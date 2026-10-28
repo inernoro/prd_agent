@@ -416,6 +416,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
 export function resolveEffectiveProfile(
   profile: BuildProfile,
   branch?: BranchEntry,
+  options: { preserveImageTemplates?: boolean } = {},
 ): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
@@ -423,10 +424,11 @@ export function resolveEffectiveProfile(
   // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage / fallbackImage 里的
   // ${CDS_COMMIT_SHA} 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
   // fallbackImage 可为字符串或有序数组(逐组件回退链),逐元素解析。
-  const resolvedImage = resolveImageTemplate(withMode.dockerImage, branch);
+  const resolveImage = (image: string | undefined) => options.preserveImageTemplates ? image : resolveImageTemplate(image, branch);
+  const resolvedImage = resolveImage(withMode.dockerImage);
   const resolvedFallback = Array.isArray(withMode.fallbackImage)
-    ? withMode.fallbackImage.map((f) => resolveImageTemplate(f, branch) || f)
-    : resolveImageTemplate(withMode.fallbackImage, branch);
+    ? withMode.fallbackImage.map((f) => resolveImage(f) || f)
+    : resolveImage(withMode.fallbackImage);
   const imageChanged = resolvedImage !== withMode.dockerImage;
   const fallbackChanged = JSON.stringify(resolvedFallback) !== JSON.stringify(withMode.fallbackImage);
   let resolved = (imageChanged || fallbackChanged)
@@ -466,7 +468,7 @@ export function resolveEffectiveProfile(
         hotReload: undefined,
       };
       const srcResolved = resolveProfileWithMode(srcBase);
-      const srcImg = resolveImageTemplate(srcResolved.dockerImage, branch);
+      const srcImg = resolveImage(srcResolved.dockerImage);
       const srcProfile = srcImg !== srcResolved.dockerImage
         ? { ...srcResolved, dockerImage: srcImg || srcResolved.dockerImage }
         : srcResolved;

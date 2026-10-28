@@ -11,6 +11,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
 import { createBranchRouter } from '../../src/routes/branches.js';
 import { createProjectMigrationRouter } from '../../src/routes/project-migration.js';
+import { buildStandbyBranchConfiguration } from '../../src/services/standby-mirror.js';
 import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor } from '../../src/types.js';
 
 let root: string, origin: string, author: string, repo: string, shaA: string;
@@ -23,6 +24,7 @@ let deployOutcome: 'success' | 'error' | 'long-error' | 'false' | 'missing';
 let deployedCommits: string[];
 let useRealRuntimeGuard: boolean;
 let worktree: WorktreeService;
+let afterDeploy: (() => void) | undefined;
 let scheduledTick: () => void;
 let auditFile: string;
 let scheduledInterval: ReturnType<typeof setInterval>;
@@ -37,6 +39,9 @@ const auditSink = {
     : [],
 };
 const projectId = 'fixture';
+const targetConfiguration = (entry: BranchEntry) => buildStandbyBranchConfiguration({ branch: entry, profiles: target.getBuildProfilesForProject(projectId),
+  env: target.getCustomEnv(projectId), branchEnv: target.getCustomEnvScope(entry.id), infra: target.getInfraServicesForProject(projectId),
+  routingRules: target.getRoutingRulesForProject(projectId) });
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' } }).trim();
@@ -83,6 +88,7 @@ beforeEach(async () => {
   responseTimers = [];
   servers = []; commands = []; writes = []; beforeCreate = undefined; createdReply = undefined; targetFingerprintReply = undefined;
   deployOutcome = 'success'; deployedCommits = []; useRealRuntimeGuard = false;
+  afterDeploy = undefined;
   origin = path.join(root, 'origin.git'); author = path.join(root, 'author'); repo = path.join(root, 'target');
   fs.mkdirSync(author); git(author, 'init', '-b', 'main'); git(author, 'config', 'user.name', 'Fixture');
   git(author, 'config', 'user.email', 'fixture@example.invalid');
@@ -130,6 +136,7 @@ beforeEach(async () => {
       const branch = target.getBranch(req.params.id)!; branch.status = 'running';
       branch.services.api = { profileId: 'api', status: 'running', sourceCommitSha: req.body.commitSha,
         containerName: 'mock-runtime', containerId: 'mock-only', hostPort: 17001 } as any;
+      afterDeploy?.();
     }
     res.type('text/event-stream').send(deployOutcome === 'success' ? 'event: complete\ndata: {"ok":true}\n\n'
       : deployOutcome === 'long-error' ? `${'event: progress\ndata: {"message":"PRIVATE_PROGRESS_SENTINEL"}\n\n'.repeat(180)}event: error\ndata: {"message":"late terminal failure","code":"PEER_DEPLOY_FAILED"}\n\n`
@@ -167,6 +174,70 @@ afterEach(async () => {
 });
 
 describe('three-policy real local Git / HTTP / State / fingerprint chain', () => {
+  it.each(['branch-env', 'override-env', 'extra-env', 'active-mode-env'])('effective %s database settings cannot be declared stateless', async layer => {
+    for (const state of [source, target]) {
+      const branch = seed(state, 'main', shaA);
+      const profile: any = { id: 'api', projectId, name: 'API', dockerImage: 'node', command: 'node app.js', containerPort: 8080, env: {} };
+      if (layer === 'branch-env') state.setCustomEnv({ MONGODB_URL: 'mongodb://synthetic.invalid/data' }, branch.id);
+      if (layer === 'override-env') branch.profileOverrides = { api: { env: { MONGODB_URL: 'mongodb://synthetic.invalid/data' } } };
+      if (layer === 'extra-env') branch.extraProfiles = [{ ...profile, id: 'extra', env: { MONGODB_URL: 'mongodb://synthetic.invalid/data' } }];
+      if (layer === 'active-mode-env') { profile.activeDeployMode = 'special'; profile.deployModes = { special: { env: { MONGODB_URL: 'mongodb://synthetic.invalid/data' }, command: 'node app.js' } }; }
+      state.addBuildProfile(profile);
+    }
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peerId: 'fixture-peer', remoteProjectId: projectId }) });
+    const { audit } = await response.json() as any;
+    expect(audit.currentDataVerified).toBe(false); expect(audit.readyForFailover).toBe(false);
+  });
+  it('saving unchanged standby settings preserves its semantic revision', async () => {
+    const config = { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true, branchSyncPolicy: 'catalog' as const,
+      autoFailover: false as const, intervalMinutes: 5, updatedAt: '2026-10-01T00:00:00Z' };
+    source.updateProject(projectId, { standbyMirror: config });
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+    expect(response.status).toBe(200); expect((await response.json() as any).config.updatedAt).toBe(config.updatedAt);
+  });
+  it('changing a standby target preserves prior audit history while invalidating current target results', async () => {
+    const history = [{ id: 'synthetic-prior-audit', peerId: 'fixture-peer', remoteProjectId: projectId }] as any;
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'catalog', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-01', history, lastAudit: history[0] } });
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peerId: 'fixture-peer', remoteProjectId: 'different-target', enabled: true, branchSyncPolicy: 'catalog', intervalMinutes: 5 }) });
+    const { config } = await response.json() as any;
+    expect(config.history).toEqual(history); expect(config.lastAudit).toBeUndefined(); expect(config.updatedAt).not.toBe('2026-10-01');
+  });
+  it.each(['source', 'target'])('effective %s configuration changes after fingerprint response prevent deployment', async side => {
+    for (const state of [source, target]) state.addBuildProfile({ id: 'api', projectId, name: 'API', dockerImage: 'node', command: 'node original.js', containerPort: 8080 } as any);
+    const local = seed(source, 'main', shaA), remote = seed(target, 'main', shaA, 'idle'); useRealRuntimeGuard = side === 'target';
+    let reads = 0; targetFingerprintReply = body => { if (++reads === 2) (side === 'source' ? local : remote).profileOverrides = { api: { command: 'node changed.js' } }; return body; };
+    const response = await reconcile('warm-running'); expect(response.status).toBe(207);
+    expect(response.body.result.deployed).toEqual([]); expect(remote.status).toBe('idle'); expect(commands).toEqual([]);
+    if (side === 'source') expect(writes).toEqual([]);
+  });
+  it.each(['source', 'target'])('a %s config change during an accepted deployment is not reported as converged', async side => {
+    for (const state of [source, target]) state.addBuildProfile({ id: 'api', projectId, name: 'API', dockerImage: 'node', command: 'node original.js', containerPort: 8080 } as any);
+    const local = seed(source, 'main', shaA), remote = seed(target, 'main', shaA, 'idle');
+    afterDeploy = () => { (side === 'source' ? local : remote).profileOverrides = { api: { env: { PUBLIC_SETTING: 'new' } } }; };
+    const response = await reconcile('warm-running'); expect(response.status).toBe(207);
+    expect(response.body.result.deployed).toEqual([]); expect(deployedCommits).toEqual([shaA]);
+    expect((side === 'source' ? local : remote).profileOverrides?.api.env?.PUBLIC_SETTING).toBe('new');
+  });
+  it.each(['command', 'override-env', 'extra', 'mode', 'branch-env'])('warm-running refuses non-default effective %s configuration divergence', async layer => {
+    for (const state of [source, target]) {
+      seed(state, 'main', shaA);
+      state.addBuildProfile({ id: 'api', projectId, name: 'API', dockerImage: 'node', command: 'node original.js', containerPort: 8080, env: {},
+        deployModes: { original: { command: 'node original.js', env: { PUBLIC_SETTING: 'original' } }, different: { command: 'node different.js', env: { PUBLIC_SETTING: 'different' } } } } as any);
+    }
+    const branch = seed(source, 'feature', shaA); const remote = seed(target, 'feature', shaA, 'idle');
+    if (layer === 'command') branch.profileOverrides = { api: { command: 'node different.js' } };
+    if (layer === 'override-env') branch.profileOverrides = { api: { env: { PUBLIC_SETTING: 'different' } } };
+    if (layer === 'extra') branch.extraProfiles = [{ id: 'extra', projectId, name: 'Extra', dockerImage: 'node', containerPort: 8081, command: 'node extra.js' } as any];
+    if (layer === 'mode') branch.profileOverrides = { api: { activeDeployMode: 'different' } };
+    if (layer === 'branch-env') source.setCustomEnv({ PUBLIC_SETTING: 'different' }, branch.id);
+    const response = await reconcile('warm-running');
+    expect(response.status).toBe(207); expect(response.body.result.deployed).toEqual([]);
+    expect(response.body.result.failed.some((failure: any) => failure.name === 'feature')).toBe(true);
+    expect(remote.status).toBe('idle'); expect(writes).toEqual([]);
+  });
   it('resolves the fallback CDS branch id to its Git branch name', async () => {
     const branch = seed(source, 'main', shaA);
     source.updateProject(projectId, { gitDefaultBranch: undefined, defaultBranch: branch.id });
@@ -218,7 +289,7 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     const infra = ['stateless', 'app-persistent', 'external-db'].includes(scenario) ? [] : [{ id: 'mongo', projectId, name: 'Mongo', dockerImage: 'mongo:7', containerPort: 27017, dbName: 'fixture-db', env: {}, volumes: [] }];
     const infraSpy = vi.spyOn(source, 'getInfraServicesForProject').mockReturnValue(infra as any);
     const profiles = vi.spyOn(source, 'getBuildProfilesForProject').mockReturnValue(['app-persistent', 'external-db'].includes(scenario) ? [{ id: 'app', name: 'App', dockerImage: 'node', containerPort: 8080,
-      ...(scenario === 'external-db' ? { env: { MONGODB_URI: 'mongodb://synthetic.invalid/data' } } : { cacheMounts: [{ name: 'app-data', containerPath: '/data', storage: {
+      ...(scenario === 'external-db' ? { env: { MONGODB_URI: 'mongodb://synthetic.invalid/data' } } : { cacheMounts: [{ kind: 'volume', hostPath: 'app-data', containerPath: '/data', storage: {
         version: 1, purpose: 'persistent', instanceId: 'fixture-instance', projectId, scope: 'branch-private', branchId: branch.id, serviceId: 'app', mountKey: 'data' } }] }) }] as any : []);
     const migration = { id: 'fixture-migration', projectId, dbType: 'mongodb', status: 'completed', progress: 100,
       source: { type: 'local', projectId, serviceId: 'mongo', database: 'fixture-db' },
@@ -250,6 +321,12 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
       expect(audit.readyForFailover).toBe(false);
       expect(audit.currentDataVerified).toBe(false); expect(audit.dataReadinessReason).toContain('历史快照');
       expect((await reconcile('warm-running')).status).toBe(200);
+      source.getAllBranches()[0].lastPushAt = new Date().toISOString();
+      const saved = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby`, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...source.getProject(projectId)!.standbyMirror }) }); expect(saved.status).toBe(200);
+      const checked = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const refreshed = (await checked.json() as any).audit;
+      expect(refreshed.dataSnapshotReady).toBe(true); expect(refreshed.currentDataVerified).toBe(false); expect(refreshed.readyForFailover).toBe(false);
     } finally { sourceInfra.mockRestore(); targetInfra.mockRestore(); migration.mockRestore(); }
   });
   it.each(['disabled', 'audit-only', 'peer', 'project', 'peer-url', 'peer-key', 'fallback-key'])('scheduled sync refuses stale %s settings after audit awaits', async mutation => {
@@ -536,7 +613,7 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     const entry = seed(target, 'main', shaA, mutation === 'building' ? 'building' : 'running'); useRealRuntimeGuard = true;
     if (mutation === 'sha-changed') entry.githubCommitSha = 'b'.repeat(40);
     const response = await fetch(`${targetUrl}/api/branches/${entry.id}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ standbyExpected: { commitSha: shaA, status: 'running', pinnedCommit: null } }) });
+      body: JSON.stringify({ standbyExpected: { commitSha: shaA, status: 'running', pinnedCommit: null, ...targetConfiguration(entry) } }) });
     expect(response.status).toBe(409); expect((await response.json() as any).error).toBe('standby_snapshot_changed');
     expect(commands).toEqual([]); expect(entry.status).toBe(mutation === 'building' ? 'building' : 'running');
   });
@@ -544,7 +621,7 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     const entry = seed(target, 'main', shaA, 'running'); useRealRuntimeGuard = true;
     entry.services.api.sourceCommitSha = 'b'.repeat(40);
     const response = await fetch(`${targetUrl}/api/branches/${entry.id}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ standbyExpected: { commitSha: shaA, status: 'running', pinnedCommit: null } }) });
+      body: JSON.stringify({ standbyExpected: { commitSha: shaA, status: 'running', pinnedCommit: null, ...targetConfiguration(entry) } }) });
     expect(response.status).toBe(409); expect(commands).toEqual([]); expect(entry.services.api.sourceCommitSha).toBe('b'.repeat(40));
   });
 });

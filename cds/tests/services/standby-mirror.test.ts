@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildStandbyMirrorFingerprint,
+  buildStandbyBranchConfiguration,
   compareStandbyFingerprints,
   planStandbyBranchSync,
   percentile,
@@ -75,6 +76,32 @@ describe('standby mirror fingerprint', () => {
     const source = buildStandbyMirrorFingerprint({ ...input, infra: [{ ...service, hostPort: 12345, containerName: 'source-cache', status: 'running', createdAt: '2026-01-01' } as any] });
     const target = buildStandbyMirrorFingerprint({ ...input, infra: [{ ...service, hostPort: 23456, containerName: 'target-cache', status: 'idle', errorMessage: 'historical error', createdAt: '2026-01-02' } as any] });
     expect(source.configHash).toBe(target.configHash);
+  });
+  it('keeps declared image templates portable across different branch runtime identities', () => {
+    const profiles = [{ id: 'api', name: 'API', workDir: '.', containerPort: 8080, prebuiltImage: true,
+      dockerImage: 'ghcr.io/fixture/api:sha-${CDS_COMMIT_SHA}', fallbackImage: ['ghcr.io/fixture/api:branch-${CDS_BRANCH_SLUG}'] } as BuildProfile];
+    const input = { projectId: 'demo', defaultBranch: 'main', profiles, env: {}, infra: [], routingRules: [] };
+    const branch = { id: 'main', branch: 'main', status: 'idle', githubCommitSha: 'a'.repeat(40), ciTargetSha: 'a'.repeat(40) } as BranchEntry;
+    const source = buildStandbyMirrorFingerprint({ ...input, branches: [branch] });
+    const target = buildStandbyMirrorFingerprint({ ...input, branches: [{ ...branch, githubCommitSha: 'b'.repeat(40), ciTargetSha: 'b'.repeat(40) }] });
+    const empty = buildStandbyMirrorFingerprint({ ...input, branches: [] });
+    expect(source.configHash).toBe(target.configHash); expect(source.configHash).toBe(empty.configHash);
+    expect(source.branches[0].configHash).toBe(target.branches[0].configHash);
+    expect(source.branches[0].commitSha).not.toBe(target.branches[0].commitSha);
+  });
+  it('compares logical storage across sites while the local condition detects owner and secret changes without disclosure', () => {
+    const configured = (instanceId: string, secret: string) => ({ profiles: [{ id: 'api', name: 'API', dockerImage: 'node', containerPort: 8080,
+      cacheMounts: [{ kind: 'volume', hostPath: `${instanceId}-volume`, containerPath: '/data', storage: { version: 1, purpose: 'persistent', instanceId,
+        projectId: `${instanceId}-project`, scope: 'branch-private', branchId: `${instanceId}-branch`, serviceId: 'api', mountKey: 'data' } }] } as BuildProfile],
+      env: { API_TOKEN: secret }, infra: [], routingRules: [] });
+    const input = configured('source', 'synthetic-source-secret'); const before = structuredClone(input);
+    const source = buildStandbyBranchConfiguration(input), repeated = buildStandbyBranchConfiguration(input);
+    const target = buildStandbyBranchConfiguration(configured('target', 'synthetic-target-secret'));
+    expect(source.configHash).toBe(target.configHash); expect(source.secretKeyHash).toBe(target.secretKeyHash);
+    expect(source.configurationRevision).toBe(repeated.configurationRevision);
+    expect(source.configurationRevision).not.toBe(target.configurationRevision);
+    expect(source.configurationRevision).not.toBe(buildStandbyBranchConfiguration(configured('source', 'synthetic-changed-secret')).configurationRevision);
+    expect(input).toEqual(before); expect(JSON.stringify(source)).not.toContain('synthetic-source-secret');
   });
   it('different secret values also remain portable inside the generated source fallback profile', () => {
     const build = (secret: string) => buildStandbyMirrorFingerprint({ projectId: 'demo', defaultBranch: 'main', env: {}, infra: [], routingRules: [], branches: [],
@@ -155,6 +182,8 @@ describe('standby branch sync plan', () => {
         name: item.name,
         status: item.status,
         commitSha: item.commit,
+        configHash: base.configHash,
+        secretKeyHash: base.secretKeyHash,
       })),
     };
   }

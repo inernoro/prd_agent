@@ -4,7 +4,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 
 const SNAPSHOT_BYTES = 4096;
 const SAFE_TEXT_KEYS = /^(code|message|reason|error|status|type|detail|event)$/i;
-const SAFE_FIELD_NAMES = /^(code|message|reason|error|status|type|detail|details|event|ok|success|data|branch|branches|protocolVersion|capabilities|configHash|secretKeyHash|repository|defaultBranch|id|name|projectId|commitSha|githubCommitSha)$/i;
+const SAFE_FIELD_NAMES = /^(code|message|reason|error|status|type|detail|details|event|ok|success|data|branch|branches|protocolVersion|capabilities|configurationRevision|configHash|secretKeyHash|repository|defaultBranch|id|name|projectId|commitSha|githubCommitSha)$/i;
 const PRIVATE_KEYS = /password|token|cookie|authorization|secret|credential|signature|email|phone|document|prompt|content|payload|body/i;
 
 function safeText(value: string, secrets: string[]): string {
@@ -21,7 +21,7 @@ function safeValue(value: unknown, secrets: string[], key = '', depth = 0, limit
   if (PRIVATE_KEYS.test(key) || isSensitiveKey(key)) return '[redacted]';
   if (depth > 6) { limits.truncated = true; return '[depth omitted]'; }
   if (typeof value === 'string') {
-    if (/^(commitSha|githubCommitSha|configHash)$/i.test(key) && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value)) {
+    if (/^(commitSha|githubCommitSha|configHash|configurationRevision)$/i.test(key) && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value)) {
       return secrets.includes(value) ? '[redacted]' : value;
     }
     if (/^(id|name|projectId)$/i.test(key)) {

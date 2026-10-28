@@ -15,6 +15,7 @@ import {
   shouldSkipFencedDeployCleanupForNewerRuntime,
 } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
+import { buildStandbyBranchConfiguration } from '../../src/services/standby-mirror.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
@@ -224,6 +225,10 @@ describe('Branch Routes', () => {
   let config: CdsConfig;
   let mock: MockShellExecutor;
   let stateService: StateService;
+  const standbyConfiguration = (entry: BranchEntry) => buildStandbyBranchConfiguration({ branch: entry,
+    profiles: stateService.getBuildProfilesForProject(entry.projectId || 'default'), env: stateService.getCustomEnv(entry.projectId || 'default'),
+    branchEnv: stateService.getCustomEnvScope(entry.id), infra: stateService.getInfraServicesForProject(entry.projectId || 'default'),
+    routingRules: stateService.getRoutingRulesForProject(entry.projectId || 'default') });
   let containerService: ContainerService;
   let serverEventLogStore: ServerEventLogSink;
   let branchOperationCoordinator: BranchOperationCoordinator;
@@ -4738,7 +4743,7 @@ describe('Branch Routes', () => {
       stateService.addBranch(entry); readyArtifactFixture();
       mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
       const begin = vi.spyOn(branchOperationCoordinator, 'begin');
-      const body = { commitSha: A, standbyExpected: { commitSha: A, status: 'idle', pinnedCommit: null } };
+      const body = { commitSha: A, standbyExpected: { commitSha: A, status: 'idle', pinnedCommit: null, ...standbyConfiguration(entry) } };
       const initial = await request(server, 'POST', `/api/branches/${id}/deploy`, body);
       await requestArtifactWaitRefresh(branchOperationCoordinator);
       const queuedCount = branchOperationCoordinator.getArtifactWaiters().length;
@@ -4770,20 +4775,28 @@ describe('Branch Routes', () => {
       expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]); begin.mockRestore();
     });
 
-    it('备用同步快照在产物复核期间新增pin时不能准入或清pin', async () => {
+    it.each(['pin', 'configuration', 'secret'] as const)('备用同步快照在产物复核期间新增%s时不能准入或清pin', async change => {
       const A = 'a'.repeat(40), B = 'b'.repeat(40), id = 'standby-artifact-pin-during-check';
       stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'Synthetic prebuilt',
         dockerImage: `ghcr.io/owned/api:sha-${A}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
       const entry: BranchEntry = { id, projectId: 'default', branch: id, worktreePath: tmpDir, status: 'idle',
         createdAt: new Date().toISOString(), githubCommitSha: A, ciTargetSha: A, services: {} };
       stateService.addBranch(entry); readyArtifactFixture();
+      stateService.setCustomEnv({ API_TOKEN: 'synthetic-original-secret' }, entry.id);
       const originalInspect = containerService.inspectDeploymentArtifacts.bind(containerService);
       const inspect = vi.spyOn(containerService, 'inspectDeploymentArtifacts').mockImplementation(async (...args) => {
-        const result = await originalInspect(...args); entry.pinnedCommit = B; return result;
+        const result = await originalInspect(...args);
+        if (change === 'pin') entry.pinnedCommit = B;
+        else if (change === 'secret') stateService.setCustomEnv({ API_TOKEN: 'synthetic-changed-secret' }, entry.id);
+        else entry.profileOverrides = { api: { env: { PUBLIC_SETTING: 'changed' } } };
+        return result;
       });
       const result = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: A,
-        standbyExpected: { commitSha: A, status: 'idle', pinnedCommit: null } });
-      expect(inspect).toHaveBeenCalled(); expect(result.status).toBe(409); expect(entry.pinnedCommit).toBe(B);
+        standbyExpected: { commitSha: A, status: 'idle', pinnedCommit: null, ...standbyConfiguration(entry) } });
+      expect(inspect).toHaveBeenCalled(); expect(result.status).toBe(409);
+      if (change === 'pin') expect(entry.pinnedCommit).toBe(B);
+      else if (change === 'secret') expect(stateService.getCustomEnvScope(entry.id).API_TOKEN).toBe('synthetic-changed-secret');
+      else expect(entry.profileOverrides?.api.env?.PUBLIC_SETTING).toBe('changed');
       expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]); expect(deploymentRunService.list({ branchId: id })).toEqual([]);
       expect(mock.commands.filter(command => isAppLaunchCommand(command))).toEqual([]); inspect.mockRestore();
     });

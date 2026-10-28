@@ -103,6 +103,7 @@ import { recordMainThreadSection, timeMainThreadSection } from '../services/main
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 import { branchVersionFacts, confirmedRunningRevisionSha } from '../services/running-version.js';
+import { buildStandbyBranchConfiguration } from '../services/standby-mirror.js';
 import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView, logPayloadForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
@@ -2384,11 +2385,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (expected === undefined) return true; // 人工操作保持原有合同。
     const status = String(entry.status);
     const stable = operation === 'deploy' ? status === 'idle' || status === 'stopped' : status === 'running';
+    const projectId = entry.projectId || 'default';
+    let configuration: ReturnType<typeof buildStandbyBranchConfiguration> | undefined;
+    try { configuration = buildStandbyBranchConfiguration({ branch: entry, profiles: stateService.getBuildProfilesForProject(projectId),
+      env: stateService.getCustomEnv(projectId), branchEnv: stateService.getCustomEnvScope(entry.id),
+      infra: stateService.getInfraServicesForProject(projectId), routingRules: stateService.getRoutingRulesForProject(projectId) }); }
+    catch { /* Unknown effective configuration must not become automatic permission. */ }
     if (!expected || typeof expected !== 'object' || typeof expected.commitSha !== 'string' || !/^[a-f0-9]{40}$/i.test(expected.commitSha)
       || expected.pinnedCommit !== null || entry.pinnedCommit || !stable || expected.status !== entry.status
+      || typeof expected.configHash !== 'string' || !/^[a-f0-9]{64}$/i.test(expected.configHash) || expected.configHash !== configuration?.configHash
+      || typeof expected.configurationRevision !== 'string' || !/^[a-f0-9]{64}$/i.test(expected.configurationRevision)
+      || expected.configurationRevision !== configuration?.configurationRevision
       || (operation === 'stop' && confirmedRunningRevisionSha(entry) !== expected.commitSha)
       || expected.commitSha !== entry.githubCommitSha || (operation === 'deploy' && req.body?.commitSha !== expected.commitSha)) {
-      res.status(409).json({ error: 'standby_snapshot_changed', message: '分支提交、固定版本或运行状态已变化，尚未执行自动同步，请重新核对' });
+      res.status(409).json({ error: 'standby_snapshot_changed', message: '分支提交、生效配置、固定版本或运行状态已变化，尚未执行自动同步，请重新核对' });
       return false;
     }
     return true;

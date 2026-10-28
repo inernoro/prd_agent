@@ -3767,13 +3767,17 @@ export interface StandbyMirrorBranchFingerprint {
   pinnedCommit?: string | null;
   commitIdentityConfirmed?: boolean;
   runtimeIdentityConfirmed?: boolean;
+  configHash?: string;
+  secretKeyHash?: string;
+  /** 仅用于同节点的瞬时配置条件核对；进程重启即失效，不跨站比较。 */
+  configurationRevision?: string;
 }
 
 /** 备用 CDS 之间只交换不可逆指纹与版本事实，不交换环境变量明文。 */
 export interface StandbyMirrorFingerprint {
   protocolVersion: 1;
   /** 缺少能力声明的旧节点只能核对，不能接收精确提交创建。 */
-  capabilities?: { expectedCommitCreate: true; pinAwareIdentity?: true; runtimeIdentity?: true };
+  capabilities?: { expectedCommitCreate: true; pinAwareIdentity?: true; runtimeIdentity?: true; branchConfigIdentity?: true };
   projectId: string;
   repository: string | null;
   defaultBranch: string | null;
@@ -3816,6 +3820,7 @@ export interface StandbyMirrorAudit {
 export type StandbyBranchSyncPolicy = 'audit-only' | 'catalog' | 'warm-running';
 
 export interface StandbyBranchSyncAction {
+  configurationDivergence?: boolean;
   name: string;
   sourceStatus: string;
   sourceCommit: string | null;

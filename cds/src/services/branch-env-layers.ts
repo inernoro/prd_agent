@@ -30,6 +30,18 @@ export interface BranchEnvResolution {
   profiles: BranchEnvProfileResolution[];
 }
 
+/** Shared configured profile layers: baseline → branch override → active mode. */
+export function configuredProfileEnvLayers(baseline: BuildProfile, entry?: BranchEntry, isExtra = false): EnvLayer[] {
+  const override = entry?.profileOverrides?.[baseline.id];
+  const activeMode = override?.activeDeployMode !== undefined ? override.activeDeployMode : baseline.activeDeployMode;
+  const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
+  return [
+    { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
+    { source: 'branch-override' as const, env: override?.env || {} },
+    { source: 'deploy-mode' as const, env: modeEnv || {} },
+  ].filter(layer => Object.keys(layer.env).length > 0);
+}
+
 export function resolveBranchEnvLayers(
   stateService: StateService,
   entry: BranchEntry,
@@ -68,13 +80,7 @@ export function resolveBranchEnvLayers(
     const isExtra = extraIds.has(baseline.id);
     const override = entry.profileOverrides?.[baseline.id];
     const effective = resolveEffectiveProfile(baseline, entry);
-    const activeMode = override?.activeDeployMode !== undefined ? override.activeDeployMode : baseline.activeDeployMode;
-    const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
-    const profileLayers: EnvLayer[] = [
-      { source: (isExtra ? 'extra-service' : 'profile') as EnvSource, env: baseline.env || {} },
-      { source: 'branch-override' as const, env: override?.env || {} },
-      { source: 'deploy-mode' as const, env: modeEnv || {} },
-    ].filter((l) => Object.keys(l.env).length > 0);
+    const profileLayers = configuredProfileEnvLayers(baseline, entry, isExtra);
     let provenance: EnvKeyProvenance[] = [];
     let perBranchDb: BranchEnvProfileResolution['perBranchDb'];
     let envError: string | undefined;

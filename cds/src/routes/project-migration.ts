@@ -55,6 +55,7 @@ import { maskSecrets } from '../services/secret-masker.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 import { readDeploymentSseOutcome } from '../services/infra-credential-rotation-runtime.js';
 import { createStandbyResponseAudit, type StandbyResponseAudit } from '../services/standby-response-audit.js';
+import { resolveBranchEnvLayers, configuredProfileEnvLayers } from '../services/branch-env-layers.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 
 export interface ProjectMigrationDeps {
@@ -210,16 +211,17 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     const project = stateService.getProject(projectId)!;
     const fallbackId = stateService.getDefaultBranchFor(projectId);
     const defaultBranch = project.gitDefaultBranch || (fallbackId ? stateService.getBranch(fallbackId)?.branch : undefined);
-    const defaultEntry = stateService.getAllBranches().find(branch => (branch.projectId || 'default') === projectId && branch.branch === defaultBranch);
+    const branches = stateService.getAllBranches().filter(branch => (branch.projectId || 'default') === projectId);
     return buildStandbyMirrorFingerprint({
       projectId,
       repository: project.githubRepoFullName || project.gitRepoUrl,
       defaultBranch,
       profiles: stateService.getBuildProfilesForProject(projectId),
-      env: { ...stateService.getCustomEnv(projectId), ...(defaultEntry ? stateService.getCustomEnvScope?.(defaultEntry.id) : {}) },
+      env: stateService.getCustomEnv(projectId),
       infra: stateService.getInfraServicesForProject(projectId),
       routingRules: stateService.getRoutingRulesForProject(projectId),
-      branches: stateService.getAllBranches().filter((branch) => (branch.projectId || 'default') === projectId),
+      branches,
+      branchEnvs: Object.fromEntries(branches.map(branch => [branch.id, stateService.getCustomEnvScope?.(branch.id) || {}])),
     });
   }
 
@@ -282,17 +284,27 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     const stores = stateService.getInfraServicesForProject(projectId).filter(service =>
       /mongo|mysql|mariadb|postgres|redis|sqlserver/i.test(service.dockerImage) || !!service.volumes?.length);
     const projectBranches = stateService.getAllBranches().filter(branch => (branch.projectId || 'default') === projectId);
-    const declarations = [...stateService.getBuildProfilesForProject(projectId),
+    const projectProfiles = stateService.getBuildProfilesForProject(projectId);
+    const declarations = [...projectProfiles,
       ...projectBranches.flatMap(branch => [...(branch.extraProfiles || []), ...Object.values(branch.profileOverrides || {})])];
-    const declaredEnv = { ...stateService.getCustomEnv(projectId),
-      ...Object.assign({}, ...declarations.map(profile => profile.env || {}), ...projectBranches.map(branch => stateService.getCustomEnvScope?.(branch.id) || {})) };
-    const externalDataDeclared = Object.entries(declaredEnv).some(([name, value]) =>
-      /mongo|mysql|mariadb|postgres|redis|sqlserver|database.*(?:url|uri|connection)|connection.*string/i.test(name) && typeof value === 'string' && !!value.trim())
+    let resolutionFailed = false;
+    const resolutions = projectBranches.flatMap(branch => {
+      try { return [resolveBranchEnvLayers(stateService, branch, { jwtIssuer: 'cds' })]; }
+      catch { resolutionFailed = true; return []; }
+    });
+    const effectiveEnvironments = resolutions.flatMap(resolution => resolution.profiles.length
+      ? resolution.profiles.map(profile => Object.fromEntries(profile.provenance.map(value => [value.key, value.value])))
+      : resolution.customLayers.map(layer => layer.env));
+    if (!projectBranches.length) effectiveEnvironments.push(stateService.getCustomEnv(projectId), ...projectProfiles.map(profile =>
+      Object.assign({}, stateService.getCustomEnv(projectId), ...configuredProfileEnvLayers(profile).map(layer => layer.env))));
+    const externalDataDeclared = resolutionFailed || resolutions.some(resolution => resolution.profiles.some(profile => !!profile.envError))
+      || effectiveEnvironments.some(env => Object.entries(env).some(([name, value]) => typeof value === 'string' && !!value.trim()
+        && (/mongo|mysql|mariadb|postgres|redis|sqlserver|database.*(?:url|uri|connection)|connection.*string/i.test(name)
+          || /^(mongodb(?:\+srv)?|mysql|postgres(?:ql)?|redis|sqlserver):\/\//i.test(value))))
       || declarations.some(profile => 'cacheMounts' in profile && profile.cacheMounts?.some(mount => mount.storage?.purpose === 'persistent'));
-    const baseline = Math.max(0, ...[stateService.getProject(projectId)?.createdAt, stateService.getProject(projectId)?.standbyMirror?.updatedAt,
-      ...projectBranches.flatMap(branch => [branch.createdAt, branch.lastPushAt, branch.lastDeployDispatchAt])]
-      .map(value => value ? Date.parse(value) : 0).filter(Number.isFinite));
-    // 无持久数据时不虚构迁移任务；有数据只认当前目标、完整范围和当前配置之后的快照。
+    // 历史快照不因无关保存或Git推送消失；当前一致性由独立门禁保持未知。
+    const baseline = Date.parse(stateService.getProject(projectId)?.createdAt || '') || 0;
+    // 无持久数据时不虚构迁移任务；历史记录只认当前目标与完整范围，不能代替当前一致性。
     const dataSnapshotReady = !(stores.length === 0 && externalDataDeclared) && stores.every(store => /mongo/i.test(store.dockerImage)
       && stateService.getDataMigrations().some(migration => {
         const started = Date.parse(migration.startedAt || ''), finished = Date.parse(migration.finishedAt || '');
@@ -395,6 +407,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       }
       if (policy === 'warm-running' && !target.capabilities?.pinAwareIdentity) throw new Error('目标 CDS 尚未支持固定提交身份核对，请升级后再预热');
       if (policy === 'warm-running' && !target.capabilities?.runtimeIdentity) throw new Error('目标 CDS 尚未支持实际运行提交核对，请升级后再预热');
+      if (policy === 'warm-running' && !target.capabilities?.branchConfigIdentity) throw new Error('目标 CDS 尚未支持逐分支生效配置核对，请升级后再预热');
 
       const planned = limitStandbySyncActions(planStandbyBranchSync(source, target, policy));
       const result: StandbyBranchSyncResult = {
@@ -410,7 +423,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
         deployed: [],
         stopped: [],
         divergent: comparison.divergentBranches,
-        failed: [],
+        failed: planned.filter(action => action.configurationDivergence).map(action => ({ name: action.name, action: action.kind, error: action.reason })),
       };
       if (dryRun || policy === 'audit-only') {
         result.completedAt = new Date().toISOString();
@@ -428,7 +441,9 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
           const sourceStillCurrent = () => {
             const current = localFingerprint(projectId).branches.find(branch => branch.name === action.name);
             return !!current && current.commitSha === action.sourceCommit && current.commitIdentityConfirmed !== false
-              && current.status === action.sourceStatus && current.pinnedCommit === sourceSnapshot?.pinnedCommit;
+              && current.status === action.sourceStatus && current.pinnedCommit === sourceSnapshot?.pinnedCommit
+              && (policy !== 'warm-running' || (current.configHash === sourceSnapshot?.configHash && current.secretKeyHash === sourceSnapshot?.secretKeyHash
+                && current.configurationRevision === sourceSnapshot?.configurationRevision));
           };
           if (currentSource?.commitSha !== action.sourceCommit || !sourceStillCurrent()) throw new Error('源提交或运行状态快照已变化，请重新核对');
           if (action.kind === 'create') {
@@ -462,7 +477,8 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
             ? currentTarget?.status === 'idle' || currentTarget?.status === 'stopped'
             : currentTarget?.status === 'running';
           if (!beforeOperation.ok || !currentTarget || currentTarget.commitSha !== action.sourceCommit || currentTarget.commitIdentityConfirmed !== true
-            || currentTarget.pinnedCommit || !targetStable || (targetSnapshot && currentTarget.status !== targetSnapshot.status)) {
+            || currentTarget.pinnedCommit || !targetStable || currentTarget.configHash !== sourceSnapshot?.configHash
+            || currentTarget.secretKeyHash !== sourceSnapshot?.secretKeyHash || (targetSnapshot && (currentTarget.status !== targetSnapshot.status || currentTarget.configurationRevision !== targetSnapshot.configurationRevision))) {
             throw new Error('目标提交、固定版本或运行状态已变化，已停止运行态收敛');
           }
           if (!sourceStillCurrent()) throw new Error('源提交或运行状态快照已变化，已停止运行态收敛');
@@ -472,7 +488,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
             `/api/branches/${encodeURIComponent(targetBranchId)}/${action.kind}`,
             { method: 'POST', timeoutMs: action.kind === 'deploy' ? 120_000 : 60_000,
               body: JSON.stringify({ ...(action.kind === 'deploy' ? { commitSha: action.sourceCommit } : {}),
-                standbyExpected: { commitSha: currentTarget.commitSha, status: currentTarget.status, pinnedCommit: null } }) },
+                standbyExpected: { commitSha: currentTarget.commitSha, status: currentTarget.status, pinnedCommit: null, configHash: currentTarget.configHash, configurationRevision: currentTarget.configurationRevision } }) },
             localFallbackKey(),
             responseAudit,
           );
@@ -485,7 +501,9 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
             ?.find(branch => branch.id === targetBranchId && branch.name === action.name);
           const statusMatches = action.kind === 'deploy' ? finalTarget?.status === 'running'
             : finalTarget?.status === 'idle' || finalTarget?.status === 'stopped';
-          if (!afterOperation.ok || finalTarget?.commitSha !== action.sourceCommit || !statusMatches) throw new Error('目标运行态回读未匹配源提交与计划状态，请核对现场');
+          if (!afterOperation.ok || finalTarget?.commitSha !== action.sourceCommit || !statusMatches
+            || finalTarget.configHash !== sourceSnapshot?.configHash || finalTarget.secretKeyHash !== sourceSnapshot?.secretKeyHash
+            || finalTarget.configurationRevision !== currentTarget.configurationRevision || !sourceStillCurrent()) throw new Error('目标运行态或生效配置回读未匹配源快照，请核对现场');
           if (action.kind === 'deploy') result.deployed.push(action.name);
           if (action.kind === 'stop') result.stopped.push(action.name);
         } catch (err) {
@@ -676,6 +694,8 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       return;
     }
     const previous = project.standbyMirror;
+    const unchanged = previous?.peerId === peer.id && previous.remoteProjectId === remoteId && previous.enabled === !!enabled
+      && previous.intervalMinutes === Math.floor(interval) && (previous.branchSyncPolicy || 'audit-only') === branchSyncPolicy && previous.autoFailover === false;
     project.standbyMirror = {
       peerId: peer.id,
       remoteProjectId: remoteId,
@@ -683,7 +703,8 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       intervalMinutes: Math.floor(interval),
       branchSyncPolicy,
       autoFailover: false,
-      updatedAt: new Date().toISOString(),
+      updatedAt: unchanged ? previous.updatedAt : new Date().toISOString(),
+      ...(previous?.history ? { history: previous.history } : {}),
       ...(previous?.peerId === peer.id && previous.remoteProjectId === remoteId
         ? { lastAudit: previous.lastAudit, lastBranchSync: previous.lastBranchSync, history: previous.history }
         : {}),

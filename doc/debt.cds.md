@@ -365,6 +365,16 @@ API label 都还在，但**路由处理器文件与前端 UI 早已丢失**—�
 | 8 | env 元数据（required/auto）不随迁移过去 | PR #909 Codex P2：迁移走 `toCdsCompose`，只序列化 env 的**值**（`x-cds-env`），不带 `envMeta`（哪些是 required/auto/infra-derived）。目标 import 后 `getMissingRequiredEnvKeys` 为空 → 不再弹「必填 env」提示，含空/TODO 必填值的项目在目标可能直接放行部署。**非本 PR 引入**：`/api/export-config`→`/api/import-config` 手动 round-trip 一直如此 | `toCdsCompose` 增 envMeta 参数并 emit `x-cds-env-meta`（parser 已支持解析）+ 远端 import-config 落 `setEnvMeta`。属共享序列化 + 远端契约改动，需跨同版本双端验证后单独做 |
 | 9 | 无 command 的 build profile 迁移会被远端 400 | PR #909 Codex P2：`toCdsCompose` 只在 `p.command` truthy 时 emit command；而 `/build-profiles` 允许缺 command（归一为空串，依赖镜像 CMD/ENTRYPOINT）。这类项目导出的 YAML 没 command，远端 import-config 校验 `if (!p.command)` 直接 400，dry-run/apply 失败。**非本 PR 引入**：是 toCdsComposeimport-config 共享 round-trip 的既有不一致 | 让 import-config 校验接受空 command（与 build-profiles 一致，归一空串=用镜像 CMD），或 toCdsCompose 显式 emit 空 command 标记。同属共享契约改动，需双端同版本验证 |
 
+### 2026-10-28 三种分支同步的交付边界
+
+本批只恢复核对、补齐分支目录、按稳定运行意图预热三种策略；已用真实本地 Git、HTTP 与状态链验证。容器执行采用隔离 mock，未证明实际两站预热、切流或数据迁移。发布负责人应在独立授权的两站环境核实对应版本与有限实际预热，不能拿本地回归代替现网回执。
+
+历史完整迁移仍作为历史事实展示，不因原样保存或普通 Git 活动失效；外部数据库、应用持久卷或无法解析的生效环境都不能标成无状态。当前协议没有双端实时水位证明，有状态项目保持不可自动切流。本项由 CDS 迁移维护者负责，只有明确的数据一致性协议与实际双端证据才可关闭，不为三策略测试另造数据库演练门槛。
+
+逐分支核对配置使用声明层和既有生效配置层次，节点自动生成的运行端口、发布 URL 等不作跨站相等条件；本地瞬时配置条件在进程重启后失效，旧请求必须重新规划。它不复制密钥或存储归属，也不替代目标原有存储所有权检查。
+
+备用同步的第三方响应审计依赖既有持久事件日志服务；未配置、写入失败或无法回读时明确失败。历史 verify/import-config/data-plan 等旧迁移调用尚未统一接入本批响应证据链，由 CDS 迁移维护者在改动对应路径时补齐可查询、脱敏、失败与超时审计；本批不宣称全迁移模块审计完成。
+
 ### 相关
 
 - [doc/design.cds.data-migration.md](./design.cds.data-migration.md) —— 原始数据迁移设计（本次校正"已落地"口径）

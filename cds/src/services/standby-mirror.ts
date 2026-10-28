@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 
 import type {
   BranchEntry,
@@ -15,9 +15,12 @@ import { mergeBranchProfiles } from './branch-extra-services.js';
 import { resolveEffectiveProfile } from './container.js';
 import { confirmedRunningRevisionSha } from './running-version.js';
 import { normalizeRepositoryIdentity } from './release-strategy.js';
+import { configuredProfileEnvLayers } from './branch-env-layers.js';
 
 const SECRET_PRESENT = '__cds_secret_present__';
 const SECRET_MISSING = '__cds_secret_missing__';
+// A process-local opaque precondition, never an access credential or persisted secret.
+const CONFIG_REVISION_KEY = randomBytes(32);
 
 /** Reject partial/cross-project protocol replies before storing or dereferencing them. */
 export function assertStandbyFingerprint(value: unknown, projectId: string): asserts value is StandbyMirrorFingerprint {
@@ -45,6 +48,9 @@ export function assertStandbyFingerprint(value: unknown, projectId: string): ass
     if (branch.pinnedCommit != null && (typeof branch.pinnedCommit !== 'string' || !/^[a-f0-9]{40}$/i.test(branch.pinnedCommit))) invalid(`branches.${index}.pinnedCommit`, branch.pinnedCommit);
     for (const field of ['commitIdentityConfirmed', 'runtimeIdentityConfirmed']) if (branch[field] !== undefined && typeof branch[field] !== 'boolean') invalid(`branches.${index}.${field}`, branch[field]);
     if (record.capabilities?.runtimeIdentity && branch.status === 'running' && typeof branch.runtimeIdentityConfirmed !== 'boolean') invalid(`branches.${index}.runtimeIdentityConfirmed`, branch.runtimeIdentityConfirmed, false);
+    if (record.capabilities?.branchConfigIdentity) for (const field of ['configHash', 'secretKeyHash', 'configurationRevision']) {
+      if (typeof branch[field] !== 'string' || !/^[a-f0-9]{64}$/i.test(branch[field])) invalid(`branches.${index}.${field}`, branch[field], field in branch);
+    }
   }
 }
 
@@ -84,6 +90,7 @@ function scrubProfile(profile: BuildProfile, depth = 0): BuildProfile {
     ...portable,
     ...(profile.env ? { env: scrubEnv(profile.env) } : {}),
     ...(sourceFallbackProfile && depth < 2 ? { sourceFallbackProfile: scrubProfile(sourceFallbackProfile, depth + 1) } : {}),
+    ...(profile.cacheMounts ? { cacheMounts: profile.cacheMounts.map(portableMount) } : {}),
     deployModes: profile.deployModes
       ? Object.fromEntries(Object.entries(profile.deployModes).map(([mode, config]) => [
           mode,
@@ -93,9 +100,16 @@ function scrubProfile(profile: BuildProfile, depth = 0): BuildProfile {
   } as BuildProfile;
 }
 
+function portableMount<T extends { name?: string; hostPath?: string; storage?: import('../types.js').StorageBinding }>(mount: T): T {
+  if (!mount.storage) return mount;
+  const { instanceId: _instanceId, projectId: _projectId, branchId: _branchId, ...logical } = mount.storage;
+  const name = `storage-${logical.scope}-${logical.serviceId}-${logical.mountKey}`;
+  return { ...mount, name, ...(mount.hostPath !== undefined ? { hostPath: name } : {}), storage: logical as import('../types.js').StorageBinding };
+}
+
 function scrubInfra(service: InfraService): string {
   const { projectId: _projectId, ...portable } = service;
-  return toCdsCompose([], {}, [stable({ ...portable, env: scrubEnv(service.env || {}) }) as InfraService], []);
+  return toCdsCompose([], {}, [stable({ ...portable, env: scrubEnv(service.env || {}), volumes: (service.volumes || []).map(portableMount) }) as InfraService], []);
 }
 
 function repositoryIdentity(value: string | null): string {
@@ -122,6 +136,36 @@ function branchName(branch: BranchEntry): string {
   return String(branch.branch || branch.id);
 }
 
+/** Portable configured layers only; node-derived runtime IDs/URLs are deliberately excluded. */
+export function buildStandbyBranchConfiguration(input: {
+  profiles: BuildProfile[]; env: Record<string, string>; branch?: BranchEntry; branchEnv?: Record<string, string>;
+  infra: InfraService[]; routingRules: RoutingRule[];
+}): { configHash: string; secretKeyHash: string; secretKeyCount: number; configurationRevision: string } {
+  const baseEnv = { ...input.env, ...input.branchEnv };
+  const secretKeys = new Set(Object.keys(baseEnv).filter(isSecretEnvKey));
+  const secretScopes: Array<{ profile: string; keys: string[] }> = [];
+  const localProfiles: string[] = [];
+  const profiles = mergeBranchProfiles(input.profiles, input.branch).map(baseline => {
+    const layers = configuredProfileEnvLayers(baseline, input.branch, !!input.branch?.extraProfiles?.some(profile => profile.id === baseline.id));
+    const env = Object.assign({}, baseEnv, ...layers.map(layer => layer.env)) as Record<string, string>;
+    const keys = Object.keys(env).filter(isSecretEnvKey).sort(); keys.forEach(key => secretKeys.add(key));
+    secretScopes.push({ profile: baseline.id, keys });
+    const resolved = resolveEffectiveProfile(baseline, input.branch, { preserveImageTemplates: true });
+    const effective = { ...resolved, workDir: resolved.workDir || '.' };
+    localProfiles.push(toCdsCompose([stable({ ...effective, env }) as BuildProfile], {}, [], []));
+    return { id: baseline.id, config: toCdsCompose([stable({ ...scrubProfile(effective), env: scrubEnv(env) }) as BuildProfile], {}, [], []) };
+  }).sort((a, b) => a.id.localeCompare(b.id));
+  const configHash = hash({ profiles, env: scrubEnv(baseEnv),
+    infra: [...input.infra].sort((a, b) => a.id.localeCompare(b.id)).map(scrubInfra),
+    routingRules: input.routingRules.map(scrubRule).sort((a, b) => a.id.localeCompare(b.id)) });
+  const localInfra = [...input.infra].sort((a, b) => a.id.localeCompare(b.id)).map(service => toCdsCompose([], {}, [stable(service) as InfraService], []));
+  const configurationRevision = createHmac('sha256', CONFIG_REVISION_KEY).update(JSON.stringify(stable({
+    profiles: localProfiles, env: baseEnv, infra: localInfra, routingRules: input.routingRules.map(scrubRule),
+  }))).digest('hex');
+  return { configHash, secretKeyHash: hash({ project: Object.keys(baseEnv).filter(isSecretEnvKey).sort(),
+    profiles: secretScopes.sort((a, b) => a.profile.localeCompare(b.profile)) }), secretKeyCount: secretKeys.size, configurationRevision };
+}
+
 /**
  * 生成跨 CDS 可比较的项目指纹。
  *
@@ -137,13 +181,15 @@ export function buildStandbyMirrorFingerprint(input: {
   infra: InfraService[];
   routingRules: RoutingRule[];
   branches: BranchEntry[];
+  branchEnvs?: Record<string, Record<string, string>>;
   generatedAt?: string;
 }): StandbyMirrorFingerprint {
-  const env = scrubEnv(input.env);
-  const secretKeys = Object.keys(input.env).filter(isSecretEnvKey).sort();
+  const configurationFor = (branch?: BranchEntry) => buildStandbyBranchConfiguration({ ...input, branch,
+    branchEnv: branch ? input.branchEnvs?.[branch.id] : undefined });
   const branches = input.branches
     .map((branch) => {
       const actualCommit = confirmedRunningRevisionSha(branch);
+      const configuration = configurationFor(branch);
       return {
       id: branch.id,
       name: branchName(branch),
@@ -152,25 +198,21 @@ export function buildStandbyMirrorFingerprint(input: {
       commitIdentityConfirmed: !!branch.githubCommitSha && (!branch.pinnedCommit || branch.pinnedCommit === branch.githubCommitSha)
         && (!actualCommit || actualCommit === branch.githubCommitSha),
       runtimeIdentityConfirmed: branch.status === 'running' ? !!actualCommit : undefined,
+      configHash: configuration.configHash,
+      secretKeyHash: configuration.secretKeyHash,
+      configurationRevision: configuration.configurationRevision,
       status: branch.status,
     }; })
     .sort((a, b) => a.name.localeCompare(b.name));
   const defaultEntry = input.branches.find(branch => branchName(branch) === input.defaultBranch);
-  const configPayload = {
-    profiles: mergeBranchProfiles(input.profiles, defaultEntry).map(profile => scrubProfile(resolveEffectiveProfile(profile, defaultEntry))).sort((a, b) => a.id.localeCompare(b.id)),
-    env,
-    infra: [...input.infra].sort((a, b) => a.id.localeCompare(b.id)).map(scrubInfra),
-    routingRules: input.routingRules.map(scrubRule).sort((a, b) => a.id.localeCompare(b.id)),
-  };
+  const defaultConfiguration = configurationFor(defaultEntry);
   return {
     protocolVersion: 1,
-    capabilities: { expectedCommitCreate: true, pinAwareIdentity: true, runtimeIdentity: true },
+    capabilities: { expectedCommitCreate: true, pinAwareIdentity: true, runtimeIdentity: true, branchConfigIdentity: true },
     projectId: input.projectId,
     repository: input.repository ? repositoryIdentity(input.repository) : null,
     defaultBranch: input.defaultBranch || null,
-    configHash: hash(configPayload),
-    secretKeyHash: hash(secretKeys),
-    secretKeyCount: secretKeys.length,
+    ...defaultConfiguration,
     branches,
     generatedAt: input.generatedAt || new Date().toISOString(),
   };
@@ -193,6 +235,12 @@ export function planStandbyBranchSync(
 
   for (const branch of source.branches) {
     const remote = targetByName.get(branch.name);
+    if (policy === 'warm-running' && (!branch.configHash || !branch.secretKeyHash
+      || (remote && (remote.configHash !== branch.configHash || remote.secretKeyHash !== branch.secretKeyHash)))) {
+      actions.push({ name: branch.name, sourceStatus: branch.status, sourceCommit: branch.commitSha, targetBranchId: remote?.id,
+        kind: 'divergent', configurationDivergence: true, reason: '分支生效配置或密钥项身份不一致/未知，保留目标配置并拒绝预热' });
+      continue;
+    }
     if (!branch.commitSha || branch.commitIdentityConfirmed === false || (remote && (!remote.commitSha || remote.commitIdentityConfirmed === false))
       || (policy === 'warm-running' && ((branch.status === 'running' && branch.runtimeIdentityConfirmed === false)
         || (remote?.status === 'running' && remote.runtimeIdentityConfirmed === false)))) {
