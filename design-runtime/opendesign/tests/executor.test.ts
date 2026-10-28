@@ -86,7 +86,7 @@ describe('presentation source context', () => {
         },
         designDirection: {
           schemaVersion: 'map-design-direction-v1', styleId: 'deck', styleName: '演示稿',
-          styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'minimal', reviewMode: 'strict',
+          styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'editorial', reviewMode: 'strict',
           prompts: {
             generate: '你是资深网页设计师，要把 MAP 知识内容做成一张好看、可信的单页网页。手机 390px 宽度下可读。',
             edit: '你在修改一张已经发布的网页。',
@@ -94,12 +94,20 @@ describe('presentation source context', () => {
           },
           promptFingerprint: 'native-deck-skill',
         },
+        brandPackage: {
+          schemaVersion: 'map-brand-package-v1', version: 1, ref: 'design-system:editorial', source: 'fixture',
+          designSystemId: 'editorial', logo: null, approvedColors: ['#0a0a0b', '#f1efea'], fonts: ['Georgia, serif'],
+          fixedStatements: ['来源可靠'], forbiddenStyles: [], examples: [], tokenContext: {}, fingerprint: 'editorial-fixture',
+        },
       },
     });
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
         expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
         expect(String(body.systemPrompt)).toContain('input context and provenance');
+        expect(body.designSystemId).toBe('editorial');
+        expect(String(body.systemPrompt)).toContain('Georgia, serif');
+        expect(String(body.systemPrompt)).not.toContain('mission-control');
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>OpenDesign 自主成稿</h1><p>TODO 由上游内容能力自行处理</p></main></body></html>');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };

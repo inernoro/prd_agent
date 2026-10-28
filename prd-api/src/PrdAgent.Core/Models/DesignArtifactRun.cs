@@ -33,6 +33,8 @@ public sealed class DesignArtifactPresentationInput
     public string? SourcePlanJson { get; set; }
     public string? SourcePlanHash { get; set; }
     public string Theme { get; set; } = string.Empty;
+    /// <summary>仅原确认换风格入口显式声明；缺省 false 不从 Theme 推断。</summary>
+    public bool StyleOverride { get; set; }
     public string? ParentRunId { get; set; }
     public string? ParentPackageHash { get; set; }
     /// <summary>用户在隔离编辑器里形成的非可信 HTML 提案；只能作为 OpenDesign edit 输入，不能直接发布。</summary>

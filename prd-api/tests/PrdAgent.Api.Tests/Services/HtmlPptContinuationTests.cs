@@ -1,6 +1,10 @@
 using PrdAgent.Api.Controllers.Api;
 using System.Security.Cryptography;
 using System.Text;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Microsoft.Extensions.Configuration;
@@ -71,6 +75,83 @@ public sealed class HtmlPptContinuationTests
             f.Source, f.Artifact, f.Site, f.Current, f.Current, [f.Current], "owner"));
         Assert.Equal(HtmlPptContinuationService.OperationRunId("tenant", "owner", "same-key"),
             HtmlPptContinuationService.OperationRunId("tenant", "owner", "same-key"));
+    }
+
+    [Fact]
+    public async Task ExplicitVisualOverrideReachesFrozenQueueWithoutReplacingSourceFacts()
+    {
+        var f = Fixture();
+        const string source = "固定声明：来源可靠";
+        DesignArtifactDesignDirection Direction(string id) => new()
+        {
+            StyleId="design-system:"+id, StyleName=id, DesignSystemId=id, StyleDescription=id,
+            BrandColors=id=="editorial"?["#0a0a0b","#f1efea"]:["#f8fafc","#090b12","#60a5fa"],
+            BrandFonts=id=="editorial"?["Georgia, serif"]:["Inter, system-ui, sans-serif"],
+        };
+        f.Artifact.DesignDirection=Direction("mission-control");
+        f.Artifact.UploadedSources=[new() { Content=source,ContentHash=new string('a',64),FileName="source.md" }];
+        f.Artifact.PresentationInput=new() { Theme="tech-dark",SourceContent=source,OutlineJson="[]",TargetPages=1 };
+        DesignArtifactBriefFactory.Freeze(f.Artifact,null);
+        var facts=System.Text.Json.JsonSerializer.Serialize(f.Artifact.DesignBrief!.FactualCoverageRequirements);
+        var legacy=DesignArtifactWorkspaceContract.BuildInputPackage(f.Artifact,f.Current.Html);
+        Assert.Equal("1ba514e5f8e76bd826486e92d50db8ec4280535722f0223cd812f24de3366b18",legacy.BaseRevision);
+        await using var store=await RunMongoFixture.CreateAsync("ppt_style_override");
+        await store.Db.DesignArtifactRuns.InsertOneAsync(f.Artifact);
+        var before=(await store.Db.DesignArtifactRuns.Find(x=>x.Id==f.Artifact.Id).SingleAsync()).ToJson();
+        var providers=new Mock<IDesignArtifactProviderCatalog>();
+        providers.Setup(x=>x.FindAsync("owner",DesignArtifactRuntimes.OpenDesign,It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DesignArtifactProviderCapability("test","OpenDesign","service","design-service",
+                "service-workspace",["html-ppt"],["edit"],["html-ppt"],true,true,true,null));
+        var settings=new Mock<IDesignGenerationSettingsService>();
+        settings.Setup(x=>x.FreezeCatalogStyleAsync("editorial",It.IsAny<CancellationToken>())).ReturnsAsync(()=>Direction("editorial"));
+        var queue=new HtmlPptOpenDesignRunService(store.Db,providers.Object,Mock.Of<IRunQueue>(),Mock.Of<IRunEventStore>(),
+            settings.Object,new ConfigurationBuilder().Build(),NullLogger<HtmlPptOpenDesignRunService>.Instance,
+            Mock.Of<IHtmlPptContinuationService>());
+        var context=HtmlPptContinuationService.ResolveSnapshot(f.Source,f.Artifact,f.Site,f.Origin,f.Current,
+            [f.Origin,f.Current],"owner").Context;
+        foreach(var mode in new[]{"ordinary","manual","style"})
+        {
+            var styleOverride=mode=="style";
+            var manual=mode=="manual"?f.Current.Html:null;
+            var rawHash=HtmlPptContinuationService.RequestFingerprint(f.Artifact.Id,context,"修改",null,"editorial-ink",null,manual,styleOverride);
+            var run=new MdToPptRun { Id=mode,UserId="owner",Op="patch",Theme="editorial-ink" };
+            await store.Db.MdToPptRuns.InsertOneAsync(run);
+            var child=await queue.QueueAsync(run,new HtmlPptOpenDesignInput(source,"[]",1,"editorial-ink","修改",
+                f.Artifact.Id,f.Artifact.WorkspaceResultSha256,ManualEditHtml:manual,
+                EditContext:context,RuntimeBudgetScopeId:"scope",PptCompletionId:"completion",ModificationRequestHash:rawHash,
+                StyleOverride:styleOverride),CancellationToken.None);
+            Assert.Equal(mode=="style"?"editorial":"mission-control",child.DesignDirection!.DesignSystemId);
+            Assert.Equal(styleOverride?"editorial-ink":"tech-dark",child.PresentationInput!.Theme);
+            Assert.Equal(child.PresentationInput.Theme,(await store.Db.MdToPptRuns.Find(x=>x.Id==mode).SingleAsync()).Theme);
+            Assert.Equal(rawHash,child.PptModificationRequestHash); // 不得用规范化后的有效Theme重算原始请求身份。
+            Assert.Equal(child.DesignDirection.DesignSystemId,child.BrandPackage!.DesignSystemId);
+            Assert.Equal(child.DesignDirection.BrandColors,child.BrandPackage.ApprovedColors);
+            Assert.Equal(child.DesignDirection.BrandFonts,child.BrandPackage.Fonts);
+            Assert.Equal(child.DesignDirection.StyleName,child.DesignBrief!.Tone);
+            Assert.Equal(child.DesignDirection.StyleDescription,child.DesignBrief.VisualIntent);
+            Assert.Equal(facts,System.Text.Json.JsonSerializer.Serialize(child.DesignBrief!.FactualCoverageRequirements));
+            Assert.Equal(f.Artifact.BrandPackage!.FixedStatements,child.BrandPackage.FixedStatements);
+            Assert.Equal(f.Artifact.BrandPackage.Logo,child.BrandPackage.Logo);
+            var package=DesignArtifactWorkspaceContract.BuildInputPackage(child,f.Current.Html);
+            using var task=System.Text.Json.JsonDocument.Parse(Convert.FromBase64String(package.Files.Single(x=>x.Path=="brief/task.json").ContentBase64));
+            Assert.Equal(styleOverride,task.RootElement.GetProperty("presentationContract").TryGetProperty("styleOverride",out var flag));
+            if(styleOverride) Assert.True(flag.GetBoolean());
+            Assert.Equal(child.BrandPackage.DesignSystemId,task.RootElement.GetProperty("brandPackage").GetProperty("designSystemId").GetString());
+            child.PresentationInput.StyleOverride=false;
+            var ordinaryPackage=DesignArtifactWorkspaceContract.BuildInputPackage(child,f.Current.Html);
+            Assert.Equal(!styleOverride,ordinaryPackage.BaseRevision==package.BaseRevision);
+            child.PresentationInput.StyleOverride=styleOverride;
+        }
+        var oldRequest=HtmlPptContinuationService.RequestFingerprint("saved-run",context,"修改",null,"editorial-ink",null,null);
+        var oldBytes=System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            sourceRunId="saved-run",expected=context,instruction="修改",slideIndex=(int?)null,
+            theme="editorial-ink",templateId=(string?)null,manualHash=(string?)null,
+        });
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(oldBytes)).ToLowerInvariant(),oldRequest);
+        Assert.Equal(oldRequest,HtmlPptContinuationService.RequestFingerprint("saved-run",context,"修改",null,"editorial-ink",null,null,false));
+        Assert.NotEqual(oldRequest,HtmlPptContinuationService.RequestFingerprint("saved-run",context,"修改",null,"editorial-ink",null,null,true));
+        Assert.Equal(before,(await store.Db.DesignArtifactRuns.Find(x=>x.Id==f.Artifact.Id).SingleAsync()).ToJson());
     }
 
     [Fact]
@@ -279,11 +360,33 @@ public sealed class HtmlPptContinuationTests
         });
         var manualBase = await service.ResolveCurrentEditContextAsync(edit.Id,"owner",CancellationToken.None);
         var proposal = f.Current.Html.Replace("现有演示稿", "现有演示稿：交接有据可查", StringComparison.Ordinal);
+        // 无效提案必须先拒绝；修正后同父稿仍可正常认领，不能留下没有任务的 pending。
+        var beforeInvalid=(await scopes.Find(x=>x.Id==first.ScopeId).SingleAsync()).ToJson();
+        var runsBeforeInvalid=await store.Db.MdToPptRuns.CountDocumentsAsync(FilterDefinition<MdToPptRun>.Empty);
+        using var responseBody=new MemoryStream();
+        using var requestServices=new ServiceCollection().AddLogging().BuildServiceProvider();
+        var http=new DefaultHttpContext { RequestServices=requestServices,
+            User=new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier,"owner")],"test")) };
+        http.Response.Body=responseBody;
+        var controller=new MdToPptController(store.Db,gw,currentGateway.Object,Mock.Of<ILLMRequestContextAccessor>(),
+            Mock.Of<IDesignKnowledgeSnapshotResolver>(),Mock.Of<IHtmlPptDesignArtifactAdapter>(),
+            Mock.Of<IHtmlPptOpenDesignRunService>(),Mock.Of<IHostedSiteService>(),Mock.Of<IHtmlPptPublishCoordinator>(),
+            config,NullLogger<MdToPptController>.Instance,service)
+            { ControllerContext=new ControllerContext { HttpContext=http } };
+        await controller.Patch(new MdToPptPatchRequest { ParentRunId=edit.Id,CurrentHtml=f.Current.Html,
+            ExpectedEditContext=manualBase.Context,IdempotencyKey=Guid.NewGuid().ToString("N"),
+            ManualEditHtml=f.Current.Html.Replace("</body>",new string('x',4*1024*1024)+"</body>",StringComparison.Ordinal),
+            SlideRequest="保存手动编辑并检查" });
+        Assert.True(http.Response.StatusCode==400,Encoding.UTF8.GetString(responseBody.ToArray()));
+        Assert.Contains("manual_edit_proposal_invalid",Encoding.UTF8.GetString(responseBody.ToArray()));
+        Assert.Equal(runsBeforeInvalid,await store.Db.MdToPptRuns.CountDocumentsAsync(FilterDefinition<MdToPptRun>.Empty));
+        var afterInvalid=(await scopes.Find(x=>x.Id==first.ScopeId).SingleAsync()).ToJson();
         var manualHash = HtmlPptContinuationService.RequestFingerprint(edit.Id, manualBase.Context,
             "保存手动编辑并检查", null, null, null, proposal);
         var manualSaveKey=Guid.NewGuid().ToString("N");
         var manualAdmission = await service.AdmitModificationAsync(edit.Id,"owner",manualBase.Context,
             manualSaveKey,manualHash,CancellationToken.None,isManualSave:true);
+        Assert.Equal(beforeInvalid,afterInvalid);
         Assert.Equal(first.ScopeId,manualAdmission.ScopeId);
         Assert.Equal(first.CompletionId,manualAdmission.CompletionId);
         Assert.Equal(3,await scopes.CountDocumentsAsync(FilterDefinition<GatewayRuntimeBudgetScopeRecord>.Empty));

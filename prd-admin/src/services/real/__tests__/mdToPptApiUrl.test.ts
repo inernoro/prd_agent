@@ -123,6 +123,24 @@ describe('md-to-ppt native request URLs', () => {
     expect(fetchMock.mock.calls[0][1]?.method).not.toBe('POST');
   });
 
+  it('sends visual override only for the explicit style intent, never from the global theme', async () => {
+    const context = { sourceRunId: 'd2', sourcePackageHash: 'package', baseSiteId: 'site', baseRevisionId: 'd2',
+      basePublishedRevisionId: 'online', baseContentVersion: 'version', baseHtmlHash: 'entry', baseFilesFingerprint: 'files' };
+    for (const mode of ['ordinary', 'manual', 'style']) {
+      const done = vi.fn();
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(sseResponse('done', { html: '<html>done</html>' })));
+      vi.stubGlobal('fetch', fetchMock);
+      streamMdToPptPatch({ parentRunId: 'd2', currentHtml: '<html>original</html>', expectedEditContext: context,
+        slideRequest: '修改', theme: 'editorial-ink', manualEditHtml: mode === 'manual' ? '<html>proposal</html>' : undefined,
+        styleOverride: mode === 'style', onDone: done });
+      await vi.waitFor(() => expect(done).toHaveBeenCalledTimes(1));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(body.theme).toBe('editorial-ink');
+      expect(body.styleOverride).toBe(mode === 'style' ? true : undefined);
+    }
+  });
+
   it('recovers the admitted manual save after a lost stream when the user clicks save again', async () => {
     const context = {
       sourceRunId: 'parent-draft', sourcePackageHash: 'package', baseSiteId: 'site', baseRevisionId: 'draft-d3',

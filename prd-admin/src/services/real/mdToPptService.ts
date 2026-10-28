@@ -326,6 +326,8 @@ export interface MdToPptPatchRequest {
   slideIndex?: number;
   /** 风格主题：换风格走 patch 由 AI 按该风格重绘（不是前端 CSS 换皮） */
   theme?: string;
+  /** 仅确认换风格/模板入口声明；普通精修与手动保存不覆盖父视觉。 */
+  styleOverride?: boolean;
 }
 
 export interface MdToPptManualSaveIntent {
@@ -655,6 +657,7 @@ export interface MdToPptPatchSseOptions {
   slideIndex?: number;
   /** 风格主题（patch 沿用当前风格 / 换风格重绘时传新值） */
   theme?: string;
+  styleOverride?: boolean;
   /** 自定义模板 ID（优先于 theme 生效） */
   templateId?: string;
   onStart?: () => void;
@@ -703,6 +706,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
           slideIndex: options.slideIndex,
           theme: options.theme,
           templateId: options.templateId,
+          styleOverride: options.styleOverride === true ? true : undefined,
         }),
         signal: abortController.signal,
       });

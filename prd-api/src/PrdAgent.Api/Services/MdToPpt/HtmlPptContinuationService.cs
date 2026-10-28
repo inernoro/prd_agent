@@ -347,12 +347,16 @@ public sealed class HtmlPptContinuationService(
         => Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value)));
 
     public static string RequestFingerprint(string sourceRunId, HtmlPptEditContext expected,
-        string instruction, int? slideIndex, string? theme, string? templateId, string? manualEditHtml)
-        => Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        string instruction, int? slideIndex, string? theme, string? templateId, string? manualEditHtml,
+        bool styleOverride = false)
+    {
+        var original = Hash(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
             sourceRunId, expected, instruction, slideIndex, theme, templateId,
             manualHash = manualEditHtml == null ? null : Hash(Encoding.UTF8.GetBytes(manualEditHtml)),
         })));
+        return styleOverride ? Hash(JsonSerializer.SerializeToUtf8Bytes(new { original, styleOverride = true })) : original;
+    }
 
     public static GatewayRuntimeBudgetScopeRecord BuildModificationScope(
         HtmlPptCurrentModificationPolicy current, HtmlPptEditContext context,

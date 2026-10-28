@@ -2893,6 +2893,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const request = {
         parentRunId: sourceRunId, currentHtml: base, manualEditHtml, slideRequest: instruction,
         slideIndex: effectiveSlideIndex ?? undefined, theme: styleOverride?.theme ?? theme, templateId: effTemplateId ?? undefined,
+        styleOverride: styleOverride != null,
       };
       const manualIntent = manualEditHtml ? retainMdToPptManualSaveIntent(manualSaveIntentRef.current,
         { ...request, manualEditHtml }) : null;
@@ -3042,7 +3043,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   //     （诉求 8）；无产物时只是改选择，零代价直接生效。
   const switchTheme = useCallback(
     (value: string) => {
-      if (value === theme && templateId == null) return;
+      if (!generatedHtml && value === theme && templateId == null) return;
       if (!generatedHtml || isProcessing) {
         setTheme(value);
         setTemplateId(null);

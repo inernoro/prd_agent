@@ -1421,6 +1421,28 @@ public class MdToPptController : ControllerBase
             return;
         }
         HtmlPptModificationAdmission? admission = null;
+        if (req.StyleOverride && (!string.IsNullOrWhiteSpace(req.ManualEditHtml)
+            || string.IsNullOrWhiteSpace(req.Theme) && string.IsNullOrWhiteSpace(req.TemplateId)))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { error = "换风格需明确选择主题或模板，且不能与手动保存合并", code = "ppt_style_override_invalid" });
+            return;
+        }
+        var manualEditHtml = string.IsNullOrWhiteSpace(req.ManualEditHtml)
+            ? null
+            : req.ManualEditHtml.Trim();
+        if (manualEditHtml != null
+            && (Encoding.UTF8.GetByteCount(manualEditHtml) > MaxManualEditHtmlBytes
+                || !IsCompletePresentationDocument(manualEditHtml)))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new
+            {
+                error = "手动编辑草稿不完整或过大，原版本与草稿均未被覆盖",
+                code = "manual_edit_proposal_invalid",
+            }, HttpContext.RequestAborted);
+            return;
+        }
         if (req.ExpectedEditContext != null || !string.IsNullOrWhiteSpace(req.IdempotencyKey))
         {
             try
@@ -1432,7 +1454,7 @@ public class MdToPptController : ControllerBase
                     throw new HtmlPptContinuationException("ppt_edit_request_invalid", "当前稿与修改版本身份不一致，原稿和要求已保留");
                 var requestHash = HtmlPptContinuationService.RequestFingerprint(parentRun.Id,
                     req.ExpectedEditContext, req.SlideRequest?.Trim() ?? string.Empty, req.SlideIndex,
-                    req.Theme, req.TemplateId, req.ManualEditHtml?.Trim());
+                    req.Theme, req.TemplateId, req.ManualEditHtml?.Trim(), req.StyleOverride);
                 admission = await _continuation.AdmitModificationAsync(parentRun.Id, userId,
                     req.ExpectedEditContext, req.IdempotencyKey, requestHash, CancellationToken.None,
                     isManualSave: !string.IsNullOrWhiteSpace(req.ManualEditHtml));
@@ -1458,21 +1480,6 @@ public class MdToPptController : ControllerBase
                 return;
             }
             req.CurrentHtml = parentRun.Html;
-        }
-        var manualEditHtml = string.IsNullOrWhiteSpace(req.ManualEditHtml)
-            ? null
-            : req.ManualEditHtml.Trim();
-        if (manualEditHtml != null
-            && (Encoding.UTF8.GetByteCount(manualEditHtml) > MaxManualEditHtmlBytes
-                || !IsCompletePresentationDocument(manualEditHtml)))
-        {
-            Response.StatusCode = StatusCodes.Status400BadRequest;
-            await Response.WriteAsJsonAsync(new
-            {
-                error = "手动编辑草稿不完整或过大，原版本与草稿均未被覆盖",
-                code = "manual_edit_proposal_invalid",
-            }, HttpContext.RequestAborted);
-            return;
         }
         var effectiveSourcePlanJson = parentRun.SourcePlanJson;
         var effectiveSourcePlanHash = parentRun.SourcePlanHash;
@@ -1581,7 +1588,7 @@ public class MdToPptController : ControllerBase
                     admission?.Base.Context,
                     admission?.ScopeId,
                     admission?.CompletionId,
-                    admission?.RequestHash),
+                    admission?.RequestHash, StyleOverride: req.StyleOverride),
                 CancellationToken.None);
             await StreamOpenDesignPptRunAsync(run.Id);
         }
@@ -4354,6 +4361,7 @@ public class MdToPptOutlinePageDto
 
 public class MdToPptPatchRequest
 {
+    public bool StyleOverride { get; set; }
     /// <summary>只作比较的基稿快照；权限与实际身份仍由服务器重新核对。</summary>
     public HtmlPptEditContext? ExpectedEditContext { get; set; }
     public string? IdempotencyKey { get; set; }
