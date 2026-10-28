@@ -3625,7 +3625,7 @@ interface StandbyBranchSyncResult {
   failed: Array<{ name: string; action: string; error: string }>;
 }
 
-function ProjectMigrationTab({
+export function ProjectMigrationTab({
   projectId,
   onToast,
 }: {
@@ -3894,7 +3894,10 @@ function ProjectMigrationTab({
   }, [base, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
 
   const reconcileBranches = useCallback(async (dryRun: boolean) => {
-    if (!(await saveStandby())) return;
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return; }
+    if (!standbyRemoteProjectId.trim()) { onToast('请填写目标项目 ID'); return; }
+    // 预演只提交临时方案；不能暗中保存 enabled 并触发后台真实同步。
+    if (!dryRun && !(await saveStandby())) return;
     const reqPid = projectId;
     setSyncingBranches(dryRun ? 'dry' : 'apply');
     try {

@@ -86,7 +86,9 @@ export function buildStandbyMirrorFingerprint(input: {
     .map((branch) => ({
       id: branch.id,
       name: branchName(branch),
-      commitSha: branch.githubCommitSha || branch.pinnedCommit || null,
+      commitSha: branch.pinnedCommit || branch.githubCommitSha || null,
+      pinnedCommit: branch.pinnedCommit || null,
+      commitIdentityConfirmed: !!branch.githubCommitSha && (!branch.pinnedCommit || branch.pinnedCommit === branch.githubCommitSha),
       status: branch.status,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -98,7 +100,7 @@ export function buildStandbyMirrorFingerprint(input: {
   };
   return {
     protocolVersion: 1,
-    capabilities: { expectedCommitCreate: true },
+    capabilities: { expectedCommitCreate: true, pinAwareIdentity: true },
     projectId: input.projectId,
     repository: input.repository || null,
     defaultBranch: input.defaultBranch || null,
@@ -127,7 +129,7 @@ export function planStandbyBranchSync(
 
   for (const branch of source.branches) {
     const remote = targetByName.get(branch.name);
-    if (!branch.commitSha || (remote && !remote.commitSha)) {
+    if (!branch.commitSha || branch.commitIdentityConfirmed === false || (remote && (!remote.commitSha || remote.commitIdentityConfirmed === false))) {
       actions.push({ name: branch.name, sourceStatus: branch.status, sourceCommit: branch.commitSha,
         targetBranchId: remote?.id, kind: 'divergent', reason: '提交身份尚未确认，保留现场并阻止同步与预热' });
       continue;
@@ -164,8 +166,11 @@ export function planStandbyBranchSync(
       continue;
     }
 
-    if (policy !== 'warm-running') continue;
-    if (branch.status === 'running' && remote.status !== 'running') {
+    if (policy !== 'warm-running' || remote.pinnedCommit) continue;
+    // building 仍可能保留正在服务的旧 runtime，错误/过渡态都不是停机意图。
+    const sourceStopped = branch.status === 'idle' || branch.status === 'stopped';
+    const targetStopped = remote.status === 'idle' || remote.status === 'stopped';
+    if (branch.status === 'running' && targetStopped) {
       actions.push({
         name: branch.name,
         sourceStatus: branch.status,
@@ -174,7 +179,7 @@ export function planStandbyBranchSync(
         kind: 'deploy',
         reason: '源站运行、备用站未运行，补齐热备实例',
       });
-    } else if (branch.status !== 'running' && remote.status === 'running') {
+    } else if (sourceStopped && remote.status === 'running') {
       actions.push({
         name: branch.name,
         sourceStatus: branch.status,
@@ -215,7 +220,7 @@ export function compareStandbyFingerprints(
       missingBranches.push(branch.name);
       continue;
     }
-    if (!branch.commitSha || !remote.commitSha || branch.commitSha !== remote.commitSha) {
+    if (!branch.commitSha || !remote.commitSha || branch.commitIdentityConfirmed === false || remote.commitIdentityConfirmed === false || branch.commitSha !== remote.commitSha) {
       divergentBranches.push({ name: branch.name, sourceCommit: branch.commitSha, targetCommit: remote.commitSha });
     }
   }
@@ -228,7 +233,9 @@ export function compareStandbyFingerprints(
       && source.repository.toLowerCase() === target.repository.toLowerCase(),
     configMatches: source.configHash === target.configHash,
     secretKeysMatch: source.secretKeyHash === target.secretKeyHash,
-    defaultBranchMatches: !!sourceDefault?.commitSha && !!targetDefault?.commitSha && sourceDefault.commitSha === targetDefault.commitSha,
+    defaultBranchMatches: !!sourceDefault?.commitSha && !!targetDefault?.commitSha
+      && sourceDefault.commitIdentityConfirmed !== false && targetDefault.commitIdentityConfirmed !== false
+      && sourceDefault.commitSha === targetDefault.commitSha,
     missingBranches,
     divergentBranches,
   };

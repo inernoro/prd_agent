@@ -3763,13 +3763,16 @@ export interface StandbyMirrorBranchFingerprint {
   name: string;
   commitSha: string | null;
   status: string;
+  /** 人工固定提交必须保留；缓存与固定提交不一致时不能自动操作。 */
+  pinnedCommit?: string | null;
+  commitIdentityConfirmed?: boolean;
 }
 
 /** 备用 CDS 之间只交换不可逆指纹与版本事实，不交换环境变量明文。 */
 export interface StandbyMirrorFingerprint {
   protocolVersion: 1;
   /** 缺少能力声明的旧节点只能核对，不能接收精确提交创建。 */
-  capabilities?: { expectedCommitCreate: true };
+  capabilities?: { expectedCommitCreate: true; pinAwareIdentity?: true };
   projectId: string;
   repository: string | null;
   defaultBranch: string | null;

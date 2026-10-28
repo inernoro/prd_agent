@@ -317,6 +317,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     if (policy === 'warm-running' && (!comparison.configMatches || !comparison.secretKeysMatch)) {
       throw new Error('两端配置或密钥项尚未对齐，已拒绝启动备用站分支');
     }
+    if (policy === 'warm-running' && !target.capabilities?.pinAwareIdentity) throw new Error('目标 CDS 尚未支持固定提交身份核对，请升级后再预热');
 
     const planned = planStandbyBranchSync(source, target, policy).slice(0, 100);
     const result: StandbyBranchSyncResult = {
@@ -344,7 +345,13 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       try {
         if (!action.sourceCommit || !/^[a-f0-9]{40}$/i.test(action.sourceCommit)) throw new Error('源提交身份未确认，已拒绝同步');
         const currentSource = localFingerprint(projectId).branches.find(branch => branch.name === action.name);
-        if (currentSource?.commitSha !== action.sourceCommit) throw new Error('源提交快照已过期，请重新核对');
+        const sourceSnapshot = source.branches.find(branch => branch.name === action.name);
+        const sourceStillCurrent = () => {
+          const current = localFingerprint(projectId).branches.find(branch => branch.name === action.name);
+          return !!current && current.commitSha === action.sourceCommit && current.commitIdentityConfirmed !== false
+            && current.status === action.sourceStatus && current.pinnedCommit === sourceSnapshot?.pinnedCommit;
+        };
+        if (currentSource?.commitSha !== action.sourceCommit || !sourceStillCurrent()) throw new Error('源提交或运行状态快照已变化，请重新核对');
         if (action.kind === 'create') {
           if (!target.capabilities?.expectedCommitCreate) throw new Error('目标 CDS 尚未支持源提交校验，请升级后再同步');
           const created = await remoteFetch(peer, '/api/branches', {
@@ -370,12 +377,21 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
           `/api/projects/${encodeURIComponent(remoteProjectId)}/migration/fingerprint`, {}, localFallbackKey());
         const currentTarget = (beforeOperation.json as StandbyMirrorFingerprint | null)?.branches
           ?.find(branch => branch.id === targetBranchId && branch.name === action.name);
-        if (!beforeOperation.ok || currentTarget?.commitSha !== action.sourceCommit) throw new Error('目标提交身份已变化，已停止运行态收敛');
+        const targetSnapshot = target.branches.find(branch => branch.id === targetBranchId && branch.name === action.name);
+        const targetStable = action.kind === 'deploy'
+          ? currentTarget?.status === 'idle' || currentTarget?.status === 'stopped'
+          : currentTarget?.status === 'running';
+        if (!beforeOperation.ok || !currentTarget || currentTarget.commitSha !== action.sourceCommit || currentTarget.commitIdentityConfirmed !== true
+          || currentTarget.pinnedCommit || !targetStable || (targetSnapshot && currentTarget.status !== targetSnapshot.status)) {
+          throw new Error('目标提交、固定版本或运行状态已变化，已停止运行态收敛');
+        }
+        if (!sourceStillCurrent()) throw new Error('源提交或运行状态快照已变化，已停止运行态收敛');
         const operation = await remoteFetch(
           peer,
           `/api/branches/${encodeURIComponent(targetBranchId)}/${action.kind}`,
           { method: 'POST', timeoutMs: action.kind === 'deploy' ? 120_000 : 60_000,
-            ...(action.kind === 'deploy' ? { body: JSON.stringify({ commitSha: action.sourceCommit }) } : {}) },
+            body: JSON.stringify({ ...(action.kind === 'deploy' ? { commitSha: action.sourceCommit } : {}),
+              standbyExpected: { commitSha: currentTarget.commitSha, status: currentTarget.status, pinnedCommit: null } }) },
           localFallbackKey(),
         );
         if (!operation.ok) throw new Error(`目标 ${action.kind} 返回 HTTP ${operation.status}`);

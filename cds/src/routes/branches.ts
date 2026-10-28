@@ -2379,6 +2379,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
 
+  function guardStandbyRuntimeSnapshot(req: Request, res: Response, entry: BranchEntry, operation: 'deploy' | 'stop'): boolean {
+    const expected = req.body?.standbyExpected;
+    if (expected === undefined) return true; // 人工操作保持原有合同。
+    const status = String(entry.status);
+    const stable = operation === 'deploy' ? status === 'idle' || status === 'stopped' : status === 'running';
+    if (!expected || typeof expected !== 'object' || typeof expected.commitSha !== 'string' || !/^[a-f0-9]{40}$/i.test(expected.commitSha)
+      || expected.pinnedCommit !== null || entry.pinnedCommit || !stable || expected.status !== entry.status
+      || expected.commitSha !== entry.githubCommitSha || (operation === 'deploy' && req.body?.commitSha !== expected.commitSha)) {
+      res.status(409).json({ error: 'standby_snapshot_changed', message: '分支提交、固定版本或运行状态已变化，尚未执行自动同步，请重新核对' });
+      return false;
+    }
+    return true;
+  }
+
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
   // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
   // handler 打补丁必然漏（deploy 就漏过一次），改为路由器级一次罩住。
@@ -13166,6 +13180,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
 
+    if (!guardStandbyRuntimeSnapshot(req, res, entry, 'deploy')) return;
     if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
       res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
       return;
@@ -15988,6 +16003,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
     }
+    if (!guardStandbyRuntimeSnapshot(req, res, entry, 'stop')) return;
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'stop',
       source: 'api.stop-branch',

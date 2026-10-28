@@ -21,6 +21,7 @@ let createdReply: ((body: any) => any) | undefined;
 let targetFingerprintReply: ((body: any) => any) | undefined;
 let deployOutcome: 'success' | 'error' | 'false' | 'missing';
 let deployedCommits: string[];
+let useRealRuntimeGuard: boolean;
 let worktree: WorktreeService;
 const projectId = 'fixture';
 function git(cwd: string, ...args: string[]): string {
@@ -63,7 +64,7 @@ beforeEach(async () => {
   vi.stubEnv('CDS_AI_ACCESS_KEY', ''); vi.stubEnv('AI_ACCESS_KEY', '');
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-standby-local-'));
   servers = []; commands = []; writes = []; beforeCreate = undefined; createdReply = undefined; targetFingerprintReply = undefined;
-  deployOutcome = 'success'; deployedCommits = [];
+  deployOutcome = 'success'; deployedCommits = []; useRealRuntimeGuard = false;
   origin = path.join(root, 'origin.git'); author = path.join(root, 'author'); repo = path.join(root, 'target');
   fs.mkdirSync(author); git(author, 'init', '-b', 'main'); git(author, 'config', 'user.name', 'Fixture');
   git(author, 'config', 'user.email', 'fixture@example.invalid');
@@ -95,14 +96,15 @@ beforeEach(async () => {
     next();
   });
   // Only these controlled handlers simulate runtime actions. No ContainerService or Docker is used.
-  targetApp.post('/api/branches/:id/deploy', (req, res) => {
+  targetApp.post('/api/branches/:id/deploy', (req, res, next) => {
+    if (useRealRuntimeGuard) { next(); return; }
     deployedCommits.push(req.body.commitSha);
     if (deployOutcome === 'success') target.getBranch(req.params.id)!.status = 'running';
     res.type('text/event-stream').send(deployOutcome === 'success' ? 'event: complete\ndata: {"ok":true}\n\n'
       : deployOutcome === 'error' ? 'event: error\ndata: {"message":"fixture failure"}\n\n'
       : deployOutcome === 'false' ? 'event: complete\ndata: {"ok":false}\n\n' : 'event: progress\ndata: {"ok":true}\n\n');
   });
-  targetApp.post('/api/branches/:id/stop', (req, res) => { target.getBranch(req.params.id)!.status = 'idle'; res.json({ ok: true }); });
+  targetApp.post('/api/branches/:id/stop', (req, res, next) => { if (useRealRuntimeGuard) { next(); return; } target.getBranch(req.params.id)!.status = 'idle'; res.json({ ok: true }); });
   targetApp.use('/api', createProjectMigrationRouter({ stateService: target, authMode: 'basic', assertProjectAccess: () => null }));
   targetApp.use('/api', createBranchRouter({ stateService: target, worktreeService: worktree, shell,
     containerService: {} as any, config: { repoRoot: repo, worktreeBase: path.join(root, 'worktrees'), dockerNetwork: 'never-used',
@@ -233,5 +235,46 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     expect(result.body.result.deployed).toEqual([]);
     expect(result.body.result.failed).toEqual([expect.objectContaining({ name: 'main', action: 'deploy' })]);
     expect(deployedCommits).toEqual([shaA]); expect(target.getAllBranches()[0].status).toBe('idle');
+  });
+  it.each(['building', 'starting', 'restarting', 'error', 'unknown'])('source %s cannot mean stop even with a retained serving runtime', async status => {
+    const entry = seed(source, 'main', shaA, status);
+    entry.services = { app: { status: 'running', servingRuntime: { containerName: 'synthetic-retained-serving' } } } as any;
+    seed(target, 'main', shaA, 'running');
+    const result = await reconcile('warm-running');
+    expect(result.body.result.stopped).toEqual([]); expect(result.body.result.deployed).toEqual([]);
+    expect(writes).toEqual([]); expect(target.getAllBranches()[0].status).toBe('running');
+  });
+  it('source idle becoming running with the same SHA during the final target read cannot stop the target', async () => {
+    const entry = seed(source, 'main', shaA, 'idle'); seed(target, 'main', shaA, 'running');
+    let reads = 0; targetFingerprintReply = body => { if (++reads === 2) entry.status = 'running'; return body; };
+    const result = await reconcile('warm-running');
+    expect(result.body.result.stopped).toEqual([]); expect(writes).toEqual([]);
+    expect(target.getAllBranches()[0].status).toBe('running');
+  });
+  it('a target pin B cannot be hidden by cached A or overwritten by source A preheating', async () => {
+    seed(source, 'main', shaA); const entry = seed(target, 'main', shaA, 'idle'); entry.pinnedCommit = 'b'.repeat(40);
+    const result = await reconcile('warm-running');
+    expect(result.body.result.deployed).toEqual([]); expect(writes).toEqual([]);
+    expect(entry.pinnedCommit).toBe('b'.repeat(40)); expect(result.body.result.divergent).toHaveLength(1);
+  });
+  it('matching manual target pin is preserved without automatic deploy clearing it', async () => {
+    seed(source, 'main', shaA); const entry = seed(target, 'main', shaA, 'idle'); entry.pinnedCommit = shaA;
+    const result = await reconcile('warm-running');
+    expect(result.body.result.deployed).toEqual([]); expect(writes).toEqual([]); expect(entry.pinnedCommit).toBe(shaA);
+  });
+  it('a new target pin after the fingerprint response is rejected by the real deploy route before effects', async () => {
+    seed(source, 'main', shaA); const entry = seed(target, 'main', shaA, 'idle'); useRealRuntimeGuard = true;
+    let reads = 0; targetFingerprintReply = body => { if (++reads === 2) entry.pinnedCommit = shaA; return body; };
+    const result = await reconcile('warm-running'); expect(result.status).toBe(207);
+    expect(result.body.result.deployed).toEqual([]); expect(entry.pinnedCommit).toBe(shaA);
+    expect(entry.status).toBe('idle'); expect(deployedCommits).toEqual([]); expect(commands).toEqual([]);
+  });
+  it.each(['building', 'sha-changed'])('the real stop route rejects a stale %s receiver snapshot before effects', async mutation => {
+    const entry = seed(target, 'main', shaA, mutation === 'building' ? 'building' : 'running'); useRealRuntimeGuard = true;
+    if (mutation === 'sha-changed') entry.githubCommitSha = 'b'.repeat(40);
+    const response = await fetch(`${targetUrl}/api/branches/${entry.id}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ standbyExpected: { commitSha: shaA, status: 'running', pinnedCommit: null } }) });
+    expect(response.status).toBe(409); expect((await response.json() as any).error).toBe('standby_snapshot_changed');
+    expect(commands).toEqual([]); expect(entry.status).toBe(mutation === 'building' ? 'building' : 'running');
   });
 });
