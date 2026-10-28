@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-it('editing unsaved warm-running and enabled then previewing never saves or enables background execution', async () => {
+it.each(['peers-first', 'standby-first'])('saved peer survives %s loading; unsaved preview never saves or enables background execution', async loadOrder => {
   const webRoot = path.resolve('web');
   const requireWeb = createRequire(path.join(webRoot, 'package.json'));
   const { createServer } = await import(pathToFileURL(requireWeb.resolve('vite')).href);
@@ -34,9 +34,14 @@ it('editing unsaved warm-running and enabled then previewing never saves or enab
       const method = request.method(); const body = request.postData() ? JSON.parse(request.postData()!) : null;
       requests.push({ method, path: url.pathname, body });
       let response: any;
-      if (url.pathname.endsWith('/peers')) response = { peers: [{ id: 'fixture-peer', name: 'Synthetic peer', baseUrl: 'https://example.invalid', hasKey: false, keyMasked: null, createdAt: '2026-10-28' }] };
+      if (url.pathname.endsWith('/peers')) {
+        if (loadOrder === 'standby-first') await new Promise(resolve => setTimeout(resolve, 120));
+        response = { peers: [{ id: 'unrelated-peer', name: 'Unrelated peer', baseUrl: 'https://unrelated.invalid', hasKey: false, keyMasked: null, createdAt: '2026-10-28' },
+          { id: 'fixture-peer', name: 'Synthetic peer', baseUrl: 'https://example.invalid', hasKey: false, keyMasked: null, createdAt: '2026-10-28' }] };
+      }
       else if (url.pathname.endsWith('/config-preview')) response = { yaml: '', bytes: 0, summary: { profiles: 0, infra: 0, envVars: 0, routingRules: 0 } };
       else if (url.pathname.endsWith('/standby')) {
+        if (loadOrder === 'peers-first' && method === 'GET') await new Promise(resolve => setTimeout(resolve, 120));
         if (method === 'PUT' && body.enabled && body.branchSyncPolicy === 'warm-running') backgroundStarts++;
         response = { ok: true, config: method === 'PUT' ? body : savedConfig };
       } else if (url.pathname.endsWith('/standby/reconcile')) response = { result: { dryRun: true, policy: body.policy, sourceBranchCount: 1, targetBranchCount: 0,
@@ -45,6 +50,7 @@ it('editing unsaved warm-running and enabled then previewing never saves or enab
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(response) });
     });
     await page.goto(`${origin}/__standby-preview-fixture.html`);
+    await page.waitForFunction(() => document.querySelectorAll<HTMLInputElement>('input[name="migration-peer"]')[1]?.checked === true);
     await page.locator('label').filter({ hasText: '分支同步策略' }).locator('select').selectOption('warm-running');
     await page.getByLabel('按间隔持续核对', { exact: true }).check();
     const response = page.waitForResponse((r: any) => r.url().endsWith('/standby/reconcile'));

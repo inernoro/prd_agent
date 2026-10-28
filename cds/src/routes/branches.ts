@@ -102,7 +102,7 @@ import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { recordMainThreadSection, timeMainThreadSection } from '../services/main-thread-diagnostics.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
-import { branchVersionFacts } from '../services/running-version.js';
+import { branchVersionFacts, confirmedRunningRevisionSha } from '../services/running-version.js';
 import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView, logPayloadForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
@@ -2386,6 +2386,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const stable = operation === 'deploy' ? status === 'idle' || status === 'stopped' : status === 'running';
     if (!expected || typeof expected !== 'object' || typeof expected.commitSha !== 'string' || !/^[a-f0-9]{40}$/i.test(expected.commitSha)
       || expected.pinnedCommit !== null || entry.pinnedCommit || !stable || expected.status !== entry.status
+      || (operation === 'stop' && confirmedRunningRevisionSha(entry) !== expected.commitSha)
       || expected.commitSha !== entry.githubCommitSha || (operation === 'deploy' && req.body?.commitSha !== expected.commitSha)) {
       res.status(409).json({ error: 'standby_snapshot_changed', message: '分支提交、固定版本或运行状态已变化，尚未执行自动同步，请重新核对' });
       return false;

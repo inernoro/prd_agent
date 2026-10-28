@@ -5,6 +5,8 @@ import {
   compareStandbyFingerprints,
   planStandbyBranchSync,
   percentile,
+  limitStandbySyncActions,
+  assertStandbyFingerprint,
 } from '../../src/services/standby-mirror.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
 
@@ -16,7 +18,8 @@ function fingerprint(input: {
 }) {
   const profile = { id: 'api', name: 'API', workDir: '.', containerPort: 8080 } as BuildProfile;
   const branch = {
-    id: 'demo-main', branch: 'main', projectId: 'demo', status: 'running', githubCommitSha: input.commit || 'a'.repeat(40), services: {},
+    id: 'demo-main', branch: 'main', projectId: 'demo', status: 'running', githubCommitSha: input.commit || 'a'.repeat(40),
+    services: { api: { profileId: 'api', status: 'running', sourceCommitSha: input.commit || 'a'.repeat(40) } },
   } as unknown as BranchEntry;
   return buildStandbyMirrorFingerprint({
     projectId: 'demo',
@@ -32,6 +35,63 @@ function fingerprint(input: {
 }
 
 describe('standby mirror fingerprint', () => {
+  it('validates full peer shapes and the requested project before comparison', () => {
+    const valid = fingerprint({}); expect(() => assertStandbyFingerprint(valid, 'demo')).not.toThrow();
+    for (const invalid of [{ protocolVersion: 1 }, { ...valid, projectId: 'another' }, { ...valid, branches: null },
+      { ...valid, branches: [{ ...valid.branches[0], commitSha: 'short' }] }, { ...valid, configHash: null }]) {
+      expect(() => assertStandbyFingerprint(invalid, 'demo')).toThrow('指纹');
+    }
+  });
+  it('requires the declared default branch identity and stable running state as well as equal commits', () => {
+    const source = fingerprint({}), target = fingerprint({});
+    expect(compareStandbyFingerprints(source, target).defaultBranchMatches).toBe(true);
+    expect(compareStandbyFingerprints(source, { ...target, defaultBranch: 'develop' }).defaultBranchMatches).toBe(false);
+    expect(compareStandbyFingerprints(source, { ...target, branches: target.branches.map(branch => ({ ...branch, status: 'error' })) }).defaultBranchMatches).toBe(false);
+  });
+  it('normalizes GitHub transport forms without treating another host as the same repository', () => {
+    const source = fingerprint({});
+    for (const repository of ['git@github.com:owner/repo.git', 'https://github.com/owner/repo.git']) {
+      expect(compareStandbyFingerprints(source, { ...fingerprint({}), repository }).repositoryMatches).toBe(true);
+    }
+    expect(compareStandbyFingerprints(source, { ...fingerprint({}), repository: 'https://another.invalid/owner/repo.git' }).repositoryMatches).toBe(false);
+  });
+  it('does not expose repository URL credentials in a peer fingerprint', () => {
+    const result = buildStandbyMirrorFingerprint({ projectId: 'demo', repository: 'https://synthetic-user:synthetic-pass@github.com/owner/repo.git',
+      defaultBranch: 'main', profiles: [], env: {}, infra: [], routingRules: [], branches: [] });
+    expect(result.repository).toBe('github.com/owner/repo');
+    expect(JSON.stringify(result)).not.toContain('synthetic-user'); expect(JSON.stringify(result)).not.toContain('synthetic-pass');
+  });
+  it('fingerprints the immutable running revision and rejects a contradictory webhook head', () => {
+    const result = buildStandbyMirrorFingerprint({ projectId: 'demo', repository: 'owner/repo', defaultBranch: 'main', profiles: [], env: {}, infra: [], routingRules: [],
+      branches: [{ id: 'main', branch: 'main', status: 'running', githubCommitSha: 'a'.repeat(40), services: {
+        api: { profileId: 'api', status: 'running', deployedImage: `ghcr.io/fixture/api:sha-${'b'.repeat(40)}@sha256:${'c'.repeat(64)}` },
+      } } as any] });
+    expect(result.branches[0].commitSha).toBe('b'.repeat(40));
+    expect(result.branches[0].commitIdentityConfirmed).toBe(false);
+  });
+  it('hashes portable infrastructure rather than allocated runtime ports and status', () => {
+    const input = { projectId: 'demo', repository: 'owner/repo', defaultBranch: 'main', profiles: [], env: {}, routingRules: [], branches: [] };
+    const service = { id: 'cache', name: 'Cache', dockerImage: 'redis:7', containerPort: 6379, env: {}, volumes: [] };
+    const source = buildStandbyMirrorFingerprint({ ...input, infra: [{ ...service, hostPort: 12345, containerName: 'source-cache', status: 'running', createdAt: '2026-01-01' } as any] });
+    const target = buildStandbyMirrorFingerprint({ ...input, infra: [{ ...service, hostPort: 23456, containerName: 'target-cache', status: 'idle', errorMessage: 'historical error', createdAt: '2026-01-02' } as any] });
+    expect(source.configHash).toBe(target.configHash);
+  });
+  it('different secret values also remain portable inside the generated source fallback profile', () => {
+    const build = (secret: string) => buildStandbyMirrorFingerprint({ projectId: 'demo', defaultBranch: 'main', env: {}, infra: [], routingRules: [], branches: [],
+      profiles: [{ id: 'api', name: 'API', dockerImage: 'node', command: 'node app.js', containerPort: 8080, activeDeployMode: 'express', env: { API_TOKEN: secret },
+        deployModes: { express: { prebuilt: true, dockerImage: 'ghcr.io/fixture/api:sha-a' }, source: { prebuilt: false, dockerImage: 'node:22' } } } as BuildProfile] });
+    expect(build('synthetic-source-secret').configHash).toBe(build('synthetic-target-secret').configHash);
+  });
+  it.each(['override', 'extra', 'branch-env'])('includes effective default branch %s configuration in its fingerprint', change => {
+    const branch = { id: 'main', branch: 'main', status: 'idle', githubCommitSha: 'a'.repeat(40), services: {} } as any;
+    const input = { projectId: 'demo', repository: 'owner/repo', defaultBranch: 'main', profiles: [{ id: 'api', name: 'API', dockerImage: 'node', command: 'node original.js', containerPort: 8080 } as BuildProfile], env: {}, infra: [], routingRules: [] };
+    const source = buildStandbyMirrorFingerprint({ ...input, branches: [branch] });
+    const target = buildStandbyMirrorFingerprint({ ...input, branches: [{ ...branch,
+      ...(change === 'override' ? { profileOverrides: { api: { command: 'node changed.js' } } }
+        : change === 'extra' ? { extraProfiles: [{ id: 'extra', name: 'Extra', dockerImage: 'nginx', containerPort: 80 }] } : {}) }],
+      ...(change === 'branch-env' ? { env: { BRANCH_PUBLIC_SETTING: 'changed' } } : {}) });
+    expect(source.configHash).not.toBe(target.configHash);
+  });
   it('不同站点使用不同密钥值时仍判定配置一致，响应也不含明文', () => {
     const source = fingerprint({ secret: 'source-secret' });
     const target = fingerprint({ secret: 'target-secret' });
@@ -77,6 +137,15 @@ describe('percentile', () => {
 });
 
 describe('standby branch sync plan', () => {
+  it('the action budget keeps every create/deploy pair whole', () => {
+    const actions = Array.from({ length: 51 }, (_, index) => [
+      { kind: 'create' as const, name: `branch-${index}`, sourceStatus: 'running', sourceCommit: 'a'.repeat(40), reason: 'fixture' },
+      { kind: 'deploy' as const, name: `branch-${index}`, sourceStatus: 'running', sourceCommit: 'a'.repeat(40), reason: 'fixture' },
+    ]).flat();
+    const limited = limitStandbySyncActions(actions, 99);
+    expect(limited).toHaveLength(98);
+    for (const name of new Set(limited.map(action => action.name))) expect(limited.filter(action => action.name === name).map(action => action.kind)).toEqual(['create', 'deploy']);
+  });
   function withBranches(items: Array<{ id: string; name: string; status: string; commit: string }>) {
     const base = fingerprint({ includeBranch: false });
     return {

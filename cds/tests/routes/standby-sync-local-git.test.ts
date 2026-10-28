@@ -19,10 +19,23 @@ let servers: http.Server[], commands: string[], writes: string[];
 let beforeCreate: (() => void) | undefined;
 let createdReply: ((body: any) => any) | undefined;
 let targetFingerprintReply: ((body: any) => any) | undefined;
-let deployOutcome: 'success' | 'error' | 'false' | 'missing';
+let deployOutcome: 'success' | 'error' | 'long-error' | 'false' | 'missing';
 let deployedCommits: string[];
 let useRealRuntimeGuard: boolean;
 let worktree: WorktreeService;
+let scheduledTick: () => void;
+let auditFile: string;
+let scheduledInterval: ReturnType<typeof setInterval>;
+let fingerprintOverride: { status: number; body: string; type?: string; delayMs?: number; headersOnly?: boolean } | undefined;
+let responseTimers: ReturnType<typeof setTimeout>[];
+const auditSink = {
+  record: () => { throw new Error('Durable audit must use immediate writes'); },
+  recordImmediate: async (record: any) => fs.appendFileSync(auditFile, JSON.stringify(record) + '\n'),
+  findRecent: async (filter: any = {}) => fs.existsSync(auditFile)
+    ? fs.readFileSync(auditFile, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+      .filter(record => (!filter.projectId || record.projectId === filter.projectId) && (!filter.requestId || record.requestId === filter.requestId)).reverse()
+    : [],
+};
 const projectId = 'fixture';
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
@@ -30,7 +43,9 @@ function git(cwd: string, ...args: string[]): string {
 }
 function seed(state: StateService, branch: string, sha: string | undefined, status = 'running'): BranchEntry {
   const entry = { id: `fixture-${branch.replaceAll('/', '-')}`, projectId, branch, status,
-    githubCommitSha: sha, services: {}, worktreePath: path.join(root, 'unused', branch), createdAt: new Date().toISOString() } as BranchEntry;
+    githubCommitSha: sha, services: status === 'running' && sha ? { api: { profileId: 'api', status: 'running', sourceCommitSha: sha,
+      containerName: 'mock-runtime', containerId: 'mock-only', hostPort: 17001 } } : {},
+    worktreePath: path.join(root, 'unused', branch), createdAt: new Date().toISOString() } as BranchEntry;
   state.addBranch(entry);
   return entry;
 }
@@ -63,6 +78,9 @@ function advanceOrigin(): string {
 beforeEach(async () => {
   vi.stubEnv('CDS_AI_ACCESS_KEY', ''); vi.stubEnv('AI_ACCESS_KEY', '');
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-standby-local-'));
+  auditFile = path.join(root, 'response-audit.jsonl');
+  fingerprintOverride = undefined;
+  responseTimers = [];
   servers = []; commands = []; writes = []; beforeCreate = undefined; createdReply = undefined; targetFingerprintReply = undefined;
   deployOutcome = 'success'; deployedCommits = []; useRealRuntimeGuard = false;
   origin = path.join(root, 'origin.git'); author = path.join(root, 'author'); repo = path.join(root, 'target');
@@ -84,8 +102,16 @@ beforeEach(async () => {
   } };
   worktree = new WorktreeService(shell);
   const targetApp = appWithOwner();
+  targetApp.get('/healthz', (_req, res) => res.json({ ok: true }));
   targetApp.use((req, res, next) => {
     if (req.method !== 'GET') writes.push(req.path);
+    if (req.path.endsWith('/migration/fingerprint') && fingerprintOverride) {
+      const override = fingerprintOverride;
+      if (override.headersOnly) { res.status(override.status).type(override.type || 'application/json').flushHeaders(); return; }
+      const send = () => res.status(override.status).type(override.type || 'application/json').send(override.body);
+      if (override.delayMs) { const timer = setTimeout(send, override.delayMs); timer.unref(); responseTimers.push(timer); } else send();
+      return;
+    }
     if (req.path.endsWith('/migration/fingerprint') && targetFingerprintReply) {
       const send = res.json.bind(res); res.json = ((body: any) => send(targetFingerprintReply!(body))) as typeof res.json;
     }
@@ -99,8 +125,13 @@ beforeEach(async () => {
   targetApp.post('/api/branches/:id/deploy', (req, res, next) => {
     if (useRealRuntimeGuard) { next(); return; }
     deployedCommits.push(req.body.commitSha);
-    if (deployOutcome === 'success') target.getBranch(req.params.id)!.status = 'running';
+    if (deployOutcome === 'success') {
+      const branch = target.getBranch(req.params.id)!; branch.status = 'running';
+      branch.services.api = { profileId: 'api', status: 'running', sourceCommitSha: req.body.commitSha,
+        containerName: 'mock-runtime', containerId: 'mock-only', hostPort: 17001 } as any;
+    }
     res.type('text/event-stream').send(deployOutcome === 'success' ? 'event: complete\ndata: {"ok":true}\n\n'
+      : deployOutcome === 'long-error' ? `${'event: progress\ndata: {"message":"PRIVATE_PROGRESS_SENTINEL"}\n\n'.repeat(180)}event: error\ndata: {"message":"late terminal failure","code":"PEER_DEPLOY_FAILED"}\n\n`
       : deployOutcome === 'error' ? 'event: error\ndata: {"message":"fixture failure"}\n\n'
       : deployOutcome === 'false' ? 'event: complete\ndata: {"ok":false}\n\n' : 'event: progress\ndata: {"ok":true}\n\n');
   });
@@ -112,10 +143,22 @@ beforeEach(async () => {
   targetUrl = await listen(targetApp);
   source.addCdsPeer({ id: 'fixture-peer', name: 'loopback only', baseUrl: targetUrl, createdAt: new Date().toISOString() });
   const sourceApp = appWithOwner();
-  sourceApp.use('/api', createProjectMigrationRouter({ stateService: source, authMode: 'basic', assertProjectAccess: () => null }));
+  const originalInterval = global.setInterval;
+  const intervalSpy = vi.spyOn(global, 'setInterval').mockImplementation(((callback: () => void, ms: number, ...args: any[]) => {
+    if (ms === 60_000) scheduledTick = callback;
+    const handle = originalInterval(callback, ms, ...args);
+    if (ms === 60_000) scheduledInterval = handle;
+    return handle;
+  }) as typeof setInterval);
+  try {
+    sourceApp.use('/api', createProjectMigrationRouter({ stateService: source, authMode: 'basic', assertProjectAccess: () => null,
+      serverEventLogStore: auditSink } as any));
+  } finally { intervalSpy.mockRestore(); }
   sourceUrl = await listen(sourceApp);
 });
 afterEach(async () => {
+  clearInterval(scheduledInterval);
+  responseTimers.forEach(clearTimeout);
   for (const server of servers) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   await Promise.all([source.flush(), target.flush()]);
   fs.rmSync(root, { recursive: true, force: true }); expect(fs.existsSync(root)).toBe(false);
@@ -123,6 +166,194 @@ afterEach(async () => {
 });
 
 describe('three-policy real local Git / HTTP / State / fingerprint chain', () => {
+  it('resolves the fallback CDS branch id to its Git branch name', async () => {
+    const branch = seed(source, 'main', shaA);
+    source.updateProject(projectId, { gitDefaultBranch: undefined, defaultBranch: branch.id });
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/fingerprint`);
+    expect((await response.json() as any).defaultBranch).toBe('main');
+  });
+  it('malformed successful fingerprints produce a persisted failed audit rather than retaining old readiness', async () => {
+    seed(source, 'main', shaA); fingerprintOverride = { status: 200, body: JSON.stringify({ protocolVersion: 1 }) };
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'audit-only', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-01' } });
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect(response.status).not.toBe(500);
+    const audit = source.getProject(projectId)!.standbyMirror!.lastAudit!;
+    expect(audit.readyForFailover).toBe(false); expect(audit.error).toContain('指纹');
+    expect((await auditSink.findRecent({ projectId })).some(row => row.details?.localDecision === 'parse-failure')).toBe(true);
+  });
+  it('health cannot pass when the complete takeover gate rejects an otherwise reachable standby', async () => {
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'audit-only', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-01',
+      lastAudit: { checkedAt: new Date().toISOString(), remoteReachable: true, protocolReady: true, defaultBranchMatches: true, readyForFailover: false } as any } });
+    expect((await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby-health`)).status).toBe(503);
+  });
+  it('a fresh complete stateless gate still passes health after an audited normal round', async () => {
+    seed(source, 'main', shaA); seed(target, 'main', shaA);
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'audit-only', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-01' } });
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    expect((await response.json() as any).audit.readyForFailover).toBe(true);
+    expect((await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby-health`)).status).toBe(200);
+  });
+  it('an enabled standby peer cannot be deleted underneath its scheduled policy', async () => {
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'catalog', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-01' } });
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/peers/fixture-peer`, { method: 'DELETE' });
+    expect(response.status).toBe(409); expect(source.getCdsPeer('fixture-peer')).toBeDefined();
+  });
+  it('a previously missing peer records failed freshness evidence without changing the enabled policy', async () => {
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'catalog', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-01' } });
+    source.removeCdsPeer('fixture-peer'); scheduledTick();
+    const config = source.getProject(projectId)!.standbyMirror!;
+    expect(config.enabled).toBe(true); expect(config.lastAudit?.readyForFailover).toBe(false);
+    expect(config.lastAudit?.error).toContain('不存在'); expect(writes).toEqual([]);
+  });
+  it.each(['stateless', 'reverse', 'other-project', 'subset', 'stale', 'exact'])('data readiness uses scoped current evidence: %s', async scenario => {
+    const branch = seed(source, 'main', shaA); branch.createdAt = '2026-10-01T00:00:00Z';
+    source.updateProject(projectId, { createdAt: '2026-10-01T00:00:00Z', standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'audit-only', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-02T00:00:00Z' } });
+    const infra = scenario === 'stateless' ? [] : [{ id: 'mongo', projectId, name: 'Mongo', dockerImage: 'mongo:7', containerPort: 27017, dbName: 'fixture-db', env: {}, volumes: [] }];
+    const infraSpy = vi.spyOn(source, 'getInfraServicesForProject').mockReturnValue(infra as any);
+    const migration = { id: 'fixture-migration', projectId, dbType: 'mongodb', status: 'completed', progress: 100,
+      source: { type: 'local', projectId, serviceId: 'mongo', database: 'fixture-db' },
+      target: { type: 'cds', cdsPeerId: 'fixture-peer', projectId: scenario === 'other-project' ? 'another-project' : projectId, serviceId: 'mongo', database: 'fixture-db' },
+      startedAt: '2026-10-03T00:00:00Z', finishedAt: scenario === 'stale' ? '2026-10-01T00:00:00Z' : '2026-10-04T00:00:00Z',
+      ...(scenario === 'subset' ? { collections: ['only-one'] } : {}) } as any;
+    if (scenario === 'reverse') [migration.source, migration.target] = [migration.target, migration.source];
+    const migrationSpy = vi.spyOn(source, 'getDataMigrations').mockReturnValue(scenario === 'stateless' ? [] : [migration]);
+    try {
+      const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      expect(response.status).toBe(200);
+      expect((await response.json() as any).audit.dataSnapshotReady).toBe(['stateless', 'exact'].includes(scenario));
+    } finally { infraSpy.mockRestore(); migrationSpy.mockRestore(); }
+  });
+  it.each(['disabled', 'audit-only', 'peer', 'project', 'peer-url', 'peer-key', 'fallback-key'])('scheduled sync refuses stale %s settings after audit awaits', async mutation => {
+    seed(source, 'main', shaA);
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'catalog', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-28T00:00:00Z' } });
+    let changed = false;
+    targetFingerprintReply = body => {
+      if (!changed) {
+        changed = true;
+        const config = source.getProject(projectId)!.standbyMirror!;
+        if (mutation === 'peer-url') source.getCdsPeer('fixture-peer')!.baseUrl += '/changed-target';
+        else if (mutation === 'peer-key') source.getCdsPeer('fixture-peer')!.accessKey = 'synthetic-changed-key';
+        else if (mutation === 'fallback-key') vi.stubEnv('AI_ACCESS_KEY', 'synthetic-changed-fallback');
+        else source.updateProject(projectId, { standbyMirror: { ...config,
+          ...(mutation === 'disabled' ? { enabled: false } : mutation === 'audit-only' ? { branchSyncPolicy: 'audit-only' as const }
+            : mutation === 'peer' ? { peerId: 'new-peer' } : { remoteProjectId: 'new-project' }) } });
+      }
+      return body;
+    };
+    scheduledTick();
+    await vi.waitFor(() => expect(changed).toBe(true));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(writes).toEqual([]); expect(target.getAllBranches()).toEqual([]);
+  });
+  it('scheduled catalog with unchanged settings still creates the missing branch', async () => {
+    seed(source, 'main', shaA);
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'catalog', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-28T00:00:00Z' } });
+    scheduledTick();
+    await vi.waitFor(() => expect(source.getProject(projectId)!.standbyMirror?.lastBranchSync?.created).toEqual(['main']));
+    expect(target.getAllBranches()).toHaveLength(1);
+  });
+  it('persists and cold-queries bounded response evidence before reporting sync success', async () => {
+    seed(source, 'main', shaA);
+    const result = await reconcile(); expect(result.status).toBe(200);
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/response-evidence?operationId=${result.body.result.responseAuditId}`);
+    expect(response.status).toBe(200);
+    const { records } = await response.json() as any;
+    expect(records.length).toBeGreaterThanOrEqual(2);
+    expect(records.every(record => record.projectId === projectId && record.requestId && record.operationId)).toBe(true);
+    expect(records.some(record => record.details?.httpStatus === 201 && record.details?.responseReceived === true)).toBe(true);
+    expect(new Set(records.map(record => record.operationId)).size).toBe(1);
+  });
+  it('scheduled writes recheck settings after reconciliation fingerprint awaits', async () => {
+    seed(source, 'main', shaA); let fingerprints = 0;
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'catalog', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-28T00:00:00Z' } });
+    targetFingerprintReply = body => { if (++fingerprints === 2) source.getProject(projectId)!.standbyMirror!.enabled = false; return body; };
+    scheduledTick(); await vi.waitFor(() => expect(fingerprints).toBe(2));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(writes).toEqual([]); expect(target.getAllBranches()).toEqual([]);
+  });
+  it('a settings change during an accepted create prevents the following deployment', async () => {
+    seed(source, 'main', shaA);
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'warm-running', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-28T00:00:00Z' } });
+    beforeCreate = () => { source.getProject(projectId)!.standbyMirror!.enabled = false; };
+    scheduledTick(); await vi.waitFor(() => expect(target.getAllBranches()).toHaveLength(1));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(deployedCommits).toEqual([]); expect(target.getAllBranches()[0].status).toBe('idle');
+    expect(writes).toEqual(['/api/branches']);
+  });
+  it('HTTP failure evidence retains diagnostic facts while masking credentials, personal data and large text', async () => {
+    seed(source, 'main', shaA);
+    source.updateCdsPeer('fixture-peer', { accessKey: 'SYNTHETIC_SHARED_AUTH_SENTINEL' });
+    fingerprintOverride = { status: 503, body: JSON.stringify({ code: 'PEER_BUSY', message: 'retry later test.person@example.invalid +8613812345678',
+      token: 'SYNTHETIC_TOKEN_SENTINEL', nested: { password: 'SYNTHETIC_PASSWORD_SENTINEL', document: 'PRIVATE_DOCUMENT_SENTINEL'.repeat(600) },
+      details: { reason: 'SYNTHETIC_SHARED_AUTH_SENTINEL' } }) };
+    const failure = await reconcile(); expect(failure.status).toBe(502); expect(failure.body.responseAuditId).toMatch(/^[a-f0-9-]{36}$/);
+    const records = await auditSink.findRecent({ projectId }); const details = records[0].details;
+    expect(details).toMatchObject({ responseReceived: true, httpStatus: 503, parseState: 'json', localDecision: 'upstream-failure', truncated: true });
+    expect(details.snapshot).toContain('PEER_BUSY'); expect(details.snapshot).toContain('retry later');
+    expect(Buffer.byteLength(details.snapshot)).toBeLessThanOrEqual(4096);
+    const disk = fs.readFileSync(auditFile, 'utf8');
+    for (const privateText of ['test.person@example.invalid', '13812345678', 'SYNTHETIC_TOKEN_SENTINEL', 'SYNTHETIC_PASSWORD_SENTINEL', 'PRIVATE_DOCUMENT_SENTINEL', 'SYNTHETIC_SHARED_AUTH_SENTINEL']) expect(disk).not.toContain(privateText);
+    expect(writes).toEqual([]);
+  });
+  it('malformed JSON is a received parse failure with an omitted raw body, not an authentication error', async () => {
+    seed(source, 'main', shaA); fingerprintOverride = { status: 200, body: 'UNSTRUCTURED_PRIVATE_SENTINEL not json', type: 'text/plain' };
+    expect((await reconcile()).status).toBe(502);
+    const details = (await auditSink.findRecent({ projectId }))[0].details;
+    expect(details).toMatchObject({ responseReceived: true, httpStatus: 200, parseState: 'invalid-json', localDecision: 'parse-failure' });
+    expect(details.originalBytes).toBeGreaterThan(0); expect(details.snapshot).toContain('unstructured response omitted');
+    expect(fs.readFileSync(auditFile, 'utf8')).not.toContain('UNSTRUCTURED_PRIVATE_SENTINEL');
+  });
+  it('a real aborted peer request persists no-response timeout facts without fabricated HTTP status', async () => {
+    seed(source, 'main', shaA); fingerprintOverride = { status: 200, body: '{}', delayMs: 200 };
+    const original = global.setTimeout;
+    const clock = vi.spyOn(global, 'setTimeout').mockImplementation(((callback: any, ms: number, ...args: any[]) => original(callback, ms === 20_000 ? 30 : ms, ...args)) as typeof setTimeout);
+    try { expect((await reconcile()).status).toBe(502); } finally { clock.mockRestore(); }
+    const details = (await auditSink.findRecent({ projectId }))[0].details;
+    expect(details).toMatchObject({ responseReceived: false, httpStatus: null, parseState: 'no-response', localDecision: 'timeout', originalBytes: null, snapshot: '' });
+    expect(writes).toEqual([]);
+  });
+  it.each(['write-failed', 'silent-noop'])('an audit %s is visible and prevents untraceable branch writes', async mode => {
+    seed(source, 'main', shaA);
+    const spy = vi.spyOn(auditSink, 'recordImmediate').mockImplementation(async () => { if (mode === 'write-failed') throw new Error('fixture audit unavailable'); });
+    try {
+      const response = await reconcile(); expect(response.status).toBe(502); expect(response.body.error).toContain('审计');
+      expect(writes).toEqual([]); expect(target.getAllBranches()).toEqual([]);
+    } finally { spy.mockRestore(); }
+  });
+  it('an interrupted SSE body retains received headers and timeout stage rather than inventing a response body', async () => {
+    seed(source, 'main', shaA); fingerprintOverride = { status: 200, body: '', type: 'text/event-stream', headersOnly: true };
+    const original = global.setTimeout;
+    const clock = vi.spyOn(global, 'setTimeout').mockImplementation(((callback: any, ms: number, ...args: any[]) => original(callback, ms === 20_000 ? 50 : ms, ...args)) as typeof setTimeout);
+    try { expect((await reconcile()).status).toBe(502); } finally { clock.mockRestore(); }
+    const details = (await auditSink.findRecent({ projectId }))[0].details;
+    expect(details).toMatchObject({ responseReceived: true, httpStatus: 200, parseState: 'body-read-failed', localDecision: 'timeout', originalBytes: null, snapshot: '' });
+    expect(details.contentType).toContain('text/event-stream'); expect(writes).toEqual([]);
+  });
+  it('persists the peer SSE error reason despite normalized local deployment failure', async () => {
+    seed(source, 'main', shaA); seed(target, 'main', shaA, 'idle'); deployOutcome = 'error';
+    expect((await reconcile('warm-running')).status).toBe(207);
+    const records = await auditSink.findRecent({ projectId });
+    expect(records.some(record => record.details?.localDecision === 'upstream-failure'
+      && record.details?.snapshot.includes('fixture failure'))).toBe(true);
+  });
+  it('long SSE progress cannot hide the final failure or leak progress bodies into evidence', async () => {
+    seed(source, 'main', shaA); seed(target, 'main', shaA, 'idle'); deployOutcome = 'long-error';
+    expect((await reconcile('warm-running')).status).toBe(207);
+    const record = (await auditSink.findRecent({ projectId })).find(row => row.details?.localDecision === 'upstream-failure');
+    expect(record.details.snapshot).toContain('late terminal failure'); expect(record.details.snapshot).toContain('PEER_DEPLOY_FAILED');
+    expect(Buffer.byteLength(record.details.snapshot)).toBeLessThanOrEqual(4096); expect(record.details.truncated).toBe(true);
+    expect(fs.readFileSync(auditFile, 'utf8')).not.toContain('PRIVATE_PROGRESS_SENTINEL');
+  });
   it('catalog records actual HEAD, persists it, and a second reconciliation is empty', async () => {
     seed(source, 'main', shaA);
     expect((await reconcile()).status).toBe(200);
@@ -170,7 +401,7 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
   });
   it('failed stale snapshot can retry after source is refreshed without duplicate directory', async () => {
     const entry = seed(source, 'main', shaA); const shaB = advanceOrigin();
-    expect((await reconcile()).status).toBe(207); entry.githubCommitSha = shaB;
+    expect((await reconcile()).status).toBe(207); entry.githubCommitSha = shaB; entry.services.api.sourceCommitSha = shaB;
     const result = await reconcile(); expect(result.status).toBe(200); expect(result.body.result.created).toEqual(['main']);
     expect(target.getAllBranches()).toHaveLength(1);
     expect(git(target.getAllBranches()[0].worktreePath, 'rev-parse', 'HEAD')).toBe(shaB);
@@ -218,6 +449,7 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     const result = await reconcile('warm-running');
     expect(result.status).toBe(207); expect(result.body.result.created).toEqual([]); expect(result.body.result.deployed).toEqual([]);
     expect(writes).toEqual(['/api/branches']);
+    expect((await auditSink.findRecent({ projectId })).some(row => row.details?.snapshot.includes('f'.repeat(40)))).toBe(true);
   });
   it('warm-running uses controlled runtime mocks only for matching commits and preserves target-only', async () => {
     seed(source, 'main', shaA); seed(source, 'idle', shaA, 'idle');
@@ -276,5 +508,12 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
       body: JSON.stringify({ standbyExpected: { commitSha: shaA, status: 'running', pinnedCommit: null } }) });
     expect(response.status).toBe(409); expect((await response.json() as any).error).toBe('standby_snapshot_changed');
     expect(commands).toEqual([]); expect(entry.status).toBe(mutation === 'building' ? 'building' : 'running');
+  });
+  it('the real stop route rejects a changed runtime even when webhook SHA and status are unchanged', async () => {
+    const entry = seed(target, 'main', shaA, 'running'); useRealRuntimeGuard = true;
+    entry.services.api.sourceCommitSha = 'b'.repeat(40);
+    const response = await fetch(`${targetUrl}/api/branches/${entry.id}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ standbyExpected: { commitSha: shaA, status: 'running', pinnedCommit: null } }) });
+    expect(response.status).toBe(409); expect(commands).toEqual([]); expect(entry.services.api.sourceCommitSha).toBe('b'.repeat(40));
   });
 });

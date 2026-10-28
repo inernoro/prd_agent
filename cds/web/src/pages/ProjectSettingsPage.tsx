@@ -3636,6 +3636,7 @@ export function ProjectMigrationTab({
 
   const [peers, setPeers] = useState<MigrationPeer[] | null>(null);
   const [selectedPeerId, setSelectedPeerId] = useState<string>('');
+  const peerSelectionEdited = useRef(false);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
   const [newKey, setNewKey] = useState('');
@@ -3665,6 +3666,7 @@ export function ProjectMigrationTab({
   const liveProjectId = useRef(projectId);
   liveProjectId.current = projectId;
   useEffect(() => {
+    peerSelectionEdited.current = false;
     setPeers(null); setPreview(null); setSelectedPeerId('');
     setReplicateResult(null); setDataPlan(null); setShowYaml(false);
     setReplicating(null); setScanning(false);
@@ -3714,7 +3716,7 @@ export function ProjectMigrationTab({
       const config = (body.config || null) as StandbyConfig | null;
       setStandby(config);
       if (config) {
-        setSelectedPeerId((current) => current || config.peerId);
+        if (!peerSelectionEdited.current) setSelectedPeerId(config.peerId);
         setStandbyRemoteProjectId(config.remoteProjectId);
         setStandbyEnabled(config.enabled);
         setStandbyInterval(config.intervalMinutes);
@@ -3749,7 +3751,7 @@ export function ProjectMigrationTab({
       onToast('已添加迁移目标');
       setNewName(''); setNewUrl(''); setNewKey('');
       await loadPeers();
-      if (body.peer?.id) setSelectedPeerId(body.peer.id);
+      if (body.peer?.id) { peerSelectionEdited.current = true; setSelectedPeerId(body.peer.id); }
     } catch (err) {
       onToast(`添加异常:${(err as Error).message}`);
     } finally {
@@ -4000,7 +4002,7 @@ export function ProjectMigrationTab({
                 key={p.id}
                 className={`flex flex-wrap items-center gap-2 rounded-md border p-2.5 ${selectedPeerId === p.id ? 'border-[hsl(var(--primary))]' : 'border-[hsl(var(--hairline))]'}`}
               >
-                <input type="radio" name="migration-peer" checked={selectedPeerId === p.id} onChange={() => setSelectedPeerId(p.id)} />
+                <input type="radio" name="migration-peer" checked={selectedPeerId === p.id} onChange={() => { peerSelectionEdited.current = true; setSelectedPeerId(p.id); }} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     {p.name}

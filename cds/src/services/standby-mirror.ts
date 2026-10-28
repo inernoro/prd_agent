@@ -10,9 +10,52 @@ import type {
   StandbyMirrorFingerprint,
 } from '../types.js';
 import { isSecretEnvKey } from './env-classifier.js';
+import { toCdsCompose } from './compose-parser.js';
+import { mergeBranchProfiles } from './branch-extra-services.js';
+import { resolveEffectiveProfile } from './container.js';
+import { confirmedRunningRevisionSha } from './running-version.js';
+import { normalizeRepositoryIdentity } from './release-strategy.js';
 
 const SECRET_PRESENT = '__cds_secret_present__';
 const SECRET_MISSING = '__cds_secret_missing__';
+
+/** Reject partial/cross-project protocol replies before storing or dereferencing them. */
+export function assertStandbyFingerprint(value: unknown, projectId: string): asserts value is StandbyMirrorFingerprint {
+  const invalid = (field: string, item: unknown, present = true): never => {
+    const state = !present ? 'missing' : item === null ? 'null' : item === '' ? 'empty'
+      : typeof item === 'string' && !item.trim() ? 'whitespace' : `invalid-${Array.isArray(item) ? 'array' : typeof item}`;
+    throw new Error(`目标指纹字段 ${field} 为 ${state}`);
+  };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('response', value);
+  const record = value as Record<string, any>;
+  if (record.protocolVersion !== 1) invalid('protocolVersion', record.protocolVersion, 'protocolVersion' in record);
+  if (record.projectId !== projectId) invalid('projectId', record.projectId, 'projectId' in record);
+  for (const name of ['configHash', 'secretKeyHash']) if (typeof record[name] !== 'string' || !/^[a-f0-9]{64}$/i.test(record[name])) invalid(name, record[name], name in record);
+  for (const name of ['repository', 'defaultBranch']) if (record[name] !== null && typeof record[name] !== 'string') invalid(name, record[name], name in record);
+  if (!Number.isInteger(record.secretKeyCount) || record.secretKeyCount < 0) invalid('secretKeyCount', record.secretKeyCount, 'secretKeyCount' in record);
+  if (typeof record.generatedAt !== 'string' || !Number.isFinite(Date.parse(record.generatedAt))) invalid('generatedAt', record.generatedAt, 'generatedAt' in record);
+  if (!Array.isArray(record.branches)) invalid('branches', record.branches, 'branches' in record);
+  const ids = new Set<string>(), names = new Set<string>();
+  for (const [index, branch] of record.branches.entries()) {
+    if (!branch || typeof branch !== 'object') invalid(`branches.${index}`, branch);
+    for (const field of ['id', 'name', 'status']) if (typeof branch[field] !== 'string' || !branch[field].trim() || branch[field].length > 256) invalid(`branches.${index}.${field}`, branch[field], field in branch);
+    if (ids.has(branch.id) || names.has(branch.name)) invalid(`branches.${index}.identity`, null);
+    ids.add(branch.id); names.add(branch.name);
+    if (branch.commitSha !== null && (typeof branch.commitSha !== 'string' || !/^[a-f0-9]{40}$/i.test(branch.commitSha))) invalid(`branches.${index}.commitSha`, branch.commitSha, 'commitSha' in branch);
+    if (branch.pinnedCommit != null && (typeof branch.pinnedCommit !== 'string' || !/^[a-f0-9]{40}$/i.test(branch.pinnedCommit))) invalid(`branches.${index}.pinnedCommit`, branch.pinnedCommit);
+    for (const field of ['commitIdentityConfirmed', 'runtimeIdentityConfirmed']) if (branch[field] !== undefined && typeof branch[field] !== 'boolean') invalid(`branches.${index}.${field}`, branch[field]);
+    if (record.capabilities?.runtimeIdentity && branch.status === 'running' && typeof branch.runtimeIdentityConfirmed !== 'boolean') invalid(`branches.${index}.runtimeIdentityConfirmed`, branch.runtimeIdentityConfirmed, false);
+  }
+}
+
+/** The action budget cannot split a missing branch's create/deploy transaction plan. */
+export function limitStandbySyncActions(actions: StandbyBranchSyncAction[], limit = 100): StandbyBranchSyncAction[] {
+  const groups = new Map<string, StandbyBranchSyncAction[]>();
+  for (const action of actions) groups.set(action.name, [...(groups.get(action.name) || []), action]);
+  const selected: StandbyBranchSyncAction[] = [];
+  for (const group of groups.values()) { if (selected.length + group.length > limit) break; selected.push(...group); }
+  return selected;
+}
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
@@ -35,11 +78,12 @@ function scrubEnv(env: Record<string, string>): Record<string, string> {
   ]));
 }
 
-function scrubProfile(profile: BuildProfile): BuildProfile {
-  const { projectId: _projectId, ...portable } = profile;
+function scrubProfile(profile: BuildProfile, depth = 0): BuildProfile {
+  const { projectId: _projectId, sourceFallbackProfile, ...portable } = profile;
   return {
     ...portable,
     ...(profile.env ? { env: scrubEnv(profile.env) } : {}),
+    ...(sourceFallbackProfile && depth < 2 ? { sourceFallbackProfile: scrubProfile(sourceFallbackProfile, depth + 1) } : {}),
     deployModes: profile.deployModes
       ? Object.fromEntries(Object.entries(profile.deployModes).map(([mode, config]) => [
           mode,
@@ -49,9 +93,24 @@ function scrubProfile(profile: BuildProfile): BuildProfile {
   } as BuildProfile;
 }
 
-function scrubInfra(service: InfraService): InfraService {
+function scrubInfra(service: InfraService): string {
   const { projectId: _projectId, ...portable } = service;
-  return { ...portable, env: scrubEnv(service.env || {}) } as InfraService;
+  return toCdsCompose([], {}, [stable({ ...portable, env: scrubEnv(service.env || {}) }) as InfraService], []);
+}
+
+function repositoryIdentity(value: string | null): string {
+  if (!value) return '';
+  const scp = value.match(/^[^@\s]+@([^:\s]+):/);
+  let host = scp?.[1]?.toLowerCase() || 'github.com';
+  let repository = value;
+  if (!scp) {
+    try { host = new URL(value).hostname.toLowerCase(); }
+    catch {
+      const canonical = value.match(/^([^/]+\.[^/]+)\/(.+)$/);
+      if (canonical) { host = canonical[1].toLowerCase(); repository = canonical[2]; }
+    }
+  }
+  return `${host.replace(/^www\./, '')}/${normalizeRepositoryIdentity(repository)}`;
 }
 
 function scrubRule(rule: RoutingRule): RoutingRule {
@@ -83,26 +142,31 @@ export function buildStandbyMirrorFingerprint(input: {
   const env = scrubEnv(input.env);
   const secretKeys = Object.keys(input.env).filter(isSecretEnvKey).sort();
   const branches = input.branches
-    .map((branch) => ({
+    .map((branch) => {
+      const actualCommit = confirmedRunningRevisionSha(branch);
+      return {
       id: branch.id,
       name: branchName(branch),
-      commitSha: branch.pinnedCommit || branch.githubCommitSha || null,
+      commitSha: branch.pinnedCommit || actualCommit || branch.githubCommitSha || null,
       pinnedCommit: branch.pinnedCommit || null,
-      commitIdentityConfirmed: !!branch.githubCommitSha && (!branch.pinnedCommit || branch.pinnedCommit === branch.githubCommitSha),
+      commitIdentityConfirmed: !!branch.githubCommitSha && (!branch.pinnedCommit || branch.pinnedCommit === branch.githubCommitSha)
+        && (!actualCommit || actualCommit === branch.githubCommitSha),
+      runtimeIdentityConfirmed: branch.status === 'running' ? !!actualCommit : undefined,
       status: branch.status,
-    }))
+    }; })
     .sort((a, b) => a.name.localeCompare(b.name));
+  const defaultEntry = input.branches.find(branch => branchName(branch) === input.defaultBranch);
   const configPayload = {
-    profiles: input.profiles.map(scrubProfile).sort((a, b) => a.id.localeCompare(b.id)),
+    profiles: mergeBranchProfiles(input.profiles, defaultEntry).map(profile => scrubProfile(resolveEffectiveProfile(profile, defaultEntry))).sort((a, b) => a.id.localeCompare(b.id)),
     env,
-    infra: input.infra.map(scrubInfra).sort((a, b) => a.id.localeCompare(b.id)),
+    infra: [...input.infra].sort((a, b) => a.id.localeCompare(b.id)).map(scrubInfra),
     routingRules: input.routingRules.map(scrubRule).sort((a, b) => a.id.localeCompare(b.id)),
   };
   return {
     protocolVersion: 1,
-    capabilities: { expectedCommitCreate: true, pinAwareIdentity: true },
+    capabilities: { expectedCommitCreate: true, pinAwareIdentity: true, runtimeIdentity: true },
     projectId: input.projectId,
-    repository: input.repository || null,
+    repository: input.repository ? repositoryIdentity(input.repository) : null,
     defaultBranch: input.defaultBranch || null,
     configHash: hash(configPayload),
     secretKeyHash: hash(secretKeys),
@@ -129,7 +193,9 @@ export function planStandbyBranchSync(
 
   for (const branch of source.branches) {
     const remote = targetByName.get(branch.name);
-    if (!branch.commitSha || branch.commitIdentityConfirmed === false || (remote && (!remote.commitSha || remote.commitIdentityConfirmed === false))) {
+    if (!branch.commitSha || branch.commitIdentityConfirmed === false || (remote && (!remote.commitSha || remote.commitIdentityConfirmed === false))
+      || (policy === 'warm-running' && ((branch.status === 'running' && branch.runtimeIdentityConfirmed === false)
+        || (remote?.status === 'running' && remote.runtimeIdentityConfirmed === false)))) {
       actions.push({ name: branch.name, sourceStatus: branch.status, sourceCommit: branch.commitSha,
         targetBranchId: remote?.id, kind: 'divergent', reason: '提交身份尚未确认，保留现场并阻止同步与预热' });
       continue;
@@ -230,10 +296,12 @@ export function compareStandbyFingerprints(
   return {
     repositoryMatches: !!source.repository
       && !!target.repository
-      && source.repository.toLowerCase() === target.repository.toLowerCase(),
+      && repositoryIdentity(source.repository) === repositoryIdentity(target.repository),
     configMatches: source.configHash === target.configHash,
     secretKeysMatch: source.secretKeyHash === target.secretKeyHash,
-    defaultBranchMatches: !!sourceDefault?.commitSha && !!targetDefault?.commitSha
+    defaultBranchMatches: !!source.defaultBranch && source.defaultBranch === target.defaultBranch && !!sourceDefault?.commitSha && !!targetDefault?.commitSha
+      && sourceDefault.status === 'running' && targetDefault.status === 'running'
+      && sourceDefault.runtimeIdentityConfirmed === true && targetDefault.runtimeIdentityConfirmed === true
       && sourceDefault.commitIdentityConfirmed !== false && targetDefault.commitIdentityConfirmed !== false
       && sourceDefault.commitSha === targetDefault.commitSha,
     missingBranches,

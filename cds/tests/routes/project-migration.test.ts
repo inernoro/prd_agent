@@ -6,13 +6,13 @@ import { buildStandbyMirrorFingerprint } from '../../src/services/standby-mirror
 import type { StateService } from '../../src/services/state.js';
 import type { BranchEntry, CdsPeer } from '../../src/types.js';
 
-async function request(server: http.Server, headers: Record<string, string> = {}): Promise<number> {
+async function request(server: http.Server, headers: Record<string, string> = {}, requestPath = '/api/projects/project-1/migration/peers'): Promise<number> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const req = http.request({
       hostname: '127.0.0.1',
       port: addr.port,
-      path: '/api/projects/project-1/migration/peers',
+      path: requestPath,
       method: 'GET',
       headers,
     }, (res) => {
@@ -123,6 +123,9 @@ describe('project migration human-owner guard', () => {
       expect(await request(server, { 'x-auth-kind': 'member' })).toBe(403);
       expect(await request(server, { 'x-auth-kind': 'owner' })).toBe(200);
       expect(await request(server, { 'x-auth-kind': 'legacy' })).toBe(200);
+      expect(await request(server, { 'x-auth-kind': 'member' }, '/api/projects/project-1/migration/standby/response-evidence')).toBe(403);
+      expect(await request(server, {}, '/api/projects/project-1/migration/standby/response-evidence')).toBe(403);
+      expect(await request(server, { 'x-auth-kind': 'owner' }, '/api/projects/project-1/migration/standby/response-evidence')).toBe(503);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -176,8 +179,11 @@ describe('standby branch reconciliation route', () => {
       (req as any).cdsSession = { id: 'owner-session' };
       next();
     });
+    const auditRows: any[] = [];
     app.use('/api', createProjectMigrationRouter({
       stateService, authMode: 'basic', assertProjectAccess: () => null,
+      serverEventLogStore: { record: () => undefined, recordImmediate: async row => { auditRows.push(row); },
+        findRecent: async filter => auditRows.filter(row => row.requestId === filter?.requestId) },
     }));
     const sourceServer = app.listen(0);
     const sourceAddress = sourceServer.address() as { port: number };
