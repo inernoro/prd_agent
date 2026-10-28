@@ -54,6 +54,7 @@ public class VideoGenRunWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var yieldQueuedOnce = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -63,9 +64,12 @@ public class VideoGenRunWorker : BackgroundService
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
                 //   - storyboard  → 走 ProcessScriptingAsync 拆分镜 (Scripting → Editing)
-                var queued = await ClaimQueuedRunAsync(stoppingToken);
+                // 队列处理后先让既有其它路径执行一轮，避免取消核对重入队后持续独占 worker。
+                var queued = yieldQueuedOnce ? null : await ClaimQueuedRunAsync(stoppingToken);
+                yieldQueuedOnce = false;
                 if (queued != null)
                 {
+                    yieldQueuedOnce = true;
                     _logger.LogInformation("[VideoGenWorker] Claimed run: runId={RunId}, mode={Mode}",
                         queued.Id, queued.Mode);
                     try

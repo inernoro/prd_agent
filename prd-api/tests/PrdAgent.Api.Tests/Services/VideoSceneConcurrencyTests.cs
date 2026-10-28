@@ -137,6 +137,32 @@ public class VideoSceneConcurrencyTests
         test.AssertNoSubmitOrDownload();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectCancellationMock_RequeuedReconciliationMustYieldOtherWorkerPaths(bool metadataFailure)
+    {
+        using var test = new DirectCancellationFixture("recorded-offering");
+        test.Run.Status = VideoGenRunStatus.Queued;
+        test.ProbeScheduling = true;
+        test.FailResumedMetadataWrite = metadataFailure;
+        await test.ProcessBackgroundFailureAsync();
+
+        test.SchedulingPaths.ShouldBe(new[] {
+            "recover-stale-claim", "recover-expired-lease", "resume-scene", "render-scene",
+            "export-task", "legacy-export", "regenerate",
+        });
+        test.QueuedReads.ShouldBe(1);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.Run.CurrentPhase.ShouldBe("videogen-reconciling");
+        test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
+        test.Run.EndedAt.ShouldBeNull();
+        test.Run.DirectVideoCost.ShouldBeNull();
+        test.Field("DirectVideoReconciledAt").ShouldBeNull();
+        test.MetadataFailureObserved.ShouldBe(metadataFailure);
+        test.AssertNoSubmitOrDownload();
+    }
+
     // This fixture never constructs MongoClient or an application host. All persistence and upstream calls are strict mocks.
     private sealed class DirectCancellationFixture : IDisposable
     {
@@ -152,6 +178,9 @@ public class VideoSceneConcurrencyTests
         public bool FailureWriteCancellationObserved { get; private set; }
         public bool FailResumedMetadataWrite { get; set; }
         public bool MetadataFailureObserved { get; private set; }
+        public bool ProbeScheduling { get; set; }
+        public int QueuedReads { get; private set; }
+        public List<string> SchedulingPaths { get; } = [];
         private CancellationTokenSource? _backgroundStop;
         public Func<OpenRouterVideoStatus> Status { get; set; } = () => throw new Xunit.Sdk.XunitException("Unexpected status call");
         private readonly ServiceProvider _services;
@@ -164,8 +193,9 @@ public class VideoSceneConcurrencyTests
             var collection = new Mock<IMongoCollection<VideoGenRun>>(MockBehavior.Strict);
             collection.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),
                     It.IsAny<FindOptions<VideoGenRun, VideoGenRun>>(), It.IsAny<CancellationToken>()))
-                .Returns((FilterDefinition<VideoGenRun> filter, FindOptions<VideoGenRun, VideoGenRun> _, CancellationToken _) =>
+                .Returns((FilterDefinition<VideoGenRun> filter, FindOptions<VideoGenRun, VideoGenRun> _, CancellationToken token) =>
                 {
+                    if (ProbeScheduling) ObserveSchedulingRead(filter, token);
                     var cursor = new Mock<IAsyncCursor<VideoGenRun>>(MockBehavior.Strict);
                     cursor.SetupGet(x => x.Current).Returns(Matches(filter) ? [BsonSerializer.Deserialize<VideoGenRun>(Run.ToBsonDocument())] : []);
                     cursor.SetupSequence(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true).ReturnsAsync(false);
@@ -206,12 +236,27 @@ public class VideoSceneConcurrencyTests
                         Run.DeletionRequestedAt.ShouldBeNull();
                         return Task.FromResult<VideoGenRun>(null!);
                     }
+                    if (ProbeScheduling && query.Contains(nameof(VideoGenRun.ExportRequested)))
+                    {
+                        SchedulingPaths.Add("legacy-export");
+                        return Task.FromResult<VideoGenRun>(null!);
+                    }
                     Matches(filter).ShouldBeTrue();
                     Apply(update);
                     return Task.FromResult(BsonSerializer.Deserialize<VideoGenRun>(Run.ToBsonDocument()));
                 });
             var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
             database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs", null)).Returns(collection.Object);
+            var exports = new Mock<IMongoCollection<VideoExportTask>>(MockBehavior.Strict);
+            exports.Setup(x => x.FindOneAndUpdateAsync(It.IsAny<FilterDefinition<VideoExportTask>>(),
+                    It.IsAny<UpdateDefinition<VideoExportTask>>(), It.IsAny<FindOneAndUpdateOptions<VideoExportTask, VideoExportTask>>(), It.IsAny<CancellationToken>()))
+                .Returns(() =>
+                {
+                    ProbeScheduling.ShouldBeTrue();
+                    SchedulingPaths.Add("export-task");
+                    return Task.FromResult<VideoExportTask>(null!);
+                });
+            database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks", null)).Returns(exports.Object);
             var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
             typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, database.Object);
             if (offering == null)
@@ -232,6 +277,36 @@ public class VideoSceneConcurrencyTests
                 }).ReturnsAsync(1);
             _worker = new VideoGenRunWorker(context, _services.GetRequiredService<IServiceScopeFactory>(), events.Object,
                 new Mock<IAssetStorage>(MockBehavior.Strict).Object, NullLogger<VideoGenRunWorker>.Instance);
+        }
+
+        private void ObserveSchedulingRead(FilterDefinition<VideoGenRun> filter, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
+            if (query.GetValue(nameof(VideoGenRun.Status), BsonNull.Value) == VideoGenRunStatus.Queued)
+            {
+                if (++QueuedReads == 2)
+                {
+                    // Bound the old scheduler deterministically; never wait another real polling window.
+                    _backgroundStop!.Cancel();
+                    token.ThrowIfCancellationRequested();
+                }
+                return;
+            }
+            if (!query.TryGetValue(nameof(VideoGenRun.Scenes), out var scenes)) return;
+            var status = scenes["$elemMatch"][nameof(VideoGenScene.Status)];
+            var path = status.IsBsonDocument ? "resume-scene"
+                : status == SceneItemStatus.SubmittingClaimed ? "recover-stale-claim"
+                : status == SceneItemStatus.PollingClaimed ? "recover-expired-lease"
+                : status == SceneItemStatus.Submitting ? "render-scene"
+                : status == SceneItemStatus.Generating ? "regenerate"
+                : throw new InvalidOperationException("Unexpected scene scheduling filter: " + query);
+            SchedulingPaths.Add(path);
+            if (path == "regenerate")
+            {
+                _backgroundStop!.Cancel();
+                token.ThrowIfCancellationRequested();
+            }
         }
 
         private bool Matches(FilterDefinition<VideoGenRun> filter)
