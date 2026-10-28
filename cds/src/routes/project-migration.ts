@@ -440,7 +440,8 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
           const sourceSnapshot = source.branches.find(branch => branch.name === action.name);
           const sourceStillCurrent = () => {
             const current = localFingerprint(projectId).branches.find(branch => branch.name === action.name);
-            return !!current && current.commitSha === action.sourceCommit && current.commitIdentityConfirmed !== false
+            return !!current && current.commitSha === action.sourceCommit && current.commitIdentityConfirmed === true
+              && (current.status !== 'running' || current.runtimeIdentityConfirmed === true)
               && current.status === action.sourceStatus && current.pinnedCommit === sourceSnapshot?.pinnedCommit
               && (policy !== 'warm-running' || (current.configHash === sourceSnapshot?.configHash && current.secretKeyHash === sourceSnapshot?.secretKeyHash
                 && current.configurationRevision === sourceSnapshot?.configurationRevision));
@@ -477,6 +478,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
             ? currentTarget?.status === 'idle' || currentTarget?.status === 'stopped'
             : currentTarget?.status === 'running';
           if (!beforeOperation.ok || !currentTarget || currentTarget.commitSha !== action.sourceCommit || currentTarget.commitIdentityConfirmed !== true
+            || (currentTarget.status === 'running' && currentTarget.runtimeIdentityConfirmed !== true)
             || currentTarget.pinnedCommit || !targetStable || currentTarget.configHash !== sourceSnapshot?.configHash
             || currentTarget.secretKeyHash !== sourceSnapshot?.secretKeyHash || (targetSnapshot && (currentTarget.status !== targetSnapshot.status || currentTarget.configurationRevision !== targetSnapshot.configurationRevision))) {
             throw new Error('目标提交、固定版本或运行状态已变化，已停止运行态收敛');
@@ -502,6 +504,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
           const statusMatches = action.kind === 'deploy' ? finalTarget?.status === 'running'
             : finalTarget?.status === 'idle' || finalTarget?.status === 'stopped';
           if (!afterOperation.ok || finalTarget?.commitSha !== action.sourceCommit || !statusMatches
+            || finalTarget.commitIdentityConfirmed !== true || (finalTarget.status === 'running' && finalTarget.runtimeIdentityConfirmed !== true)
             || finalTarget.configHash !== sourceSnapshot?.configHash || finalTarget.secretKeyHash !== sourceSnapshot?.secretKeyHash
             || finalTarget.configurationRevision !== currentTarget.configurationRevision || !sourceStillCurrent()) throw new Error('目标运行态或生效配置回读未匹配源快照，请核对现场');
           if (action.kind === 'deploy') result.deployed.push(action.name);
@@ -512,6 +515,8 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
             action: action.kind,
             error: maskSecrets((err as Error).message, { mask: true }),
           });
+          // A remote effect may already exist; do not issue later requests after losing durable evidence.
+          if (responseAudit.hasPersistenceFailure()) break;
         }
       }
       result.completedAt = new Date().toISOString();

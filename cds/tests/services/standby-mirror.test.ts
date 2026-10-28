@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createStandbyResponseAudit } from '../../src/services/standby-response-audit.js';
 
 import {
   buildStandbyMirrorFingerprint,
@@ -76,6 +77,16 @@ describe('standby mirror fingerprint', () => {
     const source = buildStandbyMirrorFingerprint({ ...input, infra: [{ ...service, hostPort: 12345, containerName: 'source-cache', status: 'running', createdAt: '2026-01-01' } as any] });
     const target = buildStandbyMirrorFingerprint({ ...input, infra: [{ ...service, hostPort: 23456, containerName: 'target-cache', status: 'idle', errorMessage: 'historical error', createdAt: '2026-01-02' } as any] });
     expect(source.configHash).toBe(target.configHash);
+  });
+  it('null mode sentinel inherits baseline but explicit empty mode disables its effective env in configuration identity', () => {
+    const profile = { id: 'api', name: 'API', workDir: '.', containerPort: 8080, dockerImage: 'node', command: 'node app.js', activeDeployMode: 'live',
+      deployModes: { live: { command: 'node app.js', env: { DATABASE_URL: 'postgres://synthetic.invalid/app' } } } } as BuildProfile;
+    const branch = { id: 'main', branch: 'main', profileOverrides: { api: { activeDeployMode: null } } } as unknown as BranchEntry;
+    const input = { profiles: [profile], env: {}, infra: [], routingRules: [] };
+    const inherited = buildStandbyBranchConfiguration({ ...input, branch });
+    const disabled = buildStandbyBranchConfiguration({ ...input, branch: { ...branch, profileOverrides: { api: { activeDeployMode: '' } } } });
+    expect(inherited.configHash).not.toBe(disabled.configHash);
+    expect(inherited.configurationRevision).not.toBe(disabled.configurationRevision);
   });
   it('includes effective database isolation in both portable identity and local condition', () => {
     const branch = { id: 'feature', branch: 'feature', status: 'idle', githubCommitSha: 'a'.repeat(40) } as BranchEntry;
@@ -250,5 +261,27 @@ describe('standby branch sync plan', () => {
       withBranches([]),
       'audit-only',
     )).toEqual([]);
+  });
+});
+
+
+describe('standby response audit per-operation failure latch', () => {
+  it.each(['write', 'readback'])('a %s failure prevents reuse, but does not poison an independent healthy operation', async mode => {
+    let writes = 0, reads = 0;
+    const sink: any = { recordImmediate: async () => { writes++; if (mode === 'write') throw new Error('synthetic storage failure'); },
+      findRecent: async () => { reads++; return []; } };
+    const scope = { projectId: 'fixture', remoteProjectId: 'fixture', policy: 'catalog', dryRun: false };
+    const facts = { peerId: 'synthetic-peer', url: 'http://fixture.invalid/api/branches', method: 'POST', startedAt: '2026-10-28T00:00:00Z',
+      durationMs: 1, timeoutMs: 1000, responseReceived: true, httpStatus: 200, contentType: 'application/json', upstreamRequestId: null,
+      text: '{"ok":true}', json: { ok: true }, parseState: 'json', localDecision: 'success', secrets: [] };
+    const audit = createStandbyResponseAudit(sink, scope); expect(() => audit.assertAvailable()).not.toThrow();
+    await expect(audit.record(facts)).rejects.toThrow('可能已产生');
+    expect(audit.hasPersistenceFailure()).toBe(true); expect(() => audit.assertAvailable()).toThrow('未发出后续远端请求');
+    await expect(audit.record(facts)).rejects.toThrow('禁止追加记录'); expect(writes).toBe(1); expect(reads).toBe(mode === 'write' ? 0 : 1);
+    const healthyRows: any[] = [];
+    const healthy = createStandbyResponseAudit({ recordImmediate: async (row: any) => { healthyRows.push(row); },
+      findRecent: async (filter: any) => healthyRows.filter(row => row.projectId === filter.projectId && row.requestId === filter.requestId) } as any, scope);
+    await expect(healthy.record(facts)).resolves.toBeUndefined(); expect(healthy.hasPersistenceFailure()).toBe(false);
+    expect(() => healthy.assertAvailable()).not.toThrow(); expect(healthyRows).toHaveLength(1);
   });
 });

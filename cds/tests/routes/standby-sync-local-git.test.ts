@@ -1,4 +1,4 @@
-import { resolveBranchEnvLayers } from '../../src/services/branch-env-layers.js';
+import { configuredProfileEnvLayers, resolveBranchEnvLayers } from '../../src/services/branch-env-layers.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import fs from 'node:fs';
@@ -8,6 +8,7 @@ import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { StateService } from '../../src/services/state.js';
+import { resolveEffectiveProfile } from '../../src/services/container.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
 import { createBranchRouter } from '../../src/routes/branches.js';
@@ -21,6 +22,7 @@ let servers: http.Server[], commands: string[], writes: string[];
 let beforeCreate: (() => void) | undefined;
 let createdReply: ((body: any) => any) | undefined;
 let targetFingerprintReply: ((body: any) => any) | undefined;
+let beforeTargetFingerprint: (() => void) | undefined;
 let deployOutcome: 'success' | 'error' | 'long-error' | 'false' | 'missing';
 let deployedCommits: string[];
 let useRealRuntimeGuard: boolean;
@@ -87,7 +89,7 @@ beforeEach(async () => {
   auditFile = path.join(root, 'response-audit.jsonl');
   fingerprintOverride = undefined;
   responseTimers = [];
-  servers = []; commands = []; writes = []; beforeCreate = undefined; createdReply = undefined; targetFingerprintReply = undefined;
+  servers = []; commands = []; writes = []; beforeCreate = undefined; createdReply = undefined; targetFingerprintReply = undefined; beforeTargetFingerprint = undefined;
   deployOutcome = 'success'; deployedCommits = []; useRealRuntimeGuard = false;
   afterDeploy = undefined;
   origin = path.join(root, 'origin.git'); author = path.join(root, 'author'); repo = path.join(root, 'target');
@@ -112,6 +114,7 @@ beforeEach(async () => {
   targetApp.get('/healthz', (_req, res) => res.json({ ok: true }));
   targetApp.use((req, res, next) => {
     if (req.method !== 'GET') writes.push(req.path);
+    if (req.path.endsWith('/migration/fingerprint')) beforeTargetFingerprint?.();
     if (req.path.endsWith('/migration/fingerprint') && fingerprintOverride) {
       const override = fingerprintOverride;
       if (override.headers) res.set(override.headers);
@@ -189,6 +192,38 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
       body: JSON.stringify({ peerId: 'fixture-peer', remoteProjectId: projectId }) });
     const { audit } = await response.json() as any;
     expect(audit.currentDataVerified).toBe(false); expect(audit.readyForFailover).toBe(false);
+  });
+  it('legacy null active mode inherits native baseline mode env and cannot hide an external database from audit', async () => {
+    for (const state of [source, target]) {
+      const branch = seed(state, 'main', shaA);
+      const profile: any = { id: 'api', projectId, name: 'API', workDir: '.', dockerImage: 'node', command: 'node app.js', containerPort: 8080,
+        activeDeployMode: 'express', env: {}, deployModes: { express: { command: 'node app.js', env: { DATABASE_URL: 'postgres://synthetic.invalid/app' } } } };
+      branch.profileOverrides = { api: { activeDeployMode: null } } as any;
+      state.addBuildProfile(profile);
+      expect(resolveEffectiveProfile(profile, branch).activeDeployMode).toBe('express');
+      expect(resolveEffectiveProfile(profile, branch).env?.DATABASE_URL).toBe('postgres://synthetic.invalid/app');
+    }
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ peerId: 'fixture-peer', remoteProjectId: projectId }) });
+    const { audit } = await response.json() as any;
+    expect(audit.currentDataVerified).toBe(false); expect(audit.readyForFailover).toBe(false);
+    const entry = source.getAllBranches()[0], profile = source.getBuildProfilesForProject(projectId)[0];
+    expect(configuredProfileEnvLayers(profile, entry).find(layer => layer.source === 'deploy-mode')?.env.DATABASE_URL).toBe('postgres://synthetic.invalid/app');
+  });
+  it('explicit empty active mode stays disabled and stateless in the native effective env and audit', async () => {
+    for (const state of [source, target]) {
+      const branch = seed(state, 'main', shaA);
+      const profile: any = { id: 'api', projectId, name: 'API', workDir: '.', dockerImage: 'node', command: 'node app.js', containerPort: 8080,
+        activeDeployMode: 'live', env: {}, deployModes: { live: { command: 'node app.js', env: { DATABASE_URL: 'postgres://synthetic.invalid/app' } } } };
+      branch.profileOverrides = { api: { activeDeployMode: '' } }; state.addBuildProfile(profile);
+      expect(resolveEffectiveProfile(profile, branch).activeDeployMode).toBe('');
+      expect(resolveEffectiveProfile(profile, branch).env?.DATABASE_URL).toBeUndefined();
+      expect(configuredProfileEnvLayers(profile, branch).some(layer => layer.source === 'deploy-mode')).toBe(false);
+    }
+    const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ peerId: 'fixture-peer', remoteProjectId: projectId }) });
+    const { audit } = await response.json() as any;
+    expect(audit.dataSnapshotReady).toBe(true); expect(audit.currentDataVerified).toBe(true); expect(audit.readyForFailover).toBe(true);
   });
   it('saving unchanged standby settings preserves its semantic revision', async () => {
     const config = { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true, branchSyncPolicy: 'catalog' as const,
@@ -447,6 +482,45 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
       expect(writes).toEqual([]); expect(target.getAllBranches()).toEqual([]);
     } finally { spy.mockRestore(); }
   });
+  it.each(['write-failed', 'readback-failed'])('audit loss %s after the first accepted create stops later remote effects and keeps the first outcome', async mode => {
+    git(author, 'branch', 'one', shaA); git(author, 'branch', 'two', shaA); git(author, 'push', 'origin', 'one', 'two');
+    seed(source, 'one', shaA, 'idle'); seed(source, 'two', shaA, 'idle');
+    source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: false,
+      branchSyncPolicy: 'catalog', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-28T00:00:00Z' } });
+    const originalRecord = auditSink.recordImmediate, originalRead = auditSink.findRecent; let failed = false;
+    const record = vi.spyOn(auditSink, 'recordImmediate').mockImplementation(async row => {
+      if (row.details?.method === 'POST') failed = true;
+      if (failed && mode === 'write-failed') throw new Error('synthetic persistent audit failure');
+      await originalRecord(row);
+    });
+    const read = vi.spyOn(auditSink, 'findRecent').mockImplementation(async filter => failed && mode === 'readback-failed' ? [] : originalRead(filter));
+    try {
+      const result = await reconcile('catalog');
+      console.info('audit failure after remote effect', { mode, createdAtTarget: target.getAllBranches().map(branch => branch.branch),
+        remoteWriteCount: writes.length, failedActions: result.body.result.failed.map((failure: any) => ({ name: failure.name, action: failure.action, error: failure.error })) });
+      expect(result.status).toBe(207); expect(writes).toEqual(['/api/branches']);
+      expect(target.getAllBranches().map(branch => branch.branch)).toEqual(['one']);
+      expect(git(target.getAllBranches()[0].worktreePath, 'rev-parse', 'HEAD')).toBe(shaA);
+      expect(result.body.result.created).toEqual([]); expect(result.body.result.failed).toHaveLength(1);
+      expect(result.body.result.failed[0]).toMatchObject({ name: 'one', action: 'create' });
+      expect(result.body.result.failed[0].error).toContain('可能已产生');
+      expect(result.body.result.failed[0].error).toContain('禁止自动重试');
+      expect((await originalRead({ projectId })).some(row => row.details.method === 'GET')).toBe(true);
+      expect(record.mock.calls.filter(([row]) => row.details?.method === 'POST')).toHaveLength(1);
+      await source.flush(); const restored = new StateService(path.join(root, 'source-state.json')); restored.load();
+      expect(restored.getProject(projectId)?.standbyMirror?.lastBranchSync?.failed[0].error).toContain('审计');
+    } finally { record.mockRestore(); read.mockRestore(); }
+  });
+  it('ordinary receipt mismatch does not latch healthy audit or interrupt an unrelated later catalog action', async () => {
+    git(author, 'branch', 'one', shaA); git(author, 'branch', 'two', shaA); git(author, 'push', 'origin', 'one', 'two');
+    seed(source, 'one', shaA, 'idle'); seed(source, 'two', shaA, 'idle');
+    createdReply = body => body.branch?.branch === 'one' ? { ...body, branch: { ...body.branch, githubCommitSha: 'b'.repeat(40) } } : body;
+    const result = await reconcile('catalog');
+    expect(result.status).toBe(207); expect(result.body.result.created).toEqual(['two']); expect(result.body.result.failed).toHaveLength(1);
+    expect(result.body.result.failed[0].name).toBe('one'); expect(writes).toEqual(['/api/branches', '/api/branches']);
+    expect(target.getAllBranches().map(branch => branch.branch)).toEqual(['one', 'two']);
+    const records = await auditSink.findRecent({ projectId }); expect(records.filter(row => row.details?.method === 'POST')).toHaveLength(2);
+  });
   it('an interrupted SSE body retains received headers and timeout stage rather than inventing a response body', async () => {
     seed(source, 'main', shaA); fingerprintOverride = { status: 200, body: '', type: 'text/event-stream', headersOnly: true };
     const original = global.setTimeout;
@@ -543,12 +617,85 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     expect(commands.some(command => command.startsWith('git ls-remote'))).toBe(true);
     expect(commands.some(command => /git (fetch|worktree)/.test(command))).toBe(false);
   });
+  it.each(['initial-peer-await', 'pre-operation-await', 'final-confirmation'].flatMap(stage =>
+    ['unknown', 'mixed', 'changed-B'].map(mutation => ({ stage, mutation }))))(
+    'source runtime identity $mutation during $stage cannot pass the current snapshot guard', async ({ stage, mutation }) => {
+      const entry = seed(source, 'main', shaA); const remote = seed(target, 'main', shaA, 'idle');
+      const shaB = 'b'.repeat(40);
+      const changeRuntime = () => {
+        if (mutation === 'unknown') delete entry.services.api.sourceCommitSha;
+        else if (mutation === 'mixed') entry.services.worker = { ...entry.services.api, profileId: 'worker',
+          sourceCommitSha: shaB, containerName: 'mock-worker', containerId: 'mock-worker-only', hostPort: 17002 };
+        else entry.services.api.sourceCommitSha = shaB;
+      };
+      if (stage === 'final-confirmation') afterDeploy = changeRuntime;
+      else {
+        let reads = 0;
+        targetFingerprintReply = body => { if (++reads === (stage === 'initial-peer-await' ? 1 : 2)) changeRuntime(); return body; };
+      }
+      const result = await reconcile('warm-running');
+      // Read the real source route, not a hand-built fingerprint: cache A remains while runtime proof disappears.
+      const reply = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/fingerprint`);
+      const actual = (await reply.json() as any).branches.find((branch: any) => branch.id === entry.id);
+      expect(actual).toMatchObject({ status: 'running', commitSha: mutation === 'changed-B' ? shaB : shaA,
+        commitIdentityConfirmed: mutation !== 'changed-B', runtimeIdentityConfirmed: mutation === 'changed-B' });
+      expect(result.status).toBe(207); expect(result.body.result.deployed).toEqual([]);
+      expect(result.body.result.failed).toContainEqual(expect.objectContaining({ name: 'main', action: 'deploy' }));
+      if (stage === 'final-confirmation') {
+        // The accepted remote action already happened: reject convergence, do not pretend zero effects or roll it back.
+        expect(deployedCommits).toEqual([shaA]); expect(remote.status).toBe('running'); expect(writes).toEqual([`/api/branches/${remote.id}/deploy`]);
+      } else {
+        expect(deployedCommits).toEqual([]); expect(remote.status).toBe('idle'); expect(writes).toEqual([]);
+      }
+      expect(entry.status).toBe('running'); expect(entry.githubCommitSha).toBe(shaA); expect(commands).toEqual([]);
+    });
+  it.each(['idle', 'stopped'])('catalog keeps safe %s source behavior without a running-runtime proof', async status => {
+    seed(source, 'main', shaA, status);
+    const result = await reconcile('catalog'); expect(result.status).toBe(200); expect(result.body.result.created).toEqual(['main']);
+    expect(result.body.result.deployed).toEqual([]); expect(deployedCommits).toEqual([]);
+    expect(git(target.getAllBranches()[0].worktreePath, 'rev-parse', 'HEAD')).toBe(shaA);
+  });
   it('a changed source snapshot between planning and action is rejected before writes', async () => {
     const entry = seed(source, 'main', shaA);
     targetFingerprintReply = body => { entry.githubCommitSha = 'b'.repeat(40); return body; };
     expect((await reconcile()).status).toBe(207);
     expect(writes).toEqual([]); expect(commands).toEqual([]); expect(target.getAllBranches()).toEqual([]);
   });
+  it.each(['unknown', 'mixed', 'changed-B', 'pinned-A-runtime-B'])(
+    'successful SSE followed by target runtime %s cannot be counted as deployed', async mutation => {
+      seed(source, 'main', shaA); const entry = seed(target, 'main', shaA, 'idle'); const shaB = 'b'.repeat(40);
+      afterDeploy = () => {
+        if (mutation === 'unknown') delete entry.services.api.sourceCommitSha;
+        else if (mutation === 'mixed') entry.services.worker = { ...entry.services.api, profileId: 'worker', sourceCommitSha: shaB };
+        else { entry.services.api.sourceCommitSha = shaB; if (mutation === 'pinned-A-runtime-B') entry.pinnedCommit = shaA; }
+      };
+      const result = await reconcile('warm-running');
+      const reply = await fetch(`${targetUrl}/api/projects/${projectId}/migration/fingerprint`);
+      const actual = (await reply.json() as any).branches.find((branch: any) => branch.id === entry.id);
+      expect(actual).toMatchObject({ status: 'running', commitSha: mutation === 'changed-B' ? shaB : shaA,
+        commitIdentityConfirmed: !['changed-B', 'pinned-A-runtime-B'].includes(mutation),
+        runtimeIdentityConfirmed: ['changed-B', 'pinned-A-runtime-B'].includes(mutation) });
+      expect(result.status).toBe(207); expect(result.body.result.deployed).toEqual([]);
+      expect(result.body.result.failed).toContainEqual(expect.objectContaining({ name: 'main', action: 'deploy' }));
+      expect(deployedCommits).toEqual([shaA]); expect(entry.status).toBe('running');
+      expect(writes).toEqual([`/api/branches/${entry.id}/deploy`]); expect(commands).toEqual([]);
+      if (mutation === 'pinned-A-runtime-B') expect(entry.pinnedCommit).toBe(shaA);
+    });
+  it.each(['unknown', 'mixed', 'changed-B'])(
+    'target runtime %s before a stop cannot pass the operation guard', async mutation => {
+      seed(source, 'main', shaA, 'idle'); const entry = seed(target, 'main', shaA); const shaB = 'b'.repeat(40);
+      let reads = 0;
+      beforeTargetFingerprint = () => {
+        if (++reads !== 2) return;
+        if (mutation === 'unknown') delete entry.services.api.sourceCommitSha;
+        else if (mutation === 'mixed') entry.services.worker = { ...entry.services.api, profileId: 'worker', sourceCommitSha: shaB };
+        else entry.services.api.sourceCommitSha = shaB;
+      };
+      const result = await reconcile('warm-running');
+      expect(result.status).toBe(207); expect(result.body.result.stopped).toEqual([]);
+      expect(result.body.result.failed).toContainEqual(expect.objectContaining({ name: 'main', action: 'stop' }));
+      expect(entry.status).toBe('running'); expect(writes).toEqual([]); expect(commands).toEqual([]);
+    });
   it('missing source identity cannot create or warm a branch', async () => {
     seed(source, 'main', undefined);
     const result = await reconcile('warm-running');

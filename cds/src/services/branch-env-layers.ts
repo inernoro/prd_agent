@@ -7,7 +7,7 @@
  */
 import type { BranchEntry, BuildProfile, EnvKeyProvenance, EnvSource } from '../types.js';
 import type { StateService } from './state.js';
-import { resolveEffectiveProfile } from './container.js';
+import { resolveEffectiveProfile, sanitizeProfileOverride } from './container.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from './env-provenance.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './preview-entrypoints.js';
 import { cdsRefResolverDepsFromState, parseCdsRefs, resolveCdsRef } from './cross-project-refs.js';
@@ -32,7 +32,7 @@ export interface BranchEnvResolution {
 
 /** Shared configured profile layers: baseline → branch override → active mode. */
 export function configuredProfileEnvLayers(baseline: BuildProfile, entry?: BranchEntry, isExtra = false): EnvLayer[] {
-  const override = entry?.profileOverrides?.[baseline.id];
+  const override = sanitizeProfileOverride(entry?.profileOverrides?.[baseline.id]);
   const activeMode = override?.activeDeployMode !== undefined ? override.activeDeployMode : baseline.activeDeployMode;
   const modeEnv = (activeMode && baseline.deployModes?.[activeMode]?.env) || undefined;
   return [
@@ -78,7 +78,7 @@ export function resolveBranchEnvLayers(
   const extraIds = new Set((entry.extraProfiles || []).map((p) => p.id));
   const profiles = stateService.getEffectiveProfilesForBranch(entry).map((baseline): BranchEnvProfileResolution => {
     const isExtra = extraIds.has(baseline.id);
-    const override = entry.profileOverrides?.[baseline.id];
+    const override = sanitizeProfileOverride(entry.profileOverrides?.[baseline.id]);
     const effective = resolveEffectiveProfile(baseline, entry);
     const profileLayers = configuredProfileEnvLayers(baseline, entry, isExtra);
     let provenance: EnvKeyProvenance[] = [];

@@ -157,7 +157,8 @@ describe('standby branch reconciliation route', () => {
     };
     const sourceBranch = {
       id: 'source-main', projectId: 'project-1', branch: 'main', status: 'running',
-      githubCommitSha: 'a'.repeat(40), services: {}, createdAt: new Date().toISOString(),
+      // A running source needs immutable runtime evidence; an empty service map is intentionally refused.
+      githubCommitSha: 'a'.repeat(40), services: { api: { profileId: 'api', status: 'running', sourceCommitSha: 'a'.repeat(40) } }, createdAt: new Date().toISOString(),
     } as unknown as BranchEntry;
     const project = { id: 'project-1', githubRepoFullName: 'owner/repo', gitDefaultBranch: 'main' };
     const stateService = {

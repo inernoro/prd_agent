@@ -66,13 +66,17 @@ export function createStandbyResponseAudit(sink: ServerEventLogSink | null | und
 }) {
   const operationId = randomUUID();
   let attempt = 0;
+  let persistenceFailed = false;
   return {
     operationId,
     remoteProjectId: scope.remoteProjectId,
+    hasPersistenceFailure() { return persistenceFailed; },
     assertAvailable() {
+      if (persistenceFailed) throw new Error('本轮备用站持久响应审计已失败，未发出后续远端请求，禁止自动重试');
       if (!sink?.recordImmediate || !sink.findRecent) throw new Error('备用站持久响应审计不可用，未发出本次远端请求');
     },
     async record(facts: StandbyResponseFacts) {
+      if (persistenceFailed) throw new Error('本轮备用站持久响应审计已失败，禁止追加记录或自动重试');
       if (!sink?.recordImmediate || !sink.findRecent) throw new Error('备用站持久响应审计不可用');
       const requestId = `${operationId}:${++attempt}`;
       let target = '[invalid peer URL omitted]';
@@ -125,6 +129,7 @@ export function createStandbyResponseAudit(sink: ServerEventLogSink | null | und
         const saved = await sink.findRecent({ projectId: scope.projectId, requestId, limit: 1 });
         if (!saved.some(row => row.requestId === requestId && row.projectId === scope.projectId)) throw new Error('审计回读未找到记录');
       } catch {
+        persistenceFailed = true;
         throw new Error('备用站响应审计持久化失败；远端结果可能已产生，禁止自动重试，请核对本次现场');
       }
     },
