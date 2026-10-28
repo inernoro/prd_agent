@@ -215,12 +215,11 @@ public sealed class HtmlPptContinuationService(
             throw Failure("ppt_edit_policy_missing", "当前 PPT 修改策略缺少受信输出上限或尾部预留，未创建修改任务");
         if (currentGateway == null || string.IsNullOrWhiteSpace(selectedModel))
             throw Failure("ppt_edit_policy_missing", "当前模型路由解析服务不可用，未创建修改任务");
-        // 复用网关当前解析，不发送模型内容，不从旧 scope 借用任何费率或请求包络。
-        var route = requestPolicy.PinnedPlatformId == null
-            ? await currentGateway.ResolveRequiredLogicalModelAsync(
-                AppCallerRegistry.MdToPptAgent.Generation.Patch, "chat", selectedModel, ct)
-            : await currentGateway.ResolveModelAsync(AppCallerRegistry.MdToPptAgent.Generation.Patch, "chat",
-                selectedModel, requestPolicy.PinnedPlatformId, requestPolicy.PinnedModelId, ct);
+        // 只读当前元信息；执行解析会认领恢复租约，不能用于预算预检。
+        var route = await currentGateway.ResolveModelMetadataAsync(
+            AppCallerRegistry.MdToPptAgent.Generation.Patch, "chat", selectedModel,
+            requestPolicy.PinnedPlatformId,
+            requestPolicy.PinnedPlatformId == null ? null : requestPolicy.PinnedModelId, ct);
         if (!route.Success || route.LogicalModelPublicId != p.LogicalModelPublicId
             || string.IsNullOrWhiteSpace(route.OfferingId) || string.IsNullOrWhiteSpace(route.ActualPlatformName)
             || route.ActualModel != p.Model)

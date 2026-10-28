@@ -160,8 +160,8 @@ public sealed class HtmlPptContinuationTests
         };
         var activeRoute=CurrentRoute(true);
         var currentGateway=new Mock<ILlmGateway>(MockBehavior.Strict);
-        currentGateway.Setup(x=>x.ResolveRequiredLogicalModelAsync(AppCallerRegistry.MdToPptAgent.Generation.Patch,
-            "chat","default-chat-curated",It.IsAny<CancellationToken>())).ReturnsAsync(()=>activeRoute);
+        currentGateway.Setup(x=>x.ResolveModelMetadataAsync(AppCallerRegistry.MdToPptAgent.Generation.Patch,
+            "chat","default-chat-curated",null,null,It.IsAny<CancellationToken>())).ReturnsAsync(()=>activeRoute);
         var service = new HtmlPptContinuationService(store.Db, gw, config,currentGateway.Object);
         var context = await service.ResolveCurrentEditContextAsync(f.Source.Id, "owner", CancellationToken.None);
         var key = Guid.NewGuid().ToString("N");

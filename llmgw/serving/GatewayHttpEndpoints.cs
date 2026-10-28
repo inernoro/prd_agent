@@ -1186,11 +1186,20 @@ public static class GatewayHttpEndpoints
                 }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
             }
             using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
-            var resolution = string.IsNullOrWhiteSpace(body.OfferingId)
+            if (body.ReadOnlyMetadata && !string.IsNullOrWhiteSpace(body.OfferingId))
+                return Results.Json(new { error = new { code = "METADATA_OFFERING_RECOVERY_NOT_ALLOWED" } },
+                    jsonOpts, statusCode: StatusCodes.Status400BadRequest);
+            var resolution = body.ReadOnlyMetadata
+                ? await gateway.ResolveModelMetadataAsync(
+                    body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None)
+                : string.IsNullOrWhiteSpace(body.OfferingId)
                 ? await gateway.ResolveModelAsync(
                     body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None)
                 : await gateway.ResolveOfferingAsync(
                     body.AppCallerCode, body.ModelType, body.OfferingId, CancellationToken.None);
+            if (body.ReadOnlyMetadata)
+                http.Response.Headers[PrdAgent.Core.LlmGateway.ILlmGateway.MetadataResolutionPurposeHeader]
+                    = PrdAgent.Core.LlmGateway.ILlmGateway.ReadOnlyMetadataPurpose;
             return Results.Json(resolution, jsonOpts);
         });
 
@@ -6347,7 +6356,8 @@ public sealed record ResolveRequestDto(
     string? ModelPolicy = null,
     string? ModelPoolId = null,
     GatewayRequestContext? Context = null,
-    string? OfferingId = null);
+    string? OfferingId = null,
+    bool ReadOnlyMetadata = false);
 
 // /gw/v1/client-stream 的请求体 DTO（PascalCase）。Messages 用 Core 的 LLMMessage，
 // 与 MAP 侧 HttpLlmClient 序列化口径一致。
