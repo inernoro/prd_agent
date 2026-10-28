@@ -16,6 +16,7 @@
  *   DELETE /projects/:id/migration/peers/:peerId      删除迁移目标
  *   GET    /projects/:id/migration/config-preview     预览本项目可复刻的 cds-compose 配置
  *   POST   /projects/:id/migration/replicate-config   把配置推到远端 CDS 复刻部署(支持 dryRun)
+ *   POST   /projects/:id/migration/standby/reconcile  预演或执行分支目录/运行态收敛
  *   POST   /projects/:id/migration/data-plan          数据迁移扫描(只读:源库 + 目标可达性)
  *
  * 安全:
@@ -30,10 +31,32 @@
 import { Router } from 'express';
 
 import type { StateService } from '../services/state.js';
-import type { BuildProfile, CdsPeer, InfraService, RoutingRule } from '../types.js';
+import type {
+  BuildProfile,
+  CdsPeer,
+  InfraService,
+  RoutingRule,
+  StandbyBranchSyncPolicy,
+  StandbyBranchSyncResult,
+  StandbyMirrorAudit,
+  StandbyMirrorFingerprint,
+} from '../types.js';
 import { toCdsCompose } from '../services/compose-parser.js';
 import { getCdsAiAccessKey } from '../config/known-env-keys.js';
+import {
+  buildStandbyMirrorFingerprint,
+  compareStandbyFingerprints,
+  planStandbyBranchSync,
+  percentile,
+  assertStandbyFingerprint,
+  limitStandbySyncActions,
+} from '../services/standby-mirror.js';
+import { maskSecrets } from '../services/secret-masker.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { readDeploymentSseOutcome } from '../services/infra-credential-rotation-runtime.js';
+import { createStandbyResponseAudit, type StandbyResponseAudit } from '../services/standby-response-audit.js';
+import { resolveBranchEnvLayers, configuredProfileEnvLayers } from '../services/branch-env-layers.js';
+import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 
 export interface ProjectMigrationDeps {
   stateService: StateService;
@@ -41,6 +64,7 @@ export interface ProjectMigrationDeps {
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
   /** CDS 鉴权模式。disabled(开放面板)时没有 cookie/session 标记且本就无安全边界,迁移放行。 */
   authMode: 'disabled' | 'basic' | 'github';
+  serverEventLogStore?: ServerEventLogSink | null;
 }
 
 /** 对外视图:绝不回明文 accessKey,只给掩码 + hasKey。 */
@@ -93,10 +117,16 @@ async function remoteFetch(
   path: string,
   init: { method?: string; body?: string; timeoutMs?: number } = {},
   fallbackKey?: string,
-): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
+  audit?: StandbyResponseAudit,
+): Promise<{ ok: boolean; status: number; json: unknown; text: string; elapsedMs: number }> {
+  audit?.assertAvailable();
   const key = resolvePeerKey(peer, fallbackKey);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 20_000);
+  const startedAt = performance.now();
+  const startedIso = new Date().toISOString();
+  let response: Response | undefined, text: string | undefined, json: unknown = null;
+  let parseState = 'no-response', localDecision = 'network-failure', error: unknown;
   try {
     const resp = await fetch(`${peer.baseUrl}${path}`, {
       method: init.method ?? 'GET',
@@ -107,12 +137,34 @@ async function remoteFetch(
       body: init.body,
       signal: controller.signal,
     });
-    const text = await resp.text();
-    let json: unknown = null;
-    try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-    return { ok: resp.ok, status: resp.status, json, text };
+    response = resp; parseState = 'body-read-failed';
+    text = await resp.text();
+    if (resp.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
+      parseState = 'sse'; localDecision = resp.ok && readDeploymentSseOutcome(text).ok ? 'success' : 'upstream-failure';
+    } else {
+      try { json = text ? JSON.parse(text) : null; parseState = text ? 'json' : 'empty'; }
+      catch { parseState = 'invalid-json'; }
+      localDecision = !resp.ok || (json as any)?.ok === false || (json as any)?.success === false ? 'upstream-failure'
+        : parseState === 'invalid-json' ? 'parse-failure' : 'success';
+      if (audit && resp.ok && parseState === 'json' && path.endsWith('/migration/fingerprint')) {
+        try { assertStandbyFingerprint(json, audit.remoteProjectId); }
+        catch (err) { parseState = 'invalid-fingerprint'; localDecision = 'parse-failure'; throw err; }
+      }
+    }
+    return { ok: resp.ok, status: resp.status, json, text, elapsedMs: performance.now() - startedAt };
+  } catch (err) {
+    error = err;
+    if (controller.signal.aborted) localDecision = 'timeout';
+    else if (parseState === 'no-response') localDecision = 'network-failure';
+    else if (parseState === 'body-read-failed') localDecision = 'body-read-failure';
+    throw err;
   } finally {
     clearTimeout(timer);
+    await audit?.record({ peerId: peer.id, url: `${peer.baseUrl}${path}`, method: init.method || 'GET',
+      startedAt: startedIso, durationMs: performance.now() - startedAt, timeoutMs: init.timeoutMs ?? 20_000,
+      responseReceived: !!response, httpStatus: response?.status ?? null, contentType: response?.headers.get('content-type') ?? null,
+      upstreamRequestId: response?.headers.get('x-request-id') ?? null, text, json, parseState, localDecision,
+      error: error instanceof Error ? error.message : undefined, secrets: key ? [key] : [] });
   }
 }
 
@@ -140,6 +192,340 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     if (fromEnv) return fromEnv;
     const globalEnv = stateService.getCustomEnv() as Record<string, string> | undefined;
     return globalEnv?.['AI_ACCESS_KEY'] || undefined;
+  }
+
+  function projectGuard(req: any, res: any, projectId: string): boolean {
+    const access = deps.assertProjectAccess(req, projectId);
+    if (access) {
+      res.status(access.status).json(access.body);
+      return false;
+    }
+    if (!stateService.getProject(projectId)) {
+      res.status(404).json({ error: '项目不存在' });
+      return false;
+    }
+    return true;
+  }
+
+  function localFingerprint(projectId: string): StandbyMirrorFingerprint {
+    const project = stateService.getProject(projectId)!;
+    const fallbackId = stateService.getDefaultBranchFor(projectId);
+    const defaultBranch = project.gitDefaultBranch || (fallbackId ? stateService.getBranch(fallbackId)?.branch : undefined);
+    const branches = stateService.getAllBranches().filter(branch => (branch.projectId || 'default') === projectId);
+    return buildStandbyMirrorFingerprint({
+      projectId,
+      repository: project.githubRepoFullName || project.gitRepoUrl,
+      defaultBranch,
+      profiles: stateService.getBuildProfilesForProject(projectId),
+      env: stateService.getCustomEnv(projectId),
+      infra: stateService.getInfraServicesForProject(projectId),
+      routingRules: stateService.getRoutingRulesForProject(projectId),
+      branches,
+      branchEnvs: Object.fromEntries(branches.map(branch => [branch.id, stateService.getCustomEnvScope?.(branch.id) || {}])),
+    });
+  }
+
+  async function auditStandby(
+    projectId: string,
+    peer: CdsPeer,
+    remoteProjectId: string,
+    sampleCount = 3,
+  ): Promise<StandbyMirrorAudit> {
+    const responseAudit = createStandbyResponseAudit(deps.serverEventLogStore, { projectId, remoteProjectId,
+      policy: 'audit-only', dryRun: true, configUpdatedAt: stateService.getProject(projectId)?.standbyMirror?.updatedAt });
+    const checkedAt = new Date().toISOString();
+    const localStarted = performance.now();
+    const source = localFingerprint(projectId);
+    const localFingerprintMs = Math.round((performance.now() - localStarted) * 10) / 10;
+    const healthSamples: number[] = [];
+    let remoteReachable = false;
+    let protocolReady = false;
+    let error: string | undefined;
+    let target: StandbyMirrorFingerprint | null = null;
+    let fingerprintMs: number | null = null;
+
+    try {
+      for (let index = 0; index < Math.max(1, Math.min(5, sampleCount)); index += 1) {
+        const health = await remoteFetch(peer, '/healthz', { timeoutMs: 12_000 }, localFallbackKey(), responseAudit);
+        if (!health.ok) throw new Error(`目标健康检查返回 HTTP ${health.status}`);
+        remoteReachable = true;
+        healthSamples.push(health.elapsedMs);
+      }
+      const response = await remoteFetch(
+        peer,
+        `/api/projects/${encodeURIComponent(remoteProjectId)}/migration/fingerprint`,
+        { timeoutMs: 20_000 },
+        localFallbackKey(),
+        responseAudit,
+      );
+      fingerprintMs = Math.round(response.elapsedMs * 10) / 10;
+      if (!response.ok) {
+        throw new Error(response.status === 404
+          ? '目标 CDS 尚未升级备用站指纹协议'
+          : `目标指纹接口返回 HTTP ${response.status}`);
+      }
+      target = response.json as StandbyMirrorFingerprint;
+      protocolReady = target?.protocolVersion === 1;
+      if (!protocolReady) throw new Error('目标 CDS 的备用站指纹协议版本不兼容');
+    } catch (err) {
+      error = maskSecrets((err as Error).message, { mask: true });
+    }
+
+    const comparison = target
+      ? compareStandbyFingerprints(source, target)
+      : {
+          configMatches: false,
+          secretKeysMatch: false,
+          repositoryMatches: false,
+          defaultBranchMatches: false,
+          missingBranches: [] as string[],
+          divergentBranches: [] as Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>,
+        };
+    const stores = stateService.getInfraServicesForProject(projectId).filter(service =>
+      /mongo|mysql|mariadb|postgres|redis|sqlserver/i.test(service.dockerImage) || !!service.volumes?.length);
+    const projectBranches = stateService.getAllBranches().filter(branch => (branch.projectId || 'default') === projectId);
+    const projectProfiles = stateService.getBuildProfilesForProject(projectId);
+    const declarations = [...projectProfiles,
+      ...projectBranches.flatMap(branch => [...(branch.extraProfiles || []), ...Object.values(branch.profileOverrides || {})])];
+    let resolutionFailed = false;
+    const resolutions = projectBranches.flatMap(branch => {
+      try { return [resolveBranchEnvLayers(stateService, branch, { jwtIssuer: 'cds' })]; }
+      catch { resolutionFailed = true; return []; }
+    });
+    const effectiveEnvironments = resolutions.flatMap(resolution => resolution.profiles.length
+      ? resolution.profiles.map(profile => Object.fromEntries(profile.provenance.map(value => [value.key, value.value])))
+      : resolution.customLayers.map(layer => layer.env));
+    if (!projectBranches.length) effectiveEnvironments.push(stateService.getCustomEnv(projectId), ...projectProfiles.map(profile =>
+      Object.assign({}, stateService.getCustomEnv(projectId), ...configuredProfileEnvLayers(profile).map(layer => layer.env))));
+    const externalDataDeclared = resolutionFailed || resolutions.some(resolution => resolution.profiles.some(profile => !!profile.envError))
+      || effectiveEnvironments.some(env => Object.entries(env).some(([name, value]) => typeof value === 'string' && !!value.trim()
+        && (/mongo|mysql|mariadb|postgres|redis|sqlserver|database.*(?:url|uri|connection)|connection.*string/i.test(name)
+          || /^(mongodb(?:\+srv)?|mysql|postgres(?:ql)?|redis|sqlserver):\/\//i.test(value))))
+      || declarations.some(profile => 'cacheMounts' in profile && profile.cacheMounts?.some(mount => mount.storage?.purpose === 'persistent'));
+    // 历史快照不因无关保存或Git推送消失；当前一致性由独立门禁保持未知。
+    const baseline = Date.parse(stateService.getProject(projectId)?.createdAt || '') || 0;
+    // 无持久数据时不虚构迁移任务；历史记录只认当前目标与完整范围，不能代替当前一致性。
+    const dataSnapshotReady = !(stores.length === 0 && externalDataDeclared) && stores.every(store => /mongo/i.test(store.dockerImage)
+      && stateService.getDataMigrations().some(migration => {
+        const started = Date.parse(migration.startedAt || ''), finished = Date.parse(migration.finishedAt || '');
+        return migration.projectId === projectId && migration.status === 'completed' && !migration.collections?.length
+          && migration.source.type === 'local' && migration.source.projectId === projectId && migration.source.serviceId === store.id
+          && migration.target.type === 'cds' && migration.target.cdsPeerId === peer.id
+          && migration.target.projectId === remoteProjectId && migration.target.serviceId === store.id
+          && (!migration.source.database || migration.source.database === store.dbName)
+          && (!migration.target.database || migration.target.database === store.dbName)
+          && Number.isFinite(started) && Number.isFinite(finished) && started >= baseline && finished >= started && finished <= Date.now();
+      }));
+    // 当前迁移协议只有历史完成记录，没有源/目标实时水位或一致性证明。
+    // 不猜测允许丢失的数据窗口；该切流门禁不参与三种分支同步策略的执行许可。
+    const currentDataVerified = stores.length === 0 && !externalDataDeclared;
+    const dataReadinessReason = currentDataVerified ? '无声明的持久数据，数据门禁不适用'
+      : dataSnapshotReady ? '已有历史快照，尚未核验当前两端数据一致，暂不可切流'
+        : '尚无完整目标快照与当前数据一致性证据，暂不可切流';
+    const readyForFailover = remoteReachable
+      && protocolReady
+      && comparison.repositoryMatches
+      && comparison.configMatches
+      && comparison.secretKeysMatch
+      && comparison.defaultBranchMatches
+      && dataSnapshotReady
+      && currentDataVerified;
+
+    const audit: StandbyMirrorAudit = {
+      id: `standby_${Date.now().toString(36)}`,
+      responseAuditId: responseAudit.operationId,
+      checkedAt,
+      peerId: peer.id,
+      remoteProjectId,
+      remoteReachable,
+      protocolReady,
+      repositoryMatches: comparison.repositoryMatches,
+      configMatches: comparison.configMatches,
+      secretKeysMatch: comparison.secretKeysMatch,
+      defaultBranchMatches: comparison.defaultBranchMatches,
+      dataSnapshotReady,
+      currentDataVerified,
+      dataReadinessReason,
+      readyForFailover,
+      missingBranches: comparison.missingBranches.slice(0, 100),
+      divergentBranches: comparison.divergentBranches.slice(0, 100),
+      performance: {
+        samples: healthSamples.length,
+        healthP50Ms: percentile(healthSamples, 0.5),
+        healthP95Ms: percentile(healthSamples, 0.95),
+        fingerprintMs,
+        localFingerprintMs,
+      },
+      ...(error ? { error } : {}),
+    };
+
+    const project = stateService.getProject(projectId);
+    if (project?.standbyMirror?.peerId === peer.id && project.standbyMirror.remoteProjectId === remoteProjectId) {
+      const history = [audit, ...(project.standbyMirror.history || [])].slice(0, 30);
+      project.standbyMirror = { ...project.standbyMirror, lastAudit: audit, history };
+      stateService.save();
+    }
+    return audit;
+  }
+
+  async function reconcileStandbyBranches(
+    projectId: string,
+    peer: CdsPeer,
+    remoteProjectId: string,
+    policy: StandbyBranchSyncPolicy,
+    dryRun: boolean,
+    isWritePlanCurrent?: () => boolean,
+  ): Promise<StandbyBranchSyncResult> {
+    const startedAt = new Date().toISOString();
+    const responseAudit = createStandbyResponseAudit(deps.serverEventLogStore, { projectId, remoteProjectId, policy, dryRun,
+      configUpdatedAt: stateService.getProject(projectId)?.standbyMirror?.updatedAt });
+    try {
+      const assertWritePlanCurrent = () => {
+        if (isWritePlanCurrent && !isWritePlanCurrent()) throw new Error('备用站启用状态、同步策略或目标已变化，已停止旧计划');
+      };
+      const source = localFingerprint(projectId);
+      const response = await remoteFetch(
+        peer,
+        `/api/projects/${encodeURIComponent(remoteProjectId)}/migration/fingerprint`,
+        { timeoutMs: 20_000 },
+        localFallbackKey(),
+        responseAudit,
+      );
+      if (!response.ok) {
+        throw new Error(response.status === 404
+          ? '目标 CDS 尚未提供备用站指纹协议'
+          : `目标指纹接口返回 HTTP ${response.status}`);
+      }
+      const target = response.json as StandbyMirrorFingerprint;
+      if (target?.protocolVersion !== 1) throw new Error('目标 CDS 的备用站指纹协议版本不兼容');
+      const comparison = compareStandbyFingerprints(source, target);
+      if (!comparison.repositoryMatches) {
+        throw new Error('两端绑定的代码仓库不同，已拒绝同步分支');
+      }
+      if (policy === 'warm-running' && (!comparison.configMatches || !comparison.secretKeysMatch)) {
+        throw new Error('两端配置或密钥项尚未对齐，已拒绝启动备用站分支');
+      }
+      if (policy === 'warm-running' && !target.capabilities?.pinAwareIdentity) throw new Error('目标 CDS 尚未支持固定提交身份核对，请升级后再预热');
+      if (policy === 'warm-running' && !target.capabilities?.runtimeIdentity) throw new Error('目标 CDS 尚未支持实际运行提交核对，请升级后再预热');
+      if (policy === 'warm-running' && !target.capabilities?.branchConfigIdentity) throw new Error('目标 CDS 尚未支持逐分支生效配置核对，请升级后再预热');
+
+      const planned = limitStandbySyncActions(planStandbyBranchSync(source, target, policy));
+      const result: StandbyBranchSyncResult = {
+        responseAuditId: responseAudit.operationId,
+        startedAt,
+        completedAt: startedAt,
+        dryRun,
+        policy,
+        sourceBranchCount: source.branches.length,
+        targetBranchCount: target.branches.length,
+        planned,
+        created: [],
+        deployed: [],
+        stopped: [],
+        divergent: comparison.divergentBranches,
+        failed: planned.filter(action => action.configurationDivergence).map(action => ({ name: action.name, action: action.kind, error: action.reason })),
+      };
+      if (dryRun || policy === 'audit-only') {
+        result.completedAt = new Date().toISOString();
+        return result;
+      }
+
+      const createdIds = new Map<string, string>();
+      for (const action of planned) {
+        if (action.kind === 'divergent') continue;
+        try {
+          assertWritePlanCurrent();
+          if (!action.sourceCommit || !/^[a-f0-9]{40}$/i.test(action.sourceCommit)) throw new Error('源提交身份未确认，已拒绝同步');
+          const currentSource = localFingerprint(projectId).branches.find(branch => branch.name === action.name);
+          const sourceSnapshot = source.branches.find(branch => branch.name === action.name);
+          const sourceStillCurrent = () => {
+            const current = localFingerprint(projectId).branches.find(branch => branch.name === action.name);
+            return !!current && current.commitSha === action.sourceCommit && current.commitIdentityConfirmed === true
+              && (current.status !== 'running' || current.runtimeIdentityConfirmed === true)
+              && current.status === action.sourceStatus && current.pinnedCommit === sourceSnapshot?.pinnedCommit
+              && (policy !== 'warm-running' || (current.configHash === sourceSnapshot?.configHash && current.secretKeyHash === sourceSnapshot?.secretKeyHash
+                && current.configurationRevision === sourceSnapshot?.configurationRevision));
+          };
+          if (currentSource?.commitSha !== action.sourceCommit || !sourceStillCurrent()) throw new Error('源提交或运行状态快照已变化，请重新核对');
+          if (action.kind === 'create') {
+            if (!target.capabilities?.expectedCommitCreate) throw new Error('目标 CDS 尚未支持源提交校验，请升级后再同步');
+            assertWritePlanCurrent();
+            const created = await remoteFetch(peer, '/api/branches', {
+              method: 'POST',
+              body: JSON.stringify({ branch: action.name, projectId: remoteProjectId, expectedCommit: action.sourceCommit }),
+              timeoutMs: 120_000,
+            }, localFallbackKey(), responseAudit);
+            if (!created.ok) throw new Error(`目标创建分支返回 HTTP ${created.status}`);
+            const receipt = (created.json as { branch?: { id?: string; branch?: string; projectId?: string; githubCommitSha?: string } } | null)?.branch;
+            const branchId = String(receipt?.id || '');
+            if (!branchId) throw new Error('目标创建分支成功但没有返回 branch id');
+            if (receipt?.branch !== action.name || receipt?.projectId !== remoteProjectId || receipt?.githubCommitSha !== action.sourceCommit) {
+              throw new Error('目标创建回执未确认源提交身份，已停止后续预热；请核对目标分支');
+            }
+            createdIds.set(action.name, branchId);
+            result.created.push(action.name);
+            continue;
+          }
+
+          const targetBranchId = action.targetBranchId || createdIds.get(action.name);
+          if (!targetBranchId) throw new Error('缺少目标 branch id，无法执行运行态收敛');
+          const beforeOperation = await remoteFetch(peer,
+            `/api/projects/${encodeURIComponent(remoteProjectId)}/migration/fingerprint`, {}, localFallbackKey(), responseAudit);
+          const currentTarget = (beforeOperation.json as StandbyMirrorFingerprint | null)?.branches
+            ?.find(branch => branch.id === targetBranchId && branch.name === action.name);
+          const targetSnapshot = target.branches.find(branch => branch.id === targetBranchId && branch.name === action.name);
+          const targetStable = action.kind === 'deploy'
+            ? currentTarget?.status === 'idle' || currentTarget?.status === 'stopped'
+            : currentTarget?.status === 'running';
+          if (!beforeOperation.ok || !currentTarget || currentTarget.commitSha !== action.sourceCommit || currentTarget.commitIdentityConfirmed !== true
+            || (currentTarget.status === 'running' && currentTarget.runtimeIdentityConfirmed !== true)
+            || currentTarget.pinnedCommit || !targetStable || currentTarget.configHash !== sourceSnapshot?.configHash
+            || currentTarget.secretKeyHash !== sourceSnapshot?.secretKeyHash || (targetSnapshot && (currentTarget.status !== targetSnapshot.status || currentTarget.configurationRevision !== targetSnapshot.configurationRevision))) {
+            throw new Error('目标提交、固定版本或运行状态已变化，已停止运行态收敛');
+          }
+          if (!sourceStillCurrent()) throw new Error('源提交或运行状态快照已变化，已停止运行态收敛');
+          assertWritePlanCurrent();
+          const operation = await remoteFetch(
+            peer,
+            `/api/branches/${encodeURIComponent(targetBranchId)}/${action.kind}`,
+            { method: 'POST', timeoutMs: action.kind === 'deploy' ? 120_000 : 60_000,
+              body: JSON.stringify({ ...(action.kind === 'deploy' ? { commitSha: action.sourceCommit } : {}),
+                standbyExpected: { commitSha: currentTarget.commitSha, status: currentTarget.status, pinnedCommit: null, configHash: currentTarget.configHash, configurationRevision: currentTarget.configurationRevision } }) },
+            localFallbackKey(),
+            responseAudit,
+          );
+          if (!operation.ok) throw new Error(`目标 ${action.kind} 返回 HTTP ${operation.status}`);
+          // deploy 的失败也可能返回 HTTP 200；复用现有终态判据，不把受理当成功。
+          if (action.kind === 'deploy' && !readDeploymentSseOutcome(operation.text).ok) throw new Error('目标部署未返回成功终态，预热尚未确认');
+          const afterOperation = await remoteFetch(peer,
+            `/api/projects/${encodeURIComponent(remoteProjectId)}/migration/fingerprint`, {}, localFallbackKey(), responseAudit);
+          const finalTarget = (afterOperation.json as StandbyMirrorFingerprint | null)?.branches
+            ?.find(branch => branch.id === targetBranchId && branch.name === action.name);
+          const statusMatches = action.kind === 'deploy' ? finalTarget?.status === 'running'
+            : finalTarget?.status === 'idle' || finalTarget?.status === 'stopped';
+          if (!afterOperation.ok || finalTarget?.commitSha !== action.sourceCommit || !statusMatches
+            || finalTarget.commitIdentityConfirmed !== true || (finalTarget.status === 'running' && finalTarget.runtimeIdentityConfirmed !== true)
+            || finalTarget.configHash !== sourceSnapshot?.configHash || finalTarget.secretKeyHash !== sourceSnapshot?.secretKeyHash
+            || finalTarget.configurationRevision !== currentTarget.configurationRevision || !sourceStillCurrent()) throw new Error('目标运行态或生效配置回读未匹配源快照，请核对现场');
+          if (action.kind === 'deploy') result.deployed.push(action.name);
+          if (action.kind === 'stop') result.stopped.push(action.name);
+        } catch (err) {
+          result.failed.push({
+            name: action.name,
+            action: action.kind,
+            error: maskSecrets((err as Error).message, { mask: true }),
+          });
+          // A remote effect may already exist; do not issue later requests after losing durable evidence.
+          if (responseAudit.hasPersistenceFailure()) break;
+        }
+      }
+      result.completedAt = new Date().toISOString();
+      return result;
+    } catch (err) {
+      const failure = err instanceof Error ? err : new Error('备用同步调用失败');
+      Object.assign(failure, { responseAuditId: responseAudit.operationId });
+      throw failure;
+    }
   }
 
   function guard(req: any, res: any, projectId: string): boolean {
@@ -207,6 +593,9 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       res.status(404).json({ error: '迁移目标不存在' });
       return;
     }
+    if (stateService.getProjects().some(project => project.standbyMirror?.enabled && project.standbyMirror.peerId === req.params.peerId)) {
+      res.status(409).json({ error: 'peer_in_use', message: '该节点仍被已启用的备用同步策略引用，请先停用或更换目标' }); return;
+    }
     stateService.removeCdsPeer(req.params.peerId);
     stateService.save();
     res.json({ ok: true });
@@ -262,6 +651,171 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     stateService.updateCdsPeer(peer.id, { lastVerifiedAt: new Date().toISOString(), remoteLabel: label });
     stateService.save();
     res.json({ ok: true, remoteStatus: probe.status, peer: toPublicView(stateService.getCdsPeer(peer.id)!) });
+  });
+
+  // ---- 主备镜像对账 ----
+
+  // 供另一台 CDS 拉取的只读协议。只返回不可逆指纹、密钥 key 的集合指纹和分支版本，
+  // 不返回 compose/env 明文，避免“为了比对”把两台机器的密钥互相复制。
+  router.get('/projects/:id/migration/fingerprint', (req, res) => {
+    if (!projectGuard(req, res, req.params.id)) return;
+    res.json(localFingerprint(req.params.id));
+  });
+
+  router.get('/projects/:id/migration/standby', (req, res) => {
+    if (!guard(req, res, req.params.id)) return;
+    const config = stateService.getProject(req.params.id)?.standbyMirror || null;
+    const peer = config ? stateService.getCdsPeer(config.peerId) : undefined;
+    res.json({ config, peer: peer ? toPublicView(peer) : null });
+  });
+
+  router.put('/projects/:id/migration/standby', (req, res) => {
+    if (!guard(req, res, req.params.id)) return;
+    const project = stateService.getProject(req.params.id)!;
+    const { peerId, remoteProjectId, enabled = false, intervalMinutes = 15, branchSyncPolicy = 'audit-only' } = (req.body || {}) as {
+      peerId?: string;
+      remoteProjectId?: string;
+      enabled?: boolean;
+      intervalMinutes?: number;
+      branchSyncPolicy?: StandbyBranchSyncPolicy;
+    };
+    const peer = peerId ? stateService.getCdsPeer(peerId) : undefined;
+    if (!peer) {
+      res.status(400).json({ error: '请先选择一个有效的 CDS 目标节点' });
+      return;
+    }
+    const remoteId = String(remoteProjectId || '').trim();
+    if (!remoteId || remoteId.length > 120) {
+      res.status(400).json({ error: '目标项目 ID 不能为空，且不能超过 120 个字符' });
+      return;
+    }
+    const interval = Number(intervalMinutes);
+    if (!Number.isFinite(interval) || interval < 5 || interval > 1_440) {
+      res.status(400).json({ error: '自动核对间隔必须在 5 到 1440 分钟之间' });
+      return;
+    }
+    if (!['audit-only', 'catalog', 'warm-running'].includes(branchSyncPolicy)) {
+      res.status(400).json({ error: '分支同步策略必须是 audit-only、catalog 或 warm-running' });
+      return;
+    }
+    const previous = project.standbyMirror;
+    const unchanged = previous?.peerId === peer.id && previous.remoteProjectId === remoteId && previous.enabled === !!enabled
+      && previous.intervalMinutes === Math.floor(interval) && (previous.branchSyncPolicy || 'audit-only') === branchSyncPolicy && previous.autoFailover === false;
+    project.standbyMirror = {
+      peerId: peer.id,
+      remoteProjectId: remoteId,
+      enabled: !!enabled,
+      intervalMinutes: Math.floor(interval),
+      branchSyncPolicy,
+      autoFailover: false,
+      updatedAt: unchanged ? previous.updatedAt : new Date().toISOString(),
+      ...(previous?.history ? { history: previous.history } : {}),
+      ...(previous?.peerId === peer.id && previous.remoteProjectId === remoteId
+        ? { lastAudit: previous.lastAudit, lastBranchSync: previous.lastBranchSync, history: previous.history }
+        : {}),
+    };
+    stateService.save();
+    res.json({ ok: true, config: project.standbyMirror, peer: toPublicView(peer) });
+  });
+
+  const activeAudits = new Set<string>();
+  const activeReconciles = new Set<string>();
+
+  router.get('/projects/:id/migration/standby/response-evidence', async (req, res) => {
+    if (!guard(req, res, req.params.id)) return;
+    const operationId = typeof req.query.operationId === 'string' ? req.query.operationId : undefined;
+    if (operationId && !/^[a-f0-9-]{36}$/i.test(operationId)) {
+      res.status(400).json({ error: 'invalid_operation_id' }); return;
+    }
+    const sink = deps.serverEventLogStore;
+    if (!sink?.findRecent) { res.status(503).json({ error: 'response_audit_unavailable' }); return; }
+    try {
+      const rows = await sink.findRecent({ projectId: req.params.id, source: 'standby-response-audit', operationId, limit: 100 });
+      res.json({ projectId: req.params.id, records: rows.filter(row => row.projectId === req.params.id
+        && row.source === 'standby-response-audit' && (!operationId || row.operationId === operationId)) });
+    } catch { res.status(503).json({ error: 'response_audit_read_failed' }); }
+  });
+
+  router.post('/projects/:id/migration/standby/audit', async (req, res) => {
+    if (!guard(req, res, req.params.id)) return;
+    const project = stateService.getProject(req.params.id)!;
+    const peerId = String((req.body || {}).peerId || project.standbyMirror?.peerId || '');
+    const remoteProjectId = String((req.body || {}).remoteProjectId || project.standbyMirror?.remoteProjectId || '').trim();
+    const peer = stateService.getCdsPeer(peerId);
+    if (!peer || !remoteProjectId) {
+      res.status(400).json({ error: '请先保存备用站节点与目标项目 ID' });
+      return;
+    }
+    if (activeAudits.has(project.id)) {
+      res.status(409).json({ error: '该项目已有一轮备用站核对正在进行，请等待本轮完成' });
+      return;
+    }
+    activeAudits.add(project.id);
+    try {
+      const audit = await auditStandby(project.id, peer, remoteProjectId, 3);
+      res.status(audit.remoteReachable ? 200 : 502).json({ audit });
+    } finally {
+      activeAudits.delete(project.id);
+    }
+  });
+
+  router.post('/projects/:id/migration/standby/reconcile', async (req, res) => {
+    if (!guard(req, res, req.params.id)) return;
+    const project = stateService.getProject(req.params.id)!;
+    const config = project.standbyMirror;
+    const peerId = String((req.body || {}).peerId || config?.peerId || '');
+    const remoteProjectId = String((req.body || {}).remoteProjectId || config?.remoteProjectId || '').trim();
+    const policy = String((req.body || {}).policy || config?.branchSyncPolicy || 'audit-only') as StandbyBranchSyncPolicy;
+    const dryRun = (req.body || {}).dryRun !== false;
+    const peer = stateService.getCdsPeer(peerId);
+    if (!peer || !remoteProjectId) {
+      res.status(400).json({ error: '请先保存备用站节点与目标项目 ID' });
+      return;
+    }
+    if (!['audit-only', 'catalog', 'warm-running'].includes(policy)) {
+      res.status(400).json({ error: '分支同步策略必须是 audit-only、catalog 或 warm-running' });
+      return;
+    }
+    if (activeReconciles.has(project.id)) {
+      res.status(409).json({ error: '该项目已有一轮分支同步正在进行，请等待本轮完成' });
+      return;
+    }
+    activeReconciles.add(project.id);
+    try {
+      const result = await reconcileStandbyBranches(project.id, peer, remoteProjectId, policy, dryRun);
+      if (!dryRun && policy !== 'audit-only' && project.standbyMirror?.peerId === peer.id && project.standbyMirror.remoteProjectId === remoteProjectId) {
+        project.standbyMirror = { ...project.standbyMirror, lastBranchSync: result };
+        stateService.save();
+      }
+      res.status(result.failed.length > 0 ? 207 : 200).json({ result });
+    } catch (err) {
+      res.status(502).json({ error: maskSecrets((err as Error).message, { mask: true }),
+        responseAuditId: (err as Error & { responseAuditId?: string }).responseAuditId });
+    } finally {
+      activeReconciles.delete(project.id);
+    }
+  });
+
+  router.get('/projects/:id/migration/standby-health', (req, res) => {
+    if (!projectGuard(req, res, req.params.id)) return;
+    const config = stateService.getProject(req.params.id)?.standbyMirror;
+    const audit = config?.lastAudit;
+    const maxAgeMs = Math.max(5, config?.intervalMinutes || 15) * 2 * 60_000;
+    const ageMs = audit ? Date.now() - Date.parse(audit.checkedAt) : Number.POSITIVE_INFINITY;
+    const fresh = Number.isFinite(ageMs) && ageMs <= maxAgeMs;
+    const operational = !!config?.enabled
+      && fresh
+      && !!audit?.responseAuditId
+      && audit.currentDataVerified === true
+      && audit?.readyForFailover === true;
+    res.status(operational ? 200 : 503).json({
+      status: operational ? 'pass' : 'fail',
+      enabled: config?.enabled === true,
+      fresh,
+      ageMs: Number.isFinite(ageMs) ? ageMs : null,
+      readyForFailover: audit?.readyForFailover === true,
+      lastAudit: audit || null,
+    });
   });
 
   // ---- 配置复刻(打包导出 + 推到远端 CDS) ----
@@ -370,6 +924,64 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       })),
     });
   });
+
+  // 后台只做只读核对，不自动搬密钥、不自动恢复数据库、更不自动切 DNS。
+  // 每分钟扫一次到期策略；同项目单飞，避免慢节点把定时器叠成请求风暴。
+  const timer = setInterval(() => {
+    const now = Date.now();
+    for (const project of stateService.getProjects()) {
+      const config = project.standbyMirror;
+      if (!config?.enabled || activeAudits.has(project.id)) continue;
+      const last = config.lastAudit ? Date.parse(config.lastAudit.checkedAt) : 0;
+      if (Number.isFinite(last) && now - last < config.intervalMinutes * 60_000) continue;
+      const peer = stateService.getCdsPeer(config.peerId);
+      if (!peer) {
+        const audit: StandbyMirrorAudit = { id: `standby_missing_${Date.now().toString(36)}`, checkedAt: new Date().toISOString(),
+          peerId: config.peerId, remoteProjectId: config.remoteProjectId, remoteReachable: false, protocolReady: false,
+          repositoryMatches: false, configMatches: false, secretKeysMatch: false, defaultBranchMatches: false,
+          dataSnapshotReady: false, readyForFailover: false, missingBranches: [], divergentBranches: [],
+          performance: { samples: 0, healthP50Ms: null, healthP95Ms: null, fingerprintMs: null, localFingerprintMs: 0 },
+          error: '配置的备用节点不存在，未执行远端同步' };
+        try { project.standbyMirror = { ...config, lastAudit: audit, history: [audit, ...(config.history || [])].slice(0, 30) }; stateService.save(); }
+        catch { console.warn(`[standby-mirror] ${project.id} 缺失节点审计保存失败`); }
+        continue;
+      }
+      const captured = { ...config };
+      const capturedPeer = { ...peer };
+      const capturedKey = resolvePeerKey(capturedPeer, localFallbackKey());
+      const isWritePlanCurrent = () => {
+        const current = stateService.getProject(project.id)?.standbyMirror;
+        const currentPeer = stateService.getCdsPeer(captured.peerId);
+        return !!current?.enabled && current.peerId === captured.peerId
+          && current.remoteProjectId === captured.remoteProjectId
+          && (current.branchSyncPolicy || 'audit-only') === (captured.branchSyncPolicy || 'audit-only')
+          && current.updatedAt === captured.updatedAt
+          && currentPeer?.baseUrl === capturedPeer.baseUrl && currentPeer?.accessKey === capturedPeer.accessKey
+          && resolvePeerKey(currentPeer, localFallbackKey()) === capturedKey;
+      };
+      activeAudits.add(project.id);
+      void auditStandby(project.id, capturedPeer, captured.remoteProjectId, 3)
+        .then(async audit => {
+          const policy = captured.branchSyncPolicy || 'audit-only';
+          if (audit.error || !audit.remoteReachable || !audit.protocolReady || !isWritePlanCurrent()
+            || policy === 'audit-only' || activeReconciles.has(project.id)) return;
+          activeReconciles.add(project.id);
+          try {
+            const result = await reconcileStandbyBranches(project.id, capturedPeer, captured.remoteProjectId, policy, false, isWritePlanCurrent);
+            const current = stateService.getProject(project.id)?.standbyMirror;
+            if (current && isWritePlanCurrent()) {
+              stateService.getProject(project.id)!.standbyMirror = { ...current, lastBranchSync: result };
+              stateService.save();
+            }
+          } finally {
+            activeReconciles.delete(project.id);
+          }
+        })
+        .catch((err) => console.warn(`[standby-mirror] ${project.id} 核对失败:`, maskSecrets((err as Error).message, { mask: true })))
+        .finally(() => activeAudits.delete(project.id));
+    }
+  }, 60_000);
+  timer.unref();
 
   return router;
 }

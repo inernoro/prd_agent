@@ -2,16 +2,17 @@ import { describe, it, expect } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import { createProjectMigrationRouter, maskKey, normalizeBaseUrl, toPublicView } from '../../src/routes/project-migration.js';
+import { buildStandbyMirrorFingerprint } from '../../src/services/standby-mirror.js';
 import type { StateService } from '../../src/services/state.js';
-import type { CdsPeer } from '../../src/types.js';
+import type { BranchEntry, CdsPeer } from '../../src/types.js';
 
-async function request(server: http.Server, headers: Record<string, string> = {}): Promise<number> {
+async function request(server: http.Server, headers: Record<string, string> = {}, requestPath = '/api/projects/project-1/migration/peers'): Promise<number> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const req = http.request({
       hostname: '127.0.0.1',
       port: addr.port,
-      path: '/api/projects/project-1/migration/peers',
+      path: requestPath,
       method: 'GET',
       headers,
     }, (res) => {
@@ -122,8 +123,93 @@ describe('project migration human-owner guard', () => {
       expect(await request(server, { 'x-auth-kind': 'member' })).toBe(403);
       expect(await request(server, { 'x-auth-kind': 'owner' })).toBe(200);
       expect(await request(server, { 'x-auth-kind': 'legacy' })).toBe(200);
+      expect(await request(server, { 'x-auth-kind': 'member' }, '/api/projects/project-1/migration/standby/response-evidence')).toBe(403);
+      expect(await request(server, {}, '/api/projects/project-1/migration/standby/response-evidence')).toBe(403);
+      expect(await request(server, { 'x-auth-kind': 'owner' }, '/api/projects/project-1/migration/standby/response-evidence')).toBe(503);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe('standby branch reconciliation route', () => {
+  it('catalog 模式把源站缺失分支创建到目标项目，但不启动容器', async () => {
+    const targetCalls: Array<{ path: string; body: unknown }> = [];
+    const targetApp = express();
+    targetApp.use(express.json());
+    targetApp.get('/api/projects/remote-project/migration/fingerprint', (_req, res) => {
+      res.json(buildStandbyMirrorFingerprint({
+        projectId: 'remote-project',
+        repository: 'owner/repo',
+        defaultBranch: 'main',
+        profiles: [], env: {}, infra: [], routingRules: [], branches: [],
+      }));
+    });
+    targetApp.post('/api/branches', (req, res) => {
+      targetCalls.push({ path: req.path, body: req.body });
+      res.status(201).json({ branch: { id: 'remote-main', branch: 'main', projectId: 'remote-project', githubCommitSha: 'a'.repeat(40) } });
+    });
+    const targetServer = targetApp.listen(0);
+    const targetAddress = targetServer.address() as { port: number };
+    const peer: CdsPeer = {
+      id: 'peer-1', name: 'target', baseUrl: `http://127.0.0.1:${targetAddress.port}`,
+      accessKey: 'target-key', createdAt: new Date().toISOString(),
+    };
+    const sourceBranch = {
+      id: 'source-main', projectId: 'project-1', branch: 'main', status: 'running',
+      // A running source needs immutable runtime evidence; an empty service map is intentionally refused.
+      githubCommitSha: 'a'.repeat(40), services: { api: { profileId: 'api', status: 'running', sourceCommitSha: 'a'.repeat(40) } }, createdAt: new Date().toISOString(),
+    } as unknown as BranchEntry;
+    const project = { id: 'project-1', githubRepoFullName: 'owner/repo', gitDefaultBranch: 'main' };
+    const stateService = {
+      getCustomEnv: () => ({}),
+      getProject: () => project,
+      getCdsPeers: () => [peer],
+      getCdsPeer: () => peer,
+      getBuildProfilesForProject: () => [],
+      getInfraServicesForProject: () => [],
+      getRoutingRulesForProject: () => [],
+      getDefaultBranchFor: () => 'main',
+      getAllBranches: () => [sourceBranch],
+      save: () => undefined,
+    } as unknown as StateService;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as any).cdsUser = { username: 'owner', isSystemOwner: true, authProvider: 'local' };
+      (req as any).cdsSession = { id: 'owner-session' };
+      next();
+    });
+    const auditRows: any[] = [];
+    app.use('/api', createProjectMigrationRouter({
+      stateService, authMode: 'basic', assertProjectAccess: () => null,
+      serverEventLogStore: { record: () => undefined, recordImmediate: async row => { auditRows.push(row); },
+        findRecent: async filter => auditRows.filter(row => row.requestId === filter?.requestId) },
+    }));
+    const sourceServer = app.listen(0);
+    const sourceAddress = sourceServer.address() as { port: number };
+    try {
+      const response = await fetch(`http://127.0.0.1:${sourceAddress.port}/api/projects/project-1/migration/standby/reconcile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: peer.id,
+          remoteProjectId: 'remote-project',
+          policy: 'catalog',
+          dryRun: false,
+        }),
+      });
+      const body = await response.json() as { result: { created: string[]; deployed: string[]; failed: unknown[] } };
+      expect(response.status).toBe(200);
+      expect(body.result.created).toEqual(['main']);
+      expect(body.result.deployed).toEqual([]);
+      expect(body.result.failed).toEqual([]);
+      expect(targetCalls).toEqual([{ path: '/api/branches', body: { branch: 'main', projectId: 'remote-project', expectedCommit: 'a'.repeat(40) } }]);
+    } finally {
+      await Promise.all([
+        new Promise<void>((resolve) => sourceServer.close(() => resolve())),
+        new Promise<void>((resolve) => targetServer.close(() => resolve())),
+      ]);
     }
   });
 });

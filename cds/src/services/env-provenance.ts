@@ -19,6 +19,7 @@
 import type { BuildProfile, EnvKeyProvenance, EnvSource } from '../types.js';
 import { resolveEnvTemplates, ENV_TEMPLATE_RE, envTemplateDefault } from './compose-parser.js';
 import { applyPerBranchDbIsolation, explainPerBranchDbIsolation, slugifyBranchForDb } from './db-scope-isolation.js';
+import { slugifyBranchForImage } from './image-template-vars.js';
 
 /** 与 cross-project-refs 的 CDS_REF_RE 同形（这里不能反向 import：那条链经 preview-entrypoints 会成环） */
 const CDS_REF_TOKEN_RE = /\$\{CDS_REF:[A-Za-z0-9_.~-]+\/[A-Za-z0-9_.~-]+(?:@[^}\s]+)?\}/g;
@@ -65,6 +66,7 @@ export function missingEnvTemplates(env: Record<string, string>): string[] {
 export interface EnvResolveBranchContext {
   branch: string;
   pinnedCommit?: string;
+  ciTargetSha?: string;
   githubCommitSha?: string;
   lastDeployDispatchCommitSha?: string;
   lastDeployDispatchAt?: string;
@@ -132,7 +134,7 @@ function trackSet(
  */
 export function resolveProfileRuntimeEnvWithProvenance(
   entry: EnvResolveBranchContext,
-  profile: Pick<BuildProfile, 'dockerImage' | 'dbScope'>,
+  profile: Pick<BuildProfile, 'dockerImage' | 'dbScope' | 'prebuiltImage'>,
   customEnvLayers: EnvLayer[],
   profileLayers: EnvLayer[],
   opts: {
@@ -221,9 +223,15 @@ export function resolveProfileRuntimeEnvWithProvenance(
   }
 
   // 5. 平台版本元数据(强制覆盖)
-  const deployCommit = entry.pinnedCommit || entry.githubCommitSha || entry.lastDeployDispatchCommitSha;
+  // 预构建模式的镜像 tag 由 ciTargetSha 决定；容器内版本元数据必须指向同一产物。
+  // 源码模式仍以实际检出的 githubCommitSha 为准，避免 CI 旧目标污染本地构建。
+  const deployCommit = entry.pinnedCommit
+    || (profile.prebuiltImage ? entry.ciTargetSha : undefined)
+    || entry.githubCommitSha
+    || entry.lastDeployDispatchCommitSha;
   if (entry.branch) {
     trackSet(tracked, 'VITE_GIT_BRANCH', entry.branch, 'platform-injected', 'version-metadata');
+    trackSet(tracked, 'CDS_BRANCH_SLUG', slugifyBranchForImage(entry.branch), 'platform-injected', 'version-metadata');
   }
   if (deployCommit) {
     for (const key of ['GIT_COMMIT', 'COMMIT_SHA', 'GITHUB_SHA', 'SOURCE_VERSION', 'CDS_COMMIT_SHA']) {

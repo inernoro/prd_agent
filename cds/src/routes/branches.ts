@@ -102,7 +102,8 @@ import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { recordMainThreadSection, timeMainThreadSection } from '../services/main-thread-diagnostics.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
-import { branchVersionFacts } from '../services/running-version.js';
+import { branchVersionFacts, confirmedRunningRevisionSha } from '../services/running-version.js';
+import { buildStandbyBranchConfiguration } from '../services/standby-mirror.js';
 import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView, logPayloadForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
@@ -2379,6 +2380,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
 
+  function guardStandbyRuntimeSnapshot(req: Request, res: Response, entry: BranchEntry, operation: 'deploy' | 'stop'): boolean {
+    const expected = req.body?.standbyExpected;
+    if (expected === undefined) return true; // 人工操作保持原有合同。
+    const status = String(entry.status);
+    const stable = operation === 'deploy' ? status === 'idle' || status === 'stopped' : status === 'running';
+    const projectId = entry.projectId || 'default';
+    let configuration: ReturnType<typeof buildStandbyBranchConfiguration> | undefined;
+    try { configuration = buildStandbyBranchConfiguration({ branch: entry, profiles: stateService.getBuildProfilesForProject(projectId),
+      env: stateService.getCustomEnv(projectId), branchEnv: stateService.getCustomEnvScope(entry.id),
+      infra: stateService.getInfraServicesForProject(projectId), routingRules: stateService.getRoutingRulesForProject(projectId) }); }
+    catch { /* Unknown effective configuration must not become automatic permission. */ }
+    if (!expected || typeof expected !== 'object' || typeof expected.commitSha !== 'string' || !/^[a-f0-9]{40}$/i.test(expected.commitSha)
+      || expected.pinnedCommit !== null || entry.pinnedCommit || !stable || expected.status !== entry.status
+      || typeof expected.configHash !== 'string' || !/^[a-f0-9]{64}$/i.test(expected.configHash) || expected.configHash !== configuration?.configHash
+      || typeof expected.configurationRevision !== 'string' || !/^[a-f0-9]{64}$/i.test(expected.configurationRevision)
+      || expected.configurationRevision !== configuration?.configurationRevision
+      || (operation === 'stop' && confirmedRunningRevisionSha(entry) !== expected.commitSha)
+      || expected.commitSha !== entry.githubCommitSha || (operation === 'deploy' && req.body?.commitSha !== expected.commitSha)) {
+      res.status(409).json({ error: 'standby_snapshot_changed', message: '分支提交、生效配置、固定版本或运行状态已变化，尚未执行自动同步，请重新核对' });
+      return false;
+    }
+    return true;
+  }
+
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
   // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
   // handler 打补丁必然漏（deploy 就漏过一次），改为路由器级一次罩住。
@@ -2985,7 +3010,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       requestId: requestId || null,
       commitSha: input.commitSha || null,
       versionId: input.versionId || null,
-      hasOneShotOptions: input.hasOneShotOptions || false,
+      hasOneShotOptions: input.hasOneShotOptions || req.body?.standbyExpected !== undefined,
       commitPinned: input.commitPinned || false,
       configHash: input.configHash || null,
       source: input.source,
@@ -3172,6 +3197,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     runInput: Omit<BeginDeploymentRunInput, 'projectId' | 'branchId' | 'operationId' | 'operationGeneration' | 'initialStatus'>,
     deploymentInput?: DeploymentInputSnapshot,
   ): Promise<{ started: boolean; lease: BranchOperationLease | null; run: DeploymentRun | undefined }> {
+    // 备用同步的实时条件不进入会丢失条件的重放；沿用一次性选项先核产物的路径。
+    if (req.body?.standbyExpected !== undefined) input = { ...input, hasOneShotOptions: true };
     const artifactProfiles = deploymentInput?.profiles.filter(profile => !input.profileId || profile.id === input.profileId)
       .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(deploymentInput!, entry))) || [];
     const requiresArtifacts = artifactProfiles.some(profile => profile.prebuiltImage && !profile.localArtifact && !profile.managedBuild);
@@ -3202,8 +3229,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let decision: ReturnType<BranchOperationCoordinator['begin']> | undefined;
     try {
       preparation?.assertCurrent();
+      if (req.body?.standbyExpected !== undefined && !guardStandbyRuntimeSnapshot(req, res, entry, 'deploy')) {
+        return { started: false, lease: null, run: undefined };
+      }
       // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
-      decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), { waitForArtifacts });
+      decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), {
+        waitForArtifacts, requireImmediate: req.body?.standbyExpected !== undefined,
+      });
     } catch (error) {
       if (!res.destroyed && !res.headersSent) res.status(error instanceof BranchOperationSupersededError ? 409 : 503).json({
         error: 'latest_target_unavailable', message: '本次目标读取资格已失效，尚未开始部署',
@@ -3333,7 +3365,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
           : decision.reason || '同分支已有写操作正在运行',
     };
-    if (input.versionId && !accepted) {
+    if ((input.versionId || req.body?.standbyExpected !== undefined) && !accepted) {
       // 版本分发器以 HTTP 回执判定受理；200 的 error 流会把产物拒绝误报为成功。
       res.status(409).json({ ...payload, ok: false, error: payload.message });
     } else if (input.sse) {
@@ -6329,7 +6361,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch, projectId, sourceBranchId, inheritSourceModes } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string; inheritSourceModes?: boolean };
+      const { branch, projectId, sourceBranchId, inheritSourceModes, expectedCommit } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string; inheritSourceModes?: boolean; expectedCommit?: string };
+      if (expectedCommit !== undefined && (typeof expectedCommit !== 'string' || !/^[a-f0-9]{40}$/i.test(expectedCommit))) {
+        res.status(400).json({ error: '同步源提交必须是完整 Git 提交标识' });
+        return;
+      }
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -6498,8 +6534,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
         if (needsSource) {
           await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-          await worktreeService.create(branchRepoRoot, branch, worktreePath);
+          if (expectedCommit) await worktreeService.create(branchRepoRoot, branch, worktreePath, expectedCommit);
+          else await worktreeService.create(branchRepoRoot, branch, worktreePath);
+        } else if (expectedCommit) {
+          // 纯镜像分支保持免源码：只核远端身份，不物化 worktree。
+          const actual = await worktreeService.resolveLatestRemoteHead(branchRepoRoot, branch);
+          if (actual !== expectedCommit.toLowerCase()) throw new Error('源提交快照与目标远端分支不同，请重新核对后再同步');
         }
+        if (expectedCommit) entry.githubCommitSha = expectedCommit.toLowerCase();
         stateService.addBranch(entry);
       });
       // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
@@ -13156,6 +13198,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
 
+    if (!guardStandbyRuntimeSnapshot(req, res, entry, 'deploy')) return;
     if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
       res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
       return;
@@ -15978,6 +16021,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
     }
+    if (!guardStandbyRuntimeSnapshot(req, res, entry, 'stop')) return;
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'stop',
       source: 'api.stop-branch',
