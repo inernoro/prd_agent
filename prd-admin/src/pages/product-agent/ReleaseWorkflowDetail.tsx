@@ -53,6 +53,7 @@ import { VersionCopyActions } from './VersionCopyActions';
 import { mergeMemberIds, type PastedMemberMatch } from './releaseMemberMatching';
 import { useReleasePastedMembers } from './useReleasePastedMembers';
 import { ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { ReleaseEditAction } from '@/components/product-agent/ReleaseEditAction';
 import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
@@ -664,6 +665,7 @@ export function ReleaseWorkflowDetail({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {!isNew && release && release.createdBy === currentUser?.userId && release.status !== 'voided' && <ReleaseEditAction release={release} userNames={userDisplayNames} onSaved={setRelease} />}
           {!isNew && release && release.createdBy === currentUser?.userId && <ReleaseDeleteAction id={release.id} code={release.vCode} status={release.status} voidReason={release.voidReason} canDelete={release.canDelete} onDeleted={() => { if (onClose) onClose(); else navigate('/product-agent?section=versions&versionTab=release'); }} />}
           {!isNew && release?.status === 'announcement_pending' && (
             <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-amber)]">

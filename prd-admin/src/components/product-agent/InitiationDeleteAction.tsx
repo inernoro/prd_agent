@@ -36,9 +36,9 @@ function VersionActions({ id, code, status, voidReason, canDelete, onDeleted, ki
     finally { submitting.current = false; setBusy(false); }
   };
   return <span className="inline-flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
-    {canDelete === true && <button type="button" aria-label={`删除 ${code}`} className="text-token-secondary hover:underline" onClick={() => open('delete')}>删除</button>}
     <button type="button" aria-label={`作废 ${code}`} title={voidReason ?? undefined} disabled={status === 'voided'}
       className="text-token-secondary hover:underline disabled:cursor-default disabled:no-underline" onClick={() => open('void')}>{status === 'voided' ? '已作废' : '作废'}</button>
+    {canDelete === true && <button type="button" aria-label={`删除 ${code}`} className="text-token-secondary hover:underline" onClick={() => open('delete')}>删除</button>}
     {mode && <Dialog open onOpenChange={(value) => { if (!submitting.current && !value) setMode(null); }} title={`${label}${variant.title} ${code}`} tone="danger"
       content={<div className="space-y-3 text-sm text-token-secondary">
         {mode === 'void' ? <><p>作废会保留记录、编号和理由，不会删除记录或释放编号，已有下游记录不变。</p><p>申请人或产品管理人员可作废记录，作废后的记录不能继续申领。</p></>

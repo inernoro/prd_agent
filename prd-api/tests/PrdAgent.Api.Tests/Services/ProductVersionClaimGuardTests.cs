@@ -21,6 +21,59 @@ namespace PrdAgent.Api.Tests.Services;
 public class ProductVersionClaimGuardTests
 {
     [Fact]
+    public async Task EditFormalVersionUpdatesOnlyItsBasicInformationWithoutTouchingTNumberOrNotification()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertManyAsync(new[] { new User { UserId = "me", DisplayName = "申请人" }, new User { UserId = "new-owner", DisplayName = "新负责人" } });
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "original-t", ProductId = "product", TCode = "T1.2.3", PlanName = "T原始方案", Status = "approved", CreatedBy = "me" });
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "v-edit", ProductId = "product", InitiationId = "original-t", TCode = "T1.2.3", VCode = "V1.2.4", PlanName = "V原始方案", Status = "released", CreatedBy = "me", TeamMemberIds = new() { "me" }, ClaimNotification = new ProductClaimNotification { Status = "debug_pending" } });
+        var original = await fixture.Db.ProductReleases.Find(x => x.Id == "v-edit").SingleAsync();
+        var originalT = (await fixture.Db.ProductInitiations.Find(x => x.Id == "original-t").SingleAsync()).ToBsonDocument();
+        var request = JsonSerializer.Deserialize<UpdateProductReleaseRequest>(JsonSerializer.Serialize(new {
+            expectedUpdatedAt = original.UpdatedAt, planName = "更正后的V方案", ownerId = "new-owner", teamMemberIds = new[] { "me", "new-owner" },
+            demandSource = " 新来源 ", remark = " 更正资料 ", plannedTrainingMinutes = 30,
+            vCode = "V99.9.9", tCode = "T99.9.9", productId = "other", initiationId = "fake", status = "voided", versionType = "major",
+        }), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.IsType<OkObjectResult>(await fixture.Controller().UpdateRelease("v-edit", request));
+        var edited = await fixture.Db.ProductReleases.Find(x => x.Id == "v-edit").SingleAsync();
+        Assert.Equal("更正后的V方案", edited.PlanName); Assert.Equal("新来源", edited.DemandSource); Assert.Equal("更正资料", edited.Remark);
+        Assert.Equal("new-owner", edited.OwnerId); Assert.Equal("新负责人", edited.OwnerName); Assert.Equal(new[] { "申请人", "新负责人" }, edited.ProjectMemberNames);
+        Assert.Equal(30, edited.PlannedTrainingMinutes); Assert.Equal("V1.2.4", edited.VCode); Assert.Equal("T1.2.3", edited.TCode);
+        Assert.Equal("product", edited.ProductId); Assert.Equal("original-t", edited.InitiationId); Assert.Equal("released", edited.Status);
+        Assert.Equal(original.VersionType, edited.VersionType); Assert.Equal(original.CreatedBy, edited.CreatedBy);
+        Assert.Equal(original.ClaimNotification!.ToBsonDocument(), edited.ClaimNotification!.ToBsonDocument());
+        Assert.Equal(originalT, (await fixture.Db.ProductInitiations.Find(x => x.Id == "original-t").SingleAsync()).ToBsonDocument());
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
+        Assert.IsType<ConflictObjectResult>(await fixture.Controller().UpdateRelease("v-edit", request));
+    }
+
+    [Theory]
+    [InlineData("other-owner", 403)]
+    [InlineData("voided", 409)]
+    [InlineData("deleted", 404)]
+    [InlineData("inaccessible", 404)]
+    [InlineData("sending", 409)]
+    [InlineData("stale", 409)]
+    [InlineData("missing-version", 409)]
+    [InlineData("invalid-owner", 400)]
+    [InlineData("invalid-member", 400)]
+    [InlineData("negative-training", 400)]
+    [InlineData("empty-name", 400)]
+    public async Task EditFormalVersionRefusesUnauthorizedInvalidOrChangedRecordsWithoutWriting(string scenario, int expected)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "v-edit", ProductId = scenario == "inaccessible" ? "inaccessible" : "product", VCode = "V1.2.4", PlanName = "原方案", Status = scenario == "voided" ? "voided" : "released", CreatedBy = scenario == "other-owner" ? "other" : "me", IsDeleted = scenario == "deleted", ClaimNotification = scenario == "sending" ? new ProductClaimNotification { Status = "sending" } : null });
+        var before = await fixture.Db.ProductReleases.Find(x => x.Id == "v-edit").SingleAsync();
+        var request = new UpdateProductReleaseRequest { ExpectedUpdatedAt = scenario == "missing-version" ? null : scenario == "stale" ? before.UpdatedAt.AddSeconds(-1) : before.UpdatedAt, Remark = "不可写入" };
+        if (scenario == "invalid-owner") request.OwnerId = "missing";
+        if (scenario == "invalid-member") request.TeamMemberIds = new() { "missing" };
+        if (scenario == "negative-training") request.PlannedTrainingMinutes = -1;
+        if (scenario == "empty-name") request.PlanName = "   ";
+        Assert.Equal(expected, Assert.IsAssignableFrom<ObjectResult>(await fixture.Controller().UpdateRelease("v-edit", request)).StatusCode);
+        Assert.Equal(before.ToBsonDocument(), (await fixture.Db.ProductReleases.Find(x => x.Id == "v-edit").SingleAsync()).ToBsonDocument());
+    }
+
+    [Fact]
     public async Task VoidKeepsExistingWriteAuthorityAndRefusesSendingNotification()
     {
         await using var fixture = await Fixture.CreateAsync();

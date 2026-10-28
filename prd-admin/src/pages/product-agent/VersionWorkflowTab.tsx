@@ -27,6 +27,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { InitiationDeleteAction, ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { ReleaseEditAction } from '@/components/product-agent/ReleaseEditAction';
 import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 import { VersionDebugClearButton } from '@/components/product-agent/VersionDebugClearButton';
 import { useProductListScope } from '@/lib/productListScope';
@@ -240,7 +241,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     </div>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
       {!selectedProductUnavailable && (tab === 'release'
-          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onOpenLegacy={setLegacyDetail} onChanged={reload} />
+          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} currentUserId={currentUserId} onOpenLegacy={setLegacyDetail} onChanged={reload} />
           : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
     </div>
     {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
@@ -887,12 +888,13 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   );
 }
 
-function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, pending, onOpenLegacy, onChanged }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, currentUserId, pending, onOpenLegacy, onChanged }: {
   pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
   items: WorkflowVersionRecord<ProductRelease>[];
+  currentUserId?: string;
   onChanged: () => void | Promise<void>;
   requirementNames: ReadonlyMap<string, string>;
   names: ReadonlyMap<string, string>;
@@ -926,7 +928,10 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-      <Td onClick={(event) => event.stopPropagation()}><ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} /></Td>
+      <Td onClick={(event) => event.stopPropagation()}><div className="inline-flex items-center gap-2 whitespace-nowrap">
+        {!item.legacyRegistration && item.createdBy === currentUserId && item.status !== 'voided' && <ReleaseEditAction release={item} userNames={names} onSaved={onChanged} />}
+        <ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} />
+      </div></Td>
     </tr>)}{items.length === 0 && !pending && <Empty cols={19}>暂无上线记录</Empty>}
   </Table>
   </>;

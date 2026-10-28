@@ -295,6 +295,26 @@ export function getProductVersionCopyTemplate(kind: 'initiation' | 'release', id
 export function getRelease(id: string) {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}`);
 }
+export type ReleaseBasicUpdate = {
+  expectedUpdatedAt: string;
+  planName?: string;
+  ownerId?: string;
+  teamMemberIds?: string[];
+  demandSource?: string;
+  departmentName?: string;
+  planUrl?: string;
+  requirementDescription?: string;
+  contractParty?: string;
+  remark?: string;
+  openBrandScope?: string;
+  isGlobalOpen?: boolean;
+  plannedReleaseAt?: string;
+  releasedAt?: string;
+  plannedTrainingMinutes?: number;
+};
+export function updateRelease(id: string, body: ReleaseBasicUpdate) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}`, { method: 'PATCH', body });
+}
 export function getInheritReleaseManifest(productId: string) {
   return apiRequest<{ previousReleaseId: string | null; previousVCode?: string | null; items: ReleaseFeatureItem[] }>(
     `/api/product/products/${productId}/releases/inherit-manifest`,

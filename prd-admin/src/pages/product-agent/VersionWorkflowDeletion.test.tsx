@@ -9,11 +9,12 @@ import detailSource from './InitiationWorkflowDetail.tsx?raw';
 import releaseDetailSource from './ReleaseWorkflowDetail.tsx?raw';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const api = vi.hoisted(() => ({ getWorkflowInitiations: vi.fn(), getWorkflowReleases: vi.fn() }));
+const api = vi.hoisted(() => ({ getWorkflowInitiations: vi.fn(), getWorkflowReleases: vi.fn(), updateRelease: vi.fn() }));
 vi.mock('@/services/real/productAgent', async (original) => ({
   ...await original<typeof import('@/services/real/productAgent')>(),
   getWorkflowInitiations: api.getWorkflowInitiations,
   getWorkflowReleases: api.getWorkflowReleases,
+  updateRelease: api.updateRelease,
   listProductVersionReviewSources: async () => ({ success: true, data: { items: [], canUseAllReviews: false } }),
   getInitiationPlanDefaults: async () => ({ success: true, data: { meetingDraftCount: 1 } }),
   listVersionApplicationProducts: async () => ({ success: true, data: { items: [{ id: 'a', name: '应用甲' }, { id: 'b', name: '应用乙' }] } }),
@@ -61,7 +62,7 @@ describe('末尾操作列只保留编辑、删除、作废', () => {
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('T6.19.0');
     expect(buttons()[0].closest('td')).toBe(buttons()[0].closest('tr')?.lastElementChild);
-    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['编辑', '删除', '作废'], ['编辑', '作废']]);
+    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['编辑', '作废', '删除'], ['编辑', '作废']]);
     expect(host.querySelector('thead tr')?.lastElementChild?.textContent).toBe('操作');
     expect([...host.querySelectorAll('button')].filter((button) => ['会议结果', '继续申领', '修改资料', '历史详情', '修改并重新评审'].includes(button.textContent ?? ''))).toHaveLength(0);
   });
@@ -115,16 +116,34 @@ describe('末尾操作列只保留编辑、删除、作废', () => {
   it('详情也使用后端资格，不凭有无 T 号自行开放删除', () => {
     expect(detailSource).toContain('canDelete={initiation.canDelete}');
   });
-  it('正式版本保留作废，只读资料保持原范围，删除仍由后端资格控制', async () => {
+  it('正式版本具备编辑、作废、有资格的删除，顺序与内部版本一致', async () => {
     const release = (id: string, productId: string, canDelete: boolean) => ({ id, productId, vCode: id === 'v-latest' ? 'V1.2.4' : 'V1.2.3', canDelete, createdBy: 'me', planName: id, status: 'released', versionType: 'minor', projectType: 'standard', teamMemberIds: [], requirementIds: [], openBrandScope: '', createdAt: '2026-10-27', updatedAt: '2026-10-27' });
     api.getWorkflowReleases.mockResolvedValue({ success: true, data: { items: [{ record: release('v-latest', 'a', true) }, { record: release('v-old', 'b', false) }], requirementNames: {} } });
     await act(async () => root.render(<MemoryRouter initialEntries={['/product-agent?section=versions&versionTab=release']}><VersionWorkflowTab /></MemoryRouter>));
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('V1.2.4');
     expect(buttons()[0].closest('td')).toBe(buttons()[0].closest('tr')?.lastElementChild);
-    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['删除', '作废'], ['作废']]);
+    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['编辑', '作废', '删除'], ['编辑', '作废']]);
     expect(host.querySelector('thead tr')?.lastElementChild?.textContent).toBe('操作');
     expect(releaseDetailSource).toContain('canDelete={release.canDelete}');
+  });
+  it('正式列表点击编辑打开资料弹窗，保存后重读同一列表，不修改来源T或触发行跳转', async () => {
+    const release = { ...record('v-edit', 'a', 'T1.2.3', true), vCode: 'V1.2.4', status: 'released', teamMemberIds: ['me'], openBrandScope: '全域开放', isTemporaryOptimization: false, ownerId: 'me', remark: '旧备注' };
+    api.getWorkflowReleases.mockResolvedValueOnce({ success: true, data: { items: [{ record: release }], requirementNames: {} } })
+      .mockResolvedValue({ success: true, data: { items: [{ record: { ...release, remark: '保存后的资料' } }], requirementNames: {} } });
+    api.updateRelease.mockResolvedValue({ success: true, data: { ...release, remark: '保存后的资料' } });
+    await act(async () => root.render(<MemoryRouter initialEntries={['/product-agent?section=versions&versionTab=release']}><VersionWorkflowTab /></MemoryRouter>));
+    await act(async () => host.querySelector('tbody tr')!.lastElementChild!.querySelector<HTMLButtonElement>('button')!.click());
+    expect(host.querySelector('[role=dialog] h3')?.textContent).toBe('编辑正式版本资料');
+    await act(async () => {
+      const area = [...host.querySelectorAll('label')].find((label) => label.textContent?.startsWith('备注'))!.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(area, '保存后的资料');
+      area.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => [...host.querySelectorAll('button')].find((button) => button.textContent === '保存修改')!.click());
+    expect(api.updateRelease).toHaveBeenCalledWith('v-edit', { expectedUpdatedAt: release.updatedAt, remark: '保存后的资料' });
+    expect(api.getWorkflowReleases).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[role=dialog]')).toBeNull();
   });
   it('点击已发号记录编辑打开原编辑弹窗，不执行删除或进入行详情', async () => {
     await mount();

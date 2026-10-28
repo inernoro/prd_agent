@@ -17,14 +17,14 @@ async function fill(value = '项目方案调整作废') { await act(async () => 
 }); }
 const button = (text: string) => [...host.querySelectorAll('button')].find((item) => item.textContent === text);
 describe('作废与删除是独立动作', () => {
-  it.each(['T', 'V'])('%s列表始终保留作废，有资格时按删除、作废排列且删除不调用作废接口', async (kind) => {
+  it.each(['T', 'V'])('%s列表始终保留作废，有资格时按作废、删除排列且删除不调用作废接口', async (kind) => {
     const Action = kind === 'T' ? InitiationDeleteAction : ReleaseDeleteAction;
     const remove = kind === 'T' ? api.t : api.v;
     remove.mockResolvedValue({ success: true, data: { deleted: true } });
     await act(async () => root.render(<Action id="latest" code={`${kind}1.2.4`} canDelete={false} onDeleted={vi.fn()} />));
     expect([...host.querySelectorAll('button')].map((item) => item.textContent)).toEqual(['作废']);
     await act(async () => root.render(<Action id="latest" code={`${kind}1.2.4`} canDelete onDeleted={vi.fn()} />));
-    expect([...host.querySelectorAll('button')].map((item) => item.textContent)).toEqual(['删除', '作废']);
+    expect([...host.querySelectorAll('button')].map((item) => item.textContent)).toEqual(['作废', '删除']);
     await click('删除'); await fill('删除重复申请记录'); await click('确认删除');
     expect(remove).toHaveBeenCalledWith('latest', '删除重复申请记录');
     expect(api.void).not.toHaveBeenCalled();
