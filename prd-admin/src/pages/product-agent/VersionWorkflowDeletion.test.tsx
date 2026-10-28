@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.clearAllMocks(); });
 
-describe('末尾操作列只保留编辑与删除', () => {
+describe('末尾操作列只保留编辑、删除、作废', () => {
   it('普通用户不显示调试清空入口，管理员在T/V各页签仅看到对应按钮', async () => {
     await mount();
     expect(host.textContent).not.toContain('调试清空');
@@ -56,14 +56,14 @@ describe('末尾操作列只保留编辑与删除', () => {
     expect(host.textContent).toContain('调试清空V记录');
     expect(host.textContent).not.toContain('调试清空T记录');
   });
-  it('操作列仅有编辑及有资格的删除，始终位于最末尾', async () => {
+  it('操作列仅有编辑、作废及有资格的删除，始终位于最末尾', async () => {
     await mount();
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('T6.19.0');
     expect(buttons()[0].closest('td')).toBe(buttons()[0].closest('tr')?.lastElementChild);
-    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['编辑', '删除'], ['编辑']]);
+    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['编辑', '删除', '作废'], ['编辑', '作废']]);
     expect(host.querySelector('thead tr')?.lastElementChild?.textContent).toBe('操作');
-    expect([...host.querySelectorAll('button')].filter((button) => ['作废', '会议结果', '继续申领', '修改资料', '历史详情', '修改并重新评审'].includes(button.textContent ?? ''))).toHaveLength(0);
+    expect([...host.querySelectorAll('button')].filter((button) => ['会议结果', '继续申领', '修改资料', '历史详情', '修改并重新评审'].includes(button.textContent ?? ''))).toHaveLength(0);
   });
   it('筛选到旧记录所属产品时不把它当成最新记录', async () => {
     await mount('&productId=b');
@@ -71,25 +71,58 @@ describe('末尾操作列只保留编辑与删除', () => {
     expect(host.textContent).not.toContain('T6.19.0');
     expect(buttons()).toHaveLength(0);
   });
+  it('同一应用最新记录由他人申领时，筛选我的申请不会让旧记录获得删除资格', async () => {
+    api.getWorkflowInitiations.mockResolvedValue({ success: true, data: { items: [
+      { record: { ...record('latest-other', 'a', 'T1.2.4', false), createdBy: 'colleague' } },
+      { record: record('my-old', 'a', 'T1.2.3', false) },
+      { record: record('other-app-latest', 'b', 'T9.0.0', true) },
+    ], requirementNames: {} } });
+    await mount('&productId=a');
+    await act(async () => {
+      const scope = [...host.querySelectorAll('select')].find((select) => select.querySelector('option[value=mine]'))!;
+      scope.value = 'mine'; scope.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(host.textContent).toContain('方案-my-old');
+    expect(host.textContent).not.toContain('方案-latest-other');
+    expect(host.textContent).not.toContain('方案-other-app-latest');
+    expect(buttons()).toHaveLength(0);
+    expect([...host.querySelector('tbody tr')!.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent)).toEqual(['编辑', '作废']);
+  });
+  it.each(['initiation', 'release'])('%s搜索仅显示同应用旧记录时仍无删除，其他应用最新可独立删除', async (tab) => {
+    const items = [record('same-app-old', 'a', 'T1.2.3', false), record('same-app-new', 'a', 'T1.2.4', true), record('other-app-new', 'b', 'T9.0.0', true)];
+    api.getWorkflowInitiations.mockResolvedValue({ success: true, data: { items: items.map((item) => ({ record: item })), requirementNames: {} } });
+    api.getWorkflowReleases.mockResolvedValue({ success: true, data: { items: items.map((item, index) => ({ record: { ...item, vCode: `V1.2.${index + 3}`, status: 'released', teamMemberIds: [], openBrandScope: '' } })), requirementNames: {} } });
+    await act(async () => root.render(<MemoryRouter initialEntries={[`/product-agent?section=versions&versionTab=${tab}`]}><VersionWorkflowTab /></MemoryRouter>));
+    expect(buttons()).toHaveLength(2);
+    await act(async () => {
+      const search = host.querySelector<HTMLInputElement>('input[placeholder="搜索版本号、方案名称等"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, '方案-same-app-old');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(host.textContent).toContain('方案-same-app-old');
+    expect(host.textContent).not.toContain('方案-same-app-new');
+    expect(buttons()).toHaveLength(0);
+    expect([...host.querySelector('tbody tr')!.lastElementChild!.querySelectorAll('button')].some((button) => button.textContent === '作废')).toBe(true);
+  });
   it('最新记录已有下游关联时所有行均无删除入口', async () => {
     api.getWorkflowInitiations.mockResolvedValue({ success: true, data: { items: [
       { record: record('latest', 'a', 'T6.19.0', false) }, { record: record('old', 'b', 'T6.18.13', false) },
     ], requirementNames: {} } });
     await mount();
     expect(buttons()).toHaveLength(0);
-    expect([...host.querySelectorAll('tbody tr')].flatMap((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual(['编辑', '编辑']);
+    expect([...host.querySelectorAll('tbody tr')].flatMap((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual(['编辑', '作废', '编辑', '作废']);
   });
   it('详情也使用后端资格，不凭有无 T 号自行开放删除', () => {
     expect(detailSource).toContain('canDelete={initiation.canDelete}');
   });
-  it('正式版本移除作废，只读资料保持原范围，删除仍由后端资格控制', async () => {
+  it('正式版本保留作废，只读资料保持原范围，删除仍由后端资格控制', async () => {
     const release = (id: string, productId: string, canDelete: boolean) => ({ id, productId, vCode: id === 'v-latest' ? 'V1.2.4' : 'V1.2.3', canDelete, createdBy: 'me', planName: id, status: 'released', versionType: 'minor', projectType: 'standard', teamMemberIds: [], requirementIds: [], openBrandScope: '', createdAt: '2026-10-27', updatedAt: '2026-10-27' });
     api.getWorkflowReleases.mockResolvedValue({ success: true, data: { items: [{ record: release('v-latest', 'a', true) }, { record: release('v-old', 'b', false) }], requirementNames: {} } });
     await act(async () => root.render(<MemoryRouter initialEntries={['/product-agent?section=versions&versionTab=release']}><VersionWorkflowTab /></MemoryRouter>));
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('V1.2.4');
     expect(buttons()[0].closest('td')).toBe(buttons()[0].closest('tr')?.lastElementChild);
-    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['删除'], []]);
+    expect([...host.querySelectorAll('tbody tr')].map((row) => [...row.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent))).toEqual([['删除', '作废'], ['作废']]);
     expect(host.querySelector('thead tr')?.lastElementChild?.textContent).toBe('操作');
     expect(releaseDetailSource).toContain('canDelete={release.canDelete}');
   });
@@ -101,7 +134,7 @@ describe('末尾操作列只保留编辑与删除', () => {
   it('待处理立项只显示统一编辑入口，仍可进入原续办表单', async () => {
     api.getWorkflowInitiations.mockResolvedValue({ success: true, data: { items: [{ record: { ...record('draft', 'a', '', false), status: 'review_failed' } }], requirementNames: {} } });
     await mount();
-    expect([...host.querySelector('tbody tr')!.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent)).toEqual(['编辑']);
+    expect([...host.querySelector('tbody tr')!.lastElementChild!.querySelectorAll('button')].map((button) => button.textContent)).toEqual(['编辑', '作废']);
     await act(async () => host.querySelector('tbody tr')!.lastElementChild!.querySelector<HTMLButtonElement>('button')!.click());
     expect(host.querySelector('[role=dialog] h3')?.textContent).toBe('重新发起立项');
   });

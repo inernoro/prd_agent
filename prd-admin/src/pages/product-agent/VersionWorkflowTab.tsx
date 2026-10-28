@@ -876,7 +876,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Td onClick={(e) => e.stopPropagation()}>
         <div className="inline-flex items-center gap-2 whitespace-nowrap">
           {canEdit && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">编辑</button>}
-          <InitiationDeleteAction id={item.id} code={item.tCode ?? '未发号立项'} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} showVoid={false} onDeleted={onChanged} />
+          <InitiationDeleteAction id={item.id} code={item.tCode ?? '未发号立项'} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} />
         </div>
       </Td>
     </tr>
@@ -926,7 +926,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-      <Td onClick={(event) => event.stopPropagation()}><ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} showVoid={false} onDeleted={onChanged} /></Td>
+      <Td onClick={(event) => event.stopPropagation()}><ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} /></Td>
     </tr>)}{items.length === 0 && !pending && <Empty cols={19}>暂无上线记录</Empty>}
   </Table>
   </>;
