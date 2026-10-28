@@ -21,6 +21,19 @@ function fixture() {
 }
 
 describe('原任务的产物等待与领取', () => {
+  it.each(['manual', 'webhook'] as const)('实时快照%s请求不排产物等待，不并入或覆盖在途操作', trigger => {
+    const coordinator = new BranchOperationCoordinator();
+    const request = { branchId: 'b', projectId: 'p', kind: 'deploy' as const, trigger,
+      commitSha: target, commitPinned: true, configHash: 'cfg', hasOneShotOptions: true };
+    expect(coordinator.begin(request, { waitForArtifacts: true, requireImmediate: true }).status).toBe('rejected');
+    expect(coordinator.getArtifactWaiters()).toEqual([]); expect(coordinator.getActiveOperations()).toEqual([]);
+    const active = coordinator.begin({ ...request, trigger: 'manual', hasOneShotOptions: false });
+    expect(active.status).toBe('started');
+    expect(coordinator.begin(request, { requireImmediate: true }).status).toBe('rejected');
+    expect(coordinator.getPendingWebhookDeploy('b')).toBeUndefined(); expect(active.lease!.isCurrent()).toBe(true);
+    coordinator.completeAll(active.lease!, 'completed');
+    expect(coordinator.begin(request, { requireImmediate: true }).status).toBe('started');
+  });
   it('未执行的原操作进入等待，不占分支执行租约且常规drain不能提前领取', () => {
     const { coordinator, decision, request } = fixture();
     expect(decision.status).toBe('merged'); expect(coordinator.getActiveOperations()).toHaveLength(0);

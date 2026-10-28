@@ -2999,7 +2999,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       requestId: requestId || null,
       commitSha: input.commitSha || null,
       versionId: input.versionId || null,
-      hasOneShotOptions: input.hasOneShotOptions || false,
+      hasOneShotOptions: input.hasOneShotOptions || req.body?.standbyExpected !== undefined,
       commitPinned: input.commitPinned || false,
       configHash: input.configHash || null,
       source: input.source,
@@ -3186,6 +3186,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     runInput: Omit<BeginDeploymentRunInput, 'projectId' | 'branchId' | 'operationId' | 'operationGeneration' | 'initialStatus'>,
     deploymentInput?: DeploymentInputSnapshot,
   ): Promise<{ started: boolean; lease: BranchOperationLease | null; run: DeploymentRun | undefined }> {
+    // 备用同步的实时条件不进入会丢失条件的重放；沿用一次性选项先核产物的路径。
+    if (req.body?.standbyExpected !== undefined) input = { ...input, hasOneShotOptions: true };
     const artifactProfiles = deploymentInput?.profiles.filter(profile => !input.profileId || profile.id === input.profileId)
       .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(deploymentInput!, entry))) || [];
     const requiresArtifacts = artifactProfiles.some(profile => profile.prebuiltImage && !profile.localArtifact && !profile.managedBuild);
@@ -3216,8 +3218,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let decision: ReturnType<BranchOperationCoordinator['begin']> | undefined;
     try {
       preparation?.assertCurrent();
+      if (req.body?.standbyExpected !== undefined && !guardStandbyRuntimeSnapshot(req, res, entry, 'deploy')) {
+        return { started: false, lease: null, run: undefined };
+      }
       // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
-      decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), { waitForArtifacts });
+      decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), {
+        waitForArtifacts, requireImmediate: req.body?.standbyExpected !== undefined,
+      });
     } catch (error) {
       if (!res.destroyed && !res.headersSent) res.status(error instanceof BranchOperationSupersededError ? 409 : 503).json({
         error: 'latest_target_unavailable', message: '本次目标读取资格已失效，尚未开始部署',
@@ -3347,7 +3354,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
           : decision.reason || '同分支已有写操作正在运行',
     };
-    if (input.versionId && !accepted) {
+    if ((input.versionId || req.body?.standbyExpected !== undefined) && !accepted) {
       // 版本分发器以 HTTP 回执判定受理；200 的 error 流会把产物拒绝误报为成功。
       res.status(409).json({ ...payload, ok: false, error: payload.message });
     } else if (input.sse) {
