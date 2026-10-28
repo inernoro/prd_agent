@@ -1,3 +1,4 @@
+using PrdAgent.Api.Services.MdToPpt;
 using System.Text;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
@@ -148,7 +149,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             string? presentationHtml = null;
             if (run.Operation == DesignArtifactOperations.Edit)
             {
-                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt && run.PptEditContext is { } frozenBase)
+                {
+                    var continuation = scope.ServiceProvider.GetRequiredService<IHtmlPptContinuationService>();
+                    var resolvedBase = await continuation.ValidateFrozenContextAsync(frozenBase, run.UserId, executionCts.Token);
+                    editable = await sites.GetEditableEntryHtmlAsync(frozenBase.BaseSiteId, run.UserId, executionCts.Token);
+                    if (editable.ContentVersion != frozenBase.BaseContentVersion
+                        || editable.Site.PublishedRevisionId != frozenBase.BasePublishedRevisionId)
+                        throw new InvalidOperationException("演示稿线上版本已变化，修改任务未发送模型请求");
+                    parent = await revisions.GetAsync(frozenBase.BaseSiteId, frozenBase.BaseRevisionId,
+                        run.UserId, executionCts.Token)
+                        ?? throw new InvalidOperationException("演示稿基稿不存在或无权访问");
+                    presentationHtml = resolvedBase.Html;
+                }
+                else if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
                 {
                     var parentRunId = run.PresentationInput?.ParentRunId;
                     if (string.IsNullOrWhiteSpace(parentRunId))

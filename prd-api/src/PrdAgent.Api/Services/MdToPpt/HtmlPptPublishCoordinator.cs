@@ -61,6 +61,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
     private readonly IHtmlPptDesignArtifactAdapter _artifacts;
     private readonly ILogger<HtmlPptPublishCoordinator> _logger;
     private readonly IWebPageDesignArtifactLifecycleAdapter? _openDesignArtifacts;
+    private readonly IHtmlPptContinuationService? _continuation;
 
     public HtmlPptPublishCoordinator(
         MongoDbContext db,
@@ -68,7 +69,8 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         IHostedSiteRevisionService revisions,
         IHtmlPptDesignArtifactAdapter artifacts,
         ILogger<HtmlPptPublishCoordinator> logger,
-        IWebPageDesignArtifactLifecycleAdapter? openDesignArtifacts = null)
+        IWebPageDesignArtifactLifecycleAdapter? openDesignArtifacts = null,
+        IHtmlPptContinuationService? continuation = null)
     {
         _db = db;
         _sites = sites;
@@ -76,6 +78,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         _artifacts = artifacts;
         _logger = logger;
         _openDesignArtifacts = openDesignArtifacts;
+        _continuation = continuation;
     }
 
     public async Task<HtmlPptPublishResult> PublishAsync(
@@ -266,7 +269,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                     "md-to-ppt",
                     claimed.PublishIntentId!,
                     CancellationToken.None)
-                : await LoadOpenDesignSiteAsync(openDesignRun, claimed.UserId);
+                : await LoadOpenDesignSiteAsync(openDesignRun, claimed.UserId, claimedHtml);
 
             if (claimed.PublishIntentTeamIds.Count > 0)
             {
@@ -385,7 +388,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         }
     }
 
-    private async Task<HostedSite> LoadOpenDesignSiteAsync(DesignArtifactRun run, string userId)
+    private async Task<HostedSite> LoadOpenDesignSiteAsync(DesignArtifactRun run, string userId, string completedHtml)
     {
         var siteId = run.Operation == DesignArtifactOperations.Edit
             ? run.ProducedArtifactSiteId
@@ -409,6 +412,27 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
             throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿的完整产物仍在恢复");
         if (run.Operation == DesignArtifactOperations.Edit)
         {
+            if (run.PptEditContext is { } frozenBase)
+            {
+                if (_continuation == null || run.TargetSiteId != site.Id || frozenBase.BaseSiteId != site.Id
+                    || run.PresentationInput?.ParentRunId != frozenBase.SourceRunId
+                    || !FixedHashEquals(run.PresentationInput?.ParentPackageHash, frozenBase.SourcePackageHash))
+                    throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿修改来源身份不一致");
+                var produced = await LoadOpenDesignRevisionAsync(run, userId, site.Id, completedHtml, requirePublished: false);
+                if (produced.ParentRevisionId != frozenBase.BaseRevisionId
+                    || produced.BasedOnContentVersion != frozenBase.BaseContentVersion)
+                    throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿草稿与冻结基稿不一致");
+                _ = HostedSitePreviewAccessService.ComputePackageFingerprint(produced.VerifiedFiles);
+                // 亲自产出的版本已上线时允许原发布恢复绑定；其余情况必须仍命中冻结的线上围栏。
+                // PublishAsync 继续用 BasedOnContentVersion CAS，不把未发布父稿误当线上指针。
+                if (site.PublishedRevisionId != produced.Id)
+                {
+                    try { await _continuation.ValidateFrozenContextAsync(frozenBase, userId, CancellationToken.None); }
+                    catch (HtmlPptContinuationException ex)
+                    { throw new HtmlPptPublishPendingException(ex.Code, ex.Message); }
+                }
+                return site;
+            }
             var parentRunId = run.PresentationInput?.ParentRunId;
             var parent = string.IsNullOrWhiteSpace(parentRunId)
                 ? null

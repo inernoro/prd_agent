@@ -19,7 +19,11 @@ public sealed record HtmlPptOpenDesignInput(
     string? StyleInstruction = null,
     string? ManualEditHtml = null,
     string? SourcePlanJson = null,
-    string? SourcePlanHash = null);
+    string? SourcePlanHash = null,
+    HtmlPptEditContext? EditContext = null,
+    string? RuntimeBudgetScopeId = null,
+    string? PptCompletionId = null,
+    string? ModificationRequestHash = null);
 
 public interface IHtmlPptOpenDesignRunService
 {
@@ -40,6 +44,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
     private readonly IDesignGenerationSettingsService _designSettings;
     private readonly IConfiguration _configuration;
     private readonly ILogger<HtmlPptOpenDesignRunService> _logger;
+    private readonly IHtmlPptContinuationService? _continuation;
 
     public HtmlPptOpenDesignRunService(
         MongoDbContext db,
@@ -48,7 +53,8 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         IRunEventStore events,
         IDesignGenerationSettingsService designSettings,
         IConfiguration configuration,
-        ILogger<HtmlPptOpenDesignRunService> logger)
+        ILogger<HtmlPptOpenDesignRunService> logger,
+        IHtmlPptContinuationService? continuation = null)
     {
         _db = db;
         _providers = providers;
@@ -57,6 +63,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         _designSettings = designSettings;
         _configuration = configuration;
         _logger = logger;
+        _continuation = continuation;
     }
 
     public async Task<DesignArtifactRun> QueueAsync(
@@ -105,6 +112,10 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
             Instruction = input.Instruction.Trim(),
             Title = compatibilityRun.Title,
             LinkedRunId = compatibilityRun.Id,
+            RuntimeBudgetScopeId = input.RuntimeBudgetScopeId,
+            PptCompletionId = input.PptCompletionId,
+            PptEditContext = input.EditContext,
+            PptModificationRequestHash = input.ModificationRequestHash,
             KnowledgeReferences = compatibilityRun.KnowledgeReferences.ToList(),
             UploadedSources =
             [
@@ -156,7 +167,24 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
             run.DesignDirection.PromptFingerprint = DesignGenerationSettingsService.Fingerprint(run.DesignDirection);
         }
 
-        if (operation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(input.ParentRunId))
+        if (input.EditContext != null)
+        {
+            if (_continuation == null || operation != DesignArtifactOperations.Edit
+                || input.ParentRunId != input.EditContext.SourceRunId
+                || string.IsNullOrWhiteSpace(input.RuntimeBudgetScopeId)
+                || string.IsNullOrWhiteSpace(input.PptCompletionId)
+                || string.IsNullOrWhiteSpace(input.ModificationRequestHash))
+                throw new InvalidOperationException("演示稿修改缺少受信准入身份");
+            await _continuation.ValidateFrozenContextAsync(input.EditContext, compatibilityRun.UserId, ct);
+            var parent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                    && item.Id == input.ParentRunId && item.UserId == compatibilityRun.UserId
+                    && item.ArtifactType == DesignArtifactTypes.HtmlPpt && item.Status == RunStatuses.Done)
+                .FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("演示稿来源版本不存在或无权访问");
+            run.TargetSiteId = input.EditContext.BaseSiteId;
+            DesignArtifactBriefFactory.TryInheritFrozenContext(run, parent,
+                DesignArtifactContextSources.InheritedSiteSourceRun, input.ParentRunId);
+        }
+        else if (operation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(input.ParentRunId))
         {
             var parent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
                     && item.Id == input.ParentRunId
@@ -203,7 +231,18 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         }
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
 
-        await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: ct);
+        try { await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None); }
+        catch (MongoWriteException ex) when (input.EditContext != null
+            && ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var replay = await _db.DesignArtifactRuns.Find(item => item.Id == run.Id
+                    && item.UserId == run.UserId && item.DeploymentSlug == run.DeploymentSlug
+                    && item.RuntimeBudgetScopeId == run.RuntimeBudgetScopeId
+                    && item.PptCompletionId == run.PptCompletionId
+                    && item.PptModificationRequestHash == input.ModificationRequestHash)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            return replay ?? throw new InvalidOperationException("同一修改操作身份与已创建任务不一致");
+        }
         await _db.MdToPptRuns.UpdateOneAsync(
             item => item.Id == compatibilityRun.Id && item.UserId == compatibilityRun.UserId,
             Builders<MdToPptRun>.Update

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -68,7 +69,16 @@ describe('md-to-ppt native request URLs', () => {
   it('uses the configured API base path for patch streaming', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.test/platform/');
     const done = vi.fn();
-    const fetchMock = vi.fn().mockResolvedValue(sseResponse('done', { html: '<html></html>' }));
+    const expectedEditContext = {
+      sourceRunId: 'run-1', sourcePackageHash: 'source-package', baseSiteId: 'site',
+      baseRevisionId: 'restored', basePublishedRevisionId: 'restored',
+      baseContentVersion: '2026-10-24T14:14:51.421Z', baseHtmlHash: 'entry-hash', baseFilesFingerprint: 'files-hash',
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'run-1', html: '<html>never silently substitute this newer body</html>', editContext: expectedEditContext,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(sseResponse('done', { html: '<html></html>' }));
     vi.stubGlobal('fetch', fetchMock);
 
     streamMdToPptPatch({
@@ -84,12 +94,30 @@ describe('md-to-ppt native request URLs', () => {
       'https://api.example.test/platform/api/md-to-ppt/patch',
       expect.objectContaining({ method: 'POST' }),
     );
-    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://api.example.test/platform/api/md-to-ppt/runs/run-1',
+      'https://api.example.test/platform/api/md-to-ppt/patch',
+    ]);
+    const body = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(body).toMatchObject({
+      expectedEditContext,
       parentRunId: 'run-1',
       currentHtml: '<html></html>',
       manualEditHtml: '<html><body>用户草稿</body></html>',
       slideRequest: '强化标题',
     });
+    expect(body.idempotencyKey.replaceAll('-', '')).toMatch(/^[a-f0-9]{32}$/i);
+  });
+
+  it('does not submit when the current source has no safe continuation context', async () => {
+    const error = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'run-1', editContextError: '当前恢复关系无法验证，原稿保留',
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    streamMdToPptPatch({ parentRunId: 'run-1', currentHtml: '<html></html>', slideRequest: '改标题', onError: error });
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith('当前恢复关系无法验证，原稿保留'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.method).not.toBe('POST');
   });
 });

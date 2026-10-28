@@ -178,7 +178,8 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
                           && item.UserId == run.UserId
                           && item.SourcePlanHash == sourceFingerprint
                           && item.Status == "active"
-                          && item.ExpiresAt > now)
+                          && item.ExpiresAt > now
+                          && (item.PptCompletion == null || item.PptOperationPurpose != GatewayPptCompletionPurposes.Modification))
             .FirstOrDefaultAsync(ct);
         if (matched is not null)
         {
@@ -255,7 +256,24 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
         if (BuildIdentity.Compare(ActualRuntimeCommit(), completion.CandidateCommit) != BuildIdentity.MatchState.Match)
             throw BudgetFailure("task_budget_candidate_commit_mismatch", "PPT 完成阶段额度合同与当前受信服务版本不一致，未发送模型请求");
 
-        if (run.Operation == DesignArtifactOperations.Edit)
+        var isModificationStart = scope.PptOperationPurpose == GatewayPptCompletionPurposes.Modification
+                                  && scope.PptModificationRunId == run.Id;
+        if (scope.PptOperationPurpose == GatewayPptCompletionPurposes.Modification
+            && !isModificationStart && run.Operation != DesignArtifactOperations.Edit)
+            throw BudgetFailure("task_budget_modification_binding_invalid", "本次修改合同不能用于其他生成任务，未发送模型请求");
+        if (isModificationStart)
+        {
+            if (run.Operation != DesignArtifactOperations.Edit || run.PptEditContext == null
+                || scope.PptModificationRequestHash != run.PptModificationRequestHash
+                || scope.PptModificationBaseFingerprint != HtmlPptContinuationService.ContextFingerprint(run.PptEditContext))
+                throw BudgetFailure("task_budget_modification_binding_invalid", "本次修改与冻结基稿或操作身份不一致，未发送模型请求");
+        }
+        if (scope.PptOperationPurpose == GatewayPptCompletionPurposes.Modification && !isModificationStart
+            && (scope.PptPendingManualRunId != run.Id || run.PptEditContext == null
+                || scope.PptManualRequestHash != run.PptModificationRequestHash
+                || scope.PptManualBaseFingerprint != HtmlPptContinuationService.ContextFingerprint(run.PptEditContext)))
+            throw BudgetFailure("task_budget_modification_binding_invalid", "人工保存与本次修改合同不一致，未发送模型请求");
+        if (run.Operation == DesignArtifactOperations.Edit && !isModificationStart)
         {
             var compatibility = await _map.MdToPptRuns.Find(item => item.Id == run.Id && item.UserId == run.UserId)
                 .FirstOrDefaultAsync(ct);
@@ -349,7 +367,7 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
             return new(updated, updated.PptCompletion, updated.PptCompletion.ManualSave, GatewayPptCompletionPhases.ManualSave);
         }
 
-        if (run.Operation != DesignArtifactOperations.Generate)
+        if (run.Operation != DesignArtifactOperations.Generate && !isModificationStart)
             throw BudgetFailure("task_budget_completion_phase_invalid", "PPT 完成阶段无法识别，未发送模型请求");
         var isInitial = completion.Status == GatewayPptCompletionStatuses.Pending
                         && string.IsNullOrWhiteSpace(completion.GenerationRunId);

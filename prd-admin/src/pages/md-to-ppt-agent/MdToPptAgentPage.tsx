@@ -35,6 +35,7 @@ import {
   type OutlineSlide,
   streamMdToPptConvert,
   streamMdToPptPatch,
+  createMdToPptModificationKey,
   publishMdToPpt,
   getMdToPptRun,
   getRecentMdToPptRuns,
@@ -2864,6 +2865,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿；
   //     styleOverride 用于「换风格/换模板 = AI 按新参照重绘」（不传则沿用当前选择；
   //     templateId 传 null 表示明确切回官方主题）。
+  const patchSubmissionRef = useRef(false);
+
   const startPatch = useCallback(
     (
       instruction: string,
@@ -2876,12 +2879,14 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const base = baseHtml ?? generatedHtml;
       const sourceRunId = parentRunIdOverride ?? activeRunId;
       const sourceSiteUrl = artifactSiteUrl;
-      if (!base || isProcessing || !mountedRef.current) return;
+      if (!base || isProcessing || patchSubmissionRef.current || !mountedRef.current) return;
       if (!sourceRunId) {
         toast.error('无法精修', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
         return;
       }
 
+      const modificationKey = createMdToPptModificationKey();
+      patchSubmissionRef.current = true;
       setIsProcessing(true);
       patchParentRef.current = { runId: sourceRunId, siteUrl: sourceSiteUrl };
       setArtifactPhase('patching');
@@ -2904,6 +2909,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       });
       const effTemplateId = styleOverride?.templateId !== undefined ? styleOverride.templateId : templateId;
       const cleanup = streamMdToPptPatch({
+        idempotencyKey: modificationKey,
         parentRunId: sourceRunId,
         currentHtml: base,
         manualEditHtml,
@@ -2938,6 +2944,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setArtifactSiteUrl('');
         },
         onDone: (result) => {
+          patchSubmissionRef.current = false;
           const html = result.html;
           if (!isPreviewableDeck(html)) {
             setMessages((prev) =>
@@ -2975,6 +2982,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           );
         },
         onError: (err) => {
+          patchSubmissionRef.current = false;
           setMessages((prev) =>
             prev.map((m) =>
               m.id === patchMsg.id
@@ -3336,6 +3344,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Abort
   const handleAbort = useCallback(() => {
+    patchSubmissionRef.current = false;
     cleanupRef.current?.();
     cleanupRef.current = null;
     const repairRestart = repairRestartKeyRef.current;

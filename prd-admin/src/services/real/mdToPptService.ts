@@ -301,6 +301,22 @@ export interface MdToPptConvertRequest {
   }>;
 }
 
+export function createMdToPptModificationKey(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+export interface MdToPptEditContext {
+  sourceRunId: string;
+  sourcePackageHash: string;
+  baseSiteId: string;
+  baseRevisionId: string;
+  basePublishedRevisionId: string;
+  baseContentVersion: string;
+  baseHtmlHash: string;
+  baseFilesFingerprint: string;
+}
+
 export interface MdToPptPatchRequest {
   parentRunId: string;
   currentHtml: string;
@@ -609,6 +625,8 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
 // ============ Patch SSE ============
 
 export interface MdToPptPatchSseOptions {
+  idempotencyKey?: string;
+  expectedEditContext?: MdToPptEditContext;
   parentRunId: string;
   currentHtml: string;
   manualEditHtml?: string;
@@ -640,11 +658,22 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
 
   (async () => {
     try {
+      // 只读取当前身份；不会替换用户看到的正文。若基稿已变，服务端按正文哈希/版本围栏拒绝。
+      const source = options.expectedEditContext ? null : await getMdToPptRun(options.parentRunId);
+      if (abortController.signal.aborted) return;
+      const expectedEditContext = options.expectedEditContext ?? source?.editContext;
+      if (!expectedEditContext) {
+        options.onError?.(source?.editContextError || '当前演示稿缺少可继续修改的版本身份，请重新载入当前版本。');
+        return;
+      }
+      const idempotencyKey = options.idempotencyKey ?? createMdToPptModificationKey();
       const response = await fetch(resolveApiUrl('/api/md-to-ppt/patch'), {
         method: 'POST',
         headers: buildSseHeaders(),
         body: JSON.stringify({
           parentRunId: options.parentRunId,
+          idempotencyKey,
+          expectedEditContext,
           currentHtml: options.currentHtml,
           manualEditHtml: options.manualEditHtml,
           slideRequest: options.slideRequest,
@@ -656,7 +685,9 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
       });
 
       if (!response.ok) {
-        options.onError?.(`HTTP ${response.status}`);
+        const detail = await response.json().catch(() => null) as { error?: string | { message?: string } } | null;
+        options.onError?.(typeof detail?.error === 'string' ? detail.error
+          : detail?.error?.message || '修改未开始，原稿和要求已保留，请重新载入当前版本。');
         return;
       }
 
@@ -733,6 +764,8 @@ export async function publishMdToPpt(req: MdToPptPublishRequest): Promise<{
 // ============ Runs（server-authority：刷新可重连/查看历史）============
 
 export interface MdToPptRunDetail {
+  editContext?: MdToPptEditContext | null;
+  editContextError?: string | null;
   id: string;
   parentRunId?: string | null;
   parentOutlineRunId?: string | null;

@@ -45,6 +45,7 @@ public sealed class DesignArtifactPresentationInput
     /// </summary>
     public string? RepairCandidateHtml { get; set; }
     public string? RepairCandidateHtmlHash { get; set; }
+
 }
 
 /// <summary>
@@ -203,6 +204,12 @@ public class DesignArtifactRun
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public string? PptCompletionId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public HtmlPptEditContext? PptEditContext { get; set; }
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? PptModificationRequestHash { get; set; }
+
 
     public string? TargetSiteId { get; set; }
 
@@ -544,4 +551,17 @@ public static class DesignWorkspaceResultWriteStates
     public const string Writing = "writing";
     public const string Stored = "stored";
     public const string SaveFailed = "save-failed";
+}
+
+/// <summary>一次演示稿修改的真实来源与实际基稿；线上指针单独作为并发围栏。</summary>
+public sealed class HtmlPptEditContext
+{
+    public string SourceRunId { get; set; } = string.Empty;
+    public string SourcePackageHash { get; set; } = string.Empty;
+    public string BaseSiteId { get; set; } = string.Empty;
+    public string BaseRevisionId { get; set; } = string.Empty;
+    public string BasePublishedRevisionId { get; set; } = string.Empty;
+    public DateTime BaseContentVersion { get; set; }
+    public string BaseHtmlHash { get; set; } = string.Empty;
+    public string BaseFilesFingerprint { get; set; } = string.Empty;
 }
