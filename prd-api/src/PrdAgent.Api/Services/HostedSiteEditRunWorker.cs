@@ -1536,8 +1536,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IReadOnlyList<DesignWorkspaceFile> files,
         string hardenedHtml,
         bool trustedPresentation = false,
-        bool preserveVerifiedWebPackage = false) =>
-        PrepareVerifiedHostedSiteFiles(sites, files, hardenedHtml, trustedPresentation, preserveVerifiedWebPackage)
+        bool preserveVerifiedWebPackage = false)
+    {
+        var prepared = PrepareVerifiedHostedSiteFiles(sites, files, hardenedHtml, trustedPresentation, preserveVerifiedWebPackage)
             .Select(file => new DesignWorkspaceFile(
                 file.Path,
                 Convert.ToBase64String(file.Content),
@@ -1545,6 +1546,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 file.Content.LongLength,
                 file.MimeType))
             .ToArray();
+        return trustedPresentation ? DesignArtifactWorkspaceContract.RebuildPublicManifest(prepared) : prepared;
+    }
 
     internal static string HardenExecutorOutput(
         string rawHtml,

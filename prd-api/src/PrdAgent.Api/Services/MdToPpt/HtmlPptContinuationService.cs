@@ -291,6 +291,11 @@ public sealed class HtmlPptContinuationService(
         if (origin.Status == HostedSiteRevisionStatuses.Published
             && (artifact.ArtifactSiteId != site.Id || artifact.ArtifactRevisionId != origin.Id))
             throw Failure("ppt_edit_source_invalid", "已发布演示稿缺少匹配的来源绑定");
+        var canonicalDelivery = origin.Status == HostedSiteRevisionStatuses.Published
+            && origin.PublishedContentVersion.HasValue && current.Source == HostedSiteRevisionSources.AiEdit
+            && current.SourceRunId == source.Id && current.ParentRevisionId == origin.Id
+            && current.BasedOnContentVersion == origin.PublishedContentVersion
+            && current.Runtime == origin.Runtime && current.KnowledgeEntryIds.SequenceEqual(origin.KnowledgeEntryIds);
         if (current.Status == HostedSiteRevisionStatuses.Draft)
         {
             if (current.Id != origin.Id || current.SourceRunId != source.Id
@@ -305,7 +310,7 @@ public sealed class HtmlPptContinuationService(
                 throw Failure("ppt_edit_base_changed", "演示稿线上版本已变化，请重新载入当前版本");
             var step = current;
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            for (var depth = 0; step.Id != origin.Id; depth++)
+            for (var depth = 0; !canonicalDelivery && step.Id != origin.Id; depth++)
             {
                 if (depth >= 16 || !seen.Add(step.Id) || step.Source != HostedSiteRevisionSources.Rollback
                     || string.IsNullOrWhiteSpace(step.RollbackTargetRevisionId))
@@ -321,6 +326,15 @@ public sealed class HtmlPptContinuationService(
         try
         {
             originFingerprint = HostedSitePreviewAccessService.ComputePackageFingerprint(origin.VerifiedFiles);
+            if (canonicalDelivery)
+            {
+                var canonical = DesignArtifactWorkspaceContract.RebuildPublicManifest(origin.VerifiedFiles.Select(file =>
+                    new DesignWorkspaceFile(file.Path, Convert.ToBase64String(file.Content), file.Sha256,
+                        file.Content.LongLength, file.MimeType)).ToArray());
+                originFingerprint = HostedSitePreviewAccessService.ComputePackageFingerprint(canonical.Select(file =>
+                    new HostedSiteRevisionFile { Path = file.Path, Content = Convert.FromBase64String(file.ContentBase64),
+                        Sha256 = file.Sha256, MimeType = file.MediaType }).ToList());
+            }
             currentFingerprint = HostedSitePreviewAccessService.ComputePackageFingerprint(current.VerifiedFiles);
         }
         catch (InvalidOperationException)

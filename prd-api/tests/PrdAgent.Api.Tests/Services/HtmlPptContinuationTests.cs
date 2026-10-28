@@ -78,6 +78,43 @@ public sealed class HtmlPptContinuationTests
     }
 
     [Fact]
+    public void CanonicalManifestDeliveryCanContinueOnlyWithTheExactTrustedFileSet()
+    {
+        var f = Fixture();
+        var sourceBefore = f.Source.ToJson();
+        f.Origin.PublishedContentVersion = f.Site.ContentVersion;
+        f.Origin.Runtime = DesignArtifactRuntimes.OpenDesign;
+        var entries = f.Origin.VerifiedFiles.Select(file => new DesignArtifactManifestFile(file.Path,
+            file.Path == "index.html" ? "b2e6960a977c65e688f099e57ef506ce9c4f02256380b433fe53d00caf6ee3bc" : file.Sha256,
+            file.Path == "index.html" ? 24929 : file.Content.Length, file.MimeType)).ToArray();
+        var staleManifest = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new DesignArtifactManifest(
+            DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+            DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(entries), "index.html", entries),
+            DesignArtifactWorkspaceContract.JsonOptions);
+        f.Origin.VerifiedFiles.Add(new HostedSiteRevisionFile { Path="manifest.json",Content=staleManifest,
+            Sha256=Convert.ToHexString(SHA256.HashData(staleManifest)).ToLowerInvariant(),MimeType="application/json" });
+        var canonical = DesignArtifactWorkspaceContract.RebuildPublicManifest(f.Origin.VerifiedFiles.Select(file =>
+            new DesignWorkspaceFile(file.Path,Convert.ToBase64String(file.Content),file.Sha256,file.Content.Length,file.MimeType)).ToArray());
+        var child = new HostedSiteRevision { Id="canonical-delivery",SiteId=f.Site.Id,CreatedByUserId="owner",
+            Source=HostedSiteRevisionSources.AiEdit,SourceRunId=f.Source.Id,ParentRevisionId=f.Origin.Id,
+            Runtime=f.Origin.Runtime,Status=HostedSiteRevisionStatuses.Published,Html=f.Origin.Html,
+            BasedOnContentVersion=f.Site.ContentVersion,PublishedContentVersion=f.Site.ContentVersion.AddSeconds(1),
+            VerifiedFiles=canonical.Select(file=>new HostedSiteRevisionFile { Path=file.Path,
+                Content=Convert.FromBase64String(file.ContentBase64),Sha256=file.Sha256,MimeType=file.MediaType }).ToList() };
+        f.Site.PublishedRevisionId=child.Id;
+        f.Site.ContentVersion=child.PublishedContentVersion.Value;
+        var resolved=HtmlPptContinuationService.ResolveSnapshot(f.Source,f.Artifact,f.Site,f.Origin,child,[child],"owner");
+        Assert.Equal(child.Id,resolved.Context.BaseRevisionId);
+        Assert.Equal(f.Origin.Html,resolved.Html);
+        var authorFile=child.VerifiedFiles.Single(file=>file.Path=="assets/style.css");
+        authorFile.Content[0]^=1;
+        authorFile.Sha256=Convert.ToHexString(SHA256.HashData(authorFile.Content)).ToLowerInvariant();
+        Assert.Throws<HtmlPptContinuationException>(()=>HtmlPptContinuationService.ResolveSnapshot(
+            f.Source,f.Artifact,f.Site,f.Origin,child,[child],"owner"));
+        Assert.Equal(sourceBefore,f.Source.ToJson());
+    }
+
+    [Fact]
     public async Task ExplicitVisualOverrideReachesFrozenQueueWithoutReplacingSourceFacts()
     {
         var f = Fixture();

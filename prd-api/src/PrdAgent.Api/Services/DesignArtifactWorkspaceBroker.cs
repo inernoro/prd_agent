@@ -1590,6 +1590,18 @@ public static class DesignArtifactWorkspaceContract
             throw new InvalidOperationException("远程设计产物清单与文件校验结果不一致，请重新生成");
     }
 
+    public static IReadOnlyList<DesignWorkspaceFile> RebuildPublicManifest(IReadOnlyList<DesignWorkspaceFile> files)
+    {
+        var original = files.Single(file => file.Path == "manifest.json");
+        var entries = files.Where(file => file.Path != "manifest.json")
+            .OrderBy(file => file.Path, StringComparer.Ordinal)
+            .Select(file => new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType)).ToArray();
+        var manifest = new DesignArtifactManifest(DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+            ComputePublicArtifactRevision(entries), "index.html", entries);
+        var replacement = ToFile("manifest.json", original.MediaType, JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions));
+        return files.Select(file => file.Path == "manifest.json" ? replacement : file).ToArray();
+    }
+
     public static string ComputePublicArtifactRevision(IEnumerable<DesignArtifactManifestFile> files)
         => DesignArtifactPublicRevision.Compute(files.Select(file =>
             new DesignArtifactPublicRevisionFile(file.Path, file.Sha256, file.Size, file.MediaType)));
