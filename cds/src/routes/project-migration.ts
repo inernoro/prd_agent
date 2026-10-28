@@ -51,6 +51,7 @@ import {
 } from '../services/standby-mirror.js';
 import { maskSecrets } from '../services/secret-masker.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { readDeploymentSseOutcome } from '../services/infra-credential-rotation-runtime.js';
 
 export interface ProjectMigrationDeps {
   stateService: StateService;
@@ -341,15 +342,23 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     for (const action of planned) {
       if (action.kind === 'divergent') continue;
       try {
+        if (!action.sourceCommit || !/^[a-f0-9]{40}$/i.test(action.sourceCommit)) throw new Error('源提交身份未确认，已拒绝同步');
+        const currentSource = localFingerprint(projectId).branches.find(branch => branch.name === action.name);
+        if (currentSource?.commitSha !== action.sourceCommit) throw new Error('源提交快照已过期，请重新核对');
         if (action.kind === 'create') {
+          if (!target.capabilities?.expectedCommitCreate) throw new Error('目标 CDS 尚未支持源提交校验，请升级后再同步');
           const created = await remoteFetch(peer, '/api/branches', {
             method: 'POST',
-            body: JSON.stringify({ branch: action.name, projectId: remoteProjectId }),
+            body: JSON.stringify({ branch: action.name, projectId: remoteProjectId, expectedCommit: action.sourceCommit }),
             timeoutMs: 120_000,
           }, localFallbackKey());
           if (!created.ok) throw new Error(`目标创建分支返回 HTTP ${created.status}`);
-          const branchId = String((created.json as { branch?: { id?: string } } | null)?.branch?.id || '');
+          const receipt = (created.json as { branch?: { id?: string; branch?: string; projectId?: string; githubCommitSha?: string } } | null)?.branch;
+          const branchId = String(receipt?.id || '');
           if (!branchId) throw new Error('目标创建分支成功但没有返回 branch id');
+          if (receipt?.branch !== action.name || receipt?.projectId !== remoteProjectId || receipt?.githubCommitSha !== action.sourceCommit) {
+            throw new Error('目标创建回执未确认源提交身份，已停止后续预热；请核对目标分支');
+          }
           createdIds.set(action.name, branchId);
           result.created.push(action.name);
           continue;
@@ -357,13 +366,28 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
 
         const targetBranchId = action.targetBranchId || createdIds.get(action.name);
         if (!targetBranchId) throw new Error('缺少目标 branch id，无法执行运行态收敛');
+        const beforeOperation = await remoteFetch(peer,
+          `/api/projects/${encodeURIComponent(remoteProjectId)}/migration/fingerprint`, {}, localFallbackKey());
+        const currentTarget = (beforeOperation.json as StandbyMirrorFingerprint | null)?.branches
+          ?.find(branch => branch.id === targetBranchId && branch.name === action.name);
+        if (!beforeOperation.ok || currentTarget?.commitSha !== action.sourceCommit) throw new Error('目标提交身份已变化，已停止运行态收敛');
         const operation = await remoteFetch(
           peer,
           `/api/branches/${encodeURIComponent(targetBranchId)}/${action.kind}`,
-          { method: 'POST', timeoutMs: action.kind === 'deploy' ? 120_000 : 60_000 },
+          { method: 'POST', timeoutMs: action.kind === 'deploy' ? 120_000 : 60_000,
+            ...(action.kind === 'deploy' ? { body: JSON.stringify({ commitSha: action.sourceCommit }) } : {}) },
           localFallbackKey(),
         );
         if (!operation.ok) throw new Error(`目标 ${action.kind} 返回 HTTP ${operation.status}`);
+        // deploy 的失败也可能返回 HTTP 200；复用现有终态判据，不把受理当成功。
+        if (action.kind === 'deploy' && !readDeploymentSseOutcome(operation.text).ok) throw new Error('目标部署未返回成功终态，预热尚未确认');
+        const afterOperation = await remoteFetch(peer,
+          `/api/projects/${encodeURIComponent(remoteProjectId)}/migration/fingerprint`, {}, localFallbackKey());
+        const finalTarget = (afterOperation.json as StandbyMirrorFingerprint | null)?.branches
+          ?.find(branch => branch.id === targetBranchId && branch.name === action.name);
+        const statusMatches = action.kind === 'deploy' ? finalTarget?.status === 'running'
+          : finalTarget?.status === 'idle' || finalTarget?.status === 'stopped';
+        if (!afterOperation.ok || finalTarget?.commitSha !== action.sourceCommit || !statusMatches) throw new Error('目标运行态回读未匹配源提交与计划状态，请核对现场');
         if (action.kind === 'deploy') result.deployed.push(action.name);
         if (action.kind === 'stop') result.stopped.push(action.name);
       } catch (err) {
@@ -612,7 +636,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     activeReconciles.add(project.id);
     try {
       const result = await reconcileStandbyBranches(project.id, peer, remoteProjectId, policy, dryRun);
-      if (!dryRun && project.standbyMirror?.peerId === peer.id && project.standbyMirror.remoteProjectId === remoteProjectId) {
+      if (!dryRun && policy !== 'audit-only' && project.standbyMirror?.peerId === peer.id && project.standbyMirror.remoteProjectId === remoteProjectId) {
         project.standbyMirror = { ...project.standbyMirror, lastBranchSync: result };
         stateService.save();
       }

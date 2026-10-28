@@ -1449,7 +1449,7 @@ public class GatewayDataDomainGuardTests
     {
         var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
 
-        foreach (var label in new[] { "费用四状态", "可估算", "供应商实际", "估算未知", "已对账" })
+        foreach (var label in new[] { "金额证据四状态", "可估算", "供应商实际", "估算未知", "已对账" })
         {
             Assert.Contains(label, usagePage);
         }
@@ -1464,6 +1464,36 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("前端不猜测汇率", usagePage);
         Assert.DoesNotContain("providerToEstimatedFxRate *", usagePage);
         Assert.DoesNotContain("* item.providerToEstimatedFxRate", usagePage);
+    }
+
+    [Fact]
+    public void 计费展示明确金额性质_未知不伪装为零()
+    {
+        var core = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostKind.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var helpers = ReadRepoFile("llmgw/web/src/lib/logsHelpers.ts");
+        var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var usage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
+        var logicalModels = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        foreach (var value in new[]
+        {
+            "provider_actual",
+            "official_baseline_estimate",
+            "provider_policy_estimate",
+            "unpriced",
+            "no_usage",
+        })
+        {
+            Assert.Contains($"\"{value}\"", core);
+            Assert.Contains($"\"{value}\"", console);
+        }
+
+        Assert.Contains("OpenAI 官方基准价估算，经 APIYI 调用", helpers);
+        Assert.Contains("Gateway 估算", logs);
+        Assert.Contains("本月预算占用", usage);
+        Assert.DoesNotContain("本月已结算", usage);
+        Assert.Contains("近 30 天 Gateway 估算", logicalModels);
     }
 
     [Fact]
@@ -2307,7 +2337,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ProdPreflightWorkflow_RunsReadOnlyPreflightWithoutLeakingKeys()
+    public void ProdPreflightWorkflow_UsesShortLivedSessionWithoutLeakingKeys()
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-preflight.yml");
 
@@ -2315,10 +2345,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("workflow_dispatch:", workflow);
         Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
         Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_SIGNING_KEY_ID", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_USER", workflow);
         Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
         Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
         Assert.Contains("LLMGW_PROD_EXPECT_COMMIT", workflow);
-        Assert.Contains("logs:read access", workflow);
+        Assert.Contains("Configure Stable Smoke RSA credentials or the legacy API key", workflow);
         Assert.Contains("scripts/llmgw-prod-preflight.py", workflow);
         Assert.Contains("--map-base \"$map_base\"", workflow);
         Assert.Contains("--gw-base \"$gw_base\"", workflow);
@@ -2331,6 +2364,7 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("llmgw-prod-stage", workflow);
         Assert.DoesNotContain("echo \"$PRD_AGENT_API_KEY\"", workflow);
         Assert.DoesNotContain("echo \"$LLMGW_GATE_KEY\"", workflow);
+        Assert.DoesNotContain("echo \"$STABLE_SMOKE_SIGNING_PRIVATE_KEY\"", workflow);
     }
 
     [Fact]
@@ -2979,7 +3013,7 @@ public class GatewayDataDomainGuardTests
 
         static bool ReturnsHostedSite(string line)
             => System.Text.RegularExpressions.Regex.IsMatch(
-                line, @"public async Task<(HostedSite\??>|List<HostedSite>>|\(List<HostedSite>\s)");
+                line, @"public (?:async )?Task<(HostedSite\??>|List<HostedSite>>|\(List<HostedSite>\s)");
 
         var memberStarts = new List<int>();
         for (var i = 0; i < lines.Length; i++)
@@ -2997,7 +3031,9 @@ public class GatewayDataDomainGuardTests
             // 只看**这一个方法自己的**方法体：到下一个成员声明为止
             var to = k + 1 < memberStarts.Count ? memberStarts[k + 1] : lines.Length;
             var body = string.Join("\n", lines[from..to]);
-            if (!body.Contains("AttachDerivedFields(", StringComparison.Ordinal))
+            // 包装必须原样透传到实现；派生字段仍在该实现的独立方法体里断言。
+            var implementation = SourceSlice.HostedSiteImplementation(src, body);
+            if (!implementation.Contains("AttachDerivedFields(", StringComparison.Ordinal))
             {
                 var name = System.Text.RegularExpressions.Regex.Match(lines[from], @"Task<[^>]*>+\s*(\w+)");
                 missing.Add(name.Success ? name.Groups[1].Value : lines[from].Trim());
@@ -3017,6 +3053,17 @@ public class GatewayDataDomainGuardTests
     {
         var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
 
+        Assert.Contains("ImageReferenceContract.Validate", worker);
+        Assert.Contains("run.ExpectedImageRefCount", worker);
+        var referenceContract = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs");
+        Assert.Contains("IMAGE_REF_INCOMPLETE", referenceContract);
+        Assert.Contains("IMAGE_REF_COUNT_REQUIRED", referenceContract);
+        Assert.Contains("ImageReferenceContract.ValidateDeclared", ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
+        Assert.Contains("run.ExpectedImageRefCount", ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs"));
+        Assert.True(
+            worker.IndexOf("ImageReferenceContract.Validate", StringComparison.Ordinal)
+            < worker.IndexOf("ResolveModelGroupAsync", StringComparison.Ordinal),
+            "参考图完整性必须在模型解析和上游调用前校验");
         Assert.Contains("expectedReferenceCount", worker);
         Assert.Contains("IMAGE_REF_UNAVAILABLE", worker);
         Assert.Contains("其他输入已保留", worker);
@@ -3025,6 +3072,32 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode)", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.Img2Img", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.VisionGen", worker);
+    }
+
+    [Fact]
+    public void GenericVisualModelAndHandoffPolicies_DoNotBranchOnCurrentProductModelIds()
+    {
+        var genericSources = new[]
+        {
+            "prd-api/src/PrdAgent.Api/Services/VisualModelPolicyService.cs",
+            "prd-api/src/PrdAgent.Core/Models/VisualModelPolicy.cs",
+            "prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts",
+            "prd-admin/src/lib/visualAgentHandoff.ts",
+        };
+        var productModelTokens = new[]
+        {
+            "gpt-image",
+            "gemini-3-pro-image-preview",
+            "doubao-seedream",
+            "image2",
+        };
+
+        foreach (var sourcePath in genericSources)
+        {
+            var source = ReadRepoFile(sourcePath);
+            Assert.All(productModelTokens, token =>
+                Assert.DoesNotContain(token, source, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     [Fact]
@@ -3158,8 +3231,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("unknownCostRequests: number", consoleTypes);
         Assert.Contains("priceCoveragePercent: number", consoleTypes);
         Assert.Contains("fmtCost(it.estimatedCost, it.estimatedCostCurrency)", logsView);
-        Assert.Contains("缺价格保持未知，不显示为 0", logsView);
-        Assert.Contains("有完整价格快照时显示估算；缺价格保持未知，不显示为 0。", logsView);
+        Assert.Contains("明确区分实际、估算、未计价和无用量，未知不显示为 0", logsView);
+        Assert.Contains("costKindLabel(it.costKind", logsView);
         Assert.Contains("未知：缺 token 或价格快照", ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx"));
     }
 

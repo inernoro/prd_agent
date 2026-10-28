@@ -16,6 +16,15 @@
 - [自更新](#自更新)
 - [维护](#维护)
 
+## 智能体短入口
+
+- `GET /api/agent/setup.md`：匿名接入说明，只返回公开操作约定；目标使用 `target=existing&project=<id>`、`target=new` 或 `target=system`。
+- `mission=<登记任务 ID>` 复用页面任务目录；`stage=task` 在自检后按需读取该任务的步骤、安全边界和验收条件。
+- `GET /api/agent/setup.json`：匿名协议与 CLI 版本、技能选择，不查询项目数据、不签发凭据。
+- `cdscli setup-check --host <接入主机> --project <真实项目 ID> --skills <逗号分隔技能>`：实际校验技能、版本、凭据及目标访问；系统只读任务使用 `--system`。失败返回非零状态和脱敏的阶段、原因与恢复动作，不能作为业务验收通过的证据。
+  自检请求不跟随重定向；任一阶段遇到 301/302/303/307/308 时返回 `unexpected_redirect`，停止后续请求并提示核对主机与代理，不把它当作缺权限重新授权。
+  五技能包必须包含可读、版本匹配的 `cds/cli/cds-skill-manifest.json`，并通过其中所有分发文件的 SHA-256 摘要校验；缺失或混装时统一更新完整包，用户额外文件不受影响。
+
 ## 核心分组速查
 
 | 分组 | 路径前缀 | 何时用 |
@@ -153,3 +162,9 @@ body: `{"branch": "claude/xxx"}`（可选，不传则当前分支 pull）。
 
 CLI 未封装的能力不得编造命令。需要 fallback 时先确认认证类型、项目作用域、风险等级、
 是否仅人类可操作以及验证与回滚方式；无法确认就停在只读状态。
+
+## 通知实例身份
+
+现有通道的故障入口可用 `cdscli monitor incident-page --file` 更新。私有文件提供 channelId 与 incidentPageUrl；CLI 先读当前通道，再使用已有管理员 PUT 接口保留其他配置，地址限 HTTPS 且不得含登录凭据。
+
+管理员使用 `cdscli monitor identity` 读取，或 `--file` 从私有 JSON 文件更新。对应 `GET/PUT /api/cds-system/alarm-identity`，使用与通知通道相同的系统管理员权限；项目 Key 不可读写。配置含当前 instance 与可选 targets，名称与环境必填，自身稳定 ID 由服务端生成且改名不变。真实配置不得作为文档示例提交。

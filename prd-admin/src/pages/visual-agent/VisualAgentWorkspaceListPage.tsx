@@ -47,13 +47,15 @@ import { createPortal } from 'react-dom';
 import { buildVisualAgentModelOptions, type VisualAgentModelOption } from '@/pages/ai-chat/visualAgentModelOptions';
 import { normalizeSizesByResolution, reconcileSize, type SizesByResolution } from '@/lib/visualModelSizes';
 import { useNavigate } from 'react-router-dom';
-import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
+import { computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
+import { createVisualAgentHandoffPayload } from '@/lib/visualAgentHandoff';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 import { BackdropPhoto, PageVignette } from '@/components/effects/PageBackdrop';
 import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode } from '@/components/visual-agent/BackdropSettings';
 import type { BackdropAsset } from '@/lib/backdropRotation';
 import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
 import { readGeneratedBackdrops } from '@/lib/backdropStudio';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint, VISUAL_MODEL_DESKTOP_MENU } from '@/components/visual-agent/VisualModelOptionContent';
 import { placeAnchoredPanel, type AnchoredPanelPlacement } from '@/lib/anchoredPanel';
 import { consumeWakeOnce } from '@/lib/wakeSweep';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
@@ -273,38 +275,49 @@ function ModelPickerButton(props: {
   onChange: (id: string) => void;
 }) {
   const { options, modelId, onChange } = props;
+  const { isMobile } = useBreakpoint();
+  const compact = !isMobile;
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<AnchoredPanelPlacement | null>(null);
 
-  // 落点交给 lib/anchoredPanel 算：上方装不下就翻到下方，宽高一律夹回视口。
-  // 上一版是恒定 `top: rect.top - 8` + CSS translateY(-100%)——页面往下滚、
-  // 工具行接近视口顶部时，面板整个跑到屏幕上方，一个选项都点不到；
-  // 而且只在打开那一刻算一次，滚动/改窗口都不重算，浮层会和按钮脱开
-  //（Codex PR #1476 P1）。scroll 用捕获阶段：真正在滚的往往是某个内层容器，
-  // 冒泡阶段收不到它的 scroll 事件。
+  // 按实际内容高度定位；高度上限只限制滚动空间，不能拿来抵掉短菜单的高度。
+  // 捕获内层滚动，观察内容变化与手机视觉视口，菜单始终跟随触发器。
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open) { setPos(null); return; }
     const place = () => {
       const r = btnRef.current?.getBoundingClientRect();
       if (!r) return;
+      const visualViewport = window.visualViewport;
       setPos(placeAnchoredPanel({
         anchor: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
-        viewport: { width: window.innerWidth, height: window.innerHeight },
+        viewport: {
+          width: visualViewport?.width ?? window.innerWidth,
+          height: visualViewport?.height ?? window.innerHeight,
+          top: visualViewport?.offsetTop, left: visualViewport?.offsetLeft,
+        },
+        height: panelRef.current?.getBoundingClientRect().height,
         prefer: 'above',
-        width: 260,
-        maxHeight: 320,
+        width: compact ? VISUAL_MODEL_DESKTOP_MENU.width : 360,
+        maxHeight: compact ? VISUAL_MODEL_DESKTOP_MENU.maxHeight : 640,
       }));
     };
     place();
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
+    const observer = new ResizeObserver(place);
+    if (panelRef.current) observer.observe(panelRef.current);
+    window.visualViewport?.addEventListener('resize', place);
+    window.visualViewport?.addEventListener('scroll', place);
     return () => {
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
+      observer.disconnect();
+      window.visualViewport?.removeEventListener('resize', place);
+      window.visualViewport?.removeEventListener('scroll', place);
     };
-  }, [open]);
+  }, [open, pos?.width, compact]);
 
   useEffect(() => {
     if (!open) return;
@@ -315,7 +328,12 @@ function ModelPickerButton(props: {
       setOpen(false);
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', onEsc);
+    };
   }, [open]);
 
   const current = options.find((o) => o.id === modelId) ?? null;
@@ -337,9 +355,11 @@ function ModelPickerButton(props: {
           cursor: 'pointer',
         }}
         title="选择绘图模型"
+        aria-expanded={open}
+        aria-controls="visual-home-model-menu"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
       >
-        <Sparkles size={13} className="shrink-0" />
+        <VisualModelIcon model={current} size={15} />
         <span className="truncate" style={{ maxWidth: 120, whiteSpace: 'nowrap' }}>
           {current?.name || current?.modelName || '选择模型'}
         </span>
@@ -348,6 +368,9 @@ function ModelPickerButton(props: {
       {open && pos && createPortal(
         <div
           ref={panelRef}
+          id="visual-home-model-menu"
+          role="group"
+          aria-label="绘图模型选项"
           style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999 }}
         >
           <div
@@ -355,14 +378,16 @@ function ModelPickerButton(props: {
             style={{
               width: pos.width,
               maxHeight: pos.maxHeight,
-              overflowY: 'auto',
-              overscrollBehavior: 'contain',
+              display: 'flex',
+              flexDirection: 'column',
               background: 'var(--panel-solid)',
               border: '1px solid var(--border-default)',
               boxShadow: 'var(--shadow-card)',
-              padding: 5,
+              padding: 0,
             }}
           >
+            <VisualModelMenuHeading compact={compact} count={options.length} onClose={() => setOpen(false)} />
+            <div className="min-h-0" style={{ padding: compact ? 4 : 6, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {options.map((opt) => {
               const active = opt.id === modelId;
               return (
@@ -371,37 +396,31 @@ function ModelPickerButton(props: {
                   type="button"
                   className="w-full text-left hover-bg-soft transition-colors"
                   style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 2,
-                    padding: '7px 9px',
+                    padding: compact ? VISUAL_MODEL_DESKTOP_MENU.rowPadding : '12px 10px',
                     borderRadius: 8,
-                    border: 0,
-                    background: active ? 'var(--bg-secondary)' : 'transparent',
+                    border: active ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                    background: active ? 'var(--report-accent-soft)' : 'transparent',
                     color: 'var(--text-primary)',
                     cursor: opt.enabled ? 'pointer' : 'not-allowed',
                     // 不可用的模型不隐藏、只压暗并说明：藏起来用户会以为「怎么少了一个」，
                     // 而看见「暂不可用」至少知道发生了什么（no-rootless-tree：暴露缺失）。
-                    opacity: opt.enabled ? 1 : 0.45,
+                    opacity: opt.enabled ? 1 : 0.7,
                   }}
                   // 压暗不等于点不了。上一版只调了透明度，这一行照样能点中：
                   // 选了之后交接包里带的就是一个没有健康成员的池，手机端把它过滤掉，
                   // 静默退回「第一个可用池」——用户明明选了 A，花钱跑的是 B
                   //（Codex PR #1476 P1）。看得见的「不可用」和点不动必须一起给。
                   disabled={!opt.enabled}
-                  title={opt.enabled ? undefined : '该模型池当前没有健康成员，暂时不能选'}
+                  aria-pressed={active}
+                  title={opt.enabled ? undefined : '暂时无法生成，请选其他模型'}
                   onClick={() => { if (!opt.enabled) return; onChange(opt.id); setOpen(false); }}
                 >
-                  <span style={{ fontSize: 12, fontWeight: active ? 600 : 500 }}>
-                    {opt.name || opt.modelName}
-                    {opt.isDefault ? <span style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--text-muted)' }}>默认</span> : null}
-                  </span>
-                  <span style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
-                    {opt.enabled ? (opt.subtitle || opt.actualModelId || '') : '暂不可用'}
-                  </span>
+                  <VisualModelOptionContent compact={compact} model={opt} selected={active} />
                 </button>
               );
             })}
+            </div>
+            <VisualModelMenuHint compact={compact} />
           </div>
         </div>,
         document.body,
@@ -1549,12 +1568,9 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       }
       const ws = res.data.workspace;
 
-      // 3. 构建消息文本（使用 [IMAGE src=... name=...] 和 (@size:...) 标记）
-      // 格式：${inlineRefToken}${uiSizeToken}${display || reqText}
-      // 即：[IMAGE src=... name=...] (@size:1024x1024) 文本内容
-      let messageText = prompt;
+      // 3. 准备参考图交接数据。图片必须是独立字段，不能借消息标记传递：
+      // buildInlineImageToken 会刻意拒绝 data:/blob:，避免把大图写进聊天文本。
       const assetId: string | null = null;
-      let imageToken = '';
       let imageSize: { w: number; h: number } | null = null;
 
       // 4. 参考图**不在这里上传**。
@@ -1569,12 +1585,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // 上传时也会带给后端，否则这张资产的 width/height 永远是空。
       if (selectedImage) {
         imageSize = await measureDataUrl(selectedImage.previewUrl);
-        imageToken = buildInlineImageToken(selectedImage.previewUrl, selectedImage.file.name || '参考图');
       }
-
-      // 构建最终消息：图片标记 + 尺寸标记 + 文本内容
-      const sizeToken = selectedSize ? `(@size:${selectedSize}) ` : '';
-      messageText = `${imageToken}${sizeToken}${messageText}`;
 
       // 5. 使用 sessionStorage 传递参数（避免刷新时重复创建）
       //
@@ -1584,7 +1595,16 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // modelId 必须进交接包：偏好接口写失败时只返回 { success:false }，
       // 编辑器再去读偏好就会拿到上一次的模型，用户在首页选的 A 会变成 B——
       // 而这是一次要花钱的生成。交接包直接带上，编辑器就不必依赖那次写。
-      const payload = { messageText, assetId, imageSize, modelId, timestamp: Date.now() };
+      const payload = createVisualAgentHandoffPayload({
+        prompt,
+        size: selectedSize,
+        assetId,
+        imageSize,
+        modelId,
+        inlineImage: selectedImage
+          ? { src: selectedImage.previewUrl, name: selectedImage.file.name || '参考图' }
+          : null,
+      });
       // 图太大存不下时**不再退化成「只带文字」**。
       //
       // 上一版是：丢掉 [IMAGE] 标记、只存文字、照常跳转，然后提示「请在画板里重新拖入」。

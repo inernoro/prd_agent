@@ -144,7 +144,7 @@ describe('standby branch reconciliation route', () => {
     });
     targetApp.post('/api/branches', (req, res) => {
       targetCalls.push({ path: req.path, body: req.body });
-      res.status(201).json({ branch: { id: 'remote-main' } });
+      res.status(201).json({ branch: { id: 'remote-main', branch: 'main', projectId: 'remote-project', githubCommitSha: 'a'.repeat(40) } });
     });
     const targetServer = targetApp.listen(0);
     const targetAddress = targetServer.address() as { port: number };
@@ -197,7 +197,7 @@ describe('standby branch reconciliation route', () => {
       expect(body.result.created).toEqual(['main']);
       expect(body.result.deployed).toEqual([]);
       expect(body.result.failed).toEqual([]);
-      expect(targetCalls).toEqual([{ path: '/api/branches', body: { branch: 'main', projectId: 'remote-project' } }]);
+      expect(targetCalls).toEqual([{ path: '/api/branches', body: { branch: 'main', projectId: 'remote-project', expectedCommit: 'a'.repeat(40) } }]);
     } finally {
       await Promise.all([
         new Promise<void>((resolve) => sourceServer.close(() => resolve())),

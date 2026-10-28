@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { buildVisualAgentModelOptions, isOperationOnlyPool, poolIdFromVisualModelOptionId, visualModelOptionIdOf, selectVisualModel } from '../visualAgentModelOptions';
+import { buildVisualAgentModelOptions, isOperationOnlyPool, normalizeVisualModelOptionId, poolIdFromVisualModelOptionId, visualModelOptionIdOf, selectVisualModel } from '../visualAgentModelOptions';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 
 function pool(overrides: Partial<ModelGroupForApp>): ModelGroupForApp {
@@ -109,27 +109,43 @@ describe('【关键】交接包里的模型 id 归一之后必须能在目录里
   // 「调用了 poolIdFromVisualModelOptionId」，这句话在反了之后依然成立，所以它没红。
   //
   // 判据换成：把交接包里的值归一之后，selectVisualModel 必须真的选得中同一个模型。
-  const normalize = (raw: string) => (raw.trim() ? visualModelOptionIdOf(poolIdFromVisualModelOptionId(raw)) : '');
-
   it('交接包给的选项 id：归一后选得中', () => {
-    const [option] = buildVisualAgentModelOptions([pool({ id: 'grp-77' })]);
+    const [option] = buildVisualAgentModelOptions([pool({ id: 'future-model-pool-2099', code: 'future-image-model-2099' })]);
     expect(option).toBeTruthy();
-    const picked = selectVisualModel([option!], false, normalize(option!.id));
+    const picked = selectVisualModel([option!], false, normalizeVisualModelOptionId(option!.id));
     expect(picked?.id, '归一后应选中同一个模型').toBe(option!.id);
   });
 
   it('万一给的是裸池 id：归一后同样选得中', () => {
-    const [option] = buildVisualAgentModelOptions([pool({ id: 'grp-77' })]);
-    const picked = selectVisualModel([option!], false, normalize('grp-77'));
+    const [option] = buildVisualAgentModelOptions([pool({ id: 'future-model-pool-2099', code: 'future-image-model-2099' })]);
+    const picked = selectVisualModel([option!], false, normalizeVisualModelOptionId('future-model-pool-2099'));
     expect(picked?.id).toBe(option!.id);
   });
 
   it('归一是幂等的，反复套用不会越套越长', () => {
-    expect(normalize(normalize(normalize('grp-77')))).toBe(visualModelOptionIdOf('grp-77'));
+    const normalized = normalizeVisualModelOptionId('future-model-pool-2099');
+    expect(normalizeVisualModelOptionId(normalizeVisualModelOptionId(normalized)))
+      .toBe(visualModelOptionIdOf('future-model-pool-2099'));
   });
 
   it('空值仍是空值，不会变成一个只有前缀的假 id', () => {
-    expect(normalize('')).toBe('');
-    expect(normalize('   ')).toBe('');
+    expect(normalizeVisualModelOptionId('')).toBe('');
+    expect(normalizeVisualModelOptionId('   ')).toBe('');
+    expect(normalizeVisualModelOptionId(null)).toBe('');
+  });
+});
+
+
+describe('恢复试探目录契约', () => {
+  it.each([false, true])('恢复资格为 %s 时按网关资格开放入口并保留请求身份', (available) => {
+    const entry = pool({});
+    entry.models = entry.models.map((member) => ({
+      ...member, healthStatus: 'Unavailable' as typeof member.healthStatus,
+      isRecoveryProbeAvailable: available,
+    }));
+    const options = buildVisualAgentModelOptions([entry]);
+    expect(options[0].enabled).toBe(available);
+    expect(options[0].modelName).toBe(entry.code);
+    if (available) expect(options[0].subtitle).toContain('恢复试探');
   });
 });

@@ -12,6 +12,7 @@
 //   - var(--danger) 在 theme.css 里**从未定义过**，本页原有 6 处引用：`color` 那几处整条
 //     声明作废（报错文字根本没变红），通配确认框那处更是连 color-mix 底色和边框一起丢了。
 //     语义色只有 --ok / --warn / --err / --info，全部改过来——边框底色重新出现是修复，不是回归。
+import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -88,6 +89,9 @@ export function ServiceKeysPage() {
   // Developer 的密钥必须绑团队（服务端硬性要求），Owner/Admin 留空则是租户级密钥。
   const isDeveloper = tenant?.role === 'developer';
   const canManageLegacyCutover = canUseCapability(tenant?.role, 'configWrite');
+  const [scopeCopied, setScopeCopied] = useState(false);
+  const [selectedKeyId, setSelectedKeyId] = useState<string | null>(null);
+  const [keyTab, setKeyTab] = useState("permissions");
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -401,6 +405,47 @@ export function ServiceKeysPage() {
     await load();
   };
 
+  const selectedKey = items?.find((item) => item.id === selectedKeyId);
+  const keyOverview = <>
+        {items ? <div className="lg-collection-key-overview" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
+          {isInternalTenant ? <div style={coverageCardStyle}>
+            <strong style={SECTION_TITLE}>MAP 生产 key 覆盖</strong><HelpPopover label="MAP 生产 key 覆盖">runtime、release-gate、canary 各用一把 production scoped key。</HelpPopover>
+            <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
+
+          </div> : null}
+          <div style={coverageCardStyle}>
+            <strong style={SECTION_TITLE}>外部平台独立身份</strong><HelpPopover label="外部平台独立身份">每个 clientCode 与环境各一把 key，不跨 purpose 或 environment。</HelpPopover>
+            <div style={chipRowStyle}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={HINT_TEXT}>暂无外部平台 key</span>}</div>
+
+          </div>
+        </div> : null}
+
+        {legacy ? <details className="lg-collection-key-legacy" style={legacyBlockStyle}>
+          <summary style={legacySummaryStyle}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
+            <span style={HINT_TEXT}>
+              收口判定
+              <HelpPopover label="legacy 收口">
+                外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。
+                每把后继 key 必须是 production MAP runtime 身份，并完整覆盖调用方、四协议和运行时 scope；
+                只有真实业务调用观测达标才能显式撤销。
+              </HelpPopover>
+            </span>
+            <span style={HINT_TEXT}>必需协议 {legacy.requiredIngressProtocols.join(', ')} · 必需 scope {legacy.requiredScopes.join(', ')}</span>
+          </div>
+          <FormGrid style={{ marginTop: GAP.normal }}>
+            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
+            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
+            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={setLegacyAllowedCallers} placeholder="逗号分隔；空表示先盘点" />
+            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={setLegacySuccessorIds} placeholder="逗号分隔" />
+            <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
+            <Button variant="primary" size="sm" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
+          </FormGrid>
+          {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
+        </details> : null}
+
+  </>;
+
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
     {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" onClick={() => startRotation(item)}>轮换</Button> : null}
     {item.rotationState === 'awaiting-client-cutover' ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void confirmClientCutover(item)}>确认已切换</Button> : null}
@@ -431,7 +476,7 @@ export function ServiceKeysPage() {
         )}
       />
 
-      <PageBody>
+      <PageBody className="lg-collection-page">
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
 
         {created ? (
@@ -553,42 +598,7 @@ export function ServiceKeysPage() {
           </div>
         ) : null}
 
-        {items ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
-          {isInternalTenant ? <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>MAP 生产 key 覆盖</strong>
-            <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
-            <p style={{ ...BODY_TEXT, margin: `${GAP.normal}px 0 0` }}>runtime、release-gate、canary 各用一把 production scoped key。</p>
-          </div> : null}
-          <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>外部平台独立身份</strong>
-            <div style={chipRowStyle}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={HINT_TEXT}>暂无外部平台 key</span>}</div>
-            <p style={{ ...BODY_TEXT, margin: `${GAP.normal}px 0 0` }}>每个 clientCode 与环境各一把 key，不跨 purpose 或 environment。</p>
-          </div>
-        </div> : null}
-
-        {legacy ? <details style={legacyBlockStyle}>
-          <summary style={legacySummaryStyle}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
-            <span style={HINT_TEXT}>
-              收口判定
-              <HelpPopover label="legacy 收口">
-                外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。
-                每把后继 key 必须是 production MAP runtime 身份，并完整覆盖调用方、四协议和运行时 scope；
-                只有真实业务调用观测达标才能显式撤销。
-              </HelpPopover>
-            </span>
-            <span style={HINT_TEXT}>必需协议 {legacy.requiredIngressProtocols.join(', ')} · 必需 scope {legacy.requiredScopes.join(', ')}</span>
-          </div>
-          <FormGrid style={{ marginTop: GAP.normal }}>
-            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
-            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
-            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={setLegacyAllowedCallers} placeholder="逗号分隔；空表示先盘点" />
-            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={setLegacySuccessorIds} placeholder="逗号分隔" />
-            <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
-            <Button variant="primary" size="sm" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
-          </FormGrid>
-          {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
-        </details> : null}
+        {!items || items.length === 0 ? keyOverview : null}
 
         {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (
           <div className="lg-service-key-empty">
@@ -599,25 +609,26 @@ export function ServiceKeysPage() {
           </div>
         ) : (
           <>
-          <div className="lg-service-key-desktop" style={tableFrameStyle}>
+          <div className="lg-collection-workspace lg-collection-key-workspace"><div className="lg-collection-list">{keyOverview}
+          <CollectionView items={items} placeholder="搜索密钥名称、客户端或调用用途" searchText={(item) => [item.name, item.keyPrefix, item.clientCode, item.environment, item.purpose, ...item.appCallerCodes].join(' ')} filters={[{ value: 'active', label: '有效', matches: (item) => item.enabled }, { value: 'revoked', label: '已撤销', matches: (item) => !item.enabled }]}>
+          {(pageItems) => <>
+          <div className="lg-service-key-desktop">
             <table className="lg-service-key-table lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}><tr>
-                {['API Key', '客户端', 'AppCaller 与权限', '团队', '最后使用', '过期', '状态', ''].map((label) => <th key={label} style={th}>{label}</th>)}
+              <colgroup><col style={{width: '25%'}}/><col style={{width: '16%'}}/><col style={{width: '20%'}}/><col style={{width: '13%'}}/><col style={{width: '13%'}}/><col style={{width: '13%'}}/></colgroup><thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}><tr>
+                {['API Key', '客户端', 'AppCaller 与权限', '团队', '最后使用 / 过期', '状态 / 操作'].map((label) => <th key={label} style={th}>{label}</th>)}
               </tr></thead>
-              <tbody>{items.map((item) => <tr key={item.id}>
+              <tbody>{pageItems.map((item) => <tr key={item.id} className={`lg-collection-key-row${selectedKeyId === item.id ? ' lg-collection-selected-row' : ''}`}>
                 <td style={td}><strong>{item.name}</strong><div style={mutedMono}>{item.keyPrefix} · {rotationLabel(item.rotationState)}</div></td>
                 <td style={td}><strong>{item.clientCode}</strong><div style={mutedMono}>{item.environment} · {item.sourceSystem}</div></td>
-                <td style={td}>{item.appCallerCodes.join(', ')}<details className="lg-service-key-permissions"><summary>查看权限</summary><div>协议：{item.ingressProtocols.join(', ')}</div><div>Scope：{item.scopes.join(', ')}</div><div>网络：{item.allowedCidrs.length ? item.allowedCidrs.join(', ') : '不限 CIDR'} · {item.rateLimitPerMinute ? `${item.rateLimitPerMinute}/分钟` : '不限速'}</div></details></td>
-                <td style={td}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
-                <td style={td}>{formatTime(item.lastUsedAt)}</td>
-                <td style={td}>{formatTime(item.expiresAt)}</td>
-                <td style={td}><Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} /></td>
-                <td style={{ ...td, textAlign: 'right' }}>{renderActions(item)}</td>
+                <td style={td}><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>{item.appCallerCodes.length} 个调用用途</Button><div style={HINT_TEXT}>协议 {item.ingressProtocols.length} · Scope {item.scopes.length}</div></td>
+                <td style={td} title={item.teamId || '租户级'}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
+                <td style={td}><div title={formatTime(item.lastUsedAt)}>{formatTime(item.lastUsedAt)}</div><div style={HINT_TEXT} title={formatTime(item.expiresAt)}>过期：{formatTime(item.expiresAt)}</div></td>
+                <td style={td}><div className="lg-collection-key-status"><Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} /><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>详情</Button></div></td>
               </tr>)}</tbody>
             </table>
           </div>
           <div className="lg-service-key-mobile">
-            {items.map((item) => <article key={item.id} className="lg-service-key-card">
+            {pageItems.map((item) => <article key={item.id} className="lg-service-key-card">
               <div className="lg-service-key-card-heading">
                 <div><strong>{item.name}</strong><code>{item.keyPrefix}</code></div>
                 <Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
@@ -629,7 +640,7 @@ export function ServiceKeysPage() {
               </div>
               <dl>
                 <div><dt>轮换阶段</dt><dd>{rotationLabel(item.rotationState)}{item.rotatedByKeyId ? <small>新钥 {item.rotatedByKeyId}</small> : null}</dd></div>
-                <div><dt>AppCaller</dt><dd>{item.appCallerCodes.join(', ')}</dd></div>
+                <div><dt>AppCaller</dt><dd><Button size="sm" variant="ghost" onClick={() => { setKeyTab("permissions"); setScopeCopied(false); setSelectedKeyId(item.id); }}>{item.appCallerCodes.length} 个调用用途</Button></dd></div>
                 <div><dt>团队 / 创建者</dt><dd>{item.teamId || '租户级'}<small>{item.createdByUsername || '历史密钥'}</small></dd></div>
                 <div><dt>最后使用</dt><dd>{formatTime(item.lastUsedAt)}<small>过期：{formatTime(item.expiresAt)}</small></dd></div>
               </dl>
@@ -637,6 +648,16 @@ export function ServiceKeysPage() {
               {renderActions(item)}
             </article>)}
           </div>
+          </>}
+          </CollectionView></div>
+          {selectedKey ? <CollectionDetailPane key={selectedKey.id} title={selectedKey.name} identifier={selectedKey.keyPrefix} onClose={() => setSelectedKeyId(null)} footer={<div className="lg-collection-key-actions">{!selectedKey.enabled ? <span style={HINT_TEXT}>已撤销，只读<HelpPopover label="已撤销">仅可查看权限与历史记录</HelpPopover></span> : null}{renderActions(selectedKey)}<Button size="sm" variant="ghost" onClick={() => setSelectedKeyId(null)}>关闭</Button></div>} tabs={<><CollectionPaneTab active={keyTab === "permissions"} onClick={() => setKeyTab("permissions")}>权限范围</CollectionPaneTab><CollectionPaneTab active={keyTab === "usage"} onClick={() => setKeyTab("usage")}>轮换与使用</CollectionPaneTab></>}>
+            <div className={keyTab === "permissions" ? "lg-collection-key-permissions" : "lg-collection-hidden"}><div className="lg-collection-key-facts"><div className="lg-collection-key-meta"><div><span>客户端 / 环境</span><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p></div><div><span>状态 / 过期</span><p>{rotationLabel(selectedKey.rotationState)} · {formatTime(selectedKey.expiresAt)}</p></div></div><div className="lg-collection-key-heading"><h3>调用用途 <Chip label={String(selectedKey.appCallerCodes.length)} color="var(--accent)" bg="var(--accent-soft)"/></h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div></div>
+            <CollectionView className="lg-collection-codes" items={selectedKey.appCallerCodes} searchText={(code) => code} placeholder="搜索 appCaller 标识">{(codes) => <>{codes.map((code) => <div key={code} className="lg-collection-code" title={code}>{code}</div>)}</>}</CollectionView>
+            <div className="lg-collection-key-facts lg-collection-key-permission-summary"><div><h3>入口协议</h3><p>{selectedKey.ingressProtocols.map((protocol) => <Chip key={protocol} label={protocol} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div><div><h3>Scope</h3><p>{selectedKey.scopes.map((scope) => <Chip key={scope} label={scope} color="var(--text-secondary)" bg="var(--bg-elevated)"/>)}</p></div></div></div>
+            {keyTab === "usage" ? <div className="lg-collection-key-facts"><CollectionFacts items={[{label:'轮换阶段',value:rotationLabel(selectedKey.rotationState)},{label:'过期时间',value:formatTime(selectedKey.expiresAt)},{label:'网络与速率',value:<>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</>},{label:'团队与创建者',value:<>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</>},{label:'最后使用',value:formatTime(selectedKey.lastUsedAt)},{label:'前钥',value:selectedKey.rotatesKeyId || '无'},{label:'后钥',value:selectedKey.rotatedByKeyId || '无'},{label:'来源',value:selectedKey.sourceSystem}]}/></div> : null}
+
+          </CollectionDetailPane> : null}
+</div>
           </>
         )}
 
@@ -750,12 +771,7 @@ const legacySummaryStyle: React.CSSProperties = {
   fontSize: 'var(--fs-heading)',
   fontWeight: 650,
 };
-const tableFrameStyle: React.CSSProperties = {
-  overflow: 'auto',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--radius)',
-  background: 'var(--bg-surface)',
-};
+
 /** 新建成功面板：原来是写死的 rgba(63,185,80,…)，现在走 --ok 语义色。 */
 const createdPanelStyle: React.CSSProperties = {
   ...CARD_BODY,

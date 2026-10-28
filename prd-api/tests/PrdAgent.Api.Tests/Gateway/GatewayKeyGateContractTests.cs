@@ -11,14 +11,19 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
+using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.MdToPpt;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
@@ -41,6 +46,474 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// </summary>
 public class GatewayKeyGateContractTests
 {
+    [Fact]
+    public async Task NativeResponses_RuntimeGrantOverridesCallerRoutingIdentityAndModelPolicy()
+    {
+        JsonObject? forwarded = null;
+        var handler = new NativeResponsesHandler(async (request, ct) =>
+        {
+            forwarded = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"id\":\"resp_grant\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}",
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+        var resolver = NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated");
+        var starts = new List<LlmLogStart>();
+        var dones = new List<LlmLogDone>();
+        var gateway = NativeResponsesGateway(resolver, handler, NativeResponsesLogWriter(starts, dones).Object);
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-1",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            PinnedPlatformId = "native-platform",
+            PinnedModelId = "gpt-5.6-sol",
+            Temperature = 0.25,
+            TopP = 0.8,
+            ReasoningMode = "effort",
+            ReasoningEffort = "high",
+            OutputTokenMode = "omit",
+            RequireDeclaredParameters = false,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            gateway,
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"attacker-model",
+              "store":false,
+              "input":"hello",
+              "temperature":1.9,
+              "top_p":0.1,
+              "max_output_tokens":99999,
+              "reasoning":{"effort":"minimal","summary":"auto"},
+              "model_pool_id":"attacker-pool",
+              "pinned_platform_id":"attacker-platform",
+              "pinned_model_id":"attacker-model-id",
+              "run_id":"attacker-run",
+              "provider":{"require_parameters":false}
+            }
+            """)!.AsObject();
+            using var request = NativeResponsesRequest(body, "runtime-grant-policy");
+            request.Headers.Remove("X-Gateway-Run-Id");
+            request.Headers.Add("X-Gateway-Run-Id", "attacker-run-header");
+            request.Headers.Remove("X-Gateway-User-Id");
+            request.Headers.Add("X-Gateway-User-Id", "attacker-user-header");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            authorizer.RequestPath.ShouldBe("/gw/v1/responses");
+            resolver.Verify(x => x.ResolveAsync(
+                AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ModelTypes.Chat,
+                "default-chat-curated",
+                "native-platform",
+                "gpt-5.6-sol",
+                It.IsAny<CancellationToken>()), Times.Once);
+            var started = starts.ShouldHaveSingleItem();
+            started.RunId.ShouldBe("trusted-run");
+            started.UserId.ShouldBe("trusted-user");
+            started.AppCallerCode.ShouldBe(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+            started.SourceSystem.ShouldBe("map");
+            forwarded.ShouldNotBeNull();
+            forwarded!["model"]!.GetValue<string>().ShouldBe("gpt-5.6-sol");
+            forwarded["temperature"]!.GetValue<double>().ShouldBe(0.25);
+            forwarded["top_p"]!.GetValue<double>().ShouldBe(0.8);
+            forwarded["reasoning"]!["effort"]!.GetValue<string>().ShouldBe("high");
+            forwarded["reasoning"]!["summary"]!.GetValue<string>().ShouldBe("auto");
+            forwarded.ContainsKey("max_output_tokens").ShouldBeFalse();
+            forwarded.ContainsKey("model_pool_id").ShouldBeFalse();
+            forwarded.ContainsKey("pinned_platform_id").ShouldBeFalse();
+            forwarded.ContainsKey("run_id").ShouldBeFalse();
+            forwarded.ContainsKey("provider").ShouldBeFalse();
+            dones.ShouldHaveSingleItem().Status.ShouldBe("succeeded");
+            callCounter.CallCount.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_RuntimeGrantWithoutFrozenRouteIgnoresClientRoutingHeaders()
+    {
+        var resolver = NativeResponsesResolver(logicalModelPublicId: "default-chat-curated");
+        var handler = new NativeResponsesHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"id\":\"resp_unpinned\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}",
+                System.Text.Encoding.UTF8,
+                "application/json"),
+        }));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-unpinned",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(resolver, handler),
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            using var request = NativeResponsesRequest(
+                JsonNode.Parse("{\"model\":\"attacker-model\",\"store\":false,\"input\":\"hello\"}")!.AsObject(),
+                "runtime-grant-unpinned");
+            request.Headers.Add("X-Gateway-Model-Pool-Id", "attacker-pool");
+            request.Headers.Add("X-Gateway-Pinned-Platform-Id", "attacker-platform");
+            request.Headers.Add("X-Gateway-Pinned-Model-Id", "attacker-model-id");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            resolver.Verify(x => x.ResolveAsync(
+                AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ModelTypes.Chat,
+                "default-chat-curated",
+                null,
+                null,
+                It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(1);
+            callCounter.CallCount.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_RejectedRuntimeGrantRequestDoesNotConsumeCallAllowance()
+    {
+        var resolver = NativeResponsesResolver(functionCalling: null);
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-rejected",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            RequireDeclaredParameters = true,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(resolver, handler),
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"default-chat-curated",
+              "store":false,
+              "input":"hello",
+              "tools":[{"type":"function","name":"run"}],
+              "provider":{"require_parameters":true}
+            }
+            """)!.AsObject();
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(body, "runtime-grant-rejected"));
+
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await response.Content.ReadAsStringAsync()).ShouldContain("FUNCTION_CALLING_UNVERIFIED");
+            resolver.Verify(x => x.ResolveAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(0);
+            callCounter.CallCount.ShouldBe(0);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_TaskBudgetDenialOccursAfterPhysicalCapAndBeforeProviderSend()
+    {
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-budget-denied",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "ppt-run",
+            UserId = "ppt-owner",
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+            Environment = "production",
+            Model = "default-chat-curated",
+            BudgetScopeId = "scope-ppt",
+            BudgetMaxOutputTokens = 8192,
+            PptCompletionId = "pptc-test",
+            PptCompletionPhase = GatewayPptCompletionPhases.Generation,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+        };
+        var counter = new CapturingRuntimeGrantCallCounter
+        {
+            RuntimeAdmission = new(
+                false, StatusCodes.Status429TooManyRequests,
+                "GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED",
+                "runtime task budget is insufficient before send"),
+        };
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(
+                NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated"),
+                handler),
+            keyAuthorizer: new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant),
+            runtimeGrantCallCounter: counter);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"default-chat-curated",
+              "store":false,
+              "input":"build the deck",
+              "max_output_tokens":99999
+            }
+            """)!.AsObject();
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(body, "ppt-budget-denied"));
+
+            response.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+            handler.Count.ShouldBe(0);
+            counter.CallCount.ShouldBe(1);
+            counter.LastRuntimeRequest.ShouldNotBeNull();
+            counter.LastRuntimeRequest!.EffectiveMaxOutputTokens.ShouldBe(8192);
+            counter.LastRuntimeRequest.LogicalModelPublicId.ShouldBe("default-chat-curated");
+            counter.LastRuntimeRequest.Model.ShouldBe("gpt-5.6-sol");
+            counter.LastGrant!.PptCompletionId.ShouldBe("pptc-test");
+            counter.LastGrant.PptCompletionPhase.ShouldBe(GatewayPptCompletionPhases.Generation);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task ChatStream_TaskBudgetDenialOccursAfterPhysicalBodyAndBeforeProviderSend()
+    {
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var gateway = NativeResponsesGateway(
+            NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated"),
+            handler);
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Outline,
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = "default-chat-curated",
+            Stream = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "plan" }),
+                ["max_tokens"] = 8192,
+            },
+            Context = new GatewayRequestContext { RequestId = "outline-budget-denied", TenantId = "tenant-test" },
+        };
+        GatewayPhysicalAdmissionContext? observed = null;
+
+        var chunks = new List<GatewayStreamChunk>();
+        await foreach (var chunk in gateway.StreamWithAdmissionAsync(request, (physical, _) =>
+        {
+            observed = physical;
+            return Task.FromResult<GatewayStreamChunk?>(GatewayStreamChunk.Fail(
+                "任务额度不足，未发送模型请求",
+                "GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED"));
+        })) chunks.Add(chunk);
+
+        handler.Count.ShouldBe(0);
+        observed.ShouldNotBeNull();
+        observed!.RequestBodyUtf8Bytes.ShouldBeGreaterThan(0);
+        observed.EffectiveMaxOutputTokens.ShouldBe(8192);
+        observed.LogicalModelPublicId.ShouldBe("default-chat-curated");
+        chunks.ShouldHaveSingleItem().ErrorCode.ShouldBe("GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED");
+    }
+
+    [Fact]
+    public async Task NativeResponses_PptManualCompletionContract_ReachesOneFakeProviderThroughMongoCounter()
+    {
+        var fixture = BuildPptCompletionFixture();
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_ppt_completion_http_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        var handler = SuccessfulPptCompletionHandler();
+        try
+        {
+            await SeedPptCallerGovernanceAsync(data);
+            var (scope, grant) = await IssueTrustedManualGrantAsync(
+                connectionString,
+                databaseName,
+                data,
+                fixture);
+            var counter = new GatewayRuntimeGrantCallCounter(data);
+            await using var app = BuildHostWithGateway(
+                NativeResponsesGateway(
+                    NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated"),
+                    handler),
+                keyAuthorizer: new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant),
+                runtimeGrantCallCounter: counter,
+                gatewayData: data);
+            await app.StartAsync();
+            try
+            {
+                using var response = await app.GetTestClient().SendAsync(
+                    NativeResponsesRequest(PptCompletionRequestBody(), "ppt-manual-completion-send"));
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                response.StatusCode.ShouldBe(HttpStatusCode.OK, responseBody);
+                handler.Count.ShouldBe(1);
+                var storedGrant = await data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+                    .Find(item => item.Id == grant.Id).SingleAsync();
+                storedGrant.CallCount.ShouldBe(1);
+                var storedScope = await data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+                    .Find(item => item.Id == scope.Id).SingleAsync();
+                storedScope.PptCompletion!.ManualSave.UsedPhysicalCalls.ShouldBe(1);
+                storedScope.PptCompletion.FutureHeldUsd.ShouldBe(0m);
+                storedScope.ReservedUsd.ShouldBe(0m);
+                storedScope.SpentUsd.ShouldBeGreaterThan(scope.SpentUsd);
+                var reservation = storedScope.Reservations.ShouldHaveSingleItem();
+                reservation.Status.ShouldBe("settled");
+                reservation.PptCompletionId.ShouldBe(scope.PptCompletion!.Id);
+                reservation.PptCompletionPhase.ShouldBe(GatewayPptCompletionPhases.ManualSave);
+                fixture.ParentPackageHash.ShouldNotBe(fixture.ParentHtmlHash);
+            }
+            finally
+            {
+                await app.StopAsync();
+            }
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
+    [Theory]
+    [InlineData("missing-completion", GatewayPptCompletionPhases.Generation)]
+    [InlineData("insufficient-hold", GatewayPptCompletionPhases.Generation)]
+    [InlineData("expired-completion", GatewayPptCompletionPhases.Generation)]
+    [InlineData("wrong-owner", GatewayPptCompletionPhases.Generation)]
+    [InlineData("missing-completion", GatewayPptCompletionPhases.ManualSave)]
+    [InlineData("insufficient-hold", GatewayPptCompletionPhases.ManualSave)]
+    [InlineData("expired-completion", GatewayPptCompletionPhases.ManualSave)]
+    [InlineData("wrong-owner", GatewayPptCompletionPhases.ManualSave)]
+    public async Task NativeResponses_InvalidPptCompletionContract_StopsBeforeFakeProvider(
+        string invalidCase,
+        string phase)
+    {
+        var fixture = BuildPptCompletionFixture();
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27017";
+        var client = new MongoClient(connectionString);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+        var databaseName = $"llmgw_ppt_completion_deny_{Guid.NewGuid():N}";
+        var data = new LlmGatewayDataContext(connectionString, databaseName);
+        var handler = new NativeResponsesHandler((_, _) =>
+            throw new InvalidOperationException("invalid completion contract must not reach the provider"));
+        var (scope, grant) = PptCompletionHttpRecords(fixture, phase);
+        switch (invalidCase)
+        {
+            case "missing-completion":
+                scope.PptCompletion = null;
+                break;
+            case "insufficient-hold":
+                scope.PptCompletion!.FutureHeldUsd = 0m;
+                break;
+            case "expired-completion":
+                scope.PptCompletion!.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
+                break;
+            case "wrong-owner":
+                scope.UserId = "different-owner";
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(invalidCase));
+        }
+        try
+        {
+            await SeedPptCallerGovernanceAsync(data);
+            await data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+                .InsertOneAsync(scope);
+            await data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+                .InsertOneAsync(grant);
+            var counter = new GatewayRuntimeGrantCallCounter(data);
+            await using var app = BuildHostWithGateway(
+                NativeResponsesGateway(
+                    NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated"),
+                    handler),
+                keyAuthorizer: new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant),
+                runtimeGrantCallCounter: counter,
+                gatewayData: data);
+            await app.StartAsync();
+            try
+            {
+                using var response = await app.GetTestClient().SendAsync(
+                    NativeResponsesRequest(PptCompletionRequestBody(), $"ppt-completion-denied-{invalidCase}-{phase}"));
+                var body = await response.Content.ReadAsStringAsync();
+
+                response.IsSuccessStatusCode.ShouldBeFalse();
+                body.ShouldContain(invalidCase switch
+                {
+                    "missing-completion" => "GATEWAY_RUNTIME_TASK_COMPLETION_CONTRACT_REQUIRED",
+                    "insufficient-hold" => "GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED",
+                    "expired-completion" => "GATEWAY_RUNTIME_TASK_COMPLETION_ENVELOPE_EXCEEDED",
+                    "wrong-owner" => "GATEWAY_RUNTIME_TASK_BUDGET_INACTIVE",
+                    _ => throw new ArgumentOutOfRangeException(nameof(invalidCase)),
+                });
+                handler.Count.ShouldBe(0);
+                (await data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+                    .Find(item => item.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(0);
+                (await data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+                    .Find(item => item.Id == scope.Id).SingleAsync()).Reservations.ShouldBeEmpty();
+            }
+            finally
+            {
+                await app.StopAsync();
+            }
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
+    }
+
     [Fact]
     public async Task NativeResponses_TwoToolRoundsPreserveRawStreamAndTrustedAttribution()
     {
@@ -420,6 +893,406 @@ public class GatewayKeyGateContractTests
         return request;
     }
 
+    private static JsonObject PptCompletionRequestBody() => JsonNode.Parse("""
+    {
+      "model":"default-chat-curated",
+      "store":false,
+      "input":"apply the trusted manual edit",
+      "max_output_tokens":99999
+    }
+    """)!.AsObject();
+
+    private static Task SeedPptCallerGovernanceAsync(LlmGatewayDataContext data)
+        => data.Database.GetCollection<BsonDocument>("llmgw_teams").InsertOneAsync(new BsonDocument
+        {
+            { "_id", "team-test" },
+            { "TenantId", "tenant-test" },
+            { "Status", "active" },
+        });
+
+    private static NativeResponsesHandler SuccessfulPptCompletionHandler()
+        => new((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"id\":\"resp_ppt_manual\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"saved\"}]}],\"usage\":{\"input_tokens\":64,\"output_tokens\":8}}",
+                System.Text.Encoding.UTF8,
+                "application/json"),
+        }));
+
+    private static (GatewayRuntimeBudgetScopeRecord Scope, GatewayRuntimeGrantRecord Grant)
+        PptCompletionHttpRecords(
+            PptCompletionFixture fixture,
+            string phase = GatewayPptCompletionPhases.ManualSave)
+    {
+        var now = DateTime.UtcNow;
+        var completionId = $"pptc-http-{Guid.NewGuid():N}";
+        var scopeId = $"scope-http-{Guid.NewGuid():N}";
+        var isGeneration = phase == GatewayPptCompletionPhases.Generation;
+        var runId = $"{(isGeneration ? "generation" : "manual")}-http-{Guid.NewGuid():N}";
+        var perCallUpper = 1m;
+        var scope = new GatewayRuntimeBudgetScopeRecord
+        {
+            Id = scopeId,
+            TenantId = "tenant-test",
+            RootOutlineRunId = "outline-http-root",
+            UserId = "trusted-user",
+            SourcePlanHash = fixture.StableSourceHash,
+            ImmutableCarryUsd = 34.493745m,
+            AuthorizedLimitUsd = 50m,
+            SpentUsd = 34.493745m,
+            ReservedUsd = 0m,
+            InputUsdPerMillion = 4m,
+            OutputUsdPerMillion = 20m,
+            LongContextThresholdTokens = 272_000,
+            LongContextInputUsdPerMillion = 8m,
+            LongContextOutputUsdPerMillion = 30m,
+            InputByteTokenMultiplier = 1,
+            MaxOutputTokens = 8192,
+            ExpectedLogicalModelPublicId = "default-chat-curated",
+            ExpectedProvider = "native-platform",
+            ExpectedModel = "gpt-5.6-sol",
+            Status = "active",
+            ActivatedByUserId = "trusted-user",
+            ExpiresAt = now.AddMinutes(30),
+            PptCompletion = new GatewayPptCompletionBudgetRecord
+            {
+                Id = completionId,
+                ContractHash = new string('a', 64),
+                CandidateCommit = new string('b', 40),
+                RootOutlineRunId = "outline-http-root",
+                StableSourceHash = fixture.StableSourceHash,
+                GenerationRunId = isGeneration ? runId : "trusted-parent-run",
+                ManualRunId = isGeneration ? string.Empty : runId,
+                ParentArtifactHash = fixture.ParentHtmlHash,
+                ParentPackageHash = fixture.ParentPackageHash,
+                Status = isGeneration
+                    ? GatewayPptCompletionStatuses.GenerationActive
+                    : GatewayPptCompletionStatuses.ManualActive,
+                FutureHeldUsd = perCallUpper,
+                GenerationAndRepairs = new GatewayPptCompletionStageBudgetRecord
+                {
+                    MaxPhysicalCalls = 4,
+                    UsedPhysicalCalls = isGeneration ? 0 : 4,
+                    MaxBodyUtf8Bytes = 300_000,
+                    MaxOutputTokens = 8192,
+                    PerCallUpperUsd = 1m,
+                },
+                ManualSave = new GatewayPptCompletionStageBudgetRecord
+                {
+                    MaxPhysicalCalls = 1,
+                    MaxBodyUtf8Bytes = 300_000,
+                    MaxOutputTokens = 8192,
+                    PerCallUpperUsd = perCallUpper,
+                },
+                ExpiresAt = now.AddMinutes(30),
+            },
+        };
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = $"grant-http-{Guid.NewGuid():N}",
+            TenantId = scope.TenantId,
+            KeyPrefix = "gwrg_test",
+            KeyHash = $"hash-{Guid.NewGuid():N}",
+            RunId = runId,
+            UserId = scope.UserId,
+            AppCallerCode = isGeneration
+                ? AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate
+                : AppCallerRegistry.MdToPptAgent.Generation.Patch,
+            Environment = "test",
+            Model = "default-chat-curated",
+            BudgetScopeId = scope.Id,
+            BudgetMaxOutputTokens = 8192,
+            PptCompletionId = completionId,
+            PptCompletionPhase = phase,
+            MaxCalls = 1,
+            ExpiresAt = now.AddMinutes(20),
+            CreatedAt = now,
+        };
+        return (scope, grant);
+    }
+
+    private static PptCompletionFixture BuildPptCompletionFixture()
+    {
+        var sourcePlanPath = Environment.GetEnvironmentVariable("PPT_COMPLETION_SOURCE_PLAN_PATH");
+        string sourcePlanJson;
+        if (!string.IsNullOrWhiteSpace(sourcePlanPath))
+        {
+            sourcePlanJson = File.ReadAllText(sourcePlanPath);
+            Sha256(System.Text.Encoding.UTF8.GetBytes(sourcePlanJson)).ShouldBe(
+                "f811184612a2379787782f123531347bb4cd7db90600217d5f81f363fa3f3cb2");
+        }
+        else
+        {
+            var fallback = MdToPptSourcePlan.Create(
+                "# Trusted source\n\nThe release condition must remain visible.",
+                Array.Empty<DesignKnowledgeSnapshot>());
+            sourcePlanJson = fallback.SerializeBound(fallback.Bind(new[]
+            {
+                new MdToPptOutlinePageDto
+                {
+                    Title = "Trusted source",
+                    SourceBlockIds = fallback.Blocks.Select(block => block.Id).ToList(),
+                },
+            }, 1));
+        }
+
+        var catalog = MdToPptSourcePlan.RestoreCatalog(sourcePlanJson);
+        var pages = MdToPptSourcePlan.RestoreBound(sourcePlanJson);
+        if (!string.IsNullOrWhiteSpace(sourcePlanPath))
+        {
+            catalog.Blocks.Count.ShouldBe(210);
+            pages.Count.ShouldBe(34);
+            catalog.Fingerprint.ShouldBe("93fea52f8a30d753cf1d49e80732d8fd4bb788b53a138320e2b9e5d80de30646");
+        }
+        var parentHtml = "<!doctype html><html><body><h1>Trusted parent artifact</h1>"
+                         + string.Join(string.Empty, pages.Select((page, index) =>
+                             $"<section data-slide-index=\"{index + 1}\"><h2>{System.Net.WebUtility.HtmlEncode(page.DisplayTitle)}</h2>"
+                             + string.Join(string.Empty, page.Blocks.Select(block =>
+                                 $"<div data-mdppt-source=\"{block.Id}\">{block.Html}</div>"))
+                             + "</section>"))
+                         + "</body></html>";
+        var parentHtmlHash = Sha256(System.Text.Encoding.UTF8.GetBytes(parentHtml));
+        var packageBytes = BuildTrustedResultPackage("trusted-parent-run", "trusted-base", parentHtml);
+        var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            packageBytes,
+            "trusted-parent-run",
+            "trusted-base",
+            DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        parsed.IndexHtml.ShouldBe(parentHtml);
+        var parentPackageHash = Sha256(packageBytes);
+        parentPackageHash.ShouldNotBe(parentHtmlHash);
+        return new PptCompletionFixture(
+            catalog.Fingerprint,
+            sourcePlanJson,
+            MdToPptSourcePlan.Hash(sourcePlanJson),
+            parentHtml,
+            parentHtmlHash,
+            parentPackageHash);
+    }
+
+    private static async Task<(GatewayRuntimeBudgetScopeRecord Scope, GatewayRuntimeGrantRecord Grant)>
+        IssueTrustedManualGrantAsync(
+            string connectionString,
+            string databaseName,
+            LlmGatewayDataContext gateway,
+            PptCompletionFixture fixture)
+    {
+        var map = new MongoDbContext(connectionString, databaseName);
+        var now = DateTime.UtcNow;
+        var rootId = $"outline-http-{Guid.NewGuid():N}";
+        var parentId = $"generation-http-{Guid.NewGuid():N}";
+        var manualId = $"manual-http-{Guid.NewGuid():N}";
+        var completionId = $"pptc-http-{Guid.NewGuid():N}";
+        var scopeId = $"scope-http-{Guid.NewGuid():N}";
+        var candidateCommit = DesignArtifactGatewayGrantService.ActualRuntimeCommit();
+        candidateCommit.ShouldNotBeNullOrWhiteSpace();
+
+        var generation = new GatewayPptCompletionStageBudgetRecord
+        {
+            MaxPhysicalCalls = 4,
+            UsedPhysicalCalls = 4,
+            MaxBodyUtf8Bytes = 300_000,
+            MaxOutputTokens = 8192,
+        };
+        var manual = new GatewayPptCompletionStageBudgetRecord
+        {
+            MaxPhysicalCalls = 1,
+            MaxBodyUtf8Bytes = 300_000,
+            MaxOutputTokens = 8192,
+        };
+        var scope = new GatewayRuntimeBudgetScopeRecord
+        {
+            Id = scopeId,
+            TenantId = "tenant-test",
+            RootOutlineRunId = rootId,
+            UserId = "trusted-user",
+            SourcePlanHash = fixture.StableSourceHash,
+            ImmutableCarryUsd = 34.493745m,
+            AuthorizedLimitUsd = 50m,
+            SpentUsd = 34.493745m,
+            InputUsdPerMillion = 4m,
+            OutputUsdPerMillion = 20m,
+            LongContextThresholdTokens = 272_000,
+            LongContextInputUsdPerMillion = 8m,
+            LongContextOutputUsdPerMillion = 30m,
+            InputByteTokenMultiplier = 1,
+            MaxOutputTokens = 8192,
+            ExpectedLogicalModelPublicId = "default-chat-curated",
+            ExpectedProvider = "native-platform",
+            ExpectedModel = "gpt-5.6-sol",
+            Status = "active",
+            ActivatedByUserId = "trusted-user",
+            ExpiresAt = now.AddMinutes(30),
+        };
+        generation.PerCallUpperUsd = GatewayPptCompletionBudgetMath.PerCallUpper(
+            scope, generation.MaxBodyUtf8Bytes, generation.MaxOutputTokens);
+        manual.PerCallUpperUsd = GatewayPptCompletionBudgetMath.PerCallUpper(
+            scope, manual.MaxBodyUtf8Bytes, manual.MaxOutputTokens);
+        manual.PerCallUpperUsd.ShouldBe(2.678528m);
+        scope.PptCompletion = new GatewayPptCompletionBudgetRecord
+        {
+            Id = completionId,
+            ContractHash = new string('a', 64),
+            CandidateCommit = candidateCommit!,
+            RootOutlineRunId = rootId,
+            StableSourceHash = fixture.StableSourceHash,
+            GenerationRunId = parentId,
+            Status = GatewayPptCompletionStatuses.GenerationActive,
+            FutureHeldUsd = manual.PerCallUpperUsd,
+            GenerationAndRepairs = generation,
+            ManualSave = manual,
+            ExpiresAt = now.AddMinutes(30),
+        };
+        await gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .InsertOneAsync(scope);
+
+        await map.MdToPptRuns.InsertManyAsync(new[]
+        {
+            new MdToPptRun
+            {
+                Id = rootId,
+                UserId = scope.UserId,
+                Op = "outline",
+                Status = "done",
+                SourcePlanVersion = MdToPptSourcePlan.Version,
+                SourcePlanJson = fixture.SourcePlanJson,
+                SourcePlanHash = fixture.SourcePlanHash,
+            },
+            new MdToPptRun
+            {
+                Id = parentId,
+                UserId = scope.UserId,
+                Op = "convert",
+                Status = "done",
+                ParentOutlineRunId = rootId,
+                HtmlHash = fixture.ParentHtmlHash,
+                SourcePlanVersion = MdToPptSourcePlan.Version,
+                SourcePlanJson = fixture.SourcePlanJson,
+                SourcePlanHash = fixture.SourcePlanHash,
+            },
+            new MdToPptRun
+            {
+                Id = manualId,
+                UserId = scope.UserId,
+                Op = "manual-edit",
+                Status = "running",
+                ParentRunId = parentId,
+                ParentOutlineRunId = rootId,
+                ParentHtmlHash = fixture.ParentHtmlHash,
+                SourcePlanVersion = MdToPptSourcePlan.Version,
+                SourcePlanJson = fixture.SourcePlanJson,
+                SourcePlanHash = fixture.SourcePlanHash,
+            },
+        });
+        await map.DesignArtifactRuns.InsertManyAsync(new[]
+        {
+            new DesignArtifactRun
+            {
+                Id = parentId,
+                DeploymentSlug = DeploymentScope.Current,
+                UserId = scope.UserId,
+                Status = RunStatuses.Done,
+                ArtifactType = DesignArtifactTypes.HtmlPpt,
+                Operation = DesignArtifactOperations.Generate,
+                Runtime = DesignArtifactRuntimes.OpenDesign,
+                WorkspaceResultSha256 = fixture.ParentPackageHash,
+                PresentationInput = new DesignArtifactPresentationInput
+                {
+                    SourcePlanJson = fixture.SourcePlanJson,
+                    SourcePlanHash = fixture.SourcePlanHash,
+                },
+            },
+            new DesignArtifactRun
+            {
+                Id = manualId,
+                DeploymentSlug = DeploymentScope.Current,
+                UserId = scope.UserId,
+                Status = RunStatuses.Running,
+                ArtifactType = DesignArtifactTypes.HtmlPpt,
+                Operation = DesignArtifactOperations.Edit,
+                Runtime = DesignArtifactRuntimes.OpenDesign,
+                LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" },
+                PresentationInput = new DesignArtifactPresentationInput
+                {
+                    ParentRunId = parentId,
+                    ParentPackageHash = fixture.ParentPackageHash,
+                    SourcePlanJson = fixture.SourcePlanJson,
+                    SourcePlanHash = fixture.SourcePlanHash,
+                    ManualEditHtml = fixture.ParentHtml,
+                    ManualEditHtmlHash = fixture.ParentHtmlHash,
+                },
+            },
+        });
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://gateway",
+            ["LlmGateway:InternalTenantId"] = scope.TenantId,
+        }).Build();
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns("Production");
+        var service = new DesignArtifactGatewayGrantService(gateway, map, configuration, environment.Object);
+        var issued = await service.IssueAsync(
+            await map.DesignArtifactRuns.Find(item => item.Id == manualId).SingleAsync(),
+            now.AddMinutes(20),
+            CancellationToken.None);
+        var grant = await gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .Find(item => item.Id == issued.Id)
+            .SingleAsync();
+        grant.BudgetScopeId.ShouldBe(scope.Id);
+        grant.PptCompletionId.ShouldBe(completionId);
+        grant.PptCompletionPhase.ShouldBe(GatewayPptCompletionPhases.ManualSave);
+        grant.MaxCalls.ShouldBe(1);
+        return (await gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .Find(item => item.Id == scope.Id).SingleAsync(), grant);
+    }
+
+    private static byte[] BuildTrustedResultPackage(string runId, string baseRevision, string html)
+    {
+        var htmlBytes = System.Text.Encoding.UTF8.GetBytes(html);
+        var htmlFile = new DesignWorkspaceFile(
+            "index.html",
+            Convert.ToBase64String(htmlBytes),
+            Sha256(htmlBytes),
+            htmlBytes.LongLength,
+            "text/html");
+        var manifestFiles = new[]
+        {
+            new DesignArtifactManifestFile(htmlFile.Path, htmlFile.Sha256, htmlFile.Size, htmlFile.MediaType),
+        };
+        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(
+            new DesignArtifactManifest(
+                DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+                DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(manifestFiles),
+                "index.html",
+                manifestFiles),
+            DesignArtifactWorkspaceContract.JsonOptions);
+        var manifestFile = new DesignWorkspaceFile(
+            "manifest.json",
+            Convert.ToBase64String(manifestBytes),
+            Sha256(manifestBytes),
+            manifestBytes.LongLength,
+            "application/json");
+        return JsonSerializer.SerializeToUtf8Bytes(
+            new DesignWorkspacePackage(
+                DesignArtifactWorkspaceBroker.SchemaVersion,
+                runId,
+                baseRevision,
+                [htmlFile, manifestFile]),
+            DesignArtifactWorkspaceContract.JsonOptions);
+    }
+
+    private static string Sha256(byte[] content)
+        => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)).ToLowerInvariant();
+
+    private sealed record PptCompletionFixture(
+        string StableSourceHash,
+        string SourcePlanJson,
+        string SourcePlanHash,
+        string ParentHtml,
+        string ParentHtmlHash,
+        string ParentPackageHash);
+
     [Fact]
     public async Task NativeResponses_ScopedKeyCannotEscalateToStreaming()
     {
@@ -473,13 +1346,14 @@ public class GatewayKeyGateContractTests
     }
 
     private static Mock<IModelResolver> NativeResponsesResolver(bool? functionCalling = true,
-        string model = "native-model", bool? vision = true)
+        string model = "native-model", bool? vision = true, string? logicalModelPublicId = null)
     {
         var resolver = new Mock<IModelResolver>();
         resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new ModelResolutionResult
             {
                 Success = true, ActualModel = model, ActualPlatformId = "native-platform", ApiUrl = "https://upstream.test",
+                LogicalModelPublicId = logicalModelPublicId,
                 ApiKey = "synthetic-provider-key", PlatformType = "openai", Protocol = "openai",
                 SupportsFunctionCalling = functionCalling, SupportsThinking = true, SupportsVision = vision,
                 InputPricePerMillion = 1, OutputPricePerMillion = 2,
@@ -3696,6 +4570,7 @@ public class GatewayKeyGateContractTests
         PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         IGatewayServingReadinessProbe? readinessProbe = null,
         IGatewayScopedKeyAuthorizer? keyAuthorizer = null,
+        IGatewayRuntimeGrantCallCounter? runtimeGrantCallCounter = null,
         ILLMRequestContextAccessor? contextAccessor = null,
         LlmGatewayDataContext? gatewayData = null,
         IHttpContextAccessor? httpContextAccessor = null)
@@ -3713,6 +4588,8 @@ public class GatewayKeyGateContractTests
             builder.Services.AddSingleton(readinessProbe);
         if (keyAuthorizer != null)
             builder.Services.AddSingleton(keyAuthorizer);
+        if (runtimeGrantCallCounter != null)
+            builder.Services.AddSingleton(runtimeGrantCallCounter);
         if (gatewayData != null)
             builder.Services.AddSingleton(gatewayData);
 
@@ -3740,17 +4617,23 @@ public class GatewayKeyGateContractTests
     {
         private readonly Func<string, bool> _scopeAllowed;
         private readonly string? _resolvedAppCallerCode;
+        private readonly GatewayRuntimeGrantRecord? _runtimeGrant;
 
-        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed, string? resolvedAppCallerCode = null)
+        public CapturingScopedKeyAuthorizer(
+            Func<string, bool> scopeAllowed,
+            string? resolvedAppCallerCode = null,
+            GatewayRuntimeGrantRecord? runtimeGrant = null)
         {
             _scopeAllowed = scopeAllowed;
             _resolvedAppCallerCode = resolvedAppCallerCode;
+            _runtimeGrant = runtimeGrant;
         }
 
         public int CallCount { get; private set; }
         public string? SourceSystem { get; private set; }
         public string? AppCallerCode { get; private set; }
         public string? RequiredScope { get; private set; }
+        public string? RequestPath { get; private set; }
         public bool AllowSingleAppCallerInference { get; private set; }
 
         public Task<GatewayKeyAuthorization> AuthorizeAsync(
@@ -3762,12 +4645,14 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             CallCount++;
             SourceSystem = sourceSystem;
             AppCallerCode = appCallerCode;
             RequiredScope = requiredScope;
+            RequestPath = requestPath;
             AllowSingleAppCallerInference = allowSingleAppCallerInference;
             var allowed = _scopeAllowed(requiredScope);
             return Task.FromResult(new GatewayKeyAuthorization(
@@ -3782,8 +4667,71 @@ public class GatewayKeyGateContractTests
                 ClientCode: "content-agent",
                 Environment: "test",
                 KeyPrefixSnapshot: "gwk_test",
-                ResolvedAppCallerCode: _resolvedAppCallerCode));
+                ResolvedAppCallerCode: _resolvedAppCallerCode,
+                RuntimeGrant: _runtimeGrant));
         }
+    }
+
+    private sealed class CapturingRuntimeGrantCallCounter : IGatewayRuntimeGrantCallCounter
+    {
+        public int CallCount { get; private set; }
+        public GatewayRuntimeGrantRecord? LastGrant { get; private set; }
+        public GatewayRuntimeGrantCallRequest? LastRuntimeRequest { get; private set; }
+        public int TaskReserveCount { get; private set; }
+        public int TaskFinalizeCount { get; private set; }
+        public GatewayTaskBudgetRequest? LastTaskRequest { get; private set; }
+        public GatewayRuntimeGrantCallAdmission RuntimeAdmission { get; set; } = new(
+            true, StatusCodes.Status200OK, string.Empty, "runtime grant call reserved");
+        public GatewayRuntimeGrantCallAdmission TaskAdmission { get; set; } = new(
+            true, StatusCodes.Status200OK, string.Empty, "task budget reserved");
+        public GatewayTaskBudgetPolicy TaskPolicy { get; set; } = new(
+            "scope-test", 8192, "default-chat-curated", "apiyi-openai", "gpt-5.6-sol");
+
+        public Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
+            GatewayRuntimeGrantRecord grant,
+            GatewayRuntimeGrantCallRequest request,
+            CancellationToken ct)
+        {
+            CallCount++;
+            LastGrant = grant;
+            LastRuntimeRequest = request;
+            return Task.FromResult(RuntimeAdmission);
+        }
+
+        public Task FinalizeAsync(
+            GatewayRuntimeGrantRecord grant,
+            string requestId,
+            GatewayTokenUsage? usage,
+            string outcomeCode,
+            CancellationToken ct) => Task.CompletedTask;
+
+        public Task<GatewayRuntimeGrantCallAdmission> TryReserveTaskAsync(
+            GatewayTaskBudgetRequest request,
+            CancellationToken ct)
+        {
+            TaskReserveCount++;
+            LastTaskRequest = request;
+            return Task.FromResult(TaskAdmission);
+        }
+
+        public Task FinalizeTaskAsync(
+            GatewayTaskBudgetRequest request,
+            GatewayTokenUsage? usage,
+            string outcomeCode,
+            CancellationToken ct)
+        {
+            TaskFinalizeCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task<GatewayTaskBudgetPolicy?> ResolveTaskPolicyAsync(
+            string scopeId,
+            string tenantId,
+            string userId,
+            string runId,
+            string appCallerCode,
+            CancellationToken ct)
+            => Task.FromResult<GatewayTaskBudgetPolicy?>(TaskPolicy with { ScopeId = scopeId });
     }
 
     private sealed class TeamScopedTestAuthorizer : IGatewayScopedKeyAuthorizer
@@ -3797,7 +4745,8 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             var teamId = providedKey switch
             {
@@ -3828,7 +4777,8 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             var tenantId = providedKey switch
             {

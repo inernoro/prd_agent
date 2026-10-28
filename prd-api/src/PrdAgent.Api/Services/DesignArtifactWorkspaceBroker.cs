@@ -19,13 +19,15 @@ public sealed record PreparedDesignArtifactWorkspace(
     string InputSha256,
     string ResultCommitUrl,
     string TransferToken,
+    string ModelGrantId,
     string ModelBaseUrl,
     string ModelToken,
     string Model,
     string BaseRevision,
     long MaxInputBytes,
     long MaxOutputBytes,
-    IReadOnlyList<string> AllowedOutputPaths);
+    IReadOnlyList<string> AllowedOutputPaths,
+    long? MaxPublicOutputBytes = null);
 
 public sealed record DesignArtifactResultCommit(
     string ResultSha256,
@@ -35,6 +37,11 @@ public sealed record DesignArtifactResultCommit(
 public interface IDesignArtifactWorkspaceBroker
 {
     Task<PreparedDesignArtifactWorkspace> PrepareAsync(
+        DesignArtifactRun run,
+        string? currentHtml,
+        CancellationToken ct);
+
+    Task<PreparedDesignArtifactWorkspace> PrepareForDirectGatewayAsync(
         DesignArtifactRun run,
         string? currentHtml,
         CancellationToken ct);
@@ -70,7 +77,10 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     public const string SchemaVersion = "map-design-workspace-v1";
     public const string ManifestSchemaVersion = "map-design-artifact-public-manifest-v2";
     public const long MaxInputBytes = 1_048_576;
-    public const long MaxOutputBytes = 6_291_456;
+    // The runtime result is a JSON envelope whose file payloads are base64 encoded. Keep the
+    // published-file contract at 6 MiB while allowing that same package to cross the runtime API.
+    public const long MaxPublicOutputBytes = 6_291_456;
+    public const long MaxOutputBytes = 20L * 1024 * 1024;
     private static readonly TimeSpan TicketTtl = TimeSpan.FromMinutes(25);
     internal static string CurrentProcessEpoch { get; } = $"{Environment.ProcessId}:{Guid.NewGuid():N}";
     private static readonly string[] AllowedOutputPaths = ["index.html", "manifest.json", "assets/**"];
@@ -78,6 +88,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     private readonly IAssetStorage _storage;
     private readonly IDataProtector _protector;
     private readonly IConfiguration _configuration;
+    private readonly IDesignArtifactGatewayGrantService _gatewayGrants;
     private readonly IHostedSiteService? _sites;
     private readonly IDesignKnowledgeSnapshotResolver? _knowledge;
     private readonly ILogger<DesignArtifactWorkspaceBroker>? _logger;
@@ -102,6 +113,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         IAssetStorage storage,
         IDataProtectionProvider dataProtectionProvider,
         IConfiguration configuration,
+        IDesignArtifactGatewayGrantService gatewayGrants,
         IHostedSiteService? sites = null,
         IDesignKnowledgeSnapshotResolver? knowledge = null,
         ILogger<DesignArtifactWorkspaceBroker>? logger = null)
@@ -110,14 +122,26 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         _storage = storage;
         _protector = dataProtectionProvider.CreateProtector("DesignArtifactWorkspaceBroker.v1");
         _configuration = configuration;
+        _gatewayGrants = gatewayGrants;
         _logger = logger;
         _sites = sites;
         _knowledge = knowledge;
     }
 
-    public async Task<PreparedDesignArtifactWorkspace> PrepareAsync(
+    public Task<PreparedDesignArtifactWorkspace> PrepareAsync(
         DesignArtifactRun run,
         string? currentHtml,
+        CancellationToken ct) => PrepareCoreAsync(run, currentHtml, directGateway: false, ct);
+
+    public Task<PreparedDesignArtifactWorkspace> PrepareForDirectGatewayAsync(
+        DesignArtifactRun run,
+        string? currentHtml,
+        CancellationToken ct) => PrepareCoreAsync(run, currentHtml, directGateway: true, ct);
+
+    private async Task<PreparedDesignArtifactWorkspace> PrepareCoreAsync(
+        DesignArtifactRun run,
+        string? currentHtml,
+        bool directGateway,
         CancellationToken ct)
     {
         var publicBaseUrl = ResolvePublicBaseUrl(_configuration)
@@ -190,26 +214,48 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         run.UpdatedAt = updatedAt;
 
         var transferToken = ProtectTicket(run, "workspace", expiresAt);
-        var modelToken = ProtectTicket(run, "model", expiresAt);
         var runtimeRoot = $"{publicBaseUrl}/api/design-artifacts/runtime/{Uri.EscapeDataString(run.Id)}";
+        if (!directGateway)
+        {
+            return new PreparedDesignArtifactWorkspace(
+                $"{runtimeRoot}/workspace/input",
+                inputSha256,
+                $"{runtimeRoot}/workspace/result",
+                transferToken,
+                string.Empty,
+                $"{runtimeRoot}/llm/v1",
+                ProtectTicket(run, "model", expiresAt),
+                "map-managed",
+                package.BaseRevision,
+                MaxInputBytes,
+                MaxOutputBytes,
+                AllowedOutputPaths,
+                MaxPublicOutputBytes);
+        }
+
+        var modelGrant = await _gatewayGrants.IssueAsync(run, expiresAt, CancellationToken.None);
         return new PreparedDesignArtifactWorkspace(
             $"{runtimeRoot}/workspace/input",
             inputSha256,
             $"{runtimeRoot}/workspace/result",
             transferToken,
-            $"{runtimeRoot}/llm/v1",
-            modelToken,
-            "map-managed",
+            modelGrant.Id,
+            modelGrant.BaseUrl,
+            modelGrant.ApiKey,
+            modelGrant.Model,
             package.BaseRevision,
             MaxInputBytes,
             MaxOutputBytes,
-            AllowedOutputPaths);
+            AllowedOutputPaths,
+            MaxPublicOutputBytes);
     }
 
     private async Task<IReadOnlyList<DesignWorkspaceFile>?> ReadCurrentFilesAsync(
         DesignArtifactRun run, string? currentHtml, CancellationToken ct)
     {
         if (run.Operation != DesignArtifactOperations.Edit) return null;
+        if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+            return await ReadCurrentPresentationFilesAsync(run, currentHtml, ct);
         if (_sites == null || string.IsNullOrWhiteSpace(run.TargetSiteId))
             throw new InvalidOperationException("当前站点工作区读取服务不可用，请联系管理员后重试");
 
@@ -265,6 +311,61 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw CurrentVersionChanged();
         return files;
     }
+
+    private async Task<IReadOnlyList<DesignWorkspaceFile>> ReadCurrentPresentationFilesAsync(
+        DesignArtifactRun run,
+        string? currentHtml,
+        CancellationToken ct)
+    {
+        var parentRunId = run.PresentationInput?.ParentRunId?.Trim();
+        if (string.IsNullOrWhiteSpace(parentRunId))
+            throw new InvalidOperationException("演示稿修改任务缺少冻结的来源版本，请从已完成版本重新发起");
+        var parent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                && item.Id == parentRunId
+                && item.UserId == run.UserId
+                && item.ArtifactType == DesignArtifactTypes.HtmlPpt
+                && item.Status == RunStatuses.Done)
+            .FirstOrDefaultAsync(ct);
+        if (parent == null || string.IsNullOrWhiteSpace(parent.WorkspaceResultAssetKey))
+            throw new InvalidOperationException("演示稿来源版本已不可用，请恢复历史版本后重试");
+        var package = await ReadResultAsync(parent.Id, ct);
+        var expected = DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(package.IndexHtml);
+        if (string.IsNullOrWhiteSpace(currentHtml)
+            || !string.Equals(
+                expected,
+                DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(currentHtml),
+                StringComparison.Ordinal)
+            || (!string.IsNullOrWhiteSpace(run.PresentationInput?.ParentPackageHash)
+                && !FixedEquals(run.PresentationInput.ParentPackageHash, parent.WorkspaceResultSha256)))
+            throw CurrentVersionChanged();
+        return MaterializeCurrentPresentationFiles(package);
+    }
+
+    internal static IReadOnlyList<DesignWorkspaceFile> MaterializeCurrentPresentationFiles(
+        ParsedDesignWorkspaceResult package)
+    {
+        var normalizedIndexBytes = Encoding.UTF8.GetBytes(package.IndexHtml);
+        return package.Files
+            .Where(file => !string.Equals(file.Path, DesignArtifactPublicRevision.InternalManifestPath, StringComparison.Ordinal)
+                           && !IsPresentationRuntimeEvidencePath(file.Path))
+            .Select(file => string.Equals(file.Path, "index.html", StringComparison.Ordinal)
+                ? new DesignWorkspaceFile(
+                    "current/index.html",
+                    Convert.ToBase64String(normalizedIndexBytes),
+                    Sha256Hex(normalizedIndexBytes),
+                    normalizedIndexBytes.LongLength,
+                    file.MediaType)
+                : file with { Path = "current/" + file.Path })
+            .ToList();
+    }
+
+    internal static bool IsPresentationRuntimeEvidencePath(string path) =>
+        path.Equals("assets/accessibility-static-report.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/design-tokens.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/page-outline.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/provenance.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/visual-quality-report.json", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("assets/quality/", StringComparison.OrdinalIgnoreCase);
 
     private async Task<HostedSiteEditableEntry> ReadAuthorizedCurrentEntryAsync(DesignArtifactRun run, CancellationToken ct)
     {
@@ -956,16 +1057,21 @@ public static class DesignArtifactWorkspaceContract
         TimeSpan.FromSeconds(1));
     private static readonly Regex SafeSlug = new("[^a-zA-Z0-9._-]+", RegexOptions.Compiled);
     private static readonly Regex MapSlideNavCompatBlock = new(
-        @"<!--map-slide-nav-compat-->\s*<script\b[^>]*>[\s\S]*?</script\s*>",
+        @"<!--map-slide-nav-compat-->\s*(?:<!--map-slide-nav-bridge-only-->\s*)?<script\b[^>]*>[\s\S]*?</script\s*>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex MapSlideNavCompatMarker = new(
         @"<!--map-slide-nav-compat-->",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex MapSlideNavBridgeOnlyMarker = new(
+        @"<!--map-slide-nav-bridge-only-->",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex CdsOfflineGuardBlock = new(
         @"<script\b(?=[^>]*\bdata-cds-offline-guard(?:\s|=|>))[^>]*>[\s\S]*?</script\s*>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public const string DesignDirectionSchemaVersion = "map-design-direction-v1";
+    public const string DesignBriefSchemaVersion = "map-design-brief-v1";
+    public const string BrandPackageSchemaVersion = "map-brand-package-v1";
 
     /// <summary>上传文档在工作区里的位置；与知识库条目同在 knowledge/，前缀 upload- 区分来源。</summary>
     internal static string UploadedSourcePath(int index, DesignUploadedSource item)
@@ -1003,13 +1109,49 @@ public static class DesignArtifactWorkspaceContract
             currentHtmlHash = string.IsNullOrEmpty(currentHtml) ? null : HashText(currentHtml),
         }, JsonOptions);
         // 新增输入只在出现时参与版本指纹：没有它们的旧运行，指纹与改动前逐字节一致。
-        if (uploadedSources.Count > 0 || referenceFiles is { Count: > 0 } || run.DesignDirection != null)
+        if (uploadedSources.Count > 0 || referenceFiles is { Count: > 0 } || run.DesignDirection != null
+            || run.DesignBrief != null || run.BrandPackage != null || run.DesignContextProvenance != null)
             semantic = JsonSerializer.SerializeToUtf8Bytes(new
             {
                 inputRevision = HashBytes(semantic),
                 uploaded = uploadedSources.Select(item => new { item.AttachmentId, item.ContentHash }),
                 references = referenceFiles?.Select(file => new { file.Path, file.Sha256 }),
                 designDirection = run.DesignDirection?.PromptFingerprint,
+                designBrief = run.DesignBrief?.Fingerprint,
+                brandPackage = run.BrandPackage?.Fingerprint,
+            }, JsonOptions);
+        if (run.DesignContextProvenance != null)
+            semantic = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                inputRevision = HashBytes(semantic),
+                designContext = new
+                {
+                    run.DesignContextProvenance.SchemaVersion,
+                    run.DesignContextProvenance.Version,
+                    run.DesignContextProvenance.Source,
+                    run.DesignContextProvenance.SourceRunId,
+                    run.DesignContextProvenance.SourceRevisionId,
+                    run.DesignContextProvenance.ParentDesignBriefFingerprint,
+                    run.DesignContextProvenance.ParentBrandPackageFingerprint,
+                },
+            }, JsonOptions);
+        if (run.PresentationInput != null)
+            semantic = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                inputRevision = HashBytes(semantic),
+                presentation = new
+                {
+                    run.PresentationInput.Version,
+                    run.PresentationInput.TargetPages,
+                    run.PresentationInput.SourceContentHash,
+                    run.PresentationInput.OutlineHash,
+                    run.PresentationInput.SourcePlanHash,
+                    run.PresentationInput.Theme,
+                    run.PresentationInput.ParentRunId,
+                    run.PresentationInput.ParentPackageHash,
+                    run.PresentationInput.ManualEditHtmlHash,
+                    run.PresentationInput.RepairCandidateHtmlHash,
+                },
             }, JsonOptions);
         // Keep the existing HTML-only revision algorithm for callers without a
         // server file snapshot; complete edits additionally bind every file digest.
@@ -1075,6 +1217,67 @@ public static class DesignArtifactWorkspaceContract
                 visibleTextOccurrenceConstraints,
             },
         }, JsonOptions);
+        if (run.PresentationInput != null)
+        {
+            var completeTask = System.Text.Json.Nodes.JsonNode.Parse(task)!;
+            var presentationContract = JsonSerializer.SerializeToNode(new
+            {
+                schemaVersion = "map-html-ppt-contract-v1",
+                run.PresentationInput.Version,
+                run.PresentationInput.TargetPages,
+                run.PresentationInput.SourceContentHash,
+                run.PresentationInput.OutlineHash,
+                sourcePlan = string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanHash)
+                    ? null
+                    : new
+                    {
+                        schemaVersion = "map-mdppt-source-plan-v2",
+                        path = "brief/source-plan.json",
+                        contentHash = run.PresentationInput.SourcePlanHash,
+                    },
+                run.PresentationInput.Theme,
+                manualEditProposal = string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtmlHash)
+                    ? null
+                    : new
+                    {
+                        authority = "user-authored-untrusted-proposal",
+                        path = "proposal/manual-edit.html",
+                        contentHash = run.PresentationInput.ManualEditHtmlHash,
+                    },
+                repairCandidate = string.IsNullOrWhiteSpace(run.PresentationInput.RepairCandidateHtmlHash)
+                    ? null
+                    : new
+                    {
+                        authority = "server-retained-failed-preview",
+                        path = "candidate/index.html",
+                        contentHash = run.PresentationInput.RepairCandidateHtmlHash,
+                    },
+                requiredSlideIndexes = Enumerable.Range(1, run.PresentationInput.TargetPages),
+                navigation = new
+                {
+                    desktop = true,
+                    mobile = true,
+                    keyboard = true,
+                },
+                factualCoverage = new
+                {
+                    required = true,
+                    unsupportedFactsAllowed = false,
+                    examplesAreNonBinding = true,
+                },
+            }, JsonOptions)!.AsObject();
+            // null means that this generate run has no manual edit proposal. Omit the member so
+            // every runtime sees the same absence semantics; older packages that serialized an
+            // explicit null remain accepted by the runtime compatibility check.
+            if (string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtmlHash))
+                presentationContract.Remove("manualEditProposal");
+            if (string.IsNullOrWhiteSpace(run.PresentationInput.RepairCandidateHtmlHash))
+                presentationContract.Remove("repairCandidate");
+            if (string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanHash))
+                presentationContract.Remove("sourcePlan");
+            completeTask["presentationContract"] = presentationContract;
+            task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
+        }
         if (originalFiles != null)
         {
             var completeTask = System.Text.Json.Nodes.JsonNode.Parse(task)!;
@@ -1141,7 +1344,52 @@ public static class DesignArtifactWorkspaceContract
             }, JsonOptions);
             task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
         }
+        if (run.DesignBrief != null || run.BrandPackage != null || run.DesignContextProvenance != null)
+        {
+            var completeTask = System.Text.Json.Nodes.JsonNode.Parse(task)!;
+            if (run.DesignBrief != null)
+                completeTask["designBrief"] = JsonSerializer.SerializeToNode(run.DesignBrief, JsonOptions);
+            if (run.BrandPackage != null)
+                completeTask["brandPackage"] = JsonSerializer.SerializeToNode(run.BrandPackage, JsonOptions);
+            if (run.DesignContextProvenance != null)
+                completeTask["designContextProvenance"] = JsonSerializer.SerializeToNode(
+                    run.DesignContextProvenance,
+                    JsonOptions);
+            task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
+        }
         files.Add(ToFile("brief/task.json", "application/json", task));
+        if (run.PresentationInput != null)
+        {
+            files.Add(ToFile(
+                "source/presentation.md",
+                "text/markdown",
+                Encoding.UTF8.GetBytes(run.PresentationInput.SourceContent)));
+            files.Add(ToFile(
+                "brief/outline.json",
+                "application/json",
+                Encoding.UTF8.GetBytes(run.PresentationInput.OutlineJson)));
+            if (!string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanJson))
+            {
+                files.Add(ToFile(
+                    "brief/source-plan.json",
+                    "application/json",
+                    Encoding.UTF8.GetBytes(run.PresentationInput.SourcePlanJson)));
+            }
+            if (!string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtml))
+            {
+                files.Add(ToFile(
+                    "proposal/manual-edit.html",
+                    "text/html",
+                    Encoding.UTF8.GetBytes(run.PresentationInput.ManualEditHtml)));
+            }
+            if (!string.IsNullOrWhiteSpace(run.PresentationInput.RepairCandidateHtml))
+            {
+                files.Add(ToFile(
+                    "candidate/index.html",
+                    "text/html",
+                    Encoding.UTF8.GetBytes(run.PresentationInput.RepairCandidateHtml)));
+            }
+        }
         for (var index = 0; index < run.KnowledgeReferences.Count; index++)
         {
             var item = run.KnowledgeReferences[index];
@@ -1208,6 +1456,7 @@ public static class DesignArtifactWorkspaceContract
         // 任意未带这些标记的脚本均保持原样，仍会由 CDS 的产物安全闸门严格审查。
         var normalized = MapSlideNavCompatBlock.Replace(html, string.Empty);
         normalized = MapSlideNavCompatMarker.Replace(normalized, string.Empty);
+        normalized = MapSlideNavBridgeOnlyMarker.Replace(normalized, string.Empty);
         normalized = CdsOfflineGuardBlock.Replace(normalized, string.Empty);
         return HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(normalized);
     }
@@ -1261,6 +1510,8 @@ public static class DesignArtifactWorkspaceContract
 
         string? indexHtml = null;
         byte[]? manifestBytes = null;
+        long publicOutputBytes = 0;
+        var publicOutputLimit = Math.Min(maxBytes, DesignArtifactWorkspaceBroker.MaxPublicOutputBytes);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var verifiedFiles = new Dictionary<string, DesignWorkspaceFile>(StringComparer.Ordinal);
         foreach (var file in package.Files)
@@ -1279,6 +1530,9 @@ public static class DesignArtifactWorkspaceContract
             if (content.LongLength != file.Size
                 || !string.Equals(HashBytes(content), file.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("远程设计结果文件校验失败，请重新生成");
+            publicOutputBytes = checked(publicOutputBytes + content.LongLength);
+            if (publicOutputBytes > publicOutputLimit)
+                throw new InvalidOperationException("远程设计结果的公开文件总量超过 6MB，请压缩资源后重新生成");
             if (normalized == "index.html") indexHtml = Encoding.UTF8.GetString(content);
             if (normalized == "manifest.json") manifestBytes = content;
             verifiedFiles[normalized] = file with { Path = normalized };

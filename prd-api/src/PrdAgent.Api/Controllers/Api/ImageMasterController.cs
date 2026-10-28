@@ -24,6 +24,7 @@ using SixLabors.ImageSharp.Processing;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models.MultiImage;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -1541,6 +1542,23 @@ public class ImageMasterController : ControllerBase
                 initSha = null;
             }
 
+            var submittedImageRefCount = request?.ImageRefs?.Count > 0
+                ? request.ImageRefs.Count
+                : string.IsNullOrWhiteSpace(initSha) ? 0 : 1;
+            var referenceValidation = ImageReferenceContract.ValidateDeclared(
+                request?.ExpectedImageRefCount,
+                submittedImageRefCount,
+                !string.IsNullOrWhiteSpace(request?.MaskBase64));
+            if (!referenceValidation.IsValid)
+            {
+                var message = referenceValidation.ErrorCode == ImageReferenceContract.RequiredCountCode
+                    ? "请求缺少参考图数量声明，这次没有生成。请刷新页面后重新提交。"
+                    : $"参考图没有完整传到生成任务：应有 {referenceValidation.ExpectedCount} 张，实际收到 {referenceValidation.SubmittedCount} 张。这次没有生成，请重新选择参考图后再试。";
+                return BadRequest(ApiResponse<object>.Fail(
+                    referenceValidation.ErrorCode ?? ImageReferenceContract.IncompleteCode,
+                    message));
+            }
+
             // 关键：先把”占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）
             // 使用 displayPrompt（不含生图意图前缀），避免前缀泄漏到 UI 展示
             //
@@ -1626,6 +1644,7 @@ public class ImageMasterController : ControllerBase
                 TargetCanvasKey = targetKey,
                 InitImageAssetSha256 = initSha,
                 ImageRefs = imageRefs, // 多图引用（新架构）
+                ExpectedImageRefCount = referenceValidation.ExpectedCount,
                 MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
                 TargetX = request?.X,
                 TargetY = request?.Y,
@@ -3181,6 +3200,12 @@ public class CreateWorkspaceImageGenRunRequest
     /// 示例：[{"refId": 1, "assetSha256": "abc...", "url": "...", "label": "风格图"}]
     /// </summary>
     public List<ImageRefInputDto>? ImageRefs { get; set; }
+
+    /// <summary>
+    /// 用户在入口明确选择的参考图数量。必须与最终提交的 ImageRefs 数量一致；
+    /// 用于阻止任何入口把图生图静默降级成文生图或少图生成。
+    /// </summary>
+    public int? ExpectedImageRefCount { get; set; }
 
     /// <summary>
     /// 可选：局部重绘蒙版（base64 data URI）。白色 = 重绘区域，黑色 = 保持。

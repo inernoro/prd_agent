@@ -134,7 +134,7 @@ def test_connect_new_project_uses_bootstrap_request(workspace, monkeypatch):
     monkeypatch.setattr(cdscli, "_request", fake_request)
     monkeypatch.setattr(cdscli.time, "sleep", lambda _seconds: None)
     code, output = run_command([
-        "connect", "--host", "cds.example", "--new-project", "--agent", "Cursor",
+        "connect", "--host", "cds.example", "--new-project", "--agent", "Codex",
     ])
 
     assert code == 0

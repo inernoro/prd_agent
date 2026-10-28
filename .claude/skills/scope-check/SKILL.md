@@ -17,7 +17,7 @@ allowed-tools: Read Bash Glob Grep
 
 1. 默认分支：读取 `refs/remotes/origin/HEAD`；失败后检查实际存在的候选分支。
 2. 变更范围：使用 merge-base 后的 `git diff --name-status <base>...HEAD`。
-3. 规则来源：最近的 `AGENTS.md`、`CLAUDE.md`、`.cursor/rules/`、`CODEOWNERS`、贡献指南。
+3. 规则来源：最近的 `AGENTS.md`、`CLAUDE.md`、`CODEOWNERS`、贡献指南。
 4. 模块边界：包清单、workspace 配置、顶层目录、构建文件和测试目录。
 5. 历史归属：仅在前四项不足时，用相邻文件和近期提交辅助判断。
 

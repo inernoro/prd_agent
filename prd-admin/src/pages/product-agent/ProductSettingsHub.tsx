@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
+import { Tabs } from '@/components/ui/Tabs';
 import { toast } from '@/lib/toast';
 import {
   listProducts, upsertGradeOption, deleteGradeOption,
@@ -36,26 +37,33 @@ import {
   DescTemplateManager,
   CategoryManager,
   RequirementTypeManager,
-  ApplicationAdminManager,
 } from './SettingsSection';
 import { WorkflowEditor } from './WorkflowTemplateSection';
 import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 import { useGradeOptions } from './gradeOptions';
+import { ProductPermissionsPanel, type ProductPermissionTab } from './ProductPermissionsPanel';
+import { useSearchParams } from 'react-router-dom';
+import { useAuthStore } from '@/stores/authStore';
+import { PRODUCT_MAP_ADMIN } from './productPermissionAccess';
+import { ProductClaimWebhookPanel } from './ProductClaimWebhookPanel';
 
-type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb';
+type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb' | 'webhook';
 
 const CATS: { key: SettingsCat; label: string; icon: typeof ShieldCheck; desc: string }[] = [
-  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '按角色分配产品管理内部各页面的访问权限' },
+  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '菜单权限、功能权限与角色权限' },
   { key: 'product', label: '产品', icon: Boxes, desc: '产品类型与产品管理员指派' },
   { key: 'requirement', label: '需求', icon: ListChecks, desc: '需求的表单、流程、类型、优先级与严重程度' },
   { key: 'feature', label: '功能', icon: Puzzle, desc: '功能的表单、流程、优先级与严重程度' },
   { key: 'defect', label: '缺陷', icon: Bug, desc: '缺陷的表单、流程、优先级与严重程度' },
   { key: 'customer', label: '客户', icon: Users, desc: '客户表单字段定义' },
   { key: 'consult-kb', label: '问策知识库', icon: BookOpen, desc: '营销问策智能体的专属知识库' },
+  { key: 'webhook', label: 'Webhook 配置', icon: ShieldCheck, desc: '版本申领自动推送、脱敏地址与发送结果' },
 ];
 
 export function ProductSettingsHub() {
-  const [cat, setCat] = useState<SettingsCat>('perm');
+  const [params, setParams] = useSearchParams();
+  const [cat, setCat] = useState<SettingsCat>(() => params.get('settingsCat') === 'webhook' ? 'webhook' : 'perm');
+  const isMapAdmin = useAuthStore(state => state.isRoot || state.permissions.includes(PRODUCT_MAP_ADMIN));
   const [products, setProducts] = useState<Product[]>([]);
 
   useEffect(() => {
@@ -75,13 +83,13 @@ export function ProductSettingsHub() {
       <div className="flex min-h-0 flex-1">
         {/* 左侧分类导航 */}
         <nav className="w-44 shrink-0 overflow-y-auto border-r border-token-subtle px-2 py-3" style={{ overscrollBehavior: 'contain' }}>
-          {CATS.map((c) => {
+          {CATS.filter(c => c.key !== 'webhook' || isMapAdmin).map((c) => {
             const Icon = c.icon;
             const on = c.key === cat;
             return (
               <button
                 key={c.key}
-                onClick={() => setCat(c.key)}
+                onClick={() => { setCat(c.key); setParams(previous => { const next = new URLSearchParams(previous); next.set('settingsCat', c.key); return next; }, { replace: true }); }}
                 className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${on ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}
               >
                 <Icon size={15} className="shrink-0" />
@@ -98,6 +106,7 @@ export function ProductSettingsHub() {
             <EntitySettingsPanel key={cat} entityType={cat} products={products} />
           )}
           {cat === 'consult-kb' && <ConsultKnowledgePanel />}
+          {cat === 'webhook' && (isMapAdmin ? <ProductClaimWebhookPanel /> : <p role="status" className="text-sm text-token-secondary">仅MAP管理员可配置申领Webhook。</p>)}
         </div>
       </div>
     </div>
@@ -106,18 +115,21 @@ export function ProductSettingsHub() {
 
 // ════════════════════════ 权限 ════════════════════════
 
+const PERMISSION_TABS = [
+  { key: 'menu', label: '菜单权限' },
+  { key: 'function', label: '功能权限' },
+  { key: 'role', label: '角色权限' },
+];
+
 function PermissionPanel() {
+  const [tab, setTab] = useState<ProductPermissionTab>('menu');
   return (
-    <div className="flex flex-col gap-5">
-      <div className="rounded-xl border border-dashed border-token-subtle bg-token-nested p-4">
-        <div className="text-sm font-medium text-token-primary">按角色分配页面权限</div>
-        <div className="mt-1 text-xs leading-5 text-token-muted">
-          根据用户角色分配产品管理内部各页面（概览 / 产品 / 需求 / 功能 / 缺陷 / 客户 / 设置等）的访问权限。该细粒度授权矩阵建设中，将在后续版本上线；当前页面访问沿用 product-agent.use / manage / admin 三级权限。
-        </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-token-subtle pb-3">
+        <Tabs items={PERMISSION_TABS} activeKey={tab} onChange={(key) => setTab(key as ProductPermissionTab)} className="flex-wrap" />
       </div>
-      <div>
-        <div className="mb-2 text-sm font-medium text-token-primary">历史数据导入权限</div>
-        <ApplicationAdminManager />
+      <div className="min-h-0 flex-1 pt-5" aria-label={PERMISSION_TABS.find((item) => item.key === tab)?.label}>
+        <ProductPermissionsPanel tab={tab} />
       </div>
     </div>
   );

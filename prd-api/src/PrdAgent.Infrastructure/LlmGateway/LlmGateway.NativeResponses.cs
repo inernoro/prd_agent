@@ -17,6 +17,7 @@ public partial class LlmGateway
         GatewayRawRequest request,
         GatewayModelResolution resolution,
         Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        Func<GatewayNativeAdmissionContext, CancellationToken, Task<GatewayRawResponse?>>? admit = null,
         CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var callerError))
@@ -57,7 +58,6 @@ public partial class LlmGateway
             else if (TryReadInt(body["max_output_tokens"]!, out var requested) && requested > resolution.MaxTokens.Value)
                 body["max_output_tokens"] = resolution.MaxTokens.Value;
         }
-
         var endpoint = BuildEndpointFromPath(resolution.ApiUrl!, "/v1/responses");
         using var message = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
@@ -87,6 +87,28 @@ public partial class LlmGateway
                 return outcome;
             }
             lease = admission.Lease;
+            // 运行时授权次数在全部本地校验和供应商并发/速率准入通过后才扣减，
+            // 但仍严格早于任何上游发送。瞬时 429 和所有本地拒绝都不消耗任务额度。
+            var effectiveMaxOutputTokens = body["max_output_tokens"] is { } maxOutputNode
+                                           && TryReadInt(maxOutputNode, out var maxOutput)
+                                           && maxOutput > 0
+                ? maxOutput
+                : 0;
+            var finalBody = body.ToJsonString();
+            if (admit is not null && await admit(
+                    new GatewayNativeAdmissionContext(
+                        request.Context?.RequestId ?? string.Empty,
+                        Encoding.UTF8.GetByteCount(finalBody),
+                        effectiveMaxOutputTokens,
+                        resolution.LogicalModelPublicId ?? string.Empty,
+                        resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
+                        resolution.ActualModel ?? string.Empty,
+                        resolution.OfferingId),
+                    deadline.Token) is { } admissionError)
+            {
+                outcome = admissionError;
+                return outcome;
+            }
             using var client = CreateOutboundClient(request.Context?.TenantId);
             // 本次 deadline 管理完整请求；不使用 HttpClient 的默认 100 秒截断原生长流。
             client.Timeout = Timeout.InfiniteTimeSpan;
@@ -145,6 +167,7 @@ public partial class LlmGateway
             else observer.Complete();
             auditBody = observer.AuditBody;
             var successful = response.IsSuccessStatusCode && observer.Completed && wantsStream == isStream;
+            var usage = ToGatewayTokenUsage(RawGatewayUsageParser.Parse(auditBody));
             // 缓冲路径只在校验通过后交付；不通过就一个字节都不发，让调用方发结构化错误。
             if (buffered != null && successful)
             {
@@ -158,6 +181,7 @@ public partial class LlmGateway
                 ErrorCode = successful ? null : response.IsSuccessStatusCode ? "NATIVE_RESPONSES_OUTCOME_UNKNOWN" : "NATIVE_RESPONSES_UPSTREAM_FAILED",
                 ErrorMessage = successful ? null : "上游未返回完整成功结果，请检查本次任务记录",
                 Resolution = resolution,
+                TokenUsage = usage,
                 LogId = logId,
                 DurationMs = (long)(DateTime.UtcNow - started).TotalMilliseconds,
             };
@@ -195,6 +219,24 @@ public partial class LlmGateway
             }
         }
     }
+
+    private static GatewayTokenUsage? ToGatewayTokenUsage(RawGatewayUsage usage)
+        => usage.InputTokens is not null
+           || usage.OutputTokens is not null
+           || usage.ReasoningTokens is not null
+           || usage.CacheReadInputTokens is not null
+           || usage.CacheCreationInputTokens is not null
+            ? new GatewayTokenUsage
+            {
+                InputTokens = usage.InputTokens,
+                OutputTokens = usage.OutputTokens,
+                ReasoningTokens = usage.ReasoningTokens,
+                CacheReadInputTokens = usage.CacheReadInputTokens,
+                CacheCreationInputTokens = usage.CacheCreationInputTokens,
+                CacheCreationCountedInsideInput = usage.CacheCreationCountedInsideInput,
+                Source = "response_body",
+            }
+            : null;
 
     public static GatewayRawResponse? ValidateNativeResponsesBody(JsonObject? body)
     {

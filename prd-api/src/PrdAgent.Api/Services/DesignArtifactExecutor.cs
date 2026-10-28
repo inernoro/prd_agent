@@ -14,7 +14,8 @@ public sealed record DesignArtifactExecutorChunk(
     string Content,
     IReadOnlyList<DesignWorkspaceFile>? VerifiedFiles = null,
     DesignArtifactResolvedModel? ResolvedModel = null,
-    int? Progress = null);
+    int? Progress = null,
+    string? PhaseCode = null);
 
 /// <summary>
 /// 本次生成实际用到的模型与平台（Codex P1，2026-09-15）。用户会因为「换了个模型」直接感到
@@ -134,6 +135,14 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         if (ModelPoolId != null)
             throw new InvalidOperationException("当前执行器暂不支持已配置的模型选择方式，请切换 OpenDesign，或联系管理员调整设计模型配置");
         return Model;
+    }
+
+    internal string? ForDirectGatewayClient()
+    {
+        // Codex 的本地配置要求一个非空 model 字段，但短期授权到达 LLMGW 后会以冻结策略
+        // 覆盖请求：模型池优先走 ModelPoolId，固定线路优先走 pin。这里的值只负责让客户端
+        // 启动，不得用旧 MAP 代理的「模型池不支持」限制拒绝正式直连路径。
+        return Model ?? ModelPoolId ?? Policy?.PinnedModelId;
     }
 
     internal void ApplyToResponsesRequest(JsonObject body)
@@ -480,7 +489,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             workspace.BaseRevision,
                             workspace.MaxInputBytes,
                             workspace.MaxOutputBytes,
-                            workspace.AllowedOutputPaths))),
+                            workspace.AllowedOutputPaths,
+                            workspace.MaxPublicOutputBytes))),
                 token), deadline, attemptToken),
                 async providerToken => (await _sessions.ListRuntimeProvidersAsync(
                         run.UserId,

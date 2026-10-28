@@ -1,3 +1,4 @@
+import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import { describeRestartWait, getRestartWait, resolveRestartStatus } from './services/self-restart-wait.js';
@@ -25,6 +26,7 @@ import { createProjectsRouter, assertProjectAccess, isBranchGroupsSaveRequest } 
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
+import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
@@ -52,6 +54,8 @@ import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deplo
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { sha256Hex } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostics.js';
+import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
 import { defaultEnvFilePath } from './services/env-file.js';
@@ -72,6 +76,7 @@ import { collectControlPlanePressure } from './services/control-plane-pressure.j
 import type { UptimeCycleHealth } from './services/uptime-monitor.js';
 import type { OffHostAuditBreakerState } from './services/offhost-audit-log.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { verifyProjectReleaseCI } from './services/project-release-ci.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
@@ -561,6 +566,8 @@ export interface ServerDeps {
    * worker abort 完成后再退出。
    */
   gracefulShutdown?: GracefulShutdownController;
+  /** Resources must settle before the shared execution pools close. */
+  registerResourceShutdown?: (close: () => Promise<void>) => void;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -630,11 +637,21 @@ function isSealedStorageRequest(req: express.Request): boolean {
   return [req.url, req.originalUrl].some((value) => normalizedSealedStoragePath(value) !== null);
 }
 
+function normalizedDatabasePassCredentialPath(value: unknown): string | null {
+  const pathname=String(value||'').split('?')[0].replace(/^\/_cds\/api\//i,'/api/').replace(/\/$/,'');
+  return /^\/api\/branches\/[^/]+\/resources\/[^/]+\/database-passes\/[a-f0-9]{20}\/credentials$/i.test(pathname)?pathname:null;
+}
+function isDatabasePassCredentialRequest(req: express.Request): boolean {
+  return [req.url,req.originalUrl].some(value=>normalizedDatabasePassCredentialPath(value)!==null);
+}
+
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
+    ?? normalizedDatabasePassCredentialPath(req.url)
+    ?? normalizedDatabasePassCredentialPath(raw)
     ?? '/api/cds-system/sealed-storage';
 }
 
@@ -1012,6 +1029,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
     'GET /bootstrap/presets': '列出初始化预设',
+    'GET /agent/setup.md': '读取智能体接入与任务说明',
+    'GET /agent/setup.json': '读取智能体接入版本与技能选择',
     'GET /skills/bundles': '列出角色套装',
     'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
@@ -1075,6 +1094,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /self-check': 'CDS 自检',
     'GET /host-stats': '获取主机状态',
     'GET /cds-system/perf-health': '运维健康观测',
+    'GET /cds-system/diagnostics/main-thread': '主线程诊断',
+    'POST /cds-system/diagnostics/cpu-profile': '采样主线程CPU',
     'GET /state-stream': '订阅状态流',
     'GET /activity-stream': '订阅活动流',
     'GET /cli-version': '获取 CLI 版本',
@@ -1099,6 +1120,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
+    'GET /projects/:id/identity-history': '查看设置记录',
     'GET /projects/:id/recent-auto-deploys': '查看自动部署历史',
     'GET /projects/:id/preview-mode': '获取项目预览模式',
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
@@ -1285,6 +1307,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
     [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
     [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
+    [/^GET \/projects\/([^/]+)\/migration\/fingerprint$/, '核对项目指纹'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby$/, '读取分支同步策略'],
+    [/^PUT \/projects\/([^/]+)\/migration\/standby$/, '保存分支同步策略'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/audit$/, '核对备用项目'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/reconcile$/, '同步项目分支'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby-health$/, '读取备用项目状态'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -1388,6 +1416,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back\/preview$/, '预览回写'],
     [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back$/, '回写派生库'],
     [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-backs\/[^/]+\/rollback$/, '回退回写'],
+    [/^GET \/projects\/[^/]+\/identity-history$/, '查看设置记录'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -1542,6 +1571,7 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (isPublicAgentSetupRoute(method, path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
@@ -1811,6 +1841,7 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  app.disable('x-powered-by');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -1820,8 +1851,10 @@ export function createServer(deps: ServerDeps): express.Express {
       undefined,
       {
         recreate: async (service) => {
-          await deps.containerService.stopInfraService(service.containerName);
-          await deps.containerService.startInfraService(service, deps.stateService.getCustomEnv(service.projectId));
+          // Credential replacement requires recreation authority before stopping the old DB.
+          const accepted = await deps.containerService.preflightInfraStorage(service);
+          await deps.containerService.stopInfraService(accepted.containerName);
+          await deps.containerService.startInfraService(accepted, deps.stateService.getCustomEnv(service.projectId));
           deps.stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, service.projectId);
           deps.stateService.save();
           await deps.stateService.flush();
@@ -1830,6 +1863,10 @@ export function createServer(deps: ServerDeps): express.Express {
     ),
   );
   const deploymentRunService = new DeploymentRunService(deps.stateService);
+  if (deps.branchOperationCoordinator && deps.config.mode !== 'executor') {
+    const restored = deploymentRunService.restoreQueued(deps.branchOperationCoordinator);
+    if (restored.length) console.warn(`[deployment-run] 已恢复 ${restored.length} 个尚未执行的排队意图`);
+  }
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   const managedProjectService = new ManagedProjectService(deps.stateService);
   const aiExplanationEndpoint = String(process.env.CDS_AI_EXPLANATION_GATEWAY_URL || '').trim();
@@ -1880,7 +1917,9 @@ export function createServer(deps: ServerDeps): express.Express {
   }
   // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
-  const releaseService = new ReleaseService(deps.stateService);
+  const releaseService = new ReleaseService(deps.stateService, {
+    verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
+  });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
   // 远端现场巡检（阶段三 · 记账）：另起一个 starter 而不塞进上面的收割器 —— 收割器
@@ -1960,11 +1999,15 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     next();
   });
+  // SSE 长连接计数（2026-10-08 卡顿复盘，药方第 1 步）：挂在所有路由之前，一处覆盖
+  // 全部 text/event-stream 端点；非 SSE 响应只多两个闭包。数据见
+  // GET /api/cds-system/diagnostics/main-thread 的 mainThread.sseOpen / sse。
+  app.use(sseConnectionTrackerMiddleware);
   // 密封存储初始化端点永远不接收客户端材料。必须在任何 body parser 和认证
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req)) {
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2007,6 +2050,13 @@ export function createServer(deps: ServerDeps): express.Express {
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
     return globalJsonParser(req, res, next);
   });
+
+  const pendingReplayGate = internalPendingReplayAuth.middleware({
+    coordinator: deps.branchOperationCoordinator,
+    projectForBranch: (id) => { const branch = deps.stateService.getBranch(id); return branch ? branch.projectId || 'default' : undefined; },
+  });
+  // 无效的专用签名先拒绝，不能回落到 legacy 内部标记或用户会话。
+  app.use(pendingReplayGate.gate);
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -2166,6 +2216,14 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.controlPlane = { ok: true, detail: `压力快照失败: ${(err as Error).message}` };
     }
 
+    // 仅无代理转发标识的真实 loopback 启动深探保留故障诊断，公网不能用转发头冒充。
+    const localStartupProbe = req.query.probe === 'routes'
+      && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')
+      && !req.headers['x-forwarded-for'] && !req.headers.forwarded;
+    if (process.env.CDS_PUBLIC_HEALTH_DETAILS !== '1' && !localStartupProbe) {
+      res.status(overallOk ? 200 : 503).json({ ok: overallOk, port: deps.config.masterPort });
+      return;
+    }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       degraded: pressure?.degraded ?? false,
@@ -2323,7 +2381,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
     // request flowing before async authentication finishes, draining uploads
@@ -2701,6 +2759,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      isPendingReplay: pendingReplayGate.isTrusted,
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
     }));
@@ -2751,6 +2810,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
+      if (pendingReplayGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
@@ -3903,6 +3963,10 @@ export function createServer(deps: ServerDeps): express.Express {
 
   function doBroadcastState(): void {
     if (stateClients.size === 0) return;
+    timeMainThreadSection('sse.state.broadcast', broadcastStateNow);
+  }
+
+  function broadcastStateNow(): void {
     lastBroadcastAt = Date.now();
     const state = deps.stateService.getState();
 
@@ -4520,6 +4584,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
+    publicBaseUrl: deps.config.publicBaseUrl,
     skillProxy: new SkillProxy({
       mapBase: process.env.CDS_MAP_BASE?.trim() || '',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
@@ -4544,10 +4609,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
+    shell: deps.shell,
     stateService: deps.stateService,
     containerService: deps.containerService,
     serverEventLogStore: deps.serverEventLogStore,
-    config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
+    config: deps.config,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)
@@ -4602,6 +4668,7 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
     shell: deps.shell,
+    registerResourceShutdown: deps.registerResourceShutdown,
     serverEventLogStore: deps.serverEventLogStore,
   }));
   // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
@@ -4619,6 +4686,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   app.use('/api', createReleasesRouter({
+    shell: deps.shell,
     stateService: deps.stateService,
     config: deps.config,
     // 与定时调度器共用同一个实例：settling 期的在途句柄只存在于实例内存里，
@@ -4725,6 +4793,7 @@ export function createServer(deps: ServerDeps): express.Express {
     masterPort: deps.config.masterPort,
   });
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
+  app.use('/api', createCdsSystemDiagnosticsRouter());
   // 离机备份（R2）配置入口，系统级。先实测再落盘、落盘后热生效，见 routes/cds-system-offsite-backup.ts。
   app.use('/api', createCdsSystemOffsiteBackupRouter());
   app.use('/api', createCdsSystemSealedStorageRouter({

@@ -917,10 +917,10 @@ function EntryCards({
             type="button"
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             onClick={onConfigure}
-            title="手动配置入口（新增子域入口 / 改名 / 改落地路径）"
+            title="修改分支地址、项目 slug 或独立子域"
           >
             <Settings className="h-3.5 w-3.5" />
-            配置入口
+            修改地址
           </button>
         ) : null}
       </header>
@@ -1077,7 +1077,7 @@ function ServiceTable({
 // ── 面板本体 ──────────────────────────────────────────────────────────────
 
 export function OverviewPanel({
-  services: rawServices, running, lifecycle, branchName, commitSha, commitMessage,
+  services: rawServices, running, lifecycle, branchName, commitSha, commitMessage, targetCommitSha, ciImageStatus,
   lastReadyAt, lastDeployAt, deployDurationMs,
   entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
@@ -1101,6 +1101,8 @@ export function OverviewPanel({
   branchName: string;
   commitSha?: string;
   commitMessage?: string;
+  targetCommitSha?: string;
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
   lastReadyAt?: string;
   lastDeployAt?: string;
   deployDurationMs?: number;
@@ -1401,6 +1403,8 @@ export function OverviewPanel({
   const copy = overviewCopy({
     lifecycle,
     running,
+    ciImageStatus,
+    pendingVersion: Boolean(commitSha && targetCommitSha && targetCommitSha !== commitSha),
     serviceCount: services.length,
     readyCount: okCount,
     badCount: badServices.length,
@@ -1409,7 +1413,7 @@ export function OverviewPanel({
   });
   const { verdict, tone: verdictTone } = copy;
   /** 入口卡点不点亮：与副标题同源，不再另判一次 `badServices.length === 0`。 */
-  const entriesReachable = copy.state === 'healthy' || copy.state === 'redeploying';
+  const entriesReachable = copy.state === 'healthy' || copy.state === 'redeploying' || copy.state === 'publish-blocked' || copy.state === 'publish-pending';
 
   const windowText = windowMinutes >= 60
     ? `近 ${(windowMinutes / 60).toFixed(windowMinutes % 60 === 0 ? 0 : 1)} 小时`
@@ -1483,8 +1487,8 @@ export function OverviewPanel({
           sub={badServices.length > 0
             ? `异常服务：${badServices.map((sv) => sv.profileId).join('、')}`
             : commitSha
-              ? <><span className="font-mono text-foreground-muted">{commitSha.slice(0, 7)}</span>{lastDeployAt ? ` · ${formatDeployedAgo(lastDeployAt, now)}` : ''}{deployDurationMs ? ` · 耗时 ${formatDuration(deployDurationMs)}` : ''}{commitMessage ? ` · ${commitMessage}` : ''}</>
-              : <span className="font-mono">{branchName}</span>}
+              ? <><span className="font-mono text-foreground-muted">运行 {commitSha.slice(0, 7)}</span>{targetCommitSha && targetCommitSha !== commitSha ? <span className="block">待发布 <code>{targetCommitSha.slice(0, 7)}</code></span> : null}{lastDeployAt ? ` · ${formatDeployedAgo(lastDeployAt, now)}` : ''}{deployDurationMs ? ` · 耗时 ${formatDuration(deployDurationMs)}` : ''}{commitMessage ? ` · ${commitMessage}` : ''}</>
+              : <span className="font-mono">运行版本未确认{targetCommitSha ? ` · 待发布 ${targetCommitSha.slice(0, 7)}` : ` · ${branchName}`}</span>}
           testId="kpi-status"
         />
         <KpiTile
@@ -1522,8 +1526,8 @@ export function OverviewPanel({
             ? <><a href={primaryEntry.url} target="_blank" rel="noreferrer" className={`font-mono ${entriesReachable ? 'text-ok hover:underline' : 'text-muted-foreground hover:text-foreground'}`} title={primaryEntry.url}>{entryHost}</a><span className="ml-1.5">· {copy.entryLabel.replace(/^\s*·\s*/, '')}</span></>
             : copy.entryLabel.replace(/^\s*·\s*/, '') || '没有入口'}
           action={onConfigureEntries ? (
-            <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.75rem] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground" onClick={onConfigureEntries} title="手动配置入口（新增子域入口 / 改名 / 改落地路径）">
-              <Settings className="h-3 w-3" />配置
+            <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.75rem] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground" onClick={onConfigureEntries} title="修改分支地址、项目 slug 或独立子域">
+              <Settings className="h-3 w-3" />修改地址
             </button>
           ) : undefined}
           testId="kpi-entries"

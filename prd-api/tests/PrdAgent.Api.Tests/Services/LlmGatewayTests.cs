@@ -1557,50 +1557,112 @@ public class LlmGatewayTests
     }
 
     [Fact]
-    public async Task StreamAsync_WhenTerminalFrameHasNoDoneOrEof_ShouldCompleteImmediately()
+    public async Task StreamAsync_WhenUsageFollowsFinishReasonInSeparateFrame_ShouldPersistUsageOnce()
     {
-        var resolver = new InMemoryModelResolver()
-            .WithPlatform(new LLMPlatform
+        var upstreamBeforeUsage = """
+            data: {"choices":[{"delta":{"content":"OK"},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+            """;
+        var upstreamUsageTail = """
+            data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}
+
+            data: [DONE]
+
+            """;
+        var http = new DelayedTailHttpClientFactory(
+            upstreamBeforeUsage,
+            upstreamUsageTail,
+            TimeSpan.FromMilliseconds(50));
+        var logWriter = new CapturingLogWriter();
+        var gateway = CreateGatewayForModel("model-a", http, logWriter);
+
+        var chunks = new List<GatewayStreamChunk>();
+        await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
             {
-                Id = "platform-a",
-                Name = "Provider A",
-                PlatformType = "openai",
-                ApiUrl = "https://provider-a.example.com",
-                Enabled = true
-            }, "sk-a")
-            .WithModelGroup(new ModelGroup
-            {
-                Id = "pool-a",
-                Name = "Pool A",
-                Code = "pool-a",
-                ModelType = "chat",
-                IsDefaultForType = true,
-                Priority = 0,
-                Models =
-                [
-                    new ModelGroupItem
-                    {
-                        PlatformId = "platform-a",
-                        ModelId = "model-a",
-                        Priority = 0,
-                        HealthStatus = ModelHealthStatus.Healthy
-                    }
-                ]
-            });
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            }
+        }))
+        {
+            chunks.Add(chunk);
+        }
+
+        var done = Assert.Single(chunks, chunk => chunk.Type == GatewayChunkType.Done);
+        Assert.Equal("stop", done.FinishReason);
+        Assert.Equal(11, done.TokenUsage?.InputTokens);
+        Assert.Equal(7, done.TokenUsage?.OutputTokens);
+        Assert.Equal(11, logWriter.Done?.InputTokens);
+        Assert.Equal(7, logWriter.Done?.OutputTokens);
+        Assert.Equal("response_body", logWriter.Done?.TokenUsageSource);
+        Assert.Equal(1, logWriter.DoneCount);
+        Assert.Contains("\"include_usage\":true", http.RequestBody);
+    }
+
+    [Fact]
+    public async Task StreamAsync_WhenUsageSharesFinishReasonFrame_ShouldPersistUsageOnce()
+    {
         var upstream = """
             data: {"choices":[{"delta":{"content":"OK"},"finish_reason":null}]}
 
-            data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+            data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}
+
+            data: [DONE]
+
+            """;
+        var http = new SequenceHttpClientFactory((200, upstream));
+        var logWriter = new CapturingLogWriter();
+        var gateway = CreateGatewayForModel("model-a", http, logWriter);
+
+        var chunks = new List<GatewayStreamChunk>();
+        await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            }
+        }))
+        {
+            chunks.Add(chunk);
+        }
+
+        var done = Assert.Single(chunks, chunk => chunk.Type == GatewayChunkType.Done);
+        Assert.Equal(5, done.TokenUsage?.InputTokens);
+        Assert.Equal(3, done.TokenUsage?.OutputTokens);
+        Assert.Equal(5, logWriter.Done?.InputTokens);
+        Assert.Equal(3, logWriter.Done?.OutputTokens);
+        Assert.Equal(1, logWriter.DoneCount);
+    }
+
+    [Fact]
+    public async Task StreamAsync_WhenTerminalFrameHasNoDoneOrEof_ShouldCompleteImmediately()
+    {
+        var upstream = """
+            data: {"choices":[{"delta":{"content":"OK"},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 
             """;
         var logWriter = new CapturingLogWriter();
-        var gateway = new LlmGateway(
-            resolver,
+        var gateway = CreateGatewayForModel(
+            "model-a",
             new TerminalThenBlockingHttpClientFactory(upstream),
-            new TestLogger<LlmGateway>(),
             logWriter);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var chunks = new List<GatewayStreamChunk>();
+        var startedAt = System.Diagnostics.Stopwatch.StartNew();
 
         var collect = Task.Run(async () =>
         {
@@ -1625,13 +1687,57 @@ public class LlmGatewayTests
         if (completed != collect)
             cts.Cancel();
         await collect;
+        startedAt.Stop();
 
         Assert.Same(collect, completed);
+        Assert.InRange(startedAt.ElapsedMilliseconds, 400, 999);
         Assert.Contains(chunks, chunk => chunk.Type == GatewayChunkType.Text && chunk.Content == "OK");
         Assert.Contains(chunks, chunk => chunk.Type == GatewayChunkType.Done && chunk.FinishReason == "stop");
         Assert.DoesNotContain(chunks, chunk => chunk.Type == GatewayChunkType.Error);
         Assert.NotNull(logWriter.Done);
         Assert.Equal("stop", logWriter.Done!.FinishReason);
+        Assert.Null(logWriter.Done.InputTokens);
+        Assert.Null(logWriter.Done.OutputTokens);
+        Assert.Equal(1, logWriter.DoneCount);
+    }
+
+    [Fact]
+    public async Task StreamAsync_WhenCallerCancelsDuringTerminalUsageDrain_ShouldKeepCancellationFailure()
+    {
+        var upstream = """
+            data: {"choices":[{"delta":{"content":"OK"},"finish_reason":null}]}
+
+            data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+            """;
+        var logWriter = new CapturingLogWriter();
+        var gateway = CreateGatewayForModel(
+            "model-a",
+            new TerminalThenBlockingHttpClientFactory(upstream),
+            logWriter);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        var chunks = new List<GatewayStreamChunk>();
+
+        await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat",
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "hi" }
+                }
+            }
+        }, cts.Token))
+        {
+            chunks.Add(chunk);
+        }
+
+        Assert.Contains(chunks, chunk => chunk.Type == GatewayChunkType.Error);
+        Assert.NotNull(logWriter.Error);
+        Assert.Null(logWriter.Done);
+        Assert.Equal(0, logWriter.DoneCount);
     }
 
     [Fact]
@@ -3276,8 +3382,10 @@ public class LlmGatewayTests
         Assert.Empty(resolver.FailedOfferingIds);
     }
 
-    [Fact]
-    public async Task SendRawWithResolutionAsync_WhenQuotaIsExhaustedWith429_ShouldRecordHealthFailure()
+    [Theory]
+    [InlineData(429, "{\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You exceeded your current quota\"}}")]
+    [InlineData(403, "{\"error\":{\"message\":\"user quota is not enough\"}}")]
+    public async Task SendRawWithResolutionAsync_WhenQuotaIsExhausted_ShouldRecordHealthFailure(int statusCode, string errorBody)
     {
         var resolution = new GatewayModelResolution
         {
@@ -3295,8 +3403,7 @@ public class LlmGatewayTests
             ApiUrl = "https://provider-a.example.com",
             ApiKey = "sk-a",
         };
-        var http = new SequenceHttpClientFactory(
-            (429, "{\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You exceeded your current quota\"}}"));
+        var http = new SequenceHttpClientFactory((statusCode, errorBody));
         var resolver = new TrackingModelResolver();
         var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>());
 
@@ -3313,6 +3420,7 @@ public class LlmGatewayTests
         }, resolution);
 
         Assert.False(response.Success);
+        Assert.Equal("LLM_QUOTA_EXCEEDED", response.ErrorCode);
         Assert.Empty(resolver.UnavailableOfferingIds);
         Assert.Equal(["offering-quota-exhausted"], resolver.FailedOfferingIds);
     }
@@ -4164,7 +4272,10 @@ public class LlmGatewayTests
         return new LlmGateway(resolver, new TestHttpClientFactory(), new TestLogger<LlmGateway>());
     }
 
-    private static LlmGateway CreateGatewayForModel(string modelId, IHttpClientFactory httpClientFactory)
+    private static LlmGateway CreateGatewayForModel(
+        string modelId,
+        IHttpClientFactory httpClientFactory,
+        ILlmRequestLogWriter? logWriter = null)
     {
         var resolver = new InMemoryModelResolver()
             .WithPlatform(new LLMPlatform
@@ -4195,7 +4306,7 @@ public class LlmGatewayTests
                 }
             });
 
-        return new LlmGateway(resolver, httpClientFactory, new TestLogger<LlmGateway>());
+        return new LlmGateway(resolver, httpClientFactory, new TestLogger<LlmGateway>(), logWriter);
     }
 
     private static LlmGateway CreateTestGateway()
@@ -4349,6 +4460,85 @@ internal sealed class TerminalThenBlockingHttpClientFactory(string body) : IHttp
     public HttpClient CreateClient(string name) => new(new TerminalThenBlockingHttpMessageHandler(body));
 }
 
+internal sealed class DelayedTailHttpClientFactory(
+    string head,
+    string tail,
+    TimeSpan delay) : IHttpClientFactory
+{
+    public string RequestBody { get; private set; } = string.Empty;
+
+    public HttpClient CreateClient(string name) => new(new DelayedTailHttpMessageHandler(
+        head,
+        tail,
+        delay,
+        body => RequestBody = body));
+}
+
+internal sealed class DelayedTailHttpMessageHandler(
+    string head,
+    string tail,
+    TimeSpan delay,
+    Action<string> captureRequestBody) : HttpMessageHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        captureRequestBody(await request.Content!.ReadAsStringAsync(cancellationToken));
+        var content = new StreamContent(new DelayedTailStream(head, tail, delay));
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content };
+    }
+}
+
+internal sealed class DelayedTailStream(
+    string head,
+    string tail,
+    TimeSpan delay) : Stream
+{
+    private readonly byte[] _head = System.Text.Encoding.UTF8.GetBytes(head);
+    private readonly byte[] _tail = System.Text.Encoding.UTF8.GetBytes(tail);
+    private int _headPosition;
+    private int _tailPosition;
+    private bool _delayCompleted;
+
+    public override bool CanRead => true;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => _head.Length + _tail.Length;
+    public override long Position { get => _headPosition + _tailPosition; set => throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    public override async ValueTask<int> ReadAsync(
+        Memory<byte> buffer,
+        CancellationToken cancellationToken = default)
+    {
+        if (_headPosition < _head.Length)
+        {
+            var copied = Math.Min(buffer.Length, _head.Length - _headPosition);
+            _head.AsMemory(_headPosition, copied).CopyTo(buffer);
+            _headPosition += copied;
+            return copied;
+        }
+
+        if (!_delayCompleted)
+        {
+            await Task.Delay(delay, cancellationToken);
+            _delayCompleted = true;
+        }
+
+        if (_tailPosition >= _tail.Length) return 0;
+        var tailCopied = Math.Min(buffer.Length, _tail.Length - _tailPosition);
+        _tail.AsMemory(_tailPosition, tailCopied).CopyTo(buffer);
+        _tailPosition += tailCopied;
+        return tailCopied;
+    }
+}
+
 internal sealed class TerminalThenBlockingHttpMessageHandler(string body) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -4373,6 +4563,7 @@ internal sealed class ThrowingHttpMessageHandler : HttpMessageHandler
 internal sealed class TerminalThenBlockingStream(string body) : Stream
 {
     private readonly byte[] _bytes = System.Text.Encoding.UTF8.GetBytes(body);
+    private readonly byte[] _heartbeat = System.Text.Encoding.UTF8.GetBytes(": keepalive\n");
     private int _position;
 
     public override bool CanRead => true;
@@ -4404,8 +4595,10 @@ internal sealed class TerminalThenBlockingStream(string body) : Stream
             return copied;
         }
 
-        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-        return 0;
+        await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+        var heartbeatCopied = Math.Min(buffer.Length, _heartbeat.Length);
+        _heartbeat.AsMemory(0, heartbeatCopied).CopyTo(buffer);
+        return heartbeatCopied;
     }
 }
 
@@ -4413,6 +4606,7 @@ internal sealed class CapturingLogWriter : ILlmRequestLogWriter
 {
     public LlmLogStart? Start { get; private set; }
     public LlmLogDone? Done { get; private set; }
+    public int DoneCount { get; private set; }
     public string? Error { get; private set; }
 
     public Task<string?> StartAsync(LlmLogStart start, CancellationToken ct = default)
@@ -4427,6 +4621,7 @@ internal sealed class CapturingLogWriter : ILlmRequestLogWriter
 
     public void MarkDone(string logId, LlmLogDone done)
     {
+        DoneCount++;
         Done = done;
     }
 

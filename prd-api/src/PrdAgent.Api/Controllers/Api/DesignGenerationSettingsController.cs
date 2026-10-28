@@ -9,7 +9,7 @@ using PrdAgent.Core.Security;
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 网页生成设置：默认执行器、自查强度、风格预设、三段可编辑提示词与只读平台契约。
+/// 网页生成设置：自查强度、风格预设、三段可编辑提示词与只读平台契约。
 /// 读：网页托管读权限（生成弹窗要用风格列表）；写：网页托管写权限。
 /// </summary>
 [ApiController]

@@ -376,10 +376,14 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_list_presets",
-            Description = "列出这个账号在文学创作里能选的风格（参考图配置）、水印配置和尺寸，并标出不传参数时默认用哪一套。用户点名「用 XX 风格 / XX 水印」时先调它，再把名称或 ID 传给 map_literary_generate_image。",
+            Description = "列出这个账号在文学创作里能选的风格（参考图配置）、水印配置和尺寸，并标出账号默认配置。用户点名风格时，style 传同一名称或 ID（none 表示不用参考图）；已有文章沿用风格时，传读取工作区返回的 illustrationPrefs.styleId。sizes 对应该风格下这台客户端所用模型（sizeModel）的真实能力，不传 style 则按账号默认风格查询。先查预设，再把同一风格、水印和支持的尺寸传给 map_literary_generate_image。查询不会占用模型恢复探测或生图额度。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "GET",
             PathTemplate = "/api/open/literary/presets",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "style", In = "query", Description = "准备生图的风格名称或 ID；none = 不用参考图；不传按账号默认风格列尺寸。已有文章沿用风格时传 illustrationPrefs.styleId。" },
+            },
         },
         new McpToolDef
         {
@@ -417,7 +421,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_generate_image",
-            Description = "为文学工作区的配图标记生成图片，保存到该工作区并回填原文位置。markerIndexes 可一次传多个（每个标记一个独立任务），markerIndex 只生一张，二选一。风格 style、水印 watermark 可传名称或 ID（none 表示不用）；不传时沿用这篇文章上次指定的那套，从没指定过才用账号默认；可选值先用 map_literary_list_presets 查。size 传比例（16:9）或 宽x高。返回里 applied 说明实际套用了哪套风格/水印/尺寸以及来源（explicit 本次指定 / remembered 沿用上次 / account-default 账号默认）。异步执行：之后用 map_literary_get_workspace 看 illustrations[].status/url，一次看全部。超时重试必须保持 clientRequestId 与其它参数不变。",
+            Description = "为文学工作区的配图标记生成图片，保存到该工作区并回填原文位置。markerIndexes 可一次传多个（每个标记一个独立任务），markerIndex 只生一张，二选一。风格 style、水印 watermark 可传名称或 ID（none 表示不用）；不传时沿用这篇文章上次指定的那套，从没指定过才用账号默认；可选值先用 map_literary_list_presets 查。size 传比例（如 3:2）或 宽x高，必须是 map_literary_list_presets 的 sizes 里有的；模型不支持的尺寸会被直接拒绝（不入队、不扣额度）并列出可选项。返回里 applied 说明实际套用了哪套风格/水印/尺寸以及来源（explicit 本次指定 / remembered 沿用上次 / account-default 账号默认）。异步执行：之后用 map_literary_get_workspace 看 illustrations[].status/url，一次看全部。超时重试必须保持 clientRequestId 与其它参数不变。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/images",
             Params = new List<McpToolParam>
@@ -429,7 +433,7 @@ public static class McpBuiltinTools
                 new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一次请求一个值，原样重试使用同一个值" },
                 new() { Name = "style", In = "body", Description = "风格（参考图配置）名称或 ID；none = 不用参考图；不传 = 沿用这篇文章上次指定的，没有则账号当前启用的那套" },
                 new() { Name = "watermark", In = "body", Description = "水印配置名称或 ID；none = 不打水印；不传 = 沿用这篇文章上次指定的，没有则账号给文学创作绑定的那套" },
-                new() { Name = "size", In = "body", Description = "尺寸：比例如 1:1、16:9、3:4，或 宽x高如 1376x768；不传 = 沿用这篇文章上次指定的，没有则 1024x1024" },
+                new() { Name = "size", In = "body", Description = "尺寸：比例如 1:1、3:2，或 宽x高如 1536x1024，可用值以 map_literary_list_presets 的 sizes 为准；不传 = 沿用这篇文章上次指定的，没有则 1:1" },
             },
         },
         new McpToolDef

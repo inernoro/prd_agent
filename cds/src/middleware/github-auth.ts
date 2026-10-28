@@ -17,6 +17,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthService } from '../services/auth-service.js';
 import { GH_SESSION_COOKIE, buildSessionCookie } from '../routes/auth.js';
+import { isPublicAgentSetupRoute } from '../shared/agent-setup.js';
 
 /** Paths that bypass the auth gate entirely. */
 const PUBLIC_PATHS: (string | RegExp)[] = [
@@ -117,16 +118,20 @@ export function createGithubAuthMiddleware(deps: {
   resolveAgentKey?: (req: Request) => unknown;
   /** HTTPS deployment flag; mirrors the value the auth routers use for Set-Cookie. */
   cookieSecure?: boolean;
+  /** 由前置专用能力门禁验证；不授予用户/机器身份或通用内部权限。 */
+  isPendingReplay?: (req: Request) => boolean;
 }) {
-  const { authService, resolveAgentKey, cookieSecure = false } = deps;
+  const { authService, resolveAgentKey, isPendingReplay, cookieSecure = false } = deps;
 
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
     // render assets before the user is authenticated.
-    if (isPublicPath(req.path)) {
+    if (isPublicAgentSetupRoute(req.method, req.path) || isPublicPath(req.path)) {
       next();
       return;
     }
+
+    if (isPendingReplay?.(req)) { next(); return; }
 
     const ssoIdentity = (req as Request & {
       cdsSsoIdentity?: {

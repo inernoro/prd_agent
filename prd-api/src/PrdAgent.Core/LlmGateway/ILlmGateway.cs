@@ -48,6 +48,21 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
     IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default);
 
     /// <summary>
+    /// 流式请求的物理发送前准入。实现必须在最终模型、请求体和输出上限都确定后，
+    /// 且在任何供应商字节发出前调用 admit。未实现该合同的网关必须明确拒绝，不能退回无保护发送。
+    /// </summary>
+    async IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>> admit,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await Task.CompletedTask;
+        yield return GatewayStreamChunk.Fail(
+            "当前网关未提供物理发送前准入",
+            "GATEWAY_PHYSICAL_ADMISSION_UNSUPPORTED");
+    }
+
+    /// <summary>
     /// 发送原始 HTTP 请求（使用调用方已解析的模型 Resolution，跳过内部 Resolve 步骤）。
     /// 遵循 compute-then-send 原则：当调用方已通过 ResolveModelAsync 完成模型调度，
     /// 再调用此方法可避免 Gateway 内部的第二次 ResolveAsync，保证 "选什么用什么"。
@@ -66,6 +81,7 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         GatewayRawRequest request,
         GatewayModelResolution resolution,
         Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        Func<GatewayNativeAdmissionContext, CancellationToken, Task<GatewayRawResponse?>>? admit = null,
         CancellationToken ct = default)
         => Task.FromResult(GatewayRawResponse.Fail(
             "NATIVE_RESPONSES_UNSUPPORTED", "当前网关未提供原生 Responses 通道", 501));
@@ -266,6 +282,9 @@ public class PoolModelInfo
     /// </summary>
     public string HealthStatus { get; init; } = "Healthy";
 
+    /// <summary>只读恢复资格快照；实际请求仍须原子认领半开租约。</summary>
+    public bool IsRecoveryProbeAvailable { get; init; }
+
     /// <summary>
     /// 健康评分（0-100）
     /// </summary>
@@ -291,7 +310,7 @@ public class PoolModelInfo
 }
 
 /// <summary>
-/// LLMGW 对外发布的图片能力快照。尺寸只保存原始宽高，比例由 MAP 通用计算，
+/// LLMGW 对外发布的图片能力快照。保留原始宽高与模型声明的比例，
 /// 因此这里不包含任何供应商或具体模型名称。
 /// </summary>
 public sealed class GatewayImageCapabilitiesSnapshot
@@ -299,6 +318,7 @@ public sealed class GatewayImageCapabilitiesSnapshot
     public string SizeConstraintType { get; init; } = string.Empty;
     public string SizeConstraintDescription { get; init; } = string.Empty;
     public Dictionary<string, List<string>> SizesByResolution { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> AspectRatiosBySize { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public string SizeParamFormat { get; init; } = string.Empty;
     public bool SizesNotApplicable { get; init; }
     public int? MustBeDivisibleBy { get; init; }

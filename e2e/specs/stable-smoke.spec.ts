@@ -254,6 +254,7 @@ type ImageRunDetail = {
     total: number;
     done: number;
     failed: number;
+    expectedImageRefCount?: number | null;
     imageRefs?: Array<{
       refId: number;
       assetSha256: string;
@@ -303,6 +304,12 @@ type GatewayUpstreamModel = {
   name?: string | null;
   platformId?: string | null;
   protocol?: string | null;
+  enabled?: boolean;
+};
+
+type GatewayPlatform = {
+  id: string;
+  platformType?: string | null;
   enabled?: boolean;
 };
 
@@ -424,20 +431,39 @@ async function disableStrayGatewayBackups(
   return handled;
 }
 
-type GatewayUpstreamIndex = { upstreamIds: Set<string>; upstreamById: Map<string, GatewayUpstreamModel> };
+type GatewayUpstreamIndex = {
+  upstreamIds: Set<string>;
+  upstreamById: Map<string, GatewayUpstreamModel>;
+  platformById: Map<string, GatewayPlatform>;
+};
 
 async function readGatewayUpstreamIndex(
   request: APIRequestContext,
   gateway: { baseUrl: string; headers: Record<string, string> },
 ): Promise<GatewayUpstreamIndex> {
-  const response = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers });
-  const body = await response.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
-  expect(response.ok(), body.error?.message || '无法读取网关模型目录').toBe(true);
+  const [modelResponse, platformResponse] = await Promise.all([
+    request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
+    request.get(`${gateway.baseUrl}/gw/platforms`, { headers: gateway.headers }),
+  ]);
+  const modelBody = await modelResponse.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
+  const platformBody = await platformResponse.json() as ApiEnvelope<{ items: GatewayPlatform[] }>;
+  expect(modelResponse.ok(), modelBody.error?.message || '无法读取网关模型目录').toBe(true);
+  expect(platformResponse.ok(), platformBody.error?.message || '无法读取网关平台目录').toBe(true);
   return {
-    upstreamIds: new Set(body.data.items.map((item) => item.id)),
-    upstreamById: new Map(body.data.items.map((item) => [item.id, item])),
+    upstreamIds: new Set(modelBody.data.items.map((item) => item.id)),
+    upstreamById: new Map(modelBody.data.items.map((item) => [item.id, item])),
+    platformById: new Map(platformBody.data.items.map((item) => [item.id, item])),
   };
 }
+
+/** 与网关运行时一致：Offering 显式值优先，其次物理模型，最后继承 Provider 的 PlatformType。 */
+const resolveGatewayOfferingProtocol = (offering: GatewayOffering, index: GatewayUpstreamIndex) => {
+  const upstream = index.upstreamById.get(offering.targetId);
+  return (offering.protocol
+    || upstream?.protocol
+    || index.platformById.get(upstream?.platformId || '')?.platformType
+    || '').toLowerCase();
+};
 
 const isLiveGatewayUpstream = (offering: GatewayOffering, index: GatewayUpstreamIndex) => (
   offering.enabled
@@ -513,6 +539,7 @@ type GatewayLogItem = {
   statusCode?: number | null;
   isFallback?: boolean | null;
   protocol?: string | null;
+  appCallerCode?: string | null;
 };
 
 type GatewayLogDetail = GatewayLogItem & {
@@ -2051,41 +2078,138 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-003] 大文件上传期间持续显示文件名和百分比', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[FILE-003] 大文件上传和解析持续反馈，正式环境使用安全小文件', { tag: '@cleanup' }, async ({ page, request }) => {
+    const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
     test.setTimeout(90_000);
-    const token = await loginAndReadToken(page, request, '/document-store');
+    const token = await loginAndReadToken(page, request, '/');
+    await page.getByRole('button', { name: '知识库', exact: true }).click();
+    await page.waitForURL((url) => url.pathname === '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
     let storeId = '';
+    const session = production ? null : await page.context().newCDPSession(page);
+    let requestPausedId = '';
+    let pausedRequestId = '';
+    let progressObserver: import('@playwright/test').JSHandle<{ seen: { value: boolean }; stop: () => void }> | null = null;
+    let pendingUpload: Promise<import('@playwright/test').Response> | null = null;
+    let uploadStarted = false;
+    const observeUpload = (item: import('@playwright/test').Request) => {
+      if (storeId && new URL(item.url()).pathname === `/api/document-store/stores/${storeId}/upload`) uploadStarted = true;
+    };
+    page.on('request', observeUpload);
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: { name: runKey, description: '上传进度稳定冒烟，执行后自动清理', isPublic: false },
       }));
       storeId = store.id;
-      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
+      await page.getByText(runKey, { exact: true }).click();
       await expect(page.getByText(runKey, { exact: true })).toBeVisible({ timeout: 15_000 });
 
-      let releaseUpload!: () => void;
-      const release = new Promise<void>((resolveRelease) => { releaseUpload = resolveRelease; });
-      await page.route(`**/api/document-store/stores/${storeId}/upload`, async (route) => {
-        await release;
-        await route.continue();
-      });
+      const uploadPath = `/api/document-store/stores/${storeId}/upload`;
+      const input = page.locator('input[type="file"][accept*=".pdf"]').first();
+      if (session) {
+        // 超限仅在 CDS 前端预检；不得真的把超限文件提交到服务端。
+        let uploadRequests = 0;
+        const countUpload = (item: import('@playwright/test').Request) => {
+          if (new URL(item.url()).pathname === uploadPath) uploadRequests++;
+        };
+        page.on('request', countUpload);
+        await input.setInputFiles({ name: `${runKey}-超限.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(21 * 1024 * 1024, 65) });
+        await expect(page.getByText(/单文件上限 20MB/)).toBeVisible();
+        expect(uploadRequests, '超限文件必须在上传前拒绝').toBe(0);
+        page.off('request', countUpload);
+        // 只暂停本轮真实请求与响应，不替换回执、正文或页面状态。
+        session.on('Fetch.requestPaused', (event) => {
+          if (event.responseStatusCode !== undefined) pausedRequestId = event.requestId;
+          else requestPausedId = event.requestId;
+        });
+        const urlPattern = new URL(uploadPath, page.url()).href;
+        await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [
+          { urlPattern, latency: 0, downloadThroughput: -1, uploadThroughput: 128 * 1024 },
+        ] });
+        await session.send('Fetch.enable', { patterns: [
+          { urlPattern, requestStage: 'Request' }, { urlPattern, requestStage: 'Response' },
+        ] });
+      }
       const name = `${runKey}.txt`;
-      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
+      if (production) {
+        progressObserver = await page.evaluateHandle(() => {
+          const seen = { value: false };
+          const observer = new MutationObserver(() => {
+            if (document.querySelector('[data-testid="document-upload-progress"]')) seen.value = true;
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+          return { seen, stop: () => observer.disconnect() };
+        });
+      }
+      pendingUpload = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath, { timeout: 60_000 });
+      void pendingUpload.catch(() => {});
+      await input.setInputFiles({
         name,
         mimeType: 'text/plain',
-        buffer: Buffer.alloc(2 * 1024 * 1024, 65),
+        buffer: Buffer.alloc(production ? 256 : 2 * 1024 * 1024, 65),
       });
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/^\d+%$/)).toBeVisible();
-      releaseUpload();
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+      if (session) {
+        await expect.poll(() => requestPausedId, { timeout: 10_000 }).not.toBe('');
+        await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible();
+        await expect(page.getByText(/^\d+%$/)).toBeVisible();
+        const transferStatus = page.getByTestId('document-upload-status');
+        const initialPercent = await transferStatus.innerText();
+        await session.send('Fetch.continueRequest', { requestId: requestPausedId }); requestPausedId = '';
+        await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(initialPercent);
+        await expect(transferStatus).toHaveText(/^\d+%$/);
+        const nextPercent = await transferStatus.innerText();
+        await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(nextPercent);
+        await expect(transferStatus).toHaveText(/^\d+%$/);
+        await expect.poll(() => pausedRequestId, { timeout: 20_000 }).not.toBe('');
+        await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeVisible();
+        const status = page.getByTestId('document-upload-status');
+        await expect(status).toContainText('解析中 · 已等待');
+        expect(await status.evaluate((element) => Boolean(element.closest('[aria-live="polite"], [role="status"]')))).toBe(false);
+        const firstStatus = await status.innerText();
+        await expect.poll(() => status.innerText(), { timeout: 3000 }).not.toBe(firstStatus);
+        await session.send('Fetch.continueRequest', { requestId: pausedRequestId }); pausedRequestId = '';
+      }
+      const uploadResponse = await pendingUpload;
+      expect(uploadResponse.ok()).toBe(true);
+      const uploadedBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(uploadedBody.success).toBe(true);
+      if (progressObserver) {
+        expect(await progressObserver.evaluate((observation) => observation.seen.value), '安全小文件上传必须实际渲染进度卡，不能仅靠终态隐藏').toBe(true);
+      }
+      await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+      const content = await readEnvelope<{ content: string }>(await page.request.get(
+        `/api/document-store/entries/${uploadedBody.data.entry.id}/content`, { headers: authHeaders(token) },
+      ));
+      expect(content.content).toContain('AAAA');
     } finally {
+      if (progressObserver) {
+        await progressObserver.evaluate((observation) => observation.stop());
+        await progressObserver.dispose();
+      }
+      if (session) {
+        for (const requestId of [requestPausedId, pausedRequestId].filter(Boolean)) {
+          await session.send('Fetch.continueRequest', { requestId }).catch(() => {});
+        }
+        await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [] });
+        await session.detach();
+      }
+      page.off('request', observeUpload);
+      if (pendingUpload && uploadStarted) {
+        // 请求已放行也可能仍在写正文；必须等真实响应完整收敛后再级联删除。
+        try {
+          const response = await pendingUpload;
+          if (await response.finished()) throw new Error('上传响应未完整结束');
+        } catch {
+          throw new Error(`上传未收敛，保留本轮知识库 ${storeId} 供恢复清理，禁止并发级联删除`);
+        }
+      }
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
     }
   });
@@ -3115,6 +3239,66 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[VIS-011][REG-image-reference-count-001] 参考图数量缺失或不一致时在调用上游前拒绝', { tag: '@cleanup' }, async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'reference-count-contract');
+    try {
+      const pools = await readEnvelope<ImageModelPool[]>(
+        await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) }),
+      );
+      const pool = pools.find((item) => item.isDefault);
+      expect(pool, 'MAP 必须配置显式默认模型，不能用目录首项替代').toBeTruthy();
+
+      const requestRun = (suffix: string, expectedImageRefCount?: number) => page.request.post(
+        `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`,
+        {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}`,
+          },
+          data: {
+            prompt: '参考图契约前置校验，不应调用生成模型',
+            userMessageContent: '验证参考图数量契约',
+            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-target`,
+            platformId: 'logical-model',
+            modelId: pool!.code,
+            size: '1024x1024',
+            responseFormat: 'url',
+            ...(expectedImageRefCount === undefined ? {} : { expectedImageRefCount }),
+            imageRefs: [],
+            x: 0,
+            y: 0,
+            w: 1001,
+            h: 1001,
+          },
+        },
+      );
+
+      const missing = await requestRun('missing-count');
+      const missingBody = await missing.json() as ApiEnvelope<never>;
+      expect(missing.status()).toBe(400);
+      expect(missingBody.success).toBe(false);
+      expect(missingBody.error?.code).toBe('IMAGE_REF_COUNT_REQUIRED');
+      expectUserReadable(missingBody.error?.message || '');
+
+      const incomplete = await requestRun('incomplete-count', 1);
+      const incompleteBody = await incomplete.json() as ApiEnvelope<never>;
+      expect(incomplete.status()).toBe(400);
+      expect(incompleteBody.success).toBe(false);
+      expect(incompleteBody.error?.code).toBe('IMAGE_REF_INCOMPLETE');
+      expect(incompleteBody.error?.message || '').toContain('应有 1 张，实际收到 0 张');
+      expectUserReadable(incompleteBody.error?.message || '');
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: {
+          ...authHeaders(token),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reference-count-delete`,
+        },
+      });
+      await expectDeleteSucceeded(deleted, `删除参考图数量契约工作区 ${workspace.id} 失败`);
+    }
+  });
+
   test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-auth-synthetic-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
     const { baseUrl, headers } = await loginGateway(request);
 
@@ -3830,6 +4014,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           modelId: pool!.code,
           size: '1024x1024',
           responseFormat: 'url',
+          expectedImageRefCount: 0,
           x: 0,
           y: 0,
           w: 1001,
@@ -4121,17 +4306,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         '/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) },
       ));
       const gateway = await loginGateway(request);
+      const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
       const { items } = await readEnvelope<{ items: GatewayLogicalModel[] }>(await request.get(
         `${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers },
       ));
+      const requestedLogicalModel = process.env.STABLE_SMOKE_IMAGE_MODEL_ID?.trim();
       const logical = items.find((item) => {
         const primary = item.offerings.filter((offering) => offering.enabled)
           .sort((left, right) => left.priority - right.priority)[0];
-        return item.enabled && ['openai', 'openai-compatible'].includes(primary?.protocol || '')
+        return item.enabled
+          && (!requestedLogicalModel || item.publicId === requestedLogicalModel)
+          && primary !== undefined
+          && ['openai', 'openai-compatible'].includes(resolveGatewayOfferingProtocol(primary, upstreamIndex))
           && pools.some((pool) => pool.code === item.publicId
             && pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
       });
-      expect(logical, 'JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替').toBeTruthy();
+      expect(
+        logical,
+        `JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替${requestedLogicalModel ? `：${requestedLogicalModel}` : ''}`,
+      ).toBeTruthy();
       const created = await readEnvelope<{ runId: string }>(await page.request.post(
         `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
           headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-run` },
@@ -4141,6 +4334,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-jpeg-target`,
             platformId: 'logical-model', modelId: logical!.publicId,
             size: '1024x1024', responseFormat: 'url',
+            expectedImageRefCount: 1,
             imageRefs: [{ refId: 1, assetSha256: asset.sha256, url: asset.url, label: 'JPEG 参考', role: 'target' }],
             x: 0, y: 0, w: 1001, h: 1001,
           },
@@ -4149,8 +4343,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = created.runId;
       const completed = await waitForImageRun(page, token, runId);
       await assertImageArtifact(page, completed.detail);
+      expect(completed.detail.run.expectedImageRefCount).toBe(1);
       const log = await waitForGatewayLog(request, `${runId}-0-0`);
       expect(log.logicalModelPublicId).toBe(logical!.publicId);
+      expect(log.appCallerCode).toBe('visual-agent.image.img2img::generation');
       expect(['openai', 'openai-compatible']).toContain(log.protocol);
       expect(log.isFallback, '格式错误不能靠切换供应商掩盖').not.toBe(true);
       const wire = JSON.parse(log.requestBodyRedacted || '{}') as {
@@ -4210,20 +4406,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const logicalModels = await readEnvelope<{ items: GatewayLogicalModel[] }>(
         await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers }),
       );
-      const upstreamModels = await readEnvelope<{ items: GatewayUpstreamModel[] }>(
-        await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
-      );
-      const upstreamById = new Map(upstreamModels.items.map((item) => [item.id, item]));
+      const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
       // 主路协议：Offering 没显式声明时继承上游模型的协议。
       const primaryProtocol = (item: GatewayLogicalModel) => {
         const primary = item.offerings
           .filter((offering) => offering.enabled)
           .sort((left, right) => left.priority - right.priority)[0];
         if (!primary) return '';
-        return (primary.protocol || upstreamById.get(primary.targetId)?.protocol || '').toLowerCase();
+        return resolveGatewayOfferingProtocol(primary, upstreamIndex);
       };
-      // 业务默认池排最前：2026-08-31 起 MAP 只开放 image1 / image2 两个 OpenAI 图片模型，
-      // 多图旅程要验的是「业务默认模型带着参考图真实生成」，不再限定必须是 OpenRouter 主路；
+      // 业务默认池排最前；多图旅程验的是「当前业务默认模型带着参考图真实生成」，
+      // 不按具体产品型号或单一 Provider 写死；
       // 协议只要能把 input_references 或 image[] 原样送到上游即可，具体线上契约在 assertWireReferences 里逐条核。
       const businessCandidates = logicalModels.items
         .filter((item) => item.enabled && healthyPoolCodes.has(item.publicId))
@@ -4256,6 +4449,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             modelId: pool!.code,
             size: '1024x1024',
             responseFormat: 'url',
+            expectedImageRefCount: imageRefs.length,
             imageRefs,
             x: 0,
             y: runIds.length * 1040,
@@ -4271,6 +4465,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
         const log = await waitForGatewayLog(request, `${runId}-0-0`);
         expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
+        expect(log.appCallerCode).toBe('visual-agent.image.vision::generation');
         expect(
           ['openrouter-image', 'openai', 'openai-compatible'],
           '多图逻辑模型只能走保留参考图语义的图片协议',
@@ -4331,6 +4526,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const restoredTwo = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
       )).run;
+      expect(restoredTwo.expectedImageRefCount).toBe(2);
       expect(restoredTwo.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
         { refId: 1, label: '蓝色参考', role: 'target' },
         { refId: 2, label: '黄色参考', role: 'style' },
@@ -4408,6 +4604,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) });
       const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;
       expect(restoredRun.status).toBe('Completed');
+      expect(restoredRun.expectedImageRefCount).toBe(3);
       expect(restoredRun.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
         { refId: 1, label: '蓝色参考', role: 'target' },
         { refId: 2, label: '黄色参考', role: 'style' },
@@ -4655,6 +4852,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             modelId: pool!.code,
             size: '1024x1024',
             responseFormat: 'url',
+            expectedImageRefCount: 2,
             imageRefs: [
               { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
               { refId: 2, assetSha256: 'e'.repeat(64), url: '', label: '不可用参考图', role: 'style' },
@@ -4725,6 +4923,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           modelId: pool!.code,
           size: '1024x1024',
           responseFormat: 'url',
+          expectedImageRefCount: 2,
           imageRefs: [
             { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
             { refId: 2, assetSha256: 'f'.repeat(64), url: '', label: '已损坏参考图', role: 'style' },

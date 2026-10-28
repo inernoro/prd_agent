@@ -34,6 +34,12 @@ describe('预览快照生产运行时加载', () => {
     mkdirSync(srcServices, { recursive: true });
     writeFileSync(path.join(root, 'package.json'), '{"type":"module"}\n');
     writeFileSync(path.join(distServices, 'preview-instance-seed.js'), compiled);
+    // 隔离运行目录也必须携带播种器实际使用的项目标识依赖。
+    const slugSourcePath = path.resolve(__dirname, '../../src/services/preview-slug.ts');
+    writeFileSync(path.join(distServices, 'preview-slug.js'), ts.transpileModule(readFileSync(slugSourcePath, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: slugSourcePath,
+    }).outputText);
     writeFileSync(
       path.join(srcServices, 'preview-demo-snapshot.json'),
       readFileSync(snapshotPath),

@@ -51,6 +51,7 @@ import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
 import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
 import { CallTracePanel } from '@/components/CallTracePanel';
 import './LogicalModelsPage.css';
+import { CollectionView, CollectionDetailPane, CollectionPaneTab } from '@/components/CollectionView';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
@@ -74,6 +75,7 @@ export function LogicalModelsPage() {
   // 不画一条假的平滑曲线——「没数据」和「用量平稳」是两件事，画成一样会误导。
   const [usage, setUsage] = useState<Map<string, LogicalModelUsageItem> | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
   /** 正在看调用全貌的那个模型。和「展开」分开：一个给配置，一个给推演。 */
   const [traceFor, setTraceFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -329,6 +331,166 @@ export function LogicalModelsPage() {
     () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.unpricedCalls || 0), 0),
     [usage]);
 
+  const selectedItem = items?.find((item) => item.id === (expanded || traceFor));
+  function renderSelectedDetails() {
+    if (!selectedItem) return null;
+    const item = selectedItem;
+    const routes = describeRoutes(item, models);
+    const health = summarizeHealth(item, routes);
+    const tracing = traceFor === item.id;
+    const open = expanded === item.id;
+    return <>
+                  {tracing ? (
+                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)` }}>
+                      <CallTracePanel logicalModelId={item.id} />
+                    </div>
+                  ) : null}
+
+                  {open ? (
+                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+                      {health.tone === 'warn' && health.advice ? <InlineAlert tone="info">{health.advice}</InlineAlert> : null}
+
+                      <div className={configurationOpen ? "lg-collection-model-config" : "lg-collection-hidden"}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                        <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
+                        <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
+                        <span style={HINT_TEXT}>{item.capabilities.join(' · ') || '未声明能力'}</span>
+                        {canWrite ? (
+                          <>
+                            <span style={{ flex: 1 }} />
+                            <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}>
+                              <option value="priority">优先级与故障切换</option>
+                              <option value="weighted">权重负载均衡</option>
+                            </select>
+                            <Button size="sm" disabled={busy === `default:${item.id}`} onClick={() => void toggleDefault(item)}>
+                              {item.isDefaultForType ? '取消默认' : '设为默认'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-expanded={claimDraft?.id === item.id}
+                              onClick={() => setClaimDraft((x) => (x?.id === item.id
+                                ? null
+                                : { id: item.id, value: item.defaultForAppCallerCodes.join(', ') }))}
+                            >
+                              指定调用方
+                            </Button>
+                            <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
+                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
+                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
+                          </>
+                        ) : null}
+                      </div>
+
+                      {claimDraft?.id === item.id && canWrite ? (
+                        <div data-testid="logical-model-claims" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                          <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
+                            这些调用方不点名模型时走它，优先于「{item.modelType} 用途的默认」。逗号或空格分隔；留空表示取消认领。
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                            <input
+                              aria-label={`${item.name} 指定的调用方`}
+                              value={claimDraft.value}
+                              placeholder="document-store.transcribe-summary::chat"
+                              onChange={(e) => setClaimDraft({ id: item.id, value: e.target.value })}
+                              style={{ flex: 1, minWidth: 260 }}
+                            />
+                            <Button
+                              size="sm"
+                              disabled={busy === `claims:${item.id}`}
+                              onClick={() => void saveClaims(item, claimDraft.value)}
+                            >
+                              保存
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setClaimDraft(null)}>取消</Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      </div>
+                      {!configurationOpen ? <div className="lg-collection-subhead"><Chip label={`${routes.length} 条线路`} color="var(--accent)" bg="var(--accent-soft)" /><span style={HINT_TEXT}>{item.routingStrategy === "weighted" ? "权重负载均衡" : "主备与故障切换"}</span><span style={{flex:1}} />{canWrite ? <Button size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>添加上游</Button> : null}</div> : null}
+                      {offeringFor === item.id && canWrite ? (
+                        <form onSubmit={(e) => submitOffering(e, item)} style={INSET_BLOCK}>
+                          <FormGrid>
+                            <label style={labelStyle}>
+                              <span>目标类型</span>
+                              <select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}>
+                                <option value="model">Provider 模型</option>
+                                <option value="exchange">Exchange</option>
+                              </select>
+                            </label>
+                            <label style={labelStyle}>
+                              <span>上游目标</span>
+                              <select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}>
+                                <option value="">请选择</option>
+                                {targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+                              </select>
+                            </label>
+                            <label style={labelStyle}>
+                              <span>
+                                上游模型标识
+                                <HelpPopover label="上游模型标识">
+                                  留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。
+                                  协议与 Endpoint path 两栏同理，填了才覆盖。
+                                </HelpPopover>
+                              </span>
+                              <input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>协议</span>
+                              <input value={offeringDraft.protocol || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, protocol: e.target.value }))} placeholder="openai / google / exchange" style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>Endpoint path</span>
+                              <input value={offeringDraft.endpointPath || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, endpointPath: e.target.value }))} placeholder="例如 v1beta/models/{model}:generateContent" style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>优先级</span>
+                              <input type="number" min={0} value={offeringDraft.priority ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, priority: Number(e.target.value) }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>权重</span>
+                              <input type="number" min={1} value={offeringDraft.weight ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, weight: Number(e.target.value) }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>
+                                最大并发
+                                <HelpPopover label="最大并发">
+                                  留空表示继承上游自己的并发上限；每分钟速率留空表示这一层不额外限流。
+                                  两栏都填时，本条上游与上游本身的限制同时生效，任一层触顶都会让请求切到下一个上游。
+                                </HelpPopover>
+                              </span>
+                              <input type="number" min={1} max={10000} value={offeringDraft.maxConcurrency ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, maxConcurrency: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>每分钟速率</span>
+                              <input type="number" min={1} max={1000000} value={offeringDraft.rateLimitPerMinute ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, rateLimitPerMinute: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>运维备注</span>
+                              <input value={offeringDraft.notes || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, notes: e.target.value }))} style={inputStyle} />
+                            </label>
+                            <Button type="submit" variant="primary" size="sm" disabled={busy === `offering:${item.id}`}>{busy === `offering:${item.id}` ? '保存中' : editingOfferingId ? '保存修改' : '保存 Offering'}</Button>
+                            {editingOfferingId ? <Button type="button" size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>取消编辑</Button> : null}
+                          </FormGrid>
+                        </form>
+                      ) : null}
+
+                      <CollectionView className={configurationOpen ? "lg-collection-hidden" : "lg-collection-route-list"} filters={[{value: "enabled", label: "线路启用", matches: (route) => route.offering.enabled}, {value: "disabled", label: "线路停用", matches: (route) => !route.offering.enabled}]} allFilterLabel="全部线路" items={routes} placeholder="搜索上游模型、供应方或备注" searchText={(route) => [route.label, route.upstreamModelId, route.providerName, route.offering.targetName, route.offering.notes, route.protocol].filter(Boolean).join(' ')}>
+                        {(pageRoutes) => <>{pageRoutes.map((route) => (
+                        <div className="lg-logical-model-route-detail" key={`detail-${route.id}`}>
+                          <div className="lg-collection-route-heading"><strong title={route.upstreamModelId || route.offering.targetName || route.label}>{route.upstreamModelId || route.offering.targetName || route.label}</strong><Chip label={route.roleLabel} color="var(--accent)" bg="var(--accent-soft)" /></div>
+                          <div className="lg-collection-route-meta"><span title={route.label}>{route.providerName || route.label} · 优先级 {route.priority}</span><span title={route.priceOrigin}>{route.price}</span></div>
+                          <div className="lg-collection-route-actions"><RouteDot health={route.health} /><span style={HINT_TEXT}>{route.protocol}</span><span style={{flex:1}} />{canWrite ? <><Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>{route.health === 'down' ? <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button> : null}<Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button></> : null}</div>
+                          <details className="lg-collection-route-properties"><summary>线路参数</summary><div>{route.label} · {route.priceOrigin}<br />优先级 {route.priority} · 权重 {route.weight} · {route.governance}</div></details>
+                        </div>
+                      ))}</>}
+                      </CollectionView>
+                    </div>
+                  ) : null}
+    </>;
+  }
+
   return (
     <PageShell>
       <PageHeader
@@ -340,7 +502,7 @@ export function LogicalModelsPage() {
           <>
             <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
             <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
-            {usage ? <span>近 30 天 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
+            {usage ? <span>近 30 天 Gateway 估算 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
             {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
             <span>已设默认 <strong>{items.filter((x) => x.isDefaultForType).length}</strong> 个用途</span>
           </>
@@ -355,7 +517,7 @@ export function LogicalModelsPage() {
         ) : null}
       />
 
-      <PageBody>
+      <PageBody className="lg-collection-page">
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
@@ -428,66 +590,42 @@ export function LogicalModelsPage() {
         ) : null}
 
         {items !== null && items.length > 0 ? (
-          <Card
-            className="lg-logical-model-list"
-            style={{ padding: 0, overflow: 'hidden', flexShrink: 0 }}
-          >
+          <div className="lg-collection-workspace">
+          <Card className="lg-logical-model-list lg-collection-list" style={{ padding: 0 }}>
+            <CollectionView items={items} placeholder="搜索模型名称或公开标识" searchText={(item) => `${item.name} ${item.publicId}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
+            {(pageItems) => <>
             <div className="lg-logical-model-grid lg-logical-model-heading" style={{ ...ROW_GRID, ...ROW_HEAD }}>
               <span style={COL_CAP}>模型</span>
               <span style={COL_CAP}>上游线路与单价</span>
-              <span style={COL_CAP}>近 30 天</span>
+              <span style={COL_CAP}>近 30 天 Gateway 估算</span>
               <span style={COL_CAP}>状态</span>
               <span />
             </div>
 
-            {(items ?? []).map((item) => {
+            {pageItems.map((item) => {
               const routes = describeRoutes(item, models);
               const stat = usage?.get(item.publicId) ?? null;
               const open = expanded === item.id;
-              const tracing = traceFor === item.id;
               const health = summarizeHealth(item, routes);
               return (
                 <div key={item.id} style={{
                   borderTop: '1px solid var(--border-subtle)',
-                  background: health.tone === 'warn' ? 'var(--warn-bg)' : item.isDefaultForType ? 'var(--accent-soft)' : undefined,
-                  // 异常优先于默认：一个模型既是默认又出了问题时，先让人看见出问题那件事
-                  boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : item.isDefaultForType ? 'inset 3px 0 0 var(--accent)' : undefined,
+                  background: selectedItem?.id === item.id ? 'var(--accent-soft)' : health.tone === 'warn' ? 'var(--warn-bg)' : undefined,
+                  // 选中行与详情对应；未选中异常保留风险提示，默认身份仍由标签完整说明。
+                  boxShadow: selectedItem?.id === item.id ? 'inset 3px 0 0 var(--accent)' : health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : undefined,
                 }}>
                   <div className="lg-logical-model-grid" style={ROW_GRID}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
                       <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0, flexWrap: 'wrap' }}>
-                          <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
-                          {item.isDefaultForType
-                            ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
-                            : null}
-                          {item.defaultForAppCallerCodes.length > 0
-                            ? <Chip
-                                label={`${item.defaultForAppCallerCodes.length} 个调用方指定它`}
-                                color="var(--ok)"
-                                bg="var(--ok-bg)"
-                                title={`这些调用方不点名时走它，优先于用途默认：\n${item.defaultForAppCallerCodes.join('\n')}`}
-                              />
-                            : null}
-                        </span>
-                        <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {item.publicId} · {describeScope(item.allowedAppCallerCodes)}
-                        </span>
+                        <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                        <span className="lg-collection-model-identity" title={`${item.publicId} · ${describeScope(item.allowedAppCallerCodes)}`}><code>{item.publicId}</code>{item.isDefaultForType ? <Chip label="默认" color="var(--accent)" bg="var(--accent-soft)" title="没点名时用它" /> : null}{item.defaultForAppCallerCodes.length ? <Chip label={`指定 ${item.defaultForAppCallerCodes.length}`} color="var(--ok)" bg="var(--ok-bg)" title={item.defaultForAppCallerCodes.join('\n')} /> : null}</span>
                       </span>
                     </span>
 
-                    <span className="lg-logical-model-routes" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-                      {routes.length === 0
-                        ? <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>没有上游线路，这个模型不承接请求</span>
-                        : routes.map((route) => (
-                          <span key={route.id} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', opacity: route.health === 'live' ? 1 : 0.66, minWidth: 0 }}>
-                            <RouteDot health={route.health} />
-                            <span style={{ fontSize: 'var(--fs-caption)', whiteSpace: 'nowrap' }}>{route.label}</span>
-                            <span style={route.priced ? { ...MONO_META, whiteSpace: 'nowrap' } : { ...HINT_TEXT, whiteSpace: 'nowrap' }}>{route.price}</span>
-                            <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>{route.roleLabel}</span>
-                          </span>
-                        ))}
+                    <span className="lg-collection-routes-summary">
+                      <span>{routes.length} 条线路 · {item.routingStrategy === 'weighted' ? '权重负载均衡' : '主备切换'}</span>
+                      <span style={HINT_TEXT}>{routes[0] ? `${routes[0].label} · ${routes[0].price}` : '没有上游线路'}</span>
                     </span>
 
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }} aria-label="近 30 天用量">
@@ -496,7 +634,7 @@ export function LogicalModelsPage() {
                           <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
                           <span style={{ display: 'flex', flexDirection: 'column' }}>
                             <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsd(stat.totalCostUsd)}</span>
-                            <span style={HINT_TEXT}>{formatCount(stat.totalCalls)} 次</span>
+                            <span style={HINT_TEXT}>Gateway 估算 · {formatCount(stat.totalCalls)} 次</span>
                           </span>
                         </>
                       ) : <span style={HINT_TEXT}>暂无</span>}
@@ -510,180 +648,23 @@ export function LogicalModelsPage() {
                     <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
                           「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
-                      <Button size="sm" variant="ghost" aria-expanded={tracing} onClick={() => setTraceFor((x) => (x === item.id ? null : item.id))}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{tracing ? '收起全貌' : '调用全貌'}</span>
-                      </Button>
-                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setExpanded((x) => (x === item.id ? null : item.id))}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '展开'}</span>
+                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setConfigurationOpen(false); setTraceFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '查看'}</span>
                       </Button>
                     </span>
                   </div>
 
-                  {tracing ? (
-                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)` }}>
-                      <CallTracePanel logicalModelId={item.id} />
-                    </div>
-                  ) : null}
 
-                  {open ? (
-                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
-                      {health.tone === 'warn' && health.advice ? <InlineAlert tone="info">{health.advice}</InlineAlert> : null}
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
-                        <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
-                        <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
-                        <span style={HINT_TEXT}>{item.capabilities.join(' · ') || '未声明能力'}</span>
-                        {canWrite ? (
-                          <>
-                            <span style={{ flex: 1 }} />
-                            <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}>
-                              <option value="priority">优先级与故障切换</option>
-                              <option value="weighted">权重负载均衡</option>
-                            </select>
-                            <Button size="sm" disabled={busy === `default:${item.id}`} onClick={() => void toggleDefault(item)}>
-                              {item.isDefaultForType ? '取消默认' : '设为默认'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              aria-expanded={claimDraft?.id === item.id}
-                              onClick={() => setClaimDraft((x) => (x?.id === item.id
-                                ? null
-                                : { id: item.id, value: item.defaultForAppCallerCodes.join(', ') }))}
-                            >
-                              指定调用方
-                            </Button>
-                            <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
-                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
-                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
-                          </>
-                        ) : null}
-                      </div>
-
-                      {claimDraft?.id === item.id && canWrite ? (
-                        <div data-testid="logical-model-claims" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
-                          <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
-                            这些调用方不点名模型时走它，优先于「{item.modelType} 用途的默认」。逗号或空格分隔；留空表示取消认领。
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
-                            <input
-                              aria-label={`${item.name} 指定的调用方`}
-                              value={claimDraft.value}
-                              placeholder="document-store.transcribe-summary::chat"
-                              onChange={(e) => setClaimDraft({ id: item.id, value: e.target.value })}
-                              style={{ flex: 1, minWidth: 260 }}
-                            />
-                            <Button
-                              size="sm"
-                              disabled={busy === `claims:${item.id}`}
-                              onClick={() => void saveClaims(item, claimDraft.value)}
-                            >
-                              保存
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => setClaimDraft(null)}>取消</Button>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {offeringFor === item.id && canWrite ? (
-                        <form onSubmit={(e) => submitOffering(e, item)} style={INSET_BLOCK}>
-                          <FormGrid>
-                            <label style={labelStyle}>
-                              <span>目标类型</span>
-                              <select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}>
-                                <option value="model">Provider 模型</option>
-                                <option value="exchange">Exchange</option>
-                              </select>
-                            </label>
-                            <label style={labelStyle}>
-                              <span>上游目标</span>
-                              <select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}>
-                                <option value="">请选择</option>
-                                {targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-                              </select>
-                            </label>
-                            <label style={labelStyle}>
-                              <span>
-                                上游模型标识
-                                <HelpPopover label="上游模型标识">
-                                  留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。
-                                  协议与 Endpoint path 两栏同理，填了才覆盖。
-                                </HelpPopover>
-                              </span>
-                              <input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} />
-                            </label>
-                            <label style={labelStyle}>
-                              <span>协议</span>
-                              <input value={offeringDraft.protocol || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, protocol: e.target.value }))} placeholder="openai / google / exchange" style={inputStyle} />
-                            </label>
-                            <label style={labelStyle}>
-                              <span>Endpoint path</span>
-                              <input value={offeringDraft.endpointPath || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, endpointPath: e.target.value }))} placeholder="例如 v1beta/models/{model}:generateContent" style={inputStyle} />
-                            </label>
-                            <label style={labelStyle}>
-                              <span>优先级</span>
-                              <input type="number" min={0} value={offeringDraft.priority ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, priority: Number(e.target.value) }))} style={inputStyle} />
-                            </label>
-                            <label style={labelStyle}>
-                              <span>权重</span>
-                              <input type="number" min={1} value={offeringDraft.weight ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, weight: Number(e.target.value) }))} style={inputStyle} />
-                            </label>
-                            <label style={labelStyle}>
-                              <span>
-                                最大并发
-                                <HelpPopover label="最大并发">
-                                  留空表示继承上游自己的并发上限；每分钟速率留空表示这一层不额外限流。
-                                  两栏都填时，本条上游与上游本身的限制同时生效，任一层触顶都会让请求切到下一个上游。
-                                </HelpPopover>
-                              </span>
-                              <input type="number" min={1} max={10000} value={offeringDraft.maxConcurrency ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, maxConcurrency: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
-                            </label>
-                            <label style={labelStyle}>
-                              <span>每分钟速率</span>
-                              <input type="number" min={1} max={1000000} value={offeringDraft.rateLimitPerMinute ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, rateLimitPerMinute: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
-                            </label>
-                            <label style={labelStyle}>
-                              <span>运维备注</span>
-                              <input value={offeringDraft.notes || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, notes: e.target.value }))} style={inputStyle} />
-                            </label>
-                            <Button type="submit" variant="primary" size="sm" disabled={busy === `offering:${item.id}`}>{busy === `offering:${item.id}` ? '保存中' : editingOfferingId ? '保存修改' : '保存 Offering'}</Button>
-                            {editingOfferingId ? <Button type="button" size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>取消编辑</Button> : null}
-                          </FormGrid>
-                        </form>
-                      ) : null}
-
-                      {routes.map((route) => (
-                        <div className="lg-logical-model-route-detail" key={`detail-${route.id}`} style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, width: 200, flexShrink: 0 }}>
-                            <RouteDot health={route.health} />
-                            <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                              <strong style={{ fontSize: 'var(--fs-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{route.label}</strong>
-                              <span style={HINT_TEXT}>{route.roleLabel} · 协议 {route.protocol}</span>
-                            </span>
-                          </span>
-                          <span className="lg-logical-model-route-info" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-                            <span style={HINT_TEXT}>{route.priceOrigin}</span>
-                            <span style={HINT_TEXT}>优先级 {route.priority} · 权重 {route.weight} · {route.governance}</span>
-                          </span>
-                          {canWrite ? (
-                            <>
-                              <Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>
-                              {/* 只给「连续失败被摘掉」那一档：线路自己被停用要点启用，
-                                  上游被停用要去上游页——对那两种而言半开资格给了也没用。 */}
-                              {route.health === 'down' ? (
-                                <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button>
-                              ) : null}
-                              <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button>
-                            </>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
               );
             })}
+            </>}
+            </CollectionView>
           </Card>
+          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); }} tabs={<><CollectionPaneTab active={Boolean(expanded) && !configurationOpen} onClick={() => {setConfigurationOpen(false);setTraceFor(null);setExpanded(selectedItem.id);}}>上游线路</CollectionPaneTab><CollectionPaneTab active={Boolean(expanded) && configurationOpen} onClick={() => {setConfigurationOpen(true);setTraceFor(null);setExpanded(selectedItem.id);}}>模型配置</CollectionPaneTab><CollectionPaneTab active={Boolean(traceFor)} onClick={() => {setExpanded(null);setTraceFor(selectedItem.id);}}>调用全貌</CollectionPaneTab></>}>
+            {renderSelectedDetails()}
+          </CollectionDetailPane> : null}
+          </div>
         ) : null}
 
         <DetailsBlock title="工作原理：逻辑模型、Offering 与模型池的分工">
@@ -707,7 +688,7 @@ export function LogicalModelsPage() {
 const ROW_GRID: React.CSSProperties = {
   display: 'grid',
   alignItems: 'center',
-  gap: GAP.page,
+  gap: GAP.normal,
   padding: `${GAP.section}px ${CARD_PADDING}px`,
 };
 const ROW_HEAD: React.CSSProperties = { background: 'var(--bg-base)', paddingTop: GAP.normal, paddingBottom: GAP.normal };
@@ -753,12 +734,13 @@ function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[
   // 这里**不再自己判**谁在扛流量：此前那份「enabled && healthStatus === 0」比运行时严——
   // 运行时照样会用降级线路，只是把它排在健康的后面，于是全部降级时页面显示「没有主」，
   // 而实际一直有一条在承接。判据分裂三份，漂了也没人发现。
+  const modelById = new Map(models.map((model) => [model.id, model]));
   const ordered = [...item.offerings].sort(
     (a, b) => (a.queuePosition || 999) - (b.queuePosition || 999) || a.priority - b.priority || a.id.localeCompare(b.id));
   const liveId = ordered.find((x) => x.queuePosition === 1)?.id ?? null;
 
   return ordered.map((offering) => {
-    const model = offering.targetKind === 'model' ? models.find((x) => x.id === offering.targetId) : undefined;
+    const model = offering.targetKind === 'model' ? modelById.get(offering.targetId) : undefined;
     /*
       不参与排队有三种成因，下一步完全不同，所以不能合成一个「熔断」：
         线路自己被停用  → 去把这条线路启用回来；

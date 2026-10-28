@@ -98,6 +98,7 @@ export function buildStandbyMirrorFingerprint(input: {
   };
   return {
     protocolVersion: 1,
+    capabilities: { expectedCommitCreate: true },
     projectId: input.projectId,
     repository: input.repository || null,
     defaultBranch: input.defaultBranch || null,
@@ -126,6 +127,11 @@ export function planStandbyBranchSync(
 
   for (const branch of source.branches) {
     const remote = targetByName.get(branch.name);
+    if (!branch.commitSha || (remote && !remote.commitSha)) {
+      actions.push({ name: branch.name, sourceStatus: branch.status, sourceCommit: branch.commitSha,
+        targetBranchId: remote?.id, kind: 'divergent', reason: '提交身份尚未确认，保留现场并阻止同步与预热' });
+      continue;
+    }
     if (!remote) {
       actions.push({
         name: branch.name,
@@ -146,7 +152,7 @@ export function planStandbyBranchSync(
       continue;
     }
 
-    if (branch.commitSha !== remote.commitSha) {
+    if (!branch.commitSha || !remote.commitSha || branch.commitSha !== remote.commitSha) {
       actions.push({
         name: branch.name,
         sourceStatus: branch.status,
@@ -209,7 +215,7 @@ export function compareStandbyFingerprints(
       missingBranches.push(branch.name);
       continue;
     }
-    if (branch.commitSha !== remote.commitSha) {
+    if (!branch.commitSha || !remote.commitSha || branch.commitSha !== remote.commitSha) {
       divergentBranches.push({ name: branch.name, sourceCommit: branch.commitSha, targetCommit: remote.commitSha });
     }
   }
@@ -222,7 +228,7 @@ export function compareStandbyFingerprints(
       && source.repository.toLowerCase() === target.repository.toLowerCase(),
     configMatches: source.configHash === target.configHash,
     secretKeysMatch: source.secretKeyHash === target.secretKeyHash,
-    defaultBranchMatches: !!sourceDefault && !!targetDefault && sourceDefault.commitSha === targetDefault.commitSha,
+    defaultBranchMatches: !!sourceDefault?.commitSha && !!targetDefault?.commitSha && sourceDefault.commitSha === targetDefault.commitSha,
     missingBranches,
     divergentBranches,
   };

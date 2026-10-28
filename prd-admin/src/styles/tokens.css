@@ -1460,6 +1460,8 @@
   --semantic-neutral-border: rgba(148, 163, 184, 0.20);
   --semantic-neutral-soft: rgba(148, 163, 184, 0.10);
   --semantic-neutral-text: #cbd5e1;
+  --semantic-purple-border: rgba(168, 85, 247, 0.24);
+  --semantic-purple-text: #d8b4fe;
   --semantic-success-border: rgba(34, 197, 94, 0.24);
   --semantic-success-soft: rgba(34, 197, 94, 0.12);
   --semantic-success-text: #86efac;

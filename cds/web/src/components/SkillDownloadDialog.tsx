@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, Package, Rocket, ShieldCheck } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Check, Copy, Download, ExternalLink, GraduationCap, Loader2, Package, Rocket, ShieldCheck } from 'lucide-react';
 
 import {
   AgentAccessMap,
@@ -15,6 +15,7 @@ import {
   chooseAgentProjectId,
   createAgentMissionContext,
   getAgentMissionScope,
+  initialAgentConnectSelection,
   PROJECT_SKILL_PATHS,
   resolveAgentConnectTarget,
   resolveAgentMissionContextForTarget,
@@ -48,45 +49,45 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projects: AgentProjectOption[];
+  projectsLoading?: boolean;
+  projectsError?: string;
+  onReloadProjects?: () => void;
   context?: AgentPageContext;
 }
 
 type TabKey = 'starter' | 'init' | 'connect' | 'manual' | 'marketplace';
 
-// 「项目初始化」排在第一位：从零建项目是新用户最常见的入口，
-// 藏在第四个 tab 等于没有。详见 doc/design.cds.project-bootstrap.md。
+// 接入默认只复制短口令；角色方法论与项目初始化仍可独立选择。
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: boolean }> = [
-  { key: 'starter', label: '上手助手', icon: GraduationCap, recommended: true },
+  { key: 'connect', label: '自动接入', icon: Bot, recommended: true },
+  { key: 'starter', label: '上手助手', icon: GraduationCap },
   { key: 'init', label: '快速初始化', icon: Rocket },
-  { key: 'connect', label: '自动接入', icon: Bot },
   { key: 'manual', label: '手动安装', icon: Package },
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
 
-function initialMapSelection(
-  projects: AgentProjectOption[],
-  context: AgentPageContext,
-): AgentAccessMapSelection {
-  if (getAgentMissionScope(context.id) === 'system') return { kind: 'system' };
-  const selectedProjectId = chooseAgentProjectId(projects, context);
-  return selectedProjectId
-    ? { kind: 'project', projectId: selectedProjectId }
-    : { kind: 'new' };
-}
-
-export function SkillDownloadDialog({ open, onOpenChange, projects, context }: Props): JSX.Element {
-  const [active, setActive] = useState<TabKey>('starter');
+export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoading = false, projectsError = '', onReloadProjects, context }: Props): JSX.Element {
+  const [active, setActive] = useState<TabKey>('connect');
   const sourceContext = context || createAgentMissionContext('projects');
   const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
-    () => initialMapSelection(projects, sourceContext),
+    () => initialAgentConnectSelection(projects, sourceContext),
   );
   const [missionId, setMissionId] = useState<AgentPageContextId>(sourceContext.id);
+  const initializedContext = useRef<string | null>(null);
+  const explicitSelection = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
-    setMapSelection(initialMapSelection(projects, sourceContext));
+    if (!open) { initializedContext.current = null; explicitSelection.current = false; return; }
+    const key = `${sourceContext.id}:${sourceContext.pagePath}`;
+    if (initializedContext.current !== key) {
+      initializedContext.current = key;
+      explicitSelection.current = false;
+    }
+    // Allow the first project response to resolve the page target, then retain explicit choices.
+    if (explicitSelection.current || projectsLoading) return;
+    setMapSelection(initialAgentConnectSelection(projects, sourceContext));
     setMissionId(sourceContext.id);
-  }, [open, projects, context?.id, context?.pagePath]);
+  }, [open, projects, projectsLoading, context?.id, context?.pagePath]);
 
   const systemProjectId = chooseAgentProjectId(
     projects,
@@ -103,8 +104,8 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     projects,
     effectiveProjectId,
   );
-  const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
-  // 目标解析（含「上手助手不许落到 system」那条）收在 agent-onboarding 里，
+  const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://cds.invalid';
+  // 页签切换保持明确目标；统一解析收在 agent-onboarding 里，
   // 由 agent-onboarding.test.ts 直接断言行为，避免这段判断只能靠扫源码验证。
   const target: CdsConnectTarget = resolveAgentConnectTarget({
     tab: active,
@@ -112,11 +113,17 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     effectiveProjectId,
   });
   const targetKind = target.kind;
+  const setupError = target.kind === 'system' ? '' : projectsError || (
+    !projectsLoading && target.kind === 'existing' && !projects.some((project) => project.id === target.projectId)
+      ? '当前项目不在可见列表中，请重新读取或明确选择目标；尚未生成接入口令。'
+      : ''
+  );
   const prompt = useMemo(
     () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
     [cdsOrigin, target.kind, effectiveProjectId, selectedContext.id, selectedContext.pagePath],
   );
   const handleMapSelection = (selection: AgentAccessMapSelection): void => {
+    explicitSelection.current = true;
     setMapSelection(selection);
     const selectedScope = getAgentMissionScope(missionId);
     const nextScope = selection.kind === 'system' ? 'system' : selection.kind === 'project' ? 'project' : 'system';
@@ -142,7 +149,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
         <DialogHeader>
           <DialogTitle>接入 Agent</DialogTitle>
           <DialogDescription>
-            选择项目和任务后，Agent 会获得可执行步骤、安全边界与完成标准。
+            选择项目和任务，复制短口令。Agent 会按需读取说明，并实际验证接入。
             已有项目权限会静默复用，只有缺少权限或明确提权时才需要批准。
           </DialogDescription>
         </DialogHeader>
@@ -153,7 +160,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           context={selectedContext}
           sourceContextId={sourceContext.id}
           onSelectionChange={handleMapSelection}
-          onMissionChange={setMissionId}
+          onMissionChange={(nextMission) => { explicitSelection.current = true; setMissionId(nextMission); }}
         /> : null}
 
         {/* 目标选择在「上手助手」上同样要给：口令里嵌的是新建项目还是已有项目，
@@ -194,6 +201,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
               onChange={(event) => chooseProject(event.target.value)}
               className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 text-sm text-foreground"
             >
+              {target.kind === 'existing' && !projects.some((project) => project.id === target.projectId) ? (
+                <option value={target.projectId}>当前项目暂不可用</option>
+              ) : null}
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>{project.name} ({project.slug})</option>
               ))}
@@ -253,15 +263,17 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
             data-agent-starter-slot={active === 'starter' ? 'true' : undefined}
             className={active === 'starter' ? undefined : 'hidden'}
           >
-            <AgentStarterTab
+            {setupError ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} /> : <AgentStarterTab
               active={active === 'starter'}
               cdsPrompt={prompt}
               projectId={targetKind === 'existing' ? effectiveProjectId : ''}
               onOpenMarketplace={() => setActive('marketplace')}
-            />
+            />}
           </div>
           {active === 'init' ? <ProjectInitTab /> : null}
-          {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
+          {active === 'connect' ? setupError
+            ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} />
+            : <ConnectTab prompt={prompt} loading={projectsLoading} onCopied={() => { explicitSelection.current = true; }} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
           {active === 'marketplace' ? <MarketplaceTab /> : null}
         </div>
@@ -270,12 +282,20 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
   );
 }
 
-function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
+function ProjectScopeError({ message, onRetry }: { message: string; onRetry?: () => void }): JSX.Element {
+  return <div role="alert" className="space-y-3 rounded-md border border-[hsl(var(--hairline))] p-3 text-sm">
+    <p>{message}</p>
+    {onRetry ? <Button variant="outline" onClick={onRetry}>重新读取项目</Button> : null}
+  </div>;
+}
+
+function ConnectTab({ prompt, loading, onCopied }: { prompt: string; loading: boolean; onCopied: () => void }): JSX.Element {
   const [copied, setCopied] = useState(false);
 
   const copy = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(prompt);
+      onCopied();
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -287,17 +307,22 @@ function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
     <div className="space-y-3">
       <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <span>口令不含密钥。Agent 会先静默检查当前项目权限；检查通过就直接工作，缺少权限才会在 CDS 右下角申请批准。</span>
+        <span>口令不含密钥。Agent 先读取接入说明，按当前任务加载技能，再验证凭据与目标项目。已有权限直接复用，缺少权限才在 CDS 页面申请批准。</span>
       </div>
       <div className="cds-surface-raised cds-hairline relative rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
-        <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words pr-12 font-mono text-xs leading-relaxed text-foreground" style={{ overscrollBehavior: 'contain' }}>
-          {prompt}
+        <div className="mb-2 flex justify-end">
+          <Button size="sm" disabled={loading} variant={copied ? 'default' : 'outline'} onClick={() => void copy()}>
+            {loading ? <Loader2 className="animate-spin" /> : copied ? <Check /> : <Copy />}
+            {loading ? '正在确认项目范围' : copied ? '已复制' : '复制短接入口令'}
+          </Button>
+        </div>
+        <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-foreground" style={{ overscrollBehavior: 'contain' }}>
+          {loading ? '正在读取当前项目范围，随后生成接入口令。' : prompt}
         </pre>
-        <Button size="sm" variant={copied ? 'default' : 'outline'} className="absolute right-2 top-2" onClick={() => void copy()}>
-          {copied ? <Check /> : <Copy />}
-          {copied ? '已复制' : '复制接入口令'}
-        </Button>
       </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        把口令发给当前项目里的 Agent。它会回报 setup-check 的阶段结果；只有实际读取目标成功才算接入完成。技能完整安装，正文按任务加载。
+      </p>
     </div>
   );
 }
@@ -640,7 +665,7 @@ function ProjectInitTab(): JSX.Element {
           ) : null}
 
           <p className="text-xs text-muted-foreground">
-            会装到当前项目的技能目录（自动识别 .claude / .cursor / .agents），跟着项目的版本库走，
+            会装到当前项目的技能目录（自动识别 .claude / .agents），跟着项目的版本库走，
             团队每个人拉下来都有。
           </p>
         </>

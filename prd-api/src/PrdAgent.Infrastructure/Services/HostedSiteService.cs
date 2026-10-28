@@ -24,10 +24,8 @@ public class HostedSiteService : IHostedSiteService
     private readonly IAskOpeningQuestionGenerator _askOpeners;
     private readonly ILogger<HostedSiteService> _logger;
 
-    // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
-    // 后，控制器会把媒体包装成 ZIP 走这条路径，解压上限若仍是 200MB 会让 200-500MB 的上传
-    // "过了控制器、却被服务层拒收"。该值同时保留 zip bomb 防御（停止解压超出此总大小的归档）。
-    private const long MaxExtractedSize = 500L * 1024 * 1024; // 500MB
+    // ZIP 上传与解压共用总量边界，防止入口已接受而发布阶段拒绝。
+    private const long MaxExtractedSize = HostedSiteUploadLimits.MaxPackageBytes;
     // 现代原型导出会生成大量切片、字体和静态资源；5000 会拒绝体积很小但条目较多的正常包。
     // 文件数仍保留硬上限以避免用海量空条目消耗解析与对象存储资源；解压总量另由
     // MaxExtractedSize 独立限制，不能用提高文件数上限绕过 zip bomb 防护。
@@ -234,6 +232,9 @@ public class HostedSiteService : IHostedSiteService
     public byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html") =>
         RewritePublishedEntryHtml(htmlBytes, entryFile);
 
+    public byte[] PrepareTrustedPresentationHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html") =>
+        RewritePublishedEntryHtml(htmlBytes, entryFile, bridgeOnly: true);
+
     public async Task<HostedSite> CreateFromHtmlIdempotentAsync(
         string userId,
         byte[] htmlBytes,
@@ -343,9 +344,22 @@ public class HostedSiteService : IHostedSiteService
         string? uploadId = null,
         string? sourceRef = null)
     {
+        using var stream = new MemoryStream(zipBytes, writable: false);
+        return await CreateFromZipAsync(userId, stream, title, description, folder, tags,
+            wrappedAssetType, ct, uploadId, sourceRef);
+    }
+
+    public async Task<HostedSite> CreateFromZipAsync(
+        string userId, Stream zipStream,
+        string? title, string? description, string? folder, List<string>? tags,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? sourceRef = null)
+    {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var result = await ExtractAndUploadZip(siteId, zipBytes, uploadId);
+        var result = await ExtractAndUploadZip(siteId, zipStream, uploadId);
         if (result.Error != null)
             throw new InvalidOperationException(result.Error);
 
@@ -717,6 +731,30 @@ public class HostedSiteService : IHostedSiteService
         string? uploadId = null,
         string? reuploadRef = null)
     {
+        using var stream = new MemoryStream(fileBytes, writable: false);
+        return await ReuploadCoreAsync(siteId, userId, stream, fileBytes, fileName,
+            wrappedAssetType, ct, uploadId, reuploadRef);
+    }
+
+    public Task<HostedSite> ReuploadAsync(
+        string siteId, string userId, Stream zipStream, string fileName,
+        string? wrappedAssetType = null, CancellationToken ct = default,
+        string? uploadId = null, string? reuploadRef = null)
+    {
+        if (!string.Equals(Path.GetExtension(fileName), ".zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("流式上传仅支持 ZIP 文件");
+        return ReuploadCoreAsync(siteId, userId, zipStream, null, fileName,
+            wrappedAssetType, ct, uploadId, reuploadRef);
+    }
+
+    private async Task<HostedSite> ReuploadCoreAsync(
+        string siteId, string userId,
+        Stream zipStream, byte[]? fileBytes, string fileName,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? reuploadRef = null)
+    {
         // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null)
@@ -740,10 +778,10 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
-            var validationError = ValidateZip(siteId, fileBytes);
+            var validationError = ValidateZip(siteId, zipStream);
             if (validationError != null)
                 throw new InvalidOperationException(validationError);
-            newKeys = GetValidatedZipPaths(fileBytes, siteId)
+            newKeys = GetValidatedZipPaths(zipStream, siteId)
                 .Select(path => _storage.BuildSiteKey(siteId, $"{versionRoot}/{path}"))
                 .ToArray();
         }
@@ -763,7 +801,7 @@ public class HostedSiteService : IHostedSiteService
         {
             if (ext == ".zip")
             {
-                var result = await ExtractAndUploadZip(siteId, fileBytes, uploadId, versionRoot);
+                var result = await ExtractAndUploadZip(siteId, zipStream, uploadId, versionRoot);
                 if (result.Error != null)
                     throw new InvalidOperationException(result.Error);
                 siteFiles = result.Files;
@@ -773,7 +811,7 @@ public class HostedSiteService : IHostedSiteService
             }
             else
             {
-                var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
+                var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes!, "index.html"));
                 replacedIsSlideDeck = DetectSlideDeck(rewritten);
                 await _storage.UploadToKeyAsync(
                     newKeys[0], rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
@@ -3087,6 +3125,7 @@ public class HostedSiteService : IHostedSiteService
                 EntrySize = s.Files.FirstOrDefault(f =>
                     string.Equals(f.Path, s.EntryFile, StringComparison.OrdinalIgnoreCase))?.Size ?? 0,
                 FileCount = s.Files.Count,
+                PdfFilePaths = HostedSitePdfFiles.Paths(s),
                 CoverImageUrl = s.CoverImageUrl,
                 PdfAssetUrl = TryBuildPdfAssetUrl(s),
                 // 前端据此跳过「取正文」——包装站没有可读的 HTML 正文，问了必被拒
@@ -3175,6 +3214,7 @@ public class HostedSiteService : IHostedSiteService
     {
         if (site is null) return null;
         site.PdfAssetUrl = TryBuildPdfAssetUrl(site);
+        site.PdfFilePaths = HostedSitePdfFiles.Paths(site);
         site.ContentShape = HostedSiteContentShapeRules.Resolve(site);
         var version = EffectiveContentVersion(site);
         foreach (var file in site.Files ?? new List<HostedSiteFile>())
@@ -4413,12 +4453,18 @@ public class HostedSiteService : IHostedSiteService
             if (BlockedExtensions.Contains(fileExt))
                 continue;
 
-            totalSize += entry.Length;
-            if (totalSize > MaxExtractedSize)
+            var singleFileError = HostedSiteUploadLimits.ValidateSingleFileSize(entry.Length);
+            if (singleFileError != null)
             {
-                plan.Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)";
+                plan.Error = singleFileError;
                 return plan;
             }
+            if (entry.Length > MaxExtractedSize - totalSize)
+            {
+                plan.Error = HostedSiteUploadLimits.ValidateExtractedSize(MaxExtractedSize + 1);
+                return plan;
+            }
+            totalSize += entry.Length;
 
             if (entry.Length == 0) continue;
 
@@ -4455,7 +4501,7 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<ZipExtractResult> ExtractAndUploadZip(
         string siteId,
-        byte[] zipBytes,
+        Stream zipStream,
         string? uploadId = null,
         string? versionRoot = null)
     {
@@ -4463,8 +4509,8 @@ public class HostedSiteService : IHostedSiteService
 
         try
         {
-            using var zipStream = new MemoryStream(zipBytes);
-            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+            zipStream.Position = 0;
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
 
             var plan = PlanZipEntries(archive, siteId);
             if (plan.Error != null)
@@ -4503,9 +4549,7 @@ public class HostedSiteService : IHostedSiteService
                 });
 
                 using var entryStream = entry.Open();
-                using var entryMs = new MemoryStream();
-                await entryStream.CopyToAsync(entryMs);
-                var entryBytes = entryMs.ToArray();
+                var entryBytes = await ReadZipEntryAsync(entryStream, entry.Length);
 
                 if (mimeType == "text/html")
                 {
@@ -4544,16 +4588,35 @@ public class HostedSiteService : IHostedSiteService
         }
     }
 
+    internal static async Task<byte[]> ReadZipEntryAsync(Stream input, long declaredLength)
+    {
+        var sizeError = HostedSiteUploadLimits.ValidateSingleFileSize(declaredLength);
+        if (sizeError != null) throw new InvalidOperationException(sizeError);
+        // 单个资源仍受 500MB 上限保护；只分配一次，不再同时持有 MemoryStream 与 ToArray 副本。
+        var output = new byte[checked((int)declaredLength)];
+        var offset = 0;
+        while (offset < output.Length)
+        {
+            var read = await input.ReadAsync(output.AsMemory(offset));
+            if (read == 0)
+                throw new InvalidOperationException("ZIP 文件大小校验失败，请重新导出后再上传");
+            offset += read;
+        }
+        if (await input.ReadAsync(new byte[1]) != 0)
+            throw new InvalidOperationException("ZIP 文件大小校验失败，请重新导出后再上传");
+        return output;
+    }
+
     /// <summary>
     /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。与 ExtractAndUploadZip 共用
     /// PlanZipEntries，条件结构上一致。用于重传替换：先校验后写入，失败时零副作用。
     /// </summary>
-    private string? ValidateZip(string siteId, byte[] zipBytes)
+    internal string? ValidateZip(string siteId, Stream zipStream)
     {
         try
         {
-            using var zipStream = new MemoryStream(zipBytes);
-            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+            zipStream.Position = 0;
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
             return PlanZipEntries(archive, siteId).Error;
         }
         catch (InvalidDataException)
@@ -4564,10 +4627,10 @@ public class HostedSiteService : IHostedSiteService
 
     // PlanZipEntries 现在要 siteId 才能算出每个条目的对象键（主干把站点隔离并进了这一层）。
     // 这里只取相对路径，但仍须把 siteId 透传下去，不能用空串糊过去——那会让键前缀失去站点作用域。
-    private string[] GetValidatedZipPaths(byte[] zipBytes, string siteId)
+    private string[] GetValidatedZipPaths(Stream zipStream, string siteId)
     {
-        using var zipStream = new MemoryStream(zipBytes);
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        zipStream.Position = 0;
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
         var plan = PlanZipEntries(archive, siteId);
         if (plan.Error != null)
             throw new InvalidOperationException(plan.Error);
@@ -4612,6 +4675,9 @@ public class HostedSiteService : IHostedSiteService
     internal static byte[] RewritePublishedEntryHtml(byte[] htmlBytes, string entryFile) =>
         InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, entryFile));
 
+    internal static byte[] RewritePublishedEntryHtml(byte[] htmlBytes, string entryFile, bool bridgeOnly) =>
+        InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, entryFile), bridgeOnly);
+
     // ─────────────────────────────────────────────
     // 幻灯片翻页方向兼容垫片
     // ─────────────────────────────────────────────
@@ -4624,11 +4690,12 @@ public class HostedSiteService : IHostedSiteService
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
     // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
     // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
-    private const int SlideNavVersion = 6;
+    private const int SlideNavVersion = 7;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
     private const string SlideNavMarker = "<!--map-slide-nav-compat-->";
+    private const string SlideNavBridgeOnlyMarker = "<!--map-slide-nav-bridge-only-->";
 
     /// <summary>
     /// 给幻灯片类 HTML 注入翻页方向兼容垫片，让只认左右方向键的 PPT 导出页也能用
@@ -4685,9 +4752,14 @@ public class HostedSiteService : IHostedSiteService
         return SlideDeckSignatures.Any(re => re.IsMatch(head));
     }
 
-    private static byte[] InjectSlideNavCompat(byte[] htmlBytes)
+    private static byte[] InjectSlideNavCompat(byte[] htmlBytes, bool bridgeOnly = false)
     {
         var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
+
+        // 可信 OpenDesign 演示稿已经浏览器质检证明自带导航。托管层只保留父窗口桥接，
+        // 不再叠加角落邀请条或键盘接管。标记随注入块一起移除，但先记住其语义，
+        // 保证后续走普通二参规范化时仍不会恢复第二套 UI。
+        bridgeOnly = bridgeOnly || html.Contains(SlideNavBridgeOnlyMarker, StringComparison.Ordinal);
 
         // 没有任何 HTML 结构信号（既无 </body> 也无 </html> 也无 <html）的内容不处理，
         // 避免把脚本塞进纯文本/JSON 等被误判为 text/html 的文件。
@@ -4715,10 +4787,11 @@ public class HostedSiteService : IHostedSiteService
         // 2) 插入当前版本注入块（剥离后重新定位锚点）
         var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+        var compatScript = bridgeOnly ? SlideNavBridgeOnlyCompatScript : SlideNavCompatScript;
         string injected = bodyIdx >= 0
-            ? html[..bodyIdx] + SlideNavCompatScript + html[bodyIdx..]
-            : (htmlIdx >= 0 ? html[..htmlIdx] + SlideNavCompatScript + html[htmlIdx..]
-                            : html + SlideNavCompatScript);
+            ? html[..bodyIdx] + compatScript + html[bodyIdx..]
+            : (htmlIdx >= 0 ? html[..htmlIdx] + compatScript + html[htmlIdx..]
+                            : html + compatScript);
 
         return System.Text.Encoding.UTF8.GetBytes(injected);
     }
@@ -4773,11 +4846,22 @@ public class HostedSiteService : IHostedSiteService
     }
 
     // 注入的运行时脚本：自包含 IIFE，全部用单引号避免 C# verbatim 字符串的双引号转义。
+    private static readonly string SlideNavBridgeOnlyCompatScript = SlideNavCompatScript
+        .Replace(
+            SlideNavMarker,
+            SlideNavMarker + SlideNavBridgeOnlyMarker,
+            StringComparison.Ordinal)
+        .Replace(
+            "  function decide(){\n    if (decided) return;",
+            "  function decide(){\n    if (decided) return;\n    decided = true; driver = resolveDriver(); return;",
+            StringComparison.Ordinal);
+
     private const string SlideNavCompatScript = SlideNavMarker + @"<script>
 (function(){
   if (window.__mapSlideNavCompat) return;
   window.__mapSlideNavCompat = true;
   var SNAP_AXIS = null, scroller = null, driver = null;
+  var bridgeDocumentId = null, revealBridgeBound = false;
   var navOn = false, decided = false, pill = null;
   // 记住用户对「本 deck」的选择（on/off）。用 sessionStorage（随标签页关闭清空，符合 no-localStorage 约定）
   var KEY = 'mapSlideNav:' + (location.pathname || '');
@@ -4828,6 +4912,65 @@ public class HostedSiteService : IHostedSiteService
     } catch(e){}
     return null;
   }
+  function bridgeSlides(){
+    return document.querySelectorAll('.reveal .slides > section, .swiper-slide, section.slide, [data-slide], .step, .slidev-page');
+  }
+  function bridgePosition(){
+    var nodes = bridgeSlides(), total = nodes.length || 1, current = 0;
+    try {
+      if (window.Reveal && typeof window.Reveal.getIndices === 'function') current = window.Reveal.getIndices().h || 0;
+      else {
+        var active = document.querySelector('.swiper-slide-active, .reveal .slides > section.present, section.slide.active, [data-slide].active, .step.active, .slidev-page.active');
+        if (active) current = Array.prototype.indexOf.call(nodes, active);
+      }
+    } catch(e){}
+    return { cur: Math.max(0, current) + 1, total: Math.max(1, total) };
+  }
+  function bridgePost(type){
+    if (!bridgeDocumentId || window.parent === window) return;
+    var payload = { type:type, documentId:bridgeDocumentId };
+    if (type === 'map-ppt-slide') {
+      var position = bridgePosition(); payload.cur = position.cur; payload.total = position.total;
+    }
+    try { window.parent.postMessage(payload, '*'); } catch(e){}
+  }
+  function bridgeGoto(index){
+    var target = Math.max(0, Math.floor(index));
+    try {
+      if (window.Reveal && typeof window.Reveal.slide === 'function') { window.Reveal.slide(target); return true; }
+      var sw = document.querySelector('.swiper, .swiper-container');
+      if (sw && sw.swiper && typeof sw.swiper.slideTo === 'function') { sw.swiper.slideTo(target); return true; }
+      if (scroller) {
+        if ((SNAP_AXIS||'y') === 'x') scroller.scrollTo({ left:target*scroller.clientWidth, behavior:'smooth' });
+        else scroller.scrollTo({ top:target*scroller.clientHeight, behavior:'smooth' });
+        return true;
+      }
+    } catch(e){}
+    return false;
+  }
+  function bindBridge(){
+    if (revealBridgeBound || !window.Reveal || typeof window.Reveal.on !== 'function') return;
+    revealBridgeBound = true;
+    try { window.Reveal.on('slidechanged', function(){ bridgePost('map-ppt-slide'); }); } catch(e){}
+  }
+  window.addEventListener('message', function(event){
+    if (event.source !== window.parent || !event.data || typeof event.data !== 'object') return;
+    var data = event.data;
+    if (data.type === 'map-ppt-init') {
+      if (typeof data.documentId !== 'string' || data.documentId.length < 1 || data.documentId.length > 128) return;
+      bridgeDocumentId = data.documentId; driver = resolveDriver(); bindBridge();
+      bridgePost('map-ppt-ready'); bridgePost('map-ppt-slide'); return;
+    }
+    if (!bridgeDocumentId) return;
+    if (data.type === 'map-ppt-nav' && (data.dir === 'next' || data.dir === 'prev')) {
+      if (!driver) driver = resolveDriver();
+      if (driver) data.dir === 'next' ? driver.next() : driver.prev();
+      setTimeout(function(){ bridgePost('map-ppt-slide'); }, 80);
+    } else if (data.type === 'map-ppt-goto' && typeof data.h === 'number' && isFinite(data.h)) {
+      bridgeGoto(data.h); setTimeout(function(){ bridgePost('map-ppt-slide'); }, 80);
+    }
+  }, false);
+  window.addEventListener('hashchange', function(){ bridgePost('map-ppt-slide'); });
   // 低可信信号：仅靠 .slide 类元素 ≥2（最易误判，故只用于「邀请」不自动劫持）
   function looseSlides(){
     return document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page').length >= 2;

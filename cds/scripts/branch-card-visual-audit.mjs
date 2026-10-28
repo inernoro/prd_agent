@@ -14,7 +14,7 @@
  *   3. 状态翻转后 data-deploy-phase 依次变为 done / failed（收尾有没有接上线）；
  *   4. 页脚里的构建文字没有被截断（scrollWidth ≤ clientWidth）。
  *
- * 用法：node scripts/branch-card-visual-audit.mjs [--out <dir>] [--width 1920]
+ * 用法：node scripts/branch-card-visual-audit.mjs [--out <dir>] [--width 1920] [--interactions-only]
  * 截图写进 --out（默认 /tmp/branch-card-audit），不进仓库。
  */
 import { createRequire } from 'node:module';
@@ -74,6 +74,7 @@ function makeBranches() {
     }),
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
+      runningCommitSha: '1234567' + 'a'.repeat(33), targetCommitSha: '7654321' + 'b'.repeat(33),
       // 容器级复制集：三个容器各做了复制。标识与端口挤在同一条单行槽里，「+N」不能被挤出卡片。
       // 同时带「CI 失败」标记（极速版 CI 出镜像失败、旧版本仍在跑）：端口行最挤的情形，只剩一个端口名额。
       ciImageStatus: 'failed', ciWorkflowConclusion: 'failure', ciWorkflowRunUrl: 'https://github.com/example/actions/runs/1',
@@ -83,10 +84,12 @@ function makeBranches() {
       replicaSets: Object.fromEntries(['api', 'admin', 'web'].map((id) => [id, { enabled: true, members: [{ status: 'running' }, { status: 'running' }] }])),
       lastDeployAt: iso(-40 * MIN), lastAccessedAt: iso(-5 * MIN),
     }),
-    base('b-scan', 'codex/scan-risk-admin-fix-branch', {
+    base('b-scan', 'codex/stable-smoke-20261021-long-branch-name-card-overlap-regression', {
       status: 'error',
       services: services(22400, 'running', { api: { status: 'error', errorMessage: '就绪探测超时（120 秒内 /health 未返回 200）' } }),
-      errorMessage: 'imp-api-mdimp: 就绪探测超时（120 秒内 /health 未返回 200），旧版本已下线',
+      errorMessage: 'admin-prd-agent: 部署阶段等待超时，旧服务保持可用 llmgw-prd-agent: 部署阶段等待超时，旧服务保持可用 '.repeat(8),
+      targetCommitSha: '7df226a' + 'c'.repeat(33),
+      tags: ['固定尺寸卡片长标签不换行', '异常摘要省略', '中部版本信息'],
       lastAccessedAt: iso(-19 * MIN),
     }),
     base('b-edison', 'claude/beautiful-edison-mx81', {
@@ -112,6 +115,7 @@ function makeBranches() {
       deployEstimate: { releaseMedianMs: 370_000, releaseSamples: 8, sourceMedianMs: null, sourceSamples: 0 },
     }),
     base('b-relaxed', 'claude/relaxed-brown-hcib', {
+      runningCommitSha: 'abcdef0' + 'd'.repeat(33), targetCommitSha: 'abcdef0' + 'd'.repeat(33),
       status: 'idle', services: services(24300, 'stopped'),
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-15 * 60 * MIN),
       lastDeployAt: iso(-16 * 60 * MIN),
@@ -173,11 +177,16 @@ const check = (ok, message) => { if (!ok) failures.push(message); console.log(`$
 
 async function openPage(browser, url, theme) {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: 1180 }, deviceScaleFactor: 1 });
+  const actionRequests = [];
+  const browserErrors = [];
   await context.addInitScript(`try{localStorage.setItem('cds_theme','${theme}')}catch(e){}`);
   await context.addInitScript(FAKE_SSE);
   await context.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (isEventStream(pathname)) {
+    if (route.request().method() === 'POST' && /\/(restart|deploy)$/.test(pathname)) {
+      actionRequests.push(pathname);
+    }
+    if (isEventStream(pathname) || route.request().headers().accept?.includes('text/event-stream')) {
       await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': fixture\n\n' });
       return;
     }
@@ -185,10 +194,20 @@ async function openPage(browser, url, theme) {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body ?? {}) });
   });
   const page = await context.newPage();
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text());
+  });
   await page.goto(`${url}/branch-list?project=${PROJECT_ID}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  try {
+    await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  } catch (error) {
+    await page.screenshot({ path: path.join(OUT, `load-failure-${theme}.png`) });
+    console.error((await page.locator('body').innerText()).slice(0, 3000));
+    throw error;
+  }
   await page.waitForTimeout(1200);
-  return { context, page };
+  return { context, page, actionRequests, browserErrors };
 }
 
 /* 同一排 = 卡片顶边 y 相同。量每排的高度差。 */
@@ -234,7 +253,36 @@ async function main() {
     browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || '/opt/pw-browsers/chromium' });
     for (const theme of ['dark', 'light']) {
       branches = makeBranches();
-      const { context, page } = await openPage(browser, server.url, theme);
+      const { context, page, actionRequests, browserErrors } = await openPage(browser, server.url, theme);
+      const card = (id) => page.locator(`[data-branch-card-id="${id}"]`);
+      const deployButtons = (id) => card(id).getByRole('button', { name: /^(重新部署|部署) / });
+      for (const id of ['b-test', 'b-edison', 'b-pack', 'b-ident', 'b-relaxed']) {
+        check(await deployButtons(id).count() === 0, `[${theme}] ${id} 运行、等待、构建或停止态不显示直接部署入口`);
+      }
+      check(await card('b-test').getByRole('button', { name: '预览', exact: true }).count() === 1,
+        `[${theme}] 健康运行卡保留预览入口`);
+      check(await deployButtons('b-scan').count() === 1
+        && await card('b-scan').getByRole('button', { name: /^预览/ }).count() === 0,
+        `[${theme}] 异常卡保留重新部署，且不同时显示预览`);
+      await card('b-relaxed').getByRole('button', { name: /^一键启动 / }).click();
+      await page.waitForTimeout(400);
+      check(actionRequests.filter((p) => p === '/api/branches/b-relaxed/restart').length === 1
+        && !actionRequests.some((p) => p.endsWith('/deploy')),
+        `[${theme}] 一键启动只发送一次 restart，不发送 deploy`);
+      const drawer = page.getByRole('dialog', { name: '分支详情', exact: true });
+      check(await drawer.count() === 0, `[${theme}] 一键启动不冒泡打开分支详情`);
+      if (await drawer.count()) await page.getByRole('button', { name: '关闭', exact: true }).click();
+      // 卡片空白仍能打开详情；不能靠禁用整卡点击修复按钮冒泡。
+      await card('b-relaxed').locator('[data-card-versions]').click();
+      await drawer.waitFor({ state: 'visible' });
+      check(await drawer.isVisible(), `[${theme}] 信息槽空白仍可打开分支详情`);
+      await page.getByRole('button', { name: '关闭', exact: true }).click();
+      if (process.argv.includes('--interactions-only')) {
+        check(browserErrors.length === 0, `[${theme}] 无浏览器运行错误${browserErrors.length ? ': ' + browserErrors.join('; ') : ''}`);
+        await page.screenshot({ path: path.join(OUT, `interactions-${theme}.png`), fullPage: true });
+        await context.close();
+        continue;
+      }
       const rows = await measureRows(page);
       rows.forEach((row, i) => {
         const hs = row.list.map((c) => c.h);
@@ -283,6 +331,8 @@ async function main() {
       for (const f of await footerTruncation(page)) {
         check(!f.clipped, `[${theme}] ${f.id} 页脚构建文字没被截断：「${f.text}」`);
       }
+      const sameVersion = await page.textContent('[data-branch-card-id="b-relaxed"] [data-card-versions]');
+      check(/运行 abcdef0/.test(sameVersion || '') && !/目标/.test(sameVersion || ''), `[${theme}] 运行与目标一致时只展示运行版本`);
       await page.screenshot({ path: path.join(OUT, `grid-${theme}.png`), fullPage: true });
 
       // 复制集标识 + 端口 + 「+N」同在一条单行槽：各档视口宽度下「+N」都要完整落在卡片里、点得到。
@@ -302,11 +352,49 @@ async function main() {
           return {
             cardW: Math.round(c.width),
             inside: inside(btn)
-              && inside(card.querySelector('button[aria-label^="CI 构建失败"]'))
+              && inside(card.querySelector('button[aria-label^="新版本 CI 失败"]'))
               && inside(infra)
               && inside(card.querySelector('[data-drift-chip]')),
           };
         });
+        const geometry = await page.$$eval('[data-branch-card-id]', (cards) => cards.map((card) => {
+          const c = card.getBoundingClientRect();
+          const footer = card.querySelector('footer');
+          const f = footer.getBoundingClientRect();
+          const info = card.querySelector('[data-card-info]');
+          const i = info.getBoundingClientRect();
+          const actions = [...footer.querySelectorAll('button')];
+          const actionRects = actions.map((button) => button.getBoundingClientRect());
+          const summary = card.querySelector('[data-card-error-summary]');
+          const versions = card.querySelector('[data-card-versions]');
+          const singleLine = (el) => !el || (getComputedStyle(el).whiteSpace === 'nowrap'
+            && el.clientHeight <= parseFloat(getComputedStyle(el).lineHeight) + 1);
+          return {
+            id: card.getAttribute('data-branch-card-id'),
+            fixedHeight: Math.abs(c.height - parseFloat(getComputedStyle(document.documentElement).fontSize) * 15.25) <= 1,
+            infoInside: i.top >= c.top && i.bottom <= f.top + 1 && i.right <= c.right,
+            footerInside: f.bottom <= c.bottom && f.top > i.top,
+            footerOnlyActions: actions.length >= 1 && actions.length <= 2 && actions[0].textContent.trim() === '日志'
+              && (actions.length === 1 || actions[1].textContent.trim() === '部署')
+              && !footer.querySelector('[data-card-versions], [data-footer-status]'),
+            actionsFit: actionRects.every((r) => r.left >= c.left && r.right <= c.right && r.top >= f.top && r.bottom <= f.bottom)
+              && actionRects.every((r, index) => index === 0 || actionRects[index - 1].right <= r.left),
+            summarySingleLine: singleLine(summary),
+            versionsSingleLine: !versions || [...versions.children].every(singleLine),
+          };
+        }));
+        const broken = geometry.filter((g) => !g.fixedHeight || !g.infoInside || !g.footerInside || !g.footerOnlyActions
+          || !g.actionsFit || !g.summarySingleLine || !g.versionsSingleLine);
+        check(broken.length === 0, `[${theme}] ${vw}px 固定卡高、中部单行、页脚仅头像与日志/部署且无覆盖${broken.length ? ': ' + JSON.stringify(broken) : ''}`);
+        const versionChecks = await page.$eval('[data-branch-card-id="b-scan"]', (card) => {
+          const versions = card.querySelector('[data-card-versions]');
+          const summary = card.querySelector('[data-card-error-summary]');
+          return Boolean(versions && !versions.closest('footer') && versions.textContent.includes('运行 未确认')
+            && versions.textContent.includes('目标 7df226a') && summary.scrollWidth > summary.clientWidth
+            && getComputedStyle(summary).textOverflow === 'ellipsis');
+        });
+        check(versionChecks, `[${theme}] ${vw}px 长报错省略、未知运行版本与目标版本在中部独立显示`);
+        if (vw === 390) await shotCard(page, 'b-scan', `error-card-${theme}-390.png`);
         if (vw === 1000) await shotCard(page, 'b-test', `port-row-markers-${theme}-${vw}.png`);
         check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 / CI 失败 / 基础设施异常 / 漂移四种标记都在时，它们与「+N」都完整落在卡内`);
       }
@@ -440,6 +528,8 @@ async function main() {
         // 60 秒后：「刚部署成功」退场，页脚换回提交信息。
         const remain = 61_500 - (Date.now() - finishedAt);
         if (remain > 0) await page.waitForTimeout(remain);
+        // 收尾计时从卡片进入视野起算；负载高时 DOM 推进可能晚几帧，等真实退场再取证。
+        await page.waitForFunction(() => document.querySelector('[data-branch-card-id="b-ident"]')?.getAttribute('data-deploy-phase') === null, null, { timeout: 10000 });
         await shotCard(page, 'b-ident', 'finish-6-after-60s.png');
         const settledPhase = await page.getAttribute('[data-branch-card-id="b-ident"]', 'data-deploy-phase');
         check(settledPhase === null, `60 秒后收尾态退场（实际 data-deploy-phase=${settledPhase}）`);
@@ -707,6 +797,7 @@ async function main() {
         check(relaxedHidden && relaxedShown.mounted && !relaxedShown.inDormant,
           `停止的分支单独部署一个服务时离开收起的「未运行」分组（部署前${relaxedHidden ? '被收起' : '可见'}，部署中${relaxedShown.mounted ? '已渲染' : '未渲染'}${relaxedShown.inDormant ? '、仍在未运行分组' : ''}）`);
       }
+      check(browserErrors.length === 0, `[${theme}] 无浏览器运行错误${browserErrors.length ? ': ' + browserErrors.join('; ') : ''}`);
       await context.close();
     }
   } finally {

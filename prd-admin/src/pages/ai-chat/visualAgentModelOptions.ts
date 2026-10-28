@@ -1,4 +1,5 @@
 import type { Model } from '@/types/admin';
+import { isModelAvailableForRequest } from '@/lib/modelAvailability';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 import type { ModelAdapterInfo, SizeOptionFromBackend } from '@/services/contracts/models';
 
@@ -19,6 +20,7 @@ export type VisualAgentModelOption = Model & {
   recommended?: boolean;
   poolCode?: string;
   poolName?: string;
+  isRecoveryProbeAvailable?: boolean;
   recentTenRequests?: number;
   recentTenSuccessRatePercent?: number | null;
   averageDurationMs?: number | null;
@@ -52,6 +54,15 @@ export function poolIdFromVisualModelOptionId(optionId: string): string {
   return id.startsWith(VISUAL_MODEL_OPTION_ID_PREFIX)
     ? id.slice(VISUAL_MODEL_OPTION_ID_PREFIX.length)
     : id;
+}
+
+/**
+ * 任意来源的模型选择值统一归一为选择器使用的 option id。
+ * 首页交接、用户偏好、桌面端与手机端都必须走这里，避免各自猜测是否带前缀。
+ */
+export function normalizeVisualModelOptionId(rawId: string | null | undefined): string {
+  const poolId = poolIdFromVisualModelOptionId(String(rawId ?? ''));
+  return poolId ? visualModelOptionIdOf(poolId) : '';
 }
 
 export type VisualResultModelMeta = {
@@ -115,6 +126,7 @@ export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualA
     const members = pool.models ?? [];
     const preferredMember = members.find((member) => member.healthStatus === 'Healthy')
       ?? members.find((member) => member.healthStatus === 'Degraded')
+      ?? members.find(isModelAvailableForRequest)
       ?? members[0];
     return {
       id: visualModelOptionIdOf(pool.id),
@@ -122,7 +134,7 @@ export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualA
       modelName: pool.code,
       actualModelId: pool.code,
       platformId: 'logical-model',
-      enabled: members.some((member) => member.healthStatus === 'Healthy' || member.healthStatus === 'Degraded'),
+      enabled: members.some(isModelAvailableForRequest),
       isMain: false,
       isImageGen: true,
       enablePromptCache: false,
@@ -134,10 +146,12 @@ export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualA
       description: pool.description,
       poolCode: pool.code,
       poolName: pool.name,
+      isRecoveryProbeAvailable: preferredMember?.isRecoveryProbeAvailable === true,
       recentTenRequests: pool.recentTenRequests,
       recentTenSuccessRatePercent: pool.recentTenSuccessRatePercent,
       averageDurationMs: pool.averageDurationMs,
       subtitle: [
+        preferredMember?.isRecoveryProbeAvailable ? '恢复试探' : null,
         pool.averageDurationMs == null ? null : `平均 ${(pool.averageDurationMs / 1000).toFixed(1)} 秒`,
         pool.recentTenSuccessRatePercent == null ? null : `近 ${pool.recentTenRequests ?? 0} 次成功率 ${pool.recentTenSuccessRatePercent}%`,
       ].filter(Boolean).join(' · '),

@@ -434,7 +434,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     const query = params.toString();
     href = query ? `/release-center?${query}` : '/release-center';
   } else if (copy.link === 'status') {
-    href = '/status';
+    href = data.targetId ? `/status?target=${encodeURIComponent(data.targetId)}` : '/status';
   } else if (copy.link === 'maintenance') {
     href = '/cds-settings';
   }

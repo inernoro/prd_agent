@@ -16,6 +16,8 @@ import {
   UserCog,
   FlaskConical,
   Settings,
+  Boxes,
+  ClipboardCheck,
   ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
@@ -41,6 +43,8 @@ const iconMap: Record<string, LucideIcon> = {
   UserCog,
   FlaskConical,
   Settings,
+  Boxes,
+  ClipboardCheck,
 };
 
 interface PermissionMatrixProps {

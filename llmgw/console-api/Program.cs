@@ -286,6 +286,15 @@ var videoGenRuns = mapDatabase.GetCollection<BsonDocument>(OfferingReferencePoli
 // 删线路的在途闸两张表都要查，只查一张等于对其中一类任务完全不设防（第 74 轮 review）。
 var directVideoJobOwnerships = mapDatabase.GetCollection<BsonDocument>(
     OfferingReferencePolicy.DirectVideoOwnershipCollectionName);
+// 逻辑模型 PublicId 还会被 MAP 的业务策略、模型绑定密钥和生图任务引用。
+// 两边没有数据库外键，删除前必须显式审计；统一判据见 MapLogicalModelReferencePolicy。
+var mapAppSettings = mapDatabase.GetCollection<BsonDocument>(
+    MapLogicalModelReferencePolicy.AppSettingsCollectionName);
+var mapAgentApiKeys = mapDatabase.GetCollection<BsonDocument>(
+    MapLogicalModelReferencePolicy.AgentApiKeysCollectionName);
+var mapImageGenRuns = mapDatabase.GetCollection<BsonDocument>(
+    MapLogicalModelReferencePolicy.ImageRunsCollectionName);
+var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
 var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pools");
@@ -3378,6 +3387,7 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
         {
             detail.ProviderReportedCost = reportedCost.Amount;
             detail.ProviderCostCurrency = reportedCost.Currency;
+            detail.CostKind = GatewayCostKindNames.ProviderActual;
         }
     }
     return Json(ApiEnvelope<LlmLogDetail>.Ok(detail), jsonOptions);
@@ -6433,6 +6443,39 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
             + "直接删会让那些请求当场失败，或者悄悄换成另一个模型。"
             + "先在模型编辑里把默认与认领转给别的模型，再回来删"),
             jsonOptions, 409);
+    }
+
+    /*
+      网关模型与 MAP 业务配置是跨库引用，没有 Mongo 外键。删除前统一检查所有仍会参与未来执行的
+      PublicId 引用，避免只删目录、留下“默认但不可用”的业务配置。这里不自动替 MAP 换模型：
+      自动替换会把用户选择的模型语义悄悄改掉，正确恢复动作是先在引用处明确迁移，再回来删除。
+
+      三类引用分别覆盖：视觉创作开放策略、MCP/OpenAPI 模型绑定密钥、尚未终结的生图任务。
+      历史日志和用户最近选择不阻断，它们不会再发起调用。过滤器与 MAP 实体的镜像契约由
+      MapLogicalModelReferencePolicyMirrorTests 守住。
+    */
+    var publicId = doc.AsNullableString("PublicId")?.Trim() ?? string.Empty;
+    if (!string.IsNullOrWhiteSpace(publicId))
+    {
+        var visualPolicyCount = await mapAppSettings.CountDocumentsAsync(
+            MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId));
+        var agentApiKeyCount = await mapAgentApiKeys.CountDocumentsAsync(
+            MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId));
+        var imageRunCount = await mapImageGenRuns.CountDocumentsAsync(
+            MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId));
+        if (visualPolicyCount > 0 || agentApiKeyCount > 0 || imageRunCount > 0)
+        {
+            var reasons = new List<string>();
+            if (visualPolicyCount > 0) reasons.Add("视觉创作模型策略");
+            if (agentApiKeyCount > 0) reasons.Add($"{agentApiKeyCount} 把模型绑定密钥");
+            if (imageRunCount > 0) reasons.Add($"{imageRunCount} 个未结束的生图任务");
+            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+                "MODEL_REFERENCED_BY_MAP",
+                $"MAP 仍在引用公开模型「{publicId}」：{string.Join("、", reasons)}。"
+                + "直接删除会留下失效默认值、固定配置或正在执行的任务。"
+                + "请先在 MAP 模型设置和智能体接入台迁移配置，并等待相关生图任务结束后再删除"),
+                jsonOptions, 409);
+        }
     }
 
     /*
@@ -12302,6 +12345,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
             {
                 { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
                 { "ProviderCostCurrency", actualCurrency },
+                { "CostKind", GatewayCostKindNames.ProviderActual },
                 { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
                 { "ReconciliationStatus", reconciliationStatus },
                 { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
@@ -16738,11 +16782,13 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     StatusCode = d.AsNullableInt("StatusCode"),
     InputTokens = d.AsNullableInt("InputTokens"),
     OutputTokens = d.AsNullableInt("OutputTokens"),
+    ReasoningTokens = d.AsNullableInt("ReasoningTokens"),
     TokenUsageSource = d.AsNullableString("TokenUsageSource"),
     ImageSuccessCount = d.AsNullableInt("ImageSuccessCount"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
     EstimatedCostUsd = d.AsNullableDecimal("EstimatedCostUsd"),
+    CostKind = ResolveLogCostKind(d),
     PriceSnapshotHash = d.AsNullableString("PriceSnapshotHash"),
     ProviderRequestId = d.AsNullableString("ProviderRequestId"),
     ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
@@ -16804,6 +16850,10 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ToolCallCount = d.AsNullableInt("ToolCallCount"),
     InputTokens = d.AsNullableInt("InputTokens"),
     OutputTokens = d.AsNullableInt("OutputTokens"),
+    ReasoningTokens = d.AsNullableInt("ReasoningTokens"),
+    CacheCreationInputTokens = d.AsNullableInt("CacheCreationInputTokens"),
+    CacheReadInputTokens = d.AsNullableInt("CacheReadInputTokens"),
+    CacheCreationCountedInsideInput = d.AsNullableBool("CacheCreationCountedInsideInput"),
     ImageSuccessCount = d.AsNullableInt("ImageSuccessCount"),
     OutputImages = MapLogImages(d, "OutputImages"),
     OutputImageCaptureStatus = d.AsNullableString("OutputImageCaptureStatus"),
@@ -16825,6 +16875,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     // 是这次没花钱、还是这条模型压根没配价——后者才是他要去处理的事。
     CostStatus = ResolveLogCostStatus(d),
     CostUnpricedReason = d.AsNullableString("CostUnpricedReason"),
+    CostKind = ResolveLogCostKind(d),
     EstimatedCallCost = d.AsNullableDecimal("EstimatedCallCost"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
@@ -19903,6 +19954,44 @@ static string ResolveLogCostStatus(BsonDocument d)
 }
 
 /// <summary>
+/// 金额证据性质。供应商实际账单永远优先于请求完成时的估算快照；存量日志没有 CostKind 时
+/// 按已有事实回退，绝不把 APIYI 的人工价格表伪装成供应商实际结算。
+/// </summary>
+static string ResolveLogCostKind(BsonDocument d)
+{
+    if (d.AsNullableDecimal("ProviderReportedCost") is not null)
+    {
+        return GatewayCostKindNames.ProviderActual;
+    }
+
+    var stored = d.AsNullableString("CostKind")?.Trim().ToLowerInvariant();
+    if (GatewayCostKindNames.All.Contains(stored, StringComparer.Ordinal))
+    {
+        return stored!;
+    }
+
+    var status = ResolveLogCostStatus(d);
+    if (status == GatewayCostStatusNames.NoUsage) return GatewayCostKindNames.NoUsage;
+    if (status != GatewayCostStatusNames.Priced) return GatewayCostKindNames.Unpriced;
+
+    var provider = string.Join(' ', new[]
+    {
+        d.AsNullableString("Provider"),
+        d.AsNullableString("PlatformId"),
+        d.AsNullableString("PlatformName"),
+    }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    if (provider.Contains("apiyi", StringComparison.OrdinalIgnoreCase)
+        || provider.Equals("openai", StringComparison.OrdinalIgnoreCase))
+    {
+        return GatewayCostKindNames.OfficialBaselineEstimate;
+    }
+
+    return string.Equals(d.AsNullableString("PriceSource")?.Trim(), "upstream", StringComparison.OrdinalIgnoreCase)
+        ? GatewayCostKindNames.ProviderPolicyEstimate
+        : GatewayCostKindNames.OfficialBaselineEstimate;
+}
+
+/// <summary>
 /// 网关写进日志的成本状态取值。console-api 是独立工程、引用不到网关那份常量，
 /// 只能在这里复述一份；两边漂移会让统计口径和写入口径对不上，所以由
 /// <c>GatewayCostStatusMirrorGuardTests</c> 从源码上钉住。
@@ -19916,6 +20005,24 @@ static class GatewayCostStatusNames
     public const string Unpriced = "unpriced";
     public const string StaleCurrency = "stale_currency";
     public const string NoUsage = "no_usage";
+}
+
+static class GatewayCostKindNames
+{
+    public const string ProviderActual = "provider_actual";
+    public const string OfficialBaselineEstimate = "official_baseline_estimate";
+    public const string ProviderPolicyEstimate = "provider_policy_estimate";
+    public const string Unpriced = "unpriced";
+    public const string NoUsage = "no_usage";
+
+    public static readonly string[] All =
+    [
+        ProviderActual,
+        OfficialBaselineEstimate,
+        ProviderPolicyEstimate,
+        Unpriced,
+        NoUsage,
+    ];
 }
 
 /// <summary>

@@ -18,6 +18,8 @@
 
 ## 文档列表
 
+- [CDS 项目发布脚本 · 指南](./guide.cds.release-scripts.md) `guide.cds.release-scripts`
+
 ### 一、产品规格
 
 - [cds-compose 契约 · SSOT · 规格](./spec.cds.compose-contract.md) `spec.cds.compose-contract`
@@ -76,6 +78,7 @@
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
+- [MyCDS 外网通行证 · 设计](./design.cds.public.pass.md) `design.cds.public.pass`
 - [CDS 角色化 Agent 一键上手范型 · 设计](./design.cds.agent-onboarding-harness.md) `design.cds.agent-onboarding-harness`
 - [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
@@ -150,6 +153,7 @@
 - [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
 - [周报管理 Agent (Report Agent) · 设计](./design.report-agent.md) `design.report-agent`
+- [周报管理 Agent · 月报 · 设计](./design.report-agent.monthly.md) `design.report-agent.monthly`
 - [产品评审员技术 · 设计](./design.review-agent.md) `design.review-agent`
 - [苹果快捷指令集成 · 设计](./design.shortcuts-agent.apple.md) `design.shortcuts-agent.apple`
 - [海鲜市场技能开放接口设计 (Skill Marketplace Open API) · 设计](./design.skill.marketplace-open-api.md) `design.skill.marketplace-open-api`
@@ -281,12 +285,15 @@
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
+- [CDS 控制面卡顿治理 · 计划](./plan.cds.control-plane-lag.md) `plan.cds.control-plane-lag`
 - [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) `plan.cds.database-isolation`
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 本地多用户认证解耦 · 计划](./plan.cds.local-multi-user-auth.md) `plan.cds.local-multi-user-auth`
 - [CDS 一仓多项目与身份层 · 计划](./plan.cds.multi-project-identity.md) `plan.cds.multi-project-identity`
 - [CDS 多项目剩余交付 · 计划](./plan.cds.multi-project-phases.md) `plan.cds.multi-project-phases`
+- [CDS 长期性能优化与独立验收 · 计划](./plan.cds.performance.optimization.md) `plan.cds.performance.optimization`
+- [CDS 长期性能优化待办 · 计划](./plan.cds.performance.todo.md) `plan.cds.performance.todo`
 - [CDS 发布系统改进 · 计划](./plan.cds.release-system.md) `plan.cds.release-system`
 - [CDS 高可用运行验证 · 计划](./plan.cds.resilience-rollout.md) `plan.cds.resilience-rollout`
 - [CDS 服务关系与跨项目引用 · 计划](./plan.cds.service-relations.md) `plan.cds.service-relations`

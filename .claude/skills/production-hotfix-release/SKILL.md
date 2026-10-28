@@ -111,7 +111,7 @@ ssh root@host 'docker inspect prdagent-api --format "{{ index .Config.Labels \"o
 ssh root@host 'cd /root/inernoro/prd_agent && git status --short --branch && git log --oneline -5'
 ```
 
-注意：生产机 Git 目录可能滞后，实际运行版本以容器镜像 label、前端静态包或部署系统记录为准。
+注意：生产机 Git 目录可能滞后。必须同时读取公网 API/网关版本、运行容器 revision 与目标最近一次成功发布记录；实际产品版本是基线。三者不一致先定位，禁止用宿主机 git HEAD、主干 HEAD 或历史报告代替线上 revision。
 
 ### Step 3：创建热修分支
 
@@ -123,6 +123,8 @@ git checkout -b codex/hotfix-<short-name>-prod <production-revision>
 ```
 
 如果生产 revision 不在本地历史中，先确认远端是否缺失；不要凭猜测找相近 commit。
+
+候选发布必须执行 `git merge-base --is-ancestor <production-revision> <candidate>` 并通过。失败说明候选可能覆盖线上独有热修，必须先补齐当前基线，不能用“主干已合并”或“CI 全绿”放行。真正执行发布前再次读取运行态和最近成功记录；基线改变则重新构建并验证。用户明确授权的指定回滚另按回滚规则执行。
 
 ### Step 4：cherry-pick 指定提交
 

@@ -57,6 +57,8 @@ export default {
         //
         // 每档两个值：DEFAULT 是实色（圆点 / 图标 / 进度条 / 文字），
         // soft 是整块底色（行底、提示条底、徽章底）。
+        'express-full': 'hsl(var(--express-full) / <alpha-value>)',
+        'express-partial': 'hsl(var(--express-partial) / <alpha-value>)',
         ok: {
           DEFAULT: 'hsl(var(--ok) / <alpha-value>)',
           soft: 'hsl(var(--ok-soft) / <alpha-value>)',

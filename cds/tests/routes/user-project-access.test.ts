@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
+import * as sqlConsole from '../../src/services/sql-console-executor.js';
 import { createServer } from '../../src/server.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
@@ -200,6 +201,7 @@ describe('human project grants through the production server', () => {
 
   it('bounds a stalled grant response and restores late writes before releasing the gate', async () => {
     await grant(['project-a']);
+    const previousFlushTimeout = process.env.CDS_GRANT_FLUSH_TIMEOUT_MS;
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     const stalled = new Promise<void>(resolve => { finish = resolve; });
@@ -211,20 +213,15 @@ describe('human project grants through the production server', () => {
     expect(status.status).toBe(409);
     expect(status.body.update.reconciling).toBe(true);
     expect((await call('GET', '/api/projects', member)).status).toBe(409);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', previousFlushTimeout);
     finish();
-    for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined();
+    await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined(), { timeout: 2000 });
     expect(flush).toHaveBeenCalledTimes(3);
     expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
     fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'late-write-restored.json'));
     const restored = new StateService(path.join(dir, 'late-write-restored.json'));
     restored.load();
     expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
-    // The short budget above only drives the timeout branch. A recovered normal
-    // write must use the production budget or a busy CI runner can create a
-    // second timeout unrelated to the behavior under test.
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await grant(['project-b'])).status).toBe(200);
   });
@@ -239,6 +236,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => pending);
     try {
       expect((await grant(['project-b'])).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'interrupted-grant.json'));
       for (const failedStep of ['save', 'flush'] as const) {
@@ -319,6 +317,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     try {
       expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       const restartPath = path.join(dir, `interrupted-${status}.json`);
       fs.copyFileSync(path.join(dir, 'state.json'), restartPath);
@@ -433,6 +432,7 @@ describe('human project grants through the production server', () => {
 
   it.each(['mysql', 'mongo'] as const)('allows only existing read-only %s commands in authorized resources', async runtime => {
     const mongo = runtime === 'mongo';
+    if (!mongo) vi.spyOn(sqlConsole, 'executeSqlConsole').mockResolvedValue({ columns: ['answer'], rows: [['1']], rowCount: 1, resultSets: [{ columns: ['answer'], rows: [['1']], rowCount: 1 }], output: 'SQL 执行完成。' });
     state.addInfraService({ id: runtime, projectId: 'project-a', name: runtime, dockerImage: mongo ? 'mongo:7' : 'mysql:8',
       containerPort: mongo ? 27017 : 3306, hostPort: mongo ? 27017 : 3306, containerName: `fixture-${runtime}`, status: 'running',
       dbName: 'app', env: mongo ? { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'fake-db-password', MONGO_INITDB_DATABASE: 'app' }
@@ -1117,6 +1117,7 @@ describe('human project grants through the production server', () => {
     const principalId = humanPrincipalId(memberId);
     const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    const previousFlushTimeout = process.env.CDS_GRANT_FLUSH_TIMEOUT_MS;
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
@@ -1125,16 +1126,12 @@ describe('human project grants through the production server', () => {
     expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
     expect((await grant(['project-b'])).status).toBe(409);
+    // 20ms 只用于上面的受控超时，补偿和正常恢复沿用原有等待预算。
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', previousFlushTimeout);
     finish();
-    for (let attempt = 0; attempt < 40 && humanProjectGrantUpdateStatus(state, principalId); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
+    await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined(), { timeout: 2000 });
     expect(state.getPrincipal(principalId)?.status).toBe('disabled');
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
-    // The 20ms timeout above exists only to force the compensation path. Restore a
-    // production-like budget before asserting recovery so full-suite CPU pressure
-    // cannot turn the final durability write into a second synthetic timeout.
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(200);
   });

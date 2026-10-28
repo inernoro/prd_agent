@@ -13,7 +13,7 @@
  * tested against a MockShellExecutor that pretends to be docker.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -21,9 +21,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { createProjectsRouter, LEGACY_PROJECT_ID } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
+import {storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
-import type { Project } from '../../src/types.js';
+import type { Project, BranchEntry, BuildProfile, CdsConfig } from '../../src/types.js';
+import { computePreviewSlug } from '../../src/services/preview-slug.js';
+import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
+import { namedServiceLabel } from '../../src/services/preview-entrypoints.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -93,6 +97,8 @@ async function request(
         port: addr.port,
         path: urlPath,
         method,
+        // 每例都会重建临时 server，不复用上一例正在关闭的空闲连接。
+        agent: false,
         headers: {
           'Content-Type': 'application/json',
           ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
@@ -140,6 +146,7 @@ describe('Projects router (P4 Part 2)', () => {
   let stateService: StateService;
   let shell: MockShellExecutor;
   let server: http.Server;
+  let projectConfig: CdsConfig;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-test-'));
@@ -152,10 +159,21 @@ describe('Projects router (P4 Part 2)', () => {
 
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      const id = req.headers['x-test-project-key'];
+      if (typeof id === 'string') (req as any).cdsProjectKey = { projectId: id, keyId: 'test' };
+      else if (req.headers['x-test-human'] !== 'none') {
+        const member = req.headers['x-test-human'] === 'member';
+        (req as any).cdsUser = { id: member ? 'member' : 'owner', isSystemOwner: !member, authProvider: 'local' };
+        if (req.headers['x-test-human'] !== 'unverified') (req as any).cdsSession = {};
+      }
+      next();
+    });
     const githubApp = {
       getInstallationToken: async () => 'github-app-installation-token',
     } as GitHubAppClient;
-    app.use('/api', createProjectsRouter({ stateService, shell, githubApp }));
+    projectConfig = { rootDomains: ['preview.test', 'secondary.test'] } as CdsConfig;
+    app.use('/api', createProjectsRouter({ stateService, shell, githubApp, config: projectConfig }));
 
     server = app.listen(0);
   });
@@ -658,25 +676,404 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.description).toBe('Second Desc');
     });
 
-    // ── Alias fields (follow-up PR for doc/plan.cds-github-integration-followups P0) ──
-    it('accepts aliasName + aliasSlug and returns them on the project', async () => {
+    // ── 唯一项目 slug 与变更记录 ──
+    it('keeps one slug, supports changing it back, and records changes', async () => {
+      delete stateService.getProject('default')!.identityHistory;
+      const initial = await request(server, 'GET', '/api/projects/default');
+      expect(initial.body).not.toHaveProperty('aliasSlug');
+      expect(initial.body).not.toHaveProperty('previewIdentifier');
+      const changed = await request(server, 'PUT', '/api/projects/default', {
+        slug: 'short-preview', expectedIdentityVersion: initial.body.identityVersion,
+      });
+      expect(changed.status).toBe(200);
+      expect(changed.body.project.slug).toBe('short-preview');
+      const restored = await request(server, 'PUT', '/api/projects/default', {
+        slug: initial.body.slug, expectedIdentityVersion: changed.body.project.identityVersion,
+      });
+      expect(restored.status).toBe(200);
+      expect(restored.body.project.aliasSlug).toBeUndefined();
+      expect(restored.body.project.slug).toBe(initial.body.slug);
+      const history = await request(server, 'GET', '/api/projects/default/identity-history');
+      expect(history.body.coverage).toBe('since-baseline');
+      expect(history.body.records[0].before.slug).toBe('short-preview');
+      expect(history.body.records[0].after.slug).toBe(initial.body.slug);
+      expect(history.body.records.at(-1).kind).toBe('baseline');
+      // The migration observation is not presented as historical creation evidence.
+      expect(history.body.records.at(-1).before).toBeUndefined();
+    });
+
+    it('rejects stale, blank, duplicate and ambiguous identifiers without writing history', async () => {
+      const initial = await request(server, 'GET', '/api/projects/default');
+      await request(server, 'POST', '/api/projects', { name: 'Taken', slug: 'taken-identity' });
+      await request(server, 'PUT', '/api/projects/default', { name: 'Changed elsewhere' });
+      const count = stateService.getProject('default')!.identityHistory!.length;
+      for (const body of [
+        { name: 'Stale write', expectedIdentityVersion: initial.body.identityVersion },
+        { slug: 'taken-identity' },
+        { slug: '' },
+        { slug: 'bad identifier' },
+        { slug: 'x'.repeat(51) },
+        { previewIdentifier: 'one', aliasSlug: 'two' },
+      ]) {
+        const res = await request(server, 'PUT', '/api/projects/default', body);
+        expect(res.status).toBeGreaterThanOrEqual(400);
+      }
+      expect(stateService.getProject('default')!.identityHistory).toHaveLength(count);
+      expect(stateService.getProject('default')!.name).toBe('Changed elsewhere');
+    });
+
+    it('保留旧 slug 的入口归属，其他项目不能通过创建或改名占用', async () => {
+      const first = await request(server, 'POST', '/api/projects', { name: '旧入口归属', slug: 'reserved-old' });
+      const id = first.body.project.id;
+      expect((await request(server, 'PUT', `/api/projects/${id}`, { slug: 'reserved-new' })).status).toBe(200);
+      const occupied = await request(server, 'PUT', '/api/projects/default', { slug: 'reserved-old' });
+      expect(occupied.status).toBe(409);
+      const created = await request(server, 'POST', '/api/projects', { name: '另一个项目', slug: 'reserved-old' });
+      expect(created.status).toBe(409);
+      expect(created.body.field).toBe('slug');
+      expect(stateService.getProject(id)?.slug).toBe('reserved-new');
+    });
+
+    it('其他项目的 id 同样保留，创建与改名不能使 slug 指向错误项目', async () => {
+      const other = await request(server, 'POST', '/api/projects', { name: '另一项目', slug: 'other-readable' });
+      expect(other.status).toBe(201);
+      const reservedId = other.body.project.id;
+      const current = stateService.getProject('default')!;
+      const slug = current.slug;
+      const history = current.identityHistory;
+      expect((await request(server, 'PUT', '/api/projects/default', { slug: reservedId })).status).toBe(409);
+      expect((await request(server, 'POST', '/api/projects', { name: '错误归属', slug: reservedId })).status).toBe(409);
+      expect(stateService.getProject('default')!.slug).toBe(slug);
+      expect(stateService.getProject('default')!.identityHistory).toEqual(history);
+      expect(stateService.getProject(slug)!.id).toBe('default');
+      expect(stateService.getProject(reservedId)!.slug).toBe('other-readable');
+    });
+
+    it.each(['aliasSlug', 'previewIdentifier'])('创建项目也拒绝废弃的 %s 字段', async (field) => {
+      const count = stateService.getProjects().length;
+      const res = await request(server, 'POST', '/api/projects', { name: '创建', slug: 'single-slug', [field]: 'second-slug' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('obsolete_project_slug_field');
+      expect(stateService.getProjects()).toHaveLength(count);
+    });
+
+    it('persists before/after history across restart and beyond activity-log retention', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Initial', slug: 'history-persist' });
+      const id = created.body.project.id;
+      await request(server, 'PUT', `/api/projects/${id}`, {
+        name: 'Recorded name', gitRepoUrl: 'https://user:secret@example.com/repo.git?token=private#private',
+      });
+      const count = stateService.getProject(id)!.identityHistory!.length;
+      // Unchanged saves do not manufacture new setting changes.
+      await request(server, 'PUT', `/api/projects/${id}`, { name: 'Recorded name' });
+      for (let i = 0; i < 205; i++) stateService.appendActivityLog(id, { type: 'pull' });
+      stateService.save();
+      await stateService.flush();
+      const reloaded = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      reloaded.load();
+      const history = reloaded.getProject(id)!.identityHistory!;
+      expect(history).toHaveLength(count);
+      expect(history.at(-1)?.before?.name).not.toBe('Recorded name');
+      expect(history.at(-1)?.after.name).toBe('Recorded name');
+      expect(history.at(-1)?.after.repository).toBe('https://example.com/repo.git');
+      expect(JSON.stringify(history)).not.toMatch(/secret|private/);
+      expect(reloaded.getActivityLogs(id)).toHaveLength(StateService.ACTIVITY_LOG_MAX);
+    });
+
+    it('records raw repository changes despite redaction and rejects stale writes', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Local', slug: 'local-history' });
+      expect(created.status).toBe(201);
+      const id = created.body.project.id;
+      const initial = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: '/srv/repo-a' });
+      expect(initial.status).toBe(200);
+      let version = initial.body.project.identityVersion;
+      for (const repository of ['/srv/repo-b', 'https://user:secret-one@example.com/repo.git', 'https://user:secret-two@example.com/repo.git']) {
+        const changed = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: repository, expectedIdentityVersion: version });
+        expect(changed.status).toBe(200);
+        expect(changed.body.project.identityVersion).not.toBe(version);
+        const stale = await request(server, 'PUT', `/api/projects/${id}`, { name: 'Stale', expectedIdentityVersion: version });
+        expect(stale.status).toBe(409);
+        version = changed.body.project.identityVersion;
+      }
+      const history = stateService.getProject(id)!.identityHistory!;
+      expect(history).toHaveLength(5);
+      expect(history[2].before?.repository).not.toBe(history[2].after.repository);
+      expect(history.at(-1)?.before?.repository).toBe('https://example.com/repo.git');
+      expect(history.at(-1)?.after.repository).toBe('https://example.com/repo.git');
+      expect(JSON.stringify(history)).not.toMatch(/secret-one|secret-two|\/srv\/repo/);
+      const unchanged = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: 'https://user:secret-two@example.com/repo.git', expectedIdentityVersion: version });
+      expect(unchanged.body.project.identityVersion).toBe(version);
+    });
+
+    it('redacts SCP usernames from history while still advancing the version on raw changes', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'SSH', slug: 'ssh-history' })).body.project.id;
+      const first = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: 'deploy-token@host:owner/repo.git' });
+      const second = await request(server, 'PUT', `/api/projects/${id}`, {
+        gitRepoUrl: 'git@host:owner/repo.git', expectedIdentityVersion: first.body.project.identityVersion,
+      });
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(second.body.project.identityVersion).not.toBe(first.body.project.identityVersion);
+      const history = await request(server, 'GET', `/api/projects/${id}/identity-history`);
+      expect(history.body.records[0].before.repository).toBe('host:owner/repo.git');
+      expect(history.body.records[0].after.repository).toBe('host:owner/repo.git');
+      expect(JSON.stringify(history.body)).not.toMatch(/deploy-token|git@/);
+    });
+
+    it('records the creation input source and paginates history without exposing it in project lists', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'New', slug: 'explicit-history' });
+      const id = created.body.project.id;
+      for (let i = 0; i < 52; i++) stateService.updateProject(id, { name: `Name ${i}` });
+      const first = await request(server, 'GET', `/api/projects/${id}/identity-history`);
+      expect(first.body.coverage).toBe('since-creation');
+      expect(first.body.records).toHaveLength(50);
+      const second = await request(server, 'GET', `/api/projects/${id}/identity-history?before=${first.body.nextCursor}`);
+      expect(second.body.records).toHaveLength(3);
+      expect(second.body.records.at(-1).slugSource).toBe('explicit');
+      expect(new Set([...first.body.records, ...second.body.records].map((entry: any) => entry.id)).size).toBe(53);
+      expect(created.body.project.identityHistory).toBeUndefined();
+      const scoped = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-project-key': id });
+      expect(scoped.status).toBe(403);
+      expect(scoped.body.records).toBeUndefined();
+      const denied = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-project-key': 'other-project' });
+      expect(denied.status).toBe(403);
+      const invalid = await request(server, 'GET', `/api/projects/${id}/identity-history?before=missing`);
+      expect(invalid.status).toBe(400);
+    });
+
+    it('requires verified human authentication and an active member project grant for history', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Audit', slug: 'audit-access' })).body.project.id;
+      const authCases: Array<Record<string, string>> = [
+        { 'x-test-human': 'none' }, { 'x-test-human': 'unverified' },
+        { authorization: 'Bearer machine-key' }, { 'x-ai-access-key': 'global-machine-key' },
+      ];
+      for (const headers of authCases) {
+        const response = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, headers);
+        expect(response.status).toBe(403);
+        expect(response.body.records).toBeUndefined();
+      }
+      expect((await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-human': 'member' })).status).toBe(403);
+      stateService.addPrincipal({ id: 'human:member', name: 'Member', kind: 'human', status: 'active', createdAt: new Date().toISOString() });
+      stateService.addProjectGrant({ id: 'audit-grant', projectId: id, principalId: 'human:member', origin: 'approved', grantedAt: new Date().toISOString() });
+      const granted = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-human': 'member' });
+      expect(granted.status).toBe(200);
+      expect(granted.body.records).toHaveLength(1);
+      stateService.revokeProjectGrant('audit-grant');
+      expect((await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-human': 'member' })).status).toBe(403);
+    });
+
+    it.each(['alias', 'custom-domain', 'canonical', 'named-service', 'legacy-service', 'override-service'].flatMap(kind =>
+      ['root-domains', 'preview-only', 'empty-roots-preview'].map(mode => [mode, kind])))('rejects a rename in %s occupying another branch %s host before changing history', async (mode, kind) => {
+      if (mode !== 'root-domains') {
+        projectConfig.rootDomains = mode === 'preview-only' ? undefined : [];
+        projectConfig.previewDomain = 'preview.test';
+      }
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
+      const owner = (await request(server, 'POST', '/api/projects', { name: 'Owner', slug: 'host-owner' })).body.project.id;
+      const now = new Date().toISOString();
+      const named = ['named-service', 'legacy-service', 'override-service'].includes(kind);
+      const profiles = named ? [{ id: 'gateway', projectId: id, subdomain: kind === 'override-service' ? 'unused' : 'llmgw' } as BuildProfile] : [];
+      for (const profile of profiles) stateService.addBuildProfile(profile);
+      const branch = kind === 'canonical' ? 'main' : 'feature/demo';
+      stateService.addBranch({ id: 'rename-branch', projectId: id, branch, status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir,
+        ...(kind === 'override-service' ? { profileOverrides: { gateway: { subdomain: 'llmgw' } } } : {}),
+      } as BranchEntry);
+      const slug = kind === 'canonical' ? 'feature-host-owner' : 'after-rename';
+      const canonical = computePreviewSlug(branch, slug);
+      const host = named ? namedServiceLabel(canonical, kind === 'legacy-service' ? 'llmgw-web' : 'llmgw') : canonical;
+      // main + feature-host-owner 与 feature/main + host-owner 的主入口相同。
+      stateService.addBranch({ id: 'owner-branch', projectId: owner, branch: kind === 'canonical' ? 'feature/main' : 'main', status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir,
+        ...(kind === 'alias' || named ? { subdomainAliases: [host] } : {}),
+        ...(kind === 'custom-domain' ? { customDomains: [`${host}.${mode === 'root-domains' ? 'secondary.test' : 'preview.test'}`] } : {}),
+      } as BranchEntry);
+      const before = structuredClone(stateService.getProject(id)!);
+      const response = await request(server, 'PUT', `/api/projects/${id}`, { slug });
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('preview_host_conflict');
+      expect(stateService.getProject(id)!.slug).toBe(before.slug);
+      expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+      const saved = await request(server, 'PUT', `/api/projects/${id}`, { slug: 'available-next' });
+      expect(saved.status).toBe(200);
+    });
+
+    it.each(['alias', 'domain'].flatMap(source => ['self-named', 'self-member', 'other-member'].map(kind => [source, kind])))('改名拒绝%s占用%s服务入口，状态不变', async (source, kind) => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
+      const profile = { id: 'gateway', projectId: id, name: 'Gateway', dockerImage: 'nginx:alpine', workDir: '.', containerPort: 80, subdomain: 'llmgw' };
+      stateService.addBuildProfile(profile);
+      const slug = 'after-rename';
+      const canonical = computePreviewSlug('feature/demo', slug);
+      const label = kind === 'self-named' ? namedServiceLabel(canonical, 'llmgw') : `${canonical}-gateway-res-1`;
+      const now = new Date().toISOString();
+      const entry = { id: 'rename-branch', projectId: id, branch: 'feature/demo', status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir,
+        replicaSets: { gateway: { profileId: 'gateway', enabled: true, primaryWeight: 100, members: [{ id: 'res-1', status: 'running', hostPort: 12001, weight: 100 }], createdAt: now, updatedAt: now } },
+      } as BranchEntry;
+      stateService.addBranch(entry);
+      const owner = kind.startsWith('self') ? entry : { id: 'owner-branch', projectId: id, branch: 'main', status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir } as BranchEntry;
+      if (owner !== entry) stateService.addBranch(owner);
+      if (source === 'alias') owner.subdomainAliases = [label];
+      else owner.customDomains = [`${label}.preview.test`];
+      const before = structuredClone(stateService.getProject(id)!);
+      const response = await request(server, 'PUT', `/api/projects/${id}`, { slug });
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('preview_host_conflict');
+      expect(stateService.getProject(id)).toEqual(before);
+      expect((await request(server, 'PUT', `/api/projects/${id}`, { slug: 'unoccupied-next' })).status).toBe(200);
+    });
+
+    it('同一上游的自有主入口别名不阻止项目改名', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
+      const canonical = computePreviewSlug('feature/demo', 'after-rename');
+      stateService.addBranch({ id: 'rename-branch', projectId: id, branch: 'feature/demo', status: 'idle', services: {}, createdAt: NOW, worktreePath: tmpDir, subdomainAliases: [canonical] } as BranchEntry);
+      expect((await request(server, 'PUT', `/api/projects/${id}`, { slug: 'after-rename' })).status).toBe(200);
+    });
+
+    it('does not acknowledge success when persistence fails', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
+      const originalFlush = stateService.flush;
+      stateService.flush = async () => { throw new Error('simulated storage failure'); };
+      try {
+        const result = await request(server, 'PUT', `/api/projects/${id}`, { name: 'Pending persistence' });
+        expect(result.status).toBe(503);
+        expect(result.body.error).toBe('state_save_pending');
+        expect(result.body.message).toContain('尚未确认');
+        expect(result.body.message).not.toContain('simulated storage failure');
+        expect(result.body.restored).toBe(false);
+        expect(stateService.getProject(id)!.name).toBe(before.name);
+        expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+      } finally { stateService.flush = originalFlush; }
+      await stateService.flush();
+      const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      restarted.load();
+      expect(restarted.getProject(id)!.name).toBe(before.name);
+      expect(restarted.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+    });
+
+    it.each([false, true])('restores synchronous save exceptions and reports compensation availability (%s)', async (persistentFailure) => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Sync', slug: 'sync-save-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
+      const store = stateService.getBackingStore();
+      const originalSave = store.save.bind(store);
+      let calls = 0;
+      store.save = (...args) => { if (++calls === 1 || persistentFailure) throw new Error('private-storage-detail'); originalSave(...args); };
+      try {
+        const result = await request(server, 'PUT', `/api/projects/${id}`, { slug: 'failed-sync-slug', name: 'Failed sync name' });
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(!persistentFailure);
+        expect(result.body.message).not.toContain('private-storage-detail');
+        expect(stateService.getProject(id)!.slug).toBe(before.slug);
+        expect(stateService.getProject(id)!.name).toBe(before.name);
+        expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+      } finally { store.save = originalSave; }
+      stateService.save();
+      await stateService.flush();
+      const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      restarted.load();
+      expect(restarted.getProject(id)!.slug).toBe(before.slug);
+      expect(restarted.getProject(id)!.name).toBe(before.name);
+      expect(restarted.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+    });
+
+    it('restores failed settings and confirms the compensation across restart', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
+      const originalFlush = stateService.flush.bind(stateService);
+      let calls = 0;
+      stateService.flush = async () => { if (++calls === 1) throw new Error('first write failed'); await originalFlush(); };
+      try {
+        const result = await request(server, 'PUT', `/api/projects/${id}`, { slug: 'failed-slug', name: 'Failed name' });
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(true);
+        expect(stateService.getProject(id)!.slug).toBe(before.slug);
+        expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+        const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+        restarted.load();
+        expect(restarted.getProject(id)!.slug).toBe(before.slug);
+        expect(restarted.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+      } finally { stateService.flush = originalFlush; }
+    });
+
+    it('preserves a newer identity write while recovering an earlier failed write', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const originalFlush = stateService.flush.bind(stateService);
+      let rejectFirst!: (err: Error) => void;
+      let calls = 0;
+      stateService.flush = async () => { if (++calls === 1) await new Promise<void>((_resolve, reject) => { rejectFirst = reject; }); else await originalFlush(); };
+      try {
+        const pending = request(server, 'PUT', `/api/projects/${id}`, { name: 'First pending' });
+        await vi.waitFor(() => expect(rejectFirst).toBeTypeOf('function'));
+        stateService.updateProject(id, { name: 'Newer change' }, { actor: 'user:concurrent' });
+        const newerHistory = structuredClone(stateService.getProject(id)!.identityHistory);
+        rejectFirst(new Error('first write failed'));
+        const result = await pending;
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(false);
+        expect(stateService.getProject(id)!.name).toBe('Newer change');
+        expect(stateService.getProject(id)!.identityHistory).toEqual(newerHistory);
+        const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+        restarted.load();
+        expect(restarted.getProject(id)!.name).toBe('Newer change');
+        expect(restarted.getProject(id)!.identityHistory).toEqual(newerHistory);
+      } finally { stateService.flush = originalFlush; }
+    });
+
+    it('restores a timed-out write while retaining an unrelated concurrent clone update', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
+      const originalFlush = stateService.flush.bind(stateService);
+      let finishFirst!: () => void;
+      let calls = 0;
+      stateService.flush = async () => { if (++calls === 1) await new Promise<void>(resolve => { finishFirst = resolve; }); await originalFlush(); };
+      try {
+        const pending = request(server, 'PUT', `/api/projects/${id}`, { slug: 'timeout-slug' });
+        await vi.waitFor(() => expect(finishFirst).toBeTypeOf('function'));
+        stateService.updateProject(id, { cloneStatus: 'ready', repoPath: '/repos/concurrent' });
+        const result = await pending;
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(true);
+        const current = stateService.getProject(id)!;
+        expect(current.slug).toBe(before.slug);
+        expect(current.identityHistory).toEqual(before.identityHistory);
+        expect(current.cloneStatus).toBe('ready');
+        finishFirst();
+        await originalFlush();
+        const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+        restarted.load();
+        expect(restarted.getProject(id)!.slug).toBe(before.slug);
+        expect(restarted.getProject(id)!.cloneStatus).toBe('ready');
+      } finally { finishFirst?.(); stateService.flush = originalFlush; }
+    }, 10_000);
+
+    it('attributes changes to the verified key instead of a caller-supplied identity header', async () => {
+      const result = await request(server, 'PUT', '/api/projects/default', { name: 'Verified actor' }, {
+        'x-test-project-key': 'default', 'x-ai-agent': 'spoofed-user',
+      });
+      expect(result.status).toBe(200);
+      const history = stateService.getProject('default')!.identityHistory!;
+      expect(history.at(-1)?.actor).toBe('agent:test');
+      expect(history.at(-1)?.requestId).toBeTruthy();
+      expect(history.at(-1)?.actor).not.toContain('spoofed');
+    });
+
+    it('accepts aliasName and the single project slug', async () => {
       const res = await request(server, 'PUT', '/api/projects/default', {
         aliasName: 'PRD Agent',
-        aliasSlug: 'prd',
+        slug: 'prd',
       });
       expect(res.status).toBe(200);
       expect(res.body.project.aliasName).toBe('PRD Agent');
-      expect(res.body.project.aliasSlug).toBe('prd');
+      expect(res.body.project.slug).toBe('prd');
+      expect(res.body.project).not.toHaveProperty('aliasSlug');
+      expect(res.body.project).not.toHaveProperty('previewIdentifier');
     });
 
     it('clears alias when an empty string is sent', async () => {
       await request(server, 'PUT', '/api/projects/default', {
         aliasName: 'PRD Agent',
-        aliasSlug: 'prd',
+        slug: 'prd',
       });
       const res = await request(server, 'PUT', '/api/projects/default', {
         aliasName: '',
-        aliasSlug: '',
       });
       expect(res.status).toBe(200);
       // Cleared fields should not be truthy — either undefined or missing.
@@ -684,27 +1081,27 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.aliasSlug || null).toBeNull();
     });
 
-    it('rejects aliasSlug that fails the slug regex with 400', async () => {
+    it('rejects a project slug that fails the slug regex with 400', async () => {
       const res = await request(server, 'PUT', '/api/projects/default', {
-        aliasSlug: 'Bad Slug!',
+        slug: 'Bad Slug!',
       });
       expect(res.status).toBe(400);
-      expect(res.body.field).toBe('aliasSlug');
+      expect(res.body.field).toBe('slug');
     });
 
-    it('rejects aliasSlug that equals the project own slug with 400', async () => {
+    it('accepts an unchanged project slug without another alias', async () => {
       // Legacy default's slug is derived from projectSlug, not the id. Fetch
       // it so the assertion doesn't depend on the test repo name.
       const get = await request(server, 'GET', '/api/projects/default');
       const ownSlug = get.body.slug as string;
       const res = await request(server, 'PUT', '/api/projects/default', {
-        aliasSlug: ownSlug,
+        slug: ownSlug,
       });
-      expect(res.status).toBe(400);
-      expect(res.body.field).toBe('aliasSlug');
+      expect(res.status).toBe(200);
+      expect(res.body.project.slug).toBe(ownSlug);
     });
 
-    it('rejects aliasSlug that collides with another project slug with 409', async () => {
+    it('rejects a project slug that collides with another project slug with 409', async () => {
       const other = await request(server, 'POST', '/api/projects', {
         name: 'Taken',
         slug: 'taken-slug',
@@ -712,10 +1109,10 @@ describe('Projects router (P4 Part 2)', () => {
       expect(other.status).toBe(201);
 
       const res = await request(server, 'PUT', '/api/projects/default', {
-        aliasSlug: 'taken-slug',
+        slug: 'taken-slug',
       });
       expect(res.status).toBe(409);
-      expect(res.body.field).toBe('aliasSlug');
+      expect(res.body.field).toBe('slug');
     });
 
     it('rejects aliasName longer than 60 chars with 400', async () => {
@@ -821,6 +1218,63 @@ describe('Projects router (P4 Part 2)', () => {
       expect(humanAlign.status).toBe(200);
     });
 
+    /*
+     * 2026-10-08 mdimp 事故：项目设置页保存时给每个服务都写一个空串，空串被拷进分支覆盖 = 强制源码，
+     * 于是基线是极速版的服务在每条新分支里都改走宿主编译。页面现在只写显式选过的服务；表里没有的
+     * 就是「跟随构建配置」，对齐时要把分支覆盖里残留的模式清掉、真正回到基线。
+     */
+    it('对齐：表里没有的服务跟随构建配置基线，分支覆盖里残留的源码模式被清掉', async () => {
+      stateService.addBuildProfile({
+        id: 'fast-api', projectId: 'default', name: 'API', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5000,
+        activeDeployMode: 'express',
+        deployModes: { dev: { label: '开发' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' } },
+      });
+      stateService.addBuildProfile({
+        id: 'plain-web', projectId: 'default', name: 'Web', dockerImage: 'node:20', command: 'pnpm dev', workDir: '.', containerPort: 3000,
+        deployModes: { dev: { label: '开发' }, static: { label: '静态' } },
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({ id: 'align-b1', projectId: 'default', branch: 'feat/a', worktreePath: '/tmp/wt-a', services: {}, status: 'idle', createdAt: now });
+      // 旧页面写出来的那种分支：两个服务都被拷了模式，fast-api 被压成 dev
+      stateService.setBranchProfileOverride('align-b1', 'fast-api', { activeDeployMode: 'dev', env: { KEEP: '1' } });
+      stateService.setBranchProfileOverride('align-b1', 'plain-web', { activeDeployMode: 'static' });
+
+      // 只显式选了 plain-web；fast-api 跟随构建配置
+      const saved = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'plain-web': 'static' } });
+      expect(saved.status).toBe(200);
+      const align = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(align.status).toBe(200);
+
+      const api = stateService.getBranchProfileOverride('align-b1', 'fast-api')!;
+      expect(api.activeDeployMode).toBeUndefined();
+      expect(api.env).toEqual({ KEEP: '1' });
+      const effective = stateService.getEffectiveProfilesForBranch(stateService.getBranch('align-b1')!)
+        .find((p) => p.id === 'fast-api')!;
+      expect(effective.activeDeployMode).toBe('express');
+      expect(stateService.getBranchProfileOverride('align-b1', 'plain-web')!.activeDeployMode).toBe('static');
+
+      // 全部跟随（保存成空表）是合法配置，对齐照样执行，不再报「未设置默认」
+      await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: {} });
+      const alignAll = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(alignAll.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('align-b1', 'plain-web')!.activeDeployMode).toBeUndefined();
+    });
+
+    it('失效项目默认模式对齐整批拒绝，所有分支和 CI 状态保持原样', async () => {
+      stateService.addBuildProfile({ id: 'valid-api', projectId: 'default', name: 'API', dockerImage: 'node:20', workDir: '.', command: 'dev', containerPort: 3000,
+        deployModes: { dev: {}, express: { prebuilt: true } } });
+      stateService.addBuildProfile({ id: 'bad-worker', projectId: 'default', name: 'Worker', dockerImage: 'node:20', workDir: '.', command: 'dev', containerPort: 3001,
+        deployModes: { dev: {}, express: { prebuilt: true } } });
+      stateService.updateProject('default', { defaultDeployModes: { 'valid-api': 'express', 'bad-worker': 'removed-express' } });
+      for (const id of ['align-default-a', 'align-default-b']) stateService.addBranch({ id, projectId: 'default', branch: id, worktreePath: '/tmp/' + id, services: {}, status: 'idle', createdAt: new Date().toISOString(),
+        ciImageStatus: 'ready', ciTargetSha: 'a'.repeat(40), profileOverrides: { 'valid-api': { activeDeployMode: 'dev', env: { KEEP: 'yes' } } } });
+      const before = structuredClone(stateService.getAllBranches());
+      const response = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ code: 'invalid_default_deploy_mode' });
+      expect(stateService.getAllBranches()).toEqual(before);
+    });
+
     it('round-trips the CDS global variable inheritance opt-in', async () => {
       const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
       expect(enabled.status).toBe(200);
@@ -901,6 +1355,19 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.error).toBe('legacy_protected');
     });
 
+    it('项目删除成功才广播回执归档进度，其他项目不变', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'receipt-archive' });
+      const pid = created.body.project.id;
+      const publish = vi.spyOn(cdsEventsBus, 'publish');
+      try {
+        expect((await request(server, 'DELETE', '/api/projects/no-such-id')).status).toBe(404);
+        expect(publish).not.toHaveBeenCalledWith('access-request.progress', expect.objectContaining({ stage: 'project-deleted' }));
+        expect((await request(server, 'DELETE', `/api/projects/${pid}`)).status).toBe(200);
+        expect(stateService.getProject(pid)).toBeUndefined();
+        expect(publish).toHaveBeenCalledWith('access-request.progress', { projectId: pid, stage: 'project-deleted' });
+      } finally { publish.mockRestore(); }
+    });
+
     it('returns 404 for unknown project ids', async () => {
       const res = await request(server, 'DELETE', '/api/projects/no-such-id');
       expect(res.status).toBe(404);
@@ -922,6 +1389,7 @@ describe('Projects router (P4 Part 2)', () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'cascade-b1',
+        replacementNetworks: ['cds-br-cascade-b1-r-' + 'a'.repeat(32)],
         projectId: pid,
         branch: 'main',
         worktreePath: '/tmp/wt-1',
@@ -1000,6 +1468,8 @@ describe('Projects router (P4 Part 2)', () => {
       const del = await request(server, 'DELETE', '/api/projects/' + pid);
       expect(del.status).toBe(200);
       expect(del.body.cascade.branches.sort()).toEqual(['cascade-b1', 'cascade-b2']);
+      expect(stateService.getNetworkTeardowns().map(n => n.name).sort()).toEqual(['cds-br-cascade-b1', 'cds-br-cascade-b1-r-' + 'a'.repeat(32), 'cds-br-cascade-b2']);
+      expect(stateService.getNetworkTeardowns().every(n => n.projectId === pid)).toBe(true);
       expect(del.body.cascade.buildProfiles.sort()).toEqual(['cascade-p1', 'cascade-p2']);
       expect(del.body.cascade.infraServices).toEqual(['cascade-i1']);
       expect(del.body.cascade.routingRules).toEqual(['cascade-r1']);
@@ -1121,6 +1591,7 @@ function sseRequest(
     const req = http.request(
       {
         hostname: '127.0.0.1',
+        agent: false,
         port: addr.port,
         path: urlPath,
         method,
@@ -1161,6 +1632,36 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
   let server: http.Server;
   const REPOS_BASE = '/test-repos';
 
+  let config: any;
+  function enableCatalogStorageFixture() {
+    config.storageInstanceId='owned-test'; config.repoRoot=tmpDir;
+    const volumes=new Map<string,unknown>();
+    shell.addResponsePatternFirst(/^docker info /,()=>({stdout:'owned-test-daemon',stderr:'',exitCode:0}));
+    shell.addResponsePatternFirst(/^docker volume inspect (.*)$/,m=>{
+      const name=m[1].replace(/^'|'$/g,'');return volumes.has(name)?{stdout:JSON.stringify([volumes.get(name)]),stderr:'',exitCode:0}:{stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume',exitCode:1};
+    });
+    shell.addResponsePatternFirst(/^docker volume create (.*)$/,m=>{
+      const name=m[1].split(' ').at(-1)!.replace(/^'|'$/g,''),birth=stateService.getStorageBirth(name)!;
+      expect(birth.stage).toBe('issued');
+      volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(birth.binding),'cds.storage.birth':birth.birthNonce}});
+      return{stdout:name,stderr:'',exitCode:0};
+    });
+    const image='sha256:'+'a'.repeat(64),cid='c'.repeat(64);let helper:any,helperRemoved=false;
+    shell.addResponsePatternFirst(/^docker image inspect (.*)$/,m=>({stdout:m[1].includes('json .Config.User')?JSON.stringify('appuser'):JSON.stringify([image,m[1].includes('apache/kafka')||m[1].includes(image)?{'/etc/kafka/secrets':{},'/var/lib/kafka/data':{},'/mnt/shared/config':{}}:null]),stderr:'',exitCode:0}));
+    shell.addResponsePatternFirst(/^docker create (.*)$/,m=>{
+      const command=m[1],mounts=[...command.matchAll(/type=volume,source=([^,]+),dst=([^,]+),/g)];
+      const birth=stateService.getStorageBirth(mounts[0][1])!;
+      expect(birth.stage).toBe('confirmed');expect(mounts).toHaveLength(3);helperRemoved=false;
+      const raw=command.slice(command.lastIndexOf(' -ceu ')+6),program=raw.slice(1,-1).replaceAll("'\\''", "'");
+      helper={Id:cid,Name:'/cds-storage-init-'+birth.birthNonce,Image:image,Config:{User:'0:0',Entrypoint:['/bin/sh'],Cmd:['-ceu',program],Labels:{'cds.storage.init.birth':birth.birthNonce,'cds.storage.init.operation':birth.operationId}},State:{Status:'created',Running:false,Pid:0,ExitCode:0},HostConfig:{Privileged:false,NetworkMode:'none',ReadonlyRootfs:true,Memory:67108864,MemorySwap:67108864,PidsLimit:16,RestartPolicy:{Name:'no'},CapDrop:['ALL'],CapAdd:['CAP_CHOWN'],SecurityOpt:['no-new-privileges'],LogConfig:{Type:'json-file',Config:{'max-size':'1m','max-file':'1'}}},Mounts:mounts.map(x=>({Type:'volume',Name:x[1],Source:(volumes.get(x[1]) as any).Mountpoint,Destination:x[2],RW:true}))};
+      return{stdout:cid,stderr:'',exitCode:0};
+    });
+    shell.addResponsePatternFirst(/^docker inspect (.*)$/,m=>{expect(m[1].replace(/^'|'$/g,'')).toBe(cid);return helperRemoved?{exitCode:1,stdout:'[]',stderr:'error: no such object: '+cid}:{exitCode:0,stdout:JSON.stringify([helper]),stderr:''};});
+    shell.addResponsePatternFirst(/^docker start -a (.*)$/,m=>{expect(m[1]).toBe(cid);helper.State={Status:'exited',Running:false,Pid:0,ExitCode:0};return{exitCode:0,stdout:['0:1000:770','0:1000:770','0:1000:770'].join('\n'),stderr:''};});
+    shell.addResponsePatternFirst(/^docker rm (.*)$/,m=>{expect(m[1]).toBe(cid);expect(helper.State.Running).toBe(false);helperRemoved=true;return{exitCode:0,stdout:cid,stderr:''};});
+    return volumes;
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-clone-test-'));
     const stateFile = path.join(tmpDir, 'state.json');
@@ -1172,7 +1673,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
     // Build a minimal config with just reposBase — the rest of
     // CdsConfig is unused by the projects router.
-    const config = { reposBase: REPOS_BASE } as any;
+    config = { reposBase: REPOS_BASE };
 
     const app = express();
     app.use(express.json());
@@ -1228,6 +1729,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('creates selected infra presets and project env vars during onboarding', async () => {
+      enableCatalogStorageFixture();
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Railway Style',
         gitRepoUrl: 'https://github.com/example/railway-style.git',
@@ -1262,6 +1764,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('surfaces (not silently swallows) user customEnv overwritten by infra connection strings', async () => {
+      enableCatalogStorageFixture();
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Env Collision',
         gitRepoUrl: 'https://github.com/example/env-collision.git',
@@ -1284,6 +1787,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('applies infra presets (real secrets + env) to an existing project via /infra-presets', async () => {
+      enableCatalogStorageFixture();
       const created = await request(server, 'POST', '/api/projects', { name: 'Topo Preset' });
       expect(created.status).toBe(201);
       const pid = created.body.project.id;
@@ -1313,6 +1817,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('singleton guard: a 2nd same-type non-DB preset (kafka) is never created across repeated calls', async () => {
+      enableCatalogStorageFixture();
       // Kafka self-advertises as kafka:9092 in its container env; a 2nd instance would
       // collide with the 1st. Only DBs (supportsDbName) may multi-instance. The guard
       // must hold even when the 2nd request comes from a separate infra-presets call
@@ -1333,6 +1838,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('DB presets still multi-instance: a 2nd postgres call yields postgres-2 with its own connection string', async () => {
+      enableCatalogStorageFixture();
       const created = await request(server, 'POST', '/api/projects', { name: 'Multi PG' });
       const pid = created.body.project.id;
 
@@ -1364,6 +1870,23 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     // run an arbitrary command, streaming logs. A project-scoped key has no authorized
     // target project/repo, so allowing it = borrowing the server token to clone + exfil
     // any private repo. Only admin / cookie auth (no cdsProjectKey) may call them.
+    it('validate-runtime bounds the emitted newborn create even when its probe fails', async () => {
+      shell.addResponsePattern(/^git clone --depth 1 /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^docker pull /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^docker create /, () => ({ stdout: '', stderr: 'fixture create rejected', exitCode: 1 }));
+      const res = await request(server, 'POST', '/api/validate-runtime', {
+        gitRepoUrl: 'https://github.com/example/log-fixture.git', image: 'node:22', command: 'exit 0',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body).toContain('容器无法创建');
+      const command = shell.commands.find((value) => value.startsWith('docker create '));
+      expect(command).toBeDefined();
+      for (const flag of ['--log-driver json-file', '--log-opt max-size=50m', '--log-opt max-file=3']) {
+        expect(command).toContain(flag);
+        expect(command!.indexOf(flag)).toBeLessThan(command!.indexOf("'node:22'"));
+      }
+    });
+
     it('validate-runtime → 403 project_key_forbidden for a project-scoped key', async () => {
       const res = await request(server, 'POST', '/api/validate-runtime',
         { gitRepoUrl: 'https://github.com/foo/bar.git', image: 'node:20', command: 'node x.js' },
@@ -1951,7 +2474,7 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(fs.existsSync(`${repoPath}/db/seed.sql`)).toBe(true);
     });
 
-    it('全栈基础设施样例可通过沙盒创建并生成前后端与三类 infra', async () => {
+    it('全栈沙盒保留项目源码，未显式分配存储前不发布半组配置', async () => {
       const exampleRoot = path.join(process.cwd(), 'examples/fullstack-infra-smoke');
       const readExample = (relativePath: string) => fs.readFileSync(path.join(exampleRoot, relativePath), 'utf-8');
       const res = await request(server, 'POST', '/api/projects', {
@@ -1973,23 +2496,12 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(res.body.sandbox).toBe(true);
       expect(res.body.project.cloneStatus).toBe('ready');
 
-      const profiles = stateService.getBuildProfilesForProject(pid);
-      expect(profiles).toHaveLength(2);
-      const frontend = profiles.find((profile) => profile.id.startsWith('frontend'))!;
-      const backend = profiles.find((profile) => profile.id.startsWith('backend'))!;
-      expect(frontend.pathPrefixes).toEqual(['/']);
-      expect(backend.pathPrefixes).toEqual(['/api/']);
-
-      const infra = stateService.getInfraServicesForProject(pid);
-      expect(infra.map((service) => service.id).sort()).toEqual(['mysql', 'rabbitmq', 'redis']);
-      expect(infra.find((service) => service.id === 'mysql')?.volumes?.[0]?.containerPath).toBe('/var/lib/mysql');
-      expect(infra.find((service) => service.id === 'redis')?.volumes?.[0]?.containerPath).toBe('/data');
-      expect(infra.find((service) => service.id === 'rabbitmq')?.volumes?.[0]?.containerPath).toBe('/var/lib/rabbitmq');
-
-      const env = stateService.getCustomEnv(pid);
-      expect(env.MYSQL_URL).toContain('mysql://');
-      expect(env.REDIS_URL).toContain('redis://');
-      expect(env.RABBITMQ_URL).toContain('amqp://');
+      expect(fs.existsSync(path.join(res.body.project.repoPath,'cds-compose.yml'))).toBe(true);
+      expect(fs.existsSync(path.join(res.body.project.repoPath,'init.sql'))).toBe(true);
+      expect(stateService.getBuildProfilesForProject(pid)).toEqual([]);
+      expect(stateService.getInfraServicesForProject(pid)).toEqual([]);
+      expect(stateService.getCustomEnv(pid).MYSQL_URL).toBeUndefined();
+      expect(shell.commands.some(command=>/^docker (run|create|volume create) /.test(command))).toBe(false);
     });
 
     it('composeYaml + gitRepoUrl 互斥 — 返回 400', async () => {
@@ -2026,6 +2538,18 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       // 新 id 不会和旧目录冲突,所以这一步反而会成功 — 跳过该断言路径,
       // 改为下一个 it 用直接的 stub 路径测 bootstrap 错误回滚。
       expect(second.status).toBe(201);
+    });
+
+    it('沙盒初始化失败且删除落盘失败时保留项目网络，不迟到清理恢复后的项目', async () => {
+      shell.addResponse('git init -b main', { stdout: '', stderr: 'init failed', exitCode: 128 });
+      const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('injected rollback write failure'));
+      try {
+        const res = await request(server, 'POST', '/api/projects', { name: 'Rollback Fail', slug: 'rollback-fail', composeYaml: 'services: {}' });
+        expect(res.status).toBe(500);
+        expect(res.body.error).toBe('state_save_failed');
+        expect(stateService.getProjects().some(p => p.slug === 'rollback-fail')).toBe(true);
+        expect(shell.commands.some(c => c.startsWith('docker network rm'))).toBe(false);
+      } finally { flush.mockRestore(); }
     });
 
     it('git init 失败时报 500 + 回滚 project + 回滚 docker network', async () => {

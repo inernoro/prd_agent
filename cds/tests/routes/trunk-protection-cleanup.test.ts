@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 /**
  * 一键删除类路由的主干保护回归（2026-07-27 P0：CDS 把主分支 main 删掉了）。
  *
@@ -155,7 +156,7 @@ describe('一键清理路径的主干保护（事故回归）', () => {
     stateService.load();
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    const containerService = new ContainerService(mock, config);
+    const containerService = new ContainerService(mock, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const serverEventLogStore = { record() { /* 测试里不关心事件落盘 */ } };
     const app = express();
     app.use(express.json());

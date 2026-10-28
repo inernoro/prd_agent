@@ -219,3 +219,27 @@ DocBrowser 的核心契约是 `entries: DocBrowserEntry[]` + `loadContent(id) �
 - 水位线读取（同样按名找库）：`.claude/skills/daily-report-summary/reference/coverage_window.py`
 - CI 守卫：`scripts/tests/test_report_evidence_figure.py`
 - 原则：`.claude/rules/report-design-system.md` §1.6、`.claude/rules/predicate-and-wiring-discipline.md` 形状 9
+
+## 周报 Agent 月报
+
+月报首版（2026-10-15）刻意收窄了范围，这里记下没做的部分，以及实现时顺带发现、但不属于本次目标的周报遗留问题。
+
+| 字段 | 内容 |
+|---|---|
+| 模块 | 月报（`report_monthly_reports` + 周报智能体「月报」标签） |
+| 状态 | open（功能已可用；以下为已知边界与后续可补） |
+| 关联 | [design.report-agent.monthly.md](./design.report-agent.monthly.md) |
+| 提出 | 用户 2026-10-15：在周报基础上生成和修改月报，评论点赞等功能要完整 |
+
+### 已知边界
+
+1. **不接入 AI**：没有生成、润色、伙伴推荐；用户明确要求首版不碰 AI。
+2. **未做**：月末提醒与截止规则、正文插图（章节正文只支持 Markdown 文字）、导出 Markdown、对外分享链接、季度汇总。
+3. **默认登录页偏好**不含「月报」标签（`DefaultTabKey` 仍是四个值）。
+4. **首页「继续上次」**不记录月报的打开。
+5. **并发重复创建**：唯一索引需 DBA 手动建；建好之前，同一人同一月几乎同时点两次「新建」理论上可能产生两份。
+
+### 周报遗留（实现月报时发现，未在本次处理）
+
+1. **删除周报不清理互动数据**：周报删除后，它的评论、点赞、浏览记录留在三张共享表里成为孤儿数据（月报删除已清理）。
+2. **周报详情对非团队成员较宽**：团队设为「团队成员可互相查看」时，周报详情接口只拦「仅负责人可查看」，并不要求访问者是团队成员。本次只修正了评论 / 点赞 / 浏览接口在「仅负责人可查看」下的泄露，详情接口的口径未动。

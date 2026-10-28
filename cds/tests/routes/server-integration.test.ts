@@ -17,6 +17,7 @@ const AUTH_ENV_KEYS = [
   'CDS_SSO_TOKEN_URL',
   'CDS_SSO_CLIENT_ID',
   'CDS_SSO_CLIENT_SECRET',
+  'CDS_PUBLIC_HEALTH_DETAILS',
 ] as const;
 const savedAuthEnv = new Map<string, string | undefined>();
 beforeAll(() => {
@@ -216,6 +217,35 @@ async function startForwarderActiveServer(active: ActiveHttpRequestRecord[]): Pr
 }
 
 describe('Server route ordering (regression)', () => {
+  it('直连健康路径变体脱敏但保留真实故障状态，并兼容显式诊断与深探', async () => {
+    const app = buildRealServerWithEvents([]);
+    server = await startServer(app);
+    for (const url of ['/healthz', '/healthz/', '/HEALTHZ', '/HeAlThZ/?lightweight=0']) {
+      const result = await request(server, url);
+      expect(result.status).toBe(503); // 本夹具未提供可用 Docker，不能伪装为健康。
+      expect(JSON.parse(result.body)).toEqual({ ok: false, port: 9900 });
+      expect(result.headers['x-powered-by']).toBeUndefined();
+    }
+    expect(JSON.parse((await request(server, '/healthz?probe=routes')).body).checks).toHaveProperty('routesHttp');
+    for (const headers of [{ 'X-Forwarded-For': '127.0.0.1' }, { Forwarded: 'for=127.0.0.1' }]) {
+      const publicProbe = await request(server, '/healthz?probe=routes', headers);
+      expect(publicProbe.status).toBe(503);
+      expect(JSON.parse(publicProbe.body)).toEqual({ ok: false, port: 9900 });
+    }
+    const original = process.env.CDS_PUBLIC_HEALTH_DETAILS;
+    process.env.CDS_PUBLIC_HEALTH_DETAILS = '1';
+    try {
+      const detailed = await request(server, '/healthz?probe=routes');
+      expect(detailed.status).toBe(503);
+      expect(JSON.parse(detailed.body).checks).toHaveProperty('routesHttp');
+      const live = await request(server, '/healthz?lightweight=1');
+      expect(live.status).toBe(200);
+      expect(JSON.parse(live.body)).toEqual({ ok: true, port: 9900 });
+    } finally {
+      if (original === undefined) delete process.env.CDS_PUBLIC_HEALTH_DETAILS;
+      else process.env.CDS_PUBLIC_HEALTH_DETAILS = original;
+    }
+  });
   let tmpDir: string;
   let webDir: string;
   let server: http.Server | null = null;
@@ -763,6 +793,27 @@ describe('Server route ordering (regression)', () => {
       if (prevPublicBaseUrl === undefined) delete process.env.CDS_PUBLIC_BASE_URL;
       else process.env.CDS_PUBLIC_BASE_URL = prevPublicBaseUrl;
     }
+  });
+
+  it('通行证复制响应的密码不进入HTTP日志，审计路径保持原资源范围',async()=>{
+    const logs:HttpLogRecord[]=[];
+    const app=buildRealServerWithHttpLogs(logs,[],undefined,true);
+    const route='/api/branches/qa/resources/infra%3Apostgres/database-passes/0123456789abcdefabcd/credentials';
+    const canary='temporary-pass-password-canary';
+    app.get(route,(_req,res)=>res.json({username:'cdsp_test',password:canary,tlsCa:'public-test-ca'}));
+    // 只替换业务响应，保留真实服务器在分支 Router 前安装的认证和日志中间件。
+    const stack=(app as any)._router.stack;
+    const responseLayer=stack.pop();
+    const branchRouterIndex=stack.findIndex((layer:any)=>layer.handle?.stack?.some((nested:any)=>
+      nested.route?.path==='/branches/:id/resources/:resourceId/database-passes/:passId/credentials'));
+    expect(branchRouterIndex).toBeGreaterThan(-1);
+    stack.splice(branchRouterIndex,0,responseLayer);
+    server=await startServer(app);
+    const response=await request(server,route+'?unused='+canary,{'User-Agent':canary});
+    expect(response.status).toBe(200);expect(JSON.parse(response.body).password).toBe(canary);
+    const log=logs.find(row=>row.path===route);
+    expect(log).toBeDefined();expect(JSON.stringify(log)).not.toContain(canary);
+    expect(log?.response?.bodyPreview||'').not.toContain('public-test-ca');
   });
 
   it('密封存储全部 Express 路径变体在解析和认证前抑制请求材料', async () => {

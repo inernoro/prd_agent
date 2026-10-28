@@ -220,7 +220,8 @@ public class ImageGenController : ControllerBase
                 ModelId = model.ModelId,
                 PlatformId = model.PlatformId,
                 Priority = model.Priority,
-                HealthStatus = model.HealthStatus
+                HealthStatus = model.HealthStatus,
+                IsRecoveryProbeAvailable = model.IsRecoveryProbeAvailable
             }).ToList(),
             ResolutionType = pool.ResolutionType,
             IsDedicated = pool.IsDedicated,
@@ -1968,6 +1969,7 @@ public class ImageGenController : ControllerBase
                 run.ModelGroupName,
                 run.Size,
                 run.ResponseFormat,
+                run.ExpectedImageRefCount,
                 imageRefs = run.ImageRefs?.Select(imageRef => new
                 {
                     imageRef.RefId,

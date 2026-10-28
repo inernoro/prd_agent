@@ -10,7 +10,7 @@
  *   - save() 只记 dirty 引用；setImmediate 在本 tick 末把一连串 save
  *     合并成一次序列化（序列化即快照，之后 live state 被 mutate 也不影响
  *     写盘内容），异步串行落盘。
- *   - 写路径仍保持原子语义：state.json.tmp.<pid>.<ts> → fsync → rename。
+ *   - 写路径仍保持原子语义：独占临时文件 → fsync → rename。
  *   - .bak 轮转从「每次 save 写一份」改为 ≥60s 节流（每次 save 双倍磁盘
  *     写是旧实现的第二个放大器）。
  *   - 新增 flush()：把 pending 写强制落盘并等待完成，进程 shutdown 前调用
@@ -22,8 +22,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import type { CdsState } from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
+import { timeMainThreadSection } from '../../services/main-thread-diagnostics.js';
 
 /** Keep the last N rolling backups. Old ones are pruned after each backup write. */
 export const MAX_STATE_BACKUPS = 10;
@@ -51,6 +53,23 @@ export async function flushAllJsonStateStores(): Promise<void> {
   }
 }
 
+/** 同进程、同规范化目标只由一个写链执行；跨进程不裁决快照新旧或合并状态。 */
+const TARGET_WRITES = new Map<string, Promise<void>>();
+function enqueueTargetWrite(filePath: string, write: () => Promise<void>): Promise<void> {
+  const key = path.resolve(filePath);
+  const pending = (TARGET_WRITES.get(key) || Promise.resolve()).catch(() => {}).then(write);
+  TARGET_WRITES.set(key, pending);
+  void pending.finally(() => { if (TARGET_WRITES.get(key) === pending) TARGET_WRITES.delete(key); }).catch(() => {});
+  return pending;
+}
+
+/** 仅显式注入诊断观察者时计算快照摘要；生产默认不散列完整状态或暴露快照正文。 */
+export interface JsonStateWriteEvent {
+  storeId: string; writeId: string; filePath: string; tempPath: string; timestampMs: number;
+  purpose: 'primary' | 'backup'; phase: 'opened' | 'synced' | 'committed' | 'failed';
+  bytes: number; sha256: string; errorName?: string; errorCode?: string;
+}
+
 export class JsonStateBackingStore implements StateBackingStore {
   readonly kind = 'json' as const;
 
@@ -59,11 +78,11 @@ export class JsonStateBackingStore implements StateBackingStore {
   private flushScheduled = false;
   /** 串行写链：一次只有一个磁盘写在飞，后来的快照排队。 */
   private writeChain: Promise<void> = Promise.resolve();
-  /** 最近一次写盘失败的错误；flush() 时抛出，避免静默吞错。 */
-  private lastWriteError: Error | null = null;
   private lastBackupAtMs = 0;
 
-  constructor(private readonly filePath: string) {
+  private readonly storeId = randomUUID();
+
+  constructor(private readonly filePath: string, private readonly options: { onWrite?: (event: JsonStateWriteEvent) => void } = {}) {
     LIVE_STORES.add(new WeakRef(this));
   }
 
@@ -90,7 +109,7 @@ export class JsonStateBackingStore implements StateBackingStore {
 
     const backups = fs
       .readdirSync(dir)
-      .filter((f) => f.startsWith(`${base}.bak.`))
+      .filter((f) => f.startsWith(`${base}.bak.`) && !f.includes('.tmp.'))
       .sort()
       .reverse();
 
@@ -128,11 +147,6 @@ export class JsonStateBackingStore implements StateBackingStore {
     }
     this.flushScheduled = false;
     await this.writeChain;
-    if (this.lastWriteError) {
-      const err = this.lastWriteError;
-      this.lastWriteError = null;
-      throw err;
-    }
   }
 
   /** 序列化当前 dirty state（序列化即不可变快照）并入串行写队列。 */
@@ -141,33 +155,27 @@ export class JsonStateBackingStore implements StateBackingStore {
     const live = this.dirtyState;
     if (!live) return;
     this.dirtyState = null;
-    const serialized = JSON.stringify(live, null, 2);
-    this.writeChain = this.writeChain
-      .then(() => this.writeToDisk(serialized))
-      .catch((err) => {
-        this.lastWriteError = err as Error;
-        console.error(`[state] async state.json write failed: ${(err as Error).message}`);
-      });
+    try {
+      const serialized = timeMainThreadSection('state.persist.serialize.json-file', () => JSON.stringify(live, null, 2), (out) => out.length);
+      this.writeChain = enqueueTargetWrite(this.filePath, () => this.writeToDisk(serialized));
+    } catch (error) {
+      this.writeChain = Promise.reject(error);
+    }
+    // 每个 flush 等待自己捕获的同一个写入 Promise。观察者不能消费或清除别人的
+    // 失败；较新的成功写也不追认旧失败。这里只旁路记录，绝不把失败写链改成 fulfilled。
+    void this.writeChain.catch((error) => {
+      try {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[state] async state.json write failed: ${message}`);
+      } catch { /* 诊断旁路失败也不能制造未处理拒绝或改变原始写入结果。 */ }
+    });
   }
 
   private async writeToDisk(serialized: string): Promise<void> {
     const dir = path.dirname(this.filePath);
     await fs.promises.mkdir(dir, { recursive: true });
 
-    // Unique tmp path per write — see class docstring for why this
-    // matters. Two concurrent saves must not share a tmp filename.
-    const tmpPath = `${this.filePath}.tmp.${process.pid}.${Date.now()}`;
-
-    // Atomic write: tmp → fsync → rename
-    const handle = await fs.promises.open(tmpPath, 'w', 0o600);
-    try {
-      await handle.writeFile(serialized);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await fs.promises.rename(tmpPath, this.filePath);
-    await fs.promises.chmod(this.filePath, 0o600);
+    await this.atomicWrite(this.filePath, serialized, 'primary');
 
     // Rolling backup（≥60s 节流；best-effort，失败不影响主写）
     const now = Date.now();
@@ -181,6 +189,31 @@ export class JsonStateBackingStore implements StateBackingStore {
     }
   }
 
+  private async atomicWrite(target: string, serialized: string, purpose: 'primary' | 'backup'): Promise<void> {
+    const writeId = randomUUID();
+    const tmpPath = `${target}.tmp.${process.pid}.${writeId}`;
+    const observed = this.options.onWrite ? { storeId: this.storeId, writeId, filePath: path.resolve(target), tempPath: path.resolve(tmpPath),
+      timestampMs: Date.now(), purpose, bytes: Buffer.byteLength(serialized), sha256: createHash('sha256').update(serialized).digest('hex') } : undefined;
+    const emit = (phase: JsonStateWriteEvent['phase'], error?: unknown) => {
+      if (!observed) return;
+      try { this.options.onWrite?.({ ...observed, phase, ...(error ? { errorName: (error as Error).name, errorCode: (error as NodeJS.ErrnoException).code } : {}) }); }
+      catch { /* 诊断观察者不能改变关键状态确认结果 */ }
+    };
+    let handle: fs.promises.FileHandle | undefined;
+    let opened = false, committed = false;
+    try {
+      // wx不截断任何其他写入器文件；即使随机标识碰撞也明确失败，不删除未拥有的文件。
+      handle = await fs.promises.open(tmpPath, 'wx', 0o600); opened = true; emit('opened');
+      await handle.writeFile(serialized); await handle.sync(); emit('synced');
+      await handle.close(); handle = undefined;
+      await fs.promises.rename(tmpPath, target); committed = true; emit('committed');
+    } catch (error) { emit('failed', error); throw error; }
+    finally {
+      if (handle) await handle.close().catch(() => {});
+      if (opened && !committed) await fs.promises.unlink(tmpPath).catch(() => {});
+    }
+  }
+
   /**
    * Write a .bak.<timestamp> snapshot and prune old backups.
    * We use the already-serialized string to avoid double serialization.
@@ -190,12 +223,11 @@ export class JsonStateBackingStore implements StateBackingStore {
     const base = path.basename(this.filePath);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupPath = path.join(dir, `${base}.bak.${stamp}`);
-    await fs.promises.writeFile(backupPath, serialized, { mode: 0o600 });
-    await fs.promises.chmod(backupPath, 0o600);
+    await this.atomicWrite(backupPath, serialized, 'backup');
 
     // Prune: keep MAX_STATE_BACKUPS newest, delete the rest
     const backups = (await fs.promises.readdir(dir))
-      .filter((f) => f.startsWith(`${base}.bak.`))
+      .filter((f) => f.startsWith(`${base}.bak.`) && !f.includes('.tmp.'))
       .sort() // ISO timestamps sort chronologically
       .reverse();
     for (let i = MAX_STATE_BACKUPS; i < backups.length; i++) {

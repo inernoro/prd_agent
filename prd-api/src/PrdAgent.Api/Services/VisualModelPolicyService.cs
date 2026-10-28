@@ -9,7 +9,10 @@ namespace PrdAgent.Api.Services;
 
 public interface IVisualModelPolicyService
 {
+    /// <summary>运行时策略：只包含网关目录中仍存在的公开模型；失效默认值会被清空，绝不自动替换。</summary>
     Task<VisualModelPolicy> ReadAsync(CancellationToken ct);
+    /// <summary>管理端原始配置：保留失效引用，便于管理员看见并迁移。</summary>
+    Task<VisualModelPolicy> ReadStoredAsync(CancellationToken ct);
     Task<List<GatewayImageModel>> DiscoverAsync(string? appCaller, CancellationToken ct);
     Task<List<AvailableModelPool>> ListAsync(string? appCaller, CancellationToken ct);
     Task<string?> SaveAsync(VisualModelPolicy proposed, string userId, CancellationToken ct);
@@ -24,9 +27,16 @@ public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayCl
         AppCallerRegistry.VisualAgent.Image.VisionGen,
     ];
 
-    public async Task<VisualModelPolicy> ReadAsync(CancellationToken ct)
+    public async Task<VisualModelPolicy> ReadStoredAsync(CancellationToken ct)
         => (await db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct))?.VisualModelPolicy
            ?? new VisualModelPolicy();
+
+    public async Task<VisualModelPolicy> ReadAsync(CancellationToken ct)
+    {
+        var stored = await ReadStoredAsync(ct);
+        var catalog = await DiscoverAsync(null, ct);
+        return ReconcileForRuntime(stored, catalog);
+    }
 
     public async Task<List<GatewayImageModel>> DiscoverAsync(string? appCaller, CancellationToken ct)
     {
@@ -37,9 +47,47 @@ public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayCl
 
     public async Task<List<AvailableModelPool>> ListAsync(string? appCaller, CancellationToken ct)
     {
-        var policy = await ReadAsync(ct);
+        // 菜单要保留失效项供管理员识别，但失效项绝不能继续获得“默认”身份。
+        var policy = await ReadStoredAsync(ct);
         var catalog = await DiscoverAsync(appCaller, ct);
         return Project(policy, catalog);
+    }
+
+    /// <summary>
+    /// 把 MAP 保存的业务策略与网关实时目录求交集。目录是模型存在性的权威来源；MAP 只拥有
+    /// “哪些模型开放、哪一个是默认”的业务意图。失效项不参与运行，也不静默替换为列表首项。
+    /// 原始配置由 ReadStoredAsync 保留，管理员仍能看见并显式迁移。
+    /// </summary>
+    public static VisualModelPolicy ReconcileForRuntime(
+        VisualModelPolicy stored,
+        IEnumerable<GatewayImageModel> catalog)
+    {
+        var availableIds = catalog
+            .Select(x => x.Model.Code?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.Ordinal);
+        var models = (stored.Models ?? [])
+            .Where(x => x is not null && availableIds.Contains(x.ModelId))
+            .Select(x => new VisualModelEntry
+            {
+                ModelId = x.ModelId,
+                DisplayName = x.DisplayName,
+                Description = x.Description,
+            })
+            .ToList();
+        var defaultModelId = availableIds.Contains(stored.DefaultModelId)
+            && models.Any(x => x.ModelId == stored.DefaultModelId)
+                ? stored.DefaultModelId
+                : string.Empty;
+        return new VisualModelPolicy
+        {
+            Revision = stored.Revision,
+            DefaultModelId = defaultModelId,
+            Models = models,
+            UpdatedAt = stored.UpdatedAt,
+            UpdatedBy = stored.UpdatedBy,
+        };
     }
 
     public static List<AvailableModelPool> Project(VisualModelPolicy policy, IEnumerable<GatewayImageModel> catalog)
@@ -52,11 +100,12 @@ public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayCl
             {
                 Id = available?.Id ?? entry.ModelId,
                 Code = entry.ModelId,
-                Name = available?.Name ?? entry.DisplayName,
+                Name = entry.ResolveDisplayName(available?.Name),
                 Description = entry.Description ?? available?.Description,
                 Priority = index,
                 ResolutionType = "LogicalModel",
-                IsDefault = policy.DefaultModelId == entry.ModelId,
+                // 旧引用可以显示出来帮助修复，但不能再对外宣称它是可执行的默认模型。
+                IsDefault = available is not null && policy.DefaultModelId == entry.ModelId,
                 Capabilities = available?.Capabilities ?? [],
                 Models = available?.Models ?? [],
             };
@@ -72,7 +121,7 @@ public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayCl
         {
             if (!discovered.TryGetValue(entry.ModelId, out var model))
                 return "开放列表包含未授权或暂不可用的模型，请刷新目录后重试。";
-            entry.DisplayName = model.Model.Name;
+            entry.DisplayName = entry.ResolveDisplayName(model.Model.Name);
         }
         // 默认必须能完成无参考图的新建流程，不能把仅支持编辑的模型设为默认。
         var textModels = await DiscoverAsync(AppCallers[0], ct);

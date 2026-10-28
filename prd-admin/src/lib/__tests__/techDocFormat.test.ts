@@ -74,7 +74,7 @@ describe('techDocFormat', () => {
       requirementFiles: [
         {
           name: 'DDD+Harness-渐进式新项目架构指南.md',
-          content: 'P0 阶段需要建立 miduo-md 文档中枢，补齐 .cursor/skills 技能门禁，并明确领域分层。',
+          content: 'P0 阶段需要建立 miduo-md 文档中枢，补齐 .agents/skills 技能门禁，并明确领域分层。',
         },
       ],
       githubProject: {

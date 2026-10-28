@@ -36,6 +36,8 @@ export type OverviewState =
   | 'deploying'
   /** 在跑且全就绪。 */
   | 'healthy'
+  | 'publish-blocked'
+  | 'publish-pending'
   /** 在跑但还有服务没起来。 */
   | 'partial'
   /** 没在跑、也不在途。 */
@@ -48,6 +50,8 @@ export interface OverviewFacts {
    * 行为不变。
    */
   lifecycle?: string;
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  pendingVersion?: boolean;
   /** SSE 给的权威运行态。 */
   running: boolean;
   serviceCount: number;
@@ -90,6 +94,10 @@ export function deriveOverviewState(f: OverviewFacts): OverviewState {
     return moving ? 'provisioning' : 'unconfigured';
   }
   if (moving) return f.readyCount === f.serviceCount ? 'redeploying' : 'deploying';
+  if (f.running && f.readyCount === f.serviceCount) {
+    if (f.ciImageStatus === 'failed') return 'publish-blocked';
+    if (f.pendingVersion || f.ciImageStatus === 'waiting') return 'publish-pending';
+  }
   if (f.running) return f.readyCount === f.serviceCount ? 'healthy' : 'partial';
   return 'stopped';
 }
@@ -159,6 +167,10 @@ export function overviewCopy(f: OverviewFacts): OverviewCopy {
         entryLabel: ENTRY_NOT_READY,
         skeletonNote: sampling ? pendingNote : '正在部署 · 容器起来后开始采样',
       };
+    case 'publish-blocked':
+      return { state, verdict: '新版本被 CI 拦截，旧版本仍可用', tone: 'idle', entryLabel: ' · 当前运行版本可用', skeletonNote: pendingNote };
+    case 'publish-pending':
+      return { state, verdict: '当前版本可用，请核对目标的检查与部署记录', tone: 'idle', entryLabel: ' · 当前运行版本可用', skeletonNote: pendingNote };
     case 'healthy':
       return {
         state,

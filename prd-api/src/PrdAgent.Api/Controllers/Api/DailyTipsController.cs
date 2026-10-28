@@ -1096,7 +1096,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=marketplace-search]", Title = "第 3 步：搜索", Body = "按名称快速找到目标配置。" },
                         new() { Selector = "[data-tour-id=marketplace-sort]", Title = "第 4 步：热门 / 最新", Body = "想看大家在用什么点「热门」，想看新货点「最新」。" },
                         new() { Selector = "[data-tour-id=marketplace-list]", Title = "第 5 步：浏览卡片", Body = "每张卡是一个可 fork 的配置，点进去看详情和 fork 数。" },
-                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Cursor 直连市场。看完点「完成」" },
+                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Codex 直连市场。看完点「完成」" },
                     },
                 }),
 

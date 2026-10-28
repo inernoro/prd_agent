@@ -9,6 +9,7 @@ import type { EgressRelay, EgressRelayOptions } from './engine/egress-relay.js';
 import { EngineLifecycle } from './engine/lifecycle.js';
 import { runEngineSelfCheck, type EngineSelfCheck } from './engine/self-check.js';
 import { DesignTaskExecutor } from './executor.js';
+import { SubprocessBrowserQualityRunner, type BrowserQualityRunner } from './quality/browser-runner.js';
 import { createServer } from './http/server.js';
 import { TaskManager } from './tasks.js';
 
@@ -20,6 +21,7 @@ export interface DesignRuntimeOverrides {
   startRelay?: (options: EgressRelayOptions) => Promise<EgressRelay>;
   resetRetryBaseMs?: number;
   log?: (line: string) => void;
+  browserQualityRunner?: BrowserQualityRunner;
 }
 
 export interface DesignRuntime {
@@ -57,7 +59,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     // 服务自己的代码目录（镜像里是 /opt/map-design-runtime/dist）、工作目录与只读资源都不许落进任务目录。
-    protectedPaths: [fileURLToPath(new URL('.', import.meta.url)), process.cwd(), config.webPrototypeSourceDir, config.designSystemsDir],
+    protectedPaths: [fileURLToPath(new URL('.', import.meta.url)), process.cwd(), config.webPrototypeSourceDir, config.presentationSkillSourceDir, config.designSystemsDir],
   });
   const executor = new DesignTaskExecutor({
     paths: {
@@ -66,14 +68,18 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
       templatesDir: config.templatesDir,
       outputDir: config.outputDir,
       webPrototypeSourceDir: config.webPrototypeSourceDir,
+      presentationSkillSourceDir: config.presentationSkillSourceDir,
     },
     daemon,
     fetchImpl: overrides.fetchImpl,
     pollIntervalMs: overrides.pollIntervalMs,
     relayPort: config.egressPort,
+    llmgwBaseUrl: config.llmgwBaseUrl,
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     startRelay: overrides.startRelay,
+    browserQualityRunner: overrides.browserQualityRunner
+      ?? new SubprocessBrowserQualityRunner(config.engineUid, config.engineGid, config.engineHome),
   });
   const tasks = new TaskManager({
     run: (task, signal, onCreatingStage, onStage) => executor.run(task, signal, onCreatingStage, onStage),
@@ -84,10 +90,15 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
   const selfCheck = overrides.selfCheck ?? await runEngineSelfCheck({
     codexBin: config.codexBin,
     webPrototypeSourceDir: config.webPrototypeSourceDir,
+    presentationSkillSourceDir: config.presentationSkillSourceDir,
     designSystemsDir: config.designSystemsDir,
+    engineHome: config.engineHome,
+    engineUid: config.engineUid,
+    engineGid: config.engineGid,
   });
   const server = createServer({
     apiKey: config.apiKey,
+    llmgwBaseUrl: config.llmgwBaseUrl,
     apiKeyConfigured: config.apiKey.length > 0,
     selfCheck,
     lifecycle,

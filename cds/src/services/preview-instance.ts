@@ -233,6 +233,14 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
 export class PreviewInstanceShellExecutor implements IShellExecutor {
   constructor(private readonly inner: IShellExecutor) {}
 
+  async execBackgroundObservation(command: string, options?: ExecOptions): Promise<ExecResult> {
+    if (findBlockedBinary(command)) return this.exec(command, options);
+    if (!this.inner.execBackgroundObservation) {
+      return { stdout: '', stderr: '非紧急查询执行器暂不可用，请稍后重试。', exitCode: 1 };
+    }
+    return this.inner.execBackgroundObservation(command, options);
+  }
+
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     const blocked = findBlockedBinary(command);
     if (blocked) {

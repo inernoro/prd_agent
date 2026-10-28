@@ -47,7 +47,8 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         // 服务接单的第一条事件（task_accepted）就要让进度动起来，而不是等到引擎开跑。
         chunks.First().Type.ShouldBe("phase");
         chunks.ShouldContain(chunk => chunk.Type == "phase" && chunk.Progress.HasValue);
-        chunks.ShouldContain(chunk => chunk.Type == "thinking" && chunk.Content == "OpenDesign 正在修改共享工作区。");
+        chunks.ShouldNotContain(chunk => chunk.Type == "thinking");
+        chunks.ShouldNotContain(chunk => chunk.Content == "OpenDesign 正在修改共享工作区。");
         var delta = chunks.Single(chunk => chunk.Type == "delta");
         delta.Content.ShouldBe(IndexHtml);
 
@@ -57,9 +58,13 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         submit.Body["attempt"]!.GetValue<int>().ShouldBe(1);
         submit.Body["transfer"]!["transferToken"]!.GetValue<string>().ShouldBe("transfer-token");
         submit.Body["transfer"]!["inputPackageUrl"]!.GetValue<string>().ShouldBe("https://map.example/api/design-artifacts/runtime/r/workspace/input");
-        submit.Body["model"]!["baseUrl"]!.GetValue<string>().ShouldBe("https://map.example/api/design-artifacts/runtime/r/llm/v1");
-        submit.Body["model"]!["apiKey"]!.GetValue<string>().ShouldBe("model-ticket");
+        submit.Body["model"]!["baseUrl"]!.GetValue<string>().ShouldBe("http://gateway/gw/v1");
+        submit.Body["model"]!["apiKey"]!.GetValue<string>().ShouldBe("run-scoped-grant");
         submit.Body["model"]!["protocol"]!.GetValue<string>().ShouldBe("openai");
+        submit.Body["model"]!["sourceSystem"]!.GetValue<string>().ShouldBe("map");
+        submit.Body["model"]!["appCallerCode"]!.GetValue<string>().ShouldBe(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+        submit.Body["model"]!["userId"]!.GetValue<string>().ShouldBe("user-1");
+        submit.Body["model"]!["runId"]!.GetValue<string>().ShouldBe(RunId);
         submit.Body["envelope"]!["runId"]!.GetValue<string>().ShouldBe(RunId);
         submit.Body["envelope"]!["schemaVersion"]!.GetValue<string>().ShouldBe("map-design-artifact-command-v2");
         service.EventRequests.ShouldHaveSingleItem().Accept.ShouldContain("text/event-stream");
@@ -79,6 +84,13 @@ public sealed class OpenDesignServiceArtifactExecutorTests
                 ["code"] = "design_output_quality_rejected",
                 ["message"] = "quality gate rejected index.html",
                 ["retryable"] = false,
+                ["details"] = new JsonObject
+                {
+                    ["issueCodes"] = new JsonArray("mobile_navigation_unusable", "key_text_contrast_low"),
+                    ["repairAttempts"] = 1,
+                    ["repairBudgetExhausted"] = true,
+                    ["browserQualityEvidence"] = BrowserQualityEvidence(),
+                },
             })));
         var executor = BuildExecutor(service, BuildBroker().Object);
 
@@ -87,8 +99,183 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         error.Message.ShouldContain("没有通过发布前的校验");
         // 远端原文不进用户读的那句话，挂在异常链里进日志（与 CDS 路径同一口径）。
         error.Message.ShouldNotContain("quality gate rejected");
-        error.InnerException.ShouldNotBeNull();
+        var diagnostic = error.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>();
+        diagnostic.RemoteCode.ShouldBe("design_output_quality_rejected");
+        diagnostic.Details.ShouldNotBeNull();
+        diagnostic.Details!.IssueCodes.ShouldBe(["mobile_navigation_unusable", "key_text_contrast_low"]);
+        diagnostic.Details.RepairAttempts.ShouldBe(1);
+        diagnostic.Details.RepairBudgetExhausted.ShouldBe(true);
+        var browserEvidence = diagnostic.Details.BrowserQualityEvidence.ShouldNotBeNull();
+        browserEvidence.SchemaVersion.ShouldBe("map-browser-quality-failure-evidence-v1");
+        var issue = browserEvidence.Attempts.ShouldHaveSingleItem().Issues.ShouldHaveSingleItem();
+        issue.Viewport.ShouldBe("mobile");
+        issue.Actual["visibleLinkCount"].ShouldBe(0d);
+        issue.Target.ShouldBe("visible links or a matching aria-controls toggle");
+        issue.ElementSummary!.Tag.ShouldBe("nav");
+        diagnostic.ToRuntimeFailure()!.BrowserQualityEvidence.ShouldNotBeNull();
         service.CancelCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public void ErrorDetails_OnlyAcceptBoundedStableFields()
+    {
+        var issueCodes = new JsonArray();
+        for (var index = 0; index < 20; index++)
+            issueCodes.Add($"quality_issue_{index}");
+        issueCodes.Add("quality_issue_0");
+        issueCodes.Add("css</script>");
+        issueCodes.Add(new string('a', 65));
+        var payload = new JsonObject
+        {
+            ["details"] = new JsonObject
+            {
+                ["issueCodes"] = issueCodes,
+                ["repairAttempts"] = 1001,
+                ["repairBudgetExhausted"] = "true",
+                ["rawHtml"] = "<style>body::before{content:'secret'}</style>",
+                ["provider"] = "private-provider",
+            },
+        }.ToJsonString();
+
+        var details = OpenDesignEventTranslator.ReadFailureDetails(payload);
+
+        details.ShouldNotBeNull();
+        details!.IssueCodes.Count.ShouldBe(16);
+        details.IssueCodes.ShouldAllBe(code => code.StartsWith("quality_issue_", StringComparison.Ordinal));
+        details.RepairAttempts.ShouldBeNull();
+        details.RepairBudgetExhausted.ShouldBeNull();
+        OpenDesignEventTranslator.ReadPayloadStableToken(
+            "{\"code\":\"design_output_quality_rejected<script>\"}", "code").ShouldBeNull();
+
+        var noMessage = OpenDesignEventTranslator.RemoteFailure(
+            "{\"code\":\"design_output_quality_rejected\",\"details\":{" +
+            "\"issueCodes\":[\"css_generated_text\"],\"repairAttempts\":1," +
+            "\"repairBudgetExhausted\":true}}");
+        var diagnostic = noMessage.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>();
+        diagnostic.RemoteCode.ShouldBe("design_output_quality_rejected");
+        diagnostic.Details!.IssueCodes.ShouldBe(["css_generated_text"]);
+    }
+
+    [Fact]
+    public void BrowserQualityDetails_RejectUnboundedOrUntrustedMeasurements()
+    {
+        var evidence = BrowserQualityEvidence();
+        evidence["rawHtml"] = "<main>must not cross boundary</main>";
+        var issue = evidence["attempts"]!.AsArray()[0]!["issues"]!.AsArray()[0]!.AsObject();
+        issue["actual"]!["nested"] = new JsonObject { ["secret"] = "not primitive" };
+        var payload = new JsonObject { ["details"] = new JsonObject { ["browserQualityEvidence"] = evidence } };
+
+        var details = OpenDesignEventTranslator.ReadFailureDetails(payload.ToJsonString());
+
+        details.ShouldBeNull();
+    }
+
+    private static JsonObject BrowserQualityEvidence() => new()
+    {
+        ["schemaVersion"] = "map-browser-quality-failure-evidence-v1",
+        ["ruleVersion"] = "browser-hard-gate-v1",
+        ["heuristicVersion"] = "browser-aesthetic-heuristic-v1",
+        ["repairAttempts"] = 1,
+        ["repairBudgetExhausted"] = true,
+        ["attempts"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["repairAttempt"] = 1,
+                ["hardPassed"] = false,
+                ["score"] = 6,
+                ["issues"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["issueCode"] = "mobile_navigation_unusable",
+                        ["viewport"] = "mobile",
+                        ["actual"] = new JsonObject { ["visibleLinkCount"] = 0, ["hasVisibleToggle"] = false },
+                        ["target"] = "visible links or a matching aria-controls toggle",
+                        ["elementSummary"] = new JsonObject
+                        {
+                            ["tag"] = "nav",
+                            ["id"] = "mobile-nav",
+                            ["role"] = "navigation",
+                            ["label"] = "Main navigation",
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    [Fact]
+    public async Task UsageObservationFailure_StillRevokesTheRunScopedGrant()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Sse(Event(1, "done", new JsonObject { ["artifactRef"] = "ref-1" })));
+        var grants = new Mock<IDesignArtifactGatewayGrantService>(MockBehavior.Strict);
+        grants.SetupSequence(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(0, null, null))
+            .ThrowsAsync(new InvalidOperationException("synthetic observation failure"));
+        grants.Setup(x => x.RevokeAsync("grant-id", CancellationToken.None)).Returns(Task.CompletedTask);
+        var executor = BuildExecutor(service, BuildBroker().Object, gatewayGrants: grants.Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        grants.Verify(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None), Times.Exactly(2));
+        grants.Verify(x => x.RevokeAsync("grant-id", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task EveryBoundedStatusStage_RefreshesTheExistingGrantUsageWithoutChangingTheRunContract()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Sse(
+            Event(1, "status", new JsonObject { ["status"] = "running", ["reason"] = "open_design_running" }),
+            Event(2, "status", new JsonObject { ["status"] = "running", ["reason"] = "workspace_collecting" }),
+            Event(3, "done", new JsonObject { ["artifactRef"] = "ref-1" })));
+        var grants = new Mock<IDesignArtifactGatewayGrantService>(MockBehavior.Strict);
+        grants.SetupSequence(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(1, "model-1", "platform-1"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(18, "model-1", "platform-1"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(33, "model-1", "platform-1"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(33, "model-1", "platform-1"));
+        grants.Setup(x => x.RevokeAsync("grant-id", CancellationToken.None)).Returns(Task.CompletedTask);
+        var executor = BuildExecutor(service, BuildBroker().Object, gatewayGrants: grants.Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        chunks.ShouldContain(chunk => chunk.Type == "phase");
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        grants.Verify(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None), Times.Exactly(4));
+        grants.Verify(x => x.RevokeAsync("grant-id", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task StatusUsageObservationFailure_DoesNotTurnTheExistingWebPageRunIntoAnExecutionFailure()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Sse(
+            Event(1, "status", new JsonObject { ["status"] = "running", ["reason"] = "workspace_collecting" }),
+            Event(2, "done", new JsonObject { ["artifactRef"] = "ref-1" })));
+        var grants = new Mock<IDesignArtifactGatewayGrantService>(MockBehavior.Strict);
+        grants.SetupSequence(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("synthetic status observation failure"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(3, "model-1", "platform-1"))
+            .ThrowsAsync(new InvalidOperationException("synthetic final observation failure"));
+        grants.Setup(x => x.RevokeAsync("grant-id", CancellationToken.None)).Returns(Task.CompletedTask);
+        var executor = BuildExecutor(service, BuildBroker().Object, gatewayGrants: grants.Object);
+        var run = BuildRun();
+
+        var chunks = await CollectAsync(executor, run);
+
+        run.ArtifactType.ShouldBe(DesignArtifactTypes.WebPage);
+        chunks.ShouldContain(chunk => chunk.Type == "phase");
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        chunks.ShouldNotContain(chunk => chunk.Type == "error");
+        grants.Verify(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None), Times.Exactly(3));
+        grants.Verify(x => x.RevokeAsync("grant-id", CancellationToken.None), Times.Once);
     }
 
     [Fact]
@@ -146,7 +333,8 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         service.EventRequests.Count.ShouldBe(2);
         service.EventRequests[0].AfterSeq.ShouldBe("0");
         service.EventRequests[1].AfterSeq.ShouldBe("2");
-        chunks.Where(chunk => chunk.Type == "thinking").Select(chunk => chunk.Content).ShouldBe(["第一段", "第二段"]);
+        chunks.ShouldNotContain(chunk => chunk.Type == "thinking");
+        chunks.ShouldNotContain(chunk => chunk.Content == "第一段" || chunk.Content == "第二段");
         chunks.ShouldContain(chunk => chunk.Type == "delta");
     }
 
@@ -172,8 +360,13 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
         service.OnEvents(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StreamContent(new FirstThenHangStream(Encoding.UTF8.GetBytes(Event(1, "text_delta",
-                new JsonObject { ["text"] = "正在设计" })))),
+            Content = new StreamContent(new FirstThenHangStream(Encoding.UTF8.GetBytes(Event(1, "status",
+                new JsonObject
+                {
+                    ["status"] = "running",
+                    ["reason"] = "open_design_running",
+                    ["elapsedSeconds"] = 3,
+                })))),
         });
         var executor = BuildExecutor(service, BuildBroker().Object);
         using var cts = new CancellationTokenSource();
@@ -182,7 +375,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         {
             await foreach (var chunk in executor.ExecuteAsync(BuildRun(), null, cts.Token))
             {
-                if (chunk.Type == "thinking") cts.Cancel();
+                if (chunk.Type == "phase") cts.Cancel();
             }
         });
 
@@ -380,6 +573,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         services.AddSingleton(Mock.Of<IInfraConnectionService>());
         services.AddSingleton(Mock.Of<IInfraAgentSessionService>());
         services.AddSingleton(Mock.Of<IDesignArtifactWorkspaceBroker>());
+        services.AddSingleton(Mock.Of<IDesignArtifactGatewayGrantService>());
         services.AddOpenDesignExecutors();
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
@@ -648,6 +842,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         var run = BuildRun();
         run.Status = RunStatuses.Queued;
         run.Progress = 2;
+        run.DeploymentSlug = DeploymentScope.Current;
         await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
 
         var service = new FakeDesignService();
@@ -727,14 +922,21 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         FakeDesignService service,
         IDesignArtifactWorkspaceBroker broker,
         List<TimeSpan>? delays = null,
-        Dictionary<string, string?>? configuration = null)
+        Dictionary<string, string?>? configuration = null,
+        IDesignArtifactGatewayGrantService? gatewayGrants = null)
     {
         // 假时钟：每次「等待」立即返回并把时钟往前推，排队 / 不可用的截止时间按它算，
         // 用例既不真等、也不会在真实时间里空转到上限。
         var now = DateTime.UtcNow;
+        var grants = new Mock<IDesignArtifactGatewayGrantService>();
+        grants.Setup(x => x.ObserveAsync(It.IsAny<string>(), It.IsAny<DesignArtifactRun>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(0, null, null));
+        grants.Setup(x => x.RevokeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         return new(
             new SingleClientFactory(service),
             broker,
+            gatewayGrants ?? grants.Object,
             Config(configuration ?? new Dictionary<string, string?>
             {
                 [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,
@@ -756,7 +958,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     private static Mock<IDesignArtifactWorkspaceBroker> BuildBroker()
     {
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
-        broker.Setup(x => x.PrepareAsync(It.IsAny<DesignArtifactRun>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        broker.Setup(x => x.PrepareForDirectGatewayAsync(It.IsAny<DesignArtifactRun>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DesignArtifactRun run, string? _, CancellationToken _) =>
             {
                 run.RuntimeTicketExpiresAt = DateTime.UtcNow.AddMinutes(25);
@@ -765,9 +967,10 @@ public sealed class OpenDesignServiceArtifactExecutorTests
                     new string('a', 64),
                     "https://map.example/api/design-artifacts/runtime/r/workspace/result",
                     "transfer-token",
-                    "https://map.example/api/design-artifacts/runtime/r/llm/v1",
-                    "model-ticket",
-                    "map-managed",
+                    "grant-id",
+                    "http://gateway/gw/v1",
+                    "run-scoped-grant",
+                    "default-chat-curated",
                     "revision-1",
                     1024 * 1024,
                     6 * 1024 * 1024,

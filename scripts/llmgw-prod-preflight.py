@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """LLM Gateway production preflight.
 
-This script is a read-only operator check for production releases. It does not
-deploy or mutate data. It verifies that the operator has enough production
-access to inspect MAP logs and probe llmgw-serve, that MAP and the gateway run
-the expected commit, and that MAP logged no direct (non-gateway) model calls.
+This script is an operator check for production releases. It does not deploy or
+mutate business data. RSA authentication may create a short-lived session and
+reconcile the dedicated stable-smoke identity. The check verifies that the
+operator has enough production access to inspect MAP logs and probe llmgw-serve,
+that MAP and the gateway run the expected commit, and that MAP logged no direct
+(non-gateway) model calls.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -76,6 +79,97 @@ def _item_value(item: dict, *names: str) -> str:
         if value is not None:
             return str(value)
     return ""
+
+
+def _stable_smoke_session(base: str, timeout: int) -> tuple[str, str, dict] | None:
+    """Use the long-lived RSA identity to mint a short-lived MAP session."""
+    key_id = os.environ.get("STABLE_SMOKE_SIGNING_KEY_ID", "").strip()
+    private_key = os.environ.get("STABLE_SMOKE_SIGNING_PRIVATE_KEY", "").strip()
+    username = os.environ.get("STABLE_SMOKE_USER", "").strip()
+    if not any((key_id, private_key, username)):
+        return None
+    if not all((key_id, private_key, username)):
+        return "STABLE_SMOKE_RSA", "", {
+            "name": "map_signed_session",
+            "ok": False,
+            "detail": "STABLE_SMOKE_SIGNING_KEY_ID、STABLE_SMOKE_SIGNING_PRIVATE_KEY、STABLE_SMOKE_USER 必须同时配置",
+        }
+
+    ticket_path = "/api/v1/auth/synthetic/ticket"
+    ticket_body = json.dumps({"returnUrl": "/", "expiresInSeconds": 180}, separators=(",", ":"))
+    signature_script = Path(__file__).with_name("stable-smoke-signature.mjs")
+    signature_env = dict(os.environ)
+    signature_env["STABLE_SMOKE_SIGNING_KEY_ID"] = key_id
+    signature_env["STABLE_SMOKE_SIGNING_PRIVATE_KEY"] = private_key
+    try:
+        signed = subprocess.run(
+            [
+                "node", str(signature_script),
+                "--method", "POST",
+                "--url", f"{base}{ticket_path}",
+                "--body", ticket_body,
+                "--username", username,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=signature_env,
+        )
+        signature_headers = json.loads(signed.stdout)
+    except Exception as exc:  # noqa: BLE001
+        return "STABLE_SMOKE_RSA", "", {
+            "name": "map_signed_session",
+            "ok": False,
+            "detail": f"签名生成失败：{type(exc).__name__}",
+        }
+
+    ticket = _http_json(
+        f"{base}{ticket_path}",
+        headers={"Content-Type": "application/json", **signature_headers},
+        method="POST",
+        body=ticket_body.encode("utf-8"),
+        timeout=timeout,
+    )
+    ticket_payload = ticket.get("payload") if isinstance(ticket.get("payload"), dict) else {}
+    ticket_data = _payload_dict(ticket_payload, "data")
+    login_url = str(ticket_data.get("loginUrl") or ticket_data.get("LoginUrl") or "")
+    code = urllib.parse.parse_qs(urllib.parse.urlsplit(login_url).fragment).get("code", [""])[0]
+    if not ticket.get("ok") or not code:
+        error = _payload_dict(ticket_payload, "error")
+        return "STABLE_SMOKE_RSA", "", {
+            "name": "map_signed_session",
+            "ok": False,
+            "detail": json.dumps({
+                "stage": "ticket",
+                "status": ticket.get("status"),
+                "errorCode": error.get("code") or error.get("Code"),
+            }, ensure_ascii=False),
+        }
+
+    exchange_body = json.dumps({"code": code}, separators=(",", ":")).encode("utf-8")
+    exchange = _http_json(
+        f"{base}/api/v1/auth/synthetic/exchange",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+        body=exchange_body,
+        timeout=timeout,
+    )
+    exchange_payload = exchange.get("payload") if isinstance(exchange.get("payload"), dict) else {}
+    exchange_data = _payload_dict(exchange_payload, "data")
+    token = str(exchange_data.get("accessToken") or exchange_data.get("AccessToken") or "").strip()
+    error = _payload_dict(exchange_payload, "error")
+    return "STABLE_SMOKE_RSA", token, {
+        "name": "map_signed_session",
+        "ok": exchange.get("ok") is True and bool(token),
+        "detail": json.dumps({
+            "stage": "exchange",
+            "status": exchange.get("status"),
+            "keyId": key_id,
+            "username": username,
+            "errorCode": error.get("code") or error.get("Code"),
+        }, ensure_ascii=False),
+    }
 
 
 def _direct_transport_check(args: argparse.Namespace, base: str, key_name: str, key: str) -> dict:
@@ -170,6 +264,11 @@ def _map_checks(args: argparse.Namespace) -> list[dict]:
         return checks
     checks.append({"name": "map_base_configured", "ok": True, "detail": base})
 
+    signed_session = _stable_smoke_session(base, args.timeout)
+    if signed_session is not None:
+        key_name, key, signed_session_check = signed_session
+        checks.append(signed_session_check)
+
     health = _http_json(f"{base}/health", timeout=args.timeout)
     checks.append({
         "name": "map_health",
@@ -193,7 +292,11 @@ def _map_checks(args: argparse.Namespace) -> list[dict]:
     })
 
     if not key:
-        checks.append({"name": "map_logs_scope", "ok": False, "detail": f"missing {args.map_key_env} or PRD_AGENT_API_KEY"})
+        checks.append({
+            "name": "map_logs_scope",
+            "ok": False,
+            "detail": f"missing STABLE_SMOKE RSA identity or {args.map_key_env}/PRD_AGENT_API_KEY",
+        })
         return checks
 
     logs_url = f"{base}/api/logs/llm?" + urllib.parse.urlencode({"page": 1, "pageSize": 10})

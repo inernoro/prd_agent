@@ -24,7 +24,7 @@ export const MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA = 'map-design-artifact-quality-v
 export const MAX_QUALITY_REPAIR_ATTEMPTS = 4;
 
 /** 模板 <main> 里那段「把版式粘到这里」的指示注释。留在交付页面里 = 起始页原样交回。 */
-const TEMPLATE_UNTOUCHED_MARKER = 'PASTE LAYOUTS FROM references/layouts.md HERE';
+export const TEMPLATE_UNTOUCHED_MARKER = 'PASTE LAYOUTS FROM references/layouts.md HERE';
 
 const ARTIFACT_CSP = [
   "default-src 'none'",
@@ -107,6 +107,42 @@ const inertButtonLocationHint = (details: Record<string, unknown> | undefined): 
 
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
+  if (error.code === 'design_output_quality_rejected'
+    && error.details?.qualityIssueCode === 'source_slot_cardinality_invalid') {
+    const sourceBlockId = typeof error.details.sourceBlockId === 'string'
+      && /^sb-[a-f0-9]{64}$/.test(error.details.sourceBlockId)
+      ? error.details.sourceBlockId
+      : undefined;
+    const sourceBlockOrdinal = typeof error.details.sourceBlockOrdinal === 'number'
+      && Number.isSafeInteger(error.details.sourceBlockOrdinal)
+      && error.details.sourceBlockOrdinal > 0
+      ? error.details.sourceBlockOrdinal
+      : undefined;
+    const assignedPageIndex = typeof error.details.assignedPageIndex === 'number'
+      && Number.isSafeInteger(error.details.assignedPageIndex)
+      && error.details.assignedPageIndex > 0
+      ? error.details.assignedPageIndex
+      : undefined;
+    const slotCount = typeof error.details.slotCount === 'number'
+      && Number.isSafeInteger(error.details.slotCount)
+      && error.details.slotCount >= 0
+      && error.details.slotCount <= 1000
+      ? error.details.slotCount
+      : undefined;
+    if (sourceBlockId && sourceBlockOrdinal && slotCount !== undefined) {
+      const observed = error.details.slotCountTruncated === true ? `at least ${slotCount}` : String(slotCount);
+      return {
+        code: 'source_slot_cardinality_invalid',
+        instruction: `Frozen source block ${sourceBlockId} (source block ${sourceBlockOrdinal}${assignedPageIndex ? `, assigned slide ${assignedPageIndex}` : ''}) requires exactly one empty <div data-mdppt-source="${sourceBlockId}"></div> marker, but the artifact contained ${observed}. Restore that one empty marker on its assigned slide, then inspect every frozen block marker and correct every occurrence of the same cardinality violation in this repair pass. Do not copy, rewrite, fill, hide, or delete the frozen source text; the runtime materializes it before preview and quality checks.`,
+      };
+    }
+  }
+  if (message === 'index.html omitted a required fact from the frozen design brief') {
+    return {
+      code: 'required_fact_missing',
+      instruction: 'Read designBrief.factualCoverageRequirements.requiredFacts in /workspace/brief/task.json and restore every required statement in visible page text exactly once or more. Do not invent surrounding claims.',
+    };
+  }
   if (message === 'index.html contains a measured claim with unresolved source context'
     || message === 'index.html dropped a retained source-backed measured claim') {
     const missing = message === 'index.html dropped a retained source-backed measured claim';
@@ -257,6 +293,27 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
   return undefined;
 }
 
+/** 冻结简报明确标为必需的事实必须全部出现在可见文本中；不把事实正文写进错误或日志。 */
+export function assertRequiredFactualCoverage(rawHtml: string, requiredFacts: readonly string[]): void {
+  if (requiredFacts.length === 0) return;
+  const visible = normalizeFactText(extractVisibleHtmlText(rawHtml));
+  for (let index = 0; index < requiredFacts.length; index += 1) {
+    const required = normalizeFactText(requiredFacts[index]);
+    if (required && !visible.includes(required)) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        'index.html omitted a required fact from the frozen design brief',
+        false,
+        { requiredFactOrdinal: index + 1, requiredFactCount: requiredFacts.length },
+      );
+    }
+  }
+}
+
+function normalizeFactText(value: string): string {
+  return decodeHtmlText(value).replace(/\s+/g, ' ').trim();
+}
+
 /** Version 1 canonical bytes shared with HostedSiteRevisionRules.NormalizeGeneratedHtml. */
 export function normalizeGeneratedHtml(raw: string): string {
   const trimHtmlWhitespace = (value: string) => value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
@@ -312,6 +369,7 @@ export function createArtifactQualityGate(
   evidenceText: string,
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
   authoritativeEvidenceText = evidenceText,
+  enforceContentQuality = true,
 ): (rawHtml: string, packagePaths?: readonly string[]) => string {
   const retention: MeasuredFactRetentionState = {
     facts: new Map(),
@@ -325,6 +383,7 @@ export function createArtifactQualityGate(
     constraints,
     retention,
     packagePaths,
+    enforceContentQuality,
   );
 }
 
@@ -334,6 +393,7 @@ function hardenHtmlWithFactRetention(
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
   retention?: MeasuredFactRetentionState,
   packagePaths?: readonly string[],
+  enforceContentQuality = true,
 ): string {
   let html = normalizeGeneratedHtml(rawHtml);
   if (!DOCUMENT_ROOT_RE.test(html)) {
@@ -408,14 +468,16 @@ function hardenHtmlWithFactRetention(
       'index.html CSS references a non-inline resource',
     );
   }
-  validateCssGeneratedContent(html);
-  validateArtifactQuality(
-    html,
-    evidenceText,
-    visibleTextOccurrenceConstraints,
-    retention,
-    verifiedPackagePaths !== undefined,
-  );
+  if (enforceContentQuality) {
+    validateCssGeneratedContent(html);
+    validateArtifactQuality(
+      html,
+      evidenceText,
+      visibleTextOccurrenceConstraints,
+      retention,
+      verifiedPackagePaths !== undefined,
+    );
+  }
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${verifiedPackagePaths === undefined ? ARTIFACT_CSP : VERIFIED_PACKAGE_ARTIFACT_CSP}">`;
   const root = html.match(DOCUMENT_ROOT_RE);
@@ -560,43 +622,70 @@ function measuredClaimContexts(text: string): MeasuredClaimContext[] {
     /(?<![\d:：])(?:[01]?\d|2[0-3])[:：][0-5]\d(?!\d|[:：]\d)/g,
     (clock) => clock.replace(/\d/g, ' '),
   );
-  for (const segment of quantityText.split(/[\r\n。！？!?；;，,：:]+/)) {
-    const segmentClaims: Array<MeasuredClaimContext & { offset: number; patternOrder: number }> = [];
+  for (const sentence of quantityText.split(/[\r\n。！？!?；;]+/)) {
     const patterns = [
       // 「1 个月」「2 个小时」是时长，与 MAP 的 HostedSiteRevisionRules 同口径，不当成「1 个（计数）」。
       { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
       { regex: /([￥¥$])\s*(\d+(?:[.,]\d+)*)/gi, numberIndex: 2, unitIndex: 1 },
-      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])(?!\s*(?:月|小时))/gi, numberIndex: 1, unitIndex: 2 },
+      // 字符长度是一个完整量纲。「50 个字符」「50 字符」「50 字」必须最长匹配为同一事实，
+      // 不能让通用量词先截成「50 个」或把「字符」前缀截成「50 字」。
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(?:个\s*)?(字符|字(?!节|段|体|数|符))(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
+      // 中文没有通用的正则词界；量词同时可能是名词词首。没有这组窄边界时，
+      // `12.16项目代号` 会被读成数量 `12.16项`。这里只排除确定的复合词，
+      // `3项`、`3项项目`、`3个项目` 等真实数量仍会进入事实核对。
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个(?!\s*(?:字符|字(?!节|段|体|数|符)))|条(?!款|例|目)|次(?!数|要|版本)|篇(?!章)|人|位(?!置)|家|项(?!目|链)|例(?!如|会)|份(?!额)|种(?!类|植)|类(?!型|目|似)|层(?!级|次)|步(?!骤|行)|章(?!节)|节(?!点|目|奏|日)|页(?!面|码))(?![A-Za-z])(?!\s*(?:月|小时))/gi, numberIndex: 1, unitIndex: 2 },
     ];
-    for (const [patternOrder, pattern] of patterns.entries()) {
-      for (const match of segment.matchAll(pattern.regex)) {
-        const rawNumber = match[pattern.numberIndex];
-        const parsed = Number(rawNumber.replaceAll(',', ''));
-        const number = Number.isFinite(parsed) ? String(parsed) : rawNumber;
-        const rawUnit = match[pattern.unitIndex];
-        const requiresContext = isCountUnit(rawUnit);
-        const entityKeys = extractClaimEntityKeys(segment, rawUnit);
-        const unit = normalizeClaimUnit(rawUnit, entityKeys);
-        segmentClaims.push({
-          token: `${number}|${unit}`,
-          context: normalizeClaimContext(segment),
-          requiresContext,
-          isStructural: requiresContext && isStructuralCount(segment),
-          entityKeys,
-          offset: match.index ?? 0,
-          patternOrder,
-        });
+    const sentenceClaims: Array<{
+      number: string;
+      rawUnit: string;
+      segment: string;
+      segmentOrder: number;
+      offset: number;
+      patternOrder: number;
+    }> = [];
+    for (const [segmentOrder, segment] of sentence.split(/[，,：:]+/).entries()) {
+      for (const [patternOrder, pattern] of patterns.entries()) {
+        for (const match of segment.matchAll(pattern.regex)) {
+          const rawNumber = match[pattern.numberIndex];
+          const parsed = Number(rawNumber.replaceAll(',', ''));
+          const number = Number.isFinite(parsed) ? String(parsed) : rawNumber;
+          const rawUnit = match[pattern.unitIndex];
+          sentenceClaims.push({
+            number,
+            rawUnit,
+            segment,
+            segmentOrder,
+            offset: match.index ?? 0,
+            patternOrder,
+          });
+        }
       }
     }
-    segmentClaims.sort((left, right) => left.offset - right.offset || left.patternOrder - right.patternOrder);
-    for (const { offset: _offset, patternOrder: _patternOrder, ...claim } of segmentClaims) claims.push(claim);
+    sentenceClaims.sort((left, right) => left.segmentOrder - right.segmentOrder
+      || left.offset - right.offset || left.patternOrder - right.patternOrder);
+    for (const claim of sentenceClaims) {
+      const isCharacterLength = claim.rawUnit === '字符' || claim.rawUnit === '字';
+      const requiresContext = isCountUnit(claim.rawUnit);
+      // 字符上限经常写在「对象：规则，长度」的同一句多个分句中。只有整句唯一的数量声明
+      // 才借用同句对象；一旦同句有另一个数量，仍按原分句绑定，避免跨对象串联。
+      const context = isCharacterLength && sentenceClaims.length === 1 ? sentence : claim.segment;
+      const entityKeys = extractClaimEntityKeys(context, claim.rawUnit);
+      const unit = normalizeClaimUnit(claim.rawUnit, entityKeys);
+      claims.push({
+        token: `${claim.number}|${unit}`,
+        context: normalizeClaimContext(context),
+        requiresContext,
+        isStructural: requiresContext && isStructuralCount(claim.segment),
+        entityKeys,
+      });
+    }
   }
   return claims;
 }
 
 const CONTROLLED_MEASURED_CLAIM_UNITS = new Set([
   '%', '分钟', '小时', '天', '周', '月', '年', '万字', 'KB', 'MB', 'GB', 'CNY', 'USD',
-  '个', '条', '次', '字', '项', '例', '份', '种', '类', '层', '步',
+  '个', '条', '次', '字', '项', '例', '份', '种', '类', '层', '步', 'CHARACTER',
   'PERSON', 'ARTICLE', 'ORGANIZATION', 'SECTION', 'PAGE', 'PROJECT', 'CUSTOMER', 'USER',
   'CONSUMER', 'READER', 'EMPLOYEE', 'CASE', 'MODULE', 'CATEGORY', 'OPERATION', 'COLUMN',
 ]);
@@ -609,7 +698,7 @@ function controlledMeasuredClaimToken(value: unknown): string | undefined {
 
 function normalizeClaimContext(value: string): string {
   return value.replace(
-    /\d+(?:[.,]\d+)*|%|％|￥|¥|\$|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB|个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页|大约|约|只需|总共|预计|可达|达到|需要|耗时|时长|total|approximately|about|around/gi,
+    /\d+(?:[.,]\d+)*|%|％|￥|¥|\$|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB|个|条|次|篇|字符|字|人|位|家|项|例|份|种|类|层|步|章|节|页|大约|约|只需|总共|预计|可达|达到|需要|耗时|时长|total|approximately|about|around/gi,
     '',
   );
 }
@@ -659,6 +748,7 @@ function normalizeClaimUnit(value: string, entityKeys: Set<string>): string {
   if (value === '％') return '%';
   if (value === '￥' || value === '¥' || value === '元' || value === '人民币') return 'CNY';
   if (value === '$' || value === '美元') return 'USD';
+  if (value === '字符' || value === '字') return 'CHARACTER';
   if (value === '人' || value === '位' || (value === '个' && ['CUSTOMER', 'USER', 'CONSUMER', 'READER', 'EMPLOYEE'].some((key) => entityKeys.has(key)))) return 'PERSON';
   if (value === '篇' || (value === '个' && entityKeys.has('ARTICLE'))) return 'ARTICLE';
   if (value === '家' || (value === '个' && entityKeys.has('ORGANIZATION'))) return 'ORGANIZATION';
@@ -669,7 +759,7 @@ function normalizeClaimUnit(value: string, entityKeys: Set<string>): string {
 }
 
 function isCountUnit(unit: string): boolean {
-  return new Set(['个', '条', '次', '篇', '字', '人', '位', '家', '项', '例', '份', '种', '类', '层', '步', '章', '节', '页']).has(unit);
+  return new Set(['个', '条', '次', '篇', '字符', '字', '人', '位', '家', '项', '例', '份', '种', '类', '层', '步', '章', '节', '页']).has(unit);
 }
 
 function isStructuralCount(segment: string): boolean {
@@ -704,6 +794,30 @@ function extractClaimEntityKeys(segment: string, unit: string): Set<string> {
   return keys;
 }
 
+function maskEvidenceBackedNamespacedDraftTokens(visible: string, evidenceText: string): string {
+  const valuesByNamespace = new Map<string, Set<string>>();
+  const sourceTokens = new Set<string>();
+  for (const match of evidenceText.matchAll(/\b([a-z][a-z0-9_-]*):([a-z][a-z0-9_-]*)\b/gi)) {
+    const namespace = match[1].toLowerCase();
+    const value = match[2].toLowerCase();
+    sourceTokens.add(`${namespace}:${value}`);
+    const values = valuesByNamespace.get(namespace) ?? new Set<string>();
+    values.add(value);
+    valuesByNamespace.set(namespace, values);
+  }
+  return visible.replace(
+    /\b([a-z][a-z0-9_-]*):(todo|tbd)\b(?!\s*[:：])/gi,
+    (token, rawNamespace: string, rawValue: string) => {
+      const namespace = rawNamespace.toLowerCase();
+      const value = rawValue.toLowerCase();
+      const siblings = valuesByNamespace.get(namespace);
+      const isFrozenEnumValue = sourceTokens.has(`${namespace}:${value}`)
+        && Boolean(siblings && [...siblings].some((sibling) => sibling !== 'todo' && sibling !== 'tbd'));
+      return isFrozenEnumValue ? token.replace(new RegExp(`${rawValue}$`, 'i'), 'source-value') : token;
+    },
+  );
+}
+
 function validateArtifactQuality(
   html: string,
   evidenceText: string,
@@ -728,7 +842,8 @@ function validateArtifactQuality(
   if (!visible) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no visible content');
   }
-  if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visible)) {
+  const visibleForPlaceholderCheck = maskEvidenceBackedNamespacedDraftTokens(visible, evidenceText);
+  if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visibleForPlaceholderCheck)) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains visible placeholder or unfinished content');
   }
   // 起始页是一张清空了占位文案的模板，模型一字未改地交回来时，它的可见文字只剩一个版权符号，
@@ -978,9 +1093,9 @@ function validateArtifactQuality(
 }
 
 /**
- * 日期统一成「年-月[-日]」再比；作证据时完整日期同时支撑它的「年-月」，中文写法「2026 年 9 月 24 日」
- * 也算证据。与 MAP 发布闸 HostedSiteRevisionRules.ExtractSensitiveFacts 同一口径（2026-09-24 真人验收：
- * 页面写「2026-09」取自来源里的 9 月 24 日，被判成来源里没有的日期）。页面侧仍只认数字写法。
+ * 日期统一成「年-月[-日]」或「月-日」再比；作证据时完整日期同时支撑它的「年-月」，中文写法
+ * 「2026 年 9 月 24 日」与「12 月 16 日」也算证据。与 MAP 发布闸
+ * HostedSiteRevisionRules.ExtractSensitiveFacts 同一口径。页面侧仍只认数字写法。
  */
 export function sensitiveFacts(text: string, asEvidence = false): Set<string> {
   const facts = new Set<string>();
@@ -993,18 +1108,31 @@ export function sensitiveFacts(text: string, asEvidence = false): Set<string> {
     facts.add(`${yearMonth}-${String(Number(day)).padStart(2, '0')}`);
     if (evidence) facts.add(yearMonth);
   };
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)/gi)) {
+  const addMonthDay = (month: string, day: string): boolean => {
+    const monthNumber = Number(month);
+    const dayNumber = Number(day);
+    const maximumDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][monthNumber - 1];
+    if (!maximumDays || dayNumber < 1 || dayNumber > maximumDays) return false;
+    facts.add(`month-day:${String(monthNumber).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`);
+    return true;
+  };
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?!\d)|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)/gi)) {
     const value = match[0].replace(/[.,;:，。；：)\]}>`]+$/g, '').toLowerCase();
     const date = /^((?:19|20)\d{2})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/.exec(value);
-    if (!date) {
-      facts.add(value);
+    if (date) {
+      addDate(date[1], date[2], date[3], asEvidence);
       continue;
     }
-    addDate(date[1], date[2], date[3], asEvidence);
+    const monthDay = /^(\d{1,2})[-/.](\d{1,2})$/.exec(value);
+    if (monthDay && addMonthDay(monthDay[1], monthDay[2])) continue;
+    facts.add(value);
   }
   if (asEvidence) {
     for (const match of text.matchAll(/((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日号])?/g)) {
       addDate(match[1], match[2], match[3], true);
+    }
+    for (const match of text.matchAll(/(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g)) {
+      addMonthDay(match[1], match[2]);
     }
   }
   return facts;

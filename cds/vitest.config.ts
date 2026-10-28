@@ -47,6 +47,7 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    setupFiles: ['tests/helpers/deployment-budget-fixture.ts'],
     include: ['tests/**/*.test.ts'],
   },
 });

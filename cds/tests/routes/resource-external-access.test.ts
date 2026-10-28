@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -56,7 +57,13 @@ describe('resource external TCP access', () => {
   let server: http.Server | null = null;
   let tmpDir = '';
 
+  beforeEach(() => {
+    vi.stubEnv('CDS_RESOURCE_TCP_ENABLED', '1');
+    vi.stubEnv('CDS_RESOURCE_TCP_HOST', '192.0.2.20');
+    vi.stubEnv('CDS_RESOURCE_TCP_BIND_IP', '192.0.2.20');
+  });
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
     server = null;
@@ -139,12 +146,14 @@ describe('resource external TCP access', () => {
     const containerService = new ContainerService(shell, config, {
       getDockerNetwork: () => 'cds-proj-prd-agent',
       getProjectSlug: () => 'prd-agent',
-    });
+    }, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
       if (req.headers['x-test-cookie-auth'] === '1') {
         (req as any)._cdsCookieAuth = true;
+        (req as any)._cdsBasicHumanAuth = true;
+        (req as any).cdsUser = { username: 'owner', isSystemOwner: true, authProvider: 'legacy' };
       }
       next();
     });
@@ -152,6 +161,17 @@ describe('resource external TCP access', () => {
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', resolve);
     });
+
+    const endpoint = '/api/branches/main-branch/resources/infra%3Amysql-main/external-access';
+    const valid = { enabled: true, ttlMinutes: 120, allowlist: ['203.0.113.10'] };
+    expect((await request(server!, 'PUT', endpoint, valid)).status).toBe(403);
+    for (const body of [{ ...valid, ttlMinutes: 0 }, { ...valid, ttlMinutes: 1441 }, { ...valid, ttlMinutes: 1.5 }, { ...valid, allowlist: ['0.0.0.0/0'] }, { ...valid, allowlist: ['0.0.0.0/1', '128.0.0.0/1'] }, { ...valid, allowlist: ['203.0.113.10/32/1'] }]) {
+      expect((await request(server!, 'PUT', endpoint, body, { 'x-test-cookie-auth': '1' })).status).toBe(400);
+    }
+    vi.stubEnv('CDS_RESOURCE_TCP_ENABLED', '0');
+    expect((await request(server!, 'PUT', endpoint, valid, { 'x-test-cookie-auth': '1' })).status).toBe(409);
+    vi.stubEnv('CDS_RESOURCE_TCP_ENABLED', '1');
+    expect(shell.commands.some((cmd) => cmd.startsWith('docker run -d'))).toBe(false);
 
     const res = await request(
       server!,
@@ -161,9 +181,26 @@ describe('resource external TCP access', () => {
       { 'x-test-cookie-auth': '1' },
     );
 
-    expect(res.status).toBe(409);
-    expect(res.body.error).toContain('禁止直接发布到公网');
-    expect(shell.commands.some((cmd) => cmd.startsWith('docker run -d'))).toBe(false);
+    expect(res.status).toBe(200);
+    expect(res.body.policy.allowlistEnforced).toBe(true);
+    expect(shell.commands.find((cmd) => cmd.startsWith('iptables -I DOCKER-USER'))).toContain('--ctdir ORIGINAL');
+    expect(res.body.policy.host).toBe('192.0.2.20');
+    expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('-p 192.0.2.20:43000:15432');
+    expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('EXPIRES_AT=');
+    for (const flag of ['--log-driver json-file', '--log-opt max-size=50m', '--log-opt max-file=3']) {
+      expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain(flag);
+    }
+    const expiredPolicy = stateService.upsertResourceExternalAccess({ ...res.body.policy, expiresAt: new Date(Date.now() - 1000).toISOString() });
+    const expired = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Amysql-main/connection-string?scope=external', undefined, { 'x-test-cookie-auth': '1' });
+    expect(expired.status).toBe(409);
+    expect(stateService.getResourceExternalAccess('prd-agent', 'main-branch', 'infra:mysql-main')?.enabled).toBe(false);
+    expect(shell.commands.some((cmd) => cmd.startsWith('docker rm -f') && cmd.includes(expiredPolicy.proxyContainerName!))).toBe(true);
+    shell.addResponse(`iptables -F ${expiredPolicy.firewallChain}`, { stdout: '', stderr: 'permission denied', exitCode: 1 });
+    const failedFirewall = await request(server!, 'PUT', endpoint, valid, { 'x-test-cookie-auth': '1' });
+    expect(failedFirewall.status).toBe(500);
+    expect(shell.commands.filter((cmd) => cmd.startsWith('docker run -d'))).toHaveLength(1);
+    expect(stateService.getResourceExternalAccess('prd-agent', 'main-branch', 'infra:mysql-main')?.enabled).toBe(false);
+
   });
 
   it('reuses the resource own external port when updating an already-enabled policy (#805)', async () => {
@@ -249,12 +286,14 @@ describe('resource external TCP access', () => {
     const containerService = new ContainerService(shell, config, {
       getDockerNetwork: () => 'cds-proj-prd-agent',
       getProjectSlug: () => 'prd-agent',
-    });
+    }, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
       if (req.headers['x-test-cookie-auth'] === '1') {
         (req as any)._cdsCookieAuth = true;
+        (req as any)._cdsBasicHumanAuth = true;
+        (req as any).cdsUser = { username: 'owner', isSystemOwner: true, authProvider: 'legacy' };
       }
       next();
     });
@@ -271,9 +310,29 @@ describe('resource external TCP access', () => {
       { 'x-test-cookie-auth': '1' },
     );
 
-    expect(res.status).toBe(409);
-    expect(res.body.error).toContain('禁止直接发布到公网');
-    expect(shell.commands.some((cmd) => cmd.startsWith('docker run -d'))).toBe(false);
+    expect(res.status).toBe(200);
+    expect(res.body.policy.port).toBe(43111);
+    expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('-p 192.0.2.20:43111:15432');
+
+    const endpoint='/api/branches/main-branch/resources/infra%3Amysql-main/external-access';
+    for(const stage of ['firewall','network','container']){
+      // Restore an enabled policy to exercise replacement of an existing live endpoint.
+      stateService.upsertResourceExternalAccess({...res.body.policy,enabled:true});
+      if(stage==='firewall')shell.addResponsePatternFirst(/^iptables -F CDS_EXT_/,()=>({stdout:'',stderr:'permission denied',exitCode:1}));
+      if(stage==='network')shell.addResponsePatternFirst(/^docker network (inspect|create) /,()=>({stdout:'',stderr:'network unavailable',exitCode:1}));
+      if(stage==='container')shell.addResponsePatternFirst(/^docker run -d /,()=>({stdout:'',stderr:'start failed',exitCode:1}));
+      const failed=await request(server!,'PUT',endpoint,{enabled:true,ttlMinutes:30,allowlist:['203.0.113.10']},{'x-test-cookie-auth':'1'});
+      expect(failed.status).toBe(500);
+      expect(stateService.getResourceExternalAccess('prd-agent','main-branch','infra:mysql-main')?.enabled).toBe(false);
+      await flushAllJsonStateStores();
+      const restored=new StateService(path.join(tmpDir,'state.json'),tmpDir);restored.load();
+      expect(restored.getResourceExternalAccess('prd-agent','main-branch','infra:mysql-main')?.enabled).toBe(false);
+      const connection=await request(server!,'GET','/api/branches/main-branch/resources/infra%3Amysql-main/connection-string?scope=external',undefined,{'x-test-cookie-auth':'1'});
+      expect(connection.status).toBe(409);
+      // Undo only this injected error; subsequent failure stages must reach their own boundary.
+      if(stage==='firewall')shell.addResponsePatternFirst(/^iptables -F CDS_EXT_/,()=>({stdout:'',stderr:'',exitCode:0}));
+      if(stage==='network')shell.addResponsePatternFirst(/^docker network (inspect|create) /,()=>({stdout:'',stderr:'',exitCode:0}));
+    }
   });
 
   it('rejects enabling public TCP access without an allowlist', async () => {
@@ -332,12 +391,14 @@ describe('resource external TCP access', () => {
     const containerService = new ContainerService(shell, config, {
       getDockerNetwork: () => 'cds-proj-prd-agent',
       getProjectSlug: () => 'prd-agent',
-    });
+    }, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
       if (req.headers['x-test-cookie-auth'] === '1') {
         (req as any)._cdsCookieAuth = true;
+        (req as any)._cdsBasicHumanAuth = true;
+        (req as any).cdsUser = { username: 'owner', isSystemOwner: true, authProvider: 'legacy' };
       }
       next();
     });
@@ -354,8 +415,8 @@ describe('resource external TCP access', () => {
       { 'x-test-cookie-auth': '1' },
     );
 
-    expect(res.status).toBe(409);
-    expect(res.body.error).toContain('禁止直接发布到公网');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('allowlist');
     expect(shell.commands.some((cmd) => cmd.startsWith('docker run -d'))).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { ArrowLeft, Download, Expand, ImagePlus, LayoutGrid, RefreshCw, Send, Wand2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { poolIdFromVisualModelOptionId, visualModelOptionIdOf } from '@/pages/ai-chat/visualAgentModelOptions';
+import { normalizeVisualModelOptionId } from '@/pages/ai-chat/visualAgentModelOptions';
 import {
   createWorkspaceImageGenRun,
   getImageGenRun,
@@ -34,7 +34,9 @@ import type { ImageAsset } from '@/services/contracts/visualAgent';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 import type { ModelAdapterInfo } from '@/services/contracts/models';
 import { buildVisualAgentModelOptions, selectVisualModel, visualImageSizeChoices } from '../ai-chat/visualAgentModelOptions';
-import { buildInlineImageToken, parseInlinePrompt, tryParseWxH } from '@/lib/visualAgentPromptUtils';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint } from '@/components/visual-agent/VisualModelOptionContent';
+import { buildInlineImageToken, tryParseWxH } from '@/lib/visualAgentPromptUtils';
+import { parseVisualAgentHandoff } from '@/lib/visualAgentHandoff';
 
 // 与 AdvancedVisualAgentTab 的持久化契约一致（schemaVersion=1）
 const PERSIST_SCHEMA_VERSION = 1;
@@ -70,6 +72,7 @@ type GenCard = {
   assetId?: string;
   errorMessage?: string;
   refUrl?: string;
+  ref?: RefImage;
   startedAt: number;
   size: string;
 };
@@ -198,15 +201,16 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       const stored = sessionStorage.getItem(sessionKey);
       if (!stored) return;
       sessionStorage.removeItem(sessionKey);
-      const data = JSON.parse(stored) as { messageText?: string; assetId?: string | null; modelId?: string };
-      const parsed = parseInlinePrompt(String(data.messageText ?? ''));
+      const handoff = parseVisualAgentHandoff(stored);
+      if (!handoff) return;
+      const parsed = handoff.prompt;
       if (parsed.text) {
         pendingInitRef.current = {
           text: parsed.text,
           size: parsed.size,
-          assetId: data.assetId,
+          assetId: handoff.assetId,
           // 首页现在不再预先上传参考图（跳转不等那个往返），assetId 通常是空的，
-          // 图只存在于 messageText 里的 [IMAGE src=dataURL]。只认 assetId 的话，
+          // 图存在交接包的独立 inlineImage 字段里。只认 assetId 的话，
           // 手机用户传的照片会被整个忽略，还照样扣一次生成（Codex PR #1476 P1）。
           inlineImage: parsed.inlineImage ?? null,
         };
@@ -229,8 +233,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       // 所以这里不再手写方向，而是**归一到选项 id 这个口径**：先剥再加，
       // 无论交接包给的是哪一种写法，结果都是同一个规范形式。判据纪律形状 6：
       // 读到的值真实存在不代表它是这里真正生效的那个。
-      const raw = String(data.modelId || '').trim();
-      const handedModelId = raw ? visualModelOptionIdOf(poolIdFromVisualModelOptionId(raw)) : '';
+      const handedModelId = normalizeVisualModelOptionId(handoff.modelId);
       if (handedModelId) setPickedPoolId(handedModelId);
     } catch {
       // ignore
@@ -294,7 +297,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
 
       setCards((prev) => [
         ...prev,
-        { key, prompt, status: 'running', refUrl: ref?.url, startedAt: Date.now(), size: genSize },
+        { key, prompt, status: 'running', refUrl: ref?.url, ref: ref ?? undefined, startedAt: Date.now(), size: genSize },
       ]);
       setInput('');
       setRefImage(null);
@@ -413,6 +416,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             imageRefs: ref
               ? [{ refId: 1, assetSha256: ref.sha256, url: ref.url, label: '第1张图' }]
               : undefined,
+            expectedImageRefCount: ref ? 1 : 0,
             userMessageContent: `${imageToken}(@size:${genSize}) ${prompt}`,
           },
           idempotencyKey: `imRun_${workspaceId}_${key}`,
@@ -689,11 +693,11 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           modelOptions.length > 1 ? (
             <button
               type="button"
-              className="h-8 px-2.5 rounded-lg text-[11px] font-mono truncate max-w-[120px] active:opacity-70"
+              className="h-8 px-2.5 rounded-lg text-[11px] inline-flex items-center gap-1.5 max-w-[150px] active:opacity-70"
               style={{ color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.06)' }}
               onClick={() => setPoolSheetOpen(true)}
             >
-              {pickedPool.name}
+              <VisualModelIcon model={pickedPool} size={14} /><span className="truncate">{pickedPool.name}</span>
             </button>
           ) : (
             <span className="text-[11px] font-mono truncate max-w-[120px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
@@ -761,7 +765,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
                 <div className="text-[12px] leading-snug" style={{ color: 'rgba(255,255,255,0.6)' }}>{c.prompt}</div>
                 <div className="text-[13px]" style={{ color: 'var(--accent-fg-danger)' }}>{c.errorMessage || '生成失败'}</div>
                 <div>
-                  <button type="button" className={actionBtnCls} style={actionBtnStyle} onClick={() => void handleGenerate(c.prompt)}>
+                  <button type="button" className={actionBtnCls} style={actionBtnStyle} onClick={() => void handleGenerate(c.prompt, { ref: c.ref ?? null, sizeOverride: c.size })}>
                     <RefreshCw size={13} /> 重试
                   </button>
                 </div>
@@ -914,18 +918,16 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         ? createPortal(
             <div className="fixed inset-0 z-[120] flex flex-col justify-end" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setPoolSheetOpen(false)}>
               <div
-                className="surface-tone-dark rounded-t-2xl px-3 pt-3 flex flex-col gap-1"
+                className="surface-tone-dark rounded-t-2xl flex flex-col"
                 style={{
-                  background: '#1a1a20',
-                  maxHeight: '60vh',
-                  overflowY: 'auto',
+                  background: 'var(--panel-solid)',
+                  maxHeight: '85dvh',
                   paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)',
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="text-[13px] font-medium px-1 pb-1" style={{ color: 'rgba(255,255,255,0.85)' }}>
-                  选择生图模型
-                </div>
+                <VisualModelMenuHeading onClose={() => setPoolSheetOpen(false)} />
+                <div className="min-h-0 p-1.5" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
                 {modelOptions.length === 0 && <p className="p-3 text-sm">尚未开放业务模型，请管理员在视觉创作首页的模型设置中配置。</p>}
                 {modelOptions.map((g) => (
                   <button
@@ -933,24 +935,22 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
                     type="button"
                     disabled={!g.enabled}
                     className="w-full text-left px-3 py-3 rounded-xl active:opacity-70"
-                    style={
-                      g.id === pickedPool?.id
-                        ? { background: 'rgba(120,120,255,0.18)', color: 'rgba(220,220,255,0.95)' }
-                        : { color: 'rgba(255,255,255,0.75)' }
-                    }
+                    aria-pressed={g.id === pickedPool?.id}
+                    style={{
+                      background: g.id === pickedPool?.id ? 'var(--report-accent-soft)' : 'transparent',
+                      border: g.id === pickedPool?.id ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                      opacity: g.enabled ? 1 : 0.7,
+                    }}
                     onClick={() => {
                       setPickedPoolId(g.id);
                       setPoolSheetOpen(false);
                     }}
                   >
-                    <div className="text-[14px]">{g.name}{g.isDefault ? ' · 默认' : ''}{!g.enabled ? ' · 暂不可用' : ''}</div>
-                    {g.description ? (
-                      <div className="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                        {g.description}
-                      </div>
-                    ) : null}
+                    <VisualModelOptionContent model={g} selected={g.id === pickedPool?.id} />
                   </button>
                 ))}
+                </div>
+                <VisualModelMenuHint />
               </div>
             </div>,
             document.body

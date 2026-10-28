@@ -1,3 +1,5 @@
+import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-plan.js';
+import { projectResourceNamespace } from '../services/preview-slug.js';
 /**
  * Pending imports — Agent-submitted CDS compose YAML awaiting operator approval.
  *
@@ -370,13 +372,17 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // Apply build profiles. Non-legacy projects auto-suffix the id with
     // the project slug so two projects can share "api" and "admin"
     // without colliding. This matches the /quickstart convention.
-    const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
+    const idSuffix = project.legacyFlag ? '' : `-${projectResourceNamespace(project)}`;
     // depends_on / cds.calls 写的是 compose 服务名；id 加了项目后缀后由同一个助手对齐（与克隆导入、
     // Quickstart 同一份规则），否则 `web` 调 `api` 会落成 `web-foo` 调不存在的 `api`，边被丢、服务被判游离。
     const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
       (parsed.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
       idSuffix,
     );
+    try {assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));}
+    catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
+    try { stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     const appliedProfiles: string[] = [];
     for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
@@ -422,7 +428,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       // "mongodb" without colliding on `cds-infra-mongodb`.
       const containerName = project.legacyFlag
         ? `cds-infra-${def.id}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${def.id}`;
+        : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${def.id}`;
       const service: InfraService = {
         id: def.id,
         projectId: project.id,
