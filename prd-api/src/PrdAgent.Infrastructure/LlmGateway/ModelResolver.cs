@@ -1124,6 +1124,11 @@ public class ModelResolver : IModelResolver
                         PlatformName = "LLM Gateway",
                         Priority = 1,
                         HealthStatus = catalogOffering?.HealthStatus.ToString() ?? "Unavailable",
+                        IsRecoveryProbeAvailable = catalogOffering is not null
+                            && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                                catalogOffering.HealthStatus, catalogOffering.HalfOpenLeaseUntil,
+                                catalogOffering.ManualRecoveryAt, catalogOffering.LastFailedAt,
+                                nowUtc, halfOpenCutoff),
                         HealthScore = catalogOffering?.HealthStatus switch
                         {
                             ModelHealthStatus.Healthy => 100,
@@ -1330,9 +1335,12 @@ public class ModelResolver : IModelResolver
 
         if (resolved.Count == 0)
         {
+            var enabledOfferings = available.Where(x => x.Enabled).ToList();
+            var allRecovering = enabledOfferings.Count > 0
+                && enabledOfferings.All(x => x.HealthStatus == ModelHealthStatus.Unavailable);
             return ModelResolutionResult.NotFound(expectedModel,
                 $"逻辑模型没有可用上游 Offering: {logical.PublicId}",
-                GatewayRouteFailure.OfferingUnresolvable,
+                allRecovering ? GatewayRouteFailure.ModelPoolAllUnavailable : GatewayRouteFailure.OfferingUnresolvable,
                 "logical-model-offering",
                 appCallerCode,
                 logicalModelPublicId: logical.PublicId);

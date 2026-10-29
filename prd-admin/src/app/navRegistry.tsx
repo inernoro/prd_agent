@@ -14,6 +14,7 @@
 
 import { lazy, type ReactElement } from 'react';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
+import { ProductPermissionGate, ProductReviewPermissionGate } from '@/pages/product-agent/ProductPermissionGate';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
@@ -44,14 +45,19 @@ const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ defa
 const PmMilestoneDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.MilestoneDetailPage })));
 const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
-const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
-const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
+const ProductVersionProductRoute = lazy(() => import('@/pages/product-agent/ProductVersionAccessPage').then(m => ({ default: m.ProductVersionProductRoute })));
+const ProductVersionDetailRoute = lazy(() => import('@/pages/product-agent/ProductVersionAccessPage').then(m => ({ default: m.ProductVersionDetailRoute })));
 const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const McpConsolePage = lazy(() => import('@/pages/mcp-console/McpConsolePage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
+const ReviewAgentSubmitPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentSubmitPage').then(m => ({ default: m.ReviewAgentSubmitPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
+const ReviewAgentResultPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentResultPage').then(m => ({ default: m.ReviewAgentResultPage })));
+const ReviewAgentAllPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentAllPage').then(m => ({ default: m.ReviewAgentAllPage })));
+const ReviewAssessmentListPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentListPage').then(m => ({ default: m.ReviewAssessmentListPage })));
+const ReviewAssessmentDetailPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentDetailPage').then(m => ({ default: m.ReviewAssessmentDetailPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const EmailAgentPage = lazy(() => import('@/pages/email-agent').then(m => ({ default: m.EmailAgentPage })));
 const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
@@ -141,9 +147,16 @@ function shellGuarded(perm: string | string[], el: ReactElement): ReactElement {
 function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElement {
   return (
     <RequireAuth>
-      <RequirePermission perm={perm}>{el}</RequirePermission>
+      <RequirePermission perm={perm}>{(Array.isArray(perm) ? perm : [perm]).some((key) => key.startsWith('product-agent.')) ? <ProductPermissionGate>{el}</ProductPermissionGate> : el}</RequirePermission>
     </RequireAuth>
   );
+}
+
+function productReviewGuarded(section: 'review' | 'requirements', el: ReactElement): ReactElement {
+  return fullscreenGuarded('product-agent.use',
+    <ProductReviewPermissionGate permission="review-agent.use">
+      <OverviewShell sectionOverride={section}>{el}</OverviewShell>
+    </ProductReviewPermissionGate>);
 }
 
 // ── 注册表正文 ─────────────────────────────────────────────
@@ -612,6 +625,39 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/product-agent/review/submit',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('review', <ReviewAgentSubmitPage />),
+  },
+  {
+    path: '/product-agent/review/submissions/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('review', <ReviewAgentResultPage />),
+  },
+  {
+    path: '/product-agent/review/all',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('review',
+      <ProductReviewPermissionGate permission="review-agent.view-all">
+        <ReviewAgentAllPage />
+      </ProductReviewPermissionGate>),
+  },
+  {
+    path: '/product-agent/requirements/assessments',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('requirements', <ReviewAssessmentListPage />),
+  },
+  {
+    path: '/product-agent/requirements/assessments/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('requirements', <ReviewAssessmentDetailPage />),
+  },
+  {
     // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航
     path: '/product-agent/p/:productId/knowledge/:entryId',
     placement: 'fullscreen',
@@ -622,21 +668,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
     path: '/product-agent/p/:productId/:kind/:id',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+    permission: ['product-agent.use', 'product-agent.version-apply'],
+    element: fullscreenGuarded(['product-agent.use', 'product-agent.version-apply'], <ProductVersionDetailRoute />),
   },
   {
     // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
     path: '/product-agent/p/:productId',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+    permission: ['product-agent.use', 'product-agent.version-apply'],
+    element: fullscreenGuarded(['product-agent.use', 'product-agent.version-apply'], <ProductVersionProductRoute />),
   },
   {
     path: '/product-agent',
     placement: 'fullscreen',
-    permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <OverviewShell />),
+    permission: ['product-agent.use', 'product-agent.version-apply'],
+    element: fullscreenGuarded(['product-agent.use', 'product-agent.version-apply'], <OverviewShell />),
     nav: {
       label: '产品管理',
       shortLabel: '产品',

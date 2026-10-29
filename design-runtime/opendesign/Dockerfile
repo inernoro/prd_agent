@@ -29,6 +29,19 @@ LABEL org.opencontainers.image.source="https://github.com/inernoro/prd_agent" \
 
 USER root
 
+ARG DESIGN_RUNTIME_CHROMIUM_VERSION=155.0.8059.84
+ARG DESIGN_RUNTIME_CHROMIUM_RELEASE=0
+
+ENV DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    DESIGN_RUNTIME_BROWSER_VERSION=${DESIGN_RUNTIME_CHROMIUM_VERSION}
+
+WORKDIR /opt/map-design-runtime
+RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --prod --frozen-lockfile \
+    && apk add --no-cache chromium="${DESIGN_RUNTIME_CHROMIUM_VERSION}-r${DESIGN_RUNTIME_CHROMIUM_RELEASE}" \
+    && test -x "$DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH"
+
 # 与 cds/open-design-runtime/Dockerfile 同一个钉住版本，并在构建时核对。
 RUN npm install --global --ignore-scripts=false @openai/codex@0.143.0 \
     && test "$(codex --version)" = "codex-cli 0.143.0" \
@@ -36,12 +49,24 @@ RUN npm install --global --ignore-scripts=false @openai/codex@0.143.0 \
 
 COPY THIRD_PARTY_NOTICES.md /usr/share/doc/map-design-runtime/THIRD_PARTY_NOTICES.md
 COPY --from=build /build/dist /opt/map-design-runtime/dist
-COPY --from=build /build/package.json /opt/map-design-runtime/package.json
+COPY scripts/image-browser-smoke.mjs /opt/map-design-runtime/scripts/image-browser-smoke.mjs
 
-# 工作目录与引擎数据目录归引擎用户；产物导出目录只归本服务（root），引擎读不到也写不进。
-RUN mkdir -p /workspace /app/design-templates /app/.od /var/lib/map-design-runtime/output \
-    && chown open-design:open-design /workspace /app/design-templates /app/.od \
-    && chmod 0700 /var/lib/map-design-runtime /var/lib/map-design-runtime/output
+# 工作目录与引擎数据目录归引擎用户；浏览器质量证据由同一个降权用户写入专用目录。
+# 产物导出目录仍只归本服务（root），引擎与浏览器子进程读不到也写不进。
+RUN mkdir -p /home/open-design /workspace /app/design-templates /app/.od \
+        /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality \
+    && chown open-design:open-design /home/open-design /workspace /app/design-templates /app/.od \
+        /var/lib/map-design-runtime/browser-quality \
+    && chmod 0711 /var/lib/map-design-runtime \
+    && chmod 0700 /home/open-design /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality
+
+# 构建产物只有在降权用户能真实拉起固定版本 Chromium，并分别创建桌面与移动视口时才可发布。
+# 这条零模型自检会在 Alpine 包、Playwright 协议或沙箱权限漂移时直接让镜像构建失败。
+RUN su open-design -s /bin/sh -c \
+    "HOME=/home/open-design \
+     DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH='$DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH' \
+     DESIGN_RUNTIME_BROWSER_VERSION='$DESIGN_RUNTIME_BROWSER_VERSION' \
+     node /opt/map-design-runtime/scripts/image-browser-smoke.mjs"
 
 # 基础镜像的 NODE_OPTIONS（192 MB 堆上限）是给 daemon 的，daemon 的环境由本服务显式传入；
 # 本服务自己要处理最大 64 MB 的任务包与 128 MB 的产物，堆上限在启动命令里单独给。

@@ -161,7 +161,7 @@ export function UsagePage() {
     <PageShell>
       <PageHeader
         title="预算与用量"
-        subtitle="最近 30 天的请求用量、费用估算和供应商账单对照。"
+        subtitle="最近 30 天的请求用量、Gateway 估算和供应商账单对照。"
         summary={summaryStrip}
         actions={(
           <>
@@ -185,7 +185,7 @@ export function UsagePage() {
         </div>
         {governanceError ? <InlineAlert tone="error">{governanceError}</InlineAlert> : null}
         <div className="lg-usage-grid">
-          <Card><div className="lg-card-kicker">本月已结算</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.spentUsd, 'USD') : '未设上限'}</strong><p>{governance?.monthlyBudgetUsd ? `剩余 ${fmtCost(governance.remainingBudgetUsd ?? 0, 'USD')}` : '不影响 appCaller 自身预算'}</p></Card>
+          <Card><div className="lg-card-kicker">本月预算占用</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.spentUsd, 'USD') : '未设上限'}</strong><p>{governance?.monthlyBudgetUsd ? `Gateway 估算口径，剩余 ${fmtCost(governance.remainingBudgetUsd ?? 0, 'USD')}` : '不代表供应商实际结算，不影响 appCaller 自身预算'}</p></Card>
           <Card><div className="lg-card-kicker">并发预占</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.monthlyBudgetUsd ? fmtCost(governance.reservedUsd, 'USD') : '未启用'}</strong><p>{governance?.budgetReservationUsd ? `每请求保守预占 ${fmtCost(governance.budgetReservationUsd, 'USD')}` : '设置总月预算时必须同时设置'}</p></Card>
           <Card><div className="lg-card-kicker"><Gauge size={15} /> 当前分钟</div><strong className="lg-large-value">{!governance ? '正在读取' : governance.rateLimitPerMinute ? `${fmtCompact(governance.currentMinuteCount)} / ${fmtCompact(governance.rateLimitPerMinute)}` : '未设上限'}</strong><p>所有实际调用合计，分钟窗口原子计数</p></Card>
         </div>
@@ -208,19 +208,19 @@ export function UsagePage() {
             <p>命中缓存的输入按缓存价计，比全价省下这些</p>
           </Card>
         ) : null}
-        {(summary?.estimatedCosts ?? []).map((item) => <Card key={item.currency}><div className="lg-card-kicker">{item.currency} 估算费用</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 个请求，未与其他币种相加</p></Card>)}
-        {(reconciliation?.providerActualCosts ?? []).map((item) => <Card key={`actual-${item.currency}`}><div className="lg-card-kicker">{item.currency} 供应商实际费用</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 条供应商账单记录</p></Card>)}
+        {(summary?.estimatedCosts ?? []).map((item) => <Card key={item.currency}><div className="lg-card-kicker">{item.currency} Gateway 估算</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 个请求，未与其他币种相加</p></Card>)}
+        {(reconciliation?.providerActualCosts ?? []).map((item) => <Card key={`actual-${item.currency}`}><div className="lg-card-kicker">{item.currency} 供应商实际账单</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 条供应商账单记录</p></Card>)}
       </div>
       <Card style={CARD_BODY} aria-labelledby="cost-state-title">
         <div style={cardHeadStyle}>
           <h2 id="cost-state-title" style={SECTION_TITLE}>
-            费用四状态
+            金额证据四状态
             {/* 四张卡原本各挂一整句解释，一屏就是四段说明。解释收进这里，卡片只留数字。 */}
-            <HelpPopover label="费用四状态">
+            <HelpPopover label="金额证据四状态">
               <dl>
                 <dt>可估算</dt><dd>请求具备完整 token 和价格快照；金额仍按原币种分别展示。</dd>
                 <dt>供应商实际</dt><dd>来自供应商响应或账单导入，不覆盖 Gateway 估算。</dd>
-                <dt>估算未知</dt><dd>缺少 token 或价格时保持未知，绝不显示为费用 0。</dd>
+                <dt>估算未知</dt><dd>缺少 token 或价格时保持未知，绝不显示为金额 0。</dd>
                 <dt>已对账</dt><dd>同币种可直接比较；跨币种只有具备 FX 凭证和汇率才计算差额。</dd>
               </dl>
             </HelpPopover>

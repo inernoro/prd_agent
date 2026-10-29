@@ -1,3 +1,4 @@
+using Moq;
 using System.IO.Compression;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -10,6 +11,132 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class HostedSiteOptimizationServiceTests
 {
+    [Theory]
+    [InlineData(600L * 1024 * 1024, false, true)]
+    [InlineData(5000L * 1024 * 1024, false, true)]
+    [InlineData(5000L * 1024 * 1024 + 1, false, false)]
+    [InlineData(500L * 1024 * 1024 + 1, true, false)]
+    public void PublicationPlan_UsesTheSamePackageAndEntryLimits(long bytes, bool singleEntry, bool accepted)
+    {
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string path) => $"web-hosting/sites/{siteId}/{path}");
+        var service = new HostedSiteService(null!, storage.Object, null!, null!, null!, null!, null!, null!,
+            NullLogger<HostedSiteService>.Instance);
+        using var zip = CreateMetadataOnlyZip64(bytes, singleEntry);
+
+        (service.ValidateZip("00000000000000000000000000000000", zip) == null).ShouldBe(accepted);
+    }
+
+    [Fact]
+    public async Task Extract_RejectsEntryBodyLargerThanDeclaredLength()
+    {
+        using var input = new MemoryStream(new byte[17]);
+        await Should.ThrowAsync<InvalidOperationException>(() => HostedSiteService.ReadZipEntryAsync(input, 16));
+    }
+
+    [Fact]
+    public async Task Extract_PreservesExactEntryBytes()
+    {
+        var bytes = Encoding.UTF8.GetBytes("<main>ready</main>");
+        using var input = new MemoryStream(bytes);
+        (await HostedSiteService.ReadZipEntryAsync(input, bytes.Length)).ShouldBe(bytes);
+    }
+
+    [Theory]
+    [InlineData(600L * 1024 * 1024)]
+    [InlineData(5000L * 1024 * 1024)]
+    public void Analyze_Zip64AboveOldLimit_UsesLongCapacityAndKeepsOptimizationBudget(long bytes)
+    {
+        using var zip = CreateMetadataOnlyZip64(bytes);
+
+        var result = CreateService().Analyze(zip);
+
+        result.Blocked.ShouldBeFalse();
+        result.Recommended.ShouldBeFalse();
+        result.OriginalUncompressedBytes.ShouldBe(bytes);
+        result.Warnings.ShouldContain(x => x.Contains("200 MB"));
+        PrdAgent.Core.Models.HostedSiteUploadLimits.ValidateExtractedSize(bytes).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Analyze_Zip64OverCapacity_IsRejectedBeforeReadingEntryBody()
+    {
+        var bytes = PrdAgent.Core.Models.HostedSiteUploadLimits.MaxPackageBytes + 1;
+        using var zip = CreateMetadataOnlyZip64(bytes);
+
+        var result = CreateService().Analyze(zip);
+
+        result.Blocked.ShouldBeTrue();
+        result.Error.ShouldContain("5000 MB");
+        PrdAgent.Core.Models.HostedSiteUploadLimits.ValidateExtractedSize(bytes).ShouldNotBeNull();
+    }
+
+    [Theory]
+    [InlineData(600L * 1024 * 1024, true)]
+    [InlineData(5000L * 1024 * 1024, true)]
+    [InlineData(5000L * 1024 * 1024 + 1, false)]
+    public void UploadCapacity_MatchesExtractedCapacityWithoutAllocatingLargeBuffers(long bytes, bool accepted)
+    {
+        PrdAgent.Core.Models.HostedSiteUploadLimits.IsWithinPackageLimit(bytes).ShouldBe(accepted);
+        (PrdAgent.Core.Models.HostedSiteUploadLimits.ValidateExtractedSize(bytes) == null).ShouldBe(accepted);
+    }
+
+    // 只创建 ZIP64 目录元数据。Analyze 必须按 long 检查容量，并在 200MB 预算处返回，
+    // 不能读取这个没有真实正文的条目，更不能为声称的 5GB 分配内存。
+    private static MemoryStream CreateMetadataOnlyZip64(long size, bool singleEntry = false)
+    {
+        var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
+        var count = 0;
+        while (size > 0)
+        {
+            var length = singleEntry ? size : Math.Min(size, 500L * 1024 * 1024);
+            var name = Encoding.UTF8.GetBytes(count == 0 ? "index.html" : $"assets/{count}.bin");
+            writer.Write(0x02014b50u);
+            writer.Write((ushort)45); writer.Write((ushort)45);
+            writer.Write((ushort)0); writer.Write((ushort)0);
+            writer.Write((ushort)0); writer.Write((ushort)0);
+            writer.Write(0u); writer.Write(0u); writer.Write(uint.MaxValue);
+            writer.Write((ushort)name.Length); writer.Write((ushort)12);
+            writer.Write((ushort)0); writer.Write((ushort)0); writer.Write((ushort)0);
+            writer.Write(0u); writer.Write(0u); writer.Write(name);
+            writer.Write((ushort)1); writer.Write((ushort)8); writer.Write(length);
+            size -= length;
+            count++;
+        }
+        var centralSize = (uint)stream.Length;
+        writer.Write(0x06054b50u);
+        writer.Write((ushort)0); writer.Write((ushort)0);
+        writer.Write((ushort)count); writer.Write((ushort)count);
+        writer.Write(centralSize); writer.Write(0u); writer.Write((ushort)0);
+        stream.Position = 0;
+        return stream;
+    }
+
+    [Fact]
+    public void Analyze_SingleEntryAbove500Mb_IsRejectedBeforeReadingEntryBody()
+    {
+        using var zip = CreateMetadataOnlyZip64(500L * 1024 * 1024 + 1, singleEntry: true);
+
+        var result = CreateService().Analyze(zip);
+
+        result.Blocked.ShouldBeTrue();
+        result.Error.ShouldContain("单个文件不能超过 500 MB");
+    }
+
+    [Theory]
+    [InlineData(".zip", 600L * 1024 * 1024, true)]
+    [InlineData(".zip", 5000L * 1024 * 1024, true)]
+    [InlineData(".zip", 5000L * 1024 * 1024 + 1, false)]
+    [InlineData(".mp4", 500L * 1024 * 1024, true)]
+    [InlineData(".mp4", 500L * 1024 * 1024 + 1, false)]
+    public void DirectUpload_UsesPackageAndSingleFileBoundaries(string extension, long bytes, bool accepted)
+    {
+        (PrdAgent.Api.Controllers.Api.WebPagesController.ValidateUploadSize(bytes, extension) == null)
+            .ShouldBe(accepted);
+    }
+
     [Theory]
     [InlineData("web-hosting/sites/0123456789abcdef0123456789abcdef/__chunks/000000.part", null, true)]
     [InlineData("data/web-hosting/sites/0123456789abcdef0123456789abcdef/__source/source.zip", "data", true)]
@@ -653,7 +780,9 @@ public class HostedSiteOptimizationServiceTests
         var source = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteOptimizationService.cs"));
 
-        source.ShouldContain("var sourceBytes = new byte[checked((int)session.SourceFileSize)]");
+        source.ShouldContain("await using var sourceStream = await DownloadChunksAsync(session)");
+        source.ShouldContain("FileOptions.Asynchronous | FileOptions.DeleteOnClose");
+        source.ShouldNotContain("new byte[checked((int)session.SourceFileSize)]");
         source.ShouldNotContain("var sourceBytes = source.ToArray()");
         source.ShouldContain("var cleanupAfter = DateTime.UtcNow.Add(WorkerLeaseLifetime)");
         source.ShouldContain("current == null || current.Status == HostedSiteOptimizationStatuses.CleanupPending");

@@ -263,7 +263,7 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
   it('「已注入」事件发在 docker run 真的执行之后，不在算出命令的地方', () => {
     const source = containerSource();
     const computedAt = source.indexOf('const resolvedCommand = mysqlDefaults.command;');
-    const dockerRunAt = source.indexOf('const result = await this.shell.exec(cmd);');
+    const dockerRunAt = source.indexOf('let result = await this.shell.exec(cmd);');
     const appliedAt = source.indexOf("action: 'infra.mysql.max-connections-defaulted'");
     const runStartedAt = source.indexOf("action: 'infra.run.started'");
     expect(computedAt, '找不到命令计算处').toBeGreaterThan(-1);
@@ -410,7 +410,7 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
   it('红用例：把「已注入」事件挪回计算处，守卫必须变红', () => {
     // 守卫谓词与上面那条绿用例同一个，分别跑真源码与变异源码。
     const guard = (source: string) => {
-      const dockerRunAt = source.indexOf('const result = await this.shell.exec(cmd);');
+      const dockerRunAt = source.indexOf('let result = await this.shell.exec(cmd);');
       const appliedAt = source.indexOf("action: 'infra.mysql.max-connections-defaulted'");
       expect(dockerRunAt).toBeGreaterThan(-1);
       expect(appliedAt).toBeGreaterThan(-1);

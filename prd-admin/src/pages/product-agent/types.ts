@@ -193,17 +193,25 @@ export interface ProductVersion {
 export type VersionScale = 'major' | 'medium' | 'minor';
 
 export interface ProductInitiation {
+  releaseTrainingRequired?: boolean | null;
   id: string;
   productId: string;
   linkedProductId?: string | null;
   tCode?: string | null;
+  /** 服务端按全局 T 序列和下游关联计算的只读删除资格。 */
+  canDelete?: boolean;
+  canChangeVersionType?: boolean;
   systemName?: string | null;
   appName?: string | null;
   projectType: 'standard' | 'custom';
   customerSource?: string | null;
+  demandSource?: string | null;
   planName: string;
   requirementDescription?: string | null;
   departmentName?: string | null;
+  ownerId?: string | null;
+  ownerName?: string | null;
+  projectMemberNames?: string[];
   planUrl?: string | null;
   versionType: VersionScale;
   requirementIds: string[];
@@ -261,16 +269,25 @@ export interface ProductRelease {
   systemName?: string | null;
   appName?: string | null;
   isTemporaryOptimization: boolean;
+  isManualTCode?: boolean;
   projectType: 'standard' | 'custom';
   planName: string;
   versionType: VersionScale;
   planUrl?: string | null;
   departmentName?: string | null;
+  demandSource?: string | null;
+  requirementDescription?: string | null;
+  ownerName?: string | null;
+  projectMemberNames?: string[];
+  contractParty?: string | null;
+  remark?: string | null;
+  isGlobalOpen?: boolean | null;
   ownerId?: string | null;
   openBrandScope: string;
   requirementIds: string[];
   teamMemberIds: string[];
   plannedReleaseAt?: string | null;
+  plannedTrainingMinutes?: number | null;
   releasedAt?: string | null;
   announcementUrl?: string | null;
   previousReleaseId?: string | null;

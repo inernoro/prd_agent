@@ -40,6 +40,10 @@ describe('resolveTextExtension — 用户选的格式说了算', () => {
     expect(resolveTextExtension('original', 'text/html')).toBe('.html');
     expect(resolveTextExtension('original', 'text/markdown')).toBe('.md');
   });
+
+  it('原生纯文本的原始导出保持.txt，不伪装成Markdown', () => {
+    expect(resolveTextExtension('original', 'text/plain')).toBe('.txt');
+  });
 });
 
 describe('shouldFetchOriginalFile — 只有真需要原文件时才去拉', () => {
@@ -52,8 +56,8 @@ describe('shouldFetchOriginalFile — 只有真需要原文件时才去拉', () 
     expect(shouldFetchOriginalFile('text', 'application/pdf', 'https://cdn/x.pdf')).toBe(false);
   });
 
-  it('文字类条目或没有 fileUrl 时不拉', () => {
-    expect(shouldFetchOriginalFile('original', 'text/markdown', 'https://cdn/x.md')).toBe(false);
+  it('文字附件也是原件；只有没有fileUrl时交由正文或附件身份路径处理', () => {
+    expect(shouldFetchOriginalFile('original', 'text/markdown', 'https://cdn/x.md')).toBe(true);
     expect(shouldFetchOriginalFile('original', 'application/pdf', undefined)).toBe(false);
   });
 });

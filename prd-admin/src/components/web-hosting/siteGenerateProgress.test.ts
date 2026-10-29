@@ -6,7 +6,9 @@ import {
   GATEWAY_PLATFORM_FALLBACK,
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
+  resolvePersistedRunPreview,
   resolveRunModelBadge,
+  runtimeFailureRecoveryMessage,
 } from './siteGenerateProgress';
 
 const run = (overrides: Partial<DesignArtifactRunSummary>): DesignArtifactRunSummary => ({
@@ -46,8 +48,8 @@ describe('生成工作台的进度契约', () => {
   it('consumes the MAP phase, incremental content, and terminal site event', () => {
     expect(parseSiteGenerationProgressEvent({
       event: 'phase',
-      data: '{"progress":35,"message":"正在组织页面"}',
-    })).toEqual({ kind: 'phase', progress: 35, message: '正在组织页面' });
+      data: '{"phaseCode":"composing-page","progress":35,"message":"内部文案"}',
+    })).toEqual({ kind: 'phase', phaseCode: 'composing-page', progress: 35, message: '正在搭建页面' });
     expect(parseSiteGenerationProgressEvent({
       event: 'delta',
       data: '{"text":"<main>"}',
@@ -59,16 +61,57 @@ describe('生成工作台的进度契约', () => {
     expect(resolveGeneratedSiteId(run({ artifactSiteId: 'site-map' }))).toBe('site-map');
   });
 
+  it('拒绝未知阶段码与原始推理事件进入用户可见过程', () => {
+    expect(parseSiteGenerationProgressEvent({
+      event: 'phase',
+      data: '{"phaseCode":"shell-command","progress":30,"message":"cat /workspace/index.html"}',
+    })).toEqual({ kind: 'unknown' });
+    expect(parseSiteGenerationProgressEvent({
+      event: 'thinking',
+      data: '{"text":"hidden chain of thought"}',
+    })).toEqual({ kind: 'unknown' });
+  });
+
   it('recovers an OpenDesign terminal result from its produced artifact identity', () => {
     expect(resolveGeneratedSiteId(run({
       runtime: 'open-design',
       artifactSiteId: null,
       producedArtifactSiteId: 'site-open-design',
     }))).toBe('site-open-design');
-    expect(parseSiteGenerationProgressEvent({
-      event: 'thinking',
-      data: '{"text":"正在读取远程工作区"}',
-    })).toEqual({ kind: 'thinking', text: '正在读取远程工作区' });
+  });
+
+  it('discovers active runs from the server and offers frozen-input restart', () => {
+    const generation = generationRunSource();
+    const edit = readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
+    for (const source of [generation, edit]) {
+      expect(source).toContain('getActiveDesignArtifactRun');
+      expect(source).toContain('restartDesignArtifactRun');
+    }
+    expect(generation).toContain("getActiveDesignArtifactRun({ operation: 'generate', includeLatestFailed: true })");
+    expect(edit).toContain('includeLatestFailed: true');
+    expect(generation).not.toContain("item.kind === 'thinking'");
+    expect(edit).not.toContain("event.event === 'thinking'");
+  });
+
+  it('restores the persisted final preview for a terminal failed run without marking it resumable', () => {
+    expect(resolvePersistedRunPreview(run({
+      status: 'Error',
+      previewHtml: '<!doctype html><main>最后预览</main>',
+      previewRevision: 7,
+    }))).toEqual({ html: '<!doctype html><main>最后预览</main>', revision: 7 });
+    expect(resolvePersistedRunPreview(run({ previewHtml: '  ', previewRevision: 8 }))).toBeNull();
+
+    const generation = generationRunSource();
+    const edit = readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
+    for (const source of [generation, edit]) {
+      expect(source).toContain('resolvePersistedRunPreview(result.data)');
+      expect(source).toContain('designPreviewEventDocument(persistedPreview.html)');
+    }
+    expect(generation).toContain("const interrupted = status === 'error' && result.data.phaseCode === 'interrupted'");
+    expect(generation).toContain("runtimeFailureRecoveryMessage(result.data, 'generate')");
+    expect(generation).not.toContain("setRestartableRunId(result.data.runId)");
+    expect(edit).toContain("runtimeFailureRecoveryMessage(result.data, 'edit')");
+    expect(edit).toContain("action: result.data.phaseCode === 'interrupted' ? 'restart' : 'generate'");
   });
 
   it('keeps recovery inside the workbench when the public stream ends or fails', () => {
@@ -92,6 +135,51 @@ describe('生成工作台的进度契约', () => {
     // 停止是进度卡上的显式按钮，交给钩子里真正打服务端的 stop。
     const stage = readFileSync(path.resolve(__dirname, 'workbench/NewSiteStage.tsx'), 'utf8');
     expect(stage).toContain('onStop={() => void run.stop()}');
+  });
+});
+
+describe('浏览器质量失败的用户恢复文案', () => {
+  const runtimeFailure = {
+    code: 'design_browser_quality_rejected',
+    issueCodes: ['mobile_navigation_unusable', 'key_text_contrast_low'],
+    repairAttempts: 1,
+    repairBudgetExhausted: true,
+    browserQualityEvidence: {
+      schemaVersion: 'map-browser-quality-failure-evidence-v1',
+      ruleVersion: 'browser-hard-gate-v1',
+      heuristicVersion: 'browser-aesthetic-heuristic-v1',
+      repairAttempts: 1,
+      repairBudgetExhausted: true,
+      attempts: [{
+        repairAttempt: 1,
+        hardPassed: false,
+        score: 6,
+        issues: [{
+          issueCode: 'key_text_contrast_low',
+          viewport: 'mobile',
+          actual: { ratio: 2.1, provider: 'must-not-render' },
+          target: 'at least 4.5',
+          elementSummary: { tag: 'h1', label: 'internal DOM label' },
+        }],
+      }],
+    },
+  };
+
+  it('shows stable recovery categories without leaking raw diagnostics', () => {
+    const message = runtimeFailureRecoveryMessage(run({
+      status: 'Error',
+      error: 'raw runtime error with model and provider',
+      runtimeFailure,
+    }), 'generate');
+
+    expect(message).toContain('移动端导航还不能可靠操作');
+    expect(message).toContain('关键文字对比度仍不足');
+    expect(message).toContain('已保留最后一版预览');
+    expect(message).toContain('请按原资料和要求重新生成');
+    expect(message).not.toContain('ratio');
+    expect(message).not.toContain('provider');
+    expect(message).not.toContain('model');
+    expect(message).not.toContain('internal DOM label');
   });
 });
 
