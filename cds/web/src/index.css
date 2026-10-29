@@ -5073,6 +5073,26 @@
   }
 
   @media (max-width: 640px) {
+    /*
+     * 手机先完成主任务：登录卡排在品牌故事之前并独立滚动。
+     * 390×664 下主按钮必须留在首屏，营销叙事继续保留在卡片下方。
+     */
+    .cds-auth-stage {
+      justify-content: flex-start;
+      gap: 1.5rem;
+      padding: 0.75rem 1rem 1.5rem;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    .cds-auth-card-wrap {
+      order: -1;
+    }
+
+    .cds-auth-copy {
+      width: 100%;
+    }
+
     .cds-auth-footer-tag {
       display: none;
     }
