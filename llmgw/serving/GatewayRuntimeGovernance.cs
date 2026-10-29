@@ -40,7 +40,9 @@ public sealed record GatewayKeyAuthorization(
     /// 把授权集合带出去，让清单端点自己判；鉴权那一档的豁免不动（预检本来就该放行）。
     /// </summary>
     IReadOnlyList<string>? AuthorizedAppCallerCodes = null,
-    GatewayRuntimeGrantRecord? RuntimeGrant = null);
+    GatewayRuntimeGrantRecord? RuntimeGrant = null,
+    /// <summary>密钥存储中的来源，绝不读取用户自报的Source头来判断内部人工操作。</summary>
+    string? AuthenticatedSourceSystem = null);
 
 public interface IGatewayScopedKeyAuthorizer
 {
@@ -87,7 +89,9 @@ public sealed record GatewayTaskBudgetRequest(
     string Model,
     string? OfferingId,
     string? PptCompletionId = null,
-    string? PptCompletionPhase = null);
+    string? PptCompletionPhase = null,
+    string? TaskPermitId = null,
+    string? Protocol = null);
 
 public sealed record GatewayTaskBudgetPolicy(
     string ScopeId,
@@ -129,7 +133,20 @@ public interface IGatewayRuntimeGrantCallCounter
         CancellationToken ct);
 }
 
-public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) : IGatewayRuntimeGrantCallCounter
+public static class GatewayTaskBudgetOutcomes
+{
+    // 只接受物理发送实现的类型化拒绝事实；未知结果仍沿原保守结算。
+    public const string RejectedBeforeSend = "authorization-rejected-before-send";
+}
+
+public static class GatewayRuntimeGrantPurposePolicy
+{
+    public const string TaskSidecar = "task-sidecar";
+    public static bool IsTaskSidecar(GatewayRuntimeGrantRecord? grant)
+        => grant is not null && string.Equals(grant.Purpose, TaskSidecar, StringComparison.Ordinal);
+}
+
+public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, Microsoft.AspNetCore.Http.IHttpContextAccessor? httpAccessor = null) : IGatewayRuntimeGrantCallCounter
 {
     public async Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
         GatewayRuntimeGrantRecord grant,
@@ -173,6 +190,7 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TenantId, grant.TenantId),
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.RunId, grant.RunId),
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, grant.AppCallerCode),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TaskPermitId, grant.TaskPermitId),
             Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
             new BsonDocumentFilterDefinition<GatewayRuntimeGrantRecord>(
                 new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$CallCount", "$MaxCalls" }))));
@@ -187,7 +205,11 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             },
             ct);
         if (reserved is not null)
+        {
+            if (taskReservation is not null)
+                MarkPptPhysicalAdmission(grant.BudgetScopeId!, grant.RunId, grant.AppCallerCode, grant.TaskPermitId, request.RequestId);
             return new(true, 200, string.Empty, "runtime grant call reserved");
+        }
 
         if (taskReservation is not null)
             await ReleaseBeforeSendAsync(grant.BudgetScopeId!, taskReservation, now, ct);
@@ -227,7 +249,24 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
     public async Task<GatewayRuntimeGrantCallAdmission> TryReserveTaskAsync(
         GatewayTaskBudgetRequest request,
         CancellationToken ct)
-        => (await TryReserveTaskBudgetAsync(request, request.EffectiveMaxOutputTokens, ct)).Admission;
+    {
+        var result = await TryReserveTaskBudgetAsync(request, request.EffectiveMaxOutputTokens, ct);
+        if (result.Admission.Allowed)
+            MarkPptPhysicalAdmission(request.ScopeId, request.RunId, request.AppCallerCode, request.TaskPermitId, request.RequestId);
+        return result.Admission;
+    }
+
+    private void MarkPptPhysicalAdmission(string scope, string run, string caller, string? permitId, string requestId)
+    {
+        var http = httpAccessor?.HttpContext;
+        if (http?.Items[GatewayTaskAdmission.HttpContextPermitKey] is not GatewayTaskPermitRecord permit
+            || permit.BudgetScopeId is not { Length: > 0 } || permitId is not null && permit.Id != permitId
+            || !permit.BoundRunIds.Contains(run, StringComparer.Ordinal)
+            || caller is not (AppCallerRegistry.MdToPptAgent.Generation.Outline
+                or AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate or AppCallerRegistry.MdToPptAgent.Generation.Patch)) return;
+        // 此方法只在真实金额预占成功后调用；PPT的root/stage/run已由同一计数器校验。
+        http.Items[GatewayInvocationAuthority.TaskBudgetAdmissionKey] = new TaskBudgetSendFact(scope, permit.Id, requestId, true);
+    }
 
     public async Task<GatewayTaskBudgetPolicy?> ResolveTaskPolicyAsync(
         string scopeId,
@@ -247,7 +286,7 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
                           && item.ExpiresAt > now)
             .FirstOrDefaultAsync(ct);
         if (scope is null || scope.MaxOutputTokens <= 0) return null;
-        if (appCallerCode == AppCallerRegistry.MdToPptAgent.Generation.Outline
+        if (scope.TaskPermitId is null && appCallerCode == AppCallerRegistry.MdToPptAgent.Generation.Outline
             && scope.RootOutlineRunId != runId)
             return null;
         return new GatewayTaskBudgetPolicy(
@@ -275,15 +314,34 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
         var reservation = scope?.Reservations.FirstOrDefault(item =>
             item.RequestId == request.RequestId && item.GrantId == request.ActorId && item.Status == "reserved");
         if (scope is null || reservation is null) return;
+        if (outcomeCode == GatewayTaskBudgetOutcomes.RejectedBeforeSend && usage is null)
+        {
+            await ReleaseBeforeSendAsync(scope.Id, reservation, DateTime.UtcNow, ct, outcomeCode);
+            return;
+        }
 
         var hasTrustedUsage = usage is not null
             && (usage.InputTokens.GetValueOrDefault() > 0 || usage.OutputTokens.GetValueOrDefault() > 0);
+        if (reservation.PriceVersion is not null)
+            hasTrustedUsage = usage?.InputTokens is >= 0 && usage.OutputTokens is >= 0
+                && usage.CacheReadInputTokens is null or >= 0 && usage.CacheCreationInputTokens is null or >= 0;
         var actualInputTokens = usage?.InputTokens.GetValueOrDefault() ?? 0;
         var actualRates = RatesFor(scope, actualInputTokens);
         var calculated = hasTrustedUsage
             ? Money(actualInputTokens, actualRates.Input)
               + Money(usage!.OutputTokens.GetValueOrDefault(), actualRates.Output)
             : reservation.ReservedUsd;
+        if (hasTrustedUsage && reservation.PriceVersion is not null)
+        {
+            var actual = GatewayCostCalculator.Calculate(reservation.PriceProtocol, "USD",
+                reservation.InputUsdPerMillion, reservation.OutputUsdPerMillion,
+                reservation.CachedInputUsdPerMillion, reservation.CacheWriteUsdPerMillion, null,
+                usage!.InputTokens!.Value, usage.OutputTokens!.Value,
+                usage.CacheReadInputTokens.GetValueOrDefault(), usage.CacheCreationInputTokens.GetValueOrDefault(),
+                true, usage.CacheCreationCountedInsideInput == true);
+            hasTrustedUsage = actual.Usd is not null;
+            calculated = actual.Usd ?? reservation.ReservedUsd;
+        }
         var invariantFailed = calculated > reservation.ReservedUsd;
         var settled = invariantFailed ? reservation.ReservedUsd : calculated;
         var status = invariantFailed ? "settled-invariant-failed" : hasTrustedUsage ? "settled" : "settled-unknown";
@@ -317,16 +375,28 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             int? trustedMaxOutputTokens,
             CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(request.RequestId) || string.IsNullOrWhiteSpace(request.ActorId)
+            || request.RequestBodyUtf8Bytes <= 0 || request.EffectiveMaxOutputTokens <= 0)
+            return (new(false, 400, "GATEWAY_RUNTIME_TASK_BUDGET_INPUT_INVALID", "physical task budget inputs are invalid"), null);
         var budgets = data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
         var scope = await budgets.Find(x => x.Id == request.ScopeId).FirstOrDefaultAsync(ct);
         var now = DateTime.UtcNow;
         if (scope is null || scope.Status != "active" || scope.ExpiresAt <= now
             || scope.TenantId != request.TenantId || scope.UserId != request.UserId
-            || (!string.IsNullOrWhiteSpace(scope.RootOutlineRunId)
+            || (scope.TaskPermitId is null && !string.IsNullOrWhiteSpace(scope.RootOutlineRunId)
                 && scope.RootOutlineRunId != request.RunId
                 && request.AppCallerCode == AppCallerRegistry.MdToPptAgent.Generation.Outline))
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_INACTIVE", "runtime task budget is unavailable"), null);
-        var isPptPhysicalCaller = request.AppCallerCode is
+        if (scope.TaskPermitId is not null && (scope.TaskPermitId != request.TaskPermitId
+            || request.ActorId != scope.TaskPermitId
+            || !scope.AllowedAppCallerCodes.Contains(request.AppCallerCode, StringComparer.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(scope.PriceVersion) || string.IsNullOrWhiteSpace(scope.PriceProtocol)
+            || GatewayProtocolAliases.NormalizeAdapterKey(scope.PriceProtocol) != GatewayProtocolAliases.NormalizeAdapterKey(request.Protocol)
+            || scope.CachedInputUsdPerMillion is null or < 0 || scope.CacheWriteUsdPerMillion is null or < 0))
+            return (new(false, 403, "GATEWAY_TASK_BUDGET_BINDING_INVALID", "task budget is not authorized for this permit and caller"), null);
+        if (scope.TaskPermitId is not null && scope.MaxPhysicalCalls is <= 0 or > GatewayTaskPermitRecord.MaximumCalls)
+            return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_POLICY_INVALID", "task physical call envelope is invalid"), null);
+        var isPptPhysicalCaller = scope.TaskPermitId is null && request.AppCallerCode is
             AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate or
             AppCallerRegistry.MdToPptAgent.Generation.Patch;
         if (isPptPhysicalCaller && scope.PptCompletion is null)
@@ -352,7 +422,9 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             return (new(false, 413, "GATEWAY_RUNTIME_TASK_BUDGET_INPUT_INVALID", "runtime task input exceeds the budget envelope"), null);
         }
         var rates = RatesFor(scope, inputUpper);
-        var amount = Money(inputUpper, rates.Input)
+        var inputCeilingRate = scope.TaskPermitId is null ? rates.Input
+            : new[] { rates.Input, scope.CachedInputUsdPerMillion!.Value, scope.CacheWriteUsdPerMillion!.Value }.Max();
+        var amount = Money(inputUpper, inputCeilingRate)
                      + Money(request.EffectiveMaxOutputTokens, rates.Output);
         if (amount <= 0)
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_POLICY_INVALID", "runtime task budget policy is invalid"), null);
@@ -370,6 +442,10 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             Model = request.Model,
             OfferingId = request.OfferingId,
             PricingTier = rates.Name,
+            PriceVersion = scope.PriceVersion,
+            PriceProtocol = scope.PriceProtocol,
+            CachedInputUsdPerMillion = scope.CachedInputUsdPerMillion,
+            CacheWriteUsdPerMillion = scope.CacheWriteUsdPerMillion,
             InputUsdPerMillion = rates.Input,
             OutputUsdPerMillion = rates.Output,
             ReservedUsd = amount,
@@ -385,6 +461,9 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.TenantId, request.TenantId),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.UserId, request.UserId),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne("Reservations.RequestId", request.RequestId));
+        if (scope.TaskPermitId is not null)
+            commonFilter &= new BsonDocumentFilterDefinition<GatewayRuntimeBudgetScopeRecord>(new BsonDocument("$expr",
+                new BsonDocument("$lt", new BsonArray { new BsonDocument("$size", "$Reservations"), scope.MaxPhysicalCalls })));
 
         FilterDefinition<GatewayRuntimeBudgetScopeRecord> filter;
         UpdateDefinition<GatewayRuntimeBudgetScopeRecord> update;
@@ -478,7 +557,8 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
         string scopeId,
         GatewayRuntimeBudgetReservationRecord reservation,
         DateTime now,
-        CancellationToken ct)
+        CancellationToken ct,
+        string detail = "runtime-grant-rejected")
     {
         var budgets = data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
         var filter = Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
@@ -490,7 +570,7 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             .Add("$set", new BsonDocument
             {
                 { "Reservations.$.Status", "released-before-send" },
-                { "Reservations.$.Detail", "runtime-grant-rejected" },
+                { "Reservations.$.Detail", detail },
                 { "Reservations.$.UpdatedAt", now },
                 { "UpdatedAt", now },
             });
@@ -620,6 +700,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 ingressProtocol,
                 requiredScope,
                 requestPath,
+                allowSingleAppCallerInference,
                 ct);
         var effectiveAppCallerCode = allowSingleAppCallerInference
             ? ResolveSingleAppCallerCode(record) ?? appCallerCode
@@ -822,7 +903,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             AuthorizedAppCallerCodes: record.AppCallerCodes
                 .Select(x => (x ?? string.Empty).Trim())
                 .Where(x => x.Length > 0)
-                .ToList());
+                .ToList(),
+            AuthenticatedSourceSystem: record.SourceSystem == "*" ? "external" : record.SourceSystem);
     }
 
     private async Task<GatewayKeyAuthorization> AuthorizeRuntimeGrantAsync(
@@ -832,6 +914,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string ingressProtocol,
         string requiredScope,
         string? requestPath,
+        bool allowSingleAppCallerInference,
         CancellationToken ct)
     {
         var grants = _data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
@@ -849,17 +932,33 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 403,
                 "GATEWAY_RUNTIME_GRANT_TENANT_INACTIVE",
                 "runtime grant tenant is not active");
-        var allowedScope = requiredScope is "invoke" or "stream:invoke";
-        var allowedPath = string.Equals(requestPath, "/gw/v1/responses", StringComparison.OrdinalIgnoreCase);
+        var known = await grants.Find(x => x.KeyHash == keyHash && x.TenantId == _internalTenantId).FirstOrDefaultAsync(ct);
+        if (known is null || known.ExpiresAt <= now)
+            return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+        if (known.CallCount >= known.MaxCalls)
+            return new(false, true, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded");
+        var sidecar = GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(known);
+        var design = string.IsNullOrEmpty(known.Purpose) || known.Purpose == "design";
+        var path = GatewayTaskRoutePolicy.Normalize(requestPath ?? string.Empty);
+        var resolve = sidecar && path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase);
+        var allowedScope = requiredScope is "invoke" or "stream:invoke" || resolve && requiredScope == "route:read";
+        var allowedPath = sidecar
+            ? path.ToLowerInvariant() is "/v1/messages" or "/v1/responses" or "/v1/chat/completions" or "/gw/v1/resolve"
+            : design && path.Equals("/gw/v1/responses", StringComparison.OrdinalIgnoreCase);
+        var caller = sidecar && (allowSingleAppCallerInference || resolve && string.IsNullOrWhiteSpace(appCallerCode))
+            ? known.AppCallerCode : appCallerCode;
+        var allowedTransport = sidecar
+            ? ingressProtocol is "openai-compatible" or "claude-compatible" || resolve && ingressProtocol == "gw-native"
+            : string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase);
         var filter = Builders<GatewayRuntimeGrantRecord>.Filter.And(
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.KeyHash, keyHash),
             Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
             new BsonDocumentFilterDefinition<GatewayRuntimeGrantRecord>(
                 new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$CallCount", "$MaxCalls" }))),
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TenantId, _internalTenantId),
-            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode));
-        if (!string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase)
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, caller));
+        if (!allowedTransport
             || !allowedScope
             || !allowedPath)
         {
@@ -878,19 +977,15 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 KeyId: grant.Id,
                 TenantId: grant.TenantId,
                 LegacySharedKey: false,
-                ClientCode: "design-opendesign",
+                ClientCode: sidecar ? GatewayRuntimeGrantPurposePolicy.TaskSidecar : "design-opendesign",
                 Environment: grant.Environment,
                 KeyPrefixSnapshot: grant.KeyPrefix,
                 ResolvedAppCallerCode: grant.AppCallerCode,
                 AuthorizedAppCallerCodes: [grant.AppCallerCode],
-                RuntimeGrant: grant);
+                RuntimeGrant: grant,
+                AuthenticatedSourceSystem: "map");
         }
 
-        var known = await grants.Find(x => x.KeyHash == keyHash).FirstOrDefaultAsync(ct);
-        if (known is null || known.ExpiresAt <= now)
-            return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
-        if (known.CallCount >= known.MaxCalls)
-            return new(false, true, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded");
         if (!allowedPath)
             return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_ROUTE_DENIED", "runtime grant only allows the Responses endpoint");
         return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_SCOPE_DENIED", "runtime grant does not allow this request");
@@ -954,7 +1049,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 LegacySharedKey: true,
                 ClientCode: "map-internal",
                 Environment: "production",
-                KeyPrefixSnapshot: "internal");
+                KeyPrefixSnapshot: "internal",
+                AuthenticatedSourceSystem: "map");
         }
 
         return new(

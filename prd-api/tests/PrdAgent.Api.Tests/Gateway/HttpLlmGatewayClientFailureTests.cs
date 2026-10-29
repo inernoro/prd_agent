@@ -29,6 +29,22 @@ public class HttpLlmGatewayClientFailureTests
     }
 
     [Fact]
+    public async Task LegacyAutomaticScope_CannotOverrideVerifiedTaskIdentity()
+    {
+        var factory = new RecordingHttpClientFactory();
+        var client = BuildClient(factory);
+        using (PrdAgent.Infrastructure.Security.AutomaticTaskExecutionContext.Enter("authorized-deployment"))
+        {
+            await client.SendAsync(Request());
+            factory.ExecutionOrigin.ShouldBe("interactive");
+            factory.SourceDeployment.ShouldBe("transport-test-deployment");
+        }
+        await client.SendAsync(Request());
+        factory.ExecutionOrigin.ShouldBe("interactive");
+        factory.SourceDeployment.ShouldBe("transport-test-deployment");
+    }
+
+    [Fact]
     public async Task ServingTransportFailure_FailsClosed_ForEveryHttpBoundary()
     {
         var client = BuildClient(new ThrowingHttpClientFactory(new HttpRequestException("serving down")));
@@ -238,7 +254,7 @@ public class HttpLlmGatewayClientFailureTests
             factory,
             config,
             NullLogger<HttpLlmGatewayClient>.Instance,
-            failoverNotifier: failoverNotifier);
+            failoverNotifier: failoverNotifier, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
     }
 
     private static GatewayRequest Request() => new()
@@ -309,18 +325,24 @@ public class HttpLlmGatewayClientFailureTests
         private readonly RecordingHandler _handler = new();
 
         public Uri? RequestUri => _handler.RequestUri;
+        public string? ExecutionOrigin => _handler.ExecutionOrigin;
+        public string? SourceDeployment => _handler.SourceDeployment;
 
         public HttpClient CreateClient(string name) => new(_handler, disposeHandler: false);
 
         private sealed class RecordingHandler : HttpMessageHandler
         {
             public Uri? RequestUri { get; private set; }
+            public string? ExecutionOrigin { get; private set; }
+            public string? SourceDeployment { get; private set; }
 
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request,
                 CancellationToken cancellationToken)
             {
                 RequestUri = request.RequestUri;
+                ExecutionOrigin = request.Headers.TryGetValues("X-Gateway-Execution-Origin", out var origins) ? origins.Single() : null;
+                SourceDeployment = request.Headers.TryGetValues("X-Gateway-Source-Deployment", out var sources) ? sources.Single() : null;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
                 {
                     Content = new StringContent("{\"error\":\"test\"}"),

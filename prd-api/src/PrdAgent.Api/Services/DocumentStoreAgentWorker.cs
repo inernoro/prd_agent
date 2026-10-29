@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -17,6 +18,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class DocumentStoreAgentWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DocumentStoreAgentWorker> _logger;
     private string? _currentRunId;
@@ -29,8 +31,10 @@ public class DocumentStoreAgentWorker : BackgroundService
 
     public DocumentStoreAgentWorker(
         IServiceScopeFactory scopeFactory,
-        ILogger<DocumentStoreAgentWorker> logger)
+        ILogger<DocumentStoreAgentWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -494,6 +498,10 @@ public class DocumentStoreAgentWorker : BackgroundService
                 ReturnDocument = ReturnDocument.After,
             });
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         _currentRunId = run.Id;
         _currentExecutionId = run.ExecutionId;

@@ -52,6 +52,7 @@ public class CrossProcessServingSelfTest
     [Fact]
     public async Task CrossProcessServing_FullContract_RoundTripsOverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         // ── 起 serving host（真实 Kestrel + stub gateway）──
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -61,6 +62,7 @@ public class CrossProcessServingSelfTest
         builder.Services.AddSingleton<PrdAgent.Core.LlmGateway.ILlmGateway, FakeServingGateway>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
 
+        GatewayAuthorizedTaskFixture.Register(builder.Services);
         await using var app = builder.Build();
         app.MapGatewayServingEndpoints(PascalJson, TestKey, "selftest-commit");
         await app.StartAsync();
@@ -157,7 +159,7 @@ public class CrossProcessServingSelfTest
             ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = key,
         }).Build();
-        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
     }
 
     // ─── stub 上游：顶替真实 LlmGateway，专测 HTTP 边界 ───

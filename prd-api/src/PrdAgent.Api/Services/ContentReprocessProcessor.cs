@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -15,6 +16,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class ContentReprocessProcessor
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly ILlmGateway _llmGateway;
     private readonly IDocumentService _documentService;
     private readonly ILLMRequestContextAccessor _llmCtx;
@@ -24,8 +26,10 @@ public class ContentReprocessProcessor
         ILlmGateway llmGateway,
         IDocumentService documentService,
         ILLMRequestContextAccessor llmCtx,
-        ILogger<ContentReprocessProcessor> logger)
+        ILogger<ContentReprocessProcessor> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _llmGateway = llmGateway;
         _documentService = documentService;
         _llmCtx = llmCtx;
@@ -34,6 +38,10 @@ public class ContentReprocessProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         // 防御：旧 BSON 文档可能没 Messages 字段 → 反序列化为 null。
         // 这一行必须在第一次访问 run.Messages 之前（包括下面日志里 Count）（Bugbot #1 五轮 High）
         run.Messages ??= new List<ReprocessChatMessage>();

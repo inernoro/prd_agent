@@ -235,7 +235,7 @@ public class LiveAsrProtocolTests
                 return Task.CompletedTask;
             },
             () => upstreamRequests++,
-            verifiedContext);
+            verifiedContext, beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -292,7 +292,7 @@ public class LiveAsrProtocolTests
             frames.Reader,
             _ => Task.CompletedTask,
             () => upstreamRequests++,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -345,7 +345,7 @@ public class LiveAsrProtocolTests
             frames.Reader,
             _ => Task.CompletedTask,
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -398,7 +398,7 @@ public class LiveAsrProtocolTests
                 return Task.CompletedTask;
             },
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -447,7 +447,7 @@ public class LiveAsrProtocolTests
                 return Task.CompletedTask;
             },
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -496,7 +496,7 @@ public class LiveAsrProtocolTests
                 return Task.CompletedTask;
             },
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -567,7 +567,7 @@ public class LiveAsrProtocolTests
                 return Task.CompletedTask;
             },
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -651,7 +651,7 @@ public class LiveAsrProtocolTests
                 return Task.CompletedTask;
             },
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -702,7 +702,7 @@ public class LiveAsrProtocolTests
             frames.Reader,
             _ => Task.CompletedTask,
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -751,7 +751,7 @@ public class LiveAsrProtocolTests
             frames.Reader,
             _ => Task.CompletedTask,
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -795,7 +795,7 @@ public class LiveAsrProtocolTests
             frames.Reader,
             _ => Task.CompletedTask,
             null,
-            TestRequestContext());
+            TestRequestContext(), beforeFallbackSend: LimitedTaskPermit());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -1058,6 +1058,18 @@ public class LiveAsrProtocolTests
             PlatformType = "openai",
             Protocol = "openrouter",
         };
+
+    private static Func<CancellationToken, Task> LimitedTaskPermit()
+    {
+        var remaining = GatewayTaskPermitRecord.MaximumCalls;
+        return token =>
+        {
+            token.ThrowIfCancellationRequested();
+            if (Interlocked.Decrement(ref remaining) < 0)
+                throw new PrdAgent.Core.Security.TaskExecutionAdmissionException("TASK_PERMIT_EXHAUSTED", "测试任务授权次数已用尽。");
+            return Task.CompletedTask;
+        };
+    }
 
     private static Mock<IModelResolver> HealthyResolver()
     {

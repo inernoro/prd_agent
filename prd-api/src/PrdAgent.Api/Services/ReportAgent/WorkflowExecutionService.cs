@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -57,6 +58,7 @@ public class WorkflowExecutionService : IWorkflowExecutionService
 
         var execution = new WorkflowExecution
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             WorkflowId = workflow.Id,
             WorkflowName = workflow.Name,
             TriggerType = "internal",

@@ -23,6 +23,8 @@ public static class DeploymentAuthority
     public const string AdoptLegacyBranchOwnersKey = "Deployment:AdoptLegacyBranchOwners";
     public const string RetiredLegacyBranchOwnerIdsKey = "Deployment:RetiredLegacyBranchOwnerIds";
     public const string LegacyOwnerCreatedBeforeUtcKey = "Deployment:LegacyOwnerCreatedBeforeUtc";
+    public const string SharedScheduledWorkEnabledKey = "Deployment:SharedScheduledWorkEnabled";
+    public const string DeploymentIdentityKey = "Deployment:Identity";
     private const string GitHubBranchKey = "Changelog:GitHubBranch";
 
     // scoped_queued 在该时刻前已完成全链路上线。这个固定截止线只用于接管旧版
@@ -195,11 +197,11 @@ public static class DeploymentAuthority
     /// <summary>
     /// 当前部署是否有权**跑打共享库与外部服务的周期后台任务**（scheduled 层）。
     ///
-    /// 与通知授权**独立且更严**，判据形状与 <see cref="CanRotateSharedCiphertext"/> 完全一致
-    /// （软开关只能收紧、不能放宽）：
+    /// 与通知授权独立，缺少 CDS 标记不能推断为生产授权：
     /// 1. `ManageGlobalNotification=false` 是「我不拥有任何共享状态」的总开关，
     ///    standby/canary 用它退出时，周期任务也不许跑；
-    /// 2. 必须是真正的生产部署（无 CDS 分支预览标记 CDS_PROJECT_ID）。
+    /// 2. 不得带 CDS 分支预览标记；
+    /// 3. 必须有显式部署身份与 SharedScheduledWorkEnabled=true 的任务授权。
     ///
     /// **关键：`ManageGlobalNotification=true` 绝不为 preview 放宽这一层。**
     /// 那个开关的语义是「让某个分支临时接管全局告警行」——它管的是往共享库写一行通知。
@@ -214,8 +216,10 @@ public static class DeploymentAuthority
         // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决。
         if (HasOptedOutOfSharedState(configuration)) return false;
 
-        // 条件 2：只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
-        return !IsCdsBranchPreview(configuration);
+        return !IsCdsBranchPreview(configuration)
+               && !string.IsNullOrWhiteSpace(configuration[DeploymentIdentityKey])
+               && bool.TryParse(configuration[SharedScheduledWorkEnabledKey], out var enabled)
+               && enabled;
     }
 
     /// <summary>
@@ -224,7 +228,7 @@ public static class DeploymentAuthority
     /// 排行榜与其它共享周期任务的网络条件不同：正式机可能无法直连 arena.ai，CDS main
     /// 却可以通过只读网页代理抓取，并把自己的分支作用域快照公开给正式机镜像。因此它需要
     /// 一个比 <see cref="CanRunSharedScheduledWork"/> 更精确的单任务权威：
-    /// 1. 正式环境仍然允许运行；
+    /// 1. 正式环境遵守通用显式任务授权；
     /// 2. CDS 里只允许真实 Git 分支名为 main 的那一个部署运行；
     /// 3. 显式退出共享状态归属仍然一票否决。
     ///
@@ -235,7 +239,7 @@ public static class DeploymentAuthority
     public static bool CanRunModelLeaderboardSync(IConfiguration configuration)
     {
         if (HasOptedOutOfSharedState(configuration)) return false;
-        if (!IsCdsBranchPreview(configuration)) return true;
+        if (!IsCdsBranchPreview(configuration)) return CanRunSharedScheduledWork(configuration);
 
         return string.Equals(
             ReadFirst(configuration, GitHubBranchKey),

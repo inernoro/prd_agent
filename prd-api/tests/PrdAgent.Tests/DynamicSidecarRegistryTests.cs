@@ -676,8 +676,10 @@ public class DynamicSidecarRegistryTests
             registry,
             configuration,
             new HttpContextAccessor(),
-            NullLogger<ClaudeSidecarRouter>.Instance);
+            NullLogger<ClaudeSidecarRouter>.Instance,
+            new CallbackTransportGrantIssuer());
 
+        using var taskScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(new("callback-test-permit", "run-1"));
         await foreach (var _ in router.RunStreamAsync(new SidecarRunRequest { RunId = "run-1" }, CancellationToken.None))
         {
         }
@@ -729,8 +731,10 @@ public class DynamicSidecarRegistryTests
             registry,
             configuration,
             new HttpContextAccessor(),
-            NullLogger<ClaudeSidecarRouter>.Instance);
+            NullLogger<ClaudeSidecarRouter>.Instance,
+            new CallbackTransportGrantIssuer());
 
+        using var taskScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(new("callback-test-permit", "run-1"));
         await foreach (var _ in router.RunStreamAsync(new SidecarRunRequest { RunId = "run-1" }, CancellationToken.None))
         {
         }
@@ -782,8 +786,10 @@ public class DynamicSidecarRegistryTests
             registry,
             configuration,
             new HttpContextAccessor(),
-            NullLogger<ClaudeSidecarRouter>.Instance);
+            NullLogger<ClaudeSidecarRouter>.Instance,
+            new CallbackTransportGrantIssuer());
 
+        using var taskScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(new("callback-test-permit", "run-1"));
         await foreach (var _ in router.RunStreamAsync(new SidecarRunRequest { RunId = "run-1" }, CancellationToken.None))
         {
         }
@@ -834,8 +840,10 @@ public class DynamicSidecarRegistryTests
             registry,
             configuration,
             new HttpContextAccessor(),
-            NullLogger<ClaudeSidecarRouter>.Instance);
+            NullLogger<ClaudeSidecarRouter>.Instance,
+            new CallbackTransportGrantIssuer());
 
+        using var taskScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(new("callback-test-permit", "run-1"));
         await foreach (var _ in router.RunStreamAsync(new SidecarRunRequest { RunId = "run-1" }, CancellationToken.None))
         {
         }
@@ -843,6 +851,23 @@ public class DynamicSidecarRegistryTests
         Assert.NotNull(body);
         using var doc = JsonDocument.Parse(body!);
         Assert.Equal("https://main-prd-agent.miduo.org", doc.RootElement.GetProperty("callbackBaseUrl").GetString());
+    }
+
+    // 只用于回调 URL 运输测试；真实 issuer 的持久许可校验由独立集成测试覆盖。
+    private sealed class CallbackTransportGrantIssuer : ITaskScopedRuntimeGrantIssuer
+    {
+        private int _calls;
+        public Task<SidecarRunRequest> PrepareAsync(SidecarRunRequest request, CancellationToken ct)
+        {
+            Assert.Equal("callback-test-permit", PrdAgent.Core.Security.TaskExecutionContext.Current?.PermitId);
+            Assert.Equal("run-1", PrdAgent.Core.Security.TaskExecutionContext.Current?.RunId);
+            Assert.Equal(1, ++_calls);
+            return Task.FromResult(new SidecarRunRequest
+            {
+                RunId = request.RunId, Model = request.Model, AppCallerCode = request.AppCallerCode,
+                BaseUrl = "https://gateway.invalid", ApiKey = "gwrg_callback-transport-test",
+            });
+        }
     }
 
     private sealed class FakeInfraConnectionService : IInfraConnectionService

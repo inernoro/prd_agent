@@ -10,6 +10,7 @@ using PrdAgent.Api.Models.Responses;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers;
@@ -150,10 +151,22 @@ public class GroupsController : ControllerBase
         // 如果用户没有提供群名且有 PRD 文档，在后台异步生成群名
         if (string.IsNullOrWhiteSpace(request.GroupName) && !string.IsNullOrEmpty(prdDocumentId))
         {
-            _groupNameSuggestionService.EnqueueGroupNameSuggestion(
-                group.GroupId, 
-                fileName: null, 
-                prdDocumentId);
+            try
+            {
+                var identity = await HttpContext.RequestServices
+                    .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                    .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
+                using var taskExecution = TaskExecutionContext.Enter(identity with { RunId = group.GroupId });
+                _groupNameSuggestionService.EnqueueGroupNameSuggestion(
+                    group.GroupId,
+                    fileName: null,
+                    prdDocumentId);
+            }
+            catch (TaskExecutionAdmissionException error)
+            {
+                _logger.LogWarning("群组已创建，AI 群名建议未排队；可稍后重试: groupId={GroupId}, code={Code}, reason={Reason}",
+                    group.GroupId, error.Code, error.Message);
+            }
         }
 
         var response = new GroupResponse

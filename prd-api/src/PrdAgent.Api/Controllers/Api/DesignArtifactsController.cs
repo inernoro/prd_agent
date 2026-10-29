@@ -280,6 +280,7 @@ public sealed class DesignArtifactsController : ControllerBase
         }
         var run = new DesignArtifactRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = runId,
             DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
@@ -317,6 +318,7 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var meta = new RunMeta
         {
+            TaskPermitId = run.TaskPermitId,
             RunId = runId,
             Kind = RunKinds.DesignArtifact,
             Status = RunStatuses.Queued,
@@ -1392,6 +1394,7 @@ public sealed class DesignArtifactsController : ControllerBase
             var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, run.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = run.TaskPermitId,
                            RunId = run.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = run.UserId,

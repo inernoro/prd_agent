@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -21,6 +22,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class ImageGenRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ImageGenRunWorker> _logger;
@@ -82,8 +84,10 @@ public class ImageGenRunWorker : BackgroundService
         IRunEventStore runStore,
         ILogger<ImageGenRunWorker> logger,
         ILLMRequestContextAccessor llmRequestContext,
-        IConfiguration config)
+        IConfiguration config,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
@@ -263,6 +267,10 @@ public class ImageGenRunWorker : BackgroundService
         // 重新读取最新 run（避免 claim 返回的字段不完整/过旧）
         var run = await _db.ImageGenRuns.Find(x => x.Id == claimed.Id).FirstOrDefaultAsync(ct);
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         // 若 ConfigModelId 存在且 run 未填平台信息，则尝试补齐（用于事件输出与后续查询）
         if (!string.IsNullOrWhiteSpace(run.ConfigModelId) && (string.IsNullOrWhiteSpace(run.PlatformId) || string.IsNullOrWhiteSpace(run.ModelId)))

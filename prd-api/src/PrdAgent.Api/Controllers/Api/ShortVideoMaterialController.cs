@@ -62,6 +62,7 @@ public class ShortVideoMaterialController : ControllerBase
         var title = CleanTitle(req.Title) ?? $"短视频素材 {DateTime.UtcNow:yyyyMMdd-HHmm}";
         var run = new ShortVideoMaterialRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             UserId = userId,
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例的 Worker 处理
             VideoUrl = videoUrl,

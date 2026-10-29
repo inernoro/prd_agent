@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -30,6 +31,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly ModelPool.IPoolFailoverNotifier? _failoverNotifier;
     private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
     private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
+    private readonly IGatewayInvocationAuthority? _invocationAuthority;
     private readonly string _internalTenantId;
     private readonly string? _openRouterReferer;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
@@ -68,7 +70,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         IDoubaoStreamAsrExecutor? doubaoStreamAsr = null,
         GatewayProviderConcurrencyCoordinator? concurrencyCoordinator = null,
         IConfiguration? configuration = null,
-        ISafeOutboundWebSocketConnector? safeWebSocketConnector = null)
+        ISafeOutboundWebSocketConnector? safeWebSocketConnector = null,
+        IGatewayInvocationAuthority? invocationAuthority = null)
     {
         _modelResolver = modelResolver;
         _httpClientFactory = httpClientFactory;
@@ -77,6 +80,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _contextAccessor = contextAccessor;
         _failoverNotifier = failoverNotifier;
         _concurrencyCoordinator = concurrencyCoordinator;
+        _invocationAuthority = invocationAuthority;
         _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
@@ -482,8 +486,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+    public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        => SendCoreAsync(request, null, ct);
+
+    public Task<GatewayResponse> SendWithAdmissionAsync(GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>> admit, CancellationToken ct = default)
+        => SendCoreAsync(request, admit ?? throw new ArgumentNullException(nameof(admit)), ct);
+
+    private async Task<GatewayResponse> SendCoreAsync(GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>>? admit, CancellationToken ct)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
         {
             return GatewayResponse.Fail(InvalidAppCallerErrorCode, error, 400);
@@ -492,6 +505,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var startedAt = DateTime.UtcNow;
         string? logId = null;
         ModelResolutionResult? resolution = null;
+
+        var reachedProvider = false;
 
         try
         {
@@ -517,7 +532,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 3. 发送请求。候选模型已在 Resolve 阶段一次性算好；发送阶段只消费结果，不再二次 resolve。
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
-            var retryResolutions = GetProviderRetryResolutions(resolution, request);
+            var retryResolutions = admit is null ? GetProviderRetryResolutions(resolution, request) : new List<ModelResolutionResult> { resolution };
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             HttpResponseMessage? response = null;
@@ -632,13 +647,27 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     attemptIndex + 1,
                     retryResolutions.Count);
 
+                if (admit is not null)
+                {
+                    var cap = ReadPhysicalOutputCap(requestBody);
+                    var denied = await admit(new GatewayPhysicalAdmissionContext(
+                        request.Context?.RequestId ?? string.Empty,
+                        Encoding.UTF8.GetByteCount(await httpRequest.Content!.ReadAsStringAsync(ct)), cap,
+                        activeResolution.LogicalModelPublicId ?? string.Empty,
+                        activeResolution.ActualPlatformName ?? activeResolution.ActualPlatformId ?? string.Empty,
+                        activeResolution.ActualModel ?? string.Empty, activeResolution.OfferingId,
+                        activeResolution.Protocol ?? activeResolution.PlatformType), ct);
+                    if (denied is not null) return denied;
+                }
                 var attemptStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(providerAttempts);
+                    reachedProvider = true;
                     response = await httpClient.SendAsync(httpRequest, ct);
                 }
-                catch (Exception sendException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
                 {
                     var sendAttemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
@@ -769,7 +798,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 _logWriter?.MarkError(logId, msg, code);
             }
-            return GatewayResponse.Fail("GATEWAY_ERROR", msg, code);
+            if (ex is TaskExecutionAdmissionException rejected && !reachedProvider)
+                return new GatewaySendRejectedBeforeSend { Success = false, ErrorCode = rejected.Code, ErrorMessage = msg, StatusCode = code };
+            return GatewayResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -778,6 +809,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequest request,
         CancellationToken ct = default)
         => StreamCoreAsync(request, null, ct);
+
+    private static int ReadPhysicalOutputCap(JsonObject body)
+        => new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }
+            .Select(name => body[name] is { } node && TryReadInt(node, out var value) && value > 0 ? value : int.MaxValue)
+            .DefaultIfEmpty(int.MaxValue).Min() is var cap && cap != int.MaxValue ? cap : 0;
 
     /// <inheritdoc />
     public IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
@@ -791,6 +827,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>>? admit,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
         {
             yield return GatewayStreamChunk.Fail($"{InvalidAppCallerErrorCode}: {error}");
@@ -841,7 +878,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpResponseMessage? rawResponse = null;
             IGatewayAdapter? adapter = null;
             string? terminalError = null;
+            string? terminalErrorCode = null;
             int? terminalStatusCode = null;
+            var authorizationRejectedBeforeSend = false;
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
@@ -925,7 +964,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             "GATEWAY_RUNTIME_TASK_OUTPUT_CAP_INVALID");
                         yield break;
                     }
-                    var finalBody = requestBody.ToJsonString();
+                    var finalBody = await httpRequest.Content!.ReadAsStringAsync(ct);
                     var admissionError = await admit(
                         new GatewayPhysicalAdmissionContext(
                             request.Context?.RequestId ?? string.Empty,
@@ -934,7 +973,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             resolution.LogicalModelPublicId ?? string.Empty,
                             resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
                             resolution.ActualModel ?? string.Empty,
-                            resolution.OfferingId),
+                            resolution.OfferingId, resolution.Protocol ?? resolution.PlatformType),
                         ct);
                     if (admissionError is not null)
                     {
@@ -964,9 +1003,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 Exception? sendException = null;
                 var attemptStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(providerAttempts);
                     rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
                 }
                 catch (Exception ex)
@@ -979,12 +1019,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
                     terminalError = sendMsg;
+                    terminalErrorCode = (sendException as TaskExecutionAdmissionException)?.Code;
                     terminalStatusCode = sendCode;
+                    authorizationRejectedBeforeSend = sendException is TaskExecutionAdmissionException
+                        && providerAttempts.All(attempt => attempt.ReachedProvider == false);
                     _logger.LogWarning(sendException,
                         "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
                         sendCode, resolution.ActualModel);
                     CompleteLastSendAttempt(providerAttempts, sendCode, attemptDurationMs, sendMsg);
-                    if (HasTrackedHealthRoute(resolution))
+                    if (sendException is not TaskExecutionAdmissionException && HasTrackedHealthRoute(resolution))
                         await _modelResolver.RecordFailureAsync(resolution, ct);
                     if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus(sendCode))
                     {
@@ -1047,7 +1090,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         resolution.ToGatewayResolution());
                     yield break;
                 }
-                yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败");
+                yield return authorizationRejectedBeforeSend
+                    ? new GatewayStreamRejectedBeforeSend
+                    {
+                        Type = GatewayChunkType.Error, Error = terminalError ?? "流式请求失败", ErrorCode = terminalErrorCode,
+                    }
+                    : GatewayStreamChunk.Fail(terminalError ?? "流式请求失败", terminalErrorCode);
                 yield break;
             }
 
@@ -1307,10 +1355,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 await _modelResolver.RecordSuccessAsync(finalResolution, ct);
             }
 
-            // 8. 发送完成块
-            yield return GatewayStreamChunk.Done(finishReason, tokenUsage);
-
-            // 9. 写入日志（完成）
+            // 8. 在完成块之前写入终态、用量及费用证据。兼容入口收到 Done 就会
+            // 结束枚举并 DisposeAsync，不能依赖消费者继续 MoveNext 才完成审计。
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
             var assembledText = textBuilder.ToString();
@@ -1332,15 +1378,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls,
                 finishReason, finalResolution, gatewayTransport, ct, providerAttempts,
                 LlmCostEvidence.BuildSafeResponseHeaders(response, "text/event-stream"));
+
+            // 9. 审计已完成，消费者可以在此安全结束枚举。
+            yield return GatewayStreamChunk.Done(finishReason, tokenUsage);
         }
         finally
         {
             if (providerLease is not null)
                 await providerLease.DisposeAsync();
-            // 注意：对于流式响应，正常情况下日志会在行 319 的 FinishStreamLogAsync 中更新
-            // 这里不需要额外处理，因为：
-            // 1. HTTP 失败时，已在行 232 调用 MarkError
-            // 2. 异常情况会被调用方捕获，调用方负责处理日志
         }
     }
 
@@ -1405,6 +1450,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayModelResolution resolution,
         CancellationToken ct = default)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
             return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
 
@@ -1532,6 +1578,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayUpstreamProfileTestRequest request,
         CancellationToken ct = default)
     {
+        _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, ModelTypes.Chat, out var error))
             return Task.FromResult(GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400));
 
@@ -1597,6 +1644,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     : request.RequestId.Trim(),
                 SessionId = sourceContext?.SessionId,
                 RunId = sourceContext?.RunId,
+                TaskPermitId = sourceContext?.TaskPermitId,
+                TaskLeaseRunId = sourceContext?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = sourceContext?.TaskLeaseOwnerHash,
+                TaskLeaseFence = sourceContext?.TaskLeaseFence,
+                ExecutionOrigin = sourceContext?.ExecutionOrigin,
+                TriggerCredentialId = sourceContext?.TriggerCredentialId,
+                TriggerActorUserId = sourceContext?.TriggerActorUserId,
+                SourceDeployment = sourceContext?.SourceDeployment,
+                SourceTask = sourceContext?.SourceTask,
                 GroupId = sourceContext?.GroupId,
                 UserId = string.IsNullOrWhiteSpace(request.UserId) ? sourceContext?.UserId : request.UserId,
                 ViewRole = sourceContext?.ViewRole,
@@ -2676,9 +2732,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.SendAsync(httpRequest, ct);
+                if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    response = await httpClient.SendAsync(httpRequest, ct);
             }
-            catch (Exception sendException)
+            catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
             {
                 var (sendMessage, sendStatusCode) = ClassifyTransportException(
                     sendException,
@@ -2824,12 +2881,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 submitStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                     response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
                 }
-                catch (Exception sendException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
                 {
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
                         sendException,
@@ -2941,6 +2999,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
                         var queryStartedAt = DateTime.UtcNow;
                         HttpResponseMessage queryResp;
+                        if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                         try
                         {
                             queryResp = await queryClient.SendAsync(queryRequest, ct);
@@ -3176,7 +3235,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     _logWriter?.MarkError(logId, msg, code);
                 }
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+            return GatewayRawResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
         finally
         {
@@ -3246,6 +3305,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 audioName,
                 audioBytes.Length);
 
+            if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
             MarkLastSendAttemptReachedProvider(providerAttempts);
             var streamResult = await _doubaoStreamAsr.TranscribeAsync(
                 wsUrl,
@@ -3333,7 +3393,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     CancellationToken.None,
                     providerAttempts);
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+            return GatewayRawResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -3634,6 +3694,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         return ex switch
         {
+            TaskExecutionAdmissionException task => (task.Message, task.StatusCode),
             TaskCanceledException => ("上游超时未响应（HttpClient timeout）", 504),
             OperationCanceledException => ("上游超时未响应", 504),
             HttpRequestException http => ($"网络请求失败：{http.Message}", 502),
@@ -4495,6 +4556,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     GroupId: request.Context?.GroupId,
                     SessionId: request.Context?.SessionId,
                     UserId: request.Context?.UserId,
+                    TaskPermitId: request.Context?.TaskPermitId,
+                    TaskLeaseRunId: request.Context?.TaskLeaseRunId,
+                    TaskLeaseFence: request.Context?.TaskLeaseFence,
+                    ExecutionOrigin: request.Context?.ExecutionOrigin,
+                    TriggerCredentialId: request.Context?.TriggerCredentialId,
+                    TriggerActorUserId: request.Context?.TriggerActorUserId,
+                    SourceDeployment: request.Context?.SourceDeployment,
+                    SourceTask: request.Context?.SourceTask,
                     ViewRole: request.Context?.ViewRole,
                     DocumentChars: request.Context?.DocumentChars,
                     DocumentHash: request.Context?.DocumentHash,
@@ -4880,6 +4949,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     GroupId: request.Context?.GroupId,
                     SessionId: request.Context?.SessionId,
                     UserId: request.Context?.UserId,
+                    TaskPermitId: request.Context?.TaskPermitId,
+                    TaskLeaseRunId: request.Context?.TaskLeaseRunId,
+                    TaskLeaseFence: request.Context?.TaskLeaseFence,
+                    ExecutionOrigin: request.Context?.ExecutionOrigin,
+                    TriggerCredentialId: request.Context?.TriggerCredentialId,
+                    TriggerActorUserId: request.Context?.TriggerActorUserId,
+                    SourceDeployment: request.Context?.SourceDeployment,
+                    SourceTask: request.Context?.SourceTask,
                     ViewRole: request.Context?.ViewRole,
                     DocumentChars: request.Context?.DocumentChars,
                     DocumentHash: request.Context?.DocumentHash,

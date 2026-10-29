@@ -1,3 +1,5 @@
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
 using System.Security.Cryptography;
 using System.Reflection;
 using System.Text;
@@ -42,17 +44,20 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
     private readonly MongoDbContext _map;
     private readonly IConfiguration _configuration;
     private readonly IHostEnvironment _environment;
+    private readonly ITaskExecutionAuthorizer _taskAuthorizer;
 
     public DesignArtifactGatewayGrantService(
         LlmGatewayDataContext gateway,
         MongoDbContext map,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        ITaskExecutionAuthorizer taskAuthorizer)
     {
         _gateway = gateway;
         _map = map;
         _configuration = configuration;
         _environment = environment;
+        _taskAuthorizer = taskAuthorizer;
     }
 
     public async Task<DesignArtifactGatewayGrant> IssueAsync(
@@ -72,6 +77,18 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
 
         var policy = selection.Policy;
         var caller = CallerFor(run);
+        if (string.IsNullOrWhiteSpace(run.TaskPermitId))
+            throw new TaskExecutionAdmissionException("TASK_EXECUTION_NOT_ADMITTED",
+                "本次设计任务没有获得执行许可，已停止模型调用；请重新明确提交操作。");
+        using var taskExecutionScope = TaskExecutionContext.Enter(TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
+        using var admissionRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/gw/v1/responses");
+        await _taskAuthorizer.AuthorizeOutboundAsync(admissionRequest, caller, new GatewayRequestContext
+        {
+            RunId = run.Id,
+            SessionId = run.Id,
+            UserId = run.UserId,
+        }, ct);
+
         var keyBytes = RandomNumberGenerator.GetBytes(32);
         var plainKey = "gwrg_" + Convert.ToBase64String(keyBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
@@ -89,6 +106,10 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
             KeyPrefix = hash[..12],
             KeyHash = hash,
             RunId = run.Id,
+            TaskPermitId = run.TaskPermitId,
+            TaskLeaseRunId = TaskExecutionContext.Current!.Lease!.RunId,
+            TaskLeaseOwnerHash = PrdAgent.Infrastructure.Security.TaskExecutionCoordinator.OwnerHash(TaskExecutionContext.Current.Lease.OwnerToken),
+            TaskLeaseFence = TaskExecutionContext.Current.Lease.Fence,
             UserId = run.UserId,
             AppCallerCode = caller,
             Environment = NormalizeEnvironment(_environment.EnvironmentName),

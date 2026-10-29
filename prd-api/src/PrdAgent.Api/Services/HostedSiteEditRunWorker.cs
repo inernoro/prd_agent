@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
@@ -16,6 +17,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class HostedSiteEditRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private static readonly TimeSpan RunTtl = TimeSpan.FromHours(24);
     internal static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
     internal static readonly TimeSpan RecoveryInterval = TimeSpan.FromSeconds(15);
@@ -47,8 +49,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IServiceScopeFactory scopeFactory,
         IRunQueue queue,
         IRunEventStore events,
-        ILogger<HostedSiteEditRunWorker> logger)
+        ILogger<HostedSiteEditRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _events = events;
@@ -103,10 +107,15 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             LeaseDuration,
             ct);
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         var projection = new RunProjection(_logger, runId);
         var meta = new RunMeta
         {
+            TaskPermitId = run.TaskPermitId,
             RunId = runId,
             Kind = RunKinds.DesignArtifact,
             CreatedByUserId = run.UserId,
@@ -943,8 +952,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
 
         var projection = new RunProjection(_logger, runId);
-        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
-            CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt };
+        var meta = new RunMeta
+        {
+            TaskPermitId = cancelled.TaskPermitId, RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt,
+        };
         meta.Status = RunStatuses.Cancelled;
         meta.EndedAt = cancelled.CancelledAt ?? DateTime.UtcNow;
         meta.ErrorCode = null;
@@ -1034,8 +1046,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
 
         var projection = new RunProjection(_logger, runId);
-        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
-            CreatedByUserId = current!.UserId, CreatedAt = current.CreatedAt };
+        var meta = new RunMeta
+        {
+            TaskPermitId = current!.TaskPermitId, RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = current.UserId, CreatedAt = current.CreatedAt,
+        };
         meta.Status = status;
         meta.EndedAt = DateTime.UtcNow;
         meta.ErrorCode = errorCode;
@@ -2247,6 +2262,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var meta = await events.GetRunAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = candidate.TaskPermitId,
                            RunId = candidate.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = candidate.UserId,
@@ -2496,6 +2512,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var meta = await events.GetRunAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = candidate.TaskPermitId,
                            RunId = candidate.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = candidate.UserId,

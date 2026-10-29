@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
@@ -115,6 +116,30 @@ public sealed class RedisRunEventStoreTests : IDisposable
         await Should.ThrowAsync<RedisServerException>(() => store.AppendEventAsync(
             RunKinds.DesignArtifact, _runId, "delta", new { text = "not-silently-discarded" }));
         (await Database.HashGetAsync(Key("meta"), "lastSeq")).IsNull.ShouldBeTrue();
+    }
+
+    [LocalRedisFact]
+    public async Task ReopenedStore_ShouldKeepOriginalPermit_AndLegacyHashMustNotAdoptAmbientAuthority()
+    {
+        Key("meta"); Key("seq"); Key("events");
+        using (var initial = new RedisRunEventStore(_connection))
+            await initial.SetRunAsync(RunKinds.DesignArtifact, new RunMeta
+            {
+                RunId = _runId, TaskPermitId = "persisted-original-permit", Status = RunStatuses.Queued,
+            });
+        using var unrelated = TaskExecutionContext.Enter(new TaskExecutionIdentity("new-request-permit", "different-run"));
+        using var reopened = new RedisRunEventStore(_connection);
+        var recovered = (await reopened.GetRunAsync(RunKinds.DesignArtifact, _runId))!;
+        recovered.TaskPermitId.ShouldBe("persisted-original-permit");
+        recovered.Status = RunStatuses.Running;
+        await reopened.SetRunAsync(RunKinds.DesignArtifact, recovered);
+        await reopened.AppendEventAsync(RunKinds.DesignArtifact, _runId, "progress", new { progress = 25 });
+        (await reopened.GetRunAsync(RunKinds.DesignArtifact, _runId))!.TaskPermitId.ShouldBe("persisted-original-permit");
+        await Database.HashDeleteAsync(Key("meta"), "taskPermitId");
+        var legacy = (await reopened.GetRunAsync(RunKinds.DesignArtifact, _runId))!;
+        legacy.TaskPermitId.ShouldBeNull();
+        await reopened.SetRunAsync(RunKinds.DesignArtifact, legacy);
+        (await reopened.GetRunAsync(RunKinds.DesignArtifact, _runId))!.TaskPermitId.ShouldBeNull();
     }
 
     private async Task<long> EvalCountAsync()

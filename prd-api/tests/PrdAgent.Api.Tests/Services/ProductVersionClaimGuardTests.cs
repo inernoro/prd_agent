@@ -117,6 +117,13 @@ public class ProductVersionClaimGuardTests
         Assert.Empty(saved.FeatureManifest);
     }
 
+    private static IConfiguration SharedWorkConfiguration()
+        => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [PrdAgent.Infrastructure.Security.DeploymentAuthority.DeploymentIdentityKey] = "product-claim-synthetic",
+            [PrdAgent.Infrastructure.Security.DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+        }).Build();
+
     [Fact]
     public async Task FormalClaimCopiesStoredTTitleAndNeverChangesOriginalTRecord()
     {
@@ -897,7 +904,7 @@ public class ProductVersionClaimGuardTests
             CreatedAt = new DateTime(2026, 10, 21, 5, 0, 0, DateTimeKind.Utc),
         });
         using var services = new ServiceCollection().AddSingleton(fixture.Db).BuildServiceProvider();
-        using var worker = new PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker(services, new ConfigurationBuilder().Build(),
+        using var worker = new PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker(services, SharedWorkConfiguration(),
             NullLogger<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>.Instance);
         await worker.StartAsync(CancellationToken.None);
         try
@@ -1400,7 +1407,7 @@ public class ProductVersionClaimGuardTests
             if (test) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentVersionClaimTest));
             if (admin) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentAdmin));
             var http = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")) };
-            if (notify) http.RequestServices = new ServiceCollection().AddSingleton<IConfiguration>(new ConfigurationBuilder().Build()).BuildServiceProvider();
+            if (notify) http.RequestServices = new ServiceCollection().AddSingleton<IConfiguration>(SharedWorkConfiguration()).BuildServiceProvider();
             return new ProductAgentController(Db, NullLogger<ProductAgentController>.Instance, null!, null!, null!, null!, null!, null!) {
                 ControllerContext = new ControllerContext { HttpContext = http },
             };

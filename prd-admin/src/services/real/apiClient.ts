@@ -253,6 +253,12 @@ async function doRefreshAdminToken(): Promise<boolean> {
   }
 }
 
+/** 每次明确的新操作生成一个意图，认证刷新重试沿用同一个；调用方可传稳定标识覆盖。 */
+function withTaskIntent<T extends { method?: string; headers?: Record<string, string> }>(options: T, defaultMethod = 'GET'): T {
+  if ((options.method ?? defaultMethod) === 'GET' || Object.keys(options.headers ?? {}).some(key => key.toLowerCase() === 'idempotency-key')) return options;
+  return { ...options, headers: { ...options.headers, 'Idempotency-Key': crypto.randomUUID() } };
+}
+
 export async function apiRequest<T>(
   path: string,
   options?: {
@@ -265,7 +271,7 @@ export async function apiRequest<T>(
     signal?: AbortSignal;
   }
 ): Promise<ApiResponse<T>> {
-  return await apiRequestInner<T>(path, options, false);
+  return await apiRequestInner<T>(path, options && withTaskIntent(options), false);
 }
 
 export interface ApiDownloadedFile {
@@ -301,7 +307,7 @@ export async function apiMultipartRequest<T>(
     signal?: AbortSignal;
   },
 ): Promise<ApiResponse<T>> {
-  return apiMultipartRequestInner(path, options, false);
+  return apiMultipartRequestInner(path, withTaskIntent(options, 'POST'), false);
 }
 
 async function apiMultipartRequestInner<T>(

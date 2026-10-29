@@ -52,7 +52,17 @@ public record LlmRequestContext(
     /// 本次生图显式指定的水印配置 id（来自已校验归属的业务 run）。null = 沿用账号给应用绑定的那套；
     /// <see cref="WatermarkSelection.None"/> = 明确不打水印。
     /// </summary>
-    string? WatermarkConfigId = null);
+    string? WatermarkConfigId = null,
+    string? TaskPermitId = null,
+    string? ExecutionOrigin = null,
+    string? TriggerCredentialId = null,
+    string? TriggerActorUserId = null,
+    string? SourceDeployment = null,
+    string? SourceTask = null,
+    string? SourceSystem = null,
+    string? TaskLeaseRunId = null,
+    string? TaskLeaseOwnerHash = null,
+    long? TaskLeaseFence = null);
 
 public interface ILLMRequestContextAccessor
 {

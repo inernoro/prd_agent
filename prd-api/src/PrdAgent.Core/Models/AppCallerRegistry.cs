@@ -1976,6 +1976,17 @@ public static class InfraAgent
 {
     public const string AppName = "CDS Agent 工作台";
 
+    public static class Runtime
+    {
+        [AppCallerMetadata(
+            "CDS Agent运行对话",
+            "已授权的基础设施任务通过平台网关执行对话，来源与额度关联到实际任务",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Infrastructure"
+        )]
+        public const string Chat = "infra-agent.runtime::chat";
+    }
+
     /// <summary>
     /// Lite 只读审查降级路径：当默认 runtime profile 不是 Claude/Anthropic 兼容
     /// （R1 未闭合）时，会话不再硬卡，改走本调用经现有 LLM Gateway 做只读代码审查。

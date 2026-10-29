@@ -1556,6 +1556,55 @@ public class LlmGatewayTests
         Assert.True(attempts[1].ReachedProvider);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StreamAsync_WhenConsumerStopsAtDone_ShouldAlreadyHaveTerminalCostEvidence(bool withUsage)
+    {
+        var usage = withUsage ? ",\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}" : "";
+        var upstream = "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}]}\n\n"
+            + "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]" + usage + "}\n\n"
+            + "data: [DONE]\n\n";
+        var resolver = new Moq.Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<string?>(),
+                Moq.It.IsAny<string?>(), Moq.It.IsAny<string?>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult(new ModelResolutionResult
+            {
+                Success = true, ActualModel = "synthetic-priced-model", ActualPlatformId = "synthetic-platform",
+                ActualPlatformName = "Synthetic", PlatformType = "openai", Protocol = "openai",
+                ApiUrl = "https://upstream.invalid", ApiKey = "synthetic", ResolutionType = "PinnedModel",
+                InputPricePerMillion = 1m, OutputPricePerMillion = 2m, PriceCurrency = "USD",
+            }));
+        var writer = new CapturingLogWriter();
+        var gateway = new LlmGateway(resolver.Object, new SequenceHttpClientFactory((200, upstream)),
+            new TestLogger<LlmGateway>(), writer);
+        var sawDone = false;
+
+        // Responses/Claude compatibility handlers return as soon as Done arrives.
+        await foreach (var chunk in gateway.StreamAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.Lab.Chat, ModelType = ModelTypes.Chat,
+            RequestBody = new JsonObject { ["messages"] = new JsonArray() },
+        }))
+        {
+            if (chunk.Type != GatewayChunkType.Done) continue;
+            sawDone = true;
+            Assert.NotNull(writer.Done);
+            break;
+        }
+
+        Assert.True(sawDone);
+        Assert.Equal(1, writer.DoneCount);
+        Assert.Null(writer.Error);
+        Assert.Equal("succeeded", writer.Done!.Status);
+        Assert.Equal("OK", writer.Done.AnswerText);
+        Assert.Equal("stop", writer.Done.FinishReason);
+        Assert.Equal(withUsage ? 11 : null, writer.Done.InputTokens);
+        Assert.Equal(withUsage ? 7 : null, writer.Done.OutputTokens);
+        Assert.Equal(withUsage ? "priced" : "no_usage", writer.Done.CostStatus);
+        Assert.Equal(withUsage ? 0.000025m : null, writer.Done.EstimatedCostUsd);
+    }
+
     [Fact]
     public async Task StreamAsync_WhenUsageFollowsFinishReasonInSeparateFrame_ShouldPersistUsageOnce()
     {

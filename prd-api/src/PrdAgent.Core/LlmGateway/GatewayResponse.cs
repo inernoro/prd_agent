@@ -15,7 +15,8 @@ public record GatewayPhysicalAdmissionContext(
     string LogicalModelPublicId,
     string Provider,
     string Model,
-    string? OfferingId);
+    string? OfferingId,
+    string? Protocol = null);
 
 public sealed record GatewayNativeAdmissionContext(
     string RequestId,
@@ -24,7 +25,8 @@ public sealed record GatewayNativeAdmissionContext(
     string LogicalModelPublicId,
     string Provider,
     string Model,
-    string? OfferingId)
+    string? OfferingId,
+    string? Protocol = null)
     : GatewayPhysicalAdmissionContext(
         RequestId,
         RequestBodyUtf8Bytes,
@@ -32,7 +34,8 @@ public sealed record GatewayNativeAdmissionContext(
         LogicalModelPublicId,
         Provider,
         Model,
-        OfferingId);
+        OfferingId,
+        Protocol);
 
 /// <summary>
 /// LLM Gateway 统一响应模型

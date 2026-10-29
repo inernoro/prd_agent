@@ -194,8 +194,12 @@ public static class SceneItemStatus
 /// <summary>
 /// storyboard 模式下的单个分镜（不含 Remotion 字段，单纯 prompt + OpenRouter 参数）
 /// </summary>
-public class VideoGenScene
+public class VideoGenScene : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>当前镜头生成或改写动作的执行许可；重启只恢复，不从所属长期Run借新权限。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public int Index { get; set; }
 
     /// <summary>分镜标题（可选，给用户看）</summary>
@@ -276,8 +280,12 @@ public class VideoGenSceneVersion
 /// 1. direct: 一段 prompt 调 OpenRouter 一镜直出 → VideoAssetUrl
 /// 2. storyboard: 文章 → LLM 拆分镜 → 用户编辑 → 逐镜 OpenRouter → ffmpeg concat → VideoAssetUrl
 /// </summary>
-public class VideoGenRun
+public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AppKey { get; set; } = "video-agent";
     public string? ProjectId { get; set; }

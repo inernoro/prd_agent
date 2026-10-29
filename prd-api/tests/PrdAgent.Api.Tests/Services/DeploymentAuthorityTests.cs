@@ -31,11 +31,25 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
-    public void SharedScheduledWork_ProductionRuns_PreviewDoesNot()
+    public void SharedScheduledWork_RequiresExplicitGrantAndIdentity_PreviewNeverRuns()
     {
-        DeploymentAuthority.CanRunSharedScheduledWork(Build(new())).ShouldBeTrue();
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new())).ShouldBeFalse();
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new()
+        {
+            [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+        })).ShouldBeFalse();
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new()
+        {
+            [DeploymentAuthority.DeploymentIdentityKey] = "prd-agent:production",
+            [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+        })).ShouldBeTrue();
         DeploymentAuthority.CanRunSharedScheduledWork(
-            Build(new() { ["CDS_PROJECT_ID"] = "50bf3eac3d02" })).ShouldBeFalse();
+            Build(new()
+            {
+                ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+                [DeploymentAuthority.DeploymentIdentityKey] = "prd-agent:production",
+                [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+            })).ShouldBeFalse();
     }
 
     [Fact]
@@ -70,7 +84,12 @@ public class DeploymentAuthorityTests
     [Fact]
     public void ModelLeaderboardSync_OnlyProductionOrCdsMainRuns()
     {
-        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new())).ShouldBeTrue();
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new())).ShouldBeFalse();
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            [DeploymentAuthority.DeploymentIdentityKey] = "prd-agent:production",
+            [DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+        })).ShouldBeTrue();
 
         DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
         {
