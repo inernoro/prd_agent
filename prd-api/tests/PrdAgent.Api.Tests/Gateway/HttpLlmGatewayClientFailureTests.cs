@@ -18,6 +18,66 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class HttpLlmGatewayClientFailureTests
 {
     [Fact]
+    public async Task RemotePreviewsLeaveOnlyRecoveryLeaseForCanonicalExecution()
+    {
+        var transport = new RecoveryLeaseTransport();
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway = BuildClient(transport);
+        var preview = await gateway.ResolveModelAsync("demo.image::generation", "generation", "future-image");
+        preview.Success.ShouldBeTrue();
+        var required = await gateway.ResolveRequiredLogicalModelAsync("demo.image::generation", "generation", "future-image");
+        required.Success.ShouldBeTrue();
+        transport.ExecutionClaims.ShouldBe(0);
+
+        var image = await ((HttpLlmGatewayClient)gateway).GenerateImageAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "demo.image::generation", ModelType = "generation",
+            ExpectedModel = "future-image", RequiredLogicalModelPublicId = "future-image",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest { Prompt = "fixture" },
+        }, CancellationToken.None);
+        image.Success.ShouldBeTrue();
+        transport.ExecutionClaims.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RemotePreviewRequiresExplicitReadOnlyAcknowledgement()
+    {
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK,
+            "{\"Success\":true,\"ActualModel\":\"future-provider\"}"));
+        var resolution = await client.ResolveModelAsync("demo.image::generation", "generation", "future-image");
+        resolution.Success.ShouldBeFalse();
+        resolution.ErrorMessage.ShouldContain("只读元信息");
+    }
+
+    private sealed class RecoveryLeaseTransport : HttpMessageHandler, IHttpClientFactory
+    {
+        public int ExecutionClaims { get; private set; }
+        public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var body = System.Text.Json.Nodes.JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!;
+            if (request.RequestUri!.AbsolutePath.EndsWith("/resolve"))
+            {
+                var readOnly = body["ReadOnlyMetadata"]?.GetValue<bool>() == true;
+                if (!readOnly) ExecutionClaims++;
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"Success\":true,\"ActualModel\":\"future-provider\",\"LogicalModelPublicId\":\"future-image\"}"),
+                };
+                if (readOnly) response.Headers.Add(PrdAgent.Core.LlmGateway.ILlmGateway.MetadataResolutionPurposeHeader,
+                    PrdAgent.Core.LlmGateway.ILlmGateway.ReadOnlyMetadataPurpose);
+                return response;
+            }
+            var available = ExecutionClaims++ == 0;
+            return new HttpResponseMessage(available ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent(available
+                    ? "{\"Success\":true,\"StatusCode\":200,\"Content\":\"{}\"}"
+                    : "{\"Success\":false,\"StatusCode\":503,\"ErrorCode\":\"MODEL_POOL_ALL_UNAVAILABLE\"}"),
+            };
+        }
+    }
+
+    [Fact]
     public async Task ProductionGatewayRoot_AppendsServingPathExactlyOnce()
     {
         var factory = new RecordingHttpClientFactory();

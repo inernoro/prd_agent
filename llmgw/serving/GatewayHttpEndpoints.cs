@@ -1189,15 +1189,14 @@ public static class GatewayHttpEndpoints
             if (body.ReadOnlyMetadata && !string.IsNullOrWhiteSpace(body.OfferingId))
                 return Results.Json(new { error = new { code = "METADATA_OFFERING_RECOVERY_NOT_ALLOWED" } },
                     jsonOpts, statusCode: StatusCodes.Status400BadRequest);
-            var resolution = body.ReadOnlyMetadata
+            // /resolve 从不发送上游请求，因此不得领取执行租约；旧客户端没传只读标记也一样。
+            // 异步任务精确恢复 Offering 的既有语义保留，实际执行仍只由 send/raw 认领。
+            var resolution = string.IsNullOrWhiteSpace(body.OfferingId)
                 ? await gateway.ResolveModelMetadataAsync(
-                    body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None)
-                : string.IsNullOrWhiteSpace(body.OfferingId)
-                ? await gateway.ResolveModelAsync(
                     body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None)
                 : await gateway.ResolveOfferingAsync(
                     body.AppCallerCode, body.ModelType, body.OfferingId, CancellationToken.None);
-            if (body.ReadOnlyMetadata)
+            if (string.IsNullOrWhiteSpace(body.OfferingId))
                 http.Response.Headers[PrdAgent.Core.LlmGateway.ILlmGateway.MetadataResolutionPurposeHeader]
                     = PrdAgent.Core.LlmGateway.ILlmGateway.ReadOnlyMetadataPurpose;
             return Results.Json(resolution, jsonOpts);

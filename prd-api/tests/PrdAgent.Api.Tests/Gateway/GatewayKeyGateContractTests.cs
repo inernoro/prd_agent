@@ -3266,7 +3266,10 @@ public class GatewayKeyGateContractTests
 
             resolveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
             authorizer.SourceSystem.ShouldBe("external");
-            gateway.LastResolveTenantId.ShouldBe("tenant-test");
+            gateway.LastMetadataResolveTenantId.ShouldBe("tenant-test");
+            gateway.LastResolveTenantId.ShouldBeNull("解析预览不能调用执行解析");
+            resolveResponse.Headers.GetValues(PrdAgent.Core.LlmGateway.ILlmGateway.MetadataResolutionPurposeHeader)
+                .ShouldContain(PrdAgent.Core.LlmGateway.ILlmGateway.ReadOnlyMetadataPurpose);
 
             var pools = new HttpRequestMessage(
                 HttpMethod.Get,
@@ -3338,6 +3341,7 @@ public class GatewayKeyGateContractTests
 
             response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
             gateway.LastResolveTenantId.ShouldBeNull();
+            gateway.LastMetadataResolveTenantId.ShouldBeNull();
             var unchanged = await callers.Find(_ => true).SingleAsync();
             unchanged.TotalSeen.ShouldBe(7);
             unchanged.LastObservedRequestId.ShouldBe("existing-request");
@@ -5012,6 +5016,7 @@ public class GatewayKeyGateContractTests
         public GatewayRequest? LastRequest { get; private set; }
         public GatewayRawRequest? LastRawRequest { get; private set; }
         public string? LastResolveTenantId { get; private set; }
+        public string? LastMetadataResolveTenantId { get; private set; }
         public string? LastCreateClientTenantId { get; private set; }
         public string? LastPoolsTenantId { get; private set; }
         public string? LastResolveExpectedModel { get; private set; }
@@ -5136,6 +5141,12 @@ public class GatewayKeyGateContractTests
             LastResolveExpectedModel = expectedModel;
             LastResolvePinnedPlatformId = pinnedPlatformId;
             LastResolvePinnedModelId = pinnedModelId;
+            return Task.FromResult(Resolve(expectedModel));
+        }
+
+        public Task<GatewayModelResolution> ResolveModelMetadataAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+        {
+            LastMetadataResolveTenantId = _contextAccessor?.Current?.TenantId;
             return Task.FromResult(Resolve(expectedModel));
         }
 
