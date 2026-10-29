@@ -693,8 +693,9 @@ public class WebPageAskController : ControllerBase
                     await RefundIfNothingProducedAsync();
                     await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                         snapshot.Text.Length, model, platform, Elapsed(startedAt), err);
-                    // 详情只进日志与消息记录，**不回给访客**：见 PublicErrorMessage
-                    await WriteSseAsync("error", new { code = "ASK_UPSTREAM_ERROR", message = PublicErrorMessage });
+                    // 只复用网关已有的有限错误码与用户文案，原始诊断仍不回给访客。
+                    var publicError = PublicGatewayError(chunk.ErrorCode, "ASK_UPSTREAM_ERROR");
+                    await WriteSseAsync("error", new { code = publicError.Code, message = publicError.Message });
                     return;
                 }
             }
@@ -736,7 +737,9 @@ public class WebPageAskController : ControllerBase
             if (session != null)
                 await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                     snapshot.Text.Length, model, platform, Elapsed(startedAt), ex.Message);
-            await WriteSseAsync("error", new { code = "ASK_FAILED", message = PublicErrorMessage });
+            var publicError = PublicGatewayError(
+                (ex as GatewayRouteFailureException)?.FailureCode, "ASK_FAILED");
+            await WriteSseAsync("error", new { code = publicError.Code, message = publicError.Message });
         }
         finally
         {
@@ -863,6 +866,12 @@ public class WebPageAskController : ControllerBase
     /// 详情照旧进日志和消息记录（owner 在会话审计里看得到），访客只拿一句稳定文案 + 错误码。
     /// </summary>
     private const string PublicErrorMessage = "回答失败了，请稍后再试。";
+
+    /// <summary>匿名访客只拿现有白名单码；未知码与异常正文不能作为公开错误透传。</summary>
+    private static (string Code, string Message) PublicGatewayError(string? failureCode, string fallbackCode)
+        => GatewayRouteFailure.All.Contains(failureCode ?? string.Empty, StringComparer.Ordinal)
+            ? (failureCode!, GatewayRouteFailure.UserMessage(failureCode))
+            : (fallbackCode, PublicErrorMessage);
 
     /// <summary>等首字期间的心跳间隔。取 5 秒：远小于常见反代 60s 空闲超时，又不会把流刷成噪音。</summary>
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
