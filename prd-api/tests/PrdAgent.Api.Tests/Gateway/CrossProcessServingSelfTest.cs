@@ -36,6 +36,38 @@ namespace PrdAgent.Api.Tests.Gateway;
 [Trait("Category", "Integration")]
 public class CrossProcessServingSelfTest
 {
+    [Fact]
+    public async Task LegacyResolvePreviewWithoutReadOnlyFlagCannotClaimExecutionLease()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.Logging.ClearProviders();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = null);
+        builder.Services.AddSingleton<ILlmGateway, FakeServingGateway>();
+        builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
+        await using var app = builder.Build();
+        app.MapGatewayServingEndpoints(PascalJson, TestKey, "selftest-commit");
+        await app.StartAsync();
+        try
+        {
+            using var http = new HttpClient { BaseAddress = new Uri(ResolveBaseUrl(app)) };
+            http.DefaultRequestHeaders.Add("X-Gateway-Key", TestKey);
+            using var response = await http.PostAsJsonAsync("/gw/v1/resolve", new
+            {
+                AppCallerCode = "demo.app::chat", ModelType = "chat", ExpectedModel = "logical-m1",
+            });
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<GatewayModelResolution>();
+            result!.Success.ShouldBeTrue();
+            response.Headers.GetValues(ILlmGateway.MetadataResolutionPurposeHeader)
+                .ShouldContain(ILlmGateway.ReadOnlyMetadataPurpose);
+            var serving = (FakeServingGateway)app.Services.GetRequiredService<ILlmGateway>();
+            serving.ExecuteResolves.ShouldBe(0);
+            serving.MetadataReads.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
     private const string TestKey = "test-gateway-key";
     private const string SecretApiKey = "SECRET-must-not-cross-http";
 
@@ -83,6 +115,8 @@ public class CrossProcessServingSelfTest
 
             // 预算元信息走明确的只读能力，不委托普通执行解析。
             var serving = (FakeServingGateway)app.Services.GetRequiredService<ILlmGateway>();
+            serving.ExecuteResolves.ShouldBe(0, "远程预解析不能占执行租约");
+            serving.MetadataReads.ShouldBe(1);
             var executeResolves = serving.ExecuteResolves;
             var metadata = await client.ResolveModelMetadataAsync("demo.app::chat", "chat", "logical-m1");
             metadata.Success.ShouldBeTrue();
@@ -96,7 +130,7 @@ public class CrossProcessServingSelfTest
             metadata.PriceObservedAt.ShouldNotBeNull();
             metadata.ApiKey.ShouldBeNull();
             serving.ExecuteResolves.ShouldBe(executeResolves);
-            serving.MetadataReads.ShouldBe(1);
+            serving.MetadataReads.ShouldBe(2);
             using var http = new HttpClient { BaseAddress = new Uri(baseUrl) };
             http.DefaultRequestHeaders.Add("X-Gateway-Key", TestKey);
             using var forbidden = await http.PostAsJsonAsync("/gw/v1/resolve", new
@@ -106,7 +140,7 @@ public class CrossProcessServingSelfTest
             });
             forbidden.StatusCode.ShouldBe(System.Net.HttpStatusCode.BadRequest);
             serving.OfferingRecoveries.ShouldBe(0);
-            serving.MetadataReads.ShouldBe(1);
+            serving.MetadataReads.ShouldBe(2);
 
             // 2) send：非流式往返。
             var send = await client.SendAsync(new GatewayRequest { AppCallerCode = "demo.app::chat", ModelType = "chat" });
@@ -165,7 +199,7 @@ public class CrossProcessServingSelfTest
             denied.StatusCode.ShouldBe(401);
             var deniedMetadata = await badClient.ResolveModelMetadataAsync("demo.app::chat", "chat");
             deniedMetadata.Success.ShouldBeFalse();
-            serving.MetadataReads.ShouldBe(1);
+            serving.MetadataReads.ShouldBe(2);
 
             // 旧 serving 的 DTO 会忽略未知用途字段；缺少用途确认时客户端必须失败关闭。
             var legacyBuilder = WebApplication.CreateBuilder();

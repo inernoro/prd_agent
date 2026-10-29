@@ -214,6 +214,52 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, busyRecovery.FailureCode);
             Assert.Equal(503, GatewayRouteFailure.HttpStatusCode(busyRecovery.FailureCode));
 
+            // 进程丢失执行结果时，过期租约必须可由另一实例接管；不改健康状态。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update.Set(x => x.HalfOpenLeaseUntil, DateTime.UtcNow.AddSeconds(-1)));
+            var otherResolver = new ModelResolver(new MongoDbContext(connection, mapName), config,
+                NullLogger<ModelResolver>.Instance, gateway);
+            var concurrent = await Task.WhenAll(Enumerable.Range(0, 16).Select(i =>
+                (i % 2 == 0 ? resolver : otherResolver).ResolveAsync(caller, "generation", "image2")));
+            var winner = Assert.Single(concurrent.Where(x => x.Success));
+            Assert.All(concurrent.Where(x => !x.Success), x =>
+                Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, x.FailureCode));
+
+            // 试探失败立即释放租约并作废人工恢复资格，继续冷却而非永久锁死或不停重试。
+            await otherResolver.RecordFailureAsync(winner);
+            var failedProbe = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Equal(ModelHealthStatus.Unavailable, failedProbe.HealthStatus);
+            Assert.Null(failedProbe.HalfOpenLeaseUntil);
+            Assert.Null(failedProbe.ManualRecoveryAt);
+            Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
+
+            // 模拟冷却已过：只读预检不占名额，真实成功收口健康与计数。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update.Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1)));
+            Assert.True((await resolver.ResolveMetadataAsync(caller, "generation", "image2")).Success);
+            Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
+            var recovered = await otherResolver.ResolveAsync(caller, "generation", "image2");
+            Assert.True(recovered.Success);
+            await otherResolver.RecordSuccessAsync(recovered);
+            var healthy = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Equal(ModelHealthStatus.Healthy, healthy.HealthStatus);
+            Assert.Equal(0, healthy.ConsecutiveFailures);
+            Assert.Null(healthy.HalfOpenLeaseUntil);
+
+            // 恢复后再次故障仍走同一自动恢复周期，不能只证明首次解锁。
+            for (var i = 0; i < GatewayCircuitBreakerPolicy.FailuresToUnavailable; i++)
+                await resolver.RecordFailureAsync(recovered);
+            Assert.Equal(ModelHealthStatus.Unavailable,
+                (await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HealthStatus);
+            Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update.Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1)));
+            var secondRecovery = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.True(secondRecovery.Success);
+            await resolver.RecordSuccessAsync(secondRecovery);
+            Assert.Equal(ModelHealthStatus.Healthy,
+                (await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HealthStatus);
+
             await offerings
                 .UpdateManyAsync(
                     FilterDefinition<GatewayModelOffering>.Empty,
