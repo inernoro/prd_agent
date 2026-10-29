@@ -24,6 +24,18 @@ public interface IModelResolver
         string? pinnedModelId = null,
         CancellationToken ct = default);
 
+    /// <summary>只读候选元信息，不认领半开租约；未支持时失败关闭。</summary>
+    Task<ModelResolutionResult> ResolveMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => Task.FromResult(ModelResolutionResult.NotFound(
+            expectedModel, "当前模型调度器不支持只读模型元信息",
+            GatewayRouteFailure.OfferingUnresolvable, "resolver-capability", appCallerCode));
+
     /// <summary>
     /// 按已经持久化的 Offering ID 恢复精确路由。用于异步任务在提交成功后继续轮询或下载，
     /// 禁止重新进入负载均衡而命中另一个上游。

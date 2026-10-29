@@ -305,6 +305,11 @@ public class GatewayServingEndpointContractTests
             string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
             => Task.FromResult(Resolve(expectedModel));
 
+        public Task<GatewayModelResolution> ResolveModelMetadataAsync(
+            string appCallerCode, string modelType, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+            => Task.FromResult(Resolve(expectedModel));
+
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
             string appCallerCode, string modelType, CancellationToken ct = default)
             => Task.FromResult(new List<AvailableModelPool>

@@ -50,6 +50,10 @@ public class HostedSiteRevision
     [JsonIgnore]
     public List<HostedSiteRevisionFile> VerifiedFiles { get; set; } = new();
 
+    /// <summary>服务端确认该已发布版本实际引用的对象键；历史内容存在时不得作为孤儿删除。</summary>
+    [JsonIgnore]
+    public List<string> PublishedAssetKeys { get; set; } = new();
+
     /// <summary>
     /// 建这条版本时线上站点的内容形态（取值见 <see cref="HostedSiteContentShapes"/>）。
     ///

@@ -1601,6 +1601,33 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Contains("不允许", error.Message);
     }
 
+    [Fact]
+    public void TrustedPptBridgeMustKeepThePublicManifestConsistentWithTheDeliveredPackage()
+    {
+        var html = HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+            "<!doctype html><html><head></head><body><h1>现有演示稿</h1></body></html>", ["index.html", "assets/style.css"]);
+        var index = BuildFile("index.html", html, "text/html; charset=utf-8");
+        var asset = BuildFile("assets/style.css", "body{color:#111}", "text/css; charset=utf-8");
+        DesignWorkspaceFile[] original = [index, asset, BuildManifest(index, asset)];
+        var before = JsonSerializer.Serialize(original);
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(x => x.PrepareTrustedPresentationHtmlForHosting(It.IsAny<byte[]>(), "index.html"))
+            .Returns<byte[], string>((bytes, entry) => HostedSiteService.RewritePublishedEntryHtml(bytes, entry, true));
+        var delivered = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(sites.Object, original, html,
+            trustedPresentation: true);
+        Assert.NotEqual(index.Sha256, delivered.Single(x => x.Path == "index.html").Sha256);
+        var package = new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion, "ppt", "base", delivered);
+        var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            JsonSerializer.SerializeToUtf8Bytes(package, DesignArtifactWorkspaceContract.JsonOptions), "ppt", "base",
+            DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        Assert.Contains("map-slide-nav-bridge-only", parsed.IndexHtml);
+        Assert.Equal(asset, parsed.Files.Single(x => x.Path == asset.Path));
+        Assert.Equal(before, JsonSerializer.Serialize(original));
+        var web = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(sites.Object, original, html,
+            preserveVerifiedWebPackage: true);
+        Assert.Equal(original, web);
+    }
+
     private static DesignArtifactRun BuildRun() => new()
     {
         Id = "run-workspace-1",

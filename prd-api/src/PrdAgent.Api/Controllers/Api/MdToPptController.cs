@@ -181,6 +181,8 @@ public class MdToPptController : ControllerBase
 
 
 
+    private readonly IHtmlPptContinuationService? _continuation;
+
     public MdToPptController(
         MongoDbContext db,
         LlmGatewayDataContext gatewayData,
@@ -192,7 +194,8 @@ public class MdToPptController : ControllerBase
         IHostedSiteService siteService,
         IHtmlPptPublishCoordinator publishCoordinator,
         IConfiguration configuration,
-        ILogger<MdToPptController> logger)
+        ILogger<MdToPptController> logger,
+        IHtmlPptContinuationService? continuation = null)
     {
         _db = db;
         _gatewayData = gatewayData;
@@ -203,6 +206,7 @@ public class MdToPptController : ControllerBase
         _openDesignRuns = openDesignRuns;
         _siteService = siteService;
         _publishCoordinator = publishCoordinator;
+        _continuation = continuation;
         _gatewayTenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
@@ -1416,18 +1420,14 @@ public class MdToPptController : ControllerBase
             }, HttpContext.RequestAborted);
             return;
         }
-        if (string.IsNullOrWhiteSpace(req.CurrentHtml)
-            || !HtmlMatchesHash(req.CurrentHtml, parentRun.HtmlHash ?? ComputeHtmlHash(parentRun.Html)))
+        HtmlPptModificationAdmission? admission = null;
+        if (req.StyleOverride && (!string.IsNullOrWhiteSpace(req.ManualEditHtml)
+            || string.IsNullOrWhiteSpace(req.Theme) && string.IsNullOrWhiteSpace(req.TemplateId)))
         {
-            Response.StatusCode = StatusCodes.Status409Conflict;
-            await Response.WriteAsJsonAsync(new
-            {
-                error = "当前演示稿与精修来源版本不一致，请刷新恢复后再修改",
-                code = "parent_html_mismatch",
-            }, HttpContext.RequestAborted);
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            await Response.WriteAsJsonAsync(new { error = "换风格需明确选择主题或模板，且不能与手动保存合并", code = "ppt_style_override_invalid" });
             return;
         }
-        req.CurrentHtml = parentRun.Html;
         var manualEditHtml = string.IsNullOrWhiteSpace(req.ManualEditHtml)
             ? null
             : req.ManualEditHtml.Trim();
@@ -1443,6 +1443,64 @@ public class MdToPptController : ControllerBase
             }, HttpContext.RequestAborted);
             return;
         }
+        var template = await ResolveTemplateAsync(userId, req.TemplateId);
+        DesignArtifactRun? styleParent = null;
+        if (req.StyleOverride)
+        {
+            styleParent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                    && item.Id == parentRun.Id && item.UserId == userId
+                    && item.ArtifactType == DesignArtifactTypes.HtmlPpt && item.Status == RunStatuses.Done)
+                .FirstOrDefaultAsync(HttpContext.RequestAborted);
+            try
+            {
+                HtmlPptOpenDesignRunService.ValidateStyleOverride(styleParent,
+                    template != null ? $"custom:{template.Name}" : req.Theme, template?.StyleSpec);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                await Response.WriteAsJsonAsync(new { error = ex.Message, code = "ppt_style_override_invalid" }, HttpContext.RequestAborted);
+                return;
+            }
+        }
+        if (req.ExpectedEditContext != null || !string.IsNullOrWhiteSpace(req.IdempotencyKey))
+        {
+            try
+            {
+                if (_continuation == null || req.ExpectedEditContext == null
+                    || string.IsNullOrWhiteSpace(req.IdempotencyKey)
+                    || string.IsNullOrWhiteSpace(req.CurrentHtml)
+                    || !HtmlMatchesHash(req.CurrentHtml, req.ExpectedEditContext.BaseHtmlHash))
+                    throw new HtmlPptContinuationException("ppt_edit_request_invalid", "当前稿与修改版本身份不一致，原稿和要求已保留");
+                var requestHash = HtmlPptContinuationService.RequestFingerprint(parentRun.Id,
+                    req.ExpectedEditContext, req.SlideRequest?.Trim() ?? string.Empty, req.SlideIndex,
+                    req.Theme, req.TemplateId, req.ManualEditHtml?.Trim(), req.StyleOverride);
+                admission = await _continuation.AdmitModificationAsync(parentRun.Id, userId,
+                    req.ExpectedEditContext, req.IdempotencyKey, requestHash, CancellationToken.None,
+                    isManualSave: !string.IsNullOrWhiteSpace(req.ManualEditHtml));
+            }
+            catch (HtmlPptContinuationException ex)
+            {
+                Response.StatusCode = StatusCodes.Status409Conflict;
+                await Response.WriteAsJsonAsync(new { error = ex.Message, code = ex.Code }, HttpContext.RequestAborted);
+                return;
+            }
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(req.CurrentHtml)
+                || !HtmlMatchesHash(req.CurrentHtml, parentRun.HtmlHash ?? ComputeHtmlHash(parentRun.Html)))
+            {
+                Response.StatusCode = StatusCodes.Status409Conflict;
+                await Response.WriteAsJsonAsync(new
+                {
+                    error = "当前演示稿与精修来源版本不一致，请刷新恢复后再修改",
+                    code = "parent_html_mismatch",
+                }, HttpContext.RequestAborted);
+                return;
+            }
+            req.CurrentHtml = parentRun.Html;
+        }
         var effectiveSourcePlanJson = parentRun.SourcePlanJson;
         var effectiveSourcePlanHash = parentRun.SourcePlanHash;
         // 手动稿由同一父版、同一来源身份继续交给 OpenDesign；MAP 不解析或重写 PPT 内容。
@@ -1452,8 +1510,14 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
-        var template = await ResolveTemplateAsync(userId, req.TemplateId);
-        var run = await CreateRunAsync(
+        MdToPptRun? run = admission == null ? null : await _db.MdToPptRuns
+            .Find(item => item.Id == admission.RunId && item.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (run == null)
+        {
+            try
+            {
+                run = await CreateRunAsync(
             userId,
             "agent",
             template != null ? $"custom:{template.Name}" : req.Theme,
@@ -1463,15 +1527,50 @@ public class MdToPptController : ControllerBase
             provenance.KnowledgeReferences,
             parentRun?.Id,
             parentRun == null ? null : parentRun.HtmlHash ?? ComputeHtmlHash(parentRun.Html),
+            runId: admission?.RunId,
             sourcePlanPageCount: parentRun!.SourcePlanPageCount,
             sourcePlanJson: effectiveSourcePlanJson,
             sourcePlanHash: effectiveSourcePlanHash);
+            }
+            catch (MongoWriteException ex) when (admission != null && ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                run = await _db.MdToPptRuns.Find(item => item.Id == admission.RunId && item.UserId == userId)
+                    .FirstOrDefaultAsync(CancellationToken.None) ?? throw new InvalidOperationException("修改操作记录未能安全恢复");
+            }
+        }
         await WriteEventAsync("run", new { runId = run.Id });
+        if (admission != null)
+        {
+            var queued = await _db.DesignArtifactRuns.Find(item => item.Id == run.Id && item.UserId == userId
+                    && item.DeploymentSlug == DeploymentScope.Current)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (queued != null)
+            {
+                await StreamOpenDesignPptRunAsync(run.Id);
+                return;
+            }
+            if (run.Status != "running")
+            {
+                await WriteEventAsync("error", new { message = "这次修改已经终结，原稿仍保留。请查看该次结果后再发起新的修改。" });
+                return;
+            }
+            // 跨库写入中断的重放仍须复核原冻结基稿，不能借重放静默换底稿。
+            try
+            {
+                admission = admission with { Base = await _continuation!.ValidateFrozenContextAsync(admission.Base.Context, userId, CancellationToken.None) };
+            }
+            catch (HtmlPptContinuationException ex)
+            {
+                await PersistRunErrorAsync(run, ex.Message, ex.Code);
+                await WriteEventAsync("error", new { message = ex.Message });
+                return;
+            }
+        }
         var effectiveSlideIndex = ResolvePatchSlideIndex(req.SlideIndex, req.SlideRequest);
         var pageHint = effectiveSlideIndex.HasValue
             ? $"（仅修改第 {effectiveSlideIndex.Value} 页）"
             : "（未指定具体页，按要求修改整份 PPT）";
-        var parentArtifact = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+        var parentArtifact = styleParent ?? await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
                 && item.Id == parentRun.Id
                 && item.UserId == userId
                 && item.ArtifactType == DesignArtifactTypes.HtmlPpt
@@ -1504,7 +1603,11 @@ public class MdToPptController : ControllerBase
                     template?.StyleSpec,
                     manualEditHtml,
                     effectiveSourcePlanJson,
-                    effectiveSourcePlanHash),
+                    effectiveSourcePlanHash,
+                    admission?.Base.Context,
+                    admission?.ScopeId,
+                    admission?.CompletionId,
+                    admission?.RequestHash, StyleOverride: req.StyleOverride),
                 CancellationToken.None);
             await StreamOpenDesignPptRunAsync(run.Id);
         }
@@ -1674,10 +1777,22 @@ public class MdToPptController : ControllerBase
             }
             run = readableRun;
         }
+        HtmlPptResolvedEditContext? editBase = null;
+        string? editContextError = null;
+        if (_continuation != null && run.Status == "done" && designArtifact?.PresentationInput != null)
+        {
+            try { editBase = await _continuation.ResolveCurrentEditContextAsync(run.Id, userId, HttpContext.RequestAborted); }
+            catch (InvalidOperationException ex)
+            {
+                editContextError = ex is HtmlPptContinuationException ? ex.Message : "当前版本文件暂不能安全用于修改，原稿仍然保留";
+            }
+        }
+        var displayedRevisionId = editBase?.Context.BaseRevisionId ?? designArtifact?.ArtifactRevisionId;
         var artifactSiteUrl = string.IsNullOrWhiteSpace(run.PublishedSiteId)
             ? null
             : await _db.HostedSites.Find(site =>
-                    site.Id == run.PublishedSiteId && site.OwnerUserId == userId)
+                    site.Id == run.PublishedSiteId && site.OwnerUserId == userId
+                    && (displayedRevisionId == null || displayedRevisionId == site.PublishedRevisionId))
                 .Project(site => site.SiteUrl)
                 .FirstOrDefaultAsync(HttpContext.RequestAborted);
         var invalidSavedDeck = run.Status == "done" &&
@@ -1695,7 +1810,9 @@ public class MdToPptController : ControllerBase
             parentOutlineRunId = run.ParentOutlineRunId,
             parentHtmlHash = run.ParentHtmlHash,
             title = run.Title,
-            html = invalidSavedDeck ? null : run.Html,
+            html = invalidSavedDeck ? null : editBase?.Html ?? run.Html,
+            editContext = editBase?.Context,
+            editContextError,
             outlineJson = run.OutlineJson,
             sourceSurface = run.SourceSurface,
             inputAuthority = run.InputAuthority,
@@ -1711,7 +1828,8 @@ public class MdToPptController : ControllerBase
             publishedSiteId = run.PublishedSiteId,
             publishedVersionId = run.PublishedVersionId,
             siteUrl = artifactSiteUrl,
-            htmlHash = run.HtmlHash,
+            htmlHash = editBase?.Context.BaseHtmlHash ?? run.HtmlHash,
+            sourceHtmlHash = run.HtmlHash,
             publishedHtmlHash = run.PublishedHtmlHash,
             error = invalidSavedDeck
                 ? "保存的演示稿不完整，已停止恢复。请重新生成或从上一版本继续"
@@ -4262,6 +4380,11 @@ public class MdToPptOutlinePageDto
 
 public class MdToPptPatchRequest
 {
+    public bool StyleOverride { get; set; }
+    /// <summary>只作比较的基稿快照；权限与实际身份仍由服务器重新核对。</summary>
+    public HtmlPptEditContext? ExpectedEditContext { get; set; }
+    public string? IdempotencyKey { get; set; }
+
     /// <summary>当前精修所依据的服务端 run；来源与知识快照只能从该 run 继承。</summary>
     public string? ParentRunId { get; set; }
 

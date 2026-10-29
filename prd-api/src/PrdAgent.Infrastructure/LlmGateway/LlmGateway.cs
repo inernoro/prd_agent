@@ -3545,6 +3545,23 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
+    public async Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+    {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+            return new GatewayModelResolution { Success = false, ErrorMessage = error, ResolutionType = "NotFound" };
+
+        var result = await _modelResolver.ResolveMetadataAsync(
+            appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        return result.ToGatewayResolution();
+    }
+
+    /// <inheritdoc />
     public async Task<GatewayModelResolution> ResolveOfferingAsync(
         string appCallerCode,
         string modelType,

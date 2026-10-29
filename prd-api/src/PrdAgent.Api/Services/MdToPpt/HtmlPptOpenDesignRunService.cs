@@ -19,7 +19,12 @@ public sealed record HtmlPptOpenDesignInput(
     string? StyleInstruction = null,
     string? ManualEditHtml = null,
     string? SourcePlanJson = null,
-    string? SourcePlanHash = null);
+    string? SourcePlanHash = null,
+    HtmlPptEditContext? EditContext = null,
+    string? RuntimeBudgetScopeId = null,
+    string? PptCompletionId = null,
+    string? ModificationRequestHash = null,
+    bool StyleOverride = false);
 
 public interface IHtmlPptOpenDesignRunService
 {
@@ -40,6 +45,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
     private readonly IDesignGenerationSettingsService _designSettings;
     private readonly IConfiguration _configuration;
     private readonly ILogger<HtmlPptOpenDesignRunService> _logger;
+    private readonly IHtmlPptContinuationService? _continuation;
 
     public HtmlPptOpenDesignRunService(
         MongoDbContext db,
@@ -48,7 +54,8 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         IRunEventStore events,
         IDesignGenerationSettingsService designSettings,
         IConfiguration configuration,
-        ILogger<HtmlPptOpenDesignRunService> logger)
+        ILogger<HtmlPptOpenDesignRunService> logger,
+        IHtmlPptContinuationService? continuation = null)
     {
         _db = db;
         _providers = providers;
@@ -57,6 +64,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         _designSettings = designSettings;
         _configuration = configuration;
         _logger = logger;
+        _continuation = continuation;
     }
 
     public async Task<DesignArtifactRun> QueueAsync(
@@ -77,6 +85,8 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         var operation = compatibilityRun.Op is "patch" or "manual-edit" or "normalize"
             ? DesignArtifactOperations.Edit
             : DesignArtifactOperations.Generate;
+        if (input.StyleOverride && !string.IsNullOrWhiteSpace(input.ManualEditHtml))
+            throw new InvalidOperationException("手动保存不能同时覆盖演示稿风格");
         if (capability == null || !capability.Enabled || !capability.Healthy
             || !capability.ArtifactTypes.Contains(DesignArtifactTypes.HtmlPpt, StringComparer.Ordinal)
             || !capability.Operations.Contains(operation, StringComparer.Ordinal))
@@ -105,6 +115,10 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
             Instruction = input.Instruction.Trim(),
             Title = compatibilityRun.Title,
             LinkedRunId = compatibilityRun.Id,
+            RuntimeBudgetScopeId = input.RuntimeBudgetScopeId,
+            PptCompletionId = input.PptCompletionId,
+            PptEditContext = input.EditContext,
+            PptModificationRequestHash = input.ModificationRequestHash,
             KnowledgeReferences = compatibilityRun.KnowledgeReferences.ToList(),
             UploadedSources =
             [
@@ -129,6 +143,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
                 SourcePlanJson = input.SourcePlanJson,
                 SourcePlanHash = input.SourcePlanHash,
                 Theme = input.Theme.Trim(),
+                StyleOverride = input.StyleOverride,
                 ParentRunId = input.ParentRunId,
                 ParentPackageHash = input.ParentPackageHash,
                 ManualEditHtml = manualEditHtml,
@@ -146,7 +161,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         };
 
         run.DesignDirection = await _designSettings.FreezeCatalogStyleAsync(
-            ResolvePresentationDesignSystem(input.Theme),
+            ResolvePresentationDesignSystem(input.Theme, input.StyleOverride && string.IsNullOrWhiteSpace(input.StyleInstruction)),
             ct);
         if (!string.IsNullOrWhiteSpace(input.StyleInstruction))
         {
@@ -156,7 +171,32 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
             run.DesignDirection.PromptFingerprint = DesignGenerationSettingsService.Fingerprint(run.DesignDirection);
         }
 
-        if (operation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(input.ParentRunId))
+        void InheritParent(DesignArtifactRun parent)
+        {
+            if (input.StyleOverride) ValidateStyleOverride(parent, input.Theme, input.StyleInstruction);
+            var inherited = DesignArtifactBriefFactory.TryInheritFrozenContext(run, parent,
+                DesignArtifactContextSources.InheritedSiteSourceRun, input.ParentRunId, input.StyleOverride);
+            if (input.StyleOverride && !inherited) throw new InvalidOperationException("换风格缺少受信来源上下文");
+            if (inherited && !input.StyleOverride && parent.PresentationInput != null)
+                run.PresentationInput.Theme = parent.PresentationInput.Theme;
+        }
+        if (input.EditContext != null)
+        {
+            if (_continuation == null || operation != DesignArtifactOperations.Edit
+                || input.ParentRunId != input.EditContext.SourceRunId
+                || string.IsNullOrWhiteSpace(input.RuntimeBudgetScopeId)
+                || string.IsNullOrWhiteSpace(input.PptCompletionId)
+                || string.IsNullOrWhiteSpace(input.ModificationRequestHash))
+                throw new InvalidOperationException("演示稿修改缺少受信准入身份");
+            await _continuation.ValidateFrozenContextAsync(input.EditContext, compatibilityRun.UserId, ct);
+            var parent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                    && item.Id == input.ParentRunId && item.UserId == compatibilityRun.UserId
+                    && item.ArtifactType == DesignArtifactTypes.HtmlPpt && item.Status == RunStatuses.Done)
+                .FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("演示稿来源版本不存在或无权访问");
+            run.TargetSiteId = input.EditContext.BaseSiteId;
+            InheritParent(parent);
+        }
+        else if (operation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(input.ParentRunId))
         {
             var parent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
                     && item.Id == input.ParentRunId
@@ -191,11 +231,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
                 throw new InvalidOperationException("演示稿来源版本已发生变化，请恢复当前版本后重试");
 
             run.TargetSiteId = parent.ArtifactSiteId;
-            DesignArtifactBriefFactory.TryInheritFrozenContext(
-                run,
-                parent,
-                DesignArtifactContextSources.InheritedSiteSourceRun,
-                input.ParentRunId);
+            InheritParent(parent);
         }
         else
         {
@@ -203,10 +239,23 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         }
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
 
-        await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: ct);
+        try { await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None); }
+        catch (MongoWriteException ex) when (input.EditContext != null
+            && ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            var replay = await _db.DesignArtifactRuns.Find(item => item.Id == run.Id
+                    && item.UserId == run.UserId && item.DeploymentSlug == run.DeploymentSlug
+                    && item.RuntimeBudgetScopeId == run.RuntimeBudgetScopeId
+                    && item.PptCompletionId == run.PptCompletionId
+                    && item.PptModificationRequestHash == input.ModificationRequestHash)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            return replay ?? throw new InvalidOperationException("同一修改操作身份与已创建任务不一致");
+        }
+        compatibilityRun.Theme = run.PresentationInput.Theme;
         await _db.MdToPptRuns.UpdateOneAsync(
             item => item.Id == compatibilityRun.Id && item.UserId == compatibilityRun.UserId,
             Builders<MdToPptRun>.Update
+                .Set(item => item.Theme, run.PresentationInput.Theme)
                 .Set(item => item.Runtime, DesignArtifactRuntimes.OpenDesign)
                 .Set(item => item.Provider, DesignArtifactRuntimes.OpenDesign)
                 .Set(item => item.ArtifactContractVersion, DesignArtifactContractVersions.Current)
@@ -252,7 +301,15 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
     private static string Sha256(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    internal static string ResolvePresentationDesignSystem(string? theme) => theme?.Trim().ToLowerInvariant() switch
+    // 与控制器准入前共用同一有限输入判据；此处不创建任务、预算或模型请求。
+    internal static void ValidateStyleOverride(DesignArtifactRun? parent, string? theme, string? styleInstruction)
+    {
+        if (parent?.DesignBrief == null || parent.BrandPackage == null)
+            throw new InvalidOperationException("换风格缺少受信来源上下文，请恢复完整来源版本后重试");
+        _ = ResolvePresentationDesignSystem(theme, requireExplicit: string.IsNullOrWhiteSpace(styleInstruction));
+    }
+
+    internal static string ResolvePresentationDesignSystem(string? theme, bool requireExplicit = false) => theme?.Trim().ToLowerInvariant() switch
     {
         "tech-dark" => "mission-control",
         "cobalt-grid" => "modern",
@@ -266,6 +323,8 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         "ocean-glass" => "glassmorphism",
         "atelier-zero" => "atelier-zero",
         "kami-paper" => "kami",
+        _ when requireExplicit && !string.Equals(theme, "storytelling", StringComparison.OrdinalIgnoreCase)
+            => throw new InvalidOperationException("明确换风格需使用已登记主题或受信模板"),
         _ => "storytelling",
     };
 }

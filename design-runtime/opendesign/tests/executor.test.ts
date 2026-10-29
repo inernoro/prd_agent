@@ -86,7 +86,7 @@ describe('presentation source context', () => {
         },
         designDirection: {
           schemaVersion: 'map-design-direction-v1', styleId: 'deck', styleName: '演示稿',
-          styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'minimal', reviewMode: 'strict',
+          styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'editorial', reviewMode: 'strict',
           prompts: {
             generate: '你是资深网页设计师，要把 MAP 知识内容做成一张好看、可信的单页网页。手机 390px 宽度下可读。',
             edit: '你在修改一张已经发布的网页。',
@@ -94,12 +94,20 @@ describe('presentation source context', () => {
           },
           promptFingerprint: 'native-deck-skill',
         },
+        brandPackage: {
+          schemaVersion: 'map-brand-package-v1', version: 1, ref: 'design-system:editorial', source: 'fixture',
+          designSystemId: 'editorial', logo: null, approvedColors: ['#0a0a0b', '#f1efea'], fonts: ['Georgia, serif'],
+          fixedStatements: ['来源可靠'], forbiddenStyles: [], examples: [], tokenContext: {}, fingerprint: 'editorial-fixture',
+        },
       },
     });
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
         expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
         expect(String(body.systemPrompt)).toContain('input context and provenance');
+        expect(body.designSystemId).toBe('editorial');
+        expect(String(body.systemPrompt)).toContain('Georgia, serif');
+        expect(String(body.systemPrompt)).not.toContain('mission-control');
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>OpenDesign 自主成稿</h1><p>TODO 由上游内容能力自行处理</p></main></body></html>');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
@@ -124,6 +132,68 @@ describe('presentation source context', () => {
     expect(map!.commits).toHaveLength(1);
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
     expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('OpenDesign 自主成稿');
+  });
+
+  it('keeps the presentation delivery boundary while upstream cleans its own unused draft', async () => {
+    const currentHtml = '<!doctype html><html><body><main><h1>保留的父稿</h1></main></body></html>';
+    const finalHtml = '<!doctype html><html><head><link rel="stylesheet" href="assets/theme.css"></head><body><main><h1>完成的演示稿</h1></main></body></html>';
+    const css = 'h1 { color: #182230; }';
+    // 两个状态复用同一真实执行链；stub 自行清理，不根据提示词字串模拟模型服从。
+    for (const cleanOwnDraft of [false, true]) {
+      harness = await startHarness();
+      const pkg = buildPackage([{ path: 'current/index.html', content: currentHtml, mediaType: 'text/html' }], {
+        taskExtras: {
+          presentationContract: {
+            schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+            sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+            requiredSlideIndexes: [1],
+          },
+        },
+      });
+      let mainPrompt = '';
+      harness.daemon.onRun = ({ workspaceDir, index, body }) => {
+        expect(fs.readFileSync(path.join(workspaceDir, 'current/index.html'), 'utf8')).toBe(currentHtml);
+        if (index === 1) {
+          mainPrompt = String(body.systemPrompt);
+          fs.writeFileSync(path.join(workspaceDir, 'index.html'), finalHtml);
+          fs.mkdirSync(path.join(workspaceDir, 'assets'), { recursive: true });
+          fs.writeFileSync(path.join(workspaceDir, 'assets/theme.css'), css);
+          const ownUnreferencedDraft = path.join(workspaceDir, 'working-copy.html');
+          fs.writeFileSync(ownUnreferencedDraft, '<!doctype html><html><body>本轮自建且未引用的临时稿</body></html>');
+          if (cleanOwnDraft) fs.unlinkSync(ownUnreferencedDraft);
+        }
+        return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+      };
+      const view = await runToEnd(pkg);
+      if (!cleanOwnDraft) {
+        expect(view.state).toBe('failed');
+        expect(view.error).toMatchObject({ code: 'design_output_invalid', details: {
+          stage: 'output_preflight', rejectedPath: 'working-copy.html',
+        } });
+        expect(harness.daemon.runBodies).toHaveLength(1);
+        expect(map!.commits).toHaveLength(0);
+      } else {
+        expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+        expect(harness.daemon.runBodies).toHaveLength(2);
+        expect(map!.commits).toHaveLength(1);
+        const files = map!.commits[0].files;
+        const entry = files.find((file: { path: string }) => file.path === 'index.html');
+        const asset = files.find((file: { path: string }) => file.path === 'assets/theme.css');
+        const deliveredHtml = Buffer.from(entry.contentBase64, 'base64').toString('utf8');
+        expect(deliveredHtml).toContain('<body><main><h1>完成的演示稿</h1></main></body>');
+        expect(deliveredHtml).toContain('<link rel="stylesheet" href="assets/theme.css">');
+        expect(deliveredHtml).toContain('Content-Security-Policy');
+        expect(Buffer.from(asset.contentBase64, 'base64').toString('utf8')).toBe(css);
+        expect(files.some((file: { path: string }) => file.path === 'working-copy.html')).toBe(false);
+        expect(mainPrompt).toContain('first confirm that the requested changes are saved in the final index.html');
+        expect(mainPrompt).toContain('only temporary or version drafts that you created in this operation');
+        expect(mainPrompt).toContain('Never delete frozen inputs, referenced files, system-managed files, or files whose origin is unknown');
+      }
+      await harness.close();
+      await map!.close();
+      harness = undefined;
+      map = undefined;
+    }
   });
 
   it('rejects a mismatched frozen source-plan hash before opening an OpenDesign session', async () => {
