@@ -208,7 +208,17 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.True(Assert.Single(manualCatalog[0].Models).IsRecoveryProbeAvailable);
             Assert.Equal("gpt-image-2", Assert.Single(manualCatalog[0].Models).ActualModelId);
             Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
+            await Insert("llmgw_model_offerings", new GatewayModelOffering
+            {
+                Id = "later-probe", LogicalModelId = "image2", TargetId = "unneeded-later-target", Protocol = "openai", Priority = int.MaxValue,
+                HealthStatus = ModelHealthStatus.Unavailable, LastFailedAt = DateTime.UtcNow.AddHours(-1),
+            });
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 2));
             var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 0));
+            Assert.Empty(await gateway.Database.GetCollection<BsonDocument>("system.profile")
+                .Find(new BsonDocument { ["command.find"] = "llmgw_models", ["command.filter._id"] = "unneeded-later-target" })
+                .ToListAsync());
             Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
             Assert.Equal("image2-offering", recoveryAttempt.OfferingId);
             Assert.All(await offerings.Find(x => x.Id == "missing-probe" || x.Id == "blocked-probe").ToListAsync(),
@@ -217,6 +227,10 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
             var leasedCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
             Assert.False(Assert.Single(leasedCatalog[0].Models).IsRecoveryProbeAvailable);
+            var busyRecovery = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.False(busyRecovery.Success);
+            Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, busyRecovery.FailureCode);
+            Assert.Equal(503, GatewayRouteFailure.HttpStatusCode(busyRecovery.FailureCode));
 
             await offerings
                 .UpdateManyAsync(

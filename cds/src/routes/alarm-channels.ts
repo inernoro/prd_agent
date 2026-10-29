@@ -1,3 +1,4 @@
+import type { AlarmRelay } from '../services/alarm-relay.js';
 import { parseAlarmIdentity, identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-identity.js';
 /*
  * 通知通道的读写接口（CDS 系统设置 → 接入 → 通知）。
@@ -27,7 +28,7 @@ import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 import { ALARM_HISTORY_SOURCE, summarizeAlarmDeliveries } from '../services/alarm-delivery-history.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 import { AlarmLedger, type AlarmChannelStatusView } from '../services/alarm-channel.js';
-import { BARK_LEVELS, drillEvent, sendAlarm } from '../services/alarm-dispatch.js';
+import { BARK_LEVELS, drillEvent, sendAlarm, phoneDispatchConfigured } from '../services/alarm-dispatch.js';
 import {
   ALARM_EVENT_KINDS,
   channelConfigured,
@@ -39,6 +40,7 @@ import {
 } from '../services/alarm-route.js';
 
 export interface AlarmChannelRoutesDeps {
+  relay?: AlarmRelay;
   getIdentity?: () => AlarmIdentitySettings | undefined;
   setIdentity?: (identity: AlarmIdentitySettings) => void;
   list: () => AlarmChannelConfig[];
@@ -349,6 +351,15 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     if (!channel) { res.status(404).json({ error: '通道不存在' }); return; }
     const now = Date.now();
     const boardUrl = deps.boardUrl?.();
+    if (deps.relay?.owns(channel.id)) {
+      const id = deps.relay.enqueue(channel.id, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, boardUrl);
+      res.json({ queued: true, id, owner: '独立监控' }); return;
+    }
+    if (channel.kind === 'bark' && phoneDispatchConfigured()) {
+      void sendAlarm(channel, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, { boardUrl, history: deps.history, deliveryKind: 'drill' })
+        .catch(() => console.warn('[alarm] 演练入队失败，请检查私有通知队列'));
+      res.json({ queued: true, owner: '通知摘要队列' }); return;
+    }
     const result = await sendAlarm(channel, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, { boardUrl, history: deps.history, deliveryKind: 'drill' });
     deps.ledger.record(channel.id, result, 'drill', now);
     res.json({ ...result, status: deps.ledger.view(channel, channelConfigured(channel)) });

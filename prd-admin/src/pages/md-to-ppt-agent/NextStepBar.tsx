@@ -8,6 +8,10 @@ export interface NextStepBarProps {
   onPublish: () => void;
   /** 发布请求进行中 */
   publishBusy: boolean;
+  /** 当前版本尚未完成质量检查时禁用发布。 */
+  publishDisabled?: boolean;
+  /** 禁用原因，供悬浮提示与无障碍说明使用。 */
+  publishDisabledReason?: string;
   /** 已发布则发布按钮显示「已发布」弱化态（仍可再点重新发布） */
   published: boolean;
   /** 点击「下载 HTML」 */
@@ -28,12 +32,20 @@ const PATCH_SUGGESTIONS: { label: string; seed: string }[] = [
  * 横向 slim bar：左侧精修建议 chip（seed 输入框），右侧下载 / 发布动作。
  */
 export function NextStepBar(props: NextStepBarProps): JSX.Element {
-  const { onPublish, publishBusy, published, onDownload, onSeedPatch } = props;
+  const {
+    onPublish,
+    publishBusy,
+    publishDisabled = false,
+    publishDisabledReason,
+    published,
+    onDownload,
+    onSeedPatch,
+  } = props;
 
   return (
     <div
       data-testid="next-step-bar"
-      className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-token-subtle bg-token-nested"
+      className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-token-subtle bg-token-nested max-sm:flex-wrap"
       style={{ minHeight: 34 }}
     >
       <span className="text-[10px] text-[var(--text-tertiary)] shrink-0">下一步</span>
@@ -51,7 +63,7 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
         </button>
       ))}
 
-      <div className="ml-auto flex items-center gap-2 shrink-0">
+      <div className="ml-auto flex items-center gap-2 shrink-0 max-sm:ml-0 max-sm:basis-full max-sm:justify-end">
         {/* 下载 HTML */}
         <button
           type="button"
@@ -66,12 +78,14 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
         <button
           type="button"
           onClick={onPublish}
-          disabled={publishBusy}
+          disabled={publishBusy || publishDisabled}
+          title={publishDisabledReason}
+          aria-describedby={publishDisabled && publishDisabledReason ? 'ppt-publish-disabled-reason' : undefined}
           className={`flex items-center gap-1 text-[10px] rounded-md px-2 py-1 border transition-colors ${
             published
               ? 'text-blue-400/70 bg-blue-500/10 border-blue-500/15 opacity-70 hover:opacity-100'
               : 'text-blue-400 bg-blue-500/15 border-blue-500/25 hover:bg-blue-500/25'
-          } ${publishBusy ? 'cursor-wait opacity-80' : ''}`}
+          } ${publishBusy ? 'cursor-wait opacity-80' : ''} ${publishDisabled ? 'cursor-not-allowed opacity-50' : ''}`}
         >
           {publishBusy ? (
             <>
@@ -90,6 +104,9 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
             </>
           )}
         </button>
+        {publishDisabled && publishDisabledReason && (
+          <span id="ppt-publish-disabled-reason" className="sr-only">{publishDisabledReason}</span>
+        )}
       </div>
     </div>
   );

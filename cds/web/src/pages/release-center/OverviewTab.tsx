@@ -224,6 +224,8 @@ function StatCard({ label, children }: { label: string; children: React.ReactNod
 export function releaseMethodSummary(row: CenterRow): string {
   const strategy = row.target.strategy;
   const health = row.target.ssh?.healthcheckUrl ? ` · 健康检查 ${row.target.ssh.healthcheckUrl}` : '';
+  if (strategy?.mode === 'project-script') return `项目发布脚本（默认） · ${strategy.scriptFile || 'cds-release.sh'} · 同提交 CI 与正文哈希${health}`;
+  if (strategy?.mode === 'managed-script') return `CDS 独立脚本（备选） · 正文哈希固定${health}`;
   if (strategy?.mode === 'generated-compose') {
     return `CDS 动态 Compose 发布 · ${strategy.composeFile || 'compose.yml'} · 保留上一版本可回滚${health}`;
   }

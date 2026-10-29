@@ -56,6 +56,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
     private const string MaxTokensField = "max_tokens";
     private const string MaxCompletionTokensField = "max_completion_tokens";
+    private static readonly TimeSpan TerminalUsageDrainTimeout = TimeSpan.FromMilliseconds(500);
 
     public LlmGateway(
         IModelResolver modelResolver,
@@ -434,13 +435,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (IsContentPolicyDenial(statusCode, responseBody))
             return Task.CompletedTask;
 
-        if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
-            return _modelResolver.RecordUnavailableAsync(resolution, ct);
-
-        // 部分供应商用 429 insufficient_quota 表示额度耗尽。它不是普通请求限流，
-        // 应累计 Offering 健康失败以触发路由回退；明确的 rate limit 仍由下方 4xx 分支忽略。
+        // APIyi 也会用 403 表示额度不足；须先识别额度，再判断凭据/路由永久隔离。
+        // 额度补足后允许半开恢复；普通 429 限流仍由下方 4xx 分支忽略。
         if (IsQuotaExceeded(statusCode, responseBody))
             return _modelResolver.RecordFailureAsync(resolution, ct);
+
+        if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
+            return _modelResolver.RecordUnavailableAsync(resolution, ct);
 
         // 408 表示 Provider 在时限内没有完成请求，属于服务健康失败而不是用户输入错误。
         // 保留回退能力并累计健康失败，避免持续把超时 Offering 排在首位。
@@ -506,8 +507,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // 向请求失败的用户发送故障通知
                 _ = TryNotifyUserFailureAsync(request, resolution);
 
-                return GatewayResponse.Fail("MODEL_NOT_FOUND",
-                    resolution.ErrorMessage ?? "未找到可用模型", 404);
+                return GatewayResponse.Fail(resolution.FailureCode ?? "MODEL_NOT_FOUND",
+                    resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
             }
 
             // 2. 选择首个适配器；若首个候选不支持，发送循环会记录失败并尝试后续候选。
@@ -773,8 +774,21 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
+    public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
         GatewayRequest request,
+        CancellationToken ct = default)
+        => StreamCoreAsync(request, null, ct);
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>> admit,
+        CancellationToken ct = default)
+        => StreamCoreAsync(request, admit ?? throw new ArgumentNullException(nameof(admit)), ct);
+
+    private async IAsyncEnumerable<GatewayStreamChunk> StreamCoreAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>>? admit,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
@@ -817,7 +831,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
-            var retryResolutions = GetProviderRetryResolutions(resolution, request);
+            // 任务预算是一次物理发送一次预占；受保护请求不在同一逻辑调用内静默切换供应商。
+            // 首个候选失败后由上层产生新的 requestId 重试并重新预占，未绑定请求保持既有 fallback。
+            var retryResolutions = admit is null
+                ? GetProviderRetryResolutions(resolution, request)
+                : new List<ModelResolutionResult> { resolution };
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             HttpResponseMessage? rawResponse = null;
@@ -892,6 +910,38 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
                 var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+
+                if (admit is not null)
+                {
+                    var effectiveMaxOutputTokens = new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }
+                        .Select(name => requestBody[name] is { } node && TryReadInt(node, out var value) && value > 0
+                            ? value
+                            : int.MaxValue)
+                        .Min();
+                    if (effectiveMaxOutputTokens == int.MaxValue)
+                    {
+                        yield return GatewayStreamChunk.Fail(
+                            "任务输出上限未在物理请求中生效",
+                            "GATEWAY_RUNTIME_TASK_OUTPUT_CAP_INVALID");
+                        yield break;
+                    }
+                    var finalBody = requestBody.ToJsonString();
+                    var admissionError = await admit(
+                        new GatewayPhysicalAdmissionContext(
+                            request.Context?.RequestId ?? string.Empty,
+                            Encoding.UTF8.GetByteCount(finalBody),
+                            effectiveMaxOutputTokens,
+                            resolution.LogicalModelPublicId ?? string.Empty,
+                            resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
+                            resolution.ActualModel ?? string.Empty,
+                            resolution.OfferingId),
+                        ct);
+                    if (admissionError is not null)
+                    {
+                        yield return admissionError;
+                        yield break;
+                    }
+                }
 
                 if (logId == null)
                 {
@@ -1032,10 +1082,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6.1 手工迭代 SSE 读取器，把 MoveNextAsync 的传输层异常（上游中途断连、读超时等）
             //     转成日志 MarkError + Fail chunk；否则异常冒泡出 StreamAsync，日志保持 running，
             //     Watchdog 5 分钟后兜底成 "TIMEOUT"，真实原因丢失。
-            await using var eventEnum = sseReader.ReadEventsAsync(ct).GetAsyncEnumerator(ct);
+            using var streamReadCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            await using var eventEnum = sseReader.ReadEventsAsync(streamReadCts.Token)
+                .GetAsyncEnumerator(streamReadCts.Token);
             bool streamAborted = false;
             string? streamAbortMsg = null;
             int? streamAbortCode = null;
+            bool terminalUsageDrainStarted = false;
 
             while (true)
             {
@@ -1058,6 +1111,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (readException != null)
                 {
+                    // OpenAI 的流式 usage 是 finish_reason 之后的独立末帧。终止帧已经完整时，
+                    // 只给这条可选末帧一个很短的读取窗口；窗口耗尽仍按成功收口，不能把
+                    // “上游不发 [DONE] / 不关闭连接”重新变成长时间挂起。调用方主动取消则
+                    // 仍走下面的真实中断语义，不能被内部 drain 超时吞掉。
+                    if (terminalUsageDrainStarted
+                        && !ct.IsCancellationRequested
+                        && readException is OperationCanceledException
+                        && streamReadCts.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
                     var (readMsg, readCode) = ClassifyTransportException(readException, ct.IsCancellationRequested);
                     _logger.LogWarning(readException,
                         "[LlmGateway] 流式读取中断 status={Code} model={Model} firstByteAt={FirstByteAt}",
@@ -1095,6 +1160,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 if (chunk == null)
                 {
+                    continue;
+                }
+
+                // finish_reason 之后只接受标准 usage 末帧。正文、工具调用等终止后增量不再
+                // 进入业务流，避免为补账改变既有输出或背压语义。
+                if (terminalUsageDrainStarted)
+                {
+                    if (chunk.TokenUsage != null)
+                    {
+                        tokenUsage = chunk.TokenUsage;
+                        break;
+                    }
                     continue;
                 }
 
@@ -1175,12 +1252,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     tokenUsage = chunk.TokenUsage;
                 }
 
-                // 部分 OpenAI 兼容上游会发送带 finish_reason 的终止帧，但既不发送
-                // data: [DONE]，也不主动关闭连接。终止语义已经完整时必须立即收口，
-                // 否则调用方会一直等到 HttpClient 超时，并丢失已经收到的正文。
+                // OpenAI 标准流会在 finish_reason 之后再发一条 choices=[] 的 usage 末帧；
+                // 部分兼容上游则既不发 usage/[DONE]，也不关闭连接。已有 usage 时直接收口，
+                // 否则进入有界 drain：拿到 usage/[DONE]/EOF 就结束，超时也按成功收口。
                 if (!string.IsNullOrEmpty(finishReason))
                 {
-                    break;
+                    if (tokenUsage != null)
+                    {
+                        break;
+                    }
+
+                    terminalUsageDrainStarted = true;
+                    streamReadCts.CancelAfter(TerminalUsageDrainTimeout);
                 }
             }
 
@@ -1326,8 +1409,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
 
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
-            return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
-                resolution.ErrorMessage ?? "未找到可用模型", 404);
+            return GatewayRawResponse.Fail(resolution.FailureCode ?? "MODEL_NOT_FOUND",
+                resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
 
         if (!string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
             && !string.Equals(
@@ -3603,7 +3686,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (m.Length == 0) return false;
 
         // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
-        return m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
+        return m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
+            || m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
             || m.Contains("credit limit")
             || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
             || (m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient")))
@@ -4547,7 +4631,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ResolutionReason: resolution.ResolutionReason,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
-                    ModelGroupName: resolution.ModelGroupName));
+                    ModelGroupName: resolution.ModelGroupName,
+                    ReasoningTokens: tokenUsage?.ReasoningTokens,
+                    CacheCreationCountedInsideInput: tokenUsage?.CacheCreationCountedInsideInput,
+                    CostKind: GatewayCostKind.Resolve(
+                        cost.Status,
+                        providerReportedCost: null,
+                        resolution.PriceSource,
+                        resolution.ActualPlatformName ?? resolution.ActualPlatformId)));
         }
         catch (Exception ex)
         {
@@ -4664,7 +4755,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ResolutionReason: resolution?.ResolutionReason,
                     ModelResolutionType: resolution is null ? null : ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution?.ModelGroupId,
-                    ModelGroupName: resolution?.ModelGroupName));
+                    ModelGroupName: resolution?.ModelGroupName,
+                    ReasoningTokens: tokenUsage?.ReasoningTokens,
+                    CacheCreationCountedInsideInput: tokenUsage?.CacheCreationCountedInsideInput,
+                    CostKind: GatewayCostKind.Resolve(
+                        cost.Status,
+                        providerReportedCost: null,
+                        resolution?.PriceSource,
+                        resolution?.ActualPlatformName ?? resolution?.ActualPlatformId)));
         }
         catch (Exception ex)
         {
@@ -4910,14 +5008,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // Anthropic 那边分开报、那两截直接不进账。两种都让 EstimatedCostUsd 失真。
             var tokenUsage = rawUsage.InputTokens is not null
                 || rawUsage.OutputTokens is not null
+                || rawUsage.ReasoningTokens is not null
                 || rawUsage.CacheReadInputTokens is not null
                 || rawUsage.CacheCreationInputTokens is not null
                 ? new GatewayTokenUsage
                 {
                     InputTokens = rawUsage.InputTokens,
                     OutputTokens = rawUsage.OutputTokens,
+                    ReasoningTokens = rawUsage.ReasoningTokens,
                     CacheReadInputTokens = rawUsage.CacheReadInputTokens,
                     CacheCreationInputTokens = rawUsage.CacheCreationInputTokens,
+                    CacheCreationCountedInsideInput = rawUsage.CacheCreationCountedInsideInput,
                     Source = "response_body"
                 }
                 : null;
@@ -4981,7 +5082,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ProviderCostCurrency: rawUsage.ProviderCostCurrency,
                     OutputImagePayloads: rawUsage.OutputImages
                         .Select(image => new LlmLogImagePayload(image.Base64Data, image.SourceUrl, image.MimeType))
-                        .ToList()));
+                        .ToList(),
+                    ReasoningTokens: rawUsage.ReasoningTokens,
+                    CacheCreationCountedInsideInput: rawUsage.CacheCreationCountedInsideInput,
+                    CostKind: GatewayCostKind.Resolve(
+                        cost.Status,
+                        rawUsage.ProviderReportedCost,
+                        resolution.PriceSource,
+                        resolution.ActualPlatformName ?? resolution.ActualPlatformId)));
         }
         catch (Exception ex)
         {

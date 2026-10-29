@@ -1,5 +1,6 @@
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
+import { AlarmRelay, registerAlarmRelayRoutes } from './services/alarm-relay.js';
 import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
@@ -158,7 +159,7 @@ import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
 import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
-import { sendAlarm } from './services/alarm-dispatch.js';
+import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
 import { buildSelfCheck, readSelfCheckRuntimeStatus, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
@@ -2087,7 +2088,9 @@ async function initStateService(): Promise<void> {
 }
 
 await initStateService();
-restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch));
+config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
+await restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch),
+  { shell: isPreviewInstance() ? undefined : shell });
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2553,6 +2556,9 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
+  resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
+  getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
   // 适配器拿值。老项目 dockerNetwork 字段可能为空,此时返回 undefined,
@@ -3224,6 +3230,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           operation: 'branch-auto-wake',
           source: 'proxy.preview-auto-wake',
           reason: '预览访问自动唤醒（docker restart，未重建代码）',
+          assertCurrent: step => lease?.assertCurrent(step),
         });
         lease?.assertCurrent(`auto-wake after ${svc.profileId}`);
         if (!ok) {
@@ -3869,6 +3876,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  stateService.assertBranchStorageRemovalAllowed(slug);
   const branchOperationLease = beginBackgroundBranchOperation({
     branchId: slug,
     kind: 'janitor-remove',
@@ -3996,6 +4004,11 @@ janitorService.setRemoveFn(async (slug: string) => {
         });
       }
       if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        try { stateService.assertBranchStorageRemovalAllowed(branch.id); }
+        catch (error) {
+          console.warn(`[startup-reconcile] retaining private-storage branch ${branch.id}: ${(error as Error).message}`);
+          continue;
+        }
         activeServerEventLogStore?.record({
           category: 'container',
           severity: 'warn',
@@ -4312,7 +4325,11 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (found && found.running) continue;
         if (!found) continue; // 容器完全不存在 → 已是 error,不在本 loop 范围(走 redeploy)
 
-        const attemptKey = `app:${key}`;
+        // 重试预算属于精确运行身份；重新部署不继承旧容器的失败计数。
+        if (found.containerName !== svc.containerName) continue;
+        if (!found.containerId) continue; // 身份未知时不把预算或命令绑定到可复用名称。
+        const attemptKey = `app:${key}:${found.containerId}`;
+        for (const oldKey of restartAttempts.keys()) if (oldKey.startsWith(`app:${key}:`) && oldKey !== attemptKey) restartAttempts.delete(oldKey);
         const isNewCrash = !restartAttempts.has(attemptKey);
         const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
         // 容器自行退出（崩溃 / OOM / docker kill）首次被巡检发现：留痕，
@@ -4395,7 +4412,9 @@ janitorService.setRemoveFn(async (slug: string) => {
         }
         try {
           branchOperationLease?.assertCurrent(`auto-restart before docker start ${profileId}`);
-          const startRes = await shell.exec(`docker start ${found.containerName}`);
+          const startRes = await shell.exec(`docker start ${found.containerId}`, {
+            beforeStart: () => branchOperationLease?.assertCurrent(`auto-restart execution ${profileId}`),
+          });
           branchOperationLease?.assertCurrent(`auto-restart after docker start ${profileId}`);
           activeServerEventLogStore?.record({
             category: 'container',
@@ -6009,6 +6028,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
    * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
    */
+  const alarmRelay = new AlarmRelay(path.join(config.repoRoot, '.cds', 'alarm-relay.json'));
   const alarmLedger = new AlarmLedger({
     // 最近一次投递结果写回通道配置：进程重启后台账清空，已验证过的通道不该退回「未知」。
     persist: (channelId, last) => {
@@ -6113,6 +6133,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
       if (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map')) void sendLegacyAlarm({
         type,
+        urgency: data.urgency,
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         targetId: data.targetId,
         targetName: data.targetName,
         projectId: data.projectId,
@@ -6140,8 +6162,13 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 上游已去抖，重试会把一次翻转变成多条通知）。
       const event = {
         identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
+        correlationKey: data.assessment === 'observation-unavailable'
+          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
+          : data.targetId,
         targetId: data.targetId,
+        urgency: data.urgency,
         kind: classifyAlert(type, data.source),
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         projectId: data.projectId,
         targetName: data.targetName,
         message: data.message,
@@ -6152,6 +6179,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       const boardUrl = alarmBoardUrl(data.targetId);
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
+        if (alarmRelay.owns(channel.id)) {
+          alarmRelay.enqueue(channel.id, { ...event, recoveryConfirmed: data.recoveryChannelIds?.includes(channel.id) }, boardUrl);
+          continue;
+        }
         void sendAlarm(channel, event, { boardUrl, history: activeServerEventLogStore })
           .then((r) => {
             alarmLedger.record(channel.id, r, 'alert', Date.now());
@@ -6166,6 +6197,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           });
       }
     },
+  });
+  configurePhoneDispatch(path.join(config.repoRoot, '.cds', 'phone-dispatch.json'), activeServerEventLogStore, async (item, result) => {
+    alarmLedger.record(item.channel.id, result, item.event.drill ? 'drill' : 'alert', Date.now());
+    if (result.ok && !item.event.drill && item.event.targetId && !item.event.kind.endsWith('-recovered')) {
+      await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channel.id, item.event.detectedAt);
+    }
   });
   // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
   // 不让状态页把已删的目标和它的故障再挂一个探测间隔（Codex PR #1517 P2）。
@@ -6407,7 +6444,28 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // 通知通道的读写与演练。挂在同一个 /api 前缀下，与监控摘要同一条身份闸。
   app.use('/api', (() => {
     const r = express.Router();
+    registerAlarmRelayRoutes(r, alarmRelay, {
+      channels: () => stateService.listAlarmChannels(),
+      acknowledged: async (item, result) => {
+        if (result.merged) activeServerEventLogStore?.record({
+          category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',
+          operationId: item.id, projectId: item.event.projectId, message: '同源检查已归入已有事故',
+          details: { kind: 'policy', targetId: item.event.targetId, targetName: item.event.targetName, reason: 'shared-incident' },
+        });
+        else alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
+        const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
+        if (!result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
+          channelId: item.channelId, channelName: channel?.name ?? '已删除的通知通道', channelKind: channel?.kind ?? 'bark',
+          kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
+          targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
+          title: item.event.targetName, body: '由独立监控统一投递，详细证据保留在事件记录中。',
+        }, async () => result);
+        if (result.ok && item.event.kind.endsWith('-down') && item.event.targetId && !item.event.drill)
+          await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channelId, item.event.detectedAt);
+      },
+    });
     registerAlarmChannelRoutes(r, {
+      relay: alarmRelay,
       getIdentity: () => stateService.getAlarmIdentity(),
       setIdentity: (identity) => stateService.setAlarmIdentity(identity),
       list: () => stateService.listAlarmChannels(),

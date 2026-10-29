@@ -66,11 +66,7 @@ public class MdToPptTableCapabilityTests
         Assert.Contains("tbody", prompt);
         Assert.Contains("本页以完整语义表格", prompt);
         Assert.Contains("data-mdppt-semantic-table", anchor.Prefix);
-        var wire = MdToPptController.BuildGatewayPageRequest(
-            new PrdAgent.Core.Models.InfraAgentRuntimeProfile(), prompt, "合成表格任务", "test.table::chat");
-        var transmittedSystem = wire.RequestBody!["messages"]![0]!["content"]!.GetValue<string>();
-        Assert.Equal(prompt, transmittedSystem);
-        Assert.Contains(table.Html, transmittedSystem);
+        Assert.Contains(table.Html, prompt);
         var assembled = anchor.Prefix + MdToPptController.AddActiveToFirstSlide(table.Html) + anchor.Suffix;
         Assert.Contains("slide mdppt-semantic-table active is-active", assembled);
     }

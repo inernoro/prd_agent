@@ -124,7 +124,7 @@ public static class DataSyncScope
             new DataSyncCollection("user_collections", System.Array.Empty<string>()),
             new DataSyncCollection("user_preferences", System.Array.Empty<string>()),
             new DataSyncCollection("user_report_template_preferences", System.Array.Empty<string>()),
-            new DataSyncCollection("users", new[] { "PasswordHash" }),
+            new DataSyncCollection("users", new[] { "PasswordHash", "NotificationIdentityProtected" }),
         }),
         new DataSyncGroup("llm-config", "平台与模型配置", new[]
         {
@@ -177,7 +177,8 @@ public static class DataSyncScope
             new DataSyncCollection("model_lab_groups", System.Array.Empty<string>()),
             new DataSyncCollection("model_lab_model_sets", System.Array.Empty<string>()),
             new DataSyncCollection("model_scheduler_config", System.Array.Empty<string>()),
-            new DataSyncCollection("product_agent_settings", System.Array.Empty<string>()),
+            // 机器人配置属于本站；连同启停标志整体保留，避免跨站导入意外投递。
+            new DataSyncCollection("product_agent_settings", new[] { "ClaimWebhook" }),
             new DataSyncCollection("reference_image_configs", System.Array.Empty<string>()),
             new DataSyncCollection("routing_rules", System.Array.Empty<string>()),
             new DataSyncCollection("shortcut_templates", System.Array.Empty<string>()),
@@ -216,6 +217,7 @@ public static class DataSyncScope
             new DataSyncCollection("report_commits", System.Array.Empty<string>()),
             new DataSyncCollection("report_data_sources", new[] { "EncryptedAccessToken" }),
             new DataSyncCollection("report_likes", System.Array.Empty<string>()),
+            new DataSyncCollection("report_monthly_reports", System.Array.Empty<string>()),
             new DataSyncCollection("report_personal_sources", new[] { "EncryptedToken" }),
             new DataSyncCollection("report_team_summaries", System.Array.Empty<string>()),
             new DataSyncCollection("report_templates", System.Array.Empty<string>()),
@@ -249,12 +251,13 @@ public static class DataSyncScope
             new DataSyncCollection("product_desc_templates", System.Array.Empty<string>()),
             new DataSyncCollection("product_form_templates", System.Array.Empty<string>()),
             new DataSyncCollection("product_grade_options", System.Array.Empty<string>()),
-            new DataSyncCollection("product_initiations", System.Array.Empty<string>()),
+            new DataSyncCollection("product_initiations", new[] { "ClaimNotification" }),
             new DataSyncCollection("product_item_summaries", System.Array.Empty<string>()),
-            new DataSyncCollection("product_releases", System.Array.Empty<string>()),
+            new DataSyncCollection("product_releases", new[] { "ClaimNotification" }),
             new DataSyncCollection("product_rules", System.Array.Empty<string>()),
             new DataSyncCollection("product_structure_nodes", System.Array.Empty<string>()),
             new DataSyncCollection("product_terms", System.Array.Empty<string>()),
+            new DataSyncCollection("product_version_workflow_snapshots", System.Array.Empty<string>()),
             new DataSyncCollection("product_versions", System.Array.Empty<string>()),
             new DataSyncCollection("product_workflow_definitions", System.Array.Empty<string>()),
             new DataSyncCollection("products", System.Array.Empty<string>()),
@@ -273,6 +276,11 @@ public static class DataSyncScope
             new DataSyncCollection("review_webhook_configs", new[] { "WebhookUrl" }),
             new DataSyncCollection("submission_likes", System.Array.Empty<string>()),
             new DataSyncCollection("submissions", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registration_sequences", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registration_snapshots", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registrations", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registry_applications", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registry_systems", System.Array.Empty<string>()),
         }),
         new DataSyncGroup("creation", "创作与素材", new[]
         {
@@ -362,6 +370,7 @@ public static class DataSyncScope
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string> Excluded = new Dictionary<string, string>
     {
+        ["product_permission_configurations"] = "产品管理权限覆盖快照：绑定本站账号及权限边界，跨实例复制会意外覆盖目标站授权；由目标站MAP管理员单独导入确认",
         ["account_data_transfers"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["active_task_absorb_preferences"] = "个人偏好（吸取建议时上次引用了哪几个知识库）：那几个知识库 Id 在目标站根本不存在，复制过去只会让人对着一堆空引用发愣",
         ["active_task_debts"] = "仓库派生数据：正文来自 doc/debt.*.md，目标站自己跑一次同步脚本就有，不需要搬。而且它的 Key 是业务唯一索引、_id 是随机 GUID —— 两个站各自同步过同一份台账时 Key 相同 _id 不同，同步引擎只按 _id 对账、撞业务唯一索引会中止整轮（见 DataSyncApply.IsIdCollision 的注释），搬它等于让跨实例同步在第一条共享债务上失败。归属与状态本就是各站自己的事实（设计上的 SSOT 划分），复制过去只会制造两本账",
@@ -452,6 +461,9 @@ public static class DataSyncScope
         ["pm_task_activities"] = "日志与埋点：量大且只对源站有意义",
         ["pm_task_work_logs"] = "日志与埋点：量大且只对源站有意义",
         ["product_item_activities"] = "日志与埋点：量大且只对源站有意义",
+        ["product_announcement_syncs"] = "本站公告任务队列、租约与月度水位：跨站搬运会抢占或跳过目标站任务，必须由目标站自行初始化",
+        ["product_announcements"] = "指定公开站点的公告缓存：可重新增量抓取，不跨站搬运成功水位",
+        ["product_workday_calendars"] = "公开法定日历缓存：由目标站按年度验证与刷新，不作为版本业务主数据导出",
         ["profile_avatar_object_cleanup_tasks"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["registered_apps"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["report_daily_logs"] = "日志与埋点：量大且只对源站有意义",

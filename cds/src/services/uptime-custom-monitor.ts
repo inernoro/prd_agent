@@ -16,6 +16,7 @@
  */
 
 import net from 'node:net';
+import { maskSecrets } from './secret-masker.js';
 import { internalProbeHeaders } from './self-check-auth.js';
 import type { MonitorObservation, UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
 import { normalizeMonitorEnvironment, type MonitorEnvironment } from './monitor-environment.js';
@@ -940,8 +941,15 @@ async function httpProbe(
         }
       }
       if (!verdict.ok) {
+        let publicMessage: string | undefined;
+        try {
+          const value = findHealthCheck(JSON.parse(body), monitor.healthComponentId || '')?.publicMessage;
+          if (typeof value === 'string') publicMessage = maskSecrets(value, { mask: true }).replace(/https?:\/\/[^\s<>"']+/gi, '[详情中查看]').slice(0, 160);
+        } catch { /* 非法文档由原判据记录，不生成通知说明。 */ }
         // 判据不成立时 HTTP 往往仍是 200——「接口通但结论是坏的」正是这类探测的存在意义。
-        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err, ...(observation ? { observation } : {}) };
+        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err,
+          ...(verdict.observed !== undefined ? { finding: publicMessage || `当前读数 ${verdict.observed.slice(0, 80)}，应${({eq:'等于',ne:'不等于',lt:'低于',lte:'不高于',gt:'高于',gte:'不低于'} as Record<string,string>)[op]} ${String(monitor.healthValue).slice(0, 80)}。` } : {}),
+          ...(observation ? { observation } : {}) };
       }
       return { up: true, ms: Date.now() - startedAt, code, ...(observation ? { observation } : {}) };
     } else {

@@ -3,7 +3,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { formatWeekDateRange } from './utils/weekRange';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, GitCompare, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
+import { ArrowLeft, GitCompare, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -17,8 +17,8 @@ import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
 import { ReportTableSectionView } from './components/ReportTableSectionView';
 import { RightRailPanel } from './components/RightRailPanel';
 import { ReportSelectionCommentLayer } from './components/ReportSelectionCommentLayer';
-import { underlineStroke, type ReportCommentAnchor } from './components/reportCommentAnchor';
-import { ReportCommentComposer, ReportCommentAttachmentGrid } from './components/ReportCommentComposer';
+import type { ReportCommentAnchor } from './components/reportCommentAnchor';
+import { ReportSectionComments } from './components/ReportSectionComments';
 import { useDataTheme } from './hooks/useDataTheme';
 import { useStatusChipConfig } from './hooks/useStatusChipConfig';
 
@@ -426,7 +426,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
             <div ref={contentRef} className="relative">
             {report.sections.map((section, idx) => {
               const sectionComments = commentsBySection[idx] || [];
-              const topLevel = sectionComments.filter((c) => !c.parentCommentId);
               const accentColor = sectionColors[idx % sectionColors.length];
               // 章节色记忆点集中在数字徽章本身(浅色下用 alpha 1.0 实色 + 暖色软阴影,
               // 与 ReportDetailPanel 保持一致); 删除右侧短色条避免视觉冗余。
@@ -549,84 +548,23 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                   )}
                   </div>
 
-                  {/* Section comments */}
-                  {topLevel.length > 0 && (
-                    <div
-                      className="mt-2 ml-10 pl-3"
-                      style={{ borderLeft: `2px solid ${isLight ? 'var(--hairline-strong)' : `${accentColor}30`}` }}
-                    >
-                      {topLevel.map((comment) => {
-                        const replies = sectionComments.filter((c) => c.parentCommentId === comment.id);
-                        return (
-                          <div
-                            key={comment.id}
-                            id={`report-comment-${comment.id}`}
-                            className="mb-2"
-                            style={{
-                              borderRadius: 10,
-                              transition: 'box-shadow 0.3s',
-                              boxShadow: flashCommentId === comment.id ? `0 0 0 2px ${underlineStroke(isLight, true)}` : undefined,
-                            }}
-                          >
-                            <CommentItem
-                              comment={comment}
-                              isMine={comment.authorUserId === currentUserId}
-                              onDelete={() => handleDeleteComment(comment.id)}
-                              onReply={() => openCommentInput(idx, comment.id)}
-                              onEdit={(newContent) => handleUpdateComment(comment.id, newContent)}
-                              quoteUnderline={underlineStroke(isLight)}
-                            />
-                            {replies.map((reply) => (
-                              <div key={reply.id} className="ml-4 mt-1">
-                                <CommentItem
-                                  comment={reply}
-                                  isMine={reply.authorUserId === currentUserId}
-                                  onDelete={() => handleDeleteComment(reply.id)}
-                                  onReply={() => openCommentInput(idx, comment.id)}
-                                  onEdit={(newContent) => handleUpdateComment(reply.id, newContent)}
-                                  isReply
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <button
-                    className="mt-1.5 ml-7 flex items-center gap-1 px-1.5 py-0.5 rounded hover-bg-soft text-[11px]"
-                    style={{ color: 'var(--text-muted)' }}
-                    onClick={() => openCommentInput(idx)}
-                  >
-                    <MessageSquare size={10} /> 评论
-                  </button>
-
-                  {replyTo?.sectionIndex === idx && (
-                    <div className="mt-2 ml-7 p-3 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}>
-                      <div className="text-[11px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
-                        {replyTo.parentId
-                          ? '回复评论'
-                          : replyTo.anchor
-                            ? (
-                              <>
-                                评论选中内容：
-                                <span style={{ borderBottom: `2px solid ${underlineStroke(isLight)}`, paddingBottom: 1 }}>
-                                  「{replyTo.anchor.selectedText.length > 40 ? `${replyTo.anchor.selectedText.slice(0, 40)}…` : replyTo.anchor.selectedText}」
-                                </span>
-                              </>
-                            )
-                            : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
-                      </div>
-                      <ReportCommentComposer
-                        key={`${replyTo.sectionIndex}:${replyTo.parentId ?? ''}:${replyTo.anchor?.selectedText ?? ''}`}
-                        reportId={reportId ?? ''}
-                        submitting={submitting}
-                        onSubmit={handleCreateComment}
-                        onCancel={() => setReplyTo(null)}
-                      />
-                    </div>
-                  )}
+                  <ReportSectionComments
+                    reportId={reportId ?? ''}
+                    sectionIndex={idx}
+                    sectionTitle={section.templateSection?.title || ''}
+                    sectionComments={sectionComments}
+                    currentUserId={currentUserId}
+                    isLight={isLight}
+                    accentBorder={isLight ? 'var(--hairline-strong)' : `${accentColor}30`}
+                    flashCommentId={flashCommentId}
+                    replyTo={replyTo}
+                    submitting={submitting}
+                    onOpenInput={openCommentInput}
+                    onCancel={() => setReplyTo(null)}
+                    onSubmit={handleCreateComment}
+                    onDelete={handleDeleteComment}
+                    onEdit={handleUpdateComment}
+                  />
                 </div>
               );
             })}
@@ -786,155 +724,5 @@ function SiblingReportsSidebar({
         })}
       </div>
     </aside>
-  );
-}
-
-function CommentItem({
-  comment,
-  isMine,
-  onDelete,
-  onReply,
-  onEdit,
-  isReply,
-  quoteUnderline,
-}: {
-  comment: ReportComment;
-  isMine: boolean;
-  onDelete: () => void;
-  onReply: () => void;
-  onEdit: (newContent: string) => Promise<boolean>;
-  isReply?: boolean;
-  /** 划词评论引用片段的下划线颜色（与正文黄色下划线同色，视觉上连成一体） */
-  quoteUnderline?: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(comment.content);
-  const [saving, setSaving] = useState(false);
-
-  const startEdit = () => {
-    setDraft(comment.content);
-    setEditing(true);
-  };
-
-  const cancelEdit = () => {
-    setEditing(false);
-    setDraft(comment.content);
-  };
-
-  const saveEdit = async () => {
-    if (saving) return;
-    setSaving(true);
-    const ok = await onEdit(draft);
-    setSaving(false);
-    if (ok) setEditing(false);
-  };
-
-  const isEdited = !!comment.updatedAt && comment.updatedAt !== comment.createdAt;
-
-  return (
-    <div className="group flex items-start gap-1.5">
-      {isReply && <CornerDownRight size={10} style={{ color: 'var(--text-muted)', marginTop: 2 }} />}
-      <div
-        className="flex-1 min-w-0 rounded-lg px-2.5 py-2 border"
-        style={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-primary)' }}
-      >
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
-            {comment.authorDisplayName}
-          </span>
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded-md"
-            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'var(--accent-fg-violet)' }}
-          >
-            评论
-          </span>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            {new Date(comment.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-          </span>
-          {isEdited && (
-            <span
-              className="text-[10px]"
-              style={{ color: 'var(--text-muted)' }}
-              title={`编辑于 ${new Date(comment.updatedAt!).toLocaleString('zh-CN')}`}
-            >
-              · 已编辑
-            </span>
-          )}
-        </div>
-        {comment.selectedText && (
-          <div className="text-[11px] mt-1 truncate" style={{ color: 'var(--text-muted)' }} title={comment.selectedText}>
-            引用：
-            <span style={{ borderBottom: `2px solid ${quoteUnderline ?? 'rgba(234, 179, 8, 0.75)'}`, paddingBottom: 1 }}>
-              {comment.selectedText.length > 60 ? `${comment.selectedText.slice(0, 60)}…` : comment.selectedText}
-            </span>
-          </div>
-        )}
-        {editing ? (
-          <div className="mt-1.5">
-            <textarea
-              className="w-full text-[12px] px-2.5 py-1.5 rounded-md resize-none"
-              style={{
-                background: 'var(--bg-primary)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-primary)',
-                minHeight: 60,
-              }}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  void saveEdit();
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  cancelEdit();
-                }
-              }}
-              autoFocus
-              disabled={saving}
-            />
-            <div className="mt-1.5 flex items-center justify-end gap-1.5">
-              <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={saving}>
-                取消
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={saveEdit}
-                disabled={saving || !draft.trim() || draft.trim() === comment.content}
-              >
-                {saving ? '保存中…' : '保存'}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            {comment.content && (
-              <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
-                {comment.content}
-              </div>
-            )}
-            <ReportCommentAttachmentGrid attachments={comment.attachments} />
-          </>
-        )}
-      </div>
-      {!editing && (
-        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-          <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onReply} title="回复">
-            <CornerDownRight size={10} style={{ color: 'var(--text-muted)' }} />
-          </button>
-          {isMine && (
-            <>
-              <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={startEdit} title="编辑">
-                <Pencil size={10} style={{ color: 'var(--text-muted)' }} />
-              </button>
-              <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onDelete} title="删除">
-                <Trash2 size={10} style={{ color: 'rgba(239, 68, 68, 0.7)' }} />
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
   );
 }

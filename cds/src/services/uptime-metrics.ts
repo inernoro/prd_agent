@@ -15,6 +15,8 @@
 
 /** 单次探测采样。字段用短名，因为要按 target 存上千条并落盘。 */
 export interface UptimeSample {
+  /** 已脱离协议语法的指标读数说明。 */
+  finding?: string;
   /** 采样时刻（epoch ms） */
   t: number;
   /** 该次探测是否判定为存活 */
@@ -202,6 +204,7 @@ export function availabilityFromSamples(
   let sumMs = 0;
   let msCount = 0;
   for (const s of samples) {
+    if (s.noData) continue;
     if (s.t < fromMs || s.t > toMs) continue;
     if (s.up) {
       upCount += 1;
@@ -363,6 +366,7 @@ export function bucketizeSamples(
     msCounts.push(0);
   }
   for (const s of samples) {
+    if (s.noData) continue;
     if (s.t < fromMs || s.t >= toMs) continue;
     const idx = Math.min(count - 1, Math.max(0, Math.floor((s.t - fromMs) / width)));
     if (s.up) {

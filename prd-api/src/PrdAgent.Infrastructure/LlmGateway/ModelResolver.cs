@@ -1338,9 +1338,12 @@ public class ModelResolver : IModelResolver
 
         if (resolved.Count == 0)
         {
+            var enabledOfferings = available.Where(x => x.Enabled).ToList();
+            var allRecovering = enabledOfferings.Count > 0
+                && enabledOfferings.All(x => x.HealthStatus == ModelHealthStatus.Unavailable);
             return ModelResolutionResult.NotFound(expectedModel,
                 $"逻辑模型没有可用上游 Offering: {logical.PublicId}",
-                GatewayRouteFailure.OfferingUnresolvable,
+                allRecovering ? GatewayRouteFailure.ModelPoolAllUnavailable : GatewayRouteFailure.OfferingUnresolvable,
                 "logical-model-offering",
                 appCallerCode,
                 logicalModelPublicId: logical.PublicId);
@@ -1769,22 +1772,29 @@ public class ModelResolver : IModelResolver
             _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenLeaseSecondsKey));
         var cutoff = now.AddSeconds(-cooldownSeconds);
 
-        var eligibleIds = new List<string>();
-        foreach (var offering in available.Where(x => x.Enabled
-            && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
-                x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff)))
-        {
-            var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
-            if (candidate is not null && await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
-                eligibleIds.Add(offering.Id);
-        }
-        if (eligibleIds.Count == 0) return null;
-
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
         var fb = Builders<GatewayModelOffering>.Filter;
-        var claimed = await offerings.FindOneAndUpdateAsync(
+        foreach (var offering in available.Where(x => x.Enabled
+            && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
+            .OrderBy(x => x.Priority).ThenBy(x => x.Id))
+        {
+            var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
+            if (candidate is null || !await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
+                continue;
+            var claimed = await ClaimOfferingAsync(offering.Id);
+            if (claimed is null) continue;
+
+            _logger.LogInformation(
+                "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
+                logical.PublicId, claimed.Id, leaseSeconds);
+            return claimed;
+        }
+        return null;
+
+        Task<GatewayModelOffering> ClaimOfferingAsync(string offeringId) => offerings.FindOneAndUpdateAsync(
             fb.And(
-                fb.In(x => x.Id, eligibleIds),
+                fb.Eq(x => x.Id, offeringId),
                 fb.Eq(x => x.TenantId, CurrentTenantId),
                 fb.Eq(x => x.LogicalModelId, logical.Id),
                 fb.Eq(x => x.Enabled, true),
@@ -1806,12 +1816,6 @@ public class ModelResolver : IModelResolver
                 Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority).Ascending(x => x.Id),
             },
             ct);
-        if (claimed is null) return null;
-
-        _logger.LogInformation(
-            "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
-            logical.PublicId, claimed.Id, leaseSeconds);
-        return claimed;
     }
 
     /// <summary>

@@ -84,6 +84,12 @@ jobs:
             cds:
               - 'cds/**'
               - '.github/workflows/ci.yml'
+              - '.github/workflows/cds-prebuilt.yml'
+              - '.claude/skills/cds/**'
+              - '.claude/skills/cds-project-scan/**'
+              - '.claude/skills/cds-deploy-pipeline/**'
+              - '.claude/skills/cds-release/**'
+              - '.claude/skills/preview-url/**'
               # build-scope-ci-parity 守卫的两份被守文件，理由同 cds.yml 的同名条目（形状 7）。
               - 'cds-compose.yml'
               - '.github/workflows/branch-image.yml'
@@ -123,6 +129,7 @@ jobs:
               - 'scripts/tests/release-evidence.test.py'
               - 'scripts/llmgw-prod-preflight.py'
               - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
+              - 'scripts/tests/mongo-ci-contract.test.py'
               # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
               # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
               # 它们守的是 gw-smoke / 发布双密钥 / ASR WebSocket 转发，
@@ -309,6 +316,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
+
       - name: Static release layout
         run: sh scripts/tests/static-release-layout.test.sh
 
@@ -382,7 +392,9 @@ jobs:
     name: Server Build & Test
     needs: changes
     if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 临时兼容：24.04 镜像 20261018.339.1 的 Azure 7.0 内核被 Mongo 8.0 拒绝。
+    # SERVER-131779 修复在 8.0.35；可用并在原 runner 真验后回迁，见 debt.platform.md。
+    runs-on: ubuntu-22.04
     services:
       mongodb:
         image: mongo:8.0
@@ -403,6 +415,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: MongoDB runtime versions
+        run: |
+          uname -r
+          docker exec "${{ job.services.mongodb.id }}" mongosh --quiet --eval \
+            'const v = db.version(); print("MongoDB " + v); if (!/^8[.]0[.]/.test(v) || db.adminCommand({ ping: 1 }).ok !== 1) quit(1);'
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -410,6 +428,10 @@ jobs:
 
       - name: Install video test dependencies
         run: |
+          # Azure 镜像源曾连续两轮卡在 deb 下载；使用官方 HTTPS 源，保留包签名与完整依赖校验。
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
@@ -804,6 +826,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install isolated quality browser
+        run: pnpm exec playwright-core install --with-deps chromium
 
       - name: Type check
         run: pnpm exec tsc --noEmit && pnpm run typecheck

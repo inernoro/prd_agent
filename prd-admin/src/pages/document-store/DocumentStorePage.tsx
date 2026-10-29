@@ -78,12 +78,10 @@ import { ShareLinkPanel } from './ShareLinkPanel';
 import {
   DOC_DOWNLOAD_FORMATS,
   resolveInitialDownloadScope,
-  resolveTextExtension,
-  shouldFetchOriginalFile,
-  toPlainText,
   type DocDownloadFormat,
   type DocDownloadScope,
 } from './downloadFormats';
+import { buildEntryDownload, ORIGINAL_DOWNLOAD_FAILURE_MESSAGE } from './entryDownload';
 import {
   hasQuickRecordRequest,
   hasRecordInStoreRequest,
@@ -103,6 +101,12 @@ import {
   type DocumentStoreDetailAction,
 } from './detailInitialAction';
 import { useTeamStore } from '@/stores/teamStore';
+import {
+  advanceDocumentUploadProgress,
+  beginDocumentUploadProgress,
+  describeDocumentUploadProgress,
+  type DocumentUploadProgressState,
+} from './documentUploadProgress';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
@@ -945,45 +949,6 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
 
 // ── 下载：范围 + 格式 ──
 // 范围/格式判定是纯函数，抽到 downloadFormats.ts 供测试（见 __tests__/downloadFormats.test.ts）
-/**
- * 按所选格式把一条文档导出成一个可写盘的文件。
- * 返回 null = 这条确实没有可导出的内容（正文为空且原始文件也取不到），由调用方计入失败数。
- */
-async function buildEntryDownload(
-  entry: { id: string; title: string },
-  format: DocDownloadFormat,
-  makeName: (title: string, ext: string) => string,
-): Promise<{ name: string; data: Blob | string } | null> {
-  const res = await getDocumentContent(entry.id);
-  if (!res.success || !res.data) return null;
-  const { content, fileUrl, contentType } = res.data;
-  const hasText = content != null && content !== '';
-
-  // 「原始文件」且是二进制条目（pdf/docx/图片…）：先试原文件。fileUrl 多为对象存储/CDN 绝对
-  // 地址（TencentCosStorage 返回公网 URL），不带 Access-Control-Allow-Origin，浏览器端 fetch
-  // 会被 CORS 拦掉；取不到就降级为抽取正文，至少不整条丢失（真·原文件需后端同源代理）。
-  if (shouldFetchOriginalFile(format, contentType, fileUrl)) {
-    try {
-      const resp = await fetch(fileUrl!);
-      if (resp.ok) {
-        const blob = await resp.blob();
-        const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl!);
-        return {
-          name: makeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), m ? `.${m[1]}` : ''),
-          data: blob,
-        };
-      }
-    } catch {
-      // CORS / 网络失败 → 落到下面的正文降级
-    }
-  }
-  if (!hasText) return null;
-  // 纯文本格式要真的去掉标记，不能只换后缀（否则 .txt 里全是 # / [](), 与文案不符）
-  const data = format === 'text' ? toPlainText(content!, contentType) : content!;
-  if (data === '') return null;
-  return { name: makeName(entry.title, resolveTextExtension(format, contentType)), data };
-}
-
 // 下载对话框：范围默认「当前这篇」，没有打开文档时自动落到整库并禁用单篇选项。
 // export 供 __tests__/DownloadDialog.test.tsx 直接渲染断言默认范围（用户明确要求默认当前文章）。
 export function DownloadDialog({ storeName, entryTitle, busy, onDownload, onClose }: {
@@ -1221,8 +1186,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
-  // 上传进度（浮动进度卡：文件名 + 百分比 + 第 n / 共 m）
-  const [uploadProgress, setUploadProgress] = useState<{ name: string; percent: number; index: number; total: number } | null>(null);
+  // 只观察传输阶段，不把字节完成百分比当作正文解析进度。
+  const [uploadProgress, setUploadProgress] = useState<DocumentUploadProgressState | null>(null);
+  const [uploadProgressNow, setUploadProgressNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (uploadProgress?.phase !== 'parsing') return;
+    setUploadProgressNow(Date.now());
+    const timer = window.setInterval(() => setUploadProgressNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [uploadProgress?.phase, uploadProgress?.parsingStartedAt]);
   // 「后台运行」看护的 SSOT。保险箱恢复与当前录音上传必须接入同一观察器，
   // 否则归档中的延迟转写会在抽屉外静默完成或失败。
   const transcribeRunRef = useRef<string | null>(null);
@@ -1869,12 +1841,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
+    const empty = files.filter(f => f.size === 0);
+    for (const f of empty) {
+      toast.error(`文件为空: ${f.name}`, '请选择非空文件后重新上传');
+    }
     // 前端预检 20MB 上限：超限文件即时报错，不进入上传白等
     const oversized = files.filter(f => f.size > MAX_UPLOAD_BYTES);
     for (const f of oversized) {
       toast.error(`文件过大: ${f.name}`, `单文件上限 20MB（该文件 ${(f.size / 1024 / 1024).toFixed(1)}MB）`);
     }
-    const accepted = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    const accepted = files.filter(f => f.size > 0 && f.size <= MAX_UPLOAD_BYTES);
     if (accepted.length === 0) return;
 
     setUploading(true);
@@ -1882,16 +1858,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     let firstUploadedId: string | null = null;
     for (let i = 0; i < accepted.length; i++) {
       const file = accepted[i];
-      setUploadProgress({ name: file.name, percent: 0, index: i + 1, total: accepted.length });
-      const res = await uploadDocumentFileWithProgress(storeId, file, (percent) => {
-        setUploadProgress({ name: file.name, percent, index: i + 1, total: accepted.length });
+      setUploadProgress(beginDocumentUploadProgress(file.name, i + 1, accepted.length));
+      const res = await uploadDocumentFileWithProgress(storeId, file, (percent, phase) => {
+        setUploadProgress(current => advanceDocumentUploadProgress(current, {
+          name: file.name, percent, phase, index: i + 1, total: accepted.length,
+        }));
       });
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
         firstUploadedId ??= res.data.entry.id;
         successCount++;
       } else {
-        toast.error(`上传失败: ${file.name}`, res.error?.message);
+        toast.error(`上传失败: ${file.name}`, res.error?.message, 20_000);
       }
     }
     setUploadProgress(null);
@@ -2217,7 +2195,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         const file = await buildEntryDownload(target, format, safeName);
         if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
         if (!file) {
-          toast.error('下载失败', '这篇文档没有可导出的内容（正文为空，或原始文件取不到）');
+          toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '这篇文档没有可导出的内容（正文为空，或原始文件取不到）');
           return;
         }
         saveFile(
@@ -2274,16 +2252,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         }
       }
       if (ok === 0) {
-        toast.error('下载失败', '所有文档均未能导出（可能正文为空或网络受限）');
+        toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '所有文档均未能导出（可能正文为空或网络受限）');
         return;
       }
       const out = await zip.generateAsync({ type: 'blob' });
       if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
       saveFile(out, `${(store.name || '知识库').replace(/[\\/:*?"<>|]/g, '_')}.zip`);
-      toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
+      if (format === 'original' && fail > 0) {
+        toast.warning('部分原件未下载', `已打包 ${ok} 篇，${fail} 篇原件未取得。请稍后重试，或另选正文格式导出。`);
+      } else {
+        toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
+      }
     } catch (err) {
       console.error('[DocumentStore] download failed:', err);
-      if (downloadAliveRef.current) toast.error('下载失败', '导出文档时出错，请重试');
+      if (downloadAliveRef.current) toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '导出文档时出错，请重试');
     } finally {
       downloadInFlightRef.current = false;
       if (downloadAliveRef.current) setDownloading(false);
@@ -3134,30 +3116,37 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
       </AnimatePresence>
 
-      {/* 上传进度卡：大文件不再"卡住没反馈"——文件名 + 实时百分比 + 第 n/共 m */}
-      {uploadProgress && (
+      {/* 解析不伪造百分比；请求体传完后展示阶段与持续等待时间。 */}
+      {uploadProgress && (() => {
+        const view = describeDocumentUploadProgress(uploadProgress, uploadProgressNow);
+        return createPortal(
         <div
-          className="fixed left-1/2 z-[70] w-[min(360px,88vw)] -translate-x-1/2 rounded-[14px] px-4 py-3"
+          data-testid="document-upload-progress"
+          data-phase={uploadProgress.phase}
+          className="fixed left-1/2 z-[70] -translate-x-1/2 rounded-[14px] px-4 py-3"
           style={{
-            bottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 0px) + 20px)',
+            width: 'min(360px,88vw)',
+            bottom: `calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 0px) + ${isMobile ? 88 : 20}px)`,
             background: 'var(--bg-card, rgba(20,20,24,0.95))',
             border: '1px solid var(--border-faint)',
             boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
           }}>
           <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px]">
-            <span className="truncate font-semibold text-token-primary">正在上传 {uploadProgress.name}</span>
-            <span className="shrink-0 tabular-nums text-token-muted">
-              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}{uploadProgress.percent}%
+            <span role="status" aria-live="polite" className="truncate font-semibold text-token-primary" title={uploadProgress.name}>{view.title}</span>
+            <span data-testid="document-upload-status" className="flex shrink-0 items-center gap-1.5 tabular-nums text-token-muted">
+              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}
+              {uploadProgress.phase === 'parsing' ? <MapSpinner size={12} /> : null}
+              {view.status}
             </span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
             <div
-              className="h-full rounded-full transition-all duration-200"
-              style={{ width: `${uploadProgress.percent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
+              className={`h-full rounded-full transition-all duration-200 ${uploadProgress.phase === 'parsing' ? 'animate-pulse' : ''}`}
+              style={{ width: `${view.barPercent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
             />
           </div>
-        </div>
-      )}
+        </div>, document.body);
+      })()}
 
       {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开。
           bottom 抬高避让右下角调色盘 FAB（CreatePaletteFab，56px + 边距） */}

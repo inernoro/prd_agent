@@ -1,0 +1,276 @@
+import { createPortal } from 'react-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { X, Plus, Trash2, TestTube, Bell, Check } from 'lucide-react';
+import {
+  listReviewWebhooks,
+  createReviewWebhook,
+  updateReviewWebhook,
+  deleteReviewWebhook,
+  testReviewWebhook,
+} from '@/services/real/productReviewApi';
+import type { ReviewWebhookConfig } from '@/services/real/productReviewApi';
+import { ReviewWebhookChannelLabels, ReviewEventLabels } from '@/services/real/productReview';
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+}
+
+const CHANNEL_OPTIONS = [
+  { value: 'wecom', label: '企业微信' },
+  { value: 'dingtalk', label: '钉钉' },
+  { value: 'feishu', label: '飞书' },
+  { value: 'custom', label: '自定义' },
+];
+
+const ALL_EVENTS = ['review_completed'];
+
+export function ReviewAgentWebhookModal({ open, onClose }: Props) {
+  const [webhooks, setWebhooks] = useState<ReviewWebhookConfig[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // Create form
+  const [showForm, setShowForm] = useState(false);
+  const [formChannel, setFormChannel] = useState<string>('wecom');
+  const [formUrl, setFormUrl] = useState('');
+  const [formName, setFormName] = useState('');
+  const [formMentionAll, setFormMentionAll] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    const res = await listReviewWebhooks();
+    setLoading(false);
+    if (res.success && res.data) setWebhooks(res.data.items);
+    else setError(res.error?.message || '加载失败');
+  }, []);
+
+  useEffect(() => {
+    if (open) void load();
+  }, [open, load]);
+
+  const handleCreate = async () => {
+    if (!formUrl.trim()) { setError('请输入 Webhook URL'); return; }
+    setCreating(true);
+    const res = await createReviewWebhook({
+      channel: formChannel,
+      webhookUrl: formUrl.trim(),
+      triggerEvents: ALL_EVENTS,
+      name: formName.trim() || undefined,
+      mentionAll: formChannel === 'wecom' ? formMentionAll : undefined,
+    });
+    setCreating(false);
+    if (res.success) {
+      setShowForm(false);
+      setFormUrl('');
+      setFormName('');
+      setFormMentionAll(false);
+      void load();
+    } else {
+      setError(res.error?.message || '创建失败');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('确认删除此 Webhook？')) return;
+    const res = await deleteReviewWebhook(id);
+    if (res.success) void load();
+  };
+
+  const handleToggle = async (wh: ReviewWebhookConfig) => {
+    await updateReviewWebhook(wh.id, { isEnabled: !wh.isEnabled });
+    void load();
+  };
+
+  const handleTest = async (wh: ReviewWebhookConfig) => {
+    setTestingId(wh.id);
+    const res = await testReviewWebhook({ webhookUrl: wh.webhookUrl, channel: wh.channel, mentionAll: wh.mentionAll });
+    setTestingId(null);
+    if (res.success && res.data?.success) {
+      setError('');
+      alert('测试消息发送成功');
+    } else {
+      setError(res.data?.error || res.error?.message || '测试失败');
+    }
+  };
+
+  if (!open) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div
+        className="relative w-full max-w-lg mx-4 rounded-2xl border border-token-subtle shadow-2xl"
+        style={{ background: 'var(--panel-solid)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-token-subtle">
+          <h2 className="text-base font-semibold text-token-primary flex items-center gap-2">
+            <Bell className="w-4 h-4" />
+            Webhook 通知配置
+          </h2>
+          <button onClick={onClose} className="text-token-muted hover-text-primary cursor-pointer">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-4" style={{ minHeight: 0, maxHeight: '60vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          <p className="text-xs text-token-muted mb-4">
+            评审完成后自动推送评分结果到企微/钉钉/飞书群聊。
+          </p>
+
+          {error && (
+            <div className="text-xs text-red-400 bg-red-400/10 rounded-lg px-3 py-2 mb-3">{error}</div>
+          )}
+
+          {/* Webhook list */}
+          {loading ? (
+            <div className="text-center py-8 text-token-muted text-sm">加载中...</div>
+          ) : webhooks.length === 0 && !showForm ? (
+            <div className="text-center py-8 text-token-muted text-sm">暂未配置 Webhook</div>
+          ) : (
+            <div className="flex flex-col gap-2 mb-3">
+              {webhooks.map((wh) => (
+                <div
+                  key={wh.id}
+                  className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                        style={{
+                          background: wh.isEnabled ? 'rgba(34, 197, 94, 0.15)' : 'rgba(156, 163, 175, 0.15)',
+                          color: wh.isEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
+                        }}
+                      >
+                        {ReviewWebhookChannelLabels[wh.channel] || wh.channel}
+                      </span>
+                      {wh.name && <span className="text-xs text-token-secondary">{wh.name}</span>}
+                      <span className="text-[10px]" style={{ color: wh.isEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)' }}>
+                        {wh.isEnabled ? '已启用' : '已禁用'}
+                      </span>
+                      {wh.channel === 'wecom' && wh.mentionAll && (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/15 text-[color:var(--accent-fg-amber)]">@所有人</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-0.5">
+                      <button onClick={() => handleTest(wh)} disabled={testingId === wh.id}
+                        className="p-1 rounded hover-bg-soft cursor-pointer" title="测试">
+                        <TestTube className="w-3.5 h-3.5 text-token-muted" />
+                      </button>
+                      <button onClick={() => handleToggle(wh)}
+                        className="p-1 rounded hover-bg-soft cursor-pointer" title={wh.isEnabled ? '禁用' : '启用'}>
+                        <Bell className="w-3.5 h-3.5" style={{ color: wh.isEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)' }} />
+                      </button>
+                      <button onClick={() => handleDelete(wh.id)}
+                        className="p-1 rounded hover-bg-soft cursor-pointer" title="删除">
+                        <Trash2 className="w-3.5 h-3.5 text-red-400/60" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-token-muted truncate">{wh.webhookUrl}</div>
+                  <div className="flex gap-1 mt-1">
+                    {wh.triggerEvents.map((evt) => (
+                      <span key={evt} className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-[color:var(--accent-fg-blue)]">
+                        {ReviewEventLabels[evt] || evt}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Create form */}
+          {showForm && (
+            <div className="rounded-lg border border-token-subtle bg-token-nested p-3 mb-3 flex flex-col gap-2.5">
+              <div className="text-xs font-medium text-token-secondary">新建 Webhook</div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-token-muted">渠道</label>
+                <select
+                  className="text-xs px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-token-primary"
+                  value={formChannel}
+                  onChange={(e) => setFormChannel(e.target.value)}
+                >
+                  {CHANNEL_OPTIONS.map((ch) => (
+                    <option key={ch.value} value={ch.value}>{ch.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-token-muted">备注名称（可选）</label>
+                <input
+                  type="text"
+                  className="text-xs px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-token-primary"
+                  placeholder="如：产品群"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-token-muted">Webhook URL</label>
+                <input
+                  type="url"
+                  className="text-xs px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-token-primary"
+                  placeholder="粘贴群机器人的 Webhook URL"
+                  value={formUrl}
+                  onChange={(e) => setFormUrl(e.target.value)}
+                />
+              </div>
+              {formChannel === 'wecom' && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formMentionAll}
+                    onChange={(e) => setFormMentionAll(e.target.checked)}
+                    className="accent-indigo-500"
+                  />
+                  <span className="text-[11px] text-token-secondary">@所有人（需群主身份，开启后消息改为纯文本格式）</span>
+                </label>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={handleCreate}
+                  disabled={creating}
+                  className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 cursor-pointer"
+                >
+                  <Check className="w-3 h-3" /> 创建
+                </button>
+                <button
+                  onClick={() => setShowForm(false)}
+                  className="text-xs px-3 py-1.5 rounded-md text-token-secondary hover-text-primary cursor-pointer"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between px-6 py-3 border-t border-token-subtle">
+          {!showForm ? (
+            <button
+              onClick={() => setShowForm(true)}
+              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-token-nested hover-bg-soft text-token-secondary hover-text-primary border border-token-subtle cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" /> 添加 Webhook
+            </button>
+          ) : <div />}
+          <button
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded-md text-token-secondary hover-text-primary cursor-pointer"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+    , document.body);
+
+}

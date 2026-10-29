@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Services;
@@ -21,7 +23,7 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class HostedSiteEditRunWorkerFailureLoggingTests
 {
     private const string RemoteDiagnostic = "POST /internal/workspace/commit returned 502 upstream=cds-node-7";
-    private const string RemoteCode = "some_unmapped_remote_code";
+    private const string RemoteCode = "design_output_quality_rejected";
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
@@ -34,17 +36,24 @@ public sealed class HostedSiteEditRunWorkerFailureLoggingTests
             UserId = "owner-user",
             Instruction = "生成说明网页",
             Title = "说明网页",
-            // 执行器按 Runtime 挑选；worker 的失败分支与执行器种类无关，这里用 MapGateway 免去 OpenDesign 公共生命周期的装配。
-            Runtime = DesignArtifactRuntimes.MapGateway,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
         };
+        WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, Capability(), currentHtml: null);
         await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
 
+        var eventStore = new InMemoryRunEventStore();
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, eventStore);
+        var lifecycleAdapter = new WebPageDesignArtifactLifecycleAdapter(
+            fixture.Db,
+            lifecycle,
+            Mock.Of<IDesignArtifactWorkspaceBroker>(),
+            NullLogger<WebPageDesignArtifactLifecycleAdapter>.Instance);
         var services = new ServiceCollection();
         services.AddSingleton(fixture.Db);
         services.AddSingleton(Mock.Of<IHostedSiteService>());
         services.AddSingleton(Mock.Of<IHostedSiteRevisionService>());
-        services.AddSingleton(Mock.Of<IWebPageDesignArtifactLifecycleAdapter>());
-        services.AddSingleton(Mock.Of<IDesignArtifactLifecycleService>());
+        services.AddSingleton<IWebPageDesignArtifactLifecycleAdapter>(lifecycleAdapter);
+        services.AddSingleton<IDesignArtifactLifecycleService>(lifecycle);
         services.AddSingleton(Mock.Of<IDesignKnowledgeSnapshotResolver>());
         services.AddSingleton(Mock.Of<IActivityActionRecorder>());
         services.AddSingleton<IDesignArtifactExecutor>(new RemoteFailureExecutor());
@@ -53,7 +62,7 @@ public sealed class HostedSiteEditRunWorkerFailureLoggingTests
         using var worker = new HostedSiteEditRunWorker(
             provider.GetRequiredService<IServiceScopeFactory>(),
             Mock.Of<IRunQueue>(),
-            new InMemoryRunEventStore(),
+            eventStore,
             logger);
 
         await worker.ProcessAsync(run.Id, CancellationToken.None);
@@ -61,8 +70,31 @@ public sealed class HostedSiteEditRunWorkerFailureLoggingTests
         var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
         Assert.Equal(RunStatuses.Error, persisted.Status);
         Assert.NotNull(persisted.Error);
-        Assert.Contains(OpenDesignFailureMessage.UnmappedReason, persisted.Error, StringComparison.Ordinal);
+        Assert.Contains("没有通过发布前的校验", persisted.Error, StringComparison.Ordinal);
         Assert.DoesNotContain(RemoteDiagnostic, persisted.Error, StringComparison.Ordinal);
+        Assert.Equal(RemoteCode, persisted.LifecycleFailureCode);
+        Assert.Equal(RemoteCode, persisted.RuntimeFailure?.Code);
+        Assert.Equal(["css_generated_text"], persisted.RuntimeFailure?.IssueCodes);
+        Assert.Equal(1, persisted.RuntimeFailure?.RepairAttempts);
+        Assert.True(persisted.RuntimeFailure?.RepairBudgetExhausted);
+        var terminal = persisted.LifecycleEvents[^1];
+        Assert.Equal(DesignArtifactLifecycleEventTypes.Error, terminal.Type);
+        Assert.Equal(["css_generated_text"], terminal.RuntimeFailure?.IssueCodes);
+        var projected = (await eventStore.GetEventsAsync(
+                RunKinds.DesignArtifact,
+                run.Id,
+                0,
+                100,
+                CancellationToken.None))
+            .Last();
+        Assert.Equal("error", projected.EventName);
+        using var projectedPayload = JsonDocument.Parse(projected.PayloadJson);
+        Assert.Equal(RemoteCode, projectedPayload.RootElement.GetProperty("code").GetString());
+        Assert.Equal("css_generated_text",
+            projectedPayload.RootElement.GetProperty("details").GetProperty("issueCodes")[0].GetString());
+        Assert.Equal(1, projectedPayload.RootElement.GetProperty("details").GetProperty("repairAttempts").GetInt32());
+        Assert.True(projectedPayload.RootElement.GetProperty("details").GetProperty("repairBudgetExhausted").GetBoolean());
+        Assert.DoesNotContain(RemoteDiagnostic, projected.PayloadJson, StringComparison.Ordinal);
 
         var entry = Assert.Single(logger.Entries, e => e.Level == LogLevel.Error);
         Assert.Contains(run.Id, entry.Message, StringComparison.Ordinal);
@@ -74,7 +106,7 @@ public sealed class HostedSiteEditRunWorkerFailureLoggingTests
 
     private sealed class RemoteFailureExecutor : IDesignArtifactExecutor
     {
-        public string Runtime => DesignArtifactRuntimes.MapGateway;
+        public string Runtime => DesignArtifactRuntimes.OpenDesign;
         public bool Supports(string artifactType, string operation) => true;
 
         public async IAsyncEnumerable<DesignArtifactExecutorChunk> ExecuteAsync(
@@ -84,9 +116,28 @@ public sealed class HostedSiteEditRunWorkerFailureLoggingTests
         {
             await Task.Yield();
             yield return new DesignArtifactExecutorChunk("thinking", "正在整理结构");
-            throw OpenDesignFailureMessage.Failure(OpenDesignFailureStage.RemoteRun, RemoteDiagnostic, RemoteCode);
+            throw OpenDesignFailureMessage.Failure(
+                OpenDesignFailureStage.RemoteRun,
+                RemoteDiagnostic,
+                RemoteCode,
+                new OpenDesignRemoteFailureDetails(["css_generated_text"], 1, true));
         }
     }
+
+    private static DesignArtifactProviderCapability Capability() => new(
+        DesignArtifactRuntimes.OpenDesign,
+        "OpenDesign",
+        DesignArtifactAdapterKinds.RemoteAgent,
+        DesignArtifactExecutionOwners.CdsRemoteAgent,
+        DesignArtifactIsolationModes.SessionContainer,
+        [DesignArtifactTypes.WebPage],
+        [DesignArtifactOperations.Generate, DesignArtifactOperations.Edit],
+        [DesignArtifactSourceSurfaces.WebHosting],
+        Configured: true,
+        Healthy: true,
+        Enabled: true,
+        Reason: null,
+        ConnectionId: "cds-primary");
 
     private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
 

@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { readFile } from 'node:fs/promises';
-import type { BranchEntry, BuildProfile } from '../types.js';
+import type { BranchEntry, BuildProfile, IShellExecutor, ServiceRuntimeRef } from '../types.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
 
 let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
@@ -155,14 +155,40 @@ export class DeploymentPhaseBudget {
 
 export const deploymentPhaseBudget = new DeploymentPhaseBudget();
 
-export function restoreDeploymentMemoryReservations(branches: readonly BranchEntry[], profiles: (branch: BranchEntry) => BuildProfile[]): void {
+export async function restoreDeploymentMemoryReservations(
+  branches: readonly BranchEntry[], profiles: (branch: BranchEntry) => BuildProfile[],
+  options: { shell?: IShellExecutor; budget?: DeploymentPhaseBudget } = {},
+): Promise<void> {
+  const budget = options.budget || deploymentPhaseBudget;
+  const candidates: Array<{ branch: BranchEntry; profileId: string; runtime: ServiceRuntimeRef; memoryMB: number }> = [];
   for (const branch of branches) {
     const hints = new Map(profiles(branch).map(profile => [profile.id, profile.resources?.memoryMB || 512]));
     for (const service of Object.values(branch.services)) for (const runtime of serviceRuntimeRefs(service)) {
       const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
-      if (incomplete) deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, hints.get(service.profileId) || 512,
-        { projectId: branch.projectId, branchId: branch.id, profileId: service.profileId });
+      if (incomplete) candidates.push({ branch, profileId: service.profileId, runtime, memoryMB: hints.get(service.profileId) || 512 });
     }
+  }
+  // A stopped immutable container cannot consume a startup reservation. Verify its
+  // identity and terminal Docker state without changing the retained runtime or container.
+  const receipts = new Map<string, { status: string; project: string; branch: string; profile: string }>();
+  const ids = [...new Set(candidates.map(item => item.runtime.containerId).filter((id): id is string => !!id && /^[a-f0-9]{64}$/.test(id)))];
+  if (options.shell && ids.length) {
+    const format = '{"id":{{json .Id}},"status":{{json .State.Status}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}}}';
+    try {
+      const result = await options.shell.exec(`docker inspect --format '${format}' ${ids.join(' ')}`, { timeout: 5000, executionLane: 'observation' });
+      for (const line of result.stdout.trim().split('\n')) {
+        try {
+          const receipt = JSON.parse(line);
+          if (ids.includes(receipt.id)) receipts.set(receipt.id, receipt);
+        } catch { /* Missing or malformed receipts retain their reservation. */ }
+      }
+    } catch { /* Unavailable Docker is unknown, not evidence of a stopped runtime. */ }
+  }
+  for (const { branch, profileId, runtime, memoryMB } of candidates) {
+    const receipt = runtime.containerId ? receipts.get(runtime.containerId) : undefined;
+    const stopped = receipt && ['exited', 'dead'].includes(receipt.status)
+      && receipt.project === (branch.projectId || '_unknown') && receipt.branch === branch.id && receipt.profile === profileId;
+    if (!stopped) budget.reserveKnownMemory(runtime.containerName, memoryMB, { projectId: branch.projectId, branchId: branch.id, profileId });
   }
 }

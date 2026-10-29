@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
+import * as sqlConsole from '../../src/services/sql-console-executor.js';
 import { createServer } from '../../src/server.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
@@ -221,6 +222,7 @@ describe('human project grants through the production server', () => {
     const restored = new StateService(path.join(dir, 'late-write-restored.json'));
     restored.load();
     expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await grant(['project-b'])).status).toBe(200);
   });
   it('restores a timed-out grant snapshot on restart before allowing the member or linked credentials', async () => {
@@ -234,6 +236,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => pending);
     try {
       expect((await grant(['project-b'])).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'interrupted-grant.json'));
       for (const failedStep of ['save', 'flush'] as const) {
@@ -314,6 +317,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     try {
       expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       const restartPath = path.join(dir, `interrupted-${status}.json`);
       fs.copyFileSync(path.join(dir, 'state.json'), restartPath);
@@ -428,6 +432,7 @@ describe('human project grants through the production server', () => {
 
   it.each(['mysql', 'mongo'] as const)('allows only existing read-only %s commands in authorized resources', async runtime => {
     const mongo = runtime === 'mongo';
+    if (!mongo) vi.spyOn(sqlConsole, 'executeSqlConsole').mockResolvedValue({ columns: ['answer'], rows: [['1']], rowCount: 1, resultSets: [{ columns: ['answer'], rows: [['1']], rowCount: 1 }], output: 'SQL 执行完成。' });
     state.addInfraService({ id: runtime, projectId: 'project-a', name: runtime, dockerImage: mongo ? 'mongo:7' : 'mysql:8',
       containerPort: mongo ? 27017 : 3306, hostPort: mongo ? 27017 : 3306, containerName: `fixture-${runtime}`, status: 'running',
       dbName: 'app', env: mongo ? { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'fake-db-password', MONGO_INITDB_DATABASE: 'app' }
@@ -1127,6 +1132,7 @@ describe('human project grants through the production server', () => {
     await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined(), { timeout: 2000 });
     expect(state.getPrincipal(principalId)?.status).toBe('disabled');
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(200);
   });
 

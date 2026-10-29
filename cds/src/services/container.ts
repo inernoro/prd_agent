@@ -1,3 +1,6 @@
+import {withWritableSourceLayer, sourceWorkspaceCommand} from './source-workspace.js';
+import { nativeBindMountInspector, guardBindMountShell, type BindMountInspector } from './deployment-bind-mount-proof.js';
+import { acquireBuildSlot } from './build-gate.js';
 import fs from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
@@ -11,6 +14,8 @@ import type { ContainerLogStreamHub, ContainerLogStreamEnd } from './container-l
 import type { ObservationStreamExecutor } from './observation-stream-executor.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import { worktreePathActivity } from './worktree-path-activity.js';
+import { assertProfileStorageBoundary, assertInfraStorageBoundary } from './deployment-storage-boundary.js';
+import { profileStoragePlan, infraStoragePlan, inspectStoragePlan, resolveStorageImage, renderStoragePlan, withReadOnlyTools, withRuntimeTmpfs, type DeploymentStoragePlan, type StorageBirthRequirements, UnsafeDeploymentStorageError } from './deployment-storage-plan.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
@@ -31,15 +36,8 @@ import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConne
 import { inspectDeploymentArtifacts } from './artifact-admission.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
-/**
- * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
- *
- * docker 默认 json-file 驱动**没有上限**：长跑分支的容器日志会一直写到根盘满。
- * 2026-07-27 根盘 100% 写满导致 CDS 自用 mongo 退出、全站 502 三十五分钟，事后
- * 宿主实测 /var/lib/docker/containers 已积 3.5GB。50m x 3 = 单容器上界 150MB，
- * 既够排障回看，也让「日志」这条增长曲线从无界变有界。
- */
-export const DOCKER_LOG_LIMIT_FLAGS = ['--log-opt max-size=50m', '--log-opt max-file=3'];
+import { DOCKER_LOG_LIMIT_FLAGS, hasBoundedDockerLogs } from './docker-log-policy.js';
+export { DOCKER_LOG_LIMIT_FLAGS } from './docker-log-policy.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
@@ -61,6 +59,8 @@ import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from 
  * config.dockerNetwork 共享网络,保持 backward compat。
  */
 export interface ProjectNetworkResolver {
+  /** 当前受管容器身份；保留的历史运行不能覆盖它的巡检结果。 */
+  getAppContainerName?(branchId: string, profileId: string): string | undefined;
   /** 返回该项目的 dockerNetwork,缺失则返回 undefined（调用方走 config 兜底）。 */
   getDockerNetwork(projectId: string): string | undefined;
   /**
@@ -90,6 +90,8 @@ export interface ProjectNetworkResolver {
    * process.env 的同一份判定——退化后仍然是安全默认，不会退回裸绑全网卡。
    */
   getInfraPublishHosts?(): string[];
+  storageBirthRequirements?(plan: DeploymentStoragePlan): StorageBirthRequirements;
+  resolveProfileStorage?(entry: Pick<BranchEntry,'id'|'projectId'>,profile: BuildProfile): BuildProfile;
 }
 
 export interface ContainerRemoveContext {
@@ -701,6 +703,9 @@ export class ContainerStopUnconfirmedError extends Error {
 
 export class ContainerService {
   private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
+  /** Private receipts cannot be asserted by an HTTP profile or transferred across daemons. */
+  private readonly admittedProfileStorage = new WeakMap<BuildProfile, { planDigest: string; imageId: string; imageReference: string; checkBindMounts: () => void }>();
+  private readonly admittedInfraStorage = new WeakMap<InfraService, { planDigest: string; imageId: string; imageReference: string; originalContainerId?: string }>();
   async inspectOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, requireRunning = true): Promise<import('../types.js').ServiceRuntimeRef | null> {
     const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}},"networks":{{json .NetworkSettings.Networks}}}';
     const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`, { timeout: 5000, executionLane: 'observation' });
@@ -821,6 +826,8 @@ export class ContainerService {
     private readonly serverEventLogStore?: ServerEventLogSink | null,
     private readonly startupStreams?: ObservationStreamExecutor,
     private readonly logStreams?: ContainerLogStreamHub,
+    // Trusted dependency injection for native FS fixtures; production always uses real synchronous FS.
+    private readonly bindMountInspector: BindMountInspector = nativeBindMountInspector,
   ) {}
 
   inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void, options: { inspectLocalArtifacts?: boolean } = {}) {
@@ -877,8 +884,8 @@ export class ContainerService {
     kind: ContainerLifecycleIntentKind,
     reason: string,
     context: ContainerRemoveContext = {},
-  ): void {
-    recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
+  ) {
+    return recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
   }
 
   private qualifiedShell(assertCurrent?: (step: string) => void): IShellExecutor {
@@ -954,18 +961,28 @@ export class ContainerService {
       onOutput?.('── 旧本地产物与目标或配置不一致，按已选择的源码模式重新构建 ──\n');
     }
 
+    const checkManagedSource = this.bindMountInspector(profileStoragePlan(entry, {...profile, prebuiltImage:false, managedBuild:undefined, cacheMounts:[]}, this.config));
+    checkManagedSource();
+    const actualSource = await shell.exec('git rev-parse HEAD', {cwd:entry.worktreePath,timeout:3000});
+    if (actualSource.exitCode !== 0 || actualSource.stdout.trim().toLowerCase() !== sourceCommitSha.toLowerCase()) throw new UnsafeDeploymentStorageError(profile.id, 'storage-source-identity-mismatch');
     const sourcePath = path.resolve(entry.worktreePath, profile.workDir || '.');
     if (!fs.existsSync(sourcePath)) throw new Error(`managed 构建目录不存在: ${sourcePath}`);
+    // Builders have an independent writable layer and no data/source bind. An image VOLUME
+    // would silently put copied source in an anonymous volume, so freeze and reject it first.
     const builderName = `${service.containerName}-managed-build-${randomBytes(6).toString('hex')}`;
+    // The temporary writable layer is a different resource from the eventual
+    // app: it must never borrow its retained volumes or shrink its denominator.
+    const builderPlan = profileStoragePlan(entry, {...profile, id:builderName, prebuiltImage:true, managedBuild:undefined, cacheMounts:[]}, this.config);
+    const builderImage = await resolveStorageImage(shell, profile.dockerImage, builderPlan, true);
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const buildCommand = [contract.installCommand, contract.buildCommand].filter(Boolean).join(' && ') || 'true';
     onOutput?.(`── managed 构建: ${contract.stack}，产物 ${artifactImage} ──\n`);
-    let created = false;
+    let createdId: string | undefined;
     try {
-      await shell.exec(`docker rm -f ${this.shellQuote(builderName)}`);
       assertCurrent?.(`managed build before create ${profile.id}`);
       const create = await shell.exec([
         'docker create',
+        ...DOCKER_LOG_LIMIT_FLAGS,
         `--name ${this.shellQuote(builderName)}`,
         `--network ${this.shellQuote(network)}`,
         // managed 构建是本机最吃 CPU 的一段（装依赖 + 打包），必须和其它托管
@@ -974,21 +991,23 @@ export class ContainerService {
         '--entrypoint=""',
         '-w /app',
         `--env-file ${this.shellQuote(envFilePath)}`,
-        this.shellQuote(profile.dockerImage),
+        this.shellQuote(builderImage),
         `sh -c ${this.shellQuote('tail -f /dev/null')}`,
       ].join(' '));
       if (create.exitCode !== 0) throw new Error(`managed 构建容器创建失败:\n${combinedOutput(create)}`);
-      created = true;
-      const copy = await shell.exec(`docker cp ${this.shellQuote(`${sourcePath}/.`)} ${this.shellQuote(`${builderName}:/app`)}`);
+      createdId = create.stdout.trim();
+      if (!/^[a-f0-9]{64}$/.test(createdId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
+      await this.inspectCreatedStorageContainer(shell, createdId, builderName, builderImage, builderPlan);
+      const copy = await guardBindMountShell(shell, checkManagedSource).exec(`docker cp ${this.shellQuote(`${sourcePath}/.`)} ${this.shellQuote(`${createdId}:/app`)}`);
       if (copy.exitCode !== 0) throw new Error(`managed 源码复制失败:\n${combinedOutput(copy)}`);
-      const start = await shell.exec(`docker start ${this.shellQuote(builderName)}`);
+      const start = await shell.exec(`docker start ${this.shellQuote(createdId!)}`);
       if (start.exitCode !== 0) throw new Error(`managed 构建容器启动失败:\n${combinedOutput(start)}`);
       assertCurrent?.(`managed build before exec ${profile.id}`);
       onOutput?.(`── managed build 命令: ${buildCommand} ──\n`);
-      const build = await shell.exec(`docker exec ${this.shellQuote(builderName)} sh -c ${this.shellQuote(buildCommand)}`);
+      const build = await shell.exec(`docker exec ${this.shellQuote(createdId!)} sh -c ${this.shellQuote(buildCommand)}`);
       if (build.stdout) onOutput?.(`${build.stdout}\n`);
       if (build.exitCode !== 0) throw new Error(`managed 构建失败:\n${combinedOutput(build)}`);
-      const commit = await shell.exec(`docker commit --change ${this.shellQuote(`LABEL org.opencontainers.image.revision=${sourceCommitSha.toLowerCase()}`)} --change ${this.shellQuote(`LABEL cds.managed.contract=${contractHash}`)} ${this.shellQuote(builderName)} ${this.shellQuote(artifactImage)}`);
+      const commit = await shell.exec(`docker commit --change ${this.shellQuote(`LABEL org.opencontainers.image.revision=${sourceCommitSha.toLowerCase()}`)} --change ${this.shellQuote(`LABEL cds.managed.contract=${contractHash}`)} ${this.shellQuote(createdId!)} ${this.shellQuote(artifactImage)}`);
       if (commit.exitCode !== 0) throw new Error(`managed 产物固化失败:\n${combinedOutput(commit)}`);
       const fixed = commit.stdout.trim();
       if (!/^sha256:[0-9a-f]{64}$/i.test(fixed)) throw new Error('受管构建未返回可确认的镜像内容身份');
@@ -997,7 +1016,7 @@ export class ContainerService {
       onOutput?.('── 受管产物提交、平台和配置已确认，使用固定内容运行 ──\n');
       return verified;
     } finally {
-      try { if (created) await this.cleanupTemporaryContainer(builderName, entry, profile.id); }
+      try { if (createdId) await this.cleanupTemporaryContainer(createdId, entry, profile.id); }
       finally { try { fs.unlinkSync(envFilePath); } catch { /* best-effort */ } }
     }
   }
@@ -1082,44 +1101,51 @@ export class ContainerService {
     ).env;
   }
 
+  private async inspectAcceptedStorage(shell: IShellExecutor, plan: DeploymentStoragePlan): Promise<void> {
+    this.bindMountInspector(plan)();
+    const before = structuredClone(this.networkResolver?.storageBirthRequirements?.(plan) || {});
+    await inspectStoragePlan(shell, plan, false, before);
+    const after = this.networkResolver?.storageBirthRequirements?.(plan) || {};
+    if (JSON.stringify(before) !== JSON.stringify(after)) throw new UnsafeDeploymentStorageError('plan', 'storage-birth-unconfirmed');
+  }
+
+  /** Only the immutable container created by this invocation may start with the accepted mounts. */
+  private async inspectCreatedStorageContainer(shell: IShellExecutor, id: string, name: string, imageId: string, plan: DeploymentStoragePlan, expectedStatus: 'created'|'exited'|'running' = 'created'): Promise<void> {
+    renderStoragePlan(plan);
+    const result = await shell.exec(`docker inspect --format '[{{json .Id}},{{json .Name}},{{json .Image}},{{json .State.Pid}},{{json .State.Status}},{{json .Mounts}},{{json (index .HostConfig "Tmpfs")}}]' ${this.shellQuote(id)}`, {executionLane: 'observation'});
+    if (result.exitCode !== 0) throw new UnsafeDeploymentStorageError(name, 'storage-created-container-unknown');
+    let fields: any[];
+    try { fields = JSON.parse(result.stdout); if (!Array.isArray(fields)) throw new Error(); }
+    catch { throw new UnsafeDeploymentStorageError(name, 'storage-created-container-unknown'); }
+    const [actualId, actualName, image, pid, status, mounts, tmpfs] = fields;
+    if (fields.length !== 7 || actualId !== id || actualName !== '/' + name || image !== imageId || !Number.isSafeInteger(pid) || (expectedStatus==='running' ? pid<=0 : pid!==0) || status !== expectedStatus
+      || !Array.isArray(mounts) || (tmpfs != null && (typeof tmpfs !== 'object' || Array.isArray(tmpfs)))
+      || (plan.mounts.some(m => m.kind === 'tmpfs') ? Object.keys(tmpfs || {}).length !== 1 || !Object.hasOwn(tmpfs || {}, '/tmp') || tmpfs['/tmp'] !== '' : Object.keys(tmpfs || {}).length !== 0)) {
+      throw new UnsafeDeploymentStorageError(name, 'storage-created-container-mismatch');
+    }
+    const expected = plan.mounts.filter(m => m.kind !== 'tmpfs');
+    const actual = mounts.filter((m: any) => m?.Type !== 'tmpfs');
+    if (actual.length !== expected.length || mounts.some((m: any) => m?.Type === 'tmpfs' && (!plan.mounts.some(e => e.kind === 'tmpfs' && e.target === m.Destination) || m.RW !== true))
+      || expected.some(m => !actual.some((v: any) => v?.Type === m.kind && v.Destination === m.target && v.RW === !m.readOnly
+        && (m.kind === 'volume' ? v.Name === m.source : v.Source === m.source)))) {
+      throw new UnsafeDeploymentStorageError(name, 'storage-created-mount-mismatch');
+    }
+    await this.inspectAcceptedStorage(shell, plan);
+  }
+
   private async buildProfileVolumeFlags(
     entry: BranchEntry,
     profile: BuildProfile,
     command: string,
     onOutput?: (chunk: string) => void,
-  ): Promise<{ containerWorkDir: string; volumeFlags: string[]; isNodeContainer: boolean; skipSrcMount: boolean }> {
-    const srcMount = path.join(entry.worktreePath, profile.workDir);
+    acceptedPlan?: DeploymentStoragePlan,
+  ): Promise<{ containerWorkDir: string; volumeFlags: string[]; isNodeContainer: boolean; skipSrcMount: boolean; runtimeStoragePlan: DeploymentStoragePlan }> {
     const containerWorkDir = profile.containerWorkDir || '/app';
     const skipSrcMount = profile.prebuiltImage === true;
     const isNodeContainer = /\bnode:/.test(profile.dockerImage);
-    // host-shell 安全（Codex P1「Validate extra-service workDir before deploy」）：srcMount 由
-    // path.join(worktreePath, profile.workDir) 拼成，profile.workDir / containerWorkDir 来自用户可控的
-    // BuildProfile（含分支级额外服务）。旧写法 `-v "${srcMount}":"${containerWorkDir}"` 用双引号，
-    // workDir 里塞一个双引号 + `$()`/反引号就能在 CDS 宿主机上越权执行。这里与 dockerImage/command 同口径，
-    // 对挂载路径两端走 shellQuote 单引号转义（docker 拿到的仍是原始路径，shell 不再预展开/不被截断）。
-    const volumeFlags: string[] = skipSrcMount
-      ? []
-      : [`-v ${this.shellQuote(srcMount)}:${this.shellQuote(containerWorkDir)}`];
-
-    if (skipSrcMount) {
-      onOutput?.(`── 预构建镜像模式: 跳过 source mount(image 已含应用文件)──\n`);
-    }
-
-    if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
-      volumeFlags.push(`-v ${this.shellQuote(nodeModulesVolumeName(entry.id, profile.id))}:${this.shellQuote(`${containerWorkDir}/node_modules`)}`);
-    }
-
-    if (profile.cacheMounts) {
-      for (const cm of profile.cacheMounts) {
-        if (cm.kind !== 'volume') {
-          const mkdir = await this.shell.exec(`mkdir -p ${this.shellQuote(cm.hostPath)}`);
-          if (mkdir.exitCode !== 0) {
-            throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
-          }
-        }
-        volumeFlags.push(`-v ${this.shellQuote(cm.hostPath)}:${this.shellQuote(cm.containerPath)}`);
-      }
-    }
+    let plan = acceptedPlan || profileStoragePlan(entry, profile, this.config);
+    if (skipSrcMount) onOutput?.('── 预构建镜像模式: 跳过 source mount ──\n');
+    // No implicit node_modules volume: writable runtime mounts need explicit ownership.
 
     const ffmpegPaths = ['/opt/ffmpeg-static/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
     const ffprobePaths = ['/opt/ffmpeg-static/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'];
@@ -1129,18 +1155,19 @@ export class ContainerService {
     );
     const ffmpegPath = findResult.stdout?.trim();
     if (ffmpegPath) {
-      volumeFlags.push(`-v "${ffmpegPath}:/usr/local/bin/ffmpeg:ro"`);
+      plan = withReadOnlyTools(plan, [{source: ffmpegPath, target: '/usr/local/bin/ffmpeg'}]);
       const findProbe = await this.shell.exec(
         `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`,
         { timeout: 5000, executionLane: 'observation' }
       );
       const ffprobePath = findProbe.stdout?.trim();
       if (ffprobePath) {
-        volumeFlags.push(`-v "${ffprobePath}:/usr/local/bin/ffprobe:ro"`);
+        plan = withReadOnlyTools(plan, [{source: ffprobePath, target: '/usr/local/bin/ffprobe'}]);
       }
     }
 
-    return { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount };
+    const runtimeStoragePlan = withWritableSourceLayer(plan.mounts.some(m => m.kind === 'tmpfs') ? plan : withRuntimeTmpfs(plan));
+    return { containerWorkDir, volumeFlags: renderStoragePlan(runtimeStoragePlan), isNodeContainer, skipSrcMount, runtimeStoragePlan };
   }
 
   private buildEntrypointFlags(profile: BuildProfile, onOutput?: (chunk: string) => void): string[] {
@@ -1345,6 +1372,107 @@ export class ContainerService {
    * Mounts the worktree + shared cache volumes into a Docker container.
    * Uses profile.command to run everything in one persistent container.
    */
+  /** Freeze every declaration before temporary builds; no database or serving runtime is changed. */
+  async preflightDeploymentStorage(entry: BranchEntry, inputs: readonly BuildProfile[], context: {
+    assertCurrent?: (step: string) => void; sourceCommitSha?: string; customEnv?: Record<string,string>;
+    operationId?: string; signal?: AbortSignal; onOutput?: (profileId:string, chunk:string) => void;
+  } = {}): Promise<BuildProfile[]> {
+    context = {...context, customEnv: context.customEnv ? {...context.customEnv} : undefined};
+    entry = {...entry};
+    const profiles = inputs.map(input => {
+      const initial = structuredClone(input), prior = this.admittedProfileStorage.get(input);
+      const copy = this.networkResolver?.resolveProfileStorage?.(entry,initial) || initial;
+      if (prior) this.admittedProfileStorage.set(copy, prior);
+      assertProfileStorageBoundary(copy, entry.worktreePath);
+      this.bindMountInspector(withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, copy, this.config))))();
+      return copy;
+    });
+    const accepted: BuildProfile[] = [];
+    for (let profile of profiles) {
+      if (profile.managedBuild) {
+        if (!context.sourceCommitSha || !/^[a-f0-9]{40}$/.test(context.sourceCommitSha)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-runtime-artifact-required');
+        const cancelled = new AbortController();
+        const abort = () => cancelled.abort();
+        context.signal?.addEventListener('abort', abort, {once:true});
+        if (context.signal?.aborted) abort();
+        const isCancelled = () => {try {context.assertCurrent?.('managed artifact admission');return false} catch {abort();return true}};
+        const timer = context.assertCurrent ? setInterval(isCancelled,1000) : undefined;
+        timer?.unref();
+        let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
+        try {
+          slot = await acquireBuildSlot({holder:{branchId:entry.id,profileId:profile.id,operationId:context.operationId,label:profile.name},
+            signal:cancelled.signal,isCancelled,
+            onQueued: info => context.onOutput?.(profile.id,`源码产物等待构建槽：前面 ${info.ahead} 个，正在构建 ${info.active}/${info.max}\n`)});
+          context.assertCurrent?.('before managed storage artifact');
+          if (cancelled.signal.aborted) throw new Error('managed artifact cancelled');
+          const network = this.getNetworkForProject(entry.projectId);
+          await this.ensureNetwork(network);
+          profile = await this.buildManagedArtifact(entry, profile,
+            {profileId:profile.id,containerName:`cds-${entry.id}-${profile.id}`,hostPort:0,status:'building'},
+            context.sourceCommitSha,network,context.customEnv,chunk=>context.onOutput?.(profile.id,chunk),step=>{
+              if(cancelled.signal.aborted)throw new Error('managed artifact cancelled');
+              context.assertCurrent?.(step);
+            });
+        } finally {
+          slot?.release();if(timer)clearInterval(timer);
+          context.signal?.removeEventListener('abort',abort);
+        }
+      }
+      accepted.push(await this.preflightProfileStorage(entry,profile,{assertCurrent:context.assertCurrent}));
+    }
+    return accepted;
+  }
+
+  /** Read-only local-daemon preflight; callers must admit a complete graph before any business action. */
+  async preflightProfileStorage(entry: Pick<BranchEntry, 'id' | 'projectId' | 'worktreePath'>, input: BuildProfile,
+    context: {assertCurrent?: (step: string) => void} = {}): Promise<BuildProfile> {
+    const prior = this.admittedProfileStorage.get(input);
+    const initial = structuredClone(input), acceptedEntry = {...entry};
+    const profile = this.networkResolver?.resolveProfileStorage?.(acceptedEntry,initial) || initial;
+    const shell = this.qualifiedShell(context.assertCurrent);
+    assertProfileStorageBoundary(profile, acceptedEntry.worktreePath);
+    if (profile.managedBuild) throw new UnsafeDeploymentStorageError(profile.id, 'storage-runtime-artifact-required');
+    // Artifact selection is owned by the existing admission path, never by storage preflight.
+    if (profile.prebuiltImage && !profile.localArtifact) throw new UnsafeDeploymentStorageError(profile.id, 'storage-image-not-admitted');
+    const plan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(acceptedEntry, profile, this.config)));
+    prior?.checkBindMounts();
+    const checkBindMounts = this.bindMountInspector(plan);
+    await this.inspectAcceptedStorage(shell, plan);
+    if (prior && (prior.planDigest !== plan.digest || prior.imageReference !== profile.dockerImage)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-admission-changed');
+    const imageId = await resolveStorageImage(shell, prior?.imageId || profile.dockerImage, plan, !prior && !profile.prebuiltImage);
+    await this.inspectAcceptedStorage(shell, plan);
+    checkBindMounts();
+    this.admittedProfileStorage.set(profile, {planDigest:plan.digest, imageId, imageReference:profile.dockerImage, checkBindMounts});
+    return profile;
+  }
+
+  /** Explicit infrastructure replacement uses this before stopping the existing container. */
+  async preflightInfraStorage(input: InfraService, context: {assertCurrent?: (step: string) => void; allowOriginalRuntime?: boolean} = {}): Promise<InfraService> {
+    const service = structuredClone(input), shell = this.qualifiedShell(context.assertCurrent);
+    if (context.allowOriginalRuntime) {
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName)) throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown');
+      const original = await shell.exec(`docker inspect --format='{{json .Id}}|{{json .State.Status}}|{{json .Name}}' ${this.shellQuote(service.containerName)}`, {executionLane:'observation'});
+      if (original.exitCode === 0) {
+        try {
+          const [id, status, name, extra] = original.stdout.trim().split('|').map(x => JSON.parse(x));
+          if (extra !== undefined || !/^[a-f0-9]{64}$/.test(id) || name !== '/' + service.containerName || !['running','exited','created'].includes(status)) throw new Error();
+          this.admittedInfraStorage.set(service, {planDigest:'original:'+id,imageId:'',imageReference:service.dockerImage,originalContainerId:id});
+          return service;
+        } catch { throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown'); }
+      }
+      const missing = ['Error: No such object: ', 'Error: no such object: ', 'error: no such object: ', 'Error response from daemon: No such container: '].map(prefix => prefix + service.containerName);
+      const absent = original.exitCode === 1 && ['', '[]'].includes(original.stdout.trim()) && missing.includes(original.stderr.trim());
+      if (!absent) throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown');
+    }
+    assertInfraStorageBoundary(service, this.config);
+    const plan = infraStoragePlan(service, this.config);
+    await this.inspectAcceptedStorage(shell, plan);
+    const imageId = await resolveStorageImage(shell, service.dockerImage, plan, true);
+    await this.inspectAcceptedStorage(shell, plan);
+    this.admittedInfraStorage.set(service, {planDigest:plan.digest, imageId, imageReference:service.dockerImage});
+    return service;
+  }
+
   async runService(
     entry: BranchEntry,
     profile: BuildProfile,
@@ -1386,7 +1514,14 @@ export class ContainerService {
       onLatestCommitImage?: (commitSha: string) => void;
     } = {},
   ): Promise<void> {
-    const shell = this.qualifiedShell(context.assertCurrent);
+    const storageAdmission = this.admittedProfileStorage.get(profile);
+    storageAdmission?.checkBindMounts();
+    context = {...context, sourceCheckout: context.sourceCheckout ? {...context.sourceCheckout} : undefined};
+    profile = structuredClone(profile);
+    entry = {...entry};
+    profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
+    if (customEnv) customEnv = {...customEnv};
+    let shell = this.qualifiedShell(context.assertCurrent);
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
@@ -1408,6 +1543,14 @@ export class ContainerService {
       entry = { ...entry, worktreePath: sourceCheckout.path };
       if (!profile.prebuiltImage) entry = { ...entry, githubCommitSha: sourceCheckout.commitSha, ciTargetSha: undefined };
     }
+    assertProfileStorageBoundary(profile, entry.worktreePath);
+    const acceptedStoragePlan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config)));
+    const checkBindMounts = this.bindMountInspector(acceptedStoragePlan);
+    const originalAssertCurrent = context.assertCurrent;
+    context = {...context, assertCurrent: step => { originalAssertCurrent?.(step); checkBindMounts(); }};
+    shell = guardBindMountShell(shell, checkBindMounts);
+    if (storageAdmission && (storageAdmission.planDigest !== acceptedStoragePlan.digest || storageAdmission.imageReference !== profile.dockerImage)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-admission-changed');
+    await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
     let managedCommitSha: string | undefined;
     if (profile.managedBuild) {
       managedCommitSha = sourceCheckout?.commitSha;
@@ -1750,6 +1893,15 @@ export class ContainerService {
       }
     }
 
+    // Pin the selected actual image and inspect all VOLUME declarations before any old runtime action.
+    const runImageReference = storageAdmission?.imageReference || profile.dockerImage;
+    profile.dockerImage = await resolveStorageImage(shell, storageAdmission?.imageId || profile.dockerImage, acceptedStoragePlan, !storageAdmission);
+    await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
+    const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount, runtimeStoragePlan } =
+      await this.buildProfileVolumeFlags(entry, profile, command, onOutput, acceptedStoragePlan);
+    const checkRuntimeBinds = this.bindMountInspector(runtimeStoragePlan);
+    checkBindMounts();
+    shell = guardBindMountShell(shell, checkRuntimeBinds);
     // 全部镜像/本地产物核验结束后才清理旧别名；失败不会在拉取前拆掉可用服务。
     context.assertCurrent?.(`runService before alias cleanup ${profile.id}`);
     await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
@@ -1805,8 +1957,6 @@ export class ContainerService {
 
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
-    const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount } =
-      await this.buildProfileVolumeFlags(entry, profile, command, onOutput);
 
     try {
       onOutput?.(usePrebuiltEntrypoint
@@ -1816,7 +1966,7 @@ export class ContainerService {
       // 比真正挂 volume 的条件(还要 /\bpnpm\b/.test(command))宽,npm/yarn 项目会
       // 看到"走 docker volume"的误导日志。改为与真实 mount 条件完全一致。
       if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
-        onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
+        onOutput?.(`── Node.js 容器: 运行源码只读；可写缓存必须显式声明稳定归属──\n`);
       }
 
       // 2026-05-28 用户反馈"100GB 内存,不允许任何容器限制":彻底删除所有
@@ -1852,7 +2002,7 @@ export class ContainerService {
 
       // 给源码 build/install 动词降调度优先级(nice)，让编译不饿死同机预览/代理。
       // 仅作用于 sh -c "command" 源码路径；极速版预构建镜像(usePrebuiltEntrypoint)不经过。
-      if (!usePrebuiltEntrypoint) command = niceBuildCommands(command);
+      if (!usePrebuiltEntrypoint) command = sourceWorkspaceCommand(runtimeStoragePlan, niceBuildCommands(command));
 
       // 防御性兜底（根治 `Unable to find image 'sh:latest'`）：到这一步 dockerImage 绝不能为空。
       // 空镜像会让 `docker run ... <labels>  sh -c "..."` 把命令 token `sh` 当成镜像名去拉，报
@@ -1874,7 +2024,8 @@ export class ContainerService {
       // 修复:隔离时改用 create → connect(infra) → start 时序 —— 进程启动前两张网都已就位,等价于
       // 旧路径下「容器进程开始前就在项目网上」。未隔离(connectNetworks 为空)仍走原 `docker run -d`,零回归。
       const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
-      const dockerCreateVerb = attachSharedBeforeStart ? 'docker create' : 'docker run -d';
+      const mustCreateBeforeStart = attachSharedBeforeStart || acceptedStoragePlan.mounts.some(m => m.kind === 'volume');
+      const dockerCreateVerb = mustCreateBeforeStart ? 'docker create' : 'docker run -d';
       const runCmd = [
         dockerCreateVerb,
         `--name ${service.containerName}`,
@@ -1892,7 +2043,6 @@ export class ContainerService {
         // 直接让镜像 ENTRYPOINT/CMD 启动。
         ...(usePrebuiltEntrypoint ? [] : [`-w ${this.shellQuote(containerWorkDir)}`]),
         envFlag,
-        '--tmpfs /tmp',
         // cds.network 标签保持「共享/项目网」语义（用于按项目归属/孤儿容器清理的 projectIdForDockerNetwork
         // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 启动前 connect 共享网，
         // 与标签无关。若把标签写成 cds-br-<id>，孤儿容器(分支已不在 state)将无法按网络名归属到项目。
@@ -1943,6 +2093,8 @@ export class ContainerService {
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
       const acknowledgedId = result.stdout.trim();
+      if (mustCreateBeforeStart && !/^[a-f0-9]{64}$/.test(acknowledgedId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
+      if (mustCreateBeforeStart) await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
       if (/^[a-f0-9]{64}$/.test(acknowledgedId)) service.containerId = acknowledgedId;
       // 2026-06-24（Bugbot Medium「Fallback mode not recorded」）：在 runService 内
       // 权威钉住**实际**启动用的 deploy mode —— profile 此刻已是回退后的真实 profile
@@ -1953,7 +2105,7 @@ export class ContainerService {
       service.networkName = netPlan.runNetwork;
       service.aliasNetworks = [netPlan.runNetwork];
       service.connectedNetworks = [];
-      service.deployedImage = runImage;
+      service.deployedImage = runImageReference;
       worktreePathActivity.assertClaimable(sourceCheckout?.path ? [sourceCheckout.path] : []);
       service.sourceCheckoutPath = !profile.prebuiltImage ? sourceCheckout?.path : undefined;
       service.sourceCommitSha = !profile.prebuiltImage ? sourceCheckout?.commitSha : undefined;
@@ -1975,9 +2127,10 @@ export class ContainerService {
         await context.onRuntimeCreated?.(service);
       }
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
-      if (attachSharedBeforeStart) {
+      if (mustCreateBeforeStart) {
+        await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
-        const startRes = await shell.exec(`docker start ${service.containerName}`);
+        const startRes = await shell.exec(`docker start ${acknowledgedId}`);
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',
@@ -2084,7 +2237,20 @@ export class ContainerService {
       timeoutMs?: number;
     } = {},
   ): Promise<ExecResult> {
-    const shell = this.qualifiedShell(context.assertCurrent);
+    profile = structuredClone(profile);
+    entry = {...entry};
+    profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
+    if (customEnv) customEnv = {...customEnv};
+    let shell = this.qualifiedShell(context.assertCurrent);
+    assertProfileStorageBoundary(profile, entry.worktreePath);
+    const acceptedStoragePlan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config)));
+    const checkBindMounts = this.bindMountInspector(acceptedStoragePlan);
+    const originalAssertCurrent = context.assertCurrent;
+    context = {...context, assertCurrent: step => { originalAssertCurrent?.(step); checkBindMounts(); }};
+    shell = guardBindMountShell(shell, checkBindMounts);
+    await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
+    profile.dockerImage = await resolveStorageImage(shell, profile.dockerImage, acceptedStoragePlan, true);
+    await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
     // 分支级隔离下，长生命周期 app 容器的 --network-alias 落在分支网（cds-br-*）而非共享项目网。一次性 job
@@ -2102,8 +2268,11 @@ export class ContainerService {
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;
-    const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount } =
-      await this.buildProfileVolumeFlags(entry, profile, command, onOutput);
+    const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount, runtimeStoragePlan } =
+      await this.buildProfileVolumeFlags(entry, profile, command, onOutput, acceptedStoragePlan);
+    const checkRuntimeBinds = this.bindMountInspector(runtimeStoragePlan);
+    checkBindMounts();
+    shell = guardBindMountShell(shell, checkRuntimeBinds);
 
     try {
       if (!command.trim()) {
@@ -2111,7 +2280,7 @@ export class ContainerService {
       }
       onOutput?.(`── 执行一次性命令: ${command} ──\n`);
       if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
-        onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
+        onOutput?.(`── Node.js 容器: 运行源码只读；可写缓存必须显式声明稳定归属──\n`);
       }
 
       const entrypointFlags = this.buildEntrypointFlags(profile, onOutput);
@@ -2122,13 +2291,13 @@ export class ContainerService {
       const jobImage = (profile.dockerImage || '').trim();
       // 容器规格（不含 run 动词 / --network / --rm / --name），隔离与非隔离两条路径共用。
       const jobSpec = [
+        ...DOCKER_LOG_LIMIT_FLAGS,
         ...volumeFlags,
         ...entrypointFlags,
         // 一次性构建/迁移作业是 CPU 大头,同样挂低权重 slice(2026-09-08)。
         ...workloadCgroupFlags(),
         `-w ${this.shellQuote(containerWorkDir)}`,
         envFlag,
-        '--tmpfs /tmp',
         `--label cds.managed=true`,
         `--label cds.type=job`,
         `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
@@ -2136,12 +2305,12 @@ export class ContainerService {
         `--label cds.branch.id=${entry.id}`,
         `--label cds.profile.id=${profile.id}`,
       ];
-      const jobTail = [this.shellQuote(jobImage), `sh -c ${this.shellQuote(command)}`];
+      const jobTail = [this.shellQuote(jobImage), `sh -c ${this.shellQuote(sourceWorkspaceCommand(runtimeStoragePlan, command))}`];
       const timeoutMs = context.timeoutMs ?? profile.buildTimeout ?? 600_000;
 
       context.assertCurrent?.(`runProfileCommand before docker-run ${profile.id}`);
       let result: ExecResult;
-      const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
+      const attachSharedBeforeStart = netPlan.connectNetworks.length > 0 || acceptedStoragePlan.mounts.some(m => m.kind === 'volume');
       if (!attachSharedBeforeStart) {
         // 未隔离：保持原 `docker run --rm` 一次性语义（零回归）。
         const runCmd = ['docker run --rm', `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
@@ -2151,29 +2320,32 @@ export class ContainerService {
         // （分支网别名）与共享 infra（mysql/redis）。不能用 `docker run --rm`（单网、退出即删，无从 connect
         // 第二张网 / 取 exitCode）。connect 失败抛错（与 app 同口径，infra 不可达的 job 没意义）。
         const jobName = `cds-job-${entry.id}-${profile.id}-${randomBytes(6).toString('hex')}`;
-        await shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined); // 预清理同名残留
-        let created = false;
+        let createdId: string | undefined;
         try {
           const createCmd = ['docker create', `--name ${this.shellQuote(jobName)}`, `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
           const createRes = await shell.exec(createCmd, { timeout: timeoutMs });
           if (createRes.exitCode !== 0) {
             result = createRes;
           } else {
-            created = true;
+            const acknowledgedId = createRes.stdout.trim();
+            if (!/^[a-f0-9]{64}$/.test(acknowledgedId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
+            createdId = acknowledgedId;
+            await this.inspectCreatedStorageContainer(shell, acknowledgedId, jobName, jobImage, runtimeStoragePlan);
             for (const sharedNet of netPlan.connectNetworks) {
-              await this.connectContainerToSharedNetwork(jobName, sharedNet, {
+              await this.connectContainerToSharedNetwork(acknowledgedId, sharedNet, {
                 projectId: entry.projectId, branchId: entry.id, profileId: profile.id,
                 requestId: context.requestId ?? undefined, operationId: context.operationId ?? undefined, assertCurrent: context.assertCurrent,
               });
             }
-            const startRes = await shell.exec(`docker start ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+            await this.inspectCreatedStorageContainer(shell, acknowledgedId, jobName, jobImage, runtimeStoragePlan);
+            const startRes = await shell.exec(`docker start ${acknowledgedId}`, { timeout: timeoutMs });
             if (startRes.exitCode !== 0) {
               result = startRes;
             } else {
               // 阻塞到容器退出取退出码，再取日志（合并到 stdout 供展示，与 docker run 捕获等价）。
-              const waitRes = await shell.exec(`docker wait ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              const waitRes = await shell.exec(`docker wait ${acknowledgedId}`, { timeout: timeoutMs });
               const parsedExit = parseInt((waitRes.stdout || '').trim(), 10);
-              const logsRes = await shell.exec(`docker logs ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              const logsRes = await shell.exec(`docker logs ${acknowledgedId}`, { timeout: timeoutMs });
               result = {
                 stdout: logsRes.stdout,
                 stderr: logsRes.stderr,
@@ -2182,7 +2354,7 @@ export class ContainerService {
             }
           }
         } finally {
-          if (created) await this.cleanupTemporaryContainer(jobName, entry, profile.id);
+          if (createdId) await this.cleanupTemporaryContainer(createdId, entry, profile.id);
         }
       }
 
@@ -2518,9 +2690,11 @@ export class ContainerService {
   async restartServiceInPlace(
     containerName: string,
     onOutput?: (chunk: string) => void,
-    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason'> = {},
+    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason' | 'assertCurrent'> = {},
   ): Promise<boolean> {
-    const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    const shell = this.qualifiedShell(context.assertCurrent);
+    context.assertCurrent?.('before restart identity');
+    const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
       this.recordContainerEvent({
@@ -2546,7 +2720,20 @@ export class ContainerService {
       return false;
     }
     onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
-    const result = await this.shell.exec(`docker restart ${containerName}`);
+    context.assertCurrent?.('before docker restart');
+    let restartIntent: ReturnType<typeof recordContainerLifecycleIntent>;
+    let result: Awaited<ReturnType<IShellExecutor['exec']>>;
+    try {
+      result = await shell.exec(`docker restart ${containerName}`, {
+        beforeStart: () => {
+          context.assertCurrent?.('restart execution admitted');
+          restartIntent = this.noteLifecycleIntent(containerName, 'cds-restart', context.reason || '原地重启现有容器', context);
+        },
+      });
+    } finally {
+      if (restartIntent) restartIntent.completedAt = new Date().toISOString();
+    }
+    context.assertCurrent?.('after docker restart');
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
@@ -3040,6 +3227,37 @@ export class ContainerService {
     service: InfraService,
     customEnv?: Record<string, string>,
   ): Promise<void> {
+    const storageAdmission = this.admittedInfraStorage.get(service);
+    service = structuredClone(service);
+    if (customEnv) customEnv = {...customEnv};
+    let storageRecreationError: UnsafeDeploymentStorageError | undefined;
+    let acceptedStoragePlan: DeploymentStoragePlan | undefined;
+    let storageReuseInspect: ExecResult | undefined;
+    let storageReuseId: string | undefined;
+    const identityQuery = `docker inspect --format='{{json .Id}}|{{json .State.Status}}|{{json .Name}}' ${this.shellQuote(service.containerName)}`;
+    const acceptExistingIdentity = (result: ExecResult): ExecResult => {
+      try {
+        const fields = result.stdout.trim().split('|').map(x => JSON.parse(x));
+        if (fields.length !== 3 || !/^[a-f0-9]{64}$/.test(fields[0]) || fields[2] !== '/' + service.containerName || !['running','exited','created'].includes(fields[1])) throw new Error();
+        if (storageAdmission?.originalContainerId && fields[0] !== storageAdmission.originalContainerId) throw new Error();
+        storageReuseId = fields[0];
+        return {...result, stdout: fields[1]};
+      } catch { throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown'); }
+    };
+    try {
+      if (storageAdmission?.originalContainerId) throw new UnsafeDeploymentStorageError(service.id, 'storage-original-only-no-recreation');
+      assertInfraStorageBoundary(service, this.config); acceptedStoragePlan = infraStoragePlan(service, this.config);
+    }
+    catch (error) {
+      if (!(error instanceof UnsafeDeploymentStorageError)) throw error;
+      storageRecreationError = error;
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName)) throw error;
+      const original = await this.shell.exec(identityQuery, {executionLane:'observation'});
+      if (original.exitCode !== 0) throw error;
+      storageReuseInspect = acceptExistingIdentity(original);
+    }
+    if (storageAdmission && !storageAdmission.originalContainerId && (!acceptedStoragePlan || storageAdmission.planDigest !== acceptedStoragePlan.digest || storageAdmission.imageReference !== service.dockerImage)) throw new UnsafeDeploymentStorageError(service.id, 'storage-admission-changed');
+    if (acceptedStoragePlan) await this.inspectAcceptedStorage(this.shell, acceptedStoragePlan);
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
@@ -3155,9 +3373,12 @@ export class ContainerService {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName)) {
       throw new Error(`Infra service container name 含非法字符: ${JSON.stringify(service.containerName).slice(0, 80)}`);
     }
-    const inspect = await this.shell.exec(
-      `docker inspect --format='{{.State.Status}}' ${service.containerName}`,
-    );
+    const observed = storageReuseInspect || await this.shell.exec(identityQuery, {executionLane:'observation'});
+    const inspect = storageReuseInspect || (observed.exitCode === 0 ? acceptExistingIdentity(observed) : observed);
+    if (inspect.exitCode !== 0) {
+      const missing = ['Error: No such object: ', 'Error: no such object: ', 'error: no such object: ', 'Error response from daemon: No such container: '].map(prefix => prefix + service.containerName);
+      if (inspect.exitCode !== 1 || !['', '[]'].includes(inspect.stdout.trim()) || !missing.includes(inspect.stderr.trim())) throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown');
+    }
     // Bug D-residual fix(2026-05-10):reuse / wake 路径都需要保证 infra 容器
     // 在 network 上同时拥有"长名 + 短别名",否则 profile 容器内 getent hosts
     // mysql 仍 NXDOMAIN。这里和 docker run 路径走同一份 alias 列表。
@@ -3166,14 +3387,22 @@ export class ContainerService {
       this.getProjectMarkers(service.projectId),
     );
     if (inspect.exitCode === 0) {
-      const dockerStatus = inspect.stdout.trim();
+      const dockerStatus = inspect.stdout.trim() as 'created'|'exited'|'running';
+      // A prior failed create is not evidence of admission. Recheck the entire
+      // exact runtime on every typed-storage reuse, including after a restart.
+      if (acceptedStoragePlan?.mounts.some(m=>m.kind==='volume')) {
+        const imageId=await resolveStorageImage(this.shell,storageAdmission?.imageId || service.dockerImage,acceptedStoragePlan,!storageAdmission);
+        await this.inspectCreatedStorageContainer(this.shell,storageReuseId!,service.containerName,imageId,acceptedStoragePlan,dockerStatus);
+      } else if (!acceptedStoragePlan && dockerStatus==='created') {
+        throw new UnsafeDeploymentStorageError(service.id,'storage-original-created-unadmitted');
+      }
       if (dockerStatus === 'running') {
         // 已经在跑 —— 共享复用，不动它
         // Bug C fix(2026-05-10):reused 路径必须确保 infra 连到当前 project
         // network。场景:project network 被重建(deploy 流程 / project 重建)后,
         // 老 infra 容器仍连在老 network 上,profile 容器解析 nacos/redis 拿到
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
-        await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        await this.ensureInfraOnNetwork(storageReuseId!, desiredAliases, network);
         await this.auditInfraLogLimit(service);
         // 复用既有容器不改启动命令：如实报告连接上限还没生效，别让上面算出的
         // resolvedCommand 冒充「已应用」。
@@ -3192,10 +3421,10 @@ export class ContainerService {
         return;
       }
       // 存在但 stopped/exited/created —— 用 docker start 唤醒
-      const startResult = await this.shell.exec(`docker start ${service.containerName}`);
+      const startResult = await this.shell.exec(`docker start ${storageReuseId!}`);
       if (startResult.exitCode === 0) {
         // 同样:wake 后保证 network attach
-        await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        await this.ensureInfraOnNetwork(storageReuseId!, desiredAliases, network);
         await this.auditInfraLogLimit(service);
         // docker start 沿用容器创建时的命令，同上：如实报告尚未生效。
         await this.auditMysqlConnectionLimit(service, desiredMysqlMaxConnections);
@@ -3214,6 +3443,11 @@ export class ContainerService {
         });
         return;
       }
+      if (storageRecreationError) throw storageRecreationError;
+      if (!acceptedStoragePlan) throw new UnsafeDeploymentStorageError(service.id, 'storage-contract-required');
+      const fixed = await resolveStorageImage(this.shell, storageAdmission?.imageId || service.dockerImage, acceptedStoragePlan, !storageAdmission);
+      await this.inspectAcceptedStorage(this.shell, acceptedStoragePlan);
+      service.dockerImage = fixed;
       // 唤醒失败（image 升级 / 命令行变了）—— fallback：删了重建
       const diagnostics = await this.captureContainerDiagnostics(service.containerName, 200);
       this.recordContainerEvent({
@@ -3229,7 +3463,7 @@ export class ContainerService {
         logs: diagnostics.logs,
       });
       this.noteLifecycleIntent(service.containerName, 'cds-infra-recreate', 'infra docker start 失败后删除重建');
-      const rmResult = await this.shell.exec(`docker rm -f ${service.containerName}`);
+      const rmResult = await this.shell.exec(`docker rm -f ${storageReuseId!}`);
       this.recordContainerEvent({
         severity: rmResult.exitCode === 0 ? 'warn' : 'error',
         source: 'cds-container-service',
@@ -3242,16 +3476,10 @@ export class ContainerService {
       });
     }
 
-    // Build volume flags (named volumes + bind mounts)
-    const volumeFlags = service.volumes.map(v => {
-      const roSuffix = v.readOnly ? ':ro' : '';
-      if (v.type === 'bind') {
-        // Resolve relative paths against repo root
-        const hostPath = v.name.startsWith('/') ? v.name : `${this.config.repoRoot}/${v.name}`;
-        return `-v "${hostPath}":"${v.containerPath}${roSuffix}"`;
-      }
-      return `-v "${v.name}":"${v.containerPath}${roSuffix}"`;
-    });
+    if (!acceptedStoragePlan) throw storageRecreationError || new UnsafeDeploymentStorageError(service.id, 'storage-contract-required');
+    service.dockerImage = await resolveStorageImage(this.shell, storageAdmission?.imageId || service.dockerImage, acceptedStoragePlan, !storageAdmission);
+    await this.inspectAcceptedStorage(this.shell, acceptedStoragePlan);
+    const volumeFlags = renderStoragePlan(acceptedStoragePlan);
 
     // 展开 ${VAR} 引用(2026-05-01 Phase 1):用 customEnv 作 lookup
     // 表先把 service.env 里的 ${MONGO_USER} / ${MONGO_PASSWORD} 等
@@ -3332,8 +3560,9 @@ export class ContainerService {
     // unless-stopped / on-failure[:N]),非法值一律回落默认,杜绝命令注入。
     const restartPolicy = sanitizeDockerRestartPolicy(service.restartPolicy);
 
+    const requiresStorageCreate = acceptedStoragePlan.mounts.some(m => m.kind === 'volume');
     const cmd = [
-      'docker run -d',
+      requiresStorageCreate ? 'docker create' : 'docker run -d',
       `--name ${service.containerName}`,
       `--network ${network}`,
       ...aliasFlags,
@@ -3352,11 +3581,17 @@ export class ContainerService {
       ...(entrypointFlag ? [entrypointFlag] : []),
       this.infraLabels(service, network),
       `--restart ${restartPolicy}`,
-      service.dockerImage,
+      this.shellQuote(service.dockerImage),
       ...cmdParts,
     ].filter(Boolean).join(' ');
 
-    const result = await this.shell.exec(cmd);
+    let result = await this.shell.exec(cmd);
+    if (result.exitCode === 0 && requiresStorageCreate) {
+      const createdId = result.stdout.trim();
+      if (!/^[a-f0-9]{64}$/.test(createdId)) throw new UnsafeDeploymentStorageError(service.id, 'storage-container-identity-unknown');
+      await this.inspectCreatedStorageContainer(this.shell, createdId, service.containerName, service.dockerImage, acceptedStoragePlan);
+      result = await this.shell.exec(`docker start ${createdId}`);
+    }
     if (result.exitCode !== 0) {
       this.recordContainerEvent({
         severity: 'error',
@@ -3431,6 +3666,46 @@ export class ContainerService {
     containerName: string,
     intentKind: 'cds-infra-stop' | 'cds-infra-remove' | 'cds-infra-recreate' = 'cds-infra-recreate',
   ): Promise<void> {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) throw new ContainerStopUnconfirmedError(undefined);
+    if (intentKind === 'cds-infra-stop') {
+      // A stop must preserve the original container: legacy storage may only wake
+      // this existing runtime and has no authority to recreate its historical data.
+      const format = '{{json .Id}}|{{json .Name}}|{{json .State.Running}}|{{json .State.Pid}}|{{json .State.Status}}';
+      const read = async (target: string) => {
+        const result = await this.shell.exec(`docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(target)}`,
+          { timeout: 5000, executionLane: 'observation' });
+        try {
+          if (result.exitCode !== 0) throw new Error();
+          const fields = result.stdout.trim().split('|').map(value => JSON.parse(value));
+          if (fields.length !== 5 || typeof fields[0] !== 'string' || !/^[a-f0-9]{64}$/.test(fields[0])
+            || fields[1] !== '/' + containerName || typeof fields[2] !== 'boolean'
+            || !Number.isSafeInteger(fields[3]) || fields[3] < 0
+            || !['running', 'exited', 'created'].includes(fields[4])) throw new Error();
+          return { id: fields[0] as string, running: fields[2] as boolean, pid: fields[3] as number };
+        } catch { throw new ContainerStopUnconfirmedError(undefined); }
+      };
+      const original = await read(containerName);
+      this.noteLifecycleIntent(containerName, intentKind, 'infra 停止并保留原容器与数据');
+      if (original.running) {
+        const result = await this.shell.exec(`docker stop ${original.id}`);
+        if (result.exitCode !== 0) throw new ContainerStopUnconfirmedError(undefined);
+      }
+      const after = await read(original.id);
+      if (after.id !== original.id || after.running || after.pid !== 0) throw new ContainerStopUnconfirmedError(after.running);
+      this.recordContainerEvent({ severity: 'info', source: 'cds-container-service', action: 'infra.stop.completed',
+        message: 'infra original container is cold and retained', containerName,
+        details: { containerId: original.id, retained: true } });
+      return;
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) throw new ContainerStopUnconfirmedError(undefined);
+    const identity=await this.shell.exec(`docker inspect --format='{{json .Id}}|{{json .Name}}' ${this.shellQuote(containerName)}`,{timeout:5000,executionLane:'observation'});
+    const missing=['Error: No such object: ','Error: no such object: ','error: no such object: ','Error response from daemon: No such container: '].map(prefix=>prefix+containerName);
+    if (identity.exitCode===1 && ['', '[]'].includes(identity.stdout.trim()) && missing.includes(identity.stderr.trim())) return;
+    let removalId:string;
+    try {const fields=identity.stdout.trim().split('|').map(x=>JSON.parse(x));
+      if(identity.exitCode!==0 || fields.length!==2 || !/^[a-f0-9]{64}$/.test(fields[0]) || fields[1]!=='/'+containerName)throw new Error();
+      removalId=fields[0];
+    } catch {throw new ContainerStopUnconfirmedError(undefined);}
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
       severity: 'warn',
@@ -3443,13 +3718,14 @@ export class ContainerService {
       error: before.error,
     });
     const INFRA_REASON: Record<typeof intentKind, string> = {
-      'cds-infra-stop': 'infra 停止，不重建',
       'cds-infra-remove': 'infra 删除（容器与登记一起删）',
       'cds-infra-recreate': 'infra stop/rm 后重建',
     };
     this.noteLifecycleIntent(containerName, intentKind, INFRA_REASON[intentKind]);
-    const stopResult = await this.shell.exec(`docker stop ${containerName}`);
-    const rmResult = await this.shell.exec(`docker rm ${containerName}`);
+    const stopResult = await this.shell.exec(`docker stop ${removalId}`);
+    if (stopResult.exitCode !== 0) throw new ContainerStopUnconfirmedError(undefined);
+    const rmResult = await this.shell.exec(`docker rm ${removalId}`);
+    if (rmResult.exitCode !== 0) throw new Error('infra_container_remove_unconfirmed');
     this.recordContainerEvent({
       severity: rmResult.exitCode === 0 ? 'info' : 'error',
       source: 'cds-container-service',
@@ -3540,34 +3816,41 @@ export class ContainerService {
    * 同 discoverInfraContainers：移除了 `cds.network=` filter,改用 branchId
    * 关联,branch 自带 projectId 不会跨项目串数据。
    */
-  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>> {
+  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string }>> {
     return (await this.discoverAppContainersWithStatus()).containers;
   }
 
   async discoverAppContainersWithStatus(): Promise<{
     ok: boolean;
-    containers: Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
+    containers: Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
   }> {
     const result = await this.shell.exec(
-      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --no-trunc --format '{{.Names}}|{{.State}}|{{.Labels}}|{{.ID}}'`,
       { timeout: 30_000, executionLane: 'observation' },
     );
 
-    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
+    const discovered = new Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
     if (result.exitCode !== 0) return { ok: false, containers: discovered };
     if (!result.stdout.trim()) return { ok: true, containers: discovered };
 
+    const ambiguous = new Set<string>();
     for (const line of result.stdout.trim().split('\n')) {
       if (!line) continue;
-      const [name, state, labels] = line.split('|');
+      const [name, state, labels, containerId] = line.split('|');
       const branchMatch = labels?.match(/cds\.branch\.id=([^,]+)/);
       const profileMatch = labels?.match(/cds\.profile\.id=([^,]+)/);
       const networkMatch = labels?.match(/cds\.network=([^,]+)/);
       if (branchMatch && profileMatch) {
         const key = `${branchMatch[1]}/${profileMatch[1]}`;
+        const currentName = this.networkResolver?.getAppContainerName?.(branchMatch[1], profileMatch[1]);
+        if (currentName && name !== currentName) continue;
+        // docker ps 的先后顺序不代表发布身份。没有状态指针且同标签多容器时不猜。
+        if (ambiguous.has(key)) continue;
+        if (discovered.has(key)) { discovered.delete(key); ambiguous.add(key); continue; }
         discovered.set(key, {
           running: state === 'running',
           containerName: name,
+          ...(/^[a-f0-9]{64}$/.test(containerId || '') ? { containerId } : {}),
           branchId: branchMatch[1],
           profileId: profileMatch[1],
           ...(networkMatch?.[1] ? { network: networkMatch[1] } : {}),
@@ -3831,48 +4114,51 @@ export class ContainerService {
   }
 
   private async auditInfraLogLimit(service: InfraService): Promise<void> {
+    const unknown = () => {
+      try {
+        console.warn(`[infra-audit] ${service.containerName} 日志与保护状态无法确认；保留现有容器，未自动重建。`);
+        this.recordContainerEvent({
+          severity: 'warn', source: 'cds-container-service', action: 'infra.protection-audit.unknown',
+          message: 'reused infra logging or protection state unavailable',
+          projectId: service.projectId, serviceId: service.id, containerName: service.containerName,
+          details: { logLimitStatus: 'unknown', protectedLabelStatus: 'unknown' },
+      });
+      } catch { /* Best-effort audit reporting must not block existing-container reuse. */ }
+    };
     try {
       const r = await this.shell.exec(
-        `docker inspect --format='{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .Config.Labels "cds.protected"}}' ${service.containerName}`,
+        `docker inspect --format='{"logConfig":{{json .HostConfig.LogConfig}},"protected":{{json (index .Config.Labels "cds.protected")}}}' ${service.containerName}`,
+        { timeout: 5000, executionLane: 'observation' },
       );
-      if (r.exitCode !== 0) return;
-      const raw = (r.stdout || '').trim().replace(/^'|'$/g, '');
-      const [maxSizeRaw, protectedRaw] = raw.split('|');
-      const maxSize = (maxSizeRaw || '').trim();
-      // docker 对缺失的 label 会渲染成 `<no value>`（Go 模板 index 取空）
-      const protectedLabel = (protectedRaw || '').trim();
-      const hasProtection = protectedLabel === 'true';
+      if (r.exitCode !== 0 || r.stderr.trim() || Buffer.byteLength(r.stdout) > 4096) { unknown(); return; }
+      let actual: { logConfig?: unknown; protected?: unknown };
+      try { actual = JSON.parse(r.stdout); } catch { unknown(); return; }
+      if (!actual || typeof actual !== 'object' || Array.isArray(actual)
+        || !Object.hasOwn(actual, 'logConfig') || !Object.hasOwn(actual, 'protected')
+        || !actual.logConfig || typeof actual.logConfig !== 'object' || Array.isArray(actual.logConfig)
+        || actual.protected !== null && typeof actual.protected !== 'string') { unknown(); return; }
+      const bounded = hasBoundedDockerLogs(actual.logConfig);
+      const hasProtection = actual.protected === 'true';
       const missing: string[] = [];
-      if (!maxSize) missing.push('日志限额（--log-opt max-size）');
+      if (!bounded) missing.push('日志限额（json-file/max-size/max-file）');
       if (!hasProtection) missing.push('保护标记（label cds.protected=true）');
       if (missing.length === 0) return;
       const consequences = [
-        !maxSize ? '容器日志会无上限占用根盘 —— 这正是 2026-07-27 根盘写满的根因之一' : '',
-        !hasProtection ? '停止后会被运维手册里 label!=cds.protected=true 的清理命令误删' : '',
+        !bounded ? '实际日志驱动或轮转上限不满足受管约束，不能确认磁盘占用有界' : '',
+        !hasProtection ? '停止后缺少保护标记，可能被通用清理命令误删' : '',
       ].filter(Boolean).join('；');
       console.warn(
         `[infra-audit] ${service.containerName} 缺少：${missing.join('、')}（复用已存在的容器，docker 无法补改）。`
-        + ` ${consequences}。`
-        + ` 低峰期执行 POST /api/infra/${service.id}/restart 让 CDS 按当前定义重建即可补齐（会短暂断连）。`,
+        + ` ${consequences}。需要受保护的维护交接；普通复用不会重建或截断现有容器。`,
       );
       this.recordContainerEvent({
-        severity: 'warn',
-        source: 'cds-container-service',
-        action: 'infra.protection-audit.missing',
+        severity: 'warn', source: 'cds-container-service', action: 'infra.protection-audit.missing',
         message: `reused infra container missing ${missing.join(' + ')}: ${service.containerName}`,
-        projectId: service.projectId,
-        serviceId: service.id,
-        containerName: service.containerName,
-        details: {
-          missingLogLimit: !maxSize,
-          missingProtectedLabel: !hasProtection,
-          remedy: `POST /api/infra/${service.id}/restart`,
-          reason: 'docker 无法给已存在容器补 label / log-opt，只能重建',
-        },
+        projectId: service.projectId, serviceId: service.id, containerName: service.containerName,
+        details: { missingLogLimit: !bounded, missingProtectedLabel: !hasProtection,
+          remedy: 'protected-maintenance-handover', reason: 'existing container logging and protection settings are not changed by reuse' },
       });
-    } catch {
-      /* 体检失败不影响复用 */
-    }
+    } catch { unknown(); }
   }
 
   private async ensureInfraOnNetwork(

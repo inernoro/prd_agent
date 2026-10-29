@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { ProjectReleaseCIVerifier } from './project-release-ci.js';
 import type { StateService } from './state.js';
 import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleasePreflightCheck, ReleasePreflightRecord, ReleaseRun, ReleaseRunProgress, ReleaseRunStatus, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
@@ -361,6 +362,7 @@ export interface ReleaseSshExecRequest {
 export type ReleaseSshExecutor = (req: ReleaseSshExecRequest) => Promise<string>;
 
 export interface ReleaseServiceOptions {
+  verifyProjectCI?: ProjectReleaseCIVerifier;
   now?: () => Date;
   /** 发布命令执行超时（毫秒）。缺省读 CDS_RELEASE_EXEC_TIMEOUT_MS，再缺省用常量。 */
   execTimeoutMs?: number;
@@ -384,6 +386,7 @@ export class ReleaseService {
   private readonly execTimeoutMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly sshExecutor: ReleaseSshExecutor;
+  private readonly verifyProjectCI: ProjectReleaseCIVerifier;
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
   private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
@@ -394,6 +397,7 @@ export class ReleaseService {
       ?? RELEASE_EXEC_TIMEOUT_MS;
     this.heartbeatIntervalMs = resolvePositiveMs(options.heartbeatIntervalMs) ?? RELEASE_HEARTBEAT_INTERVAL_MS;
     this.sshExecutor = options.sshExecutor || defaultReleaseSshExecutor;
+    this.verifyProjectCI = options.verifyProjectCI || (async () => ({ ok: false, message: '项目发布 CI 读取器未接入，不能借用镜像构建绿灯' }));
   }
 
   /**
@@ -430,6 +434,18 @@ export class ReleaseService {
   ensureDefaultPlans(projectId: string): ReleasePlan[] {
     const existing = this.stateService.getReleasePlans(projectId);
     const definitions: Array<Pick<ReleasePlan, 'id' | 'name' | 'template' | 'rollbackStrategy' | 'steps'>> = [
+      ...(['project-script', 'managed-script'] as const).map((mode) => ({
+        id: `${projectId}:${mode}`, name: mode === 'project-script' ? '项目发布脚本（默认）' : 'CDS 独立脚本（备选）',
+        template: mode, rollbackStrategy: 'previous-release' as const,
+        steps: [
+          { id: 'connect', title: '连接目标', kind: 'ssh' as const },
+          { id: 'prepare', title: '进入项目隔离目录', kind: 'ssh' as const },
+          { id: 'plan', title: '核对脚本正文哈希', kind: 'record' as const },
+          { id: 'deploy', title: '执行发布脚本 check / deploy', kind: 'ssh' as const },
+          { id: 'healthcheck', title: '验证最终入口', kind: 'healthcheck' as const },
+          { id: 'record', title: '记录版本与脚本正文哈希', kind: 'record' as const },
+        ],
+      })),
       {
         id: `${projectId}:ssh-script`,
         name: '项目现有脚本发布',
@@ -583,10 +599,26 @@ export class ReleaseService {
     );
 
     const strategyError = validateReleaseStrategy(strategy);
+    if (!projectMismatch && target && branch && (strategy.mode === 'project-script' || strategy.mode === 'managed-script')) {
+      const ci = await this.verifyProjectCI(branch, commitSha, strategy);
+      const ciOk = ci.ok;
+      push({ id: 'release-ci', label: '同提交 CI 成功', status: ciOk ? 'pass' : 'fail',
+        message: ci.message, blocking: !ciOk });
+      if (!strategyError && commitSha) {
+        try {
+          const execution = buildReleaseExecution(target, { commitSha, artifact: buildArtifact(branch, commitSha, input.previewUrl || ''), releaseId: 'preflight' } as ReleaseRun);
+          push({ id: 'release-script', label: '发布脚本正文有效', status: 'pass', message: `${execution.summary} · sha256=${execution.scriptSha256}`, blocking: false });
+        } catch (error) {
+          push({ id: 'release-script', label: '发布脚本正文有效', status: 'fail', message: (error as Error).message, blocking: true });
+        }
+      }
+    }
     if (strategyError && !projectMismatch) {
       push({ id: 'deploy-command', label: '发布策略完整', status: 'fail', message: strategyError, blocking: true });
     } else if (!projectMismatch) {
-      const strategyMessage = strategy.mode === 'existing-script'
+      const strategyMessage = strategy.mode === 'project-script' ? `执行项目脚本 ${strategy.scriptFile || 'cds-release.sh'}，CDS 不推断业务部署类型`
+        : strategy.mode === 'managed-script' ? '执行 CDS 独立脚本（显式备选）'
+        : strategy.mode === 'existing-script'
         ? deployCommand
         : strategy.mode === 'generated-compose'
           ? `CDS 将动态生成脚本并执行 ${strategy.composeFile}`
@@ -835,6 +867,10 @@ export class ReleaseService {
     if (!record.artifact || !target || !plan) return undefined;
     if (!target.isEnabled || target.lifecycle === 'archived' || target.type !== 'ssh' || !target.ssh) return undefined;
     if (!branch || branch.status !== 'running' || branch.projectId !== target.projectId) return undefined;
+    const mode = effectiveReleaseStrategy(target).mode;
+    // Always read authoritative project CI again: a newer rerun can invalidate
+    // this commit's old green result without changing any branch/image fields.
+    if (mode === 'project-script' || mode === 'managed-script') return undefined;
 
     return {
       ok: true,
@@ -894,6 +930,7 @@ export class ReleaseService {
     run.executionSnapshot = {
       mode: execution.mode,
       scriptSha256: execution.scriptSha256,
+      scriptContent: execution.scriptContent,
       summary: execution.summary,
       strategy: effectiveReleaseStrategy(preflight.target),
     };
@@ -949,6 +986,7 @@ export class ReleaseService {
       branchId: previous.branchId,
       commitSha: previous.commitSha,
       artifact: previous.artifact,
+      executionSnapshot: previous.executionSnapshot,
       targetId: current.targetId,
       planId: current.planId,
       status: 'rollback_running',
@@ -966,6 +1004,7 @@ export class ReleaseService {
     run.executionSnapshot = {
       mode: rollbackExecution.mode,
       scriptSha256: rollbackExecution.scriptSha256,
+      scriptContent: rollbackExecution.scriptContent,
       summary: `回滚到 ${previous.releaseId}: ${rollbackExecution.summary}`,
       strategy: rollbackStrategy,
     };
@@ -1411,7 +1450,14 @@ export class ReleaseService {
     }
     this.beginStep(releaseId, 'plan', `${execution.summary} · sha256=${execution.scriptSha256}`);
     this.finishStep(releaseId, 'plan');
-    await this.runDeployCommand(releaseId, executionTarget, run, execution.command);
+    try {
+      await this.runDeployCommand(releaseId, executionTarget, run, execution.command);
+    } catch (error) {
+      if (execution.mode === 'project-script' || execution.mode === 'managed-script') {
+        await this.restorePreviousAfterFailedProbe(releaseId, target, run, error, '发布脚本执行');
+      }
+      throw error;
+    }
     this.patchStatus(releaseId, 'healthchecking');
     this.beginStep(releaseId, 'healthcheck', `健康检查 ${target.ssh.healthcheckUrl}`);
     try {
@@ -1499,6 +1545,7 @@ export class ReleaseService {
     target: ReleaseTarget,
     failedRun: ReleaseRun,
     probeError: unknown,
+    failureLabel = '最终入口探测',
   ): Promise<void> {
     // 已取消就不要再往目标机器上写任何东西。取消之后的自动恢复是纯粹的越权副作用：
     // 用户已经喊停，它却把「上一版本」SSH 推上去，可能正好盖掉别人刚发的新版本
@@ -1532,7 +1579,7 @@ export class ReleaseService {
     // 不可能出现的时间顺序 —— 编码了假设而不是真实时序。
     const autoRestoreStartedAt = new Date().toISOString();
     this.stateService.patchReleaseRun(releaseId, { autoRestoreStartedAt });
-    this.emitLog(releaseId, 'warn', `最终入口探测失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
+    this.emitLog(releaseId, 'warn', `${failureLabel}失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
     try {
       await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);
       await probeReleaseSurface(target.ssh!.healthcheckUrl, execution.mode);
@@ -1546,7 +1593,7 @@ export class ReleaseService {
       this.emitLog(releaseId, 'warn', `已恢复上一成功版本 ${previous.releaseId}`, 'auto-restore');
     } catch (restoreError) {
       this.emitLog(releaseId, 'error', `自动恢复失败: ${(restoreError as Error).message}`, 'auto-restore');
-      throw new Error(`最终入口探测失败，且自动恢复失败: ${(restoreError as Error).message}`);
+      throw new Error(`${failureLabel}失败: ${(probeError as Error).message}；且自动恢复失败: ${(restoreError as Error).message}`);
     }
   }
 

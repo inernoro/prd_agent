@@ -1,3 +1,6 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
+import {stableStorageVolumeName,storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
+import {withStorageImages} from '../helpers/storage-image-mock.js';
 import { runningCommitSha } from '../../src/services/running-version.js';
 /**
  * Executor route regression tests.
@@ -16,7 +19,7 @@ import { runningCommitSha } from '../../src/services/running-version.js';
  *      falls back to resolveProjectForAutoBuild instead of 'default'.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -158,7 +161,8 @@ describe('Executor /exec/deploy', () => {
       updatedAt: now,
     });
 
-    mock = new MockShellExecutor();
+    mock = withStorageImages(new MockShellExecutor());
+    mock.addResponsePattern(/^docker image inspect .* --format '\[\{\{json .Id/,()=>({stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:'',exitCode:0}));
     mock.addResponsePattern(/git rev-parse --verify '([^']+)\^\{commit\}'/, (match) => ({
       stdout: /^[0-9a-f]{7,40}$/i.test(match[1]) ? match[1].padEnd(40, '0') : 'a'.repeat(40), stderr: '', exitCode: 0,
     }));
@@ -191,7 +195,7 @@ describe('Executor /exec/deploy', () => {
         });
       },
     };
-    const containerService = new ContainerService(mock, config, undefined, eventSink);
+    const containerService = new ContainerService(mock, config, undefined, eventSink, undefined, undefined, unitBindMountInspector);
     (containerService as any).waitForContainerAlive = async () => undefined;
     (containerService as any).waitForReadiness = async () => true;
 
@@ -273,6 +277,27 @@ describe('Executor /exec/deploy', () => {
     return { target, imageId, profiles, entry, payload: { branchId: entry.id, branchName: entry.branch, projectId: 'default', commitSha: target, profiles } };
   }
 
+  it.each(['volume', 'bind'])('executor artifact source classification respects %s host dependencies', async kind => {
+    const f=artifactFixture();f.profiles.splice(1);
+    config.storageInstanceId='fixture-instance';
+    const binding={version:1 as const,instanceId:config.storageInstanceId,projectId:'default',scope:'branch-private' as const,branchId:f.entry.id,serviceId:'api',mountKey:'config',purpose:'cache' as const};
+    const name=stableStorageVolumeName(binding);
+    mock.addResponsePatternFirst(/^docker volume inspect /,()=>({exitCode:0,stderr:'',stdout:JSON.stringify([{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',Labels:storageOwnerLabels(binding)}])}));
+    Object.assign(f.profiles[0], {cacheMounts:[{kind,hostPath:kind==='volume'?name:'./config',containerPath:'/config',...(kind==='volume'?{storage:binding}:{readOnly:true})}]});
+    const sourcePath=path.join(tmpDir,'owned-source');fs.mkdirSync(sourcePath);
+    const prepare=vi.spyOn(WorktreeService.prototype,'prepareDeploymentSource').mockResolvedValue({
+      head:f.target,before:f.target,after:f.target.slice(0,7),afterFull:f.target,updated:false,sourcePath});
+    try {
+      const result=await postSse(server,'/exec/deploy',f.payload);
+      if(kind==='volume') {
+        expect(result.events.some(event=>event.event==='complete')).toBe(true);expect(prepare).not.toHaveBeenCalled();
+      } else {
+        expect(result.events.some(event=>event.event==='error' && JSON.stringify(event).includes('storage-bind-pin-required'))).toBe(true);
+        expect(mock.commands.some(command=>/^docker (create|run|stop|rm) /.test(command))).toBe(false);
+      }
+    } finally {prepare.mockRestore();}
+  });
+
   it.each(['missing', 'local-unverified', 'unknown-target'])('旧Master直调%s在全部副作用前拒绝，保留旧服务/孤儿和分支运行态', async (failure) => {
     const f = artifactFixture(); const before = structuredClone(f.entry);
     if (failure === 'missing') mock.addResponsePatternFirst(/docker pull .*web/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
@@ -296,7 +321,7 @@ describe('Executor /exec/deploy', () => {
     const firstMutation = mock.commands.findIndex(cmd => /^docker (stop|rm)|^git /.test(cmd));
     expect(pullIndices).toHaveLength(2); expect(Math.max(...pullIndices)).toBeLessThan(firstMutation);
     const runs = mock.commands.filter(cmd => /^docker (run|create) /.test(cmd));
-    expect(runs).toHaveLength(2); expect(runs.every(cmd => cmd.includes(`ghcr.io/owned/shared:sha-${f.target}@${f.imageId}`))).toBe(true);
+    expect(runs).toHaveLength(2); expect(runs.every(cmd => cmd.includes(f.imageId))).toBe(true);
     expect(result.events.find(e => e.data?.step === 'artifact-target')?.data.artifactCommitSha).toBe(f.target);
     expect(mock.commands.some(cmd => /^git |^mkdir /.test(cmd))).toBe(false);
     expect(mock.commands.some(cmd => cmd.includes('compile-unexpected') || cmd.includes('old:tag'))).toBe(false);
@@ -311,7 +336,7 @@ describe('Executor /exec/deploy', () => {
     expect(result.events.filter(e => e.event === 'error' || e.data?.status === 'error')).toEqual([]);
     expect(mock.commands.filter(cmd => cmd.startsWith('docker pull '))).toEqual([]);
     const runtimeImage = repositoryDigest.replace('@', `:sha-${f.target}@`);
-    expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))[0]).toContain(runtimeImage);
+    expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))[0]).toContain(f.imageId);
     expect(stateService.getBranch(f.entry.id)?.services.api.deployedImage).toBe(runtimeImage);
     const versions = new DeploymentVersionService(stateService);
     const version = versions.create({ projectId: 'default', branchId: f.entry.id, commitSha: f.target, configHash: 'c'.repeat(64),
@@ -404,7 +429,7 @@ describe('Executor /exec/deploy', () => {
         return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
       }
       if (/^docker (run|create) /.test(command)) {
-        const mount = command.match(/-v '([^']+)':'\/app'/);
+        const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/.__cds_source_ro,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
         if (mount) mounts.push({ path: mount[1], version: fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8') });
       }
       return original(command, options);
@@ -587,9 +612,8 @@ describe('Executor /exec/deploy', () => {
     expect(result.events.some(e => e.event === 'error')).toBe(false);
   });
 
-  it('emits error WITH the post-teardown services snapshot when pull fails (Bugbot remote-error-stale-services)', async () => {
-    // Orphan teardown runs before pull. If pull then fails, the error event must still carry the current
-    // services snapshot so the master can reconcile (the removed orphan must not stay running on master).
+  it('emits error with the preserved original services when source preparation fails before graph admission', async () => {
+    // The master must receive the original snapshot: unconfirmed source cannot authorize teardown.
     const now = new Date().toISOString();
     stateService.addProject({ id: 'realproj', slug: 'realproj', name: 'Real', kind: 'git', createdAt: now, updatedAt: now });
     stateService.addBranch({
@@ -621,9 +645,9 @@ describe('Executor /exec/deploy', () => {
     // The error payload carries a services snapshot (object) so the master can reconcile on failure.
     expect(errorEvent!.data?.services).toBeDefined();
     expect(typeof errorEvent!.data.services).toBe('object');
-    // The orphan was torn down before the pull failed (its container was removed + entry cleared).
-    expect(stateService.getBranch('realproj-pullfail')!.services['old-extra']).toBeUndefined();
-    expect(errorEvent!.data.services['old-extra']).toBeUndefined();
+    expect(stateService.getBranch('realproj-pullfail')!.services['old-extra']?.containerName).toBe('cds-realproj-pullfail-old-extra');
+    expect(errorEvent!.data.services['old-extra']?.containerName).toBe('cds-realproj-pullfail-old-extra');
+    expect(mock.commands.some(c=>/^docker (rm|stop|create|run) /.test(c))).toBe(false);
     // worker 自身分支态落 error（Bugbot「Failed remote deploy reverts to building」）：否则下一次心跳会把
     // master 已 finalize 的 error 覆盖回 building。
     expect(stateService.getBranch('realproj-pullfail')!.status).toBe('error');
