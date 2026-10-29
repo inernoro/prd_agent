@@ -1325,10 +1325,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 await _modelResolver.RecordSuccessAsync(finalResolution, ct);
             }
 
-            // 8. 发送完成块
-            yield return GatewayStreamChunk.Done(finishReason, tokenUsage);
-
-            // 9. 写入日志（完成）
+            // 8. 在完成块之前写入终态、用量及费用证据。兼容入口收到 Done 就会
+            // 结束枚举并 DisposeAsync，不能依赖消费者继续 MoveNext 才完成审计。
             var endedAt = DateTime.UtcNow;
             var durationMs = (long)(endedAt - startedAt).TotalMilliseconds;
             var assembledText = textBuilder.ToString();
@@ -1350,15 +1348,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 logId, assembledText, assembledThinking, tokenUsage, durationMs, assembledToolCalls,
                 finishReason, finalResolution, gatewayTransport, ct, providerAttempts,
                 LlmCostEvidence.BuildSafeResponseHeaders(response, "text/event-stream"));
+
+            // 9. 审计已完成，消费者可以在此安全结束枚举。
+            yield return GatewayStreamChunk.Done(finishReason, tokenUsage);
         }
         finally
         {
             if (providerLease is not null)
                 await providerLease.DisposeAsync();
-            // 注意：对于流式响应，正常情况下日志会在行 319 的 FinishStreamLogAsync 中更新
-            // 这里不需要额外处理，因为：
-            // 1. HTTP 失败时，已在行 232 调用 MarkError
-            // 2. 异常情况会被调用方捕获，调用方负责处理日志
         }
     }
 
