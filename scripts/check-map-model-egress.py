@@ -33,6 +33,8 @@ SHARED_SERVING_TRANSPORT_FILES = {
     # 现有宿主装配与已治理实时端点；其依赖解析/注册也按调用指纹锁定，不能借此新增旁路。
     "llmgw/serving/Program.cs",
     "llmgw/serving/LiveAsrGatewayEndpoint.cs",
+    # 仅包装统一网关的任务金额闸；SDK客户端必须回到本包装器，不创建底层运输。
+    "llmgw/serving/TaskBudgetGateway.cs",
 }
 CALL = re.compile(r"\.\s*(CreateClient|SendAsync|PostAsync|PostAsJsonAsync|PutAsync|PutAsJsonAsync|PatchAsync|DeleteAsync|GetAsync|GetStringAsync|GetByteArrayAsync|GetStreamAsync|ConnectAsync)\s*\(")
 DEPENDENCY_CALL = re.compile(r"\.\s*(AddSingleton|AddScoped|AddTransient|GetRequiredService|GetService|GetServices)\s*<([^;\n()]*?)>\s*\(")

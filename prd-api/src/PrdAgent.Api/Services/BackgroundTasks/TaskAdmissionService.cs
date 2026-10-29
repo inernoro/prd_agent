@@ -145,6 +145,7 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
         permit.Id = TaskExecutionCoordinator.BusinessId(permit.TenantId, actor, intent.Scope, intent.Key);
         permit.BusinessKeyHash = TaskExecutionCoordinator.Fingerprint(intent.Key);
         permit.RequestFingerprint = intent.Fingerprint;
+        await TaskBudgetContracts.BindAsync(permit, configuration, data, ct);
         var result = await _executions.RegisterAsync(permit, http is not null, ct);
         if (result.Replayed && origin != TaskExecutionOrigins.Scheduled) throw new TaskIntentReplayException(result.Permit);
         var identity = result.Lease?.Identity ?? new TaskExecutionIdentity(result.Permit.Id);

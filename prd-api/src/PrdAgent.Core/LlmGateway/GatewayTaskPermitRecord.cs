@@ -45,6 +45,8 @@ public sealed class GatewayTaskPermitRecord
     public int MaxRuns { get; set; } = 1;
     public int MaxCalls { get; set; }
     public int CallCount { get; set; }
+    /// <summary>平台签发时冻结的通用金额合同，不接受业务请求自报或替换。</summary>
+    public string? BudgetScopeId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; }
     public DateTime? RevokedAt { get; set; }

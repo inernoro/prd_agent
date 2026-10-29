@@ -89,7 +89,9 @@ public sealed record GatewayTaskBudgetRequest(
     string Model,
     string? OfferingId,
     string? PptCompletionId = null,
-    string? PptCompletionPhase = null);
+    string? PptCompletionPhase = null,
+    string? TaskPermitId = null,
+    string? Protocol = null);
 
 public sealed record GatewayTaskBudgetPolicy(
     string ScopeId,
@@ -144,7 +146,7 @@ public static class GatewayRuntimeGrantPurposePolicy
         => grant is not null && string.Equals(grant.Purpose, TaskSidecar, StringComparison.Ordinal);
 }
 
-public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) : IGatewayRuntimeGrantCallCounter
+public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, Microsoft.AspNetCore.Http.IHttpContextAccessor? httpAccessor = null) : IGatewayRuntimeGrantCallCounter
 {
     public async Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
         GatewayRuntimeGrantRecord grant,
@@ -203,7 +205,11 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             },
             ct);
         if (reserved is not null)
+        {
+            if (taskReservation is not null)
+                MarkPptPhysicalAdmission(grant.BudgetScopeId!, grant.RunId, grant.AppCallerCode, grant.TaskPermitId, request.RequestId);
             return new(true, 200, string.Empty, "runtime grant call reserved");
+        }
 
         if (taskReservation is not null)
             await ReleaseBeforeSendAsync(grant.BudgetScopeId!, taskReservation, now, ct);
@@ -243,7 +249,24 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
     public async Task<GatewayRuntimeGrantCallAdmission> TryReserveTaskAsync(
         GatewayTaskBudgetRequest request,
         CancellationToken ct)
-        => (await TryReserveTaskBudgetAsync(request, request.EffectiveMaxOutputTokens, ct)).Admission;
+    {
+        var result = await TryReserveTaskBudgetAsync(request, request.EffectiveMaxOutputTokens, ct);
+        if (result.Admission.Allowed)
+            MarkPptPhysicalAdmission(request.ScopeId, request.RunId, request.AppCallerCode, request.TaskPermitId, request.RequestId);
+        return result.Admission;
+    }
+
+    private void MarkPptPhysicalAdmission(string scope, string run, string caller, string? permitId, string requestId)
+    {
+        var http = httpAccessor?.HttpContext;
+        if (http?.Items[GatewayTaskAdmission.HttpContextPermitKey] is not GatewayTaskPermitRecord permit
+            || permit.BudgetScopeId is not { Length: > 0 } || permitId is not null && permit.Id != permitId
+            || !permit.BoundRunIds.Contains(run, StringComparer.Ordinal)
+            || caller is not (AppCallerRegistry.MdToPptAgent.Generation.Outline
+                or AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate or AppCallerRegistry.MdToPptAgent.Generation.Patch)) return;
+        // 此方法只在真实金额预占成功后调用；PPT的root/stage/run已由同一计数器校验。
+        http.Items[GatewayInvocationAuthority.TaskBudgetAdmissionKey] = new TaskBudgetSendFact(scope, permit.Id, requestId, true);
+    }
 
     public async Task<GatewayTaskBudgetPolicy?> ResolveTaskPolicyAsync(
         string scopeId,
@@ -263,7 +286,7 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
                           && item.ExpiresAt > now)
             .FirstOrDefaultAsync(ct);
         if (scope is null || scope.MaxOutputTokens <= 0) return null;
-        if (appCallerCode == AppCallerRegistry.MdToPptAgent.Generation.Outline
+        if (scope.TaskPermitId is null && appCallerCode == AppCallerRegistry.MdToPptAgent.Generation.Outline
             && scope.RootOutlineRunId != runId)
             return null;
         return new GatewayTaskBudgetPolicy(
@@ -299,12 +322,26 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
 
         var hasTrustedUsage = usage is not null
             && (usage.InputTokens.GetValueOrDefault() > 0 || usage.OutputTokens.GetValueOrDefault() > 0);
+        if (reservation.PriceVersion is not null)
+            hasTrustedUsage = usage?.InputTokens is >= 0 && usage.OutputTokens is >= 0
+                && usage.CacheReadInputTokens is null or >= 0 && usage.CacheCreationInputTokens is null or >= 0;
         var actualInputTokens = usage?.InputTokens.GetValueOrDefault() ?? 0;
         var actualRates = RatesFor(scope, actualInputTokens);
         var calculated = hasTrustedUsage
             ? Money(actualInputTokens, actualRates.Input)
               + Money(usage!.OutputTokens.GetValueOrDefault(), actualRates.Output)
             : reservation.ReservedUsd;
+        if (hasTrustedUsage && reservation.PriceVersion is not null)
+        {
+            var actual = GatewayCostCalculator.Calculate(reservation.PriceProtocol, "USD",
+                reservation.InputUsdPerMillion, reservation.OutputUsdPerMillion,
+                reservation.CachedInputUsdPerMillion, reservation.CacheWriteUsdPerMillion, null,
+                usage!.InputTokens!.Value, usage.OutputTokens!.Value,
+                usage.CacheReadInputTokens.GetValueOrDefault(), usage.CacheCreationInputTokens.GetValueOrDefault(),
+                true, usage.CacheCreationCountedInsideInput == true);
+            hasTrustedUsage = actual.Usd is not null;
+            calculated = actual.Usd ?? reservation.ReservedUsd;
+        }
         var invariantFailed = calculated > reservation.ReservedUsd;
         var settled = invariantFailed ? reservation.ReservedUsd : calculated;
         var status = invariantFailed ? "settled-invariant-failed" : hasTrustedUsage ? "settled" : "settled-unknown";
@@ -338,16 +375,28 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             int? trustedMaxOutputTokens,
             CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(request.RequestId) || string.IsNullOrWhiteSpace(request.ActorId)
+            || request.RequestBodyUtf8Bytes <= 0 || request.EffectiveMaxOutputTokens <= 0)
+            return (new(false, 400, "GATEWAY_RUNTIME_TASK_BUDGET_INPUT_INVALID", "physical task budget inputs are invalid"), null);
         var budgets = data.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
         var scope = await budgets.Find(x => x.Id == request.ScopeId).FirstOrDefaultAsync(ct);
         var now = DateTime.UtcNow;
         if (scope is null || scope.Status != "active" || scope.ExpiresAt <= now
             || scope.TenantId != request.TenantId || scope.UserId != request.UserId
-            || (!string.IsNullOrWhiteSpace(scope.RootOutlineRunId)
+            || (scope.TaskPermitId is null && !string.IsNullOrWhiteSpace(scope.RootOutlineRunId)
                 && scope.RootOutlineRunId != request.RunId
                 && request.AppCallerCode == AppCallerRegistry.MdToPptAgent.Generation.Outline))
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_INACTIVE", "runtime task budget is unavailable"), null);
-        var isPptPhysicalCaller = request.AppCallerCode is
+        if (scope.TaskPermitId is not null && (scope.TaskPermitId != request.TaskPermitId
+            || request.ActorId != scope.TaskPermitId
+            || !scope.AllowedAppCallerCodes.Contains(request.AppCallerCode, StringComparer.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(scope.PriceVersion) || string.IsNullOrWhiteSpace(scope.PriceProtocol)
+            || GatewayProtocolAliases.NormalizeAdapterKey(scope.PriceProtocol) != GatewayProtocolAliases.NormalizeAdapterKey(request.Protocol)
+            || scope.CachedInputUsdPerMillion is null or < 0 || scope.CacheWriteUsdPerMillion is null or < 0))
+            return (new(false, 403, "GATEWAY_TASK_BUDGET_BINDING_INVALID", "task budget is not authorized for this permit and caller"), null);
+        if (scope.TaskPermitId is not null && scope.MaxPhysicalCalls is <= 0 or > GatewayTaskPermitRecord.MaximumCalls)
+            return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_POLICY_INVALID", "task physical call envelope is invalid"), null);
+        var isPptPhysicalCaller = scope.TaskPermitId is null && request.AppCallerCode is
             AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate or
             AppCallerRegistry.MdToPptAgent.Generation.Patch;
         if (isPptPhysicalCaller && scope.PptCompletion is null)
@@ -373,7 +422,9 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             return (new(false, 413, "GATEWAY_RUNTIME_TASK_BUDGET_INPUT_INVALID", "runtime task input exceeds the budget envelope"), null);
         }
         var rates = RatesFor(scope, inputUpper);
-        var amount = Money(inputUpper, rates.Input)
+        var inputCeilingRate = scope.TaskPermitId is null ? rates.Input
+            : new[] { rates.Input, scope.CachedInputUsdPerMillion!.Value, scope.CacheWriteUsdPerMillion!.Value }.Max();
+        var amount = Money(inputUpper, inputCeilingRate)
                      + Money(request.EffectiveMaxOutputTokens, rates.Output);
         if (amount <= 0)
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_POLICY_INVALID", "runtime task budget policy is invalid"), null);
@@ -391,6 +442,10 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             Model = request.Model,
             OfferingId = request.OfferingId,
             PricingTier = rates.Name,
+            PriceVersion = scope.PriceVersion,
+            PriceProtocol = scope.PriceProtocol,
+            CachedInputUsdPerMillion = scope.CachedInputUsdPerMillion,
+            CacheWriteUsdPerMillion = scope.CacheWriteUsdPerMillion,
             InputUsdPerMillion = rates.Input,
             OutputUsdPerMillion = rates.Output,
             ReservedUsd = amount,
@@ -406,6 +461,9 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.TenantId, request.TenantId),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.UserId, request.UserId),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne("Reservations.RequestId", request.RequestId));
+        if (scope.TaskPermitId is not null)
+            commonFilter &= new BsonDocumentFilterDefinition<GatewayRuntimeBudgetScopeRecord>(new BsonDocument("$expr",
+                new BsonDocument("$lt", new BsonArray { new BsonDocument("$size", "$Reservations"), scope.MaxPhysicalCalls })));
 
         FilterDefinition<GatewayRuntimeBudgetScopeRecord> filter;
         UpdateDefinition<GatewayRuntimeBudgetScopeRecord> update;

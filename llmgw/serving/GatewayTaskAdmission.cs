@@ -137,6 +137,8 @@ public sealed class GatewayTaskAdmission(
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_INVALID", "当前任务授权已失效，已停止本次调用；请重新发起任务。");
             if (permit.SourceDeployment != deployment)
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_DEPLOYMENT_DENIED", "当前任务不能在此环境执行，已停止本次调用；请回到发起任务的环境重试。");
+            if (configuration.GetValue<bool>("LlmGateway:TaskBudgets:Required") && string.IsNullOrWhiteSpace(permit.BudgetScopeId))
+                return GatewayTaskAdmissionDecision.Deny("TASK_BUDGET_POLICY_REQUIRED", "此任务缺少平台金额合同，已停止付费调用。", 409);
             if (authorization.RuntimeGrant is { } scopedGrant
                 && (GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(scopedGrant) && scopedGrant.SourceDeployment != permit.SourceDeployment
                     || !string.IsNullOrWhiteSpace(scopedGrant.SourceDeployment) && scopedGrant.SourceDeployment != permit.SourceDeployment))

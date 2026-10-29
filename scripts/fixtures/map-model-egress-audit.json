@@ -11,7 +11,7 @@
     },
     "llmgw/serving/Program.cs": {
       "calls": {
-        "dependency:AddScoped:3e19105912c496b6de25f20c": 1,
+        "dependency:AddScoped:4533b80998c26496bf481fe6": 1,
         "dependency:AddScoped:79617fcc62df341cc14f82af": 1,
         "dependency:AddScoped:87deb1e0730f71b4eabeb930": 1,
         "dependency:GetRequiredService:664d0f011014dc1ca726026f": 1,
@@ -761,6 +761,12 @@
         "call:PostAsync:f1c3f3fb730c28de5f50fd0b": 1
       },
       "purpose": "产品申领企微文本通知；目标限HTTPS企微webhook路径，使用安全出站工厂，结果未知不自动重试，不调用模型"
+    },
+    "llmgw/serving/TaskBudgetGateway.cs": {
+      "calls": {
+        "new:GatewayLLMClient:b2de5628de45932cd7333401": 1
+      },
+      "purpose": "任务金额包装器只创建回到自身的GatewayLLMClient，全部发送复用既有统一网关；不创建HTTP客户端或供应商SDK，新调用仍须逐指纹审计"
     }
   },
   "packages": {

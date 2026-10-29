@@ -104,7 +104,7 @@ public partial class LlmGateway
                         resolution.LogicalModelPublicId ?? string.Empty,
                         resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
                         resolution.ActualModel ?? string.Empty,
-                        resolution.OfferingId),
+                        resolution.OfferingId, resolution.Protocol ?? resolution.PlatformType),
                     deadline.Token) is { } admissionError)
             {
                 outcome = admissionError;
@@ -354,3 +354,5 @@ public sealed class GatewayResponseRejectedBeforeSend : GatewayRawResponse { }
 
 /// <summary>跨全部候选确认没有发送的流式拒绝；不能从错误文本或供应商响应推断。</summary>
 public sealed class GatewayStreamRejectedBeforeSend : GatewayStreamChunk { }
+
+public sealed class GatewaySendRejectedBeforeSend : GatewayResponse { }

@@ -486,7 +486,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+    public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+        => SendCoreAsync(request, null, ct);
+
+    public Task<GatewayResponse> SendWithAdmissionAsync(GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>> admit, CancellationToken ct = default)
+        => SendCoreAsync(request, admit ?? throw new ArgumentNullException(nameof(admit)), ct);
+
+    private async Task<GatewayResponse> SendCoreAsync(GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>>? admit, CancellationToken ct)
     {
         _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
@@ -497,6 +505,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var startedAt = DateTime.UtcNow;
         string? logId = null;
         ModelResolutionResult? resolution = null;
+
+        var reachedProvider = false;
 
         try
         {
@@ -522,7 +532,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 3. 发送请求。候选模型已在 Resolve 阶段一次性算好；发送阶段只消费结果，不再二次 resolve。
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
-            var retryResolutions = GetProviderRetryResolutions(resolution, request);
+            var retryResolutions = admit is null ? GetProviderRetryResolutions(resolution, request) : new List<ModelResolutionResult> { resolution };
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             HttpResponseMessage? response = null;
@@ -637,11 +647,24 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     attemptIndex + 1,
                     retryResolutions.Count);
 
+                if (admit is not null)
+                {
+                    var cap = ReadPhysicalOutputCap(requestBody);
+                    var denied = await admit(new GatewayPhysicalAdmissionContext(
+                        request.Context?.RequestId ?? string.Empty,
+                        Encoding.UTF8.GetByteCount(await httpRequest.Content!.ReadAsStringAsync(ct)), cap,
+                        activeResolution.LogicalModelPublicId ?? string.Empty,
+                        activeResolution.ActualPlatformName ?? activeResolution.ActualPlatformId ?? string.Empty,
+                        activeResolution.ActualModel ?? string.Empty, activeResolution.OfferingId,
+                        activeResolution.Protocol ?? activeResolution.PlatformType), ct);
+                    if (denied is not null) return denied;
+                }
                 var attemptStartedAt = DateTime.UtcNow;
                 try
                 {
                     if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                     MarkLastSendAttemptReachedProvider(providerAttempts);
+                    reachedProvider = true;
                     response = await httpClient.SendAsync(httpRequest, ct);
                 }
                 catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
@@ -775,6 +798,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 _logWriter?.MarkError(logId, msg, code);
             }
+            if (ex is TaskExecutionAdmissionException rejected && !reachedProvider)
+                return new GatewaySendRejectedBeforeSend { Success = false, ErrorCode = rejected.Code, ErrorMessage = msg, StatusCode = code };
             return GatewayResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
     }
@@ -784,6 +809,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequest request,
         CancellationToken ct = default)
         => StreamCoreAsync(request, null, ct);
+
+    private static int ReadPhysicalOutputCap(JsonObject body)
+        => new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }
+            .Select(name => body[name] is { } node && TryReadInt(node, out var value) && value > 0 ? value : int.MaxValue)
+            .DefaultIfEmpty(int.MaxValue).Min() is var cap && cap != int.MaxValue ? cap : 0;
 
     /// <inheritdoc />
     public IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
@@ -934,7 +964,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             "GATEWAY_RUNTIME_TASK_OUTPUT_CAP_INVALID");
                         yield break;
                     }
-                    var finalBody = requestBody.ToJsonString();
+                    var finalBody = await httpRequest.Content!.ReadAsStringAsync(ct);
                     var admissionError = await admit(
                         new GatewayPhysicalAdmissionContext(
                             request.Context?.RequestId ?? string.Empty,
@@ -943,7 +973,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             resolution.LogicalModelPublicId ?? string.Empty,
                             resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
                             resolution.ActualModel ?? string.Empty,
-                            resolution.OfferingId),
+                            resolution.OfferingId, resolution.Protocol ?? resolution.PlatformType),
                         ct);
                     if (admissionError is not null)
                     {

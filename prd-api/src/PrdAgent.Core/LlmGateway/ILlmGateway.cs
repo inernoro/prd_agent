@@ -42,6 +42,13 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
     /// </summary>
     Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default);
 
+    /// <summary>最终物理正文和路由确定后、发送前执行金额准入；未实现时默认拒绝。</summary>
+    Task<GatewayResponse> SendWithAdmissionAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>> admit,
+        CancellationToken ct = default)
+        => Task.FromResult(GatewayResponse.Fail("GATEWAY_PHYSICAL_ADMISSION_UNSUPPORTED", "当前网关未提供物理发送前准入", 409));
+
     /// <summary>
     /// 发送流式请求（Chat/Completion）
     /// </summary>

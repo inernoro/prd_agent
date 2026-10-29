@@ -173,6 +173,13 @@ public sealed class GatewayRuntimeBudgetScopeRecord
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string TenantId { get; set; } = string.Empty;
+    public string? TaskPermitId { get; set; }
+    public int MaxPhysicalCalls { get; set; }
+    public List<string> AllowedAppCallerCodes { get; set; } = new();
+    public string? PriceVersion { get; set; }
+    public string? PriceProtocol { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CachedInputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CacheWriteUsdPerMillion { get; set; }
     public string RootOutlineRunId { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
     public string SourcePlanHash { get; set; } = string.Empty;
@@ -220,6 +227,10 @@ public sealed class GatewayRuntimeBudgetReservationRecord
     public string Model { get; set; } = string.Empty;
     public string? OfferingId { get; set; }
     public string PricingTier { get; set; } = "standard";
+    public string? PriceVersion { get; set; }
+    public string? PriceProtocol { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CachedInputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? CacheWriteUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal InputUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal OutputUsdPerMillion { get; set; }
     [BsonRepresentation(BsonType.Decimal128)] public decimal ReservedUsd { get; set; }

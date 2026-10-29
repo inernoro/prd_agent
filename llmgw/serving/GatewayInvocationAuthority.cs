@@ -15,6 +15,7 @@ public sealed class GatewayInvocationAuthority(IHttpContextAccessor accessor, IC
 {
     public const string PaidAdmissionKey = "llmgw.task.paid.admitted";
     public const string AdmittedCallerKey = "llmgw.task.admitted.caller";
+    public const string TaskBudgetAdmissionKey = "llmgw.task.budget.physical-admission";
 
     public void AssertAuthorized(string appCallerCode, GatewayRequestContext? context)
     {
@@ -70,9 +71,23 @@ public sealed class GatewayInvocationAuthority(IHttpContextAccessor accessor, IC
         if (!await coordinator.ValidateHashAsync(lease.PermitId, lease.RunId, lease.OwnerHash, lease.Fence, true, ct, context?.RunId))
             throw new TaskExecutionAdmissionException("TASK_EXECUTION_LEASE_INVALID",
                 "任务执行授权已失效，已停止后续发送；请查看任务状态后重新提交。", 403);
+        var permit = (GatewayTaskPermitRecord)http.Items[GatewayTaskAdmission.HttpContextPermitKey]!;
+        if (permit.BudgetScopeId is { Length: > 0 } scopeId
+            && (http.Items[TaskBudgetAdmissionKey] is not TaskBudgetSendFact fact
+                || !fact.Consume(scopeId, permit.Id, context?.RequestId)))
+            throw new TaskExecutionAdmissionException("GATEWAY_TASK_BUDGET_PHYSICAL_ADMISSION_REQUIRED",
+                "此物理请求尚未获得任务金额预占，已停止发送。", 409);
     }
 
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     private static void Deny() => throw new TaskExecutionAdmissionException("GATEWAY_INVOCATION_NOT_AUTHORIZED",
         "此调用尚未获得平台执行许可，已停止发送；请从正常业务入口重新发起任务。", 403);
+}
+
+public sealed class TaskBudgetSendFact(string scopeId, string permitId, string requestId, bool verifiedPptContract = false)
+{
+    private int _consumed;
+    public bool Consume(string expectedScope, string expectedPermit, string? expectedRequest)
+        => (scopeId == expectedScope || verifiedPptContract) && permitId == expectedPermit && requestId == expectedRequest
+            && Interlocked.CompareExchange(ref _consumed, 1, 0) == 0;
 }

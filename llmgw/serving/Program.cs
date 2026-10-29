@@ -304,7 +304,8 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifi
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
 // LLM Gateway 统一守门员（HOST 既有实现）
-builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, TaskBudgetGateway>();
 builder.Services.AddScoped<DoubaoStreamAsrService>();
 builder.Services.AddScoped<LiveAsrBatchFallbackService>();
 builder.Services.AddScoped(sp => new LiveAsrSessionOrchestrator(
