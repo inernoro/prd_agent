@@ -16192,6 +16192,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           trigger,
           operation: 'branch-restart',
           source: 'api.restart-branch',
+          assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
           reason: '手动重新启动（docker restart，未重建代码）',
         });
         assertBranchOperationCurrent(branchOperationLease, `restart after ${svc.profileId}`);
@@ -16225,6 +16226,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             trigger,
             operation: 'branch-restart-replica-member',
             source: 'api.restart-branch',
+            assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
             reason: '分支重启级联拉起复制集副本（docker restart，未重建代码）',
           });
           if (memberOk) {

@@ -100,6 +100,77 @@ describe('部署心跳过期后的精确租约回收', () => {
     return actualCleanupInvocation(index, old, events).context;
   }
 
+  function actualRestartContext(operation: 'branch-restart' | 'branch-restart-replica-member', lease: Awaited<ReturnType<typeof trackedDeployment>>['lease']) {
+    const source = ts.createSourceFile('branches.ts', fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest);
+    let contextSource: string | undefined, assertionSource: string | undefined;
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === 'assertBranchOperationCurrent') assertionSource = node.getText(source);
+      if (ts.isCallExpression(node) && node.expression.getText(source) === 'containerService.restartServiceInPlace') {
+        const context = node.arguments[2];
+        if (context && ts.isObjectLiteralExpression(context) && context.properties.some(property =>
+          ts.isPropertyAssignment(property) && property.name.getText(source) === 'operation'
+          && ts.isStringLiteral(property.initializer) && property.initializer.text === operation)) contextSource = context.getText(source);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(contextSource).toBeDefined(); expect(assertionSource).toBeDefined();
+    const bindings = { entry: state.getBranch('b1'), svc: { profileId: 'api' }, replicaSet: { profileId: 'api' },
+      member: { id: 'replica' }, requestId: 'restart-regression', branchOperationLease: lease, actor: 'tester', trigger: 'manual' };
+    const compiled = ts.transpileModule(`${assertionSource}\nconst context = ${contextSource};`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    return new Function(...Object.keys(bindings), `${compiled}\nreturn context;`)(...Object.values(bindings)) as
+      NonNullable<Parameters<ContainerService['restartServiceInPlace']>[2]>;
+  }
+
+  it.each(['branch-restart', 'branch-restart-replica-member'] as const)
+  ('生产%s接线在inspect等待后失效时阻止继续发送重启命令', async operation => {
+    const old = await trackedDeployment(), commands: string[] = [];
+    const container = new ContainerService({ exec: async (command, options) => {
+      options?.beforeStart?.(); commands.push(command);
+      if (command.startsWith('docker inspect')) reapAfterSilence();
+      return { stdout: 'running', stderr: '', exitCode: 0 };
+    } }, { repoRoot: directory, worktreeBase: directory, dockerNetwork: 'fixture-shared' } as CdsConfig);
+    vi.spyOn(container as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    vi.spyOn(container as any, 'captureContainerDiagnostics').mockResolvedValue({ logs: '' });
+    await expect(container.restartServiceInPlace('owned-runtime', undefined, actualRestartContext(operation, old.lease)))
+      .rejects.toThrow(BranchOperationSupersededError);
+    expect(old.lease.isCurrent()).toBe(false);
+    expect(commands.some(command => command.startsWith('docker restart'))).toBe(false);
+  });
+
+  it.each(['current', 'identity-missing', 'restart-failure-diagnostics', 'liveness', 'success-diagnostics',
+    'liveness-failure', 'early-exit-diagnostics'] as const)
+  ('原地重启%s异步返回后只允许当前租约发布结果', async boundary => {
+    const old = await trackedDeployment(), actions: string[] = [];
+    const container = new ContainerService({ exec: async (command, options) => {
+      options?.beforeStart?.();
+      if (command.startsWith('docker inspect') && boundary === 'identity-missing') {
+        reapAfterSilence(); return { stdout: '', stderr: '', exitCode: 1 };
+      }
+      return { stdout: 'running', stderr: '', exitCode: boundary === 'restart-failure-diagnostics' && command.startsWith('docker restart') ? 1 : 0 };
+    } }, { repoRoot: directory, worktreeBase: directory, dockerNetwork: 'fixture-shared' } as CdsConfig,
+    undefined, { record: event => { actions.push(event.action); } });
+    vi.spyOn(container as any, 'waitForContainerAlive').mockImplementation(async () => {
+      if (boundary === 'liveness' || boundary === 'liveness-failure') reapAfterSilence();
+      if (boundary === 'liveness-failure' || boundary === 'early-exit-diagnostics') throw new Error('fixture 容器提前退出');
+    });
+    const diagnostics = vi.spyOn(container as any, 'captureContainerDiagnostics').mockImplementation(async () => {
+      if (boundary.endsWith('diagnostics')) reapAfterSilence();
+      return { logs: '' };
+    });
+    const result = container.restartServiceInPlace('owned-runtime', undefined,
+      { assertCurrent: step => old.lease.assertCurrent(step) });
+    if (boundary === 'current') {
+      await expect(result).resolves.toBe(true);
+      expect(actions).toEqual(['container.restart.completed']);
+    } else {
+      await expect(result).rejects.toThrow(BranchOperationSupersededError);
+      expect(actions).toEqual([]);
+    }
+    expect(diagnostics).toHaveBeenCalledTimes(boundary === 'current' || boundary.endsWith('diagnostics') ? 1 : 0);
+  });
+
   it.each([undefined, 'embedded', 'master-current'])('本节点%s不能只把运行账本写成失败而继续保留原执行租约', async executorId => {
     const old = await trackedDeployment();
     old.run.executorId = executorId;

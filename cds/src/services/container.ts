@@ -2822,6 +2822,7 @@ export class ContainerService {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before restart identity');
     const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    context.assertCurrent?.('after restart identity');
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
       this.recordContainerEvent({
@@ -2853,6 +2854,7 @@ export class ContainerService {
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
+      context.assertCurrent?.('after restart failure diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',
@@ -2880,7 +2882,9 @@ export class ContainerService {
     }
     try {
       await this.waitForContainerAlive(containerName, onOutput);
+      context.assertCurrent?.('after restart liveness');
       const diagnostics = await this.captureContainerDiagnostics(containerName, 80);
+      context.assertCurrent?.('after restart diagnostics');
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',
@@ -2905,8 +2909,10 @@ export class ContainerService {
       });
       return true;
     } catch (err) {
+      context.assertCurrent?.('after restart liveness failure');
       onOutput?.(`── 重启后容器未存活: ${(err as Error).message} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 300);
+      context.assertCurrent?.('after restart early-exit diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',
