@@ -135,17 +135,25 @@ describe('【关键】交接包里的模型 id 归一之后必须能在目录里
   });
 });
 
-
 describe('恢复试探目录契约', () => {
-  it.each([false, true])('恢复资格为 %s 时按网关资格开放入口并保留请求身份', (available) => {
+  it.each([
+    { healthStatus: 'Healthy', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Degraded', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: false, enabled: false },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: true, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: undefined, enabled: false },
+  ])('健康为 $healthStatus、恢复资格为 $isRecoveryProbeAvailable 时按权威快照开放入口', ({ enabled, ...state }) => {
     const entry = pool({});
     entry.models = entry.models.map((member) => ({
-      ...member, healthStatus: 'Unavailable' as typeof member.healthStatus,
-      isRecoveryProbeAvailable: available,
+      ...member,
+      ...state,
+      healthStatus: state.healthStatus as typeof member.healthStatus,
     }));
-    const options = buildVisualAgentModelOptions([entry]);
-    expect(options[0].enabled).toBe(available);
-    expect(options[0].modelName).toBe(entry.code);
-    if (available) expect(options[0].subtitle).toContain('恢复试探');
+
+    const [option] = buildVisualAgentModelOptions([entry]);
+
+    expect(option.enabled).toBe(enabled);
+    expect(option.modelName).toBe(entry.code);
+    if (state.isRecoveryProbeAvailable) expect(option.subtitle).toContain('恢复试探');
   });
 });
