@@ -210,7 +210,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
   const progressText = (() => {
     if (!currentRun) return '';
-    if (currentRun.cancelRequested && isActive) return '已停止后续生成，当前视频正在收尾，可能仍产生费用';
+    if (currentRun.cancelRequested && isActive) return currentRun.directVideoJobId ? '已停止后续生成，当前视频正在收尾，可能仍产生费用' : '已请求取消，正在确认处理结果';
     if (currentRun.status === 'Cancelled') return !currentRun.directVideoJobId
       ? '已取消，尚未提交生成'
       : currentRun.directVideoReconciledAt ? '已取消，供应商任务已结束' : '已取消；历史任务缺少费用核对记录';
