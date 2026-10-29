@@ -301,6 +301,23 @@ public sealed class GenericTaskBudgetIntegrationTests
         Assert.True(rejected);
         Assert.Equal(1, paid.Count);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientFactoryPreservesVerifiedExecutionContext(bool withMoneyContract)
+    {
+        await using var db = new Database();
+        var (gateway, _, permit, _, _, paid) = await Build(db, bindMoney: withMoneyContract);
+        var client = gateway.CreateClient(Caller, ModelTypes.Chat);
+        var done = false;
+        await foreach (var chunk in client.StreamGenerateAsync("", new List<LLMMessage>
+            { new() { Role = "user", Content = "synthetic" } }))
+            if (chunk.Type == "done") { done = true; break; }
+        Assert.True(done);
+        Assert.Equal(1, paid.Count);
+        if (withMoneyContract) Assert.Equal("settled", Assert.Single((await db.Scope(permit)).Reservations).Status);
+    }
     private static GatewayTaskPermitRecord Permit() => new()
     { Id = Guid.NewGuid().ToString("N"), TenantId = GatewayTenantDefaults.InternalTenantId, ActorUserId = "synthetic-owner",
         Origin = TaskExecutionOrigins.Interactive, SubjectUserIds = new() { "synthetic-owner" },
@@ -325,9 +342,10 @@ public sealed class GenericTaskBudgetIntegrationTests
 
     private static async Task<(TaskBudgetGateway Gateway, LlmGateway Inner, GatewayTaskPermitRecord Permit,
         GatewayRequestContext Context, DefaultHttpContext Http, FakeUpstream Paid)> Build(Database db,
-        bool revokeAfterReservation = false, bool loseOutcome = false)
+        bool revokeAfterReservation = false, bool loseOutcome = false, bool bindMoney = true)
     {
         var p = await db.Bind();
+        if (!bindMoney) p.BudgetScopeId = null;
         var executions = new TaskExecutionCoordinator(db.Context);
         var registered = await executions.RegisterAsync(p, true, default);
         var proof = registered.Lease!.Identity.Lease!;
@@ -352,11 +370,19 @@ public sealed class GenericTaskBudgetIntegrationTests
                 ActualPlatformName = "Synthetic", LogicalModelPublicId = "synthetic-logical", PlatformType = "openai", Protocol = "openai",
                 ApiUrl = "https://upstream.invalid", ApiKey = "synthetic", ResolutionType = "PinnedModel" });
         var upstream = new FakeUpstream { LoseOutcome = loseOutcome };
+        var requestAccessor = new Mock<ILLMRequestContextAccessor>();
+        requestAccessor.SetupGet(x => x.Current).Returns(new LlmRequestContext(context.RequestId!, null, null, context.UserId,
+            null, null, null, null, TenantId: context.TenantId, ServiceKeyId: context.ServiceKeyId,
+            TaskPermitId: context.TaskPermitId, TaskLeaseRunId: context.TaskLeaseRunId, TaskLeaseOwnerHash: context.TaskLeaseOwnerHash,
+            TaskLeaseFence: context.TaskLeaseFence, ExecutionOrigin: context.ExecutionOrigin, TriggerActorUserId: context.TriggerActorUserId,
+            TriggerCredentialId: context.TriggerCredentialId, SourceDeployment: context.SourceDeployment, SourceTask: context.SourceTask,
+            SourceSystem: context.SourceSystem));
         var inner = new LlmGateway(resolver.Object, upstream, NullLogger<LlmGateway>.Instance,
+            contextAccessor: requestAccessor.Object,
             invocationAuthority: new GatewayInvocationAuthority(accessor, Config(), executions));
         IGatewayRuntimeGrantCallCounter counter = new GatewayRuntimeGrantCallCounter(db.Context);
         if (revokeAfterReservation) counter = new RevokingCounter(counter, db.Context);
-        return (new TaskBudgetGateway(inner, accessor, db.Context, counter), inner, p, context, http, upstream);
+        return (new TaskBudgetGateway(inner, accessor, db.Context, counter, requestAccessor.Object), inner, p, context, http, upstream);
     }
     private static GatewayRequestContext CopyContext(GatewayRequestContext p, string requestId, string? run = null, string? budget = null) => new()
     { RequestId = requestId, TenantId = p.TenantId, UserId = p.UserId, ServiceKeyId = p.ServiceKeyId, SourceSystem = p.SourceSystem,

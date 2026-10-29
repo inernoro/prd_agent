@@ -16,7 +16,8 @@ public sealed class TaskBudgetGateway(
     PrdAgent.Infrastructure.LlmGateway.LlmGateway inner,
     IHttpContextAccessor accessor,
     LlmGatewayDataContext data,
-    IGatewayRuntimeGrantCallCounter counter) : PrdAgent.Core.LlmGateway.ILlmGateway
+    IGatewayRuntimeGrantCallCounter counter,
+    ILLMRequestContextAccessor? contextAccessor = null) : PrdAgent.Core.LlmGateway.ILlmGateway
 {
     private GatewayTaskPermitRecord? Permit => accessor.HttpContext?.Items[GatewayTaskAdmission.HttpContextPermitKey] as GatewayTaskPermitRecord;
     private bool Bound => !string.IsNullOrWhiteSpace(Permit?.BudgetScopeId);
@@ -190,8 +191,10 @@ public sealed class TaskBudgetGateway(
         => inner.GetAvailablePoolsAsync(appCallerCode, modelType, ct);
     public ILLMClient CreateClient(string appCallerCode, string modelType, int maxTokens = 4096, double temperature = 0.2,
         bool includeThinking = false, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null)
-        => new GatewayLLMClient(this, appCallerCode, modelType, maxTokens: maxTokens, temperature: temperature,
-            includeThinking: includeThinking, expectedModel: expectedModel, pinnedPlatformId: pinnedPlatformId, pinnedModelId: pinnedModelId);
+        => Bound ? new GatewayLLMClient(this, appCallerCode, modelType, maxTokens: maxTokens, temperature: temperature,
+            includeThinking: includeThinking, contextAccessor: contextAccessor, expectedModel: expectedModel,
+            pinnedPlatformId: pinnedPlatformId, pinnedModelId: pinnedModelId)
+            : inner.CreateClient(appCallerCode, modelType, maxTokens, temperature, includeThinking, expectedModel, pinnedPlatformId, pinnedModelId);
 
     private void MarkAdmission(GatewayTaskBudgetRequest request)
     {

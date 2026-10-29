@@ -25,6 +25,9 @@ public static class GatewayConsumptionAlertsEndpoint
             var items = docs.Select(doc => new
             {
                 Id = doc.GetStringOrEmpty("_id"),
+                Metric = doc.GetStringOrEmpty("Metric"),
+                BaselineAverage = doc.AsNullableDecimal("BaselineAverage"),
+                BaselineSamples = doc.AsNullableInt("BaselineSamples"),
                 AppCallerCode = doc.GetStringOrEmpty("AppCallerCode"),
                 RequestType = doc.GetStringOrEmpty("RequestType"),
                 Scope = doc.GetStringOrEmpty("Scope"),

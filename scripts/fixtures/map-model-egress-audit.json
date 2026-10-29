@@ -764,7 +764,8 @@
     },
     "llmgw/serving/TaskBudgetGateway.cs": {
       "calls": {
-        "new:GatewayLLMClient:b2de5628de45932cd7333401": 1
+        "new:GatewayLLMClient:1233a25c64eab93e5051e191": 1,
+        "call:CreateClient:c732572d6e67305342700fce": 1
       },
       "purpose": "任务金额包装器只创建回到自身的GatewayLLMClient，全部发送复用既有统一网关；不创建HTTP客户端或供应商SDK，新调用仍须逐指纹审计"
     }

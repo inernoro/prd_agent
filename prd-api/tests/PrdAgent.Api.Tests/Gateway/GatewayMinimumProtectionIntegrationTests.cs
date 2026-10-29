@@ -66,6 +66,24 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         denials[0]["Count"].ToInt64().ShouldBe(20);
     }
 
+    [Fact]
+    public async Task DynamicExplicitRateObservationUsesSameGeneralBucketAsFixedProtection()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await SeedDynamicHistory(database);
+        var coordinator = new GatewayMinimumProtectionCoordinator(database.Data,
+            new ConfigurationBuilder().AddInMemoryCollection(DynamicPolicy()).Build(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayMinimumProtectionCoordinator>.Instance);
+        for (var index = 0; index < 6; index++)
+            (await coordinator.CheckAsync(Tenant, Caller, "chat", null, Guid.NewGuid().ToString("N"),
+                new GatewayMinimumRequestIdentity("interactive", null), 1000, 100, default)).Rejected.ShouldBeFalse();
+        var alert = await database.Alerts.Find(new BsonDocument("Metric", "request_rate_baseline")).SingleAsync();
+        alert["Origin"].AsString.ShouldBe("general");
+        alert["Count"].ToInt64().ShouldBe(6);
+        alert["BaselineAverage"].ToDecimal().ShouldBe(2m);
+        (await database.Windows.CountDocumentsAsync(new BsonDocument("Origin", "interactive"))).ShouldBe(0);
+    }
+
     [Theory]
     [InlineData(false, "TenantPerHour")]
     [InlineData(true, "AutomaticTenantPerHour")]
@@ -245,6 +263,122 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         (await (await client.GetAsync("/gw/logs/consumption-alerts")).Content.ReadAsStringAsync()).ShouldContain(warning["_id"].AsString);
     }
 
+    [Fact]
+    public async Task DynamicBaselineDetectsSharedSpikeWithoutWeakeningFixedLimit()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        await SeedDynamicHistory(database);
+        var policy = DynamicPolicy();
+        await using var first = await Serving(database, new() { ["AppCallerPerHour"] = 8 }, policy);
+        await using var second = await Serving(database, new() { ["AppCallerPerHour"] = 8 }, policy);
+        var responses = await Task.WhenAll(Enumerable.Range(0, 10).Select(i =>
+            Send((i % 2 == 0 ? first : second).GetTestClient(), false)));
+        responses.Count(item => item.StatusCode == HttpStatusCode.OK).ShouldBe(8);
+        responses.Count(item => item.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(2);
+        database.UpstreamCalls.ShouldBe(8);
+        var dynamicAlert = await database.Alerts.Find(new BsonDocument("Metric", "request_rate_baseline")).SingleAsync();
+        dynamicAlert["Count"].ToInt64().ShouldBe(10);
+        dynamicAlert["Limit"].ToInt32().ShouldBe(6);
+        dynamicAlert["ThresholdPercent"].ToInt32().ShouldBe(100, "动态触发线本身已由倍数与最低量确定");
+        dynamicAlert["BaselineAverage"].ToDecimal().ShouldBe(2m);
+        dynamicAlert["BaselineSamples"].ToInt32().ShouldBe(3);
+        dynamicAlert["Kind"].AsString.ShouldBe("warning", "动态检测只预警，固定限制仍是拒绝依据");
+        dynamicAlert["Origin"].AsString.ShouldBe("general");
+        (await database.Alerts.CountDocumentsAsync(new BsonDocument("Kind", "blocked"))).ShouldBe(1);
+        await using var console = await Console(database);
+        var client = console.GetTestClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await database.TokenAsync(Tenant, "admin"));
+        var readable = await client.GetAsync("/gw/logs/consumption-alerts");
+        (await readable.Content.ReadAsStringAsync()).ShouldContain("request_rate_baseline");
+    }
+
+    [Fact]
+    public async Task DynamicBaselineAlsoObservesExplicitRatePoliciesAndNeverUsesCurrentOrForeignWindows()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant, rate: 100);
+        await database.Data.Database.GetCollection<GatewayTenantGovernanceRecord>("llmgw_tenants")
+            .InsertOneAsync(new GatewayTenantGovernanceRecord { Id = Tenant, RateLimitPerMinute = 1000 });
+        await SeedDynamicHistory(database);
+        await using var app = await Serving(database, new(), DynamicPolicy());
+        for (var index = 0; index < 6; index++)
+            (await Send(app.GetTestClient(), false)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var alert = await database.Alerts.Find(new BsonDocument("Metric", "request_rate_baseline")).SingleAsync();
+        alert["Count"].ToInt64().ShouldBe(6);
+        alert["BaselineAverage"].ToDecimal().ShouldBe(2m);
+        database.UpstreamCalls.ShouldBe(6);
+    }
+
+    [Theory]
+    [InlineData("Multiplier", "1")]
+    [InlineData("Multiplier", "")]
+    [InlineData("MinimumSamples", "99")]
+    [InlineData("Enabled", "false")]
+    public async Task MissingOrInvalidDynamicPolicyCannotChangeFixedProtection(string field, string value)
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        await SeedDynamicHistory(database);
+        var policy = DynamicPolicy();
+        policy["LlmGateway:MinimumProtection:DynamicRateBaseline:" + field] = value;
+        await using var app = await Serving(database, new() { ["AppCallerPerHour"] = 1 }, policy);
+        (await Send(app.GetTestClient(), false)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Send(app.GetTestClient(), false)).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        database.UpstreamCalls.ShouldBe(1);
+        (await database.Alerts.CountDocumentsAsync(new BsonDocument("Metric", "request_rate_baseline"))).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task DynamicColdStartAndAlertFailureDoNotRelaxFixedLimit()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        await database.Data.Database.CreateCollectionAsync(GatewayMinimumProtectionCoordinator.AlertsCollection,
+            new CreateCollectionOptions<BsonDocument>
+            {
+                Validator = new BsonDocument("$jsonSchema", new BsonDocument("required", new BsonArray { "test-only-required-field" })),
+            });
+        await using var app = await Serving(database, new() { ["AppCallerPerHour"] = 8 }, DynamicPolicy());
+        for (var index = 0; index < 6; index++)
+            (await Send(app.GetTestClient(), false)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await database.Alerts.CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty)).ShouldBe(0);
+        await SeedDynamicHistory(database);
+        for (var index = 0; index < 2; index++)
+            (await Send(app.GetTestClient(), false)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Send(app.GetTestClient(), false)).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        database.UpstreamCalls.ShouldBe(8);
+        (await database.Alerts.CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty)).ShouldBe(0);
+    }
+
+    private static Dictionary<string, string?> DynamicPolicy() => new()
+    {
+        ["LlmGateway:MinimumProtection:DynamicRateBaseline:Enabled"] = "true",
+        ["LlmGateway:MinimumProtection:DynamicRateBaseline:WindowSeconds"] = "3600",
+        ["LlmGateway:MinimumProtection:DynamicRateBaseline:SampleWindows"] = "4",
+        ["LlmGateway:MinimumProtection:DynamicRateBaseline:MinimumSamples"] = "3",
+        ["LlmGateway:MinimumProtection:DynamicRateBaseline:Multiplier"] = "2",
+        ["LlmGateway:MinimumProtection:DynamicRateBaseline:MinimumCount"] = "6",
+    };
+
+    private static async Task SeedDynamicHistory(DiagnosticDatabase database)
+    {
+        var now = DateTime.UtcNow;
+        var current = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerHour, DateTimeKind.Utc);
+        BsonDocument Window(DateTime start, long count, string tenant = Tenant, string origin = "general") => new()
+        {
+            ["_id"] = Guid.NewGuid().ToString("N"), ["TenantId"] = tenant, ["AppCallerCode"] = Caller,
+            ["RequestType"] = "chat", ["Scope"] = "app-caller", ["Origin"] = origin,
+            ["WindowSeconds"] = 3600, ["WindowStart"] = start, ["Count"] = count, ["ExpiresAt"] = now.AddDays(1),
+        };
+        await database.Windows.InsertManyAsync(new[]
+        {
+            Window(current.AddHours(-1), 2), Window(current.AddHours(-2), 2), Window(current.AddHours(-3), 2),
+            Window(current, 10000), Window(current.AddHours(1), 10000), Window(current.AddHours(-5), 10000),
+            Window(current.AddHours(-1), 10000, "foreign-tenant"), Window(current.AddHours(-1), 10000, origin: "automatic"),
+        });
+    }
+
     private static async Task<HttpResponseMessage> Send(HttpClient client, bool automatic, string deployment = "local-revision", string key = InternalKey, string caller = Caller)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
@@ -267,7 +401,8 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         return await client.SendAsync(request);
     }
 
-    private static async Task<WebApplication> Serving(DiagnosticDatabase database, Dictionary<string, int> overrides)
+    private static async Task<WebApplication> Serving(DiagnosticDatabase database, Dictionary<string, int> overrides,
+        Dictionary<string, string?>? additionalConfiguration = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -278,6 +413,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
                 defaults["LlmGateway:MinimumProtection:" + prefix + period] = "1000";
         foreach (var (name, value) in overrides) defaults["LlmGateway:MinimumProtection:" + name] = value.ToString();
         builder.Configuration.AddInMemoryCollection(defaults);
+        if (additionalConfiguration is not null) builder.Configuration.AddInMemoryCollection(additionalConfiguration);
         builder.Services.AddSingleton(database.Data);
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton<GatewayMinimumProtectionCoordinator>();
