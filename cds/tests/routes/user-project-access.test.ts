@@ -222,6 +222,7 @@ describe('human project grants through the production server', () => {
     const restored = new StateService(path.join(dir, 'late-write-restored.json'));
     restored.load();
     expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await grant(['project-b'])).status).toBe(200);
   });
   it('restores a timed-out grant snapshot on restart before allowing the member or linked credentials', async () => {
@@ -1131,6 +1132,7 @@ describe('human project grants through the production server', () => {
     await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined(), { timeout: 2000 });
     expect(state.getPrincipal(principalId)?.status).toBe('disabled');
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(200);
   });
 

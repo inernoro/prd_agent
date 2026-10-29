@@ -103,4 +103,29 @@ public sealed class MapLogicalModelReferencePolicyMirrorTests
         Assert.True(File.Exists(fullPath), $"找不到文件: {fullPath}");
         return File.ReadAllText(fullPath);
     }
+    [Fact]
+    public void 三类过滤器都绑定公开模型标识()
+    {
+        var publicId = "image-public-id";
+        var rendered = new[]
+        {
+            Render(MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId)),
+            Render(MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId)),
+            Render(MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId)),
+        };
+
+        Assert.All(rendered, filter => Assert.Contains(publicId, filter));
+        Assert.Contains(MapLogicalModelReferencePolicy.VisualPolicyDefaultField, rendered[0]);
+        Assert.Contains(MapLogicalModelReferencePolicy.AgentKeyFixedModelField, rendered[1]);
+        Assert.Contains(MapLogicalModelReferencePolicy.AgentKeyOpenApiChatModelsField, rendered[1]);
+        Assert.Contains(MapLogicalModelReferencePolicy.AgentKeyOpenApiImageModelsField, rendered[1]);
+        Assert.Contains(MapLogicalModelReferencePolicy.ImageRunLogicalModelField, rendered[2]);
+
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("MapLogicalModelReferencePolicy.BuildVisualPolicyFilter", console);
+        Assert.Contains("MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter", console);
+        Assert.Contains("MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter", console);
+        Assert.Contains("MODEL_REFERENCED_BY_MAP", console);
+    }
+
 }

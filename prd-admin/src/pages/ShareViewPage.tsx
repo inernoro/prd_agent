@@ -1,3 +1,4 @@
+import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
@@ -194,6 +195,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
    * 不做成一闪而过的 toast——它是结论，用户得来得及读完。
    */
   const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
+  const pdfDownload = useHostedPdfDownload(data?.sites.length === 1 ? data.sites[0] : null,
+    token ? { token, password: password || undefined } : undefined);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
@@ -260,6 +263,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         fileCount: updated.files.length,
         coverImageUrl: updated.coverImageUrl,
         pdfAssetUrl: updated.pdfAssetUrl,
+        pdfFilePaths: updated.pdfFilePaths,
         wrappedAssetType: updated.wrappedAssetType,
       } : item),
     } : current);
@@ -978,11 +982,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               srcDoc 注入 base 后保留相对资源路径，同时不加 allow-same-origin，
               避免用户上传 HTML 获得 MAP 同源能力。
               PDF 壳子仍走 siteUrl：它需要以托管域名为文档源才加载得到同目录那份 PDF。 */}
+          <HostedPdfDownloadStatus status={pdfDownload.status} />
           <iframe
+            ref={pdfDownload.iframeRef}
+            onLoad={pdfDownload.notifyFrame}
             // siteUrl 为空时必须给 undefined 而不是 ''：空串在 HTML 里是「相对当前文档」，
             // iframe 会把分享页自己再加载一遍。下面那块空态提示正是为这种站点准备的。
             src={previewSource === 'direct' && site.siteUrl ? site.siteUrl : undefined}
-            srcDoc={previewSource === 'srcdoc' ? iframeHtml || undefined : undefined}
+            srcDoc={previewSource === 'srcdoc' && iframeHtml ? pdfDownload.decorateHtml(iframeHtml) : undefined}
             title={site.title}
             style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
             sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX}

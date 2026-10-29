@@ -1,14 +1,19 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
+import {createHash} from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { ContainerService } from '../../src/services/container.js';
 import { DeploymentVersionService, isImmutableImageReference } from '../../src/services/deployment-version.js';
 import { StateService } from '../../src/services/state.js';
+import { ProfileStorageProvisionService } from '../../src/services/profile-storage-provision.js';
+import { profileStoragePlan, storageOwnerLabels } from '../../src/services/deployment-storage-plan.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import type { BranchEntry, BuildProfile, CdsConfig, IShellExecutor, ServiceState } from '../../src/types.js';
 const dirs: string[] = [];
 const target = 'b'.repeat(40), oldId = `sha256:${'a'.repeat(64)}`, fixedId = `sha256:${'c'.repeat(64)}`;
+const builderId = `sha256:${'e'.repeat(64)}`;
 const artifact = 'owned/managed:sha-' + 'd'.repeat(40);
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-managed-policy-')); dirs.push(dir); fs.writeFileSync(path.join(dir, 'owned.txt'), 'owned-source');
@@ -17,7 +22,10 @@ function fixture() {
   const entry: BranchEntry = { id: 'owned', projectId: 'owned', branch: 'owned', status: 'running', worktreePath: dir,
     githubCommitSha: 'a'.repeat(40), createdAt: new Date().toISOString(), services: {} };
   const runtime: ServiceState = { profileId: 'web', containerName: 'old-owned-web', hostPort: 10001, status: 'running' }; entry.services.web = runtime;
-  const commands: string[] = [], buildEnvs: string[] = [], images = new Map<string, any>(); let sourceHead = target, commitRevision = target;
+  const commands: string[] = [], buildEnvs: string[] = [], images = new Map<string, any>(), created = new Map<string, any>(), builderIds: string[] = [];
+  const baseImage = { Id: builderId, Os: 'linux', Architecture: 'amd64', Config: { Labels: {}, Volumes: null } };
+  images.set('node:22-alpine',baseImage); images.set(builderId,baseImage);
+  let sourceHead = target, commitRevision = target;
   const shell: IShellExecutor = { exec: async (command, options) => {
     options?.beforeStart?.(); commands.push(command);
     if (command.startsWith('docker create') && command.includes('-managed-build-')) {
@@ -25,13 +33,30 @@ function fixture() {
       if (envFile) buildEnvs.push(fs.readFileSync(envFile, 'utf8'));
     }
     const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
+    if (command.startsWith('docker create')) {
+      const name = /--name (?:'([^']+)'|([^ ]+))/.exec(command)?.slice(1).find(Boolean)!;
+      const id = createHash('sha256').update(name).digest('hex');
+      const imageId = command.match(/sha256:[a-f0-9]{64}/g)?.at(-1)!;
+      const mounts = [...command.matchAll(/--mount '([^']+)'/g)].map(match => {
+        const fields = Object.fromEntries(match[1].split(',').map(field => field.includes('=') ? field.split('=') : [field,true]));
+        return {Type: fields.type,Source: fields.src || fields.source,Destination: fields.dst,RW: !fields.readonly};
+      });
+      const tmpfs = command.includes("--tmpfs '/tmp'") ? {'/tmp':''} : null;
+      created.set(id,[id,'/'+name,imageId,0,'created',mounts,tmpfs]);
+      if(name.includes('-managed-build-'))builderIds.push(id);
+      return ok(id);
+    }
+    if (command.startsWith('docker inspect') && command.includes('json .Mounts')) {
+      const id=command.match(/[a-f0-9]{64}/g)?.at(-1)!;
+      return created.has(id) ? ok(JSON.stringify(created.get(id))) : {exitCode:1,stdout:'',stderr:'No such object: '+id};
+    }
     if (command === 'git rev-parse HEAD') return ok(sourceHead);
     if (command.startsWith('docker info')) return ok(JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }));
     if (command.startsWith('docker image inspect')) {
       const image = command.match(/docker image inspect '([^']+)'/)?.[1] || '';
       const metadata = images.get(image);
       if (!metadata) return { stdout: '', stderr: 'No such image: owned', exitCode: 1 };
-      return ok(JSON.stringify(command.includes('--format') ? metadata.Config.Labels : [metadata]));
+      return ok(JSON.stringify(command.includes('[{{json .Id}},') ? [metadata.Id, metadata.Config.Volumes ?? null] : command.includes('--format') ? metadata.Config.Labels : [metadata]));
     }
     if (command.startsWith('docker pull')) return { stdout: '', stderr: 'manifest unknown', exitCode: 1 };
     if (command.startsWith('docker commit')) {
@@ -45,15 +70,38 @@ function fixture() {
   const state = new StateService(path.join(dir, 'state.json'));
   state.addProject({ id: 'owned', slug: 'owned', name: 'owned' } as any); state.addBranch(entry);
   const config = { repoRoot: dir, worktreeBase: dir, dockerNetwork: 'owned-network', sharedEnv: {}, jwt: { secret: 'owned-synthetic-only', issuer: 'owned' } } as CdsConfig;
-  const service = new ContainerService(shell, config);
+  const service = new ContainerService(shell, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
   vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
   vi.spyOn(service as any, 'waitForReadiness').mockResolvedValue(true);
   const versionService = new DeploymentVersionService(state);
   const hash = () => { const env = (service as any).resolveProfileRuntimeEnv({ ...entry, pinnedCommit: undefined, githubCommitSha: sourceHead, ciTargetSha: undefined }, profile); delete env.CDS_BUILD_TIME; return versionService.computeConfigHash([profile], env); };
   const cached = (revision = target, contractHash = hash()) => { const metadata = { Id: oldId, Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': revision, 'cds.managed.contract': contractHash } } }; images.set(artifact, metadata); images.set(oldId, metadata); };
-  return { service, state, versionService, entry, profile, runtime, commands, buildEnvs, images, hash, cached, setHead: (value: string) => { sourceHead = value; }, setCommittedRevision: (value: string) => { commitRevision = value; } };
+  return { service, state, versionService, entry, profile, runtime, commands, buildEnvs, images, builderIds, hash, cached, setHead: (value: string) => { sourceHead = value; }, setCommittedRevision: (value: string) => { commitRevision = value; } };
 }
 afterEach(async () => { vi.restoreAllMocks(); await flushAllJsonStateStores(); for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
+it('real published app storage does not become a temporary builder mount requirement',async()=>{
+  const f=fixture(),config=(f.service as any).config as CdsConfig;
+  config.storageInstanceId='owned';f.profile.projectId='owned';f.state.addBuildProfile(f.profile);
+  f.state.getBranch('owned')!.services={};
+  const volumes=new Map<string,any>();
+  const pshell:IShellExecutor={exec:async(c,o)=>{
+    o?.beforeStart?.();const name=/'([^']+)'$/.exec(c)?.[1]||'';
+    if(c.startsWith('docker image inspect'))return{exitCode:0,stdout:JSON.stringify([fixedId,null]),stderr:''};
+    if(c.startsWith('docker info'))return{exitCode:0,stdout:'owned-daemon',stderr:''};
+    if(c.startsWith('docker volume inspect'))return volumes.has(name)?{exitCode:0,stdout:JSON.stringify([volumes.get(name)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume'};
+    if(c.startsWith('docker volume create')){const row=f.state.getStorageBirth(name)!;volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-24T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stdout:name,stderr:''};}
+    throw Error('unexpected P command');
+  }};
+  await new ProfileStorageProvisionService(f.state,pshell,config).provisionNewProfile(f.entry,f.profile,[{mountKey:'data',containerPath:'/data',purpose:'persistent'}],'owned-builder-storage',()=>{});
+  const bound=f.state.resolvePublishedProfileStorage(f.entry,f.profile);
+  const resolver={getDockerNetwork:()=> 'owned-network',storageBirthRequirements:(p:any)=>f.state.storageBirthRequirements(p)};
+  const service=new ContainerService((f.service as any).shell,config,resolver,undefined,undefined,undefined,unitBindMountInspector);
+  await expect((service as any).buildManagedArtifact(f.entry,bound,f.runtime,target,'owned-network')).resolves.toMatchObject({dockerImage:fixedId});
+  const create=f.commands.find(c=>c.startsWith('docker create')&&c.includes('-managed-build-'))!;
+  expect(create).toBeDefined();expect(create).not.toContain('--mount');expect(f.commands.some(c=>c.startsWith('docker cp'))).toBe(true);
+  expect(()=>f.state.storageBirthRequirements(profileStoragePlan(f.entry,{...bound,prebuiltImage:true,managedBuild:undefined,cacheMounts:[]},config))).toThrow('storage_provision');
+  expect(f.commands.some(c=>/^docker (stop|rm).*old-owned-web/.test(c))).toBe(false);
+});
 describe('受管产物生产身份与显式源码政策', () => {
   it('同源码及配置再次派发仅更新时间时复用实际已有产物，不重新编译', async () => {
     const f = fixture(); await f.service.runService(f.entry, f.profile, f.runtime);
@@ -95,7 +143,8 @@ describe('受管产物生产身份与显式源码政策', () => {
     const f = fixture(); f.setCommittedRevision('e'.repeat(40));
     await expect(f.service.runService(f.entry, f.profile, f.runtime)).rejects.toThrow('新构建产物');
     expect(f.commands.some(c => c.startsWith('docker run') || c.startsWith('docker rm -f old-owned-web'))).toBe(false);
-    expect(f.commands.some(c => c.startsWith('docker rm -f') && c.includes('-managed-build-'))).toBe(true);
+    expect(f.builderIds).toHaveLength(1);
+    expect(f.commands).toContain(`docker rm -f '${f.builderIds[0]}'`);
   });
   it.each(['revision', 'platform', 'unknown-target'])('本地固定版本拒绝%s并保持旧容器', async reason => {
     const f = fixture(); f.cached(reason === 'revision' ? 'e'.repeat(40) : target);

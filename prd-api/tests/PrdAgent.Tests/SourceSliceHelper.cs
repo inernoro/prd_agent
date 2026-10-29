@@ -44,6 +44,33 @@ internal static class SourceSlice
     }
 
     /// <summary>
+    /// 沿网页托管的公开包装追到实际实现；先验证每个包装原样透传全部参数，不能只跳过包装。
+    /// </summary>
+    public static string HostedSiteImplementation(string source, string member)
+    {
+        var compact = System.Text.RegularExpressions.Regex.Replace(member, @"\s+", " ").Trim();
+        if (compact.StartsWith("public async Task<HostedSite> CreateFromZipAsync( string userId, byte[]", StringComparison.Ordinal))
+        {
+            Assert.Contains("new MemoryStream(zipBytes, writable: false)", compact);
+            Assert.Contains("return await CreateFromZipAsync(userId, stream, title, description, folder, tags, wrappedAssetType, ct, uploadId, sourceRef);", compact);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(compact, @"\breturn\b"));
+            return Member(source, "public async Task<HostedSite> CreateFromZipAsync(\n        string userId, Stream zipStream,");
+        }
+        if (System.Text.RegularExpressions.Regex.IsMatch(compact, @"^public (?:async )?Task<HostedSite> ReuploadAsync\("))
+        {
+            var buffered = compact.Contains("byte[] fileBytes", StringComparison.Ordinal);
+            if (buffered) Assert.Contains("new MemoryStream(fileBytes, writable: false)", compact);
+            var expectedReturn = buffered
+                ? "return await ReuploadCoreAsync(siteId, userId, stream, fileBytes, fileName, wrappedAssetType, ct, uploadId, reuploadRef);"
+                : "return ReuploadCoreAsync(siteId, userId, zipStream, null, fileName, wrappedAssetType, ct, uploadId, reuploadRef);";
+            Assert.Contains(expectedReturn, compact);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(compact, @"\breturn\b"));
+            return Member(source, "private async Task<HostedSite> ReuploadCoreAsync(");
+        }
+        return member;
+    }
+
+    /// <summary>
     /// 取「某个签名之后、直到某个结束标记为止」的一段。用于只想守住方法里某一个分支的场合
     /// （例如「模型没有任何输出」那一档到它自己的 return 为止），比整段方法体更贴。
     /// </summary>

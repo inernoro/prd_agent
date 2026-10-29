@@ -29,7 +29,7 @@ export function productDisplayName(product: Pick<Product, 'name' | 'productNo'>)
   return name;
 }
 
-export function toProductOptions(products: Product[]): ItemSearchOption[] {
+export function toProductOptions(products: Pick<Product, 'id' | 'name' | 'productNo'>[]): ItemSearchOption[] {
   return products.map((p) => ({
     id: p.id,
     label: productDisplayName(p),

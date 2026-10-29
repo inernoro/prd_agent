@@ -1,3 +1,4 @@
+import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-plan.js';
 import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { addressWriteLocked } from '../services/preview-address-settings.js';
@@ -29,7 +30,9 @@ import { addressWriteLocked } from '../services/preview-address-settings.js';
 
 import express, { Router } from 'express';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { StorageProvisionService } from '../services/storage-provision.js';
+import { infraStoragePlan,stableStorageVolumeName } from '../services/deployment-storage-plan.js';
 import { StateService } from '../services/state.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
@@ -61,7 +64,7 @@ import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../s
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { normalizeBranchGroups } from '../services/branch-groups.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
-import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
+import { applyDefaultDeployModesToBranch, assertValidDefaultDeployModes, InvalidDefaultDeployModeError } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import { mergeGitAuthEnv, resolveGitAuthEnv } from '../services/git-auth-env.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
@@ -982,12 +985,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     };
   }
 
-  function applyInfraPresets(
+  async function applyInfraPresets(
     project: Project,
     presetIds: string[],
     configMap?: Record<string, { dbName?: string; initSql?: string }>,
     extraInstances?: Array<{ presetId: string; dbName?: string; initSql?: string }>,
-  ): string[] {
+    provision?: {assertCurrent:()=>void;allocated:string[];strictFresh?:boolean},
+  ): Promise<string[]> {
     // 实例请求清单:每个被选预设的第 1 个实例(presetIds) + 额外同类型实例(extraInstances,第 2+ 个)。
     const requests: Array<{ presetId: string; dbName?: string; initSql?: string }> = [];
     for (const presetId of Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))))) {
@@ -1002,9 +1006,36 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
     if (requests.length === 0) return [];
-
     const existing = stateService.getInfraServicesForProject(project.id);
     const existingIds = new Set(existing.map((service) => service.id));
+    if (provision) {
+      provision.assertCurrent();
+      const plannedCounts=new Map<string,number>();
+      // Explicit new-only is retry-safe and never increments past an existing birth.
+      // Ordinary UI keeps its additional-DB/singleton-noop contract; NEW IDs still
+      // receive the identical first-allocation protocol, never an R allocator.
+      if (!provision.strictFresh) for (const service of existing) {
+        const base=service.basePresetId||service.id;
+        plannedCounts.set(base,(plannedCounts.get(base)||0)+1);
+      }
+      const plannedNew: typeof requests = [];
+      for(const request of requests){
+        if(provision.strictFresh && existing.some(row=>(row.basePresetId||row.id)===request.presetId))
+          throw new Error('storage_provision_unconfirmed');
+        const index=plannedCounts.get(request.presetId)||0;
+        if(index>0&&!getInfraCatalogEntry(request.presetId)?.supportsDbName)continue;
+        plannedCounts.set(request.presetId,index+1);
+        const id=index?`${request.presetId}-${index+1}`:request.presetId;
+        // A held/unpublished original ID is NOT counted as an existing instance.
+        // Its birth blocks this exact request; do not skip it or choose a new ID.
+        if(existingIds.has(id)||stateService.getStorageBirthsForService(project.id,id).length)
+          throw new Error('storage_provision_unconfirmed');
+        plannedNew.push(request);
+      }
+      const needsStorage=plannedNew.some(r=>recommendedVolumePathsForImage(getInfraCatalogEntry(r.presetId)!.dockerImage)?.length);
+      if(needsStorage&&(!config?.storageInstanceId||!config.repoRoot))throw new Error('storage_provision_unconfirmed');
+      provision.assertCurrent();
+    }
     const countByPreset = new Map<string, number>();
     for (const service of existing) {
       const base = service.basePresetId || service.id;
@@ -1053,7 +1084,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         ...(preset.entrypoint ? { entrypoint: preset.entrypoint } : {}),
         createdAt: new Date().toISOString(),
       };
-      stateService.addInfraService(service);
+      if (provision && service.volumes?.length) {
+        provision.assertCurrent();service.scope='project';
+        service.volumes=(service.volumes||[]).map((volume,index)=>{
+          if(volume.type!=='volume')throw new Error('storage_provision_unconfirmed');
+          const storage={version:1 as const,instanceId:config!.storageInstanceId!,projectId:project.id,scope:'project-shared' as const,
+            serviceId:service.id,mountKey:index?`data-${index+1}`:'data',purpose:'persistent' as const};
+          return {...volume,name:stableStorageVolumeName(storage),storage};
+        });
+        await new StorageProvisionService(stateService,shell,config!).provisionNewInfra(service,infraStoragePlan(service,config!),`storage_${randomUUID()}`,provision.assertCurrent);
+        provision.allocated.push(service.id);provision.assertCurrent();
+      } else stateService.addInfraService(service);
       applied.push(service.id);
       // 连接串:第 1 个实例零改动;第 2+ 个加 _N 后缀 + host 改写到实例别名(纯函数,见单测)。
       const connEnv = instanceConnectionEnv(preset.envVars || {}, req.presetId, instanceId, idx);
@@ -1064,6 +1105,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           hint: `${service.name} 连接串，由 CDS 创建基础设施时生成`,
         };
       }
+      if(provision){
+        stateService.setEnvMeta(project.id,envMeta);
+        // Connections live on the split project document. The next P's global
+        // birth ACK cannot persist them: settle this successful item first.
+        stateService.save([{kind:'projects',id:project.id},{kind:'global'}]);
+        await stateService.flush();provision.assertCurrent();
+      }
     }
     if (Object.keys(envMeta).length > 0) {
       stateService.setEnvMeta(project.id, envMeta);
@@ -1071,6 +1119,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (applied.length > 0) {
       stateService.save();
     }
+    if (provision) { provision.assertCurrent();await stateService.flush();provision.assertCurrent(); }
     return applied;
   }
 
@@ -1304,6 +1353,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       })),
       idSuffix,
     );
+    // Throw to the existing finite auto-config error path; do not fall through
+    // into heuristic imports after a retained-storage refusal.
+    assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));
+    stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles);
     for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
@@ -2316,7 +2369,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 项目级：对已存在项目按基建目录(infra-catalog SSOT)应用预设，生成真随机密码 +
   // 自动注入连接环境变量(与一键部署同一条 applyInfraPresets 路径)。拓扑页「新增基础设施」
   // 选预设时走这里，而不是手填 change-me 占位。custom 镜像仍走 POST /api/infra。
-  router.post('/projects/:id/infra-presets', (req, res) => {
+  router.post('/projects/:id/infra-presets', async (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: 'project_not_found' });
@@ -2331,7 +2384,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(mismatch.status).json(mismatch.body);
       return;
     }
-    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown; infraExtra?: unknown };
+    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown; infraExtra?: unknown; initializeStorage?: unknown };
+    if(body.initializeStorage!==undefined && body.initializeStorage!=='new-only'){res.status(400).json({error:'storage_provision_input_invalid'});return}
     const presetIds = (Array.isArray(body.presetIds) ? body.presetIds : [])
       .filter((id): id is string => typeof id === 'string');
     if (presetIds.length === 0) {
@@ -2343,9 +2397,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(400).json({ error: `未知基建预设: ${unknown.join(', ')}（见 GET /api/infra/catalog）` });
       return;
     }
-    const applied = applyInfraPresets(project, presetIds, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
-    const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
-    res.json({ applied, services });
+    // The catalog UI already authorizes creation of fresh preset resources.
+    // Absence of the optional flag must not publish unallocated stable storage.
+    const allocated:string[]=[];
+    const instance=config?.storageInstanceId,repoRoot=config?.repoRoot,identity=JSON.stringify([project.id,project.slug,project.legacyFlag]);
+    const assertCurrent=()=>{
+      if(req.aborted||res.destroyed||assertProjectAccess(req as any,project.id)||stateService.getProject(project.id)!==project||project.paused
+        ||JSON.stringify([project.id,project.slug,project.legacyFlag])!==identity||config?.storageInstanceId!==instance||config?.repoRoot!==repoRoot)throw new Error('storage_provision_unconfirmed');
+    };
+    try {
+      const applied = await applyInfraPresets(project,presetIds,parseInfraConfigs(body.infraConfigs),parseInfraExtra(body.infraExtra),{assertCurrent,allocated,strictFresh:body.initializeStorage==='new-only'});
+      const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
+      res.json({applied,services,storageMode:allocated.length?'allocated':'not-required'});
+    } catch {
+      res.status(409).json({error:'storage_provision_unconfirmed',allocated,recoveryRequired:true});
+    }
   });
 
   // 试运行验证(配置闭环):用一次性容器在真实仓库上测「镜像 + 启动命令 + 端口」能否跑通。
@@ -3182,7 +3248,28 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         userEnvEntries.push([key, value]);
       }
     }
-    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
+    const allocatedPresetStorage: string[] = [];
+    const presetInstance = config?.storageInstanceId, presetRepoRoot = config?.repoRoot;
+    const presetIdentity = JSON.stringify([newProject.id,newProject.slug,newProject.legacyFlag]);
+    const assertFreshPresetsCurrent = () => {
+      if (req.aborted || res.destroyed || stateService.getProject(newProject.id) !== newProject || newProject.paused
+        || assertProjectAccess(req as any,newProject.id)
+        || JSON.stringify([newProject.id,newProject.slug,newProject.legacyFlag]) !== presetIdentity
+        || config?.storageInstanceId !== presetInstance || config?.repoRoot !== presetRepoRoot)
+        throw new Error('storage_provision_unconfirmed');
+    };
+    let appliedInfraPresets: string[];
+    try {
+      appliedInfraPresets = await applyInfraPresets(newProject, infraPresets,
+        parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra),
+        {assertCurrent:assertFreshPresetsCurrent,allocated:allocatedPresetStorage,strictFresh:true});
+    } catch {
+      // Keep the new project/network and every original birth, including uncertain P.
+      // Never roll back allocated volumes or silently allocate a new project on retry.
+      res.status(409).json({error:'storage_provision_unconfirmed',project:newProject,
+        allocated:allocatedPresetStorage,recoveryRequired:true});
+      return;
+    }
     // applyInfraPresets 也会写 DATABASE_URL/REDIS_URL 等连接串,会覆盖用户同名粘贴值
     // (基建预设的连接串指向刚创建的容器,优先生效)。但不能"静默"覆盖——收集被覆盖的 key
     // 回传前端 + console.warn,让用户知道粘贴的外部连接串被基建生成值取代了(PR #711 review)。
@@ -3764,6 +3851,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     const defaults = project.defaultDeployModes;
     const profiles = stateService.getBuildProfilesForProject(project.id);
+    try {
+      assertValidDefaultDeployModes(defaults, profiles);
+    } catch (err) {
+      if (!(err instanceof InvalidDefaultDeployModeError)) throw err;
+      res.status(409).json({ error: err.message, code: err.code });
+      return;
+    }
     // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
     // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。表里没有的 profile 对齐后
     // 回到基线，基线是源码同样算（coverAllProfiles）。
@@ -3775,6 +3869,28 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
     const branches = stateService.getBranchesForProject(project.id);
+    // Validate the complete batch against unchanged live declarations. Applying
+    // defaults to a live branch first would make the retained-storage comparison
+    // see the candidate as its own original and skip admission.
+    const candidates = new Map(branches.map(branch => {
+      const candidate = structuredClone(branch);
+      applyDefaultDeployModesToBranch(candidate, defaults, profiles);
+      for (const profile of profiles) {
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
+          const override = candidate.profileOverrides?.[profile.id];
+          if (override) delete override.activeDeployMode;
+        }
+      }
+      return [branch.id, candidate] as const;
+    }));
+    try {
+      stateService.assertProfileStorageDeclarationsPreserved(
+        stateService.getAllBranches().map(branch => candidates.get(branch.id) || branch),
+      );
+    } catch (error) {
+      res.status(409).json({ error: 'storage_retained_profile_mutation_refused', message: (error as Error).message });
+      return;
+    }
     const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
     for (const branch of branches) {
       // 对齐前记录各 profile 当前激活模式,用于判定本次对齐是否真的改了模式。
@@ -3783,17 +3899,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         prevModes[profile.id] = branch.profileOverrides?.[profile.id]?.activeDeployMode || '';
       }
       // 复用 SSOT 写入逻辑（建分支与 webhook 自动建分支同款）
-      applyDefaultDeployModesToBranch(branch, defaults, profiles);
+      const candidate = candidates.get(branch.id)!;
       const modes: Record<string, string> = {};
       let modeChanged = false;
       for (const profile of profiles) {
-        const ov = branch.profileOverrides?.[profile.id];
+        const ov = candidate.profileOverrides?.[profile.id];
         if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
           // 2026-10-08：表里没有 = 「跟随构建配置」。新分支不会拷这一项，所以对齐也要把分支覆盖里
           // 残留的模式清掉、回到基线；只跳过会让页面写着「跟随（极速版）」而存量分支仍停在 dev。
-          if (!ov || ov.activeDeployMode === undefined) continue;
-          const { activeDeployMode: _dropped, ...rest } = ov;
-          stateService.setBranchProfileOverride(branch.id, profile.id, rest);
+          if (branch.profileOverrides?.[profile.id]?.activeDeployMode === undefined) continue;
+          stateService.setBranchProfileOverride(branch.id, profile.id, ov || {});
           modes[profile.id] = profile.activeDeployMode || '';
           modeChanged = true;
           continue;
@@ -4171,6 +4286,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+
+    // Before tombstones, state cascade or native teardown: preserve retained storage ownership.
+    try { stateService.assertProjectStorageRemovalAllowed(project.id); }
+    catch (error) { res.status(409).json({error:'storage_retained_service_delete_refused',message:(error as Error).message}); return; }
 
     // 2026-07-15（用户实锤修复）：删项目必须连带容器。此前"容器故意不清理"
     // 导致已删项目的 infra / app 容器永远留在宿主上吃 CPU（单日取证 68 个

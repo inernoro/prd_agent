@@ -40,4 +40,13 @@ describe('productImportRouting', () => {
     expect(resolved.productId).toBeNull();
     expect(resolved.label).toBe('不存在的产品');
   });
+
+  it('does not guess between two similar products', () => {
+    const candidates = [
+      { id: 'p1', name: '营销应用' },
+      { id: 'p2', name: '营销后台' },
+    ];
+    expect(matchProductByLabel(candidates, '营销')).toBeNull();
+    expect(matchProductByLabel(candidates, '营销应用')?.id).toBe('p1');
+  });
 });

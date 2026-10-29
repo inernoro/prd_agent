@@ -231,9 +231,16 @@ describe('Pending-import router', () => {
   });
 
   describe('POST /api/pending-imports/:id/approve', () => {
-    it('applies profiles, env, and infra to the target project', async () => {
+    it('stateful compose approval remains pending and publishes no config before explicit new-only allocation',async()=>{
+      const created=await request(server,'POST',`/api/projects/${projectId}/pending-import`,{agentName:'A',composeYaml:SAMPLE_YAML});
+      const before=JSON.stringify(stateService.getState());
+      const result=await request(server,'POST',`/api/pending-imports/${created.body.importId}/approve`);
+      expect(result.status).toBe(409);expect(result.body.error).toBe('storage-provision-new-only-required');expect(JSON.stringify(stateService.getState())).toBe(before);expect(stateService.getPendingImport(created.body.importId)?.status).toBe('pending');
+    });
+
+    it('applies profiles, env, and stateless infra to the target project', async () => {
       const create = await request(server, 'POST', `/api/projects/${projectId}/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       const importId = create.body.importId;
 
@@ -290,7 +297,7 @@ describe('Pending-import router', () => {
         updatedAt: now,
       });
       const create = await request(server, 'POST', `/api/projects/default/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       // The seeded default project mimics a migrated legacy instance;
       // clone status is absent so the not-ready guard doesn't fire.
@@ -305,7 +312,7 @@ describe('Pending-import router', () => {
 
     it('refuses to approve twice', async () => {
       const create = await request(server, 'POST', `/api/projects/${projectId}/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       const importId = create.body.importId;
       await request(server, 'POST', `/api/pending-imports/${importId}/approve`);
@@ -317,7 +324,7 @@ describe('Pending-import router', () => {
     it('does not clobber existing env keys', async () => {
       stateService.setCustomEnvVar('JWT_SECRET', 'pre-existing');
       const create = await request(server, 'POST', `/api/projects/${projectId}/pending-import`, {
-        agentName: 'A', composeYaml: SAMPLE_YAML,
+        agentName: 'A', composeYaml: SAMPLE_YAML.replace('image: mongo:7','image: example/stateless-infra:1'),
       });
       await request(server, 'POST', `/api/pending-imports/${create.body.importId}/approve`);
       const env = stateService.getCustomEnv();

@@ -414,16 +414,17 @@ export async function apiDownload(
   path: string,
   fallbackFileName: string,
   didRefresh = false,
+  allowAnonymous = false,
 ): Promise<ApiDownloadedFile> {
   const authStore = useAuthStore.getState();
-  if (!authStore.token) throw new Error('当前尚未登录，请登录后重试。');
+  if (!authStore.token && !allowAnonymous) throw new Error('当前尚未登录，请登录后重试。');
 
   const headers: Record<string, string> = {
     Accept: 'application/octet-stream',
-    Authorization: `Bearer ${authStore.token}`,
     'X-Client': 'admin',
     'X-Client-Base-Url': window.location.origin,
   };
+  if (authStore.token) headers.Authorization = `Bearer ${authStore.token}`;
   const appName = resolveAdminAppName();
   if (appName) headers['X-App-Name'] = appName;
 
@@ -440,7 +441,7 @@ export async function apiDownload(
     : await response.clone().json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
   if (isSessionAuthenticationFailure(response.status, errorBody?.error?.code)) {
     if (!didRefresh && await tryRefreshAdminToken()) {
-      return apiDownload(path, fallbackFileName, true);
+      return apiDownload(path, fallbackFileName, true, allowAnonymous);
     }
     const latestAuth = useAuthStore.getState();
     if (latestAuth.isAuthenticated) {
