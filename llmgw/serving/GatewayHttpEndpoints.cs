@@ -58,7 +58,10 @@ public static class GatewayHttpEndpoints
         //   同样只接受 gateway key；为兼容 OpenAI SDK，允许 Authorization: Bearer <key>。
         app.Use(async (context, next) =>
         {
-            var path = context.Request.Path.Value ?? string.Empty;
+            var path = GatewayTaskRoutePolicy.Normalize(context.Request.Path.Value ?? string.Empty);
+            // serving只承载网关数据面。新增已匹配端点默认进密钥/任务门，遗漏业务治理方法也不能发送上游。
+            var protectedNewEndpoint = context.GetEndpoint() is not null
+                && !GatewayTaskRoutePolicy.IsAnonymousProbe(context.Request.Method, path);
             var protectedGatewayPath = path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
                                        && !path.Equals("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase)
                                        // 深度自检同样匿名：CDS 的自定义探针**刻意不携带任何密钥**
@@ -79,7 +82,7 @@ public static class GatewayHttpEndpoints
                 || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith("/v1beta/models/", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith("/gemini/v1beta/models/", StringComparison.OrdinalIgnoreCase);
-            if (protectedGatewayPath || protectedCompatPath)
+            if (protectedNewEndpoint || protectedGatewayPath || protectedCompatPath)
             {
                 var providedKey = ResolveProvidedGatewayKey(context);
                 var authorizer = context.RequestServices.GetService<IGatewayScopedKeyAuthorizer>();
@@ -112,7 +115,8 @@ public static class GatewayHttpEndpoints
                         LegacySharedKey: true,
                         ClientCode: "map-internal",
                         Environment: "production",
-                        KeyPrefixSnapshot: "internal")
+                        KeyPrefixSnapshot: "internal",
+                        AuthenticatedSourceSystem: "map")
                     : await authorizer.AuthorizeAsync(
                         providedKey ?? string.Empty,
                         gatewayApiKey,
@@ -149,7 +153,70 @@ public static class GatewayHttpEndpoints
                     };
                 }
                 context.Items["llmgw.key.authorization"] = authorization;
+                authorizationInputs = authorizationInputs with
+                {
+                    SourceSystem = authorization.AuthenticatedSourceSystem
+                        ?? (authorization.LegacySharedKey || authorization.RuntimeGrant is not null ? "map" : "external"),
+                };
                 context.Items["llmgw.key.authorization.inputs"] = authorizationInputs;
+
+                var readOnly = GatewayTaskRoutePolicy.IsReadOnlyOperation(context.Request.Method, path,
+                    (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText);
+                var paid = GatewayTaskRoutePolicy.IsAdmittedPaidOperation(context.Request.Method, path);
+                GatewayTaskAdmissionDecision admission;
+                var sidecarValidation = GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(authorization.RuntimeGrant) && paid
+                    ? await ValidateTaskSidecarRequestAsync(context, authorization.RuntimeGrant!) : GatewayTaskAdmissionDecision.Allow();
+                if (!sidecarValidation.Allowed) admission = sidecarValidation;
+                else if (!readOnly && !paid)
+                    admission = GatewayTaskAdmissionDecision.Deny("GATEWAY_ROUTE_NOT_ADMITTED", "此操作尚未获准执行，已停止本次调用；请使用已开放的业务入口。");
+                else if (paid || context.Request.Headers.ContainsKey(GatewayTaskAdmission.HeaderName) || authorization.RuntimeGrant is not null)
+                {
+                    var taskAdmission = context.RequestServices.GetService<IGatewayTaskAdmission>();
+                    admission = taskAdmission is null
+                        ? GatewayTaskAdmissionDecision.Deny("TASK_ADMISSION_UNAVAILABLE", "任务授权服务暂时不可用，已停止本次调用；请稍后重试。", 503)
+                        : await taskAdmission.AdmitAsync(context, authorization, authorizationInputs.AppCallerCode, paid, CancellationToken.None);
+                }
+                else admission = GatewayTaskAdmissionDecision.Allow();
+                if (admission.Allowed && paid && GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(authorization.RuntimeGrant))
+                {
+                    try
+                    {
+                        var counter = context.RequestServices.GetService<IGatewayRuntimeGrantCallCounter>();
+                        // SDK sidecar 使用既有按次票据；金额绑定票据必须在物理发送端解析路由与输出上限。
+                        // 此处传真实请求字节，零输出上限会令意外的金额绑定票据安全拒绝。
+                        var reserved = counter is null ? null : await counter.TryReserveAsync(authorization.RuntimeGrant!,
+                            new GatewayRuntimeGrantCallRequest(TrackGatewayRequestId(context),
+                                checked((int)context.Request.Body.Length), 0), CancellationToken.None);
+                        if (reserved is null || !reserved.Allowed)
+                            admission = GatewayTaskAdmissionDecision.Deny(reserved?.ErrorCode ?? "GATEWAY_RUNTIME_GRANT_ADMISSION_UNAVAILABLE",
+                                "当前执行器授权已失效或次数已用尽，已停止调用；请重新发起任务。", reserved?.StatusCode ?? 503);
+                    }
+                    catch (Exception ex)
+                    {
+                        context.RequestServices.GetService<ILogger<GatewayTaskAdmission>>()?.LogError(ex, "[GatewayTaskAdmission] executor authorization storage unavailable");
+                        admission = GatewayTaskAdmissionDecision.Deny("GATEWAY_RUNTIME_GRANT_ADMISSION_UNAVAILABLE",
+                            "执行器授权服务暂时不可用，已停止调用；请稍后重新发起任务。", 503);
+                    }
+                }
+                if (!admission.Allowed)
+                {
+                    await WriteRejectedGatewayRequestLogAsync(context, authorization, authorizationInputs, path,
+                        CancellationToken.None, admission.StatusCode, admission.ErrorCode);
+                    context.Response.StatusCode = admission.StatusCode;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(JsonSerializer.Serialize(new
+                    {
+                        error = new { code = admission.ErrorCode, message = admission.Message },
+                    }, jsonOpts));
+                    return;
+                }
+                if (admission.Permit is not null)
+                    context.Items[GatewayTaskAdmission.HttpContextPermitKey] = admission.Permit;
+                if (paid)
+                {
+                    context.Items[GatewayInvocationAuthority.PaidAdmissionKey] = true;
+                    context.Items[GatewayInvocationAuthority.AdmittedCallerKey] = authorizationInputs.AppCallerCode;
+                }
 
                 // Quickstart dry-run 必须走真实协议 URL 和 scoped key 鉴权，但在模型解析、预算预占
                 // 与上游发送之前结束。成功的 dry-run 仍写入带工作负载身份的租户日志，便于从
@@ -560,7 +627,9 @@ public static class GatewayHttpEndpoints
                         runtimeGrant,
                         requestId,
                         outcome.TokenUsage,
-                        outcome.ErrorCode ?? (outcome.Success ? "succeeded" : "failed"),
+                        outcome is GatewayResponseRejectedBeforeSend
+                            ? GatewayTaskBudgetOutcomes.RejectedBeforeSend
+                            : outcome.ErrorCode ?? (outcome.Success ? "succeeded" : "failed"),
                         CancellationToken.None);
                 http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
                 if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
@@ -730,6 +799,7 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
+            ingress = ApplyTaskSidecarRouting(http, ingress);
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
@@ -985,6 +1055,7 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
+            ingress = ApplyTaskSidecarRouting(http, ingress);
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
@@ -1172,6 +1243,10 @@ public static class GatewayHttpEndpoints
                     GatewayTransport = GatewayTransports.Http,
                 },
             };
+            var resolveAuthorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
+            if (resolveAuthorization is not null)
+                ApplyVerifiedExecutionContext(http, ingress, resolveAuthorization);
+            ingress = ApplyTaskSidecarRouting(http, ingress);
             if (!await CanPreviewAppCallerForTeamAsync(services, ingress, CancellationToken.None))
             {
                 return Results.Json(new
@@ -1185,12 +1260,12 @@ public static class GatewayHttpEndpoints
                     },
                 }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
             }
-            using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, body.AppCallerCode);
-            var resolution = string.IsNullOrWhiteSpace(body.OfferingId)
+            using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, ingress.AppCallerCode);
+            var resolution = GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(resolveAuthorization?.RuntimeGrant) || string.IsNullOrWhiteSpace(body.OfferingId)
                 ? await gateway.ResolveModelAsync(
-                    body.AppCallerCode, body.ModelType, effectiveExpectedModel, body.PinnedPlatformId, body.PinnedModelId, CancellationToken.None)
+                    ingress.AppCallerCode, body.ModelType, ingress.ExpectedModel, ingress.PinnedPlatformId, ingress.PinnedModelId, CancellationToken.None)
                 : await gateway.ResolveOfferingAsync(
-                    body.AppCallerCode, body.ModelType, body.OfferingId, CancellationToken.None);
+                    ingress.AppCallerCode, body.ModelType, body.OfferingId, CancellationToken.None);
             return Results.Json(resolution, jsonOpts);
         });
 
@@ -1382,7 +1457,13 @@ public static class GatewayHttpEndpoints
                     }
                     else if (chunk.Type == GatewayChunkType.Error)
                     {
-                        taskOutcome = chunk.ErrorCode ?? "failed";
+                        if (chunk is GatewayStreamRejectedBeforeSend)
+                        {
+                            taskOutcome = GatewayTaskBudgetOutcomes.RejectedBeforeSend;
+                            // SSE 的 HTTP 200 只代表传输建立，不能把已确认未发送的撤权记成月预算消费。
+                            http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = StatusCodes.Status403Forbidden;
+                        }
+                        else taskOutcome = chunk.ErrorCode ?? "failed";
                     }
                     var data = "data: " + JsonSerializer.Serialize(chunk, jsonOpts) + "\n\n";
                     await http.Response.WriteAsync(data);
@@ -1605,6 +1686,14 @@ public static class GatewayHttpEndpoints
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
 
+            profileRequest = new GatewayUpstreamProfileTestRequest
+            {
+                AppCallerCode = profileRequest.AppCallerCode, Protocol = profileRequest.Protocol,
+                BaseUrl = profileRequest.BaseUrl, Model = profileRequest.Model, ApiKey = profileRequest.ApiKey,
+                ProfileId = profileRequest.ProfileId, ProfileName = profileRequest.ProfileName,
+                UserId = ingress.Context?.UserId, RequestId = requestId,
+                Context = ingress.Context, TimeoutSeconds = profileRequest.TimeoutSeconds,
+            };
             GatewayCancellationLease? cancellation = null;
             try
             {
@@ -1762,8 +1851,12 @@ public static class GatewayHttpEndpoints
         var provided = context.Request.Headers["X-Gateway-Key"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(provided)) return provided.Trim();
         var auth = context.Request.Headers.Authorization.FirstOrDefault();
-        return !string.IsNullOrWhiteSpace(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? auth["Bearer ".Length..].Trim()
+        if (!string.IsNullOrWhiteSpace(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return auth["Bearer ".Length..].Trim();
+        // 官方 Anthropic SDK 通过标准头携带同一网关凭据；仍由下游核验密钥和有限父任务。
+        var path = GatewayTaskRoutePolicy.Normalize(context.Request.Path.Value ?? string.Empty);
+        return path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
+            ? context.Request.Headers["x-api-key"].FirstOrDefault()?.Trim()
             : null;
     }
 
@@ -2090,6 +2183,40 @@ public static class GatewayHttpEndpoints
         => context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization authorization
             ? authorization.RuntimeGrant
             : null;
+
+    private static async Task<GatewayTaskAdmissionDecision> ValidateTaskSidecarRequestAsync(HttpContext http, GatewayRuntimeGrantRecord grant)
+    {
+        http.Request.EnableBuffering();
+        JsonObject? body;
+        try { body = await ReadJsonBodyAsync(http.Request, CancellationToken.None); }
+        finally { http.Request.Body.Position = 0; }
+        var expectedPolicy = string.IsNullOrWhiteSpace(grant.ModelPoolId) ? "pinned" : "pool";
+        var declaredPolicy = FirstNonEmpty(ResolveHeader(http, "X-Gateway-Model-Policy"),
+            body is null ? null : ReadString(body, "model_policy"), body is null ? null : ReadString(body, "modelPolicy"));
+        var declaredPool = body is null ? null : ResolveCompatModelPoolId(http, body, useRuntimePolicy: false);
+        if (body is null || string.IsNullOrWhiteSpace(grant.Model) || ReadString(body, "model") != grant.Model
+            || declaredPolicy is not null && declaredPolicy != expectedPolicy
+            || declaredPool is not null && declaredPool != grant.ModelPoolId
+            || body is not null && RejectClientSuppliedPinnedTarget(http, body) is not null)
+            return GatewayTaskAdmissionDecision.Deny("GATEWAY_RUNTIME_GRANT_MODEL_DENIED",
+                "当前任务的模型选择超出已批准范围，已停止调用；请回到任务入口重新选择后发起。");
+        return GatewayTaskAdmissionDecision.Allow();
+    }
+
+    private static GatewayIngressRequest ApplyTaskSidecarRouting(HttpContext http, GatewayIngressRequest ingress)
+    {
+        var grant = GetVerifiedRuntimeGrant(http);
+        if (!GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(grant)) return ingress;
+        return new GatewayIngressRequest
+        {
+            RequestId = ingress.RequestId, SourceSystem = "map", IngressProtocol = ingress.IngressProtocol,
+            AppCallerCode = grant!.AppCallerCode, AppCallerTitle = ingress.AppCallerTitle, RequestType = ingress.RequestType,
+            ModelPolicy = string.IsNullOrWhiteSpace(grant.ModelPoolId) ? "pinned" : "pool", ModelPoolId = grant.ModelPoolId,
+            ExpectedModel = grant.ModelPoolId ?? grant.Model, PinnedPlatformId = grant.PinnedPlatformId, PinnedModelId = grant.PinnedModelId,
+            ParameterPolicy = grant.RequireDeclaredParameters ? "strict-require" : ingress.ParameterPolicy,
+            RequestBody = ingress.RequestBody, DroppedParameters = ingress.DroppedParameters, Context = ingress.Context,
+        };
+    }
 
     private static void ApplyRuntimeGrantPolicy(JsonObject body, GatewayRuntimeGrantRecord grant)
     {
@@ -2526,6 +2653,9 @@ public static class GatewayHttpEndpoints
         string? pinnedPlatformId = null,
         string? pinnedModelId = null)
     {
+        var grant = GetVerifiedRuntimeGrant(http);
+        if (GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(grant))
+            return string.IsNullOrWhiteSpace(grant!.ModelPoolId) ? "pinned" : "pool";
         var explicitPolicy = NormalizeModelPolicy(ResolveHeader(http, "X-Gateway-Model-Policy"))
                              ?? NormalizeModelPolicy(ReadString(body, "model_policy"))
                              ?? NormalizeModelPolicy(ReadString(body, "modelPolicy"));
@@ -2565,8 +2695,10 @@ public static class GatewayHttpEndpoints
         return string.IsNullOrWhiteSpace(requestedModel) ? "auto" : "pinned";
     }
 
-    private static string? ResolveCompatModelPoolId(HttpContext http, JsonObject body)
+    private static string? ResolveCompatModelPoolId(HttpContext http, JsonObject body, bool useRuntimePolicy = true)
     {
+        if (useRuntimePolicy && GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(GetVerifiedRuntimeGrant(http)))
+            return GetVerifiedRuntimeGrant(http)!.ModelPoolId;
         var explicitPoolId = FirstNonEmpty(
             ResolveHeader(http, "X-Gateway-Model-Pool-Id"),
             ReadString(body, "model_pool_id"),
@@ -2746,6 +2878,7 @@ public static class GatewayHttpEndpoints
             if (await TryRejectStrictDroppedParametersAsync(http, ingress))
                 return;
 
+            ingress = ApplyTaskSidecarRouting(http, ingress);
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
             var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream, includeThinking: includeThinking), CancellationToken.None);
@@ -3132,6 +3265,7 @@ public static class GatewayHttpEndpoints
         ingress.Context.ClientCode = authorization.ClientCode;
         ingress.Context.Environment = authorization.Environment;
         ingress.Context.ServiceKeyPrefix = authorization.KeyPrefixSnapshot;
+        ApplyVerifiedExecutionContext(http, ingress, authorization);
         if (!await RecordDiscoveredAppCallerAsync(services, ingress, ct))
         {
             var ownershipStatus = AppCallerStatusDecision.Reject(
@@ -3146,9 +3280,65 @@ public static class GatewayHttpEndpoints
             ApplyGovernanceRateLimitHeaders(http, denied);
             return denied;
         }
-        var decision = await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct);
+        var inputs = http.Items["llmgw.key.authorization.inputs"] as GatewayAuthorizationInputs;
+        var identity = GatewayMinimumRequestIdentity.Resolve(http, authorization,
+            inputs?.SourceSystem ?? string.Empty, inputs?.IngressProtocol ?? string.Empty);
+        var decision = await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct, identity);
         ApplyGovernanceRateLimitHeaders(http, decision);
         return decision;
+    }
+
+    private static void ApplyVerifiedExecutionContext(HttpContext http, GatewayIngressRequest ingress, GatewayKeyAuthorization authorization)
+    {
+        var source = ingress.Context!;
+        var permit = http.Items[GatewayTaskAdmission.HttpContextPermitKey] as GatewayTaskPermitRecord;
+        ingress.SourceSystem = authorization.AuthenticatedSourceSystem
+            ?? (authorization.LegacySharedKey || authorization.RuntimeGrant is not null ? "map" : "external");
+        // 用户归属与诊断头均不决定任务来源。只有服务端许可可以证明interactive。
+        ingress.Context = new GatewayRequestContext
+        {
+            TenantId = source.TenantId,
+            TeamId = source.TeamId,
+            ServiceKeyId = source.ServiceKeyId,
+            ClientCode = source.ClientCode,
+            Environment = source.Environment,
+            ServiceKeyPrefix = source.ServiceKeyPrefix,
+            RequestId = source.RequestId,
+            SessionId = source.SessionId,
+            LogicalRequestId = source.LogicalRequestId,
+            ProviderTaskId = source.ProviderTaskId,
+            GroupId = source.GroupId,
+            ViewRole = source.ViewRole,
+            DocumentChars = source.DocumentChars,
+            DocumentHash = source.DocumentHash,
+            QuestionText = source.QuestionText,
+            SystemPromptChars = source.SystemPromptChars,
+            SystemPromptText = source.SystemPromptText,
+            PromptPolicyId = source.PromptPolicyId,
+            PromptPolicyVersion = source.PromptPolicyVersion,
+            PromptPolicyHash = source.PromptPolicyHash,
+            ImageReferences = source.ImageReferences,
+            GatewayTransport = source.GatewayTransport,
+            IngressProtocol = source.IngressProtocol,
+            AppCallerTitle = source.AppCallerTitle,
+            ModelPolicy = source.ModelPolicy,
+            ModelPoolId = source.ModelPoolId,
+            ParameterPolicy = source.ParameterPolicy,
+            DroppedParameters = source.DroppedParameters,
+            TaskPermitId = permit?.Id,
+            TaskLeaseRunId = (http.Items[GatewayTaskAdmission.HttpContextLeaseKey] as GatewayTaskLeaseFact)?.RunId,
+            TaskLeaseOwnerHash = (http.Items[GatewayTaskAdmission.HttpContextLeaseKey] as GatewayTaskLeaseFact)?.OwnerHash,
+            TaskLeaseFence = (http.Items[GatewayTaskAdmission.HttpContextLeaseKey] as GatewayTaskLeaseFact)?.Fence,
+            TriggerActorUserId = permit?.ActorUserId,
+            ExecutionOrigin = permit?.Origin ?? TaskExecutionOrigins.Agent,
+            TriggerCredentialId = permit?.TriggerCredentialId ?? authorization.KeyId,
+            SourceDeployment = permit?.SourceDeployment,
+            SourceTask = permit?.SourceTask ?? "service:" + authorization.KeyId,
+            SourceSystem = ingress.SourceSystem,
+            UserId = http.Items[GatewayTaskAdmission.HttpContextSubjectKey] as string,
+            RunId = authorization.RuntimeGrant?.RunId ?? source.RunId ?? http.Items[GatewayTaskAdmission.HttpContextRunIdKey] as string,
+            IsHealthProbe = false,
+        };
     }
 
     private static async Task<AppCallerGovernanceDecision> CheckAppCallerGovernanceAsync(
@@ -3157,7 +3347,8 @@ public static class GatewayHttpEndpoints
         string appCallerCode,
         string requestType,
         string requestId,
-        CancellationToken ct)
+        CancellationToken ct,
+        GatewayMinimumRequestIdentity? identity = null)
     {
         if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(requestType))
             return AppCallerGovernanceDecision.Allow(appCallerCode, requestType);
@@ -3165,6 +3356,12 @@ public static class GatewayHttpEndpoints
         var gatewayData = services.GetService<LlmGatewayDataContext>();
         if (gatewayData == null)
             return AppCallerGovernanceDecision.Allow(appCallerCode, requestType);
+
+        identity ??= GatewayMinimumRequestIdentity.General;
+        var safety = services.GetService<GatewayMinimumProtectionCoordinator>()
+                     ?? new GatewayMinimumProtectionCoordinator(gatewayData,
+                         services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(),
+                         Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayMinimumProtectionCoordinator>.Instance);
 
         GatewayAppCallerRecord? caller = null;
         GatewayTenantGovernanceRecord? tenantGovernance = null;
@@ -3207,6 +3404,13 @@ public static class GatewayHttpEndpoints
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                     AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
 
+            var minimum = await safety.CheckAsync(tenantId, appCallerCode, requestType, caller?.TeamId,
+                requestId, identity, tenantGovernance?.RateLimitPerMinute, caller?.RateLimitPerMinute, ct);
+            if (minimum.Rejected)
+                return new AppCallerGovernanceDecision(status, TenantRateLimitDecision.Allow(tenantId),
+                    AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                    AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false), minimum);
+
             var budget = await ReserveMonthlyBudgetsAsync(services, tenantId, caller, appCallerCode, requestType, requestId, ct);
             if (budget.Rejected)
                 return new AppCallerGovernanceDecision(
@@ -3216,6 +3420,8 @@ public static class GatewayHttpEndpoints
                     budget);
 
             var tenantRateLimit = await CheckTenantRateLimitAsync(gatewayData, tenantId, tenantGovernance?.RateLimitPerMinute ?? 0);
+            await safety.ObserveAsync(tenantId, "$tenant", "$aggregate", null, requestId, identity.SourceDeployment,
+                "tenant", "general", 60, tenantRateLimit.WindowStart, tenantRateLimit.Count, tenantRateLimit.LimitPerMinute, ct);
             if (tenantRateLimit.Rejected)
                 return new AppCallerGovernanceDecision(
                     status,
@@ -3281,6 +3487,8 @@ public static class GatewayHttpEndpoints
             var rateLimit = count > limit
                 ? AppCallerRateLimitDecision.Reject(appCallerCode, requestType, limit, count, windowStart)
                 : AppCallerRateLimitDecision.Allow(appCallerCode, requestType, limit, count, windowStart);
+            await safety.ObserveAsync(tenantId, normalizedAppCallerCode, normalizedRequestType, caller?.TeamId,
+                requestId, identity.SourceDeployment, "app-caller", "general", 60, windowStart, count, limit, ct);
             return new AppCallerGovernanceDecision(status, tenantRateLimit, rateLimit, budget);
         }
         catch
@@ -3427,6 +3635,12 @@ public static class GatewayHttpEndpoints
             await WriteStatusErrorAsync(http, decision.Status);
             return true;
         }
+        if (decision.MinimumProtection is { Rejected: true } minimum)
+        {
+            GatewayMinimumProtectionCoordinator.ApplyHeaders(http, minimum);
+            await WriteCompatErrorAsync(http, minimum.Message, "rate_limit_error", minimum.ErrorCode, StatusCodes.Status429TooManyRequests);
+            return true;
+        }
         if (decision.Budget.Rejected)
         {
             await WriteBudgetErrorAsync(http, decision.Budget);
@@ -3451,6 +3665,15 @@ public static class GatewayHttpEndpoints
         JsonSerializerOptions jsonOpts)
     {
         if (decision.Status.Rejected) return StatusResult(decision.Status, jsonOpts);
+        if (decision.MinimumProtection is { Rejected: true } minimum)
+        {
+            GatewayMinimumProtectionCoordinator.ApplyHeaders(http, minimum);
+            return Results.Json(new
+            {
+                error = new { code = minimum.ErrorCode, message = minimum.Message, minimum.Scope, minimum.Origin,
+                    minimum.WindowSeconds, minimum.WindowStart, minimum.Count, minimum.Limit },
+            }, jsonOpts, statusCode: StatusCodes.Status429TooManyRequests);
+        }
         if (decision.Budget.Rejected) return BudgetResult(decision.Budget, jsonOpts);
         if (decision.TenantRateLimit.Rejected) return TenantRateLimitResult(http, decision.TenantRateLimit, jsonOpts);
         if (decision.RateLimit.Rejected) return RateLimitResult(http, decision.RateLimit, jsonOpts);
@@ -3460,6 +3683,7 @@ public static class GatewayHttpEndpoints
     private static string GovernanceErrorCode(AppCallerGovernanceDecision decision)
     {
         if (decision.Status.Rejected) return "APP_CALLER_DISABLED";
+        if (decision.MinimumProtection is { Rejected: true } minimum) return minimum.ErrorCode;
         if (decision.Budget.Rejected) return decision.Budget.ErrorCode;
         if (decision.TenantRateLimit.Rejected) return "TENANT_RATE_LIMITED";
         if (decision.RateLimit.Rejected) return "APP_CALLER_RATE_LIMITED";
@@ -3575,6 +3799,8 @@ public static class GatewayHttpEndpoints
 
     private static void ApplyGovernanceRateLimitHeaders(HttpContext http, AppCallerGovernanceDecision decision)
     {
+        if (decision.MinimumProtection is { Rejected: true } minimum)
+            GatewayMinimumProtectionCoordinator.ApplyHeaders(http, minimum);
         ApplyScopedRateLimitHeaders(
             http,
             "Tenant",
@@ -3645,7 +3871,45 @@ public static class GatewayHttpEndpoints
                 {
                     ["role"] = (obj["role"] ?? "user").DeepClone(),
                 };
-                if (obj.TryGetPropertyValue("content", out var contentNode) && contentNode is not null)
+                if (obj.TryGetPropertyValue("content", out var contentNode) && contentNode is JsonArray blocks)
+                {
+                    var ordinary = new JsonArray();
+                    var calls = new JsonArray();
+                    var hasResults = false;
+                    foreach (var block in blocks)
+                    {
+                        if (block is JsonObject native && ReadString(native, "type") == "tool_use")
+                        {
+                            calls.Add(new JsonObject
+                            {
+                                ["id"] = native["id"]?.DeepClone(),
+                                ["type"] = "function",
+                                ["function"] = new JsonObject
+                                {
+                                    ["name"] = native["name"]?.DeepClone(),
+                                    ["arguments"] = native["input"]?.ToJsonString() ?? "{}",
+                                },
+                            });
+                        }
+                        else if (block is JsonObject resultBlock && ReadString(resultBlock, "type") == "tool_result")
+                        {
+                            hasResults = true;
+                            messages.Add(new JsonObject
+                            {
+                                ["role"] = "tool",
+                                ["tool_call_id"] = resultBlock["tool_use_id"]?.DeepClone(),
+                                ["content"] = resultBlock["content"] is { } resultContent
+                                    ? ConvertClaudeContentToOpenAiContent(resultContent) : JsonValue.Create(string.Empty),
+                            });
+                        }
+                        else ordinary.Add(block?.DeepClone());
+                    }
+                    if (hasResults && ordinary.Count == 0 && calls.Count == 0) continue;
+                    converted["content"] = ordinary.Count == 0 && calls.Count > 0
+                        ? null : ConvertClaudeContentToOpenAiContent(ordinary);
+                    if (calls.Count > 0) converted["tool_calls"] = calls;
+                }
+                else if (contentNode is not null)
                     converted["content"] = ConvertClaudeContentToOpenAiContent(contentNode);
                 foreach (var (key, value) in obj)
                 {
@@ -3666,7 +3930,23 @@ public static class GatewayHttpEndpoints
         CopyJsonField(claudeBody, result, "top_p");
         CopyJsonField(claudeBody, result, "top_k");
         CopyJsonField(claudeBody, result, "stream");
-        CopyJsonField(claudeBody, result, "tools");
+        if (claudeBody["tools"] is JsonArray tools)
+        {
+            // 入站先转成网关既有的 OpenAI 规范，最终供应商协议仍由模型 Adapter 处理。
+            var declarations = new JsonArray();
+            foreach (var tool in tools)
+            {
+                if (tool is JsonObject nativeTool && nativeTool["input_schema"] is JsonObject schema
+                    && ReadString(nativeTool, "name") is { Length: > 0 } name)
+                {
+                    var function = new JsonObject { ["name"] = name, ["parameters"] = schema.DeepClone() };
+                    CopyJsonField(nativeTool, function, "description");
+                    declarations.Add(new JsonObject { ["type"] = "function", ["function"] = function });
+                }
+                else declarations.Add(tool?.DeepClone());
+            }
+            result["tools"] = declarations;
+        }
         CopyJsonField(claudeBody, result, "tool_choice");
         if (claudeBody.TryGetPropertyValue("stop_sequences", out var stop) && stop is not null)
             result["stop"] = stop.DeepClone();
@@ -4889,6 +5169,15 @@ public static class GatewayHttpEndpoints
                 ClientCode = ingress.Context?.ClientCode,
                 Environment = ingress.Context?.Environment,
                 ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
+                TaskPermitId = ingress.Context?.TaskPermitId,
+                TaskLeaseRunId = ingress.Context?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = ingress.Context?.TaskLeaseOwnerHash,
+                TaskLeaseFence = ingress.Context?.TaskLeaseFence,
+                TriggerActorUserId = ingress.Context?.TriggerActorUserId,
+                ExecutionOrigin = ingress.Context?.ExecutionOrigin,
+                TriggerCredentialId = ingress.Context?.TriggerCredentialId,
+                SourceDeployment = ingress.Context?.SourceDeployment,
+                SourceTask = ingress.Context?.SourceTask,
                 RequestId = ingress.Context?.RequestId ?? ingress.RequestId,
                 SessionId = ingress.Context?.SessionId,
                 RunId = ingress.Context?.RunId,
@@ -5546,7 +5835,17 @@ public static class GatewayHttpEndpoints
             Environment: ctx?.Environment,
             ServiceKeyPrefix: ctx?.ServiceKeyPrefix,
             LogicalRequestId: ctx?.LogicalRequestId,
-            ProviderTaskId: ctx?.ProviderTaskId));
+            ProviderTaskId: ctx?.ProviderTaskId,
+            TaskPermitId: ctx?.TaskPermitId,
+            TaskLeaseRunId: ctx?.TaskLeaseRunId,
+            TaskLeaseOwnerHash: ctx?.TaskLeaseOwnerHash,
+            TaskLeaseFence: ctx?.TaskLeaseFence,
+            ExecutionOrigin: ctx?.ExecutionOrigin,
+            TriggerCredentialId: ctx?.TriggerCredentialId,
+            SourceDeployment: ctx?.SourceDeployment,
+            SourceTask: ctx?.SourceTask,
+            TriggerActorUserId: ctx?.TriggerActorUserId,
+            SourceSystem: ctx?.SourceSystem));
     }
 
     private static GatewayIngressRequest ToIngress(GatewayRequest request, string ingressProtocol, string sourceSystem)
@@ -5602,13 +5901,22 @@ public static class GatewayHttpEndpoints
                 ClientCode = ingress.Context?.ClientCode,
                 Environment = ingress.Context?.Environment,
                 ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
+                TaskPermitId = ingress.Context?.TaskPermitId,
+                TaskLeaseRunId = ingress.Context?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = ingress.Context?.TaskLeaseOwnerHash,
+                TaskLeaseFence = ingress.Context?.TaskLeaseFence,
+                TriggerActorUserId = ingress.Context?.TriggerActorUserId,
+                ExecutionOrigin = ingress.Context?.ExecutionOrigin,
+                TriggerCredentialId = ingress.Context?.TriggerCredentialId,
+                SourceDeployment = ingress.Context?.SourceDeployment,
+                SourceTask = ingress.Context?.SourceTask,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
-                RunId = source?.RunId,
+                RunId = ingress.Context?.RunId,
                 LogicalRequestId = source?.LogicalRequestId,
                 ProviderTaskId = source?.ProviderTaskId,
                 GroupId = source?.GroupId,
-                UserId = source?.UserId,
+                UserId = ingress.Context?.UserId,
                 TaskBudgetScopeId = source?.TaskBudgetScopeId,
                 ViewRole = source?.ViewRole,
                 DocumentChars = source?.DocumentChars,
@@ -5628,7 +5936,7 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = ingress.ModelPoolId,
                 ParameterPolicy = ingress.ParameterPolicy,
                 DroppedParameters = ingress.DroppedParameters,
-                IsHealthProbe = source?.IsHealthProbe,
+                IsHealthProbe = ingress.Context?.IsHealthProbe,
             },
         };
     }
@@ -5664,13 +5972,22 @@ public static class GatewayHttpEndpoints
                 ClientCode = ingress.Context?.ClientCode,
                 Environment = ingress.Context?.Environment,
                 ServiceKeyPrefix = ingress.Context?.ServiceKeyPrefix,
+                TaskPermitId = ingress.Context?.TaskPermitId,
+                TaskLeaseRunId = ingress.Context?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = ingress.Context?.TaskLeaseOwnerHash,
+                TaskLeaseFence = ingress.Context?.TaskLeaseFence,
+                TriggerActorUserId = ingress.Context?.TriggerActorUserId,
+                ExecutionOrigin = ingress.Context?.ExecutionOrigin,
+                TriggerCredentialId = ingress.Context?.TriggerCredentialId,
+                SourceDeployment = ingress.Context?.SourceDeployment,
+                SourceTask = ingress.Context?.SourceTask,
                 RequestId = source?.RequestId ?? ingress.RequestId,
                 SessionId = source?.SessionId,
-                RunId = source?.RunId,
+                RunId = ingress.Context?.RunId,
                 LogicalRequestId = source?.LogicalRequestId,
                 ProviderTaskId = source?.ProviderTaskId,
                 GroupId = source?.GroupId,
-                UserId = source?.UserId,
+                UserId = ingress.Context?.UserId,
                 TaskBudgetScopeId = source?.TaskBudgetScopeId,
                 ViewRole = source?.ViewRole,
                 DocumentChars = source?.DocumentChars,
@@ -5687,7 +6004,7 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = ingress.ModelPoolId,
                 ParameterPolicy = ingress.ParameterPolicy,
                 DroppedParameters = ingress.DroppedParameters,
-                IsHealthProbe = source?.IsHealthProbe,
+                IsHealthProbe = ingress.Context?.IsHealthProbe,
             },
         };
     }
@@ -6124,6 +6441,7 @@ public static class GatewayHttpEndpoints
         if (data is null) return;
         var now = DateTime.UtcNow;
         var requestId = TrackGatewayRequestId(http);
+        var taskPermit = http.Items[GatewayTaskAdmission.HttpContextPermitKey] as GatewayTaskPermitRecord;
         try
         {
             var logs = data.Database.GetCollection<BsonDocument>("llmrequestlogs");
@@ -6138,6 +6456,13 @@ public static class GatewayHttpEndpoints
                     { "Environment", string.IsNullOrWhiteSpace(authorization.Environment) ? BsonNull.Value : authorization.Environment },
                     { "ServiceKeyPrefix", string.IsNullOrWhiteSpace(authorization.KeyPrefixSnapshot) ? BsonNull.Value : authorization.KeyPrefixSnapshot },
                     { "RequestId", requestId },
+                    { "TaskPermitId", taskPermit?.Id is { } permitId ? permitId : BsonNull.Value },
+                    { "ExecutionOrigin", taskPermit?.Origin ?? TaskExecutionOrigins.Agent },
+                    { "TriggerCredentialId", taskPermit?.TriggerCredentialId ?? authorization.KeyId },
+                    { "SourceDeployment", taskPermit?.SourceDeployment is { } deployment ? deployment : BsonNull.Value },
+                    { "SourceTask", taskPermit?.SourceTask ?? "service:" + authorization.KeyId },
+                    { "TriggerActorUserId", taskPermit?.ActorUserId is { } actor ? actor : BsonNull.Value },
+                    { "UserId", http.Items[GatewayTaskAdmission.HttpContextSubjectKey] is string subject ? subject : BsonNull.Value },
                     { "AppCallerCode", inputs.AppCallerCode },
                     { "SourceSystem", inputs.SourceSystem },
                     { "IngressProtocol", inputs.IngressProtocol },
@@ -6281,7 +6606,8 @@ public static class GatewayHttpEndpoints
         AppCallerStatusDecision Status,
         TenantRateLimitDecision TenantRateLimit,
         AppCallerRateLimitDecision RateLimit,
-        AppCallerBudgetDecision Budget)
+        AppCallerBudgetDecision Budget,
+        GatewayMinimumProtectionDecision? MinimumProtection = null)
     {
         public static AppCallerGovernanceDecision Allow(string appCallerCode, string requestType)
             => new(

@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Api.Services;
@@ -8,6 +9,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class InfraAgentRuntimeWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IInfraAgentRuntimeJobQueue _queue;
     private readonly ILogger<InfraAgentRuntimeWorker> _logger;
@@ -15,8 +17,10 @@ public sealed class InfraAgentRuntimeWorker : BackgroundService
     public InfraAgentRuntimeWorker(
         IServiceScopeFactory scopeFactory,
         IInfraAgentRuntimeJobQueue queue,
-        ILogger<InfraAgentRuntimeWorker> logger)
+        ILogger<InfraAgentRuntimeWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _logger = logger;
@@ -28,6 +32,10 @@ public sealed class InfraAgentRuntimeWorker : BackgroundService
         {
             try
             {
+                await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, job.TaskPermitId, job.MessageId);
+                if (taskExecutionAttempt.ShouldSkip) return;
+                using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+                    ?? TaskExecutionContext.ForRun(job.TaskPermitId, job.MessageId));
                 using var scope = _scopeFactory.CreateScope();
                 var sessions = scope.ServiceProvider.GetRequiredService<IInfraAgentSessionService>();
                 await sessions.RunRuntimeJobAsync(

@@ -871,6 +871,7 @@ public sealed class WeeklyPosterController : ControllerBase
         var userId = this.GetRequiredUserId();
         var run = new ImageGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = userId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,

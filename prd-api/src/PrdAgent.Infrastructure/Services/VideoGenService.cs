@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -153,6 +154,7 @@ public class VideoGenService : IVideoGenService
 
             var run = new VideoGenRun
             {
+                TaskPermitId = TaskExecutionContext.Current?.PermitId,
                 AppKey = appKey,
                 ProjectId = project?.Id,
                 OwnerAdminId = ownerAdminId,
@@ -207,6 +209,7 @@ public class VideoGenService : IVideoGenService
 
         var directRun = new VideoGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             AppKey = appKey,
             ProjectId = project?.Id,
             OwnerAdminId = ownerAdminId,
@@ -278,6 +281,7 @@ public class VideoGenService : IVideoGenService
         var updates = new List<UpdateDefinition<VideoGenRun>>
         {
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Generating),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.TaskPermitId", TaskExecutionContext.Current?.PermitId),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
         };
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
@@ -319,6 +323,7 @@ public class VideoGenService : IVideoGenService
         var updates = new List<UpdateDefinition<VideoGenRun>>
         {
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Submitting),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.TaskPermitId", TaskExecutionContext.Current?.PermitId),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.JobId", (string?)null),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.SubmissionStartedAt", DateTime.UtcNow),

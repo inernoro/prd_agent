@@ -208,6 +208,11 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.IDocum
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>();
+builder.Services.AddSingleton<ITaskExecutionCoordinator, PrdAgent.Infrastructure.Security.TaskExecutionCoordinator>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Security.TaskContinuationTokens>();
+builder.Services.AddSingleton<ITaskExecutionAuthorizer, PrdAgent.Infrastructure.Security.TaskExecutionAuthorizer>();
+builder.Services.AddMapModelEgressGuard();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
 // BackgroundService 未捕获异常时不要拖垮整个 Host。单个 Worker 崩溃已有
@@ -258,7 +263,15 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ModelCatalogContract
 // MAP 只有一条模型调用路径：HttpLlmGatewayClient 跨进程调用独立部署的 serving（/gw/v1/*）。
 // 进程内直连与影子比对已删除；出问题靠发布版本回退，不再有运行时开关切回旧路径。
 // 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>(sp => new(
+    sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<IConfiguration>(),
+    sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>>(),
+    sp.GetRequiredService<ILLMRequestContextAccessor>(),
+    sp.GetService<IAssetStorage>(),
+    sp.GetRequiredService<LlmGatewayDataContext>(),
+    sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
+    taskAuthorizer: sp.GetRequiredService<ITaskExecutionAuthorizer>()));
 builder.Services.AddScoped<PrdAgent.Api.Services.IVisualModelPolicyService, PrdAgent.Api.Services.VisualModelPolicyService>();
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
@@ -799,9 +812,9 @@ builder.Services.AddSingleton<IIdGenerator>(sp =>
 
 // Run 事件存储（断线续传/观测）：生产用 Redis（高频写，避免 Mongo 写放大）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
-    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24)));
+    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24), taskExecutions: sp.GetRequiredService<ITaskExecutionCoordinator>()));
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
-    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
+    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString, builder.Configuration));
 
 // 注册分布式限流服务（基于 Redis）
 builder.Services.AddSingleton<IRateLimitService>(sp =>
@@ -1443,6 +1456,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IDynamicSidecarRegistry,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.DynamicSidecarRegistry>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
+builder.Services.AddSingleton<ITaskScopedRuntimeGrantIssuer, TaskScopedRuntimeGrantIssuer>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeAdapter,
     PrdAgent.Infrastructure.Services.AgentRuntime.SidecarRuntimeAdapter>();
 // Lite 只读审查降级适配器：R1 未闭合 / 官方 sidecar 不可用时的兜底路径（走现有 LLM Gateway）。
@@ -1567,6 +1581,8 @@ builder.Services.AddScoped<IGapNotificationService>(sp =>
     return new GapNotificationService(cache, groupService);
 });
 
+// 平台最终启动总闸：新增 HostedService 漏写保护，也必须经过登记与部署准入。
+PrdAgent.Api.Services.BackgroundTasks.BackgroundTaskAdmissionRegistration.EnforceBackgroundTaskAdmission(builder.Services);
 var app = builder.Build();
 
 // 初始化数据库（创建管理员账号和初始邀请码）
@@ -1636,6 +1652,8 @@ app.UseAuthorization();
 app.UseMiddleware<PrdAgent.Api.Middleware.AdminPermissionMiddleware>();
 // 权限指纹：每个响应注入 X-Perm-Fingerprint，前端据此判断是否需要刷新权限缓存
 app.UseMiddleware<PrdAgent.Api.Middleware.PermissionFingerprintMiddleware>();
+// 位于认证、权限之后；未登记的新业务不能从此处取得付费执行来源。
+app.UseMiddleware<PrdAgent.Api.Middleware.TaskAdmissionMiddleware>();
 app.MapControllers();
 
 // 健康检查端点

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -24,6 +25,7 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly IAssetStorage _assetStorage;
     private readonly LlmGatewayDataContext _gatewayData;
+    private readonly ITaskExecutionAuthorizer _taskAuthorizer;
 
     public LlmGatewayOpsCanaryController(
         IHttpClientFactory httpFactory,
@@ -32,7 +34,8 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         ILogger<LlmGatewayOpsCanaryController> logger,
         ILLMRequestContextAccessor ctxAccessor,
         IAssetStorage assetStorage,
-        LlmGatewayDataContext gatewayData)
+        LlmGatewayDataContext gatewayData,
+        ITaskExecutionAuthorizer taskAuthorizer)
     {
         _httpFactory = httpFactory;
         _config = config;
@@ -41,6 +44,7 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         _ctxAccessor = ctxAccessor;
         _assetStorage = assetStorage;
         _gatewayData = gatewayData;
+        _taskAuthorizer = taskAuthorizer;
     }
 
     [HttpPost("asr")]
@@ -65,6 +69,13 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         var appCallerCode = string.IsNullOrWhiteSpace(request?.AppCallerCode)
             ? DefaultAppCallerCode
             : request!.AppCallerCode.Trim();
+        var actor = User.Identity?.IsAuthenticated == true ? this.GetRequiredUserId() : "ops-canary";
+        // 既有运维密钥只证明这个已登记自测入口；只签发一次模型发送，不给予通用后台执行权。
+        using var admittedCanary = PrdAgent.Core.Security.TaskExecutionContext.Current is null
+            ? PrdAgent.Core.Security.TaskExecutionContext.Enter(await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitVerifiedIntegrationAsync(HttpContext, actor, "ops-canary:gateway-transport", ct))
+            : null;
         var requestId = string.IsNullOrWhiteSpace(request?.RequestId)
             ? "llmgw-asr-canary-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ")
             : request!.RequestId.Trim();
@@ -77,13 +88,14 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
             _gatewayLogger,
             _ctxAccessor,
             _assetStorage,
-            _gatewayData);
+            _gatewayData,
+            taskAuthorizer: _taskAuthorizer);
 
         using var scope = _ctxAccessor.BeginScope(new LlmRequestContext(
             RequestId: requestId,
             GroupId: null,
             SessionId: null,
-            UserId: "ops-canary",
+            UserId: actor,
             ViewRole: "ops",
             DocumentChars: null,
             DocumentHash: null,
@@ -175,7 +187,7 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
             Context = new GatewayRequestContext
             {
                 RequestId = requestId,
-                UserId = "ops-canary",
+                UserId = actor,
                 ViewRole = "ops",
                 QuestionText = "LLM Gateway ASR canary",
                 GatewayTransport = GatewayTransports.Http,

@@ -274,6 +274,44 @@ public sealed class GatewayRuntimeGovernanceTests
         stored.Reservations.Single().Status.ShouldBe("released-before-send");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TaskBudget_ConfirmedBeforeSendRejectionReleasesMoneyButUnknownOutcomeDoesNot(bool rejectedBeforeSend)
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var database = testDatabase;
+        var record = BudgetScope("scope-revoked", authorized: 50m, generationRunId: "run-revoked");
+        var originalHold = record.PptCompletion!.FutureHeldUsd;
+        var budgets = database.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        await budgets.InsertOneAsync(record);
+        var grant = ProtectedGrant("grant-revoked", "run-revoked", record.Id);
+        var grants = database.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        await grants.InsertOneAsync(grant);
+        var counter = new GatewayRuntimeGrantCallCounter(database.Context);
+        (await counter.TryReserveAsync(grant, new GatewayRuntimeGrantCallRequest(
+            "request-revoked", 10_000, 8192, "default-chat-curated", "apiyi-openai", "gpt-5.6-sol"),
+            CancellationToken.None)).Allowed.ShouldBeTrue();
+        var before = await budgets.Find(item => item.Id == record.Id).SingleAsync();
+        before.ReservedUsd.ShouldBeGreaterThan(0m);
+        await counter.FinalizeAsync(grant, "request-revoked", null,
+            rejectedBeforeSend ? GatewayTaskBudgetOutcomes.RejectedBeforeSend : "TASK_EXECUTION_LEASE_INVALID",
+            CancellationToken.None);
+        // 重复结算不得再释放；已按未知结算的记录也不能被迟到的释放改写。
+        await counter.FinalizeAsync(grant, "request-revoked", null,
+            GatewayTaskBudgetOutcomes.RejectedBeforeSend, CancellationToken.None);
+
+        var stored = await budgets.Find(item => item.Id == record.Id).SingleAsync();
+        stored.ReservedUsd.ShouldBe(0m);
+        stored.SpentUsd.ShouldBe(rejectedBeforeSend ? record.SpentUsd : record.SpentUsd + before.ReservedUsd);
+        stored.PptCompletion!.FutureHeldUsd.ShouldBe(rejectedBeforeSend
+            ? originalHold : originalHold - record.PptCompletion.GenerationAndRepairs.PerCallUpperUsd);
+        stored.PptCompletion.GenerationAndRepairs.UsedPhysicalCalls.ShouldBe(rejectedBeforeSend ? 0 : 1);
+        stored.Reservations.Single().Status.ShouldBe(rejectedBeforeSend ? "released-before-send" : "settled-unknown");
+        (await grants.Find(item => item.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(1);
+    }
+
     [Fact]
     public async Task TaskBudget_FutureHoldCannotBeStolenByOutlineButBoundGenerationCanConsumeIt()
     {

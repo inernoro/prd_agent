@@ -705,6 +705,7 @@ public class WorkflowAgentController : ControllerBase
         // 创建执行实例
         var execution = new WorkflowExecution
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             WorkflowId = workflow.Id,
             WorkflowName = workflow.Name,
             TriggerType = WorkflowTriggerTypes.Manual,
@@ -764,6 +765,7 @@ public class WorkflowAgentController : ControllerBase
         // 创建新执行实例，保留目标节点之前的产物
         var newExecution = new WorkflowExecution
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             WorkflowId = original.WorkflowId,
             WorkflowName = original.WorkflowName,
             TriggerType = "resume",
@@ -879,6 +881,7 @@ public class WorkflowAgentController : ControllerBase
             e => e.Id == executionId,
             Builders<WorkflowExecution>.Update
                 .Set(e => e.Status, WorkflowExecutionStatus.Queued)
+                .Set(e => e.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                 .Set(e => e.NodeExecutions, execution.NodeExecutions),
             cancellationToken: ct);
 

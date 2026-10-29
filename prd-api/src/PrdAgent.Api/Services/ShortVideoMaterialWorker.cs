@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -231,6 +232,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
 
 public sealed class ShortVideoMaterialProcessor
 {
+    private readonly ITaskExecutionCoordinator? _taskExecutions;
     private readonly MongoDbContext _db;
     private readonly IDocumentService _documentService;
     private readonly IConfiguration _config;
@@ -242,12 +244,13 @@ public sealed class ShortVideoMaterialProcessor
         IDocumentService documentService,
         IConfiguration config,
         IServiceProvider serviceProvider,
-        ILogger<ShortVideoMaterialProcessor> logger)
+        ILogger<ShortVideoMaterialProcessor> logger, ITaskExecutionCoordinator? taskExecutions = null)
     {
         _db = db;
         _documentService = documentService;
         _config = config;
         _serviceProvider = serviceProvider;
+        _taskExecutions = taskExecutions;
         _logger = logger;
     }
 
@@ -255,6 +258,10 @@ public sealed class ShortVideoMaterialProcessor
     {
         var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None)
                   ?? throw new InvalidOperationException("短视频解析运行记录不存在");
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         var user = await _db.Users.Find(u => u.UserId == run.UserId).FirstOrDefaultAsync(CancellationToken.None);
         var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? run.UserId : user.DisplayName!;
         var now = DateTime.UtcNow;

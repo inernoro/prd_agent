@@ -108,7 +108,15 @@ public record LlmLogStart(
     string? OfferingTargetKind = null,
     string? Operation = null,
     string? LogicalRequestId = null,
-    string? ProviderTaskId = null);
+    string? ProviderTaskId = null,
+    string? TaskPermitId = null,
+    string? TaskLeaseRunId = null,
+    long? TaskLeaseFence = null,
+    string? ExecutionOrigin = null,
+    string? TriggerCredentialId = null,
+    string? TriggerActorUserId = null,
+    string? SourceDeployment = null,
+    string? SourceTask = null);
 
 public record LlmLogDone(
     int? StatusCode,

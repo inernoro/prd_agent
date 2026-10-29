@@ -380,6 +380,7 @@ public sealed class ArenaController : ControllerBase
 
         var meta = new RunMeta
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             RunId = runId,
             Kind = RunKinds.Arena,
             Status = RunStatuses.Queued,

@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
@@ -291,6 +292,7 @@ public class LiteraryImageOpenApiController(
                 var idem = IdemFor(index);
                 var run = new ImageGenRun
                 {
+                    TaskPermitId = TaskExecutionContext.Current?.PermitId,
                     Id = McpIdempotency.Fingerprint("literary-run", idem)!,
                     OwnerAdminId = userId, WorkspaceId = ws.Id,
                     AppKey = AppKey,

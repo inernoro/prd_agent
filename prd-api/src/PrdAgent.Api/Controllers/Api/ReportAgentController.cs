@@ -1565,6 +1565,9 @@ public class ReportAgentController : ControllerBase
         {
             try
             {
+                using var taskExecution = TaskExecutionContext.Enter(await HttpContext.RequestServices
+                    .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                    .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None));
                 report = await _generationService.GenerateAsync(
                     userId,
                     req.TeamId,

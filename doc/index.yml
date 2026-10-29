@@ -276,6 +276,9 @@ docs:
   rule.skill.trigger-disambiguation: "技能触发消歧 · 规则"
 
   # 五、计划
+  plan.platform.background-task-safety.phase0: "平台后台任务与消费最低保护 · 阶段 0 计划"
+  plan.platform.background-task-safety.phase1: "平台任务级准入与统一出口 · 阶段 1 计划"
+  plan.platform.background-task-safety.phase2: "平台业务幂等、执行租约与取消撤销 · 阶段 2 计划"
   plan.doc.readability.rollout: "文档说人话标准推广 · 计划"
   plan.ai-toolbox.text-assist: "AI 百宝箱文本辅助 · 计划"
   plan.cds.agent.official-sdk-migration: "CDS Agent 官方 SDK 商业闭环 · 计划"
@@ -322,6 +325,7 @@ docs:
   plan.visual-agent.optimization-backlog: "视觉创作 优化清单 · 计划"
 
   # 六、技术债务台账
+  debt.platform.background-task-safety: "平台后台任务与消费治理 · 债务台账"
   debt.acceptance-center-cds: "CDS 验收中心 · 债务台账"
   debt.acceptance.daily-anchors: "每日验收的锚点契约 · 债务台账"
   debt.acceptance.system: "功能验收体系 · 债务台账"
