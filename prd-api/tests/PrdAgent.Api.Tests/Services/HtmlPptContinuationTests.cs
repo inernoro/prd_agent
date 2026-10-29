@@ -26,6 +26,55 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class HtmlPptContinuationTests
 {
     [Fact]
+    public async Task StoredEditIdentityIgnoresFutureFieldsWithoutLosingVersionFences()
+    {
+        await using var store = await RunMongoFixture.CreateAsync("ppt_nested_identity");
+        var context = new HtmlPptEditContext { SourceRunId="source", BaseRevisionId="revision", BaseHtmlHash=new string('a',64) };
+        var run = new DesignArtifactRun { PptEditContext=context };
+        var document = run.ToBsonDocument();
+        var element = MongoDB.Bson.Serialization.BsonClassMap.LookupClassMap(typeof(DesignArtifactRun))
+            .GetMemberMap(nameof(DesignArtifactRun.PptEditContext)).ElementName;
+        document[element].AsBsonDocument["futureField"] = "future-value";
+        var restored = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<DesignArtifactRun>(document);
+        Assert.Equal(context.SourceRunId, restored.PptEditContext!.SourceRunId);
+        Assert.Equal(context.BaseRevisionId, restored.PptEditContext.BaseRevisionId);
+        Assert.Equal(context.BaseHtmlHash, restored.PptEditContext.BaseHtmlHash);
+    }
+
+    [Theory]
+    [InlineData("unknown-theme", true, true)]
+    [InlineData("editorial-ink", false, true)]
+    [InlineData("editorial-ink", true, false)]
+    public async Task InvalidStyleIsRejectedBeforeBudgetAdmission(string theme, bool hasBrief, bool hasBrand)
+    {
+        var f = Fixture();
+        f.Artifact.DesignBrief = hasBrief ? new DesignArtifactDesignBrief() : null;
+        f.Artifact.BrandPackage = hasBrand ? new DesignArtifactBrandPackage() : null;
+        await using var store = await RunMongoFixture.CreateAsync("ppt_style_pre_admission");
+        await store.Db.MdToPptRuns.InsertOneAsync(f.Source);
+        await store.Db.DesignArtifactRuns.InsertOneAsync(f.Artifact);
+        var before = (await store.Db.DesignArtifactRuns.Find(x=>x.Id==f.Artifact.Id).SingleAsync()).ToJson();
+        var continuation = new Mock<IHtmlPptContinuationService>(MockBehavior.Strict);
+        using var responseBody = new MemoryStream();
+        using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices=services,
+            User=new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier,"owner")],"test")) };
+        http.Response.Body=responseBody;
+        var controller=new MdToPptController(store.Db,null!,Mock.Of<ILlmGateway>(),Mock.Of<ILLMRequestContextAccessor>(),
+            Mock.Of<IDesignKnowledgeSnapshotResolver>(),Mock.Of<IHtmlPptDesignArtifactAdapter>(),
+            Mock.Of<IHtmlPptOpenDesignRunService>(),Mock.Of<IHostedSiteService>(),Mock.Of<IHtmlPptPublishCoordinator>(),
+            new ConfigurationBuilder().Build(),NullLogger<MdToPptController>.Instance,continuation.Object)
+            { ControllerContext=new ControllerContext { HttpContext=http } };
+        await controller.Patch(new MdToPptPatchRequest { ParentRunId=f.Source.Id, CurrentHtml=f.Source.Html,
+            ExpectedEditContext=new HtmlPptEditContext(),IdempotencyKey="must-not-be-claimed",Theme=theme,StyleOverride=true });
+        Assert.Equal(400,http.Response.StatusCode);
+        Assert.Contains("ppt_style_override_invalid",Encoding.UTF8.GetString(responseBody.ToArray()));
+        continuation.VerifyNoOtherCalls();
+        Assert.Equal(1,await store.Db.MdToPptRuns.CountDocumentsAsync(FilterDefinition<MdToPptRun>.Empty));
+        Assert.Equal(before,(await store.Db.DesignArtifactRuns.Find(x=>x.Id==f.Artifact.Id).SingleAsync()).ToJson());
+    }
+
+    [Fact]
     public void RestoredCurrentVersionRetainsRealSourceAndFreezesCurrentBytes()
     {
         var f = Fixture();
@@ -573,7 +622,7 @@ public sealed class HtmlPptContinuationTests
         List<HostedSiteRevisionFile> Files() => [File("index.html", "text/html", html), File("assets/style.css", "text/css", "body{color:#111}")];
         var now = new DateTime(2026,10,24,14,14,51,DateTimeKind.Utc);
         var source = new MdToPptRun { Id="saved-run", UserId="owner", Status="done", Op="patch", Html=html };
-        var artifact = new DesignArtifactRun { Id=source.Id, UserId="owner", Status="Done", ArtifactType="html-ppt",Runtime=DesignArtifactRuntimes.OpenDesign,
+        var artifact = new DesignArtifactRun { Id=source.Id, UserId="owner", DeploymentSlug=DeploymentScope.Current, Status="Done", ArtifactType="html-ppt",Runtime=DesignArtifactRuntimes.OpenDesign,
             ArtifactSiteId="site", ProducedArtifactSiteId="site", ArtifactRevisionId="original", ProducedArtifactRevisionId="original",
             WorkspaceResultSha256=new string('d',64), PresentationInput=new() };
         var site = new HostedSite { Id="site", OwnerUserId="owner", SourceType="design-agent", PublishedRevisionId="restored", ContentVersion=now };

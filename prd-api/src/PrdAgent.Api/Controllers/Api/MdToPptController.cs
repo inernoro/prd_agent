@@ -1443,6 +1443,26 @@ public class MdToPptController : ControllerBase
             }, HttpContext.RequestAborted);
             return;
         }
+        var template = await ResolveTemplateAsync(userId, req.TemplateId);
+        DesignArtifactRun? styleParent = null;
+        if (req.StyleOverride)
+        {
+            styleParent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                    && item.Id == parentRun.Id && item.UserId == userId
+                    && item.ArtifactType == DesignArtifactTypes.HtmlPpt && item.Status == RunStatuses.Done)
+                .FirstOrDefaultAsync(HttpContext.RequestAborted);
+            try
+            {
+                HtmlPptOpenDesignRunService.ValidateStyleOverride(styleParent,
+                    template != null ? $"custom:{template.Name}" : req.Theme, template?.StyleSpec);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                await Response.WriteAsJsonAsync(new { error = ex.Message, code = "ppt_style_override_invalid" }, HttpContext.RequestAborted);
+                return;
+            }
+        }
         if (req.ExpectedEditContext != null || !string.IsNullOrWhiteSpace(req.IdempotencyKey))
         {
             try
@@ -1490,7 +1510,6 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
-        var template = await ResolveTemplateAsync(userId, req.TemplateId);
         MdToPptRun? run = admission == null ? null : await _db.MdToPptRuns
             .Find(item => item.Id == admission.RunId && item.UserId == userId)
             .FirstOrDefaultAsync(CancellationToken.None);
@@ -1551,7 +1570,7 @@ public class MdToPptController : ControllerBase
         var pageHint = effectiveSlideIndex.HasValue
             ? $"（仅修改第 {effectiveSlideIndex.Value} 页）"
             : "（未指定具体页，按要求修改整份 PPT）";
-        var parentArtifact = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+        var parentArtifact = styleParent ?? await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
                 && item.Id == parentRun.Id
                 && item.UserId == userId
                 && item.ArtifactType == DesignArtifactTypes.HtmlPpt

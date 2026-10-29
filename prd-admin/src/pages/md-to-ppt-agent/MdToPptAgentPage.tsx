@@ -3377,6 +3377,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Reset
   const handleReset = useCallback(() => {
+    patchSubmissionRef.current = false;
     cleanupRef.current?.();
     cleanupRef.current = null;
     setMessages([]);
