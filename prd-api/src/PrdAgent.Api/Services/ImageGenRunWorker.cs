@@ -2073,7 +2073,7 @@ public class ImageGenRunWorker : BackgroundService
 
             // 传递用户期望的模型池 code
             var expectedModelCode = frontendExpectedModelId;
-            var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
+            var resolved = await gateway.ResolveModelMetadataAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
 
             if (resolved is null || !resolved.Success)
             {
@@ -2164,7 +2164,7 @@ public class ImageGenRunWorker : BackgroundService
         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
     }
 
-    private async Task<bool> ResolveRunIsAdaptiveAsync(
+    internal async Task<bool> ResolveRunIsAdaptiveAsync(
         ImageGenRun run,
         string appCallerCode,
         CancellationToken ct)
@@ -2176,18 +2176,17 @@ public class ImageGenRunWorker : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
             var requiredLogicalModel = ResolveExplicitLogicalModelPublicId(run);
-            var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
-                ? await gateway.ResolveRequiredLogicalModelAsync(
-                    appCallerCode,
-                    "generation",
-                    requiredLogicalModel,
-                    ct)
-                : await gateway.ResolveModelAsync(
-                    appCallerCode,
-                    "generation",
-                    ResolveImageGenerationModelReference(run),
-                    ct: ct);
-            if (!resolution.Success) return fallback;
+            // 这里只读取 runStart 事件的尺寸提示。执行解析会提前认领半开租约，
+            // 随后的真实生图便被自己的租约挡住；租约必须留给 serving 的 raw 请求。
+            var resolution = await gateway.ResolveModelMetadataAsync(
+                appCallerCode,
+                "generation",
+                requiredLogicalModel ?? ResolveImageGenerationModelReference(run),
+                ct: ct);
+            if (!resolution.Success
+                || (!string.IsNullOrWhiteSpace(requiredLogicalModel)
+                    && !string.Equals(requiredLogicalModel, resolution.LogicalModelPublicId,
+                        StringComparison.OrdinalIgnoreCase))) return fallback;
 
             var resolvedFallback = ImageGenModelAdapterRegistry.TryMatch(
                     resolution.ActualModel ?? run.ModelId)?.SizeConstraintType
