@@ -158,17 +158,22 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         var id = alert.GetValue("_id", "").ToString();
         if (string.IsNullOrWhiteSpace(id)) return null;
         var blocked = alert.GetValue("Kind", "warning").AsString == "blocked";
+        var dynamicRate = alert.GetValue("Metric", "requests").AsString == "request_rate_baseline";
         var caller = alert.GetValue("AppCallerCode", "unknown").AsString;
         var origin = alert.GetValue("Origin", "general").AsString == "automatic" ? "自动任务" : "一般调用";
         var requestId = alert.GetValue("RequestId", "").AsString;
         return new AdminNotification
         {
             Id = $"llmgw-consumption-{id}", Key = $"llmgw-consumption:{id}",
-            Title = blocked ? "模型调用频率超限，平台已拦截" : "模型调用接近频率上限",
-            Message = $"{caller} 的{origin}在 {alert.GetValue("WindowSeconds", 60)} 秒窗口内达到 "
+            Title = dynamicRate ? "模型调用量相对历史基线异常增长" : blocked ? "模型调用频率超限，平台已拦截" : "模型调用接近频率上限",
+            Message = (dynamicRate
+                ? $"{caller} 的{origin}在 {alert.GetValue("WindowSeconds", 60)} 秒窗口内达到 {alert.GetValue("Count", 0)} 次，"
+                  + $"动态触发线 {alert.GetValue("Limit", 0)} 次；历史均值 {alert.GetValue("BaselineAverage", 0)}，"
+                  + $"样本为 {alert.GetValue("BaselineSamples", 0)} 个已结束窗口。请检查任务范围；此预警不修改现有限额。"
+                : $"{caller} 的{origin}在 {alert.GetValue("WindowSeconds", 60)} 秒窗口内达到 "
                       + $"{alert.GetValue("Count", 0)}/{alert.GetValue("Limit", 0)} 次。"
                       + (blocked ? "超额请求已在发送上游之前拒绝。" : "已达到预警阈值，请检查是否存在异常自动触发。")
-                      + $"来源部署：{alert.GetValue("SourceDeployment", "未标记")}；请求编号：{requestId}。",
+                      ) + $"来源部署：{alert.GetValue("SourceDeployment", "未标记")}；请求编号：{requestId}。",
             Level = blocked ? "error" : "warning", Source = "gateway-alert",
             Section = AdminNotificationSections.Admin,
             ActionLabel = "查看消费预警", ActionUrl = $"/logs?requestId={Uri.EscapeDataString(requestId)}",

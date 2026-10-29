@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -54,6 +55,43 @@ public sealed record GatewayMinimumProtectionDecision(
     public static GatewayMinimumProtectionDecision Allow { get; } = new(false, "", "general", 0, DateTime.MinValue, 0, 0);
 }
 
+/// <summary>仅显式配置启用的速率异常策略；历史为已有的已结束请求计数窗，不推断模型费用或自动放宽限额。</summary>
+public sealed record GatewayDynamicRatePolicy(int WindowSeconds, int SampleWindows, int MinimumSamples,
+    decimal Multiplier, int MinimumCount)
+{
+    public static GatewayDynamicRatePolicy? Read(IConfiguration configuration, out string? error)
+    {
+        error = null;
+        const string prefix = "LlmGateway:MinimumProtection:DynamicRateBaseline:";
+        var enabledText = configuration[prefix + "Enabled"];
+        if (string.IsNullOrWhiteSpace(enabledText)) return null;
+        if (!bool.TryParse(enabledText, out var enabled)) { error = "Enabled 必须明确为 true 或 false"; return null; }
+        if (!enabled) return null;
+        if (!int.TryParse(configuration[prefix + "WindowSeconds"], out var seconds) || seconds is not (60 or 3600 or 86400)
+            || !int.TryParse(configuration[prefix + "SampleWindows"], out var samples) || samples is < 2 or > 1440
+            || (long)samples * seconds > 172800
+            || !int.TryParse(configuration[prefix + "MinimumSamples"], out var minimumSamples) || minimumSamples < 2 || minimumSamples > samples
+            || !decimal.TryParse(configuration[prefix + "Multiplier"], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var multiplier)
+            || multiplier <= 1m || multiplier > 1000m
+            || !int.TryParse(configuration[prefix + "MinimumCount"], out var minimumCount) || minimumCount < 1)
+        {
+            error = "须显式配置分钟/小时/日窗口、2至1440个且不超过两天的历史窗口、有效最少样本、1至1000之间的增长倍数及正数最小请求量";
+            return null;
+        }
+        return new(seconds, samples, minimumSamples, multiplier, minimumCount);
+    }
+
+    public GatewayDynamicRateBaseline? Evaluate(IReadOnlyList<long> counts)
+    {
+        if (counts.Count < MinimumSamples || counts.Count > SampleWindows || counts.Any(count => count < 0)) return null;
+        var average = counts.Sum(count => (decimal)count) / counts.Count;
+        var threshold = Math.Max(MinimumCount, decimal.Ceiling(average * Multiplier));
+        return threshold > int.MaxValue ? null : new(average, counts.Count, (int)threshold, SampleWindows, Multiplier);
+    }
+}
+
+public sealed record GatewayDynamicRateBaseline(decimal Average, int Samples, int Threshold, int LookbackWindows, decimal Multiplier);
+
 public sealed class GatewayMinimumProtectionCoordinator
 {
     public const string WindowsCollection = "llmgw_consumption_rate_windows";
@@ -63,6 +101,8 @@ public sealed class GatewayMinimumProtectionCoordinator
     private readonly ILogger<GatewayMinimumProtectionCoordinator> _logger;
     private readonly SemaphoreSlim _indexLock = new(1, 1);
     private bool _indexesReady;
+    private bool _dynamicIndexReady;
+    private int _invalidDynamicPolicyReported;
 
     public GatewayMinimumProtectionCoordinator(
         LlmGatewayDataContext data,
@@ -101,6 +141,10 @@ public sealed class GatewayMinimumProtectionCoordinator
                 AddLimits(limits, "app-caller", "general", "AppCaller", 120, 1000, 5000);
         }
 
+        var dynamicPolicy = GatewayDynamicRatePolicy.Read(_configuration, out var policyError);
+        if (policyError is not null && Interlocked.Exchange(ref _invalidDynamicPolicyReported, 1) == 0)
+            _logger.LogWarning("[GatewaySafety] 动态速率预警策略未启用：{Reason}；固定保护保持有效", policyError);
+        var dynamicScopes = new HashSet<string>(StringComparer.Ordinal);
         var now = DateTime.UtcNow;
         foreach (var (scope, origin, seconds, limit) in limits)
         {
@@ -108,39 +152,102 @@ public sealed class GatewayMinimumProtectionCoordinator
             // tenant 合并所有调用方和请求类型；caller 合并全部实例和部署版本。
             var counterCaller = scope == "tenant" ? "$tenant" : caller;
             var counterType = scope == "tenant" ? "$aggregate" : type;
-            var windowId = Identity("window", tenantId, counterCaller, counterType, scope, origin, seconds, windowStart);
-            var windows = _data.Database.GetCollection<BsonDocument>(WindowsCollection);
-            var filter = Builders<BsonDocument>.Filter.Eq("_id", windowId)
-                         & Builders<BsonDocument>.Filter.Eq("TenantId", tenantId);
-            var update = Builders<BsonDocument>.Update
-                .SetOnInsert("TenantId", tenantId)
-                .SetOnInsert("AppCallerCode", counterCaller)
-                .SetOnInsert("RequestType", counterType)
-                .SetOnInsert("Scope", scope)
-                .SetOnInsert("Origin", origin)
-                .SetOnInsert("WindowSeconds", seconds)
-                .SetOnInsert("WindowStart", windowStart)
-                .SetOnInsert("ExpiresAt", windowStart.AddSeconds(seconds).AddDays(2))
-                .Inc("Count", 1);
-            BsonDocument window;
-            try
-            {
-                window = await windows.FindOneAndUpdateAsync(filter, update,
-                    new FindOneAndUpdateOptions<BsonDocument> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, ct);
-            }
-            catch (MongoException ex) when (IsDuplicate(ex))
-            {
-                window = await windows.FindOneAndUpdateAsync(filter, update,
-                    new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After }, ct)
-                    ?? throw new InvalidOperationException("shared safety counter disappeared after duplicate upsert");
-            }
-            var count = window["Count"].ToInt64();
+            var count = await IncrementWindowAsync(tenantId, counterCaller, counterType, scope, origin, seconds, windowStart, ct);
             await ObserveAsync(tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
                 requestId, identity.SourceDeployment, scope, origin, seconds, windowStart, count, limit, ct);
+            if (dynamicPolicy?.WindowSeconds == seconds)
+            {
+                dynamicScopes.Add(scope);
+                await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, counterCaller, counterType, scope == "tenant" ? null : teamId,
+                    requestId, identity.SourceDeployment, scope, origin, windowStart, count, ct);
+            }
             if (count > limit)
                 return new(true, scope, origin, seconds, windowStart, count, limit);
         }
+        // 显式 RPM 配置会跳过 fallback 窗口；动态观测仍复用相同计数集合，不覆盖其硬限制。
+        if (dynamicPolicy is not null)
+        {
+            foreach (var scope in new[] { "tenant", "app-caller" }.Where(scope => !dynamicScopes.Contains(scope)))
+                await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, scope == "tenant" ? "$tenant" : caller,
+                    scope == "tenant" ? "$aggregate" : type, scope == "tenant" ? null : teamId, requestId,
+                    identity.SourceDeployment, scope, identity.Origin, WindowStart(now, dynamicPolicy.WindowSeconds), null, ct);
+        }
         return GatewayMinimumProtectionDecision.Allow;
+    }
+
+    private async Task<long> IncrementWindowAsync(string tenantId, string caller, string type, string scope, string origin,
+        int seconds, DateTime windowStart, CancellationToken ct)
+    {
+        var windows = _data.Database.GetCollection<BsonDocument>(WindowsCollection);
+        var filter = Builders<BsonDocument>.Filter.Eq("_id", Identity("window", tenantId, caller, type, scope, origin, seconds, windowStart))
+            & Builders<BsonDocument>.Filter.Eq("TenantId", tenantId);
+        var update = Builders<BsonDocument>.Update.SetOnInsert("TenantId", tenantId).SetOnInsert("AppCallerCode", caller)
+            .SetOnInsert("RequestType", type).SetOnInsert("Scope", scope).SetOnInsert("Origin", origin)
+            .SetOnInsert("WindowSeconds", seconds).SetOnInsert("WindowStart", windowStart)
+            .SetOnInsert("ExpiresAt", windowStart.AddSeconds(seconds).AddDays(2)).Inc("Count", 1);
+        BsonDocument window;
+        try
+        {
+            window = await windows.FindOneAndUpdateAsync(filter, update,
+                new FindOneAndUpdateOptions<BsonDocument> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, ct);
+        }
+        catch (MongoException ex) when (IsDuplicate(ex))
+        {
+            window = await windows.FindOneAndUpdateAsync(filter, update,
+                new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After }, ct)
+                ?? throw new InvalidOperationException("shared safety counter disappeared after duplicate upsert");
+        }
+        return window["Count"].ToInt64();
+    }
+
+    private async Task ObserveDynamicSafeAsync(GatewayDynamicRatePolicy policy, string tenantId, string caller, string type,
+        string? teamId, string requestId, string? deployment, string scope, string origin, DateTime currentStart,
+        long? count, CancellationToken ct)
+    {
+        var callerToken = ct;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(1));
+        ct = deadline.Token;
+        try
+        {
+            var windows = _data.Database.GetCollection<BsonDocument>(WindowsCollection);
+            if (!_dynamicIndexReady)
+            {
+                await _indexLock.WaitAsync(ct);
+                try
+                {
+                    if (!_dynamicIndexReady)
+                    {
+                        await windows.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+                            Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("AppCallerCode").Ascending("RequestType")
+                                .Ascending("Scope").Ascending("Origin").Ascending("WindowSeconds").Descending("WindowStart"),
+                            new CreateIndexOptions { Name = "idx_llmgw_consumption_baseline_scope_window" }), cancellationToken: ct);
+                        _dynamicIndexReady = true;
+                    }
+                }
+                finally { _indexLock.Release(); }
+            }
+            count ??= await IncrementWindowAsync(tenantId, caller, type, scope, origin, policy.WindowSeconds, currentStart, ct);
+            var filter = Builders<BsonDocument>.Filter.Eq("TenantId", tenantId)
+                & Builders<BsonDocument>.Filter.Eq("AppCallerCode", caller) & Builders<BsonDocument>.Filter.Eq("RequestType", type)
+                & Builders<BsonDocument>.Filter.Eq("Scope", scope) & Builders<BsonDocument>.Filter.Eq("Origin", origin)
+                & Builders<BsonDocument>.Filter.Eq("WindowSeconds", policy.WindowSeconds)
+                & Builders<BsonDocument>.Filter.Gte("WindowStart", currentStart.AddSeconds(-(long)policy.SampleWindows * policy.WindowSeconds))
+                & Builders<BsonDocument>.Filter.Lt("WindowStart", currentStart)
+                & Builders<BsonDocument>.Filter.Gte("Count", 0);
+            var previous = await windows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("WindowStart"))
+                .Limit(policy.SampleWindows).ToListAsync(ct);
+            var baseline = policy.Evaluate(previous.Select(window => window["Count"].ToInt64()).ToArray());
+            if (baseline is not null)
+                await ObserveAsync(tenantId, caller, type, teamId, requestId, deployment, scope, origin,
+                    policy.WindowSeconds, currentStart, count.Value, baseline.Threshold, ct, baseline);
+        }
+        catch (OperationCanceledException) when (callerToken.IsCancellationRequested) { throw; }
+        catch (Exception error)
+        {
+            // 观测、历史与通知故障都不能改变固定保护的裁决。
+            _logger.LogWarning(error, "[GatewaySafety] 动态速率预警不可用；固定保护保持有效");
+        }
     }
 
     public async Task ObserveAsync(
@@ -156,11 +263,12 @@ public sealed class GatewayMinimumProtectionCoordinator
         DateTime windowStart,
         long count,
         int limit,
-        CancellationToken ct)
+        CancellationToken ct,
+        GatewayDynamicRateBaseline? baseline = null)
     {
-        if (limit <= 0 || count < Math.Max(1, (long)Math.Ceiling(limit * WarningPercent / 100m))) return;
-        var kind = count > limit ? "blocked" : "warning";
-        var id = Identity("alert", tenantId, appCallerCode, requestType, scope, origin, seconds, windowStart) + ":" + kind;
+        if (limit <= 0 || count < (baseline?.Threshold ?? Math.Max(1, (long)Math.Ceiling(limit * WarningPercent / 100m)))) return;
+        var kind = baseline is not null ? "warning" : count > limit ? "blocked" : "warning";
+        var id = Identity(baseline is null ? "alert" : "dynamic-alert", tenantId, appCallerCode, requestType, scope, origin, seconds, windowStart) + ":" + kind;
         var now = DateTime.UtcNow;
         var update = Builders<BsonDocument>.Update
             .SetOnInsert("TenantId", tenantId)
@@ -173,14 +281,17 @@ public sealed class GatewayMinimumProtectionCoordinator
             .SetOnInsert("Origin", origin)
             .SetOnInsert("SourceDeployment", sourceDeployment is null ? (BsonValue)BsonNull.Value : new BsonString(sourceDeployment))
             .SetOnInsert("Kind", kind)
-            .SetOnInsert("Metric", "requests")
+            .SetOnInsert("Metric", baseline is null ? "requests" : "request_rate_baseline")
             .SetOnInsert("RequestId", requestId)
             .SetOnInsert("CreatedAt", now)
             .SetOnInsert("Status", "open")
             .Set("UpdatedAt", now)
             .Set("Limit", limit)
-            .Set("ThresholdPercent", WarningPercent)
+            .Set("ThresholdPercent", baseline is null ? WarningPercent : 100)
             .Max("Count", count);
+        if (baseline is not null)
+            update = update.Set("BaselineAverage", new Decimal128(baseline.Average)).Set("BaselineSamples", baseline.Samples)
+                .Set("BaselineLookbackWindows", baseline.LookbackWindows).Set("BaselineMultiplier", new Decimal128(baseline.Multiplier));
         try
         {
             var alerts = _data.Database.GetCollection<BsonDocument>(AlertsCollection);
