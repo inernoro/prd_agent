@@ -66,6 +66,24 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         denials[0]["Count"].ToInt64().ShouldBe(20);
     }
 
+    [Fact]
+    public async Task DynamicExplicitRateObservationUsesSameGeneralBucketAsFixedProtection()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await SeedDynamicHistory(database);
+        var coordinator = new GatewayMinimumProtectionCoordinator(database.Data,
+            new ConfigurationBuilder().AddInMemoryCollection(DynamicPolicy()).Build(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayMinimumProtectionCoordinator>.Instance);
+        for (var index = 0; index < 6; index++)
+            (await coordinator.CheckAsync(Tenant, Caller, "chat", null, Guid.NewGuid().ToString("N"),
+                new GatewayMinimumRequestIdentity("interactive", null), 1000, 100, default)).Rejected.ShouldBeFalse();
+        var alert = await database.Alerts.Find(new BsonDocument("Metric", "request_rate_baseline")).SingleAsync();
+        alert["Origin"].AsString.ShouldBe("general");
+        alert["Count"].ToInt64().ShouldBe(6);
+        alert["BaselineAverage"].ToDecimal().ShouldBe(2m);
+        (await database.Windows.CountDocumentsAsync(new BsonDocument("Origin", "interactive"))).ShouldBe(0);
+    }
+
     [Theory]
     [InlineData(false, "TenantPerHour")]
     [InlineData(true, "AutomaticTenantPerHour")]

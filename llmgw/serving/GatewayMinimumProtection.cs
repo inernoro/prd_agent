@@ -170,7 +170,7 @@ public sealed class GatewayMinimumProtectionCoordinator
             foreach (var scope in new[] { "tenant", "app-caller" }.Where(scope => !dynamicScopes.Contains(scope)))
                 await ObserveDynamicSafeAsync(dynamicPolicy, tenantId, scope == "tenant" ? "$tenant" : caller,
                     scope == "tenant" ? "$aggregate" : type, scope == "tenant" ? null : teamId, requestId,
-                    identity.SourceDeployment, scope, identity.Origin, WindowStart(now, dynamicPolicy.WindowSeconds), null, ct);
+                    identity.SourceDeployment, scope, identity.Automatic ? "automatic" : "general", WindowStart(now, dynamicPolicy.WindowSeconds), null, ct);
         }
         return GatewayMinimumProtectionDecision.Allow;
     }
