@@ -303,25 +303,33 @@ export function LogicalModelsPage() {
   /**
    * 手动恢复一条被熔断摘掉的线路：立刻给它进半开的资格，省掉冷却期的等待。
    *
-   * 这个按钮存在的理由是一句话的兑现：所有线路都摘掉时那条提示写着「或在展开里手动恢复一条」，
-   * 而在它之前页面上根本没有这个动作——提示指向一个做不到的下一步（第 79 轮 review）。
    * 端点回的不是线路对象（只有 offeringId 与 halfOpenPending），所以这里重拉一次列表，
    * 而不是拿返回值就地改那一行：就地改会把健康状态写成一个我们没拿到的值。
    */
   async function recoverOffering(logical: LogicalModelItem, offeringId: string) {
     setBusy(offeringId);
+    setNotice(null);
     const res = await recoverModelOffering(logical.id, offeringId);
     if (!res.success) { setBusy(null); failNotice(res.error?.message || '恢复失败'); return; }
     await reload();
     setBusy(null);
+    okNotice(res.data.halfOpenPending
+      ? `「${logical.name}」已允许下一次真实请求试探，请回业务页面重试；请求成功后恢复健康。`
+      : `「${logical.name}」的恢复请求已提交，请查看最新线路状态。`);
   }
 
   const offeringCount = items?.reduce((sum, x) => sum + x.offerings.length, 0) ?? 0;
   // 抬头先给结论再给数字：一排孤零零的计数读完不知道该干嘛，出问题的那几个才是要先看的。
   const attention = useMemo(() => (items ?? [])
     .filter((x) => x.enabled)
-    .map((x) => ({ item: x, health: summarizeHealth(x, describeRoutes(x, models)) }))
+    .map((x) => {
+      const routes = describeRoutes(x, models);
+      return { item: x, routes, health: summarizeHealth(x, routes) };
+    })
     .filter((x) => x.health.tone === 'warn'), [items, models]);
+  const recoverableRoutes = attention.flatMap(({ item, routes }) => routes
+    .filter((route) => route.health === 'down')
+    .map((route) => ({ item, route })));
   const monthlyCostUsd = useMemo(
     () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.totalCostUsd || 0), 0),
     [usage]);
@@ -335,7 +343,9 @@ export function LogicalModelsPage() {
         title="模型"
         subtitle={attention.length === 0
           ? '名单外的调用一律拒绝。应用只选择稳定的模型标识，接哪个上游由它下面的线路决定。'
-          : `${attention.map((x) => x.item.name).join('、')} 需要看一眼，其余线路正常。`}
+          : recoverableRoutes.length > 0
+            ? `${attention.length} 个模型存在异常，熔断线路可在下方直接手动恢复。`
+            : `${attention.length} 个模型存在异常，请检查上游配置。`}
         summary={items ? (
           <>
             <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
@@ -359,6 +369,28 @@ export function LogicalModelsPage() {
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
+
+        {recoverableRoutes.length > 0 ? (
+          <section aria-label="熔断线路恢复" style={{ ...INSET_BLOCK, background: 'var(--warn-bg)', flexShrink: 0 }}>
+            <strong>熔断线路 · {recoverableRoutes.length}</strong>
+            <p style={HINT_TEXT}>手动恢复允许下一次真实请求立即试探；成功后恢复健康，失败则重新冷却。</p>
+            {recoverableRoutes.map(({ item, route }) => (
+              <div key={route.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: GAP.normal, flexWrap: 'wrap' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', minWidth: 0 }}>
+                  <RouteDot health={route.health} />
+                  <strong style={{ overflowWrap: 'anywhere' }}>{item.name}</strong>
+                  <span style={{ ...MONO_META, overflowWrap: 'anywhere' }}>{item.publicId}</span>
+                  <span>{route.label}</span>
+                </span>
+                {canWrite ? (
+                  <Button size="sm" disabled={busy !== null} aria-label={`手动恢复 ${item.publicId} · ${route.label}`} onClick={() => void recoverOffering(item, route.id)}>
+                    {busy === route.id ? '正在提交…' : '手动恢复'}
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+          </section>
+        ) : null}
 
         {createOpen && canWrite ? (
           <Card style={CARD_BODY}>
@@ -671,7 +703,7 @@ export function LogicalModelsPage() {
                               {/* 只给「连续失败被摘掉」那一档：线路自己被停用要点启用，
                                   上游被停用要去上游页——对那两种而言半开资格给了也没用。 */}
                               {route.health === 'down' ? (
-                                <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button>
+                                <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button>
                               ) : null}
                               <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button>
                             </>
@@ -862,7 +894,7 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
           tone: 'warn',
           advice: '所有上游线路都被连续失败摘掉了，这个模型当前会解析失败。'
             + '冷却期满系统会自己拿一条真实请求去试探；先去查上游密钥与配额，'
-            + '修好之后可以在展开里点「手动恢复」不等冷却。',
+            + '修好之后可以在页面顶部点「手动恢复」不等冷却。',
         };
   }
   if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
