@@ -492,14 +492,19 @@ public class VideoGenRunWorker : BackgroundService
     private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage)
     {
         var userMessage = VideoGenerationUserError.ForPersistence(errorCode, errorMessage);
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var failed = await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.Status == run.Status && !x.CancelRequested && x.DeletionRequestedAt == null,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Failed)
                 .Set(x => x.ErrorCode, errorCode)
                 .Set(x => x.ErrorMessage, userMessage)
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (failed.ModifiedCount != 1)
+        {
+            await CancelRunAsync(run);
+            return;
+        }
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
         await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = userMessage });
@@ -507,12 +512,14 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task CancelRunAsync(VideoGenRun run)
     {
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var cancelled = await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.Status == run.Status && x.CancelRequested && x.DeletionRequestedAt == null,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                .Set(x => x.CurrentPhase, "cancelled")
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (cancelled.ModifiedCount != 1) return;
 
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
@@ -562,7 +569,7 @@ public class VideoGenRunWorker : BackgroundService
 
 只输出 JSON。";
 
-    private async Task ProcessStoryboardScriptingAsync(VideoGenRun run)
+    internal async Task ProcessStoryboardScriptingAsync(VideoGenRun run)
     {
         if (run.CancelRequested) { await CancelRunAsync(run); return; }
 
@@ -658,10 +665,16 @@ public class VideoGenRunWorker : BackgroundService
             update = update.Set(x => x.ArticleTitle, cleanTitle);
         }
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var scripted = await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.Status == VideoGenRunStatus.Scripting
+                && !x.CancelRequested && x.DeletionRequestedAt == null,
             update,
             cancellationToken: CancellationToken.None);
+        if (scripted.ModifiedCount != 1)
+        {
+            await CancelRunAsync(run);
+            return;
+        }
 
         await SyncProjectStoryboardAsync(run, scenes, aiTitle);
 
@@ -1079,51 +1092,59 @@ public class VideoGenRunWorker : BackgroundService
                     }
                     var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
                     var expectedSha256 = Convert.ToHexString(SHA256.HashData(playbackBytes)).ToLowerInvariant();
-                    await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                    StoredAsset stored;
+                    await using (var assetLease = await VideoAssetMutationLease.AcquireAsync(
                         _db,
                         $"generated-video:{expectedSha256}",
-                        CancellationToken.None);
-                    RegistryAssetStorage.OverrideNextScope("generated");
-                    var stored = await _assetStorage.SaveAsync(playbackBytes, dl.ContentType ?? "video/mp4",
-                        CancellationToken.None,
-                        domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
-                    if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("视频资产摘要校验失败");
-
-                    var version = new VideoGenSceneVersion
+                        CancellationToken.None))
                     {
-                        VideoUrl = stored.Url,
-                        AssetSha256 = stored.Sha256,
-                        JobId = submittedJobId,
-                        Model = actualModel,
-                        Prompt = scene.Prompt,
-                        Duration = actualDuration,
-                        FirstFrameUrl = scene.FirstFrameUrl,
-                        LastFrameUrl = scene.LastFrameUrl,
-                        Cost = status.Cost,
-                    };
+                        RegistryAssetStorage.OverrideNextScope("generated");
+                        stored = await _assetStorage.SaveAsync(playbackBytes, dl.ContentType ?? "video/mp4",
+                            CancellationToken.None,
+                            domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+                        if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidOperationException("视频资产摘要校验失败");
 
-                    var completed = await _db.VideoGenRuns.UpdateOneAsync(
-                        Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
-                        & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
-                        & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", submittedJobId)
-                        & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", claimId),
-                        Builders<VideoGenRun>.Update
-                            .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Done)
-                            .Set($"Scenes.{sceneIdx}.VideoUrl", stored.Url)
-                            .Set($"Scenes.{sceneIdx}.ActiveVersionId", version.Id)
-                            .Set($"Scenes.{sceneIdx}.JobId", submittedJobId)
-                            .Set($"Scenes.{sceneIdx}.Model", version.Model)
-                            .Set($"Scenes.{sceneIdx}.Cost", status.Cost)
-                            .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
-                            .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
-                            .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null)
-                            .Push($"Scenes.{sceneIdx}.Versions", version),
-                        cancellationToken: CancellationToken.None);
-                    if (completed.ModifiedCount != 1) return;
+                        var version = new VideoGenSceneVersion
+                        {
+                            VideoUrl = stored.Url,
+                            AssetSha256 = stored.Sha256,
+                            JobId = submittedJobId,
+                            Model = actualModel,
+                            Prompt = scene.Prompt,
+                            Duration = actualDuration,
+                            FirstFrameUrl = scene.FirstFrameUrl,
+                            LastFrameUrl = scene.LastFrameUrl,
+                            Cost = status.Cost,
+                        };
 
+                        var completed = await _db.VideoGenRuns.UpdateOneAsync(
+                            Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+                            & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                            & Builders<VideoGenRun>.Filter.Eq(x => x.DeletionRequestedAt, null)
+                            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
+                            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", submittedJobId)
+                            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", claimId),
+                            Builders<VideoGenRun>.Update
+                                .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Done)
+                                .Set($"Scenes.{sceneIdx}.VideoUrl", stored.Url)
+                                .Set($"Scenes.{sceneIdx}.ActiveVersionId", version.Id)
+                                .Set($"Scenes.{sceneIdx}.JobId", submittedJobId)
+                                .Set($"Scenes.{sceneIdx}.Model", version.Model)
+                                .Set($"Scenes.{sceneIdx}.Cost", status.Cost)
+                                .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
+                                .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
+                                .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null)
+                                .Push($"Scenes.{sceneIdx}.Versions", version),
+                            cancellationToken: CancellationToken.None);
+                        if (completed.ModifiedCount != 1) return;
+                    }
+
+                    // 同步取消会获取 run-delete，必须先释放 asset，避免与删除的 run→asset 顺序相反。
                     await SyncProjectSceneActivityAsync(run.Id);
-
+                    await using var eventLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{run.Id}", CancellationToken.None);
+                    if (!await _db.VideoGenRuns.Find(x => x.Id == run.Id && x.Status == VideoGenRunStatus.Editing
+                            && !x.CancelRequested && x.DeletionRequestedAt == null).AnyAsync(CancellationToken.None)) return;
                     await PublishEventAsync(run.Id, "scene.render.done",
                         new { sceneIndex = sceneIdx, videoUrl = stored.Url, cost = status.Cost });
 
@@ -1166,6 +1187,8 @@ public class VideoGenRunWorker : BackgroundService
     {
         var renewed = await _db.VideoGenRuns.UpdateOneAsync(
             Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.DeletionRequestedAt, null)
             & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
             & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", jobId)
             & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", leaseId),
@@ -1240,13 +1263,15 @@ public class VideoGenRunWorker : BackgroundService
             return;
         }
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var regenerated = await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.Status == VideoGenRunStatus.Editing && x.DeletionRequestedAt == null,
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Draft)
                 .Set($"Scenes.{sceneIdx}.Prompt", newPrompt)
                 .Set($"Scenes.{sceneIdx}.ErrorMessage", (string?)null),
             cancellationToken: CancellationToken.None);
+        if (regenerated.ModifiedCount != 1) return;
+        await SyncProjectSceneActivityAsync(run.Id);
 
         await PublishEventAsync(run.Id, "scene.prompt.regenerated", new { sceneIndex = sceneIdx, prompt = newPrompt });
     }
@@ -1259,7 +1284,9 @@ public class VideoGenRunWorker : BackgroundService
         string? expectedLeaseId = null)
     {
         var userMessage = VideoGenerationUserError.ForPersistence("SCENE_RENDER_FAILED", errorMessage);
-        var filter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId);
+        var filter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId)
+                     & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                     & Builders<VideoGenRun>.Filter.Eq(x => x.DeletionRequestedAt, null);
         if (!string.IsNullOrWhiteSpace(expectedJobId))
         {
             filter &= Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", expectedJobId);
@@ -1295,6 +1322,14 @@ public class VideoGenRunWorker : BackgroundService
         var run = await _db.VideoGenRuns.Find(x => x.Id == runId)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (run == null) return;
+        if (run.CancelRequested)
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IVideoGenService>();
+            await service.CancelRunAsync(run.Id, run.OwnerAdminId, run.AppKey, CancellationToken.None);
+            return;
+        }
+        if (run.Status is VideoGenRunStatus.Cancelled or VideoGenRunStatus.Failed || run.DeletionRequestedAt != null) return;
         await UpdateProjectAsync(run, ResolveProjectStatusForScenes(run.Scenes));
     }
 
@@ -1470,6 +1505,19 @@ public class VideoGenRunWorker : BackgroundService
             await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-uploading", 90);
             var bytes = await File.ReadAllBytesAsync(outputFile, CancellationToken.None);
             var expectedSha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            await using var runCommitLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{run.Id}", CancellationToken.None);
+            var currentRun = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+            if (currentRun == null || currentRun.Status != VideoGenRunStatus.Rendering || currentRun.DeletionRequestedAt != null
+                || (exportTask != null && currentRun.LatestExportTaskId != exportTask.Id)) return;
+            if (currentRun.CancelRequested)
+            {
+                await CancelRunAsync(currentRun);
+                if (exportTask != null)
+                    await _db.VideoExportTasks.UpdateOneAsync(x => x.Id == exportTask.Id && x.Status == VideoExportTaskStatus.Processing,
+                        Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Cancelled)
+                            .Set(x => x.CurrentPhase, "cancelled").Set(x => x.EndedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
+                return;
+            }
             await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
                 _db,
                 $"generated-video:{expectedSha256}",
@@ -1637,14 +1685,16 @@ public class VideoGenRunWorker : BackgroundService
 
     private sealed record MediaProbeResult(double DurationSeconds, bool HasAudio);
 
-    private async Task UpdateExportProgressAsync(string runId, string? exportTaskId, string phase, int progress)
+    internal async Task UpdateExportProgressAsync(string runId, string? exportTaskId, string phase, int progress)
     {
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
+        var changed = await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == runId && x.Status == VideoGenRunStatus.Rendering && x.DeletionRequestedAt == null
+                && (exportTaskId == null || x.LatestExportTaskId == exportTaskId),
             Builders<VideoGenRun>.Update
                 .Set(x => x.CurrentPhase, phase)
                 .Set(x => x.PhaseProgress, progress),
             cancellationToken: CancellationToken.None);
+        if (changed.MatchedCount != 1) return;
         if (!string.IsNullOrWhiteSpace(exportTaskId))
         {
             await _db.VideoExportTasks.UpdateOneAsync(
@@ -1657,11 +1707,24 @@ public class VideoGenRunWorker : BackgroundService
         await PublishEventAsync(runId, "export.progress", new { taskId = exportTaskId, phase, progress });
     }
 
-    private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
+    internal async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
     {
         var userMessage = VideoGenerationUserError.ForPersistence("EXPORT_FAILED", errorMessage);
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{run.Id}", CancellationToken.None);
+        var current = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+        if (current?.Status == VideoGenRunStatus.Rendering && current.CancelRequested
+            && (exportTaskId == null || current.LatestExportTaskId == exportTaskId))
+        {
+            await CancelRunAsync(current);
+            if (exportTaskId != null)
+                await _db.VideoExportTasks.UpdateOneAsync(x => x.Id == exportTaskId && x.RunId == run.Id,
+                    Builders<VideoExportTask>.Update.Set(x => x.Status, VideoExportTaskStatus.Cancelled)
+                        .Set(x => x.CurrentPhase, "cancelled").Set(x => x.EndedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
+            return;
+        }
+        var changed = await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.Status == VideoGenRunStatus.Rendering && x.DeletionRequestedAt == null
+                && (exportTaskId == null || x.LatestExportTaskId == exportTaskId),
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Editing)
                 .Set(x => x.ExportRequested, false)
@@ -1669,6 +1732,7 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.CurrentPhase, "export-failed")
                 .Set(x => x.PhaseProgress, 0),
             cancellationToken: CancellationToken.None);
+        if (changed.ModifiedCount != 1) return;
         if (!string.IsNullOrWhiteSpace(exportTaskId))
         {
             await _db.VideoExportTasks.UpdateOneAsync(
@@ -1698,8 +1762,12 @@ public class VideoGenRunWorker : BackgroundService
     private async Task UpdateProjectAsync(VideoGenRun run, string status)
     {
         if (string.IsNullOrWhiteSpace(run.ProjectId)) return;
+        await using var projectLease = await VideoAssetMutationLease.AcquireAsync(_db, $"video-project:{run.ProjectId}", CancellationToken.None);
+        var current = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+        if (current == null || current.DeletionRequestedAt != null
+            || (status != VideoProjectStatus.Draft && (current.CancelRequested || current.Status is VideoGenRunStatus.Cancelled or VideoGenRunStatus.Failed))) return;
         await _db.VideoProjects.UpdateOneAsync(
-            x => x.Id == run.ProjectId,
+            x => x.Id == run.ProjectId && x.OwnerAdminId == run.OwnerAdminId && x.AppKey == run.AppKey && x.LatestRunId == run.Id,
             Builders<VideoProject>.Update
                 .Set(x => x.Status, status)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
@@ -1712,7 +1780,11 @@ public class VideoGenRunWorker : BackgroundService
         string? aiTitle)
     {
         if (string.IsNullOrWhiteSpace(run.ProjectId)) return;
-        var project = await _db.VideoProjects.Find(x => x.Id == run.ProjectId)
+        await using var projectLease = await VideoAssetMutationLease.AcquireAsync(_db, $"video-project:{run.ProjectId}", CancellationToken.None);
+        var current = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+        if (current == null || current.Status != VideoGenRunStatus.Editing || current.CancelRequested || current.DeletionRequestedAt != null) return;
+        var project = await _db.VideoProjects.Find(x => x.Id == run.ProjectId
+            && x.OwnerAdminId == run.OwnerAdminId && x.AppKey == run.AppKey && x.LatestRunId == run.Id)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (project == null) return;
 
@@ -1750,7 +1822,8 @@ public class VideoGenRunWorker : BackgroundService
             var title = aiTitle.Trim();
             update = update.Set(x => x.Title, title[..Math.Min(title.Length, 60)]);
         }
-        await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId,
+        await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId
+            && x.OwnerAdminId == run.OwnerAdminId && x.AppKey == run.AppKey && x.LatestRunId == run.Id,
             update, cancellationToken: CancellationToken.None);
     }
 
