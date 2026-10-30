@@ -1,10 +1,14 @@
 import importlib.util
+import html
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = pathlib.Path(__file__).with_name("archive_report.py")
@@ -820,6 +824,66 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
     }]
     figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
 
+    def test_reg_stsmk_report_external_link_001_preserves_absolute_cds_share_urls(self):
+        with mock.patch.dict(
+            "os.environ",
+            {"CDS_HOST": "https://cds.miduo.org"},
+            clear=False,
+        ):
+            same_report_share = archive_report._render_inline(
+                "[打开技术附录](https://cds.miduo.org/r/9dbde2c9e1e2428a3f2481f01e785d8f#case-lit-006)"
+            )
+            same_host_page = archive_report._render_inline(
+                "[打开普通页面](https://cds.miduo.org/projects/prd-agent)"
+            )
+            protected_report = archive_report._render_inline(
+                "[打开受保护报告](https://cds.miduo.org/reports?project=prd-agent&report=tech-1)"
+            )
+            other_report = archive_report._render_inline(
+                "[打开外部报告](https://reports.example.test/reports?report=tech-1)"
+            )
+
+        self.assertIn('data-cds-report-share', same_report_share)
+        self.assertIn('href="https://cds.miduo.org/r/9dbde2c9e1e2428a3f2481f01e785d8f#case-lit-006"', same_report_share)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', same_report_share)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', same_host_page)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', protected_report)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', other_report)
+        for rendered in (same_host_page, protected_report, other_report):
+            self.assertNotIn('data-cds-report-share', rendered)
+
+    def test_only_real_share_token_shape_is_eligible_for_same_frame_navigation(self):
+        with mock.patch.dict("os.environ", {"CDS_HOST": "https://cds.miduo.org"}):
+            for token in ("public-token", "a" * 31, "a" * 33, "g" * 32, "_" * 32):
+                with self.subTest(token=token):
+                    rendered = archive_report._render_inline(f"[链接](https://cds.miduo.org/r/{token})")
+                    self.assertNotIn('data-cds-report-share', rendered)
+                    self.assertIn('target="_blank" rel="noopener noreferrer"', rendered)
+
+    def test_cds_share_navigation_requires_a_configured_https_origin(self):
+        link = "[附录](https://cds.miduo.org/r/9dbde2c9e1e2428a3f2481f01e785d8f)"
+        for host in ("", "http://cds.miduo.org", "https://other.example.test"):
+            with self.subTest(host=host), mock.patch.dict("os.environ", {"CDS_HOST": host}):
+                rendered = archive_report._render_inline(link)
+                self.assertNotIn('data-cds-report-share', rendered)
+                self.assertIn('target="_blank" rel="noopener noreferrer"', rendered)
+
+    def test_cds_share_uses_the_existing_scheme_less_host_contract(self):
+        link = "[附录](https://cds.miduo.org/r/9dbde2c9e1e2428a3f2481f01e785d8f)"
+        for host in ("cds.miduo.org", "  cds.miduo.org/  "):
+            with self.subTest(host=host), mock.patch.dict("os.environ", {"CDS_HOST": host}):
+                rendered = archive_report._render_inline(link)
+                self.assertIn('data-cds-report-share', rendered)
+                self.assertIn('href="https://cds.miduo.org/r/', rendered)
+
+    def test_run_id_date_segment_is_not_rendered_as_a_commit_link(self):
+        rendered = archive_report._render_inline(
+            "运行 stsmk-20261024-resume-o5d7mE；修复提交 6fa8bd6f"
+        )
+
+        self.assertNotIn("/commit/20261024", rendered)
+        self.assertIn("/commit/6fa8bd6f", rendered)
+
     @staticmethod
     def business_decision_body(not_run: int, inconclusive: int) -> str:
         passed = 1
@@ -977,6 +1041,113 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         self.assertIn('href="#method-core-001"', rendered)
         self.assertIn('<span id="method-core-001"></span>', rendered)
         self.assertEqual([], archive_report._interactive_evidence_errors(rendered, self.manifest))
+
+
+@unittest.skipUnless(os.environ.get("ARCHIVE_REPORT_BROWSER_TESTS") == "1", "显式启用 ARCHIVE_REPORT_BROWSER_TESTS=1 运行 Chromium 消费者合同")
+class ReportShareBrowserContractTests(unittest.TestCase):
+    """Exercise generated HTML inside the existing CDS and MAP iframe contracts."""
+
+    @classmethod
+    def setUpClass(cls):
+        from playwright.sync_api import sync_playwright
+        cls.playwright = sync_playwright().start()
+        cls.browser = cls.playwright.chromium.launch(
+            executable_path=os.environ.get("ARCHIVE_REPORT_CHROMIUM") or shutil.which("chromium"),
+            headless=True,
+        )
+        cls.cds_origin = "https://cds.example.test"
+        cls.share_url = cls.cds_origin + "/r/9dbde2c9e1e2428a3f2481f01e785d8f#case-lit-006"
+        with mock.patch.dict("os.environ", {"CDS_HOST": cls.cds_origin}):
+            cls.report = archive_report.build_interactive_html(
+                "验收 · 报告链接合同", "pass",
+                "## 操作入口\n\n[打开技术附录](" + cls.share_url + ")\n\n"
+                "[普通页面](https://cds.example.test/projects/prd-agent)\n\n"
+                "[受保护报告](https://cds.example.test/reports?report=tech-1)\n\n"
+                "[跨域报告](https://other.example.test/r/9dbde2c9e1e2428a3f2481f01e785d8f)\n\n"
+                "[无效分享](https://cds.example.test/r/public-token)\n\n"
+                "[章节](#操作入口)", [], figure_srcs={},
+            )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close()
+        cls.playwright.stop()
+
+    def setUp(self):
+        self.context = self.browser.new_context()
+        self.context.set_default_timeout(10000)
+        self.addCleanup(self.context.close)
+        self.requests = []
+        self.page = self.context.new_page()
+        self.context.route("**/*", self.serve)
+
+    def serve(self, route):
+        url = route.request.url
+        self.requests.append(url)
+        if "/r/" in url:
+            route.fulfill(
+                status=200, content_type="text/html; charset=utf-8",
+                headers={"Content-Security-Policy": "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'"},
+                body='<h1>技术附录</h1><h2 id="case-lit-006">文学缺陷正文</h2>',
+            )
+        else:
+            route.fulfill(status=200, content_type="text/html; charset=utf-8", body=self.viewer)
+
+    def open_viewer(self, origin, sandbox):
+        self.viewer = '<iframe title="主管报告" sandbox="' + sandbox + '" style="width:100%;height:900px" srcdoc="' + html.escape(self.report, quote=True) + '"></iframe>'
+        self.page.goto(origin + "/viewer")
+        self.frame = self.page.frame_locator("iframe")
+        self.link = self.frame.get_by_role("link", name="打开技术附录", exact=True)
+        self.link.wait_for()
+
+    def test_cds_opaque_origin_iframe_click_opens_appendix_in_same_frame(self):
+        consumer = (REPO_ROOT / "cds/web/src/pages/ReportsPage.tsx").read_text()
+        self.assertIn('sandbox="allow-scripts"', consumer)
+        self.open_viewer(self.cds_origin, "allow-scripts")
+        self.assertEqual(self.share_url, self.link.get_attribute("href"))
+        self.assertEqual("_self", self.link.get_attribute("target"))
+        self.link.click()
+        self.frame.get_by_role("heading", name="技术附录", exact=True).wait_for()
+        self.assertEqual(self.share_url, self.page.frames[1].url)
+        self.assertEqual(self.cds_origin + "/viewer", self.page.url)
+        self.assertEqual(1, len(self.context.pages))
+
+    def test_map_imported_srcdoc_click_keeps_cds_origin_and_opens_isolated_popup(self):
+        consumer = (REPO_ROOT / "prd-admin/src/pages/product-agent/knowledge/KnowledgeDetailPage.tsx").read_text()
+        self.assertIn('srcDoc={content!}', consumer)
+        self.assertIn('sandbox="allow-scripts allow-popups"', consumer)
+        self.open_viewer("https://map.example.test", "allow-scripts allow-popups")
+        self.assertEqual(self.share_url, self.link.get_attribute("href"))
+        self.assertEqual("_blank", self.link.get_attribute("target"))
+        self.assertEqual("noopener noreferrer", self.link.get_attribute("rel"))
+        with self.context.expect_page() as popup_info:
+            self.link.click()
+        popup = popup_info.value
+        popup.get_by_role("heading", name="技术附录", exact=True).wait_for()
+        self.assertEqual(self.share_url, popup.url)
+        self.assertEqual("https://map.example.test/viewer", self.page.url)
+        self.assertFalse(any(url.startswith("https://map.example.test/r/") for url in self.requests))
+
+    def test_scheme_less_cds_host_keeps_same_frame_click_working(self):
+        with mock.patch.dict("os.environ", {"CDS_HOST": "  cds.example.test/  "}):
+            self.report = archive_report.build_interactive_html(
+                "验收 · 报告链接合同", "pass",
+                "## 操作入口\n\n[打开技术附录](" + self.share_url + ")", [], figure_srcs={},
+            )
+        self.open_viewer(self.cds_origin, "allow-scripts")
+        self.assertEqual("_self", self.link.get_attribute("target"))
+        self.link.click()
+        self.frame.get_by_role("heading", name="技术附录", exact=True).wait_for()
+        self.assertEqual(self.share_url, self.page.frames[1].url)
+
+    def test_other_links_keep_existing_targets_in_cds_viewer(self):
+        self.open_viewer(self.cds_origin, "allow-scripts")
+        for label in ("普通页面", "受保护报告", "跨域报告", "无效分享"):
+            with self.subTest(label=label):
+                link = self.frame.get_by_role("link", name=label, exact=True)
+                self.assertEqual("_blank", link.get_attribute("target"))
+                self.assertEqual("noopener noreferrer", link.get_attribute("rel"))
+        self.assertIsNone(self.frame.get_by_role("link", name="章节", exact=True).get_attribute("target"))
 
 
 if __name__ == "__main__":

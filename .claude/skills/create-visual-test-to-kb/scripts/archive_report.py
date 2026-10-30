@@ -27,7 +27,7 @@
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 REPORT_KINDS = (
@@ -572,6 +572,27 @@ def _method_note(text):
     )
 
 
+def _render_link_target(url):
+    """Return the safe rendered URL and navigation attributes for a link."""
+    if not re.match(r"https?://", url):
+        return url, ""
+
+    link_url = urlsplit(url)
+    cds_url = urlsplit(_cds_base() if os.environ.get("CDS_HOST", "").strip() else "")
+    is_same_cds_share = (
+        link_url.scheme == "https"
+        and cds_url.scheme == "https"
+        and link_url.netloc == cds_url.netloc
+        and bool(re.fullmatch(r"/r/[a-f0-9]{32}", link_url.path))
+    )
+    if is_same_cds_share:
+        # Imported srcDoc reports inherit the consuming viewer's base URL.
+        # Keep the CDS origin and let the report select same-frame navigation
+        # only when it actually runs inside that CDS viewer.
+        return url, ' target="_blank" rel="noopener noreferrer" data-cds-report-share'
+    return url, ' target="_blank" rel="noopener noreferrer"'
+
+
 def _render_inline(text):
     tokens = []
 
@@ -587,8 +608,9 @@ def _render_inline(text):
 
     def link_repl(m):
         label = html.escape(m.group(1).strip())
-        url = html.escape(m.group(2).strip(), quote=True)
-        target = ' target="_blank" rel="noopener noreferrer"' if re.match(r"https?://", url) else ""
+        raw_url = m.group(2).strip()
+        rendered_url, target = _render_link_target(raw_url)
+        url = html.escape(rendered_url, quote=True)
         return stash(f'<a href="{url}"{target}>{label}</a>')
 
     def code_repl(m):
@@ -619,7 +641,7 @@ def _render_inline(text):
         raw,
     )
     raw = re.sub(
-        r"(?<![a-f0-9/])\b([a-f0-9]{8,40})\b(?![a-f0-9])",
+        r"(?<![a-f0-9/_-])\b([a-f0-9]{8,40})\b(?![a-f0-9_-])",
         lambda m: stash(
             f'<a href="{GITHUB_COMMIT_BASE}{html.escape(m.group(1), quote=True)}" '
             f'target="_blank" rel="noopener noreferrer"><code>{html.escape(m.group(1))}</code></a>'
@@ -3188,6 +3210,13 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 </div>
 <script>
 (function(){{
+  // CDS 的 srcDoc 沙箱与 MAP 导入共用正文；仅 CDS 内部分享链接留在当前 iframe。
+  document.querySelectorAll('a[data-cds-report-share]').forEach(function(link){{
+    if(new URL(link.href).origin===new URL(document.baseURI).origin){{
+      link.target='_self';
+      link.removeAttribute('rel');
+    }}
+  }});
   // 简版/完整版：把正文按 H2 分段，简版只留决策读者需要的几段。
   // 不改 DOM 结构，只加 class —— 模板契约（layout/hero/evidence-nav/reportBody）逐字节不变。
   var viewSwitch=document.querySelector('[data-view-switch]');
