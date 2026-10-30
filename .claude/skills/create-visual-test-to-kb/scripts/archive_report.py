@@ -583,13 +583,13 @@ def _render_link_target(url):
         link_url.scheme == "https"
         and cds_url.scheme == "https"
         and link_url.netloc == cds_url.netloc
-        and bool(re.fullmatch(r"/r/[A-Za-z0-9_-]+", link_url.path))
+        and bool(re.fullmatch(r"/r/[a-f0-9]{32}", link_url.path))
     )
     if is_same_cds_share:
-        share_url = link_url.path
-        if link_url.fragment:
-            share_url += f"#{link_url.fragment}"
-        return share_url, ' target="_self"'
+        # Imported srcDoc reports inherit the consuming viewer's base URL.
+        # Keep the CDS origin and let the report select same-frame navigation
+        # only when it actually runs inside that CDS viewer.
+        return url, ' target="_blank" rel="noopener noreferrer" data-cds-report-share'
     return url, ' target="_blank" rel="noopener noreferrer"'
 
 
@@ -3210,6 +3210,13 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 </div>
 <script>
 (function(){{
+  // CDS 的 srcDoc 沙箱与 MAP 导入共用正文；仅 CDS 内部分享链接留在当前 iframe。
+  document.querySelectorAll('a[data-cds-report-share]').forEach(function(link){{
+    if(new URL(link.href).origin===new URL(document.baseURI).origin){{
+      link.target='_self';
+      link.removeAttribute('rel');
+    }}
+  }});
   // 简版/完整版：把正文按 H2 分段，简版只留决策读者需要的几段。
   // 不改 DOM 结构，只加 class —— 模板契约（layout/hero/evidence-nav/reportBody）逐字节不变。
   var viewSwitch=document.querySelector('[data-view-switch]');
