@@ -578,7 +578,7 @@ def _render_link_target(url):
         return url, ""
 
     link_url = urlsplit(url)
-    cds_url = urlsplit(os.environ.get("CDS_HOST", ""))
+    cds_url = urlsplit(_cds_base() if os.environ.get("CDS_HOST", "").strip() else "")
     is_same_cds_share = (
         link_url.scheme == "https"
         and cds_url.scheme == "https"

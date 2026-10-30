@@ -868,6 +868,14 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
                 self.assertNotIn('data-cds-report-share', rendered)
                 self.assertIn('target="_blank" rel="noopener noreferrer"', rendered)
 
+    def test_cds_share_uses_the_existing_scheme_less_host_contract(self):
+        link = "[附录](https://cds.miduo.org/r/9dbde2c9e1e2428a3f2481f01e785d8f)"
+        for host in ("cds.miduo.org", "  cds.miduo.org/  "):
+            with self.subTest(host=host), mock.patch.dict("os.environ", {"CDS_HOST": host}):
+                rendered = archive_report._render_inline(link)
+                self.assertIn('data-cds-report-share', rendered)
+                self.assertIn('href="https://cds.miduo.org/r/', rendered)
+
     def test_run_id_date_segment_is_not_rendered_as_a_commit_link(self):
         rendered = archive_report._render_inline(
             "运行 stsmk-20261024-resume-o5d7mE；修复提交 6fa8bd6f"
@@ -1119,6 +1127,18 @@ class ReportShareBrowserContractTests(unittest.TestCase):
         self.assertEqual(self.share_url, popup.url)
         self.assertEqual("https://map.example.test/viewer", self.page.url)
         self.assertFalse(any(url.startswith("https://map.example.test/r/") for url in self.requests))
+
+    def test_scheme_less_cds_host_keeps_same_frame_click_working(self):
+        with mock.patch.dict("os.environ", {"CDS_HOST": "  cds.example.test/  "}):
+            self.report = archive_report.build_interactive_html(
+                "验收 · 报告链接合同", "pass",
+                "## 操作入口\n\n[打开技术附录](" + self.share_url + ")", [], figure_srcs={},
+            )
+        self.open_viewer(self.cds_origin, "allow-scripts")
+        self.assertEqual("_self", self.link.get_attribute("target"))
+        self.link.click()
+        self.frame.get_by_role("heading", name="技术附录", exact=True).wait_for()
+        self.assertEqual(self.share_url, self.page.frames[1].url)
 
     def test_other_links_keep_existing_targets_in_cds_viewer(self):
         self.open_viewer(self.cds_origin, "allow-scripts")
