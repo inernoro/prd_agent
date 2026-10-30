@@ -2078,41 +2078,138 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-003] 大文件上传期间持续显示文件名和百分比', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[FILE-003] 大文件上传和解析持续反馈，正式环境使用安全小文件', { tag: '@cleanup' }, async ({ page, request }) => {
+    const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
     test.setTimeout(90_000);
-    const token = await loginAndReadToken(page, request, '/document-store');
+    const token = await loginAndReadToken(page, request, '/');
+    await page.getByRole('button', { name: '知识库', exact: true }).click();
+    await page.waitForURL((url) => url.pathname === '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
     let storeId = '';
+    const session = production ? null : await page.context().newCDPSession(page);
+    let requestPausedId = '';
+    let pausedRequestId = '';
+    let progressObserver: import('@playwright/test').JSHandle<{ seen: { value: boolean }; stop: () => void }> | null = null;
+    let pendingUpload: Promise<import('@playwright/test').Response> | null = null;
+    let uploadStarted = false;
+    const observeUpload = (item: import('@playwright/test').Request) => {
+      if (storeId && new URL(item.url()).pathname === `/api/document-store/stores/${storeId}/upload`) uploadStarted = true;
+    };
+    page.on('request', observeUpload);
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: { name: runKey, description: '上传进度稳定冒烟，执行后自动清理', isPublic: false },
       }));
       storeId = store.id;
-      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
+      await page.getByText(runKey, { exact: true }).click();
       await expect(page.getByText(runKey, { exact: true })).toBeVisible({ timeout: 15_000 });
 
-      let releaseUpload!: () => void;
-      const release = new Promise<void>((resolveRelease) => { releaseUpload = resolveRelease; });
-      await page.route(`**/api/document-store/stores/${storeId}/upload`, async (route) => {
-        await release;
-        await route.continue();
-      });
+      const uploadPath = `/api/document-store/stores/${storeId}/upload`;
+      const input = page.locator('input[type="file"][accept*=".pdf"]').first();
+      if (session) {
+        // 超限仅在 CDS 前端预检；不得真的把超限文件提交到服务端。
+        let uploadRequests = 0;
+        const countUpload = (item: import('@playwright/test').Request) => {
+          if (new URL(item.url()).pathname === uploadPath) uploadRequests++;
+        };
+        page.on('request', countUpload);
+        await input.setInputFiles({ name: `${runKey}-超限.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(21 * 1024 * 1024, 65) });
+        await expect(page.getByText(/单文件上限 20MB/)).toBeVisible();
+        expect(uploadRequests, '超限文件必须在上传前拒绝').toBe(0);
+        page.off('request', countUpload);
+        // 只暂停本轮真实请求与响应，不替换回执、正文或页面状态。
+        session.on('Fetch.requestPaused', (event) => {
+          if (event.responseStatusCode !== undefined) pausedRequestId = event.requestId;
+          else requestPausedId = event.requestId;
+        });
+        const urlPattern = new URL(uploadPath, page.url()).href;
+        await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [
+          { urlPattern, latency: 0, downloadThroughput: -1, uploadThroughput: 128 * 1024 },
+        ] });
+        await session.send('Fetch.enable', { patterns: [
+          { urlPattern, requestStage: 'Request' }, { urlPattern, requestStage: 'Response' },
+        ] });
+      }
       const name = `${runKey}.txt`;
-      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
+      if (production) {
+        progressObserver = await page.evaluateHandle(() => {
+          const seen = { value: false };
+          const observer = new MutationObserver(() => {
+            if (document.querySelector('[data-testid="document-upload-progress"]')) seen.value = true;
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+          return { seen, stop: () => observer.disconnect() };
+        });
+      }
+      pendingUpload = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath, { timeout: 60_000 });
+      void pendingUpload.catch(() => {});
+      await input.setInputFiles({
         name,
         mimeType: 'text/plain',
-        buffer: Buffer.alloc(2 * 1024 * 1024, 65),
+        buffer: Buffer.alloc(production ? 256 : 2 * 1024 * 1024, 65),
       });
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/^\d+%$/)).toBeVisible();
-      releaseUpload();
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+      if (session) {
+        await expect.poll(() => requestPausedId, { timeout: 10_000 }).not.toBe('');
+        await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible();
+        await expect(page.getByText(/^\d+%$/)).toBeVisible();
+        const transferStatus = page.getByTestId('document-upload-status');
+        const initialPercent = await transferStatus.innerText();
+        await session.send('Fetch.continueRequest', { requestId: requestPausedId }); requestPausedId = '';
+        await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(initialPercent);
+        await expect(transferStatus).toHaveText(/^\d+%$/);
+        const nextPercent = await transferStatus.innerText();
+        await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(nextPercent);
+        await expect(transferStatus).toHaveText(/^\d+%$/);
+        await expect.poll(() => pausedRequestId, { timeout: 20_000 }).not.toBe('');
+        await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeVisible();
+        const status = page.getByTestId('document-upload-status');
+        await expect(status).toContainText('解析中 · 已等待');
+        expect(await status.evaluate((element) => Boolean(element.closest('[aria-live="polite"], [role="status"]')))).toBe(false);
+        const firstStatus = await status.innerText();
+        await expect.poll(() => status.innerText(), { timeout: 3000 }).not.toBe(firstStatus);
+        await session.send('Fetch.continueRequest', { requestId: pausedRequestId }); pausedRequestId = '';
+      }
+      const uploadResponse = await pendingUpload;
+      expect(uploadResponse.ok()).toBe(true);
+      const uploadedBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(uploadedBody.success).toBe(true);
+      if (progressObserver) {
+        expect(await progressObserver.evaluate((observation) => observation.seen.value), '安全小文件上传必须实际渲染进度卡，不能仅靠终态隐藏').toBe(true);
+      }
+      await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+      const content = await readEnvelope<{ content: string }>(await page.request.get(
+        `/api/document-store/entries/${uploadedBody.data.entry.id}/content`, { headers: authHeaders(token) },
+      ));
+      expect(content.content).toContain('AAAA');
     } finally {
+      if (progressObserver) {
+        await progressObserver.evaluate((observation) => observation.stop());
+        await progressObserver.dispose();
+      }
+      if (session) {
+        for (const requestId of [requestPausedId, pausedRequestId].filter(Boolean)) {
+          await session.send('Fetch.continueRequest', { requestId }).catch(() => {});
+        }
+        await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [] });
+        await session.detach();
+      }
+      page.off('request', observeUpload);
+      if (pendingUpload && uploadStarted) {
+        // 请求已放行也可能仍在写正文；必须等真实响应完整收敛后再级联删除。
+        try {
+          const response = await pendingUpload;
+          if (await response.finished()) throw new Error('上传响应未完整结束');
+        } catch {
+          throw new Error(`上传未收敛，保留本轮知识库 ${storeId} 供恢复清理，禁止并发级联删除`);
+        }
+      }
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
     }
   });

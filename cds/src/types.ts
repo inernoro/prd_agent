@@ -82,6 +82,8 @@ export interface BuildProfile {
   env?: Record<string, string>;
   /** Volume mounts for shared caches (e.g., node_modules, nuget) */
   cacheMounts?: CacheMount[];
+  /** Original retired CDS compiler-cache declarations; metadata only, physical bytes untouched. */
+  retiredCatalogCacheMounts?: CacheMount[];
   /** Timeout for build in ms (default: 600000) */
   buildTimeout?: number;
   /**
@@ -556,6 +558,21 @@ export interface CacheMount {
   hostPath: string;
   /** Container path where it gets mounted */
   containerPath: string;
+  /** Explicitly read-only configuration or cache. */
+  readOnly?: boolean;
+  /** Stable owner declaration for writable storage; never inferred from a path. */
+  storage?: StorageBinding;
+}
+
+export interface StorageBinding {
+  version: 1;
+  purpose: 'cache' | 'persistent';
+  instanceId: string;
+  projectId: string;
+  scope: 'branch-private' | 'project-shared';
+  branchId?: string;
+  serviceId: string;
+  mountKey: string;
 }
 
 /**
@@ -2174,6 +2191,8 @@ export interface DeletedProjectWorktreeTombstone {
 }
 
 export interface CdsState {
+  profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
+  profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
   /** Routing rules */
   routingRules: RoutingRule[];
   /** Build profiles */
@@ -2236,6 +2255,10 @@ export interface CdsState {
   customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
+  /** Stable platform storage owner; accepted durably during boot before runtime admission. */
+  storageInstanceId?: string;
+  storageBirths?: Record<string, import('./services/storage-provision.js').StorageBirth>;
+  storageProvisionPublications?: Record<string, {service: InfraService; names: string[]; operationId: string}>;
   /** Project-scoped scheduled jobs owned by CDS. */
   scheduledJobs?: ScheduledJob[];
   /** Append-only scheduled job execution history. */
@@ -4643,6 +4666,7 @@ export interface InfraVolume {
   type?: 'volume' | 'bind';
   /** Read-only mount flag */
   readOnly?: boolean;
+  storage?: StorageBinding;
 }
 
 /** Health check configuration for infrastructure service */
@@ -4875,6 +4899,8 @@ export interface SchedulerConfig {
 
 /** Application configuration */
 export interface CdsConfig {
+  /** Fixed storage namespace, explicitly configured independently of checkout/host display names. */
+  storageInstanceId?: string;
   repoRoot: string;
   /**
    * Base directory that houses every per-project git clone for the

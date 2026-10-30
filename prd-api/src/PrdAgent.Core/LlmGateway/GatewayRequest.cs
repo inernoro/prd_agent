@@ -210,6 +210,12 @@ public class GatewayRequestContext
     public string? UserId { get; init; }
 
     /// <summary>
+    /// 仅由 MAP 的受信任务绑定流程写入的任务预算作用域。Serving 必须结合已验证租户、
+    /// 用户、run 与 appCaller 再校验，不能把这个字段本身当作授权。
+    /// </summary>
+    public string? TaskBudgetScopeId { get; init; }
+
+    /// <summary>
     /// 查看角色
     /// </summary>
     public string? ViewRole { get; init; }
@@ -325,6 +331,7 @@ public class GatewayRequestContext
             ProviderTaskId = source?.ProviderTaskId,
             GroupId = source?.GroupId,
             UserId = source?.UserId,
+            TaskBudgetScopeId = source?.TaskBudgetScopeId,
             ViewRole = source?.ViewRole,
             DocumentChars = source?.DocumentChars,
             DocumentHash = source?.DocumentHash,
@@ -725,6 +732,9 @@ public class GatewayRawResponse
     /// 日志 ID
     /// </summary>
     public string? LogId { get; init; }
+
+    /// <summary>原生 Responses 的终态用量；缺失或全零不得解释为免费。</summary>
+    public GatewayTokenUsage? TokenUsage { get; init; }
 
     public static GatewayRawResponse Fail(string errorCode, string errorMessage, int statusCode = 500)
     {

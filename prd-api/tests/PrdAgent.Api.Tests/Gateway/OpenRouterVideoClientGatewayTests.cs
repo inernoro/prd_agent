@@ -1,6 +1,20 @@
 using System.Net;
+using System.Collections.Concurrent;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit.Abstractions;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
@@ -14,6 +28,9 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public class OpenRouterVideoClientGatewayTests
 {
+    private readonly ITestOutputHelper _output;
+    public OpenRouterVideoClientGatewayTests(ITestOutputHelper output) => _output = output;
+
     [Fact]
     public void VideoErrors_ShouldNeverExposeProviderDiagnosticsToUsers()
     {
@@ -540,6 +557,277 @@ public class OpenRouterVideoClientGatewayTests
         download.Success.ShouldBeFalse();
         download.ErrorMessage.ShouldBe("视频下载地址不可用，请稍后重试或重新生成");
         requestCount.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("recorded-offering")]
+    public async Task StatusProvenance_ResolutionFailureMustNotPretendSupplierTerminal(string? offeringId)
+    {
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        var resolution = new GatewayModelResolution { Success = false, ErrorMessage = "provider configuration unavailable" };
+        if (offeringId is null)
+            gateway.Setup(x => x.ResolveModelAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                    ModelTypes.VideoGen, "recorded/video-model", null, null, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(resolution);
+        else
+            gateway.Setup(x => x.ResolveOfferingAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                    ModelTypes.VideoGen, offeringId, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(resolution);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => StatusQueryClient(gateway.Object)
+            .GetStatusForOfferingAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                "job-123", "recorded/video-model", offeringId));
+
+        error.Message.ShouldBe(VideoGenerationUserError.ServiceUnavailable());
+        gateway.Invocations.Count.ShouldBe(1); // 无 Offering/模型只解析一次，不提交或查询其它任务。
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false, 503, "{\"status\":\"failed\"}")]
+    [InlineData(false, 402, "provider token invalid at https://provider.example/settings")]
+    [InlineData(true, 200, null)]
+    [InlineData(true, 200, "")]
+    [InlineData(true, 200, " \t")]
+    public async Task StatusProvenance_QueryFailureOrEmptyBodyMustNotPretendSupplierTerminal(
+        bool success, int statusCode, string? content)
+    {
+        var raw = new GatewayRawResponse
+        {
+            Success = success, StatusCode = statusCode, Content = content,
+            ErrorCode = statusCode == 402 ? "LLM_QUOTA_EXCEEDED" : "PROVIDER_ERROR",
+            ErrorMessage = "provider token invalid at https://provider.example/settings",
+        };
+        var gateway = StatusQueryGateway(raw);
+
+        var error = await Should.ThrowAsync<HttpRequestException>(() => StatusQueryClient(gateway.Object)
+            .GetStatusForOfferingAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                "job-123", "recorded/video-model", "recorded-offering"));
+
+        error.Message.ShouldBe(VideoGenerationUserError.FromGateway(raw));
+        error.Message.ShouldNotContain("provider");
+        error.Message.ShouldNotContain("http");
+        gateway.Invocations.Count.ShouldBe(2); // 同一已记录 Offering/job 只查一次；不补 Submit/Download。
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task StatusProvenance_EmptyJobMustNotPretendSupplierTerminal()
+    {
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        await Should.ThrowAsync<ArgumentException>(() => StatusQueryClient(gateway.Object)
+            .GetStatusAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate, ""));
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("pending", false, false, null)]
+    [InlineData("in_progress", false, false, null)]
+    [InlineData("completed", true, false, 0.34)]
+    [InlineData("failed", false, true, null)]
+    [InlineData("cancelled", false, true, 0.0)]
+    [InlineData("expired", false, true, 0.56)]
+    public async Task StatusProvenance_ObservedSupplierStatusAndNullableCostMustRemainUnchanged(
+        string observed, bool completed, bool failed, double? cost)
+    {
+        var doc = new JsonObject { ["status"] = observed };
+        if (completed) doc["unsigned_urls"] = new JsonArray("https://example.test/video.mp4");
+        if (failed) doc["error"] = "provider token invalid at https://provider.example/settings";
+        if (cost.HasValue) doc["usage"] = new JsonObject { ["cost"] = cost.Value };
+        var gateway = StatusQueryGateway(new GatewayRawResponse
+        {
+            Success = true, StatusCode = 200, Content = doc.ToJsonString(),
+        });
+
+        var status = await StatusQueryClient(gateway.Object).GetStatusForOfferingAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate, "job-123", "recorded/video-model", "recorded-offering");
+
+        status.Status.ShouldBe(observed);
+        status.IsCompleted.ShouldBe(completed);
+        status.IsFailed.ShouldBe(failed);
+        status.IsTerminal.ShouldBe(completed || failed);
+        status.Cost.ShouldBe(cost); // 真 failed 的未知费用仍为 null，不能补 0。
+        status.VideoUrl.ShouldBe(completed ? "https://example.test/video.mp4" : null);
+        status.ErrorMessage.ShouldBe(failed ? VideoGenerationUserError.ServiceUnavailable() : null);
+        gateway.Invocations.Count.ShouldBe(2);
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task StatusProvenance_ThrownQueryFailureMustUseExistingExceptionChannelWithoutRetry()
+    {
+        var failure = new TimeoutException("受控查询超时");
+        var gateway = StatusQueryGateway(new GatewayRawResponse { Success = true, Content = "{}" }, failure);
+
+        var actual = await Should.ThrowAsync<TimeoutException>(() => StatusQueryClient(gateway.Object)
+            .GetStatusForOfferingAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                "job-123", "recorded/video-model", "recorded-offering"));
+
+        actual.ShouldBeSameAs(failure);
+        gateway.Invocations.Count.ShouldBe(2);
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData(0, 1)]
+    [InlineData(1, 2)]
+    [InlineData(2, 2)]
+    public async Task StatusProvenance_LoopbackHttpFailureMustNotPretendSupplierTerminal(int mode, int expectedRequests)
+    {
+        const string job = "local-only-job", offering = "local-only-offering", model = "local-only/video";
+        var key = Guid.NewGuid().ToString("N");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var rows = new ConcurrentQueue<LocalStatusHttp>();
+        var completed = 0;
+        var served = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var host = new WebHostBuilder().UseKestrel().UseUrls("http://127.0.0.1:0").Configure(app => app.Run(async context =>
+        {
+            if (context.Request.ContentLength is not (> 0 and <= 8192) || rows.Count >= expectedRequests)
+                throw new InvalidOperationException("本地HTTP请求超过有界契约");
+            var request = await new StreamReader(context.Request.Body).ReadToEndAsync(deadline.Token);
+            var body = JsonNode.Parse(request)!.AsObject();
+            var path = context.Request.Path.ToString();
+            var local = context.Connection.RemoteIpAddress is { } ip && IPAddress.IsLoopback(ip);
+            var valid = context.Request.Method == "POST"
+                && local && context.Request.Headers["X-Gateway-Key"] == key
+                && body["AppCallerCode"]?.GetValue<string>() == AppCallerRegistry.VideoAgent.VideoGen.Generate
+                && body["ModelType"]?.GetValue<string>() == ModelTypes.VideoGen
+                && (path == "/gw/v1/resolve" && rows.Count == 0 && body["OfferingId"]?.GetValue<string>() == offering
+                    || path == "/gw/v1/raw" && mode != 0 && rows.Count == 1
+                    && body["HttpMethod"]?.GetValue<string>() == "GET" && body["EndpointPath"]?.GetValue<string>() == "/videos/" + job
+                    && body["RequiredOfferingId"]?.GetValue<string>() == offering && body["ExpectedModel"]?.GetValue<string>() == model
+                    && body["Context"]?["ProviderTaskId"]?.GetValue<string>() == job
+                    && body["Context"]?["GatewayTransport"]?.GetValue<string>() == "http" && body["RequestBody"] is null);
+            var status = !valid ? 400 : mode == 0 || path == "/gw/v1/raw" && mode == 1 ? 503 : 200;
+            var response = path == "/gw/v1/resolve" && mode != 0
+                ? JsonSerializer.Serialize(new GatewayModelResolution { Success = true, ActualModel = model, OfferingId = offering })
+                : mode == 2 ? JsonSerializer.Serialize(new GatewayRawResponse { Success = true, StatusCode = 200, Content = "" })
+                : "{\"error\":\"owned-loopback-503\"}";
+            context.Response.StatusCode = status;
+            context.Response.ContentType = "application/json";
+            rows.Enqueue(new LocalStatusHttp(context.Request.Method, path, request, status, response, valid));
+            await context.Response.WriteAsync(response, deadline.Token);
+            if (Interlocked.Increment(ref completed) == expectedRequests) served.TrySetResult();
+        })).Build();
+        try
+        {
+            await host.StartAsync(deadline.Token);
+            var address = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+            var endpoint = new Uri(address);
+            endpoint.Host.ShouldBe("127.0.0.1");
+            using var factory = new LocalStatusHttpFactory(endpoint.Port, expectedRequests);
+            var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LlmGateway:ServeBaseUrl"] = address, ["LlmGwServe:ApiKey"] = key,
+            }).Build();
+            var gateway = new HttpLlmGatewayClient(factory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+            var downloads = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+            var validator = new Mock<ISafeOutboundUrlValidator>(MockBehavior.Strict);
+            var client = new OpenRouterVideoClient(gateway, downloads.Object, validator.Object, NullLogger<OpenRouterVideoClient>.Instance);
+            OpenRouterVideoStatus? returned = null;
+            var error = await Record.ExceptionAsync(async () => { returned = await client.GetStatusForOfferingAsync(
+                AppCallerRegistry.VideoAgent.VideoGen.Generate, job, model, offering, deadline.Token); });
+            await served.Task.WaitAsync(deadline.Token);
+            _output.WriteLine(JsonSerializer.Serialize(new
+            {
+                Kind = "local-fixture-real-http-not-provider-uat", Mode = mode, Endpoint = address,
+                Rows = rows.ToArray(), ReturnedStatus = returned?.Status, ErrorType = error?.GetType().Name,
+                DeadlineExpired = deadline.IsCancellationRequested, ExternalRequests = 0,
+            }));
+            rows.Count.ShouldBe(expectedRequests);
+            factory.Created.ShouldBe(expectedRequests);
+            rows.ShouldAllBe(r => r.Valid && !r.Request.Contains(key, StringComparison.Ordinal));
+            rows.Count(r => r.Path == "/gw/v1/resolve").ShouldBe(1);
+            rows.Count(r => r.Path == "/gw/v1/raw").ShouldBe(expectedRequests - 1);
+            rows.Last().Status.ShouldBe(mode == 2 ? 200 : 503);
+            deadline.IsCancellationRequested.ShouldBeFalse();
+            if (mode == 0) error.ShouldBeOfType<InvalidOperationException>();
+            else error.ShouldBeOfType<HttpRequestException>();
+            error!.Message.ShouldBe(VideoGenerationUserError.ServiceUnavailable());
+            returned.ShouldBeNull("查询失败不得返回虚构的供应商failed或费用");
+            downloads.VerifyNoOtherCalls();
+            validator.VerifyNoOtherCalls();
+        }
+        finally
+        {
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await host.StopAsync(stop.Token);
+            _output.WriteLine(JsonSerializer.Serialize(new { Kind = "local-fixture-stopped", Mode = mode, Requests = rows.Count }));
+        }
+    }
+
+    private sealed record LocalStatusHttp(string Method, string Path, string Request, int Status, string Response, bool Valid)
+    {
+        public int RequestLength => Encoding.UTF8.GetByteCount(Request);
+        public string RequestSha256 => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Request))).ToLowerInvariant();
+        public int ResponseLength => Encoding.UTF8.GetByteCount(Response);
+        public string ResponseSha256 => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Response))).ToLowerInvariant();
+    }
+
+    private sealed class LocalStatusHttpFactory : IHttpClientFactory, IDisposable
+    {
+        private readonly SocketsHttpHandler _handler;
+        private readonly int _budget;
+        public int Created { get; private set; }
+        public LocalStatusHttpFactory(int port, int budget)
+        {
+            _budget = budget;
+            _handler = new SocketsHttpHandler
+            {
+                UseProxy = false, AllowAutoRedirect = false,
+                ConnectCallback = async (context, ct) =>
+                {
+                    if (context.DnsEndPoint.Host != "127.0.0.1" || context.DnsEndPoint.Port != port)
+                        throw new InvalidOperationException("本地诊断禁止任何其它目标");
+                    var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                    try
+                    {
+                        await socket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, port), ct);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch { socket.Dispose(); throw; }
+                },
+            };
+        }
+        public HttpClient CreateClient(string name)
+        {
+            if (++Created > _budget) throw new InvalidOperationException("本地HTTP诊断预算已用尽，禁止重试");
+            return new HttpClient(_handler, disposeHandler: false);
+        }
+        public void Dispose() => _handler.Dispose();
+    }
+
+    private static OpenRouterVideoClient StatusQueryClient(ILlmGateway gateway) => new(
+        gateway,
+        new Mock<IHttpClientFactory>(MockBehavior.Strict).Object,
+        new Mock<ISafeOutboundUrlValidator>(MockBehavior.Strict).Object,
+        NullLogger<OpenRouterVideoClient>.Instance);
+
+    private static Mock<ILlmGateway> StatusQueryGateway(GatewayRawResponse response, Exception? failure = null)
+    {
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        var resolution = new GatewayModelResolution
+        {
+            Success = true, ActualModel = "recorded/video-model", OfferingId = "recorded-offering",
+        };
+        gateway.Setup(x => x.ResolveOfferingAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                ModelTypes.VideoGen, "recorded-offering", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(resolution);
+        var query = gateway.Setup(x => x.SendRawWithResolutionAsync(It.Is<GatewayRawRequest>(r =>
+                    r.AppCallerCode == AppCallerRegistry.VideoAgent.VideoGen.Generate
+                    && r.ModelType == ModelTypes.VideoGen && r.HttpMethod == "GET"
+                    && r.EndpointPath == "/videos/job-123" && r.RequiredOfferingId == "recorded-offering"
+                    && r.Context != null && r.Context.ProviderTaskId == "job-123"),
+                resolution, It.IsAny<CancellationToken>()));
+        if (failure is null) query.ReturnsAsync(response);
+        else query.ThrowsAsync(failure);
+        return gateway;
     }
 
     private static GatewayModelResolution VolcengineResolution() => new()

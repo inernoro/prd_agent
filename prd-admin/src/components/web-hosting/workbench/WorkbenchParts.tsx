@@ -115,7 +115,7 @@ export interface ProgressStep {
 }
 
 /**
- * 任务进行中的那条助手消息：做到哪一步、用了多久、实际用的哪个模型、模型此刻在想什么。
+ * 任务进行中的那条助手消息：做到哪一步、用了多久、实际用的哪个模型。
  * 静止的「生成中」超过 2 秒就是缺陷（AGENTS.md §6），所以这里每秒都有东西在变。
  */
 export function RunProgressCard({
@@ -127,7 +127,6 @@ export function RunProgressCard({
   provenance,
   steps,
   activity,
-  thinking,
   onStop,
   stopRequested,
   canStop,
@@ -141,7 +140,6 @@ export function RunProgressCard({
   provenance?: string | null;
   steps: ProgressStep[];
   activity: string;
-  thinking?: string;
   onStop?: () => void;
   stopRequested?: boolean;
   canStop?: boolean;
@@ -183,11 +181,6 @@ export function RunProgressCard({
         ))}
       </ol>
       <p aria-live="polite" className="text-[11px] text-token-secondary">{activity}{estimate ? ` · ${estimate}` : ''}</p>
-      {thinking && (
-        <p className="line-clamp-3 rounded-lg px-2 py-1.5 text-[11px] text-token-muted" style={{ background: 'var(--bg-card)' }}>
-          <span className="font-medium text-token-secondary">正在分析：</span>{thinking}
-        </p>
-      )}
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-token-muted">{stopHint}</p>
         {onStop && (

@@ -2088,6 +2088,7 @@ async function initStateService(): Promise<void> {
 }
 
 await initStateService();
+config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
 await restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch),
   { shell: isPreviewInstance() ? undefined : shell });
 
@@ -2555,6 +2556,8 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
+  resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
   getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
@@ -3873,6 +3876,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  stateService.assertBranchStorageRemovalAllowed(slug);
   const branchOperationLease = beginBackgroundBranchOperation({
     branchId: slug,
     kind: 'janitor-remove',
@@ -4000,6 +4004,11 @@ janitorService.setRemoveFn(async (slug: string) => {
         });
       }
       if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        try { stateService.assertBranchStorageRemovalAllowed(branch.id); }
+        catch (error) {
+          console.warn(`[startup-reconcile] retaining private-storage branch ${branch.id}: ${(error as Error).message}`);
+          continue;
+        }
         activeServerEventLogStore?.record({
           category: 'container',
           severity: 'warn',

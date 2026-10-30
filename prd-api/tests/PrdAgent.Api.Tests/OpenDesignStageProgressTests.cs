@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests;
@@ -115,7 +116,37 @@ public sealed class OpenDesignStageProgressTests
 
         Assert.NotEmpty(repair);
         Assert.All(repair, u => Assert.True(u.Progress >= beforeRepair));
+        Assert.All(repair, u => Assert.Equal("repairing-quality", u.PhaseCode));
         Assert.Contains("第 1 次", repair[0].Phase);
+        Assert.Contains("已运行", repair[^1].Phase);
+    }
+
+    [Fact]
+    public void 质量修复按截止时间收口后仍停留在成果修正阶段()
+    {
+        var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18);
+        Replay(tracker, TypicalGenerate().TakeWhile(e => e.Item1 != "workspace_collecting"));
+
+        var update = tracker.Observe("open_design_quality_repair_budget_exhausted", null, 1);
+
+        Assert.NotNull(update);
+        Assert.Equal("repairing-quality", update!.PhaseCode);
+        Assert.Contains("第 1 次", update.Phase);
+    }
+
+    [Fact]
+    public void 浏览器质量阶段只展示成果语言且不泄露测量参数()
+    {
+        var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18);
+
+        var update = tracker.Observe("open_design_browser_quality_checking", null, null);
+
+        Assert.NotNull(update);
+        Assert.Equal(81, update!.Progress);
+        Assert.Equal("正在检查桌面与移动端布局", update.Phase);
+        Assert.Equal(DesignArtifactPhaseCodes.ReviewingPage, update.PhaseCode);
+        Assert.DoesNotContain("1440", update.Phase, StringComparison.Ordinal);
+        Assert.DoesNotContain("Chromium", update.Phase, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -126,6 +157,37 @@ public sealed class OpenDesignStageProgressTests
         Assert.Null(tracker.Observe("something_new_from_cds", 30, null));
         Assert.Null(tracker.Observe(null, null, null));
         Assert.Equal(18, tracker.Progress);
+    }
+
+    [Fact]
+    public void 真实阶段只输出有限稳定阶段码()
+    {
+        var updates = Replay(new OpenDesignStageProgress(editing: false, startProgress: 18), TypicalGenerate());
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            DesignArtifactPhaseCodes.PreparingWorkspace,
+            DesignArtifactPhaseCodes.ReadingSources,
+            DesignArtifactPhaseCodes.StartingDesign,
+            DesignArtifactPhaseCodes.ComposingPage,
+            DesignArtifactPhaseCodes.ReviewingPage,
+            DesignArtifactPhaseCodes.RepairingQuality,
+            DesignArtifactPhaseCodes.CollectingArtifact,
+            DesignArtifactPhaseCodes.CommittingArtifact,
+        };
+
+        Assert.All(updates, update => Assert.Contains(update.PhaseCode, allowed));
+        Assert.DoesNotContain(updates, update => string.IsNullOrWhiteSpace(update.PhaseCode));
+    }
+
+    [Fact]
+    public void 原始文本与隐式推理不进入用户可见分片()
+    {
+        var translator = new OpenDesignEventTranslator(editing: false, startProgress: 18);
+
+        Assert.Null(translator.ToChunk(OpenDesignEventTranslator.TextDelta,
+            "{\"text\":\"cat /workspace/index.html && print secret\"}"));
+        Assert.Null(translator.ToChunk(OpenDesignEventTranslator.Thinking,
+            "{\"text\":\"hidden chain of thought\"}"));
     }
 
     [Fact]
@@ -149,6 +211,21 @@ public sealed class OpenDesignStageProgressTests
 
         Assert.NotNull(update);
         Assert.Equal(40, update!.Progress);
+    }
+
+    [Fact]
+    public void 模型终审按预算收口后明确转入浏览器检查而不是继续显示卡住()
+    {
+        var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18);
+        tracker.Observe("open_design_reviewing", null, null);
+
+        var converged = tracker.Observe("open_design_review_budget_exhausted", null, null);
+
+        Assert.NotNull(converged);
+        Assert.Equal(75, converged!.Progress);
+        Assert.Equal(DesignArtifactPhaseCodes.ReviewingPage, converged.PhaseCode);
+        Assert.Contains("按时间预算收口", converged.Phase);
+        Assert.Contains("浏览器检查", converged.Phase);
     }
 
     [Theory]

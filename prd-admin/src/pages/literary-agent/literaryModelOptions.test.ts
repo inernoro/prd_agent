@@ -71,3 +71,17 @@ describe('buildLiteraryModelOptions', () => {
     expect(selectLiteraryModelOption(options, 'pool_sunburst')?.modelName).toBe('gpt-image-2.5-sunburst');
   });
 });
+
+
+describe('恢复试探目录契约', () => {
+  it.each([false, true])('恢复资格为 %s 时按网关资格开放入口并保留请求身份', (available) => {
+    const entry = pool();
+    entry.models = entry.models.map((member) => ({
+      ...member, healthStatus: 'Unavailable' as typeof member.healthStatus,
+      isRecoveryProbeAvailable: available,
+    }));
+    const options = buildLiteraryModelOptions([entry]);
+    expect(options).toHaveLength(available ? 1 : 0);
+    if (available) expect(options[0].modelName).toBe(entry.code);
+  });
+});

@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ContainerService, type ProjectNetworkResolver } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -52,6 +53,8 @@ const makeInfraService = (overrides?: Partial<InfraService>): InfraService => ({
 });
 
 const okDockerStubs = (mock: MockShellExecutor): void => {
+  mock.addResponsePattern(/^docker inspect --format=.*json .State.Status/,()=>({stdout:'',stderr:'Error: No such object: cds-infra-mongodb',exitCode:1}));
+  mock.addResponsePattern(/^docker image inspect .*json .Id/,()=>({stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:'',exitCode:0}));
   mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
   mock.addResponsePattern(/docker (ps|inspect)/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
   mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -177,7 +180,7 @@ describe('ContainerService 真的用上了收窄后的发布地址', () => {
   });
 
   const runInfra = async (resolver?: ProjectNetworkResolver): Promise<string> => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as unknown as { waitForContainerAlive: () => Promise<void> }, 'waitForContainerAlive')
       .mockResolvedValue(undefined);
     await service.startInfraService(makeInfraService());

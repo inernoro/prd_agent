@@ -1,5 +1,4 @@
 import type {
-  DesignGenerationRuntime,
   DesignGenerationSettings,
   DesignGenerationSettingsUpdate,
   DesignGenerationStyle,
@@ -25,7 +24,6 @@ export const PROMPT_SECTION_REGISTRY: Record<DesignPromptKind, { label: string; 
 };
 
 export interface GenerationSettingsDraft {
-  defaultRuntime: DesignGenerationRuntime;
   reviewMode: DesignReviewMode;
   styles: DesignGenerationStyle[];
   prompts: Record<DesignPromptKind, string>;
@@ -51,7 +49,6 @@ export function buildGenerationSettingsPatch(
   draft: GenerationSettingsDraft,
 ): DesignGenerationSettingsUpdate {
   const patch: DesignGenerationSettingsUpdate = {};
-  if (draft.defaultRuntime !== settings.defaultRuntime) patch.defaultRuntime = draft.defaultRuntime;
   if (draft.reviewMode !== settings.reviewMode) patch.reviewMode = draft.reviewMode;
 
   const before = settings.styles.map(styleFingerprint).join('|');
