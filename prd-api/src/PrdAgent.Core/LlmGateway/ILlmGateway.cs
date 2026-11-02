@@ -37,6 +37,9 @@ namespace PrdAgent.Core.LlmGateway;
 /// </remarks>
 public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
 {
+    const string MetadataResolutionPurposeHeader = "X-Gateway-Resolution-Purpose";
+    const string ReadOnlyMetadataPurpose = "read-only-metadata";
+
     /// <summary>
     /// 发送非流式请求（Chat/Completion）
     /// </summary>
@@ -109,6 +112,22 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         string? pinnedPlatformId = null,
         string? pinnedModelId = null,
         CancellationToken ct = default);
+
+    /// <summary>只读当前模型元信息，不认领恢复租约；未支持时禁止退回执行解析。</summary>
+    Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => Task.FromResult(new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = expectedModel,
+            ErrorMessage = "当前网关实现不支持只读模型元信息",
+        });
 
     /// <summary>
     /// 按异步任务提交阶段记录的 Offering ID 恢复精确路由。

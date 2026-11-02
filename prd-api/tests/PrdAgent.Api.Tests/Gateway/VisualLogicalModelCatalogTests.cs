@@ -127,6 +127,8 @@ public sealed class VisualLogicalModelCatalogTests
                 await Insert("llmgw_models", new LLMModel
                 {
                     Id = id + "-upstream", ModelName = upstream, PlatformId = "provider", Enabled = true, Protocol = "openai",
+                    MaxTokens = 8192, InputPricePerMillion = 3m, OutputPricePerMillion = 12m,
+                    PriceCurrency = "USD", PriceSource = "fixture", PriceObservedAt = DateTime.UtcNow.AddMinutes(-1),
                 });
                 await Insert("llmgw_logical_models", new GatewayLogicalModel
                 {
@@ -172,6 +174,19 @@ public sealed class VisualLogicalModelCatalogTests
                     .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
                     .Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1))
                     .Unset(x => x.HalfOpenLeaseUntil));
+            // 修改预算只读元信息后，真实业务请求仍应拥有认领恢复探针的机会。
+            var budgetMetadata = await resolver.ResolveMetadataAsync(caller, "generation", "image2");
+            Assert.True(budgetMetadata.Success, budgetMetadata.ErrorMessage);
+            Assert.Equal("image2-offering", budgetMetadata.OfferingId);
+            Assert.Equal("测试上游", budgetMetadata.ActualPlatformName);
+            Assert.Equal(8192, budgetMetadata.MaxTokens);
+            Assert.Equal(3m, budgetMetadata.InputPricePerMillion);
+            Assert.Equal(12m, budgetMetadata.OutputPricePerMillion);
+            Assert.Equal("USD", budgetMetadata.PriceCurrency);
+            Assert.Equal("fixture", budgetMetadata.PriceSource);
+            Assert.NotNull(budgetMetadata.PriceObservedAt);
+            var afterMetadataRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Null(afterMetadataRead.HalfOpenLeaseUntil);
             var halfOpenCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
             var halfOpenMember = Assert.Single(halfOpenCatalog[0].Models);
             Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
