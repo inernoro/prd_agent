@@ -17,7 +17,8 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode()
 
 def command(args):
-    p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    env = {**os.environ, 'LC_ALL':'C', 'LANG':'C', 'LANGUAGE':'C'}
+    p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, env=env)
     require(p.returncode == 0 and len(p.stdout) <= 262144 and len(p.stderr) <= 262144, 'native-command')
     return p.stdout.decode().strip()
 

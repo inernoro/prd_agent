@@ -84,6 +84,12 @@ ns={'__name__':'bounded_provider'}
 exec(base64.b64decode(sys.argv[1]),ns)
 req=json.loads(base64.b64decode(sys.argv[2]))
 class Cases(unittest.TestCase):
+ def test_native_command_locale_is_fixed_without_losing_executor_environment(self):
+  inherited={'LC_ALL':'zh_CN.UTF-8','LANG':'zh_CN.UTF-8','LANGUAGE':'zh_CN:zh','DOCKER_HOST':'unix:///owned-test.sock'}
+  with patch.dict(os.environ,inherited):
+   child=json.loads(ns['command']([sys.executable,'-c',"import json,os; print(json.dumps({k:os.environ.get(k) for k in ('LC_ALL','LANG','LANGUAGE','DOCKER_HOST')}))"]))
+   self.assertEqual(child,{'LC_ALL':'C','LANG':'C','LANGUAGE':'C','DOCKER_HOST':'unix:///owned-test.sock'})
+   for key,value in inherited.items():self.assertEqual(os.environ[key],value)
  def test_request(self):
   self.assertEqual(ns['validate_request'](req),req)
   for field,value in [('target','/'),('daemonId','bad;id'),('name','other'),('birthNonce','x')]:
@@ -155,6 +161,6 @@ class Cases(unittest.TestCase):
 unittest.main(argv=['bounded-storage-tests'])
 `;
   const r=spawnSync('python3',['-c','import base64,json,os,sys\n'+harness,Buffer.from(BOUNDED_STORAGE_PROGRAM).toString('base64'),Buffer.from(JSON.stringify(request)).toString('base64')],{encoding:'utf8',timeout:10000});
-  expect(r.status,r.stderr).toBe(0);expect(r.stderr).toContain('Ran 6 tests');
+  expect(r.status,r.stderr).toBe(0);expect(r.stderr).toContain('Ran 7 tests');
  });
 });
