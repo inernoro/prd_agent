@@ -230,6 +230,8 @@ export interface DesignArtifactRunSummary {
   cancelRequestedAt?: string | null;
   cancelledAt?: string | null;
   createdAt: string;
+  /** 服务端持久化的结束时间；历史记录缺失时耗时未知，不能以恢复窗口的时钟补算。 */
+  completedAt?: string | null;
   knowledgeReferences: Array<{
     entryId: string;
     storeId?: string | null;
