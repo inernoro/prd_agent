@@ -13,6 +13,7 @@ export interface FreshProfileMount {
     mountKey: string;
     containerPath: string;
     purpose: 'cache' | 'persistent';
+    policy?: StorageBinding['policy'];
 }
 export interface ProfileStorageBinding {
     version: 1;
@@ -64,8 +65,8 @@ export class ProfileStorageProvisionService {
                 throw reject();
             const raw = profile.cacheMounts || [], keys = new Set<string>(), targets = new Set(raw.map(m => m.containerPath));
             // Only explicit fresh destinations are added. An existing physical mount is never rewritten.
-            const fresh = requests.map(m => { if (!key(m.mountKey) || keys.has(m.mountKey) || !['cache', 'persistent'].includes(m.purpose) || !path.posix.isAbsolute(m.containerPath) || path.posix.normalize(m.containerPath) !== m.containerPath || targets.has(m.containerPath))
-                throw reject(); keys.add(m.mountKey); targets.add(m.containerPath); const storage: StorageBinding = { version: 1, instanceId: instance, projectId: target.projectId, scope: 'branch-private', branchId: target.branchId, serviceId: target.serviceId, mountKey: m.mountKey, purpose: m.purpose }; return { kind: 'volume' as const, hostPath: stableStorageVolumeName(storage), containerPath: m.containerPath, storage }; });
+            const fresh = requests.map(m => { if (Object.keys(m).some(k=>!['mountKey','containerPath','purpose','policy'].includes(k)) || !key(m.mountKey) || keys.has(m.mountKey) || !['cache', 'persistent'].includes(m.purpose) || !path.posix.isAbsolute(m.containerPath) || path.posix.normalize(m.containerPath) !== m.containerPath || targets.has(m.containerPath))
+                throw reject(); keys.add(m.mountKey); targets.add(m.containerPath); const storage: StorageBinding = { version: 1, instanceId: instance, projectId: target.projectId, scope: 'branch-private', branchId: target.branchId, serviceId: target.serviceId, mountKey: m.mountKey, purpose: m.purpose, ...(m.policy !== undefined ? {policy:m.policy} : {}) }; return { kind: 'volume' as const, hostPath: stableStorageVolumeName(storage), containerPath: m.containerPath, storage }; });
             const record: ProfileStorageBinding = { version: 1, target, ...original, mounts: [...raw, ...fresh], names: fresh.map(m => m.hostPath), operationId };
             // Reuse runtime's exact source-workspace rules BEFORE any intent, native read or allocation.
             const plan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, { ...profile, cacheMounts: record.mounts }, this.config)));
