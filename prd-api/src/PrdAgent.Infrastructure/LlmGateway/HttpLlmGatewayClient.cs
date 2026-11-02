@@ -578,13 +578,27 @@ public sealed class HttpLlmGatewayClient
         return string.IsNullOrWhiteSpace(cleaned) ? fallback : cleaned;
     }
 
-    public async Task<GatewayModelResolution> ResolveModelAsync(
+    public Task<GatewayModelResolution> ResolveModelAsync(
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
         string? pinnedPlatformId = null,
         string? pinnedModelId = null,
         CancellationToken ct = default)
+        => ResolveModelCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, false, ct);
+
+    public Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => ResolveModelCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, true, ct);
+
+    private async Task<GatewayModelResolution> ResolveModelCoreAsync(
+        string appCallerCode, string modelType, string? expectedModel,
+        string? pinnedPlatformId, string? pinnedModelId, bool readOnlyMetadata, CancellationToken ct)
     {
         // 注意：ApiKey 在 HTTP 模式下恒为 null（serving 端 [JsonIgnore] 不序列化敏感字段）。
         // 这是预期行为——此解析结果仅供调用方做元信息展示，真正发送时由网关在 send/raw 重新解析。
@@ -597,7 +611,8 @@ public sealed class HttpLlmGatewayClient
                 ModelType = modelType,
                 ExpectedModel = expectedModel,
                 PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId
+                PinnedModelId = pinnedModelId,
+                ReadOnlyMetadata = readOnlyMetadata ? true : (bool?)null,
             };
             using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/resolve") { Content = JsonBody(dto) };
             ApplyRoutingHeaders(req, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
@@ -611,6 +626,10 @@ public sealed class HttpLlmGatewayClient
                     ErrorMessage = $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}",
                 };
             }
+            // 旧 serving 会忽略未知 body 字段。必须收到明确只读确认，不能把普通解析当元信息。
+            if (readOnlyMetadata && (!resp.Headers.TryGetValues(ILlmGateway.MetadataResolutionPurposeHeader, out var purposes)
+                || string.Join(",", purposes) != ILlmGateway.ReadOnlyMetadataPurpose))
+                return new GatewayModelResolution { Success = false, ErrorMessage = "serving 未确认只读元信息用途，请核对 API 与 LLMGW 发布版本" };
             var result = JsonSerializer.Deserialize<GatewayModelResolution>(body, JsonOpts);
             return result ?? new GatewayModelResolution { Success = false, ErrorMessage = "serving 响应反序列化为空" };
         }

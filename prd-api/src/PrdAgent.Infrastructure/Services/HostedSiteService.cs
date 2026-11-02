@@ -1108,6 +1108,17 @@ public class HostedSiteService : IHostedSiteService
             throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
         var ordered = ValidateVerifiedGeneratedFiles(files);
         var indexFile = ordered.Single(file => file.Path == "index.html");
+        if (!string.IsNullOrWhiteSpace(current.Site.PublishedRevisionId))
+        {
+            // 只追加服务器当前指针/版本确认的整包历史引用，不从调用方接收对象键。
+            await _db.HostedSiteRevisions.UpdateOneAsync(
+                revision => revision.Id == current.Site.PublishedRevisionId && revision.SiteId == siteId
+                    && revision.Status == HostedSiteRevisionStatuses.Published
+                    && revision.PublishedContentVersion == expectedContentVersion && revision.VerifiedFiles.Count > 0,
+                Builders<HostedSiteRevision>.Update.AddToSetEach(revision => revision.PublishedAssetKeys,
+                    current.Site.Files.Select(file => file.CosKey).Where(key => !string.IsNullOrWhiteSpace(key)).Distinct()),
+                cancellationToken: CancellationToken.None);
+        }
         var now = DateTime.UtcNow;
         var versionRoot = $".versions/{Guid.NewGuid():N}";
         var keysByPath = ordered.ToDictionary(
@@ -1588,9 +1599,18 @@ public class HostedSiteService : IHostedSiteService
         try
         {
             var cleanupKeys = new List<string>();
+            var historicalKeys = new List<string>();
             var globallyReferencedKeys = new List<string>();
             foreach (var key in candidates)
             {
+                var historical = await _db.HostedSiteRevisions.CountDocumentsAsync(
+                    revision => revision.Status == HostedSiteRevisionStatuses.Published && revision.PublishedAssetKeys.Contains(key),
+                    cancellationToken: CancellationToken.None) > 0;
+                if (historical)
+                {
+                    historicalKeys.Add(key);
+                    continue;
+                }
                 var globallyReferenced = await _db.HostedSites.CountDocumentsAsync(
                     Builders<HostedSite>.Filter.ElemMatch(x => x.Files, file => file.CosKey == key),
                     cancellationToken: CancellationToken.None) > 0;
@@ -1625,7 +1645,7 @@ public class HostedSiteService : IHostedSiteService
                     .Set(x => x.AssetCleanupNextAttemptAt,
                         hasDeferredKeys ? deferredUntil : null),
             };
-            var resolvedKeys = cleanupKeys.Concat(resolvedCurrentKeys).Distinct(StringComparer.Ordinal).ToArray();
+            var resolvedKeys = cleanupKeys.Concat(resolvedCurrentKeys).Concat(historicalKeys).Distinct(StringComparer.Ordinal).ToArray();
             if (resolvedKeys.Length > 0)
                 updates.Add(Builders<HostedSite>.Update.PullAll(x => x.PendingAssetCleanupKeys, resolvedKeys));
             if (site.AssetPublishLeaseExpiresAt <= now && site.AssetPublishInProgressKeys.Count > 0)
@@ -1701,11 +1721,14 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct)
     {
         var now = DateTime.UtcNow;
+        var historicalKeys = await _db.HostedSiteRevisions.Find(revision => revision.SiteId == site.Id)
+            .Project(revision => revision.PublishedAssetKeys).ToListAsync(ct);
         var objectKeys = site.Files
             .Select(x => x.CosKey?.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x!)
             .Concat(site.PendingAssetCleanupKeys ?? new List<string>())
+            .Concat(historicalKeys.SelectMany(keys => keys ?? []))
             .Distinct(StringComparer.Ordinal)
             .ToList();
         await _db.HostedSiteDeletionTasks.UpdateOneAsync(

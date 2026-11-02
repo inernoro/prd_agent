@@ -1,10 +1,12 @@
 using System.Runtime.CompilerServices;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -79,6 +81,33 @@ public class CrossProcessServingSelfTest
             resolution.Protocol.ShouldBe("openai");
             resolution.ApiKey.ShouldBeNull("ApiKey 绝不能跨 HTTP 回传（[JsonIgnore]）");
 
+            // 预算元信息走明确的只读能力，不委托普通执行解析。
+            var serving = (FakeServingGateway)app.Services.GetRequiredService<ILlmGateway>();
+            var executeResolves = serving.ExecuteResolves;
+            var metadata = await client.ResolveModelMetadataAsync("demo.app::chat", "chat", "logical-m1");
+            metadata.Success.ShouldBeTrue();
+            metadata.OfferingId.ShouldBe("offering-1");
+            metadata.ActualPlatformName.ShouldBe("fixture-provider");
+            metadata.MaxTokens.ShouldBe(8192);
+            metadata.InputPricePerMillion.ShouldBe(3m);
+            metadata.OutputPricePerMillion.ShouldBe(12m);
+            metadata.PriceCurrency.ShouldBe("USD");
+            metadata.PriceSource.ShouldBe("fixture");
+            metadata.PriceObservedAt.ShouldNotBeNull();
+            metadata.ApiKey.ShouldBeNull();
+            serving.ExecuteResolves.ShouldBe(executeResolves);
+            serving.MetadataReads.ShouldBe(1);
+            using var http = new HttpClient { BaseAddress = new Uri(baseUrl) };
+            http.DefaultRequestHeaders.Add("X-Gateway-Key", TestKey);
+            using var forbidden = await http.PostAsJsonAsync("/gw/v1/resolve", new
+            {
+                AppCallerCode = "demo.app::chat", ModelType = "chat",
+                ReadOnlyMetadata = true, OfferingId = "video-task-offering",
+            });
+            forbidden.StatusCode.ShouldBe(System.Net.HttpStatusCode.BadRequest);
+            serving.OfferingRecoveries.ShouldBe(0);
+            serving.MetadataReads.ShouldBe(1);
+
             // 2) send：非流式往返。
             var send = await client.SendAsync(new GatewayRequest { AppCallerCode = "demo.app::chat", ModelType = "chat" });
             send.Success.ShouldBeTrue();
@@ -134,6 +163,31 @@ public class CrossProcessServingSelfTest
             var denied = await badClient.SendAsync(new GatewayRequest { AppCallerCode = "demo.app::chat", ModelType = "chat" });
             denied.Success.ShouldBeFalse();
             denied.StatusCode.ShouldBe(401);
+            var deniedMetadata = await badClient.ResolveModelMetadataAsync("demo.app::chat", "chat");
+            deniedMetadata.Success.ShouldBeFalse();
+            serving.MetadataReads.ShouldBe(1);
+
+            // 旧 serving 的 DTO 会忽略未知用途字段；缺少用途确认时客户端必须失败关闭。
+            var legacyBuilder = WebApplication.CreateBuilder();
+            legacyBuilder.WebHost.UseUrls("http://127.0.0.1:0");
+            legacyBuilder.Logging.ClearProviders();
+            await using var legacy = legacyBuilder.Build();
+            var legacyExecuteResolves = 0;
+            legacy.MapPost("/gw/v1/resolve", (LegacyResolveRequestDto body) =>
+            {
+                legacyExecuteResolves++;
+                return Results.Json(new GatewayModelResolution { Success = true, ActualModel = "m1" }, PascalJson);
+            });
+            await legacy.StartAsync();
+            try
+            {
+                var mixedVersion = await BuildClient(ResolveBaseUrl(legacy), TestKey)
+                    .ResolveModelMetadataAsync("demo.app::chat", "chat");
+                mixedVersion.Success.ShouldBeFalse();
+                (mixedVersion.ErrorMessage ?? string.Empty).ShouldContain("未确认只读");
+                legacyExecuteResolves.ShouldBe(1, "旧版本忽略字段，因此发布仍必须保证 API/LLMGW 版本一致");
+            }
+            finally { await legacy.StopAsync(); }
         }
         finally
         {
@@ -161,8 +215,15 @@ public class CrossProcessServingSelfTest
     }
 
     // ─── stub 上游：顶替真实 LlmGateway，专测 HTTP 边界 ───
+    private sealed record LegacyResolveRequestDto(string AppCallerCode, string ModelType,
+        string? ExpectedModel, string? PinnedPlatformId, string? PinnedModelId);
+
     private sealed class FakeServingGateway : PrdAgent.Core.LlmGateway.ILlmGateway
     {
+        public int ExecuteResolves { get; private set; }
+        public int MetadataReads { get; private set; }
+        public int OfferingRecoveries { get; private set; }
+
         private static GatewayModelResolution Res() => new()
         {
             Success = true,
@@ -170,6 +231,9 @@ public class CrossProcessServingSelfTest
             ActualPlatformId = "plat-1",
             Protocol = "openai",
             ResolutionType = "directModel",
+            LogicalModelPublicId = "logical-m1", OfferingId = "offering-1", ActualPlatformName = "fixture-provider",
+            MaxTokens = 8192, InputPricePerMillion = 3m, OutputPricePerMillion = 12m, PriceCurrency = "USD",
+            PriceSource = "fixture", PriceObservedAt = DateTime.UtcNow.AddMinutes(-1),
             ApiKey = SecretApiKey, // 必须被 [JsonIgnore] 拦在服务端
         };
 
@@ -197,7 +261,25 @@ public class CrossProcessServingSelfTest
         public Task<GatewayModelResolution> ResolveModelAsync(
             string appCallerCode, string modelType, string? expectedModel = null,
             string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
-            => Task.FromResult(Res());
+        {
+            ExecuteResolves++;
+            return Task.FromResult(Res());
+        }
+
+        public Task<GatewayModelResolution> ResolveModelMetadataAsync(
+            string appCallerCode, string modelType, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+        {
+            MetadataReads++;
+            return Task.FromResult(Res());
+        }
+
+        public Task<GatewayModelResolution> ResolveOfferingAsync(
+            string appCallerCode, string modelType, string offeringId, CancellationToken ct = default)
+        {
+            OfferingRecoveries++;
+            return Task.FromResult(Res());
+        }
 
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
             string appCallerCode, string modelType, CancellationToken ct = default)
