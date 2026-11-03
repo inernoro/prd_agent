@@ -37,6 +37,7 @@ export function QuotaEditorDialog({
   const [scopeMode, setScopeMode] = useState<'auto' | 'manual'>('auto');
   const [scopes, setScopes] = useState<string[]>([]);
   const [scopeDirty, setScopeDirty] = useState(false);
+  const [capabilityChanges, setCapabilityChanges] = useState<Record<string, AccessLevel>>({});
   const [image, setImage] = useState('');
   const [write, setWrite] = useState('');
   const [rate, setRate] = useState('');
@@ -73,6 +74,7 @@ export function QuotaEditorDialog({
     setScopeMode(client.scopeMode);
     setScopes(editableAuthorizationScopes(client.scopes));
     setScopeDirty(false);
+    setCapabilityChanges({});
     setImage(String(client.dailyImageQuota));
     setWrite(String(client.dailyWriteQuota));
     setRate(String(client.rateLimitPerMin));
@@ -140,7 +142,7 @@ export function QuotaEditorDialog({
       const res = await updateAgentApiKey({
         id: client.keyId,
         ...parsed,
-        ...(scopeDirty ? { scopeMode, ...(scopeMode === 'manual' ? { scopes } : {}) } : {}),
+        ...(scopeDirty ? { scopeMode, ...(scopeMode === 'manual' ? { mcpCapabilityAccess: capabilityChanges } : {}) } : {}),
         ...(modelSettingsChanged ? {
           mcpLiteraryImageModelMode: modelMode,
           mcpLiteraryImageModelPublicId: modelMode === 'fixed' ? fixedModel : undefined,
@@ -181,13 +183,13 @@ export function QuotaEditorDialog({
           <div className="mcp-permission-table">{capabilities.map(cap => {
             const shown = scopeMode === 'auto' ? picksToScopes(capabilities, autoPicks(capabilities)) : scopes;
             const current = accessLevel(cap, shown);
-            return <label className="mcp-permission-row" key={cap.key}><span>{cap.title}{!cap.availableToMe && <small>当前账号无权授权</small>}</span><select aria-label={`${cap.title}访问权限`} disabled={saving || !client?.isActive || scopeMode === 'auto' || !cap.availableToMe} value={current} onChange={e => { setScopes(previous => changeCapabilityAccess(previous, cap, e.target.value as AccessLevel)); setScopeDirty(true); }}>
+            return <label className="mcp-permission-row" key={cap.key}><span>{cap.title}{!cap.availableToMe && <small>当前账号无权授权</small>}</span><select aria-label={`${cap.title}访问权限`} disabled={saving || !client?.isActive || scopeMode === 'auto' || !cap.availableToMe} value={current} onChange={e => { setScopes(previous => changeCapabilityAccess(previous, cap, e.target.value as AccessLevel)); setCapabilityChanges(previous => ({ ...previous, [cap.key]: e.target.value as AccessLevel })); setScopeDirty(true); }}>
               <option value="none">未开放</option>
               {cap.readScope && <option value="read">{accessLabel(cap, 'read')}</option>}
               {cap.writeScope && <option value="write" disabled={!cap.writeAvailableToMe && current !== 'write'}>{accessLabel(cap, 'write')}</option>}
             </select></label>;
           })}</div>
-          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>取消“跟随我的权限”后可逐项调整。“只读”仅可查询；任务台的“使用”包含新增自己的任务、提交建议及同步债务，“管理”还可查看全员和分派任务。</p>
+          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>取消“跟随我的权限”后可逐项调整。“只读”仅可查询；任务台的“使用”包含新增自己的任务及提交建议，“管理”还可查看全员、分派任务和同步共享债务。</p>
           {client && clientSignal(client, capabilities).extraScopes.length > 0 && <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>另有 {clientSignal(client, capabilities).extraScopes.length} 项独立接口授权。自定义调整平台能力时保留这些授权；切换为自动模式后按平台能力重新计算。</p>}
           <h3 className="border-t pt-3 text-[13px] font-semibold" style={{ borderColor: 'var(--border-subtle)' }}>使用额度</h3>
           <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>每日额度按 UTC 自然日重置，北京时间每天 08:00 重置。</p>

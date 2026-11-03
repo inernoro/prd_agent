@@ -7,6 +7,11 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Authorization;
+using PrdAgent.Api.Mcp;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Routing;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using Shouldly;
@@ -16,6 +21,26 @@ namespace PrdAgent.Api.Tests.Mcp;
 
 public class McpTasksIdentityTests
 {
+    [Theory]
+    [InlineData(McpCapabilityCatalog.ScopeTasksUse, false)]
+    [InlineData(McpCapabilityCatalog.ScopeTasksManage, true)]
+    public async Task 共享债务同步只有管理档可调用_工具目录和路由保持一致(string scope, bool allowed)
+    {
+        var filter = typeof(TasksOpenApiController).GetMethod(nameof(TasksOpenApiController.SyncDebts))!
+            .GetCustomAttribute<RequireScopeAttribute>()!;
+        var context = new AuthorizationFilterContext(new ActionContext(new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity([
+                new Claim("boundUserId", "key-owner"), new Claim("scope", scope)], "ApiKey"))
+        }, new RouteData(), new ActionDescriptor()), new List<IFilterMetadata>());
+        await filter.OnAuthorizationAsync(context);
+        if (allowed) context.Result.ShouldBeNull();
+        else context.Result.ShouldBeOfType<ObjectResult>().StatusCode.ShouldBe(403);
+        var tool = McpBuiltinTools.All.Single(x => x.Name == "map_debt_sync");
+        tool.RequiredScope.ShouldBe(McpCapabilityCatalog.ScopeTasksManage);
+        McpCapabilityCatalog.ScopeSatisfies([scope], tool.RequiredScope).ShouldBe(allowed);
+    }
+
     [Fact]
     public async Task 任务台按密钥绑定用户查询_无需JWT身份也不使用其他主体()
     {

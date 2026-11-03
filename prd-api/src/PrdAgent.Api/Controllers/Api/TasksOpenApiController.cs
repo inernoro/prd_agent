@@ -236,7 +236,7 @@ public class TasksOpenApiController : ControllerBase
     /// **只覆盖正文**（标题 / 现状 / 补的条件）；谁认领了、转成了哪条任务，同步一律不碰。
     /// </summary>
     [HttpPost("debts/sync")]
-    [RequireScope(ScopeUse, ScopeManage)]
+    [RequireScope(ScopeManage)]
     public async Task<IActionResult> SyncDebts([FromBody] DebtSyncRequest req, CancellationToken ct = default)
     {
         if (req?.Items == null || req.Items.Count == 0)

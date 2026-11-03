@@ -198,7 +198,7 @@ describe('授权编辑边界', () => {
     expect(access.selectedOptions[0].textContent).toBe('使用任务台');
     expect([...access.options].map(option => option.text)).toContain('管理任务台');
     expect([...access.options].map(option => option.text)).not.toContain('只读');
-    expect(container.textContent).toContain('新增自己的任务、提交建议及同步债务');
+    expect(container.textContent).toContain('新增自己的任务及提交建议');
   });
 });
 
@@ -216,9 +216,8 @@ describe('派生发布权限不进入普通授权清单', () => {
     await save();
     const request = vi.mocked(updateAgentApiKey).mock.calls[0][0];
     expect(request.scopeMode).toBe('manual');
-    expect(request.scopes).toContain('web-pages:write');
-    expect(request.scopes).toContain('agent.example:invoke');
-    expect(request.scopes).not.toContain('web-pages:publish');
+    expect(request).not.toHaveProperty('scopes');
+    expect(request.mcpCapabilityAccess).toEqual(scopeMode === 'auto' ? {} : { tasks: 'read' });
     expect(request).not.toHaveProperty('webPublicExposureAllowed');
   });
 });
@@ -235,7 +234,7 @@ describe('发布授权跟随当前编辑权限', () => {
     await act(async () => checkbox().click());
     await save();
     expect(updateAgentApiKey).toHaveBeenCalledWith(expect.objectContaining({
-      scopes: ['web-pages:read', 'web-pages:write'], webPublicExposureAllowed: true,
+      mcpCapabilityAccess: { web: 'write' }, webPublicExposureAllowed: true,
     }));
   });
   it('删除编辑中的网页写权限时取消尚未保存的发布授权', async () => {
@@ -247,7 +246,25 @@ describe('发布授权跟随当前编辑权限', () => {
     expect(checkbox().checked).toBe(false);
     expect(checkbox().disabled).toBe(true);
     await save();
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0].scopes).toEqual(['web-pages:read']);
+    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0].mcpCapabilityAccess).toEqual({ web: 'read' });
+    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('scopes');
     expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('webPublicExposureAllowed');
+  });
+});
+
+
+describe('有效权限不覆盖存储配置', () => {
+  it('账号权限被收回时只提交实际编辑的能力', async () => {
+    const unavailable = { ...tasks, key: 'visual', title: '视觉创作', readScope: null,
+      writeScope: 'visual-agent:use', availableToMe: false, writeAvailableToMe: false };
+    await render({ ...client, scopeMode: 'manual', scopes: ['active-tasks:use'] }, true, [unavailable, tasks]);
+    const visual = container.querySelector<HTMLSelectElement>('[aria-label="视觉创作访问权限"]')!;
+    expect(visual.disabled).toBe(true);
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="任务台访问权限"]')!;
+    await act(async () => { access.value = 'none'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    await save();
+    const request = vi.mocked(updateAgentApiKey).mock.calls[0][0];
+    expect(request).not.toHaveProperty('scopes');
+    expect(request.mcpCapabilityAccess).toEqual({ tasks: 'none' });
   });
 });

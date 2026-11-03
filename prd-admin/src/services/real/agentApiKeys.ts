@@ -33,6 +33,7 @@ export const updateAgentApiKeyReal: UpdateAgentApiKeyContract = async (input) =>
       name: input.name,
       description: input.description,
       scopes: input.scopes,
+      ...(input.mcpCapabilityAccess === undefined ? {} : { mcpCapabilityAccess: input.mcpCapabilityAccess }),
       scopeMode: input.scopeMode,
       isActive: input.isActive,
       mcpDailyImageQuota: input.mcpDailyImageQuota,
