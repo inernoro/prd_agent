@@ -1,3 +1,4 @@
+using PrdAgent.Api.Services.MdToPpt;
 using System.Text;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
@@ -148,7 +149,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             string? presentationHtml = null;
             if (run.Operation == DesignArtifactOperations.Edit)
             {
-                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt && run.PptEditContext is { } frozenBase)
+                {
+                    var continuation = scope.ServiceProvider.GetRequiredService<IHtmlPptContinuationService>();
+                    var resolvedBase = await continuation.ValidateFrozenContextAsync(frozenBase, run.UserId, executionCts.Token);
+                    editable = await sites.GetEditableEntryHtmlAsync(frozenBase.BaseSiteId, run.UserId, executionCts.Token);
+                    if (editable.ContentVersion != frozenBase.BaseContentVersion
+                        || editable.Site.PublishedRevisionId != frozenBase.BasePublishedRevisionId)
+                        throw new InvalidOperationException("演示稿线上版本已变化，修改任务未发送模型请求");
+                    parent = await revisions.GetAsync(frozenBase.BaseSiteId, frozenBase.BaseRevisionId,
+                        run.UserId, executionCts.Token)
+                        ?? throw new InvalidOperationException("演示稿基稿不存在或无权访问");
+                    presentationHtml = resolvedBase.Html;
+                }
+                else if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
                 {
                     var parentRunId = run.PresentationInput?.ParentRunId;
                     if (string.IsNullOrWhiteSpace(parentRunId))
@@ -378,7 +392,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         sites,
                         verifiedFiles,
                         html,
-                        trustedPresentation: isOpenDesignPresentation);
+                        trustedPresentation: isOpenDesignPresentation,
+                        preserveVerifiedWebPackage: run.ArtifactType == DesignArtifactTypes.WebPage);
                     html = Encoding.UTF8.GetString(Convert.FromBase64String(
                         verifiedFiles.Single(file => file.Path == "index.html").ContentBase64));
                 }
@@ -1265,7 +1280,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             ? null
             : run.Operation == DesignArtifactOperations.Edit && !persistEditAsNewSite
                 ? BuildVerifiedHostedSiteFiles(verifiedFiles, html)
-                : PrepareVerifiedHostedSiteFiles(sites, verifiedFiles, html);
+                : PrepareVerifiedHostedSiteFiles(
+                    sites, verifiedFiles, html,
+                    preserveVerifiedWebPackage: run.ArtifactType == DesignArtifactTypes.WebPage);
 
         if (run.Operation == DesignArtifactOperations.Edit && !persistEditAsNewSite)
         {
@@ -1495,9 +1512,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteService sites,
         IReadOnlyList<DesignWorkspaceFile> files,
         string hardenedHtml,
-        bool trustedPresentation = false)
+        bool trustedPresentation = false,
+        bool preserveVerifiedWebPackage = false)
     {
         var verified = BuildVerifiedHostedSiteFiles(files, hardenedHtml).ToArray();
+        // 普通网页已由执行器完成安全物化并通过 Broker 验真，和修改草稿一样保留整包字节。
+        // 再套旧上传 HTML 的改写会使 index 与包内 manifest 失配；PPT 原有桥接合同仍单独保留。
+        if (preserveVerifiedWebPackage) return verified;
         var entryIndex = Array.FindIndex(verified, file => file.Path == "index.html");
         var prepared = trustedPresentation
             ? sites.PrepareTrustedPresentationHtmlForHosting(verified[entryIndex].Content, "index.html")
@@ -1514,8 +1535,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteService sites,
         IReadOnlyList<DesignWorkspaceFile> files,
         string hardenedHtml,
-        bool trustedPresentation = false) =>
-        PrepareVerifiedHostedSiteFiles(sites, files, hardenedHtml, trustedPresentation)
+        bool trustedPresentation = false,
+        bool preserveVerifiedWebPackage = false)
+    {
+        var prepared = PrepareVerifiedHostedSiteFiles(sites, files, hardenedHtml, trustedPresentation, preserveVerifiedWebPackage)
             .Select(file => new DesignWorkspaceFile(
                 file.Path,
                 Convert.ToBase64String(file.Content),
@@ -1523,6 +1546,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 file.Content.LongLength,
                 file.MimeType))
             .ToArray();
+        return trustedPresentation ? DesignArtifactWorkspaceContract.RebuildPublicManifest(prepared) : prepared;
+    }
 
     internal static string HardenExecutorOutput(
         string rawHtml,

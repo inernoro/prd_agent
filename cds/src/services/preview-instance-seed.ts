@@ -12,7 +12,7 @@
  * （见 seedPreviewInstanceDemoData 的注释）。已有真实数据（例如挂了外部 mongo
  * 的实例）一律不碰。
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile, InfraService, Project } from '../types.js';
 import type { PreviewMirrorFile } from './preview-mirror.js';
@@ -551,14 +551,15 @@ interface PreviewDemoSnapshot {
 }
 
 /*
- * 不用 JSON ESM import：生产环境的 TypeScript 编译曾把 `with { type: 'json' }`
- * 从输出里剥掉，Node 22 启动时因此直接报 ERR_IMPORT_ATTRIBUTE_MISSING。
- * 这个相对路径从 src/services 与 dist/services 出发都会落到同一个源 JSON，
- * 所以运行不依赖 tsc 是否复制非 TypeScript 资产。
+ * 预构建资产与发出的 JS 相邻，纯产物安装不依赖源码目录。
+ * 保留旧 bare tsc + 源码 checkout 的兼容入口；source-free 导入门禁禁止靠该回退通过。
+ * readFileSync 避免 TypeScript 剥掉 JSON import attribute 后 Node 启动失败。
  */
-const snapshot = JSON.parse(
-  readFileSync(new URL('../../src/services/preview-demo-snapshot.json', import.meta.url), 'utf8'),
-) as PreviewDemoSnapshot;
+const emittedSnapshot = new URL('./preview-demo-snapshot.json', import.meta.url);
+const snapshot = JSON.parse(readFileSync(
+  existsSync(emittedSnapshot) ? emittedSnapshot : new URL('../../src/services/preview-demo-snapshot.json', import.meta.url),
+  'utf8',
+)) as PreviewDemoSnapshot;
 
 const daysAgoIso = (base: number, days: number | null): string | null =>
   days == null ? null : new Date(base - days * 86_400_000).toISOString();
