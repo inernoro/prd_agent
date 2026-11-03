@@ -1,8 +1,12 @@
-import { memo } from 'react';
+import { memo, useId, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import rehypeSanitize from 'rehype-sanitize';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
+
+// remark 已给脚注加上每条回答独立的安全前缀；再加一次会使 href 和 id 不匹配。
+// 不启用 rehypeRaw，保留其余默认过滤规则。
+const citationSchema = { ...defaultSchema, clobberPrefix: '' };
 
 /**
  * 提问答案的 markdown 渲染。
@@ -19,20 +23,42 @@ import rehypeSanitize from 'rehype-sanitize';
  * 用户上传的网页正文——等于间接可控。渲染成 HTML 会把提示词注入变成 XSS。
  */
 export const AskMarkdown = memo(function AskMarkdown({ content }: { content: string }) {
+  const instanceId = useId();
+  const prefix = `ask-${instanceId.replace(/[^a-zA-Z0-9-]/g, '')}-`;
+  const rootRef = useRef<HTMLDivElement>(null);
   return (
-    <div className="ask-md" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div ref={rootRef} className="ask-md" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeSanitize]}
+        remarkRehypeOptions={{ clobberPrefix: prefix, footnoteLabel: '引用原文', footnoteBackLabel: '返回正文' }}
+        rehypePlugins={[[rehypeSanitize, citationSchema]]}
         components={{
           p: ({ children }) => <p style={{ margin: 0 }}>{children}</p>,
           ul: ({ children }) => <ul style={{ margin: 0, paddingLeft: 18, listStyle: 'disc' }}>{children}</ul>,
           ol: ({ children }) => <ol style={{ margin: 0, paddingLeft: 18, listStyle: 'decimal' }}>{children}</ol>,
-          li: ({ children }) => <li style={{ margin: '2px 0' }}>{children}</li>,
+          li: ({ id, children }) => <li id={id} style={{ margin: '2px 0' }}>{children}</li>,
           strong: ({ children }) => <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{children}</strong>,
-          a: ({ href, children }) => (
-            // 答案里的链接可能指向托管站点之外，一律新窗口 + noopener
-            <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-primary)' }}>
+          a: ({ href, id, children, node }) => (
+            <a
+              id={id}
+              href={href}
+              target={href?.startsWith('#') ? undefined : '_blank'}
+              rel={href?.startsWith('#') ? undefined : 'noopener noreferrer'}
+              aria-describedby={node?.properties.dataFootnoteRef ? `${prefix}footnote-label` : undefined}
+              aria-label={node?.properties.dataFootnoteBackref ? '返回正文' : undefined}
+              onClick={href?.startsWith('#') ? (event) => {
+                // HashRouter 的 hash 不能被脚注改写；只在当前回答中找对应锚点。
+                event.preventDefault();
+                const target = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[id]') ?? [])
+                  .find((element) => `#${element.id}` === href);
+                target?.scrollIntoView({ block: 'nearest' });
+                if (target) {
+                  target.setAttribute('tabindex', '-1');
+                  target.focus({ preventScroll: true });
+                }
+              } : undefined}
+              style={{ color: 'var(--accent-primary)' }}
+            >
               {children}
             </a>
           ),
@@ -76,7 +102,12 @@ export const AskMarkdown = memo(function AskMarkdown({ content }: { content: str
             </blockquote>
           ),
           h1: ({ children }) => <strong style={{ color: 'var(--text-primary)' }}>{children}</strong>,
-          h2: ({ children }) => <strong style={{ color: 'var(--text-primary)' }}>{children}</strong>,
+          h2: ({ id, children }) => (
+            <h2
+              id={id === 'footnote-label' ? `${prefix}footnote-label` : id}
+              style={{ margin: 0, fontSize: '1em', color: 'var(--text-primary)', fontWeight: 600 }}
+            >{children}</h2>
+          ),
           h3: ({ children }) => <strong style={{ color: 'var(--text-primary)' }}>{children}</strong>,
         }}
       >

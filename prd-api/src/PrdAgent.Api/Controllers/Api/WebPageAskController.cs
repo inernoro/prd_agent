@@ -614,9 +614,10 @@ public class WebPageAskController : ControllerBase
                     .Where(h => h != null)
                     .Select(h => (h.Role, h.Content)));
 
+            var evidence = new WebPageAskEvidence(snapshot.Text);
             var messages = new JsonArray
             {
-                new JsonObject { ["role"] = "system", ["content"] = WebPageAskPrompt.Build(site, snapshot) },
+                new JsonObject { ["role"] = "system", ["content"] = WebPageAskPrompt.Build(site, snapshot, evidence) },
             };
             foreach (var (role, content) in history)
                 messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
@@ -714,7 +715,8 @@ public class WebPageAskController : ControllerBase
                 return;
             }
 
-            await PersistMessageAsync(session, site, "assistant", answer.ToString(),
+            var finalText = evidence.CompleteAnswer(answer.ToString());
+            await PersistMessageAsync(session, site, "assistant", finalText,
                 snapshot.Text.Length, model, platform, Elapsed(startedAt), null);
 
             try
@@ -723,6 +725,8 @@ public class WebPageAskController : ControllerBase
                 {
                     elapsedMs = Elapsed(startedAt),
                     truncated = snapshot.Truncated,
+                    // 流结束时以服务端核对编号并附原文后的版本替换临时文本。
+                    text = finalText,
                 });
             }
             catch (ObjectDisposedException) { }

@@ -218,7 +218,9 @@ export function useAskStream(source: AskSource) {
               case 'done':
                 sawDone = true;
                 setMessages((prev) =>
-                  prev.map((m) => (m.id === assistantId ? { ...m, streaming: false } : m)),
+                  prev.map((m) => (m.id === assistantId
+                    ? { ...m, content: typeof data.text === 'string' ? data.text : m.content, streaming: false }
+                    : m)),
                 );
                 setStatus('done');
                 setPhaseMessage('');
