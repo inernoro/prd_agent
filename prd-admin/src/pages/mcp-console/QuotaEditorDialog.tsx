@@ -3,7 +3,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { getLiteraryAgentAllModels, updateAgentApiKey } from '@/services';
 import type { McpCapabilityDto, McpClientDto } from '@/services/contracts/mcpConsole';
 import { toast } from '@/lib/toast';
-import { accessLabel, accessLevel, changeCapabilityAccess, type AccessLevel } from './editAuthorization';
+import { editableAuthorizationScopes, accessLabel, accessLevel, changeCapabilityAccess, type AccessLevel } from './editAuthorization';
 import { autoPicks, picksToScopes } from './scopePlan';
 import { clientSignal } from './signalEncoding';
 
@@ -63,7 +63,7 @@ export function QuotaEditorDialog({
   useEffect(() => {
     if (!client || !open) return;
     setScopeMode(client.scopeMode);
-    setScopes(client.scopes);
+    setScopes(editableAuthorizationScopes(client.scopes));
     setScopeDirty(false);
     setImage(String(client.dailyImageQuota));
     setWrite(String(client.dailyWriteQuota));

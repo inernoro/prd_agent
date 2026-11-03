@@ -201,3 +201,24 @@ describe('授权编辑边界', () => {
     expect(container.textContent).toContain('新增自己的任务、提交建议及同步债务');
   });
 });
+
+
+describe('派生发布权限不进入普通授权清单', () => {
+  it.each(['auto', 'manual'] as const)('%s模式编辑授权时保留独立接口并排除派生scope', async (scopeMode) => {
+    await render({ ...client, scopeMode, webPublicExposureAllowed: true,
+      scopes: ['web-pages:write', 'web-pages:publish', 'agent.example:invoke'] }, true, [tasks]);
+    if (scopeMode === 'auto') {
+      await act(async () => container.querySelector<HTMLInputElement>('.mcp-scope-mode input')!.click());
+    } else {
+      const access = container.querySelector<HTMLSelectElement>('[aria-label="任务台访问权限"]')!;
+      await act(async () => { access.value = 'read'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    }
+    await save();
+    const request = vi.mocked(updateAgentApiKey).mock.calls[0][0];
+    expect(request.scopeMode).toBe('manual');
+    expect(request.scopes).toContain('web-pages:write');
+    expect(request.scopes).toContain('agent.example:invoke');
+    expect(request.scopes).not.toContain('web-pages:publish');
+    expect(request).not.toHaveProperty('webPublicExposureAllowed');
+  });
+});

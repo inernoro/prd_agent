@@ -21,3 +21,8 @@ export function accessLabel(cap: Pick<McpCapabilityDto, 'key' | 'writeScope'>, l
   if (cap.key === 'tasks') return level === 'read' ? '使用任务台' : '管理任务台';
   return level === 'read' ? (cap.writeScope ? '只读' : '可查询') : '可执行';
 }
+
+/** 发布权限由独立开关派生，服务端禁止作为普通 scope 签发。 */
+export function editableAuthorizationScopes(scopes: string[]): string[] {
+  return scopes.filter(scope => scope.toLowerCase() !== 'web-pages:publish');
+}
