@@ -52,6 +52,18 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
 describe('客户端独立公开发布授权', () => {
+  it('列表读回完成前保留保存中状态，避免立即重开读到旧授权', async () => {
+    let finishRefresh!: () => void;
+    onSaved.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRefresh = resolve; }));
+    await render();
+    await act(async () => checkbox().click());
+    await save();
+    expect(onSaved).toHaveBeenCalledOnce();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(checkbox().disabled).toBe(true);
+    await act(async () => finishRefresh());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
   it('自动模式和存量缺省字段均保持关闭，普通设置保存不提交授权字段', async () => {
     await render();
     expect(checkbox().checked).toBe(false);

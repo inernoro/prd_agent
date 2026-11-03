@@ -421,7 +421,7 @@ export default function McpConsolePage() {
         onOpenChange={(next) => {
           if (!next) setQuotaTarget(null);
         }}
-        onSaved={() => void load()}
+        onSaved={load}
       />
 
       <ConnectAgentDialog

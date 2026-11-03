@@ -25,7 +25,7 @@ export function QuotaEditorDialog({
   client: McpClientDto | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSaved: () => void;
+  onSaved: () => void | Promise<void>;
 }) {
   const [image, setImage] = useState('');
   const [write, setWrite] = useState('');
@@ -104,13 +104,15 @@ export function QuotaEditorDialog({
         ? {}
         : { webPublicExposureAllowed }),
     });
-    setSaving(false);
     if (!res.success) {
+      setSaving(false);
       toast.error('保存失败', res.error?.message);
       return;
     }
+    // 列表读回后再关闭：否则立即重开会把旧客户端快照重新写进开关。
+    await onSaved();
+    setSaving(false);
     toast.success('客户端设置已更新');
-    onSaved();
     onOpenChange(false);
   };
 
