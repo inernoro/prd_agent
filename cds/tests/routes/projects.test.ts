@@ -21,6 +21,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createProjectsRouter, LEGACY_PROJECT_ID } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
+import {storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 import type { Project, BranchEntry, BuildProfile, CdsConfig } from '../../src/types.js';
@@ -1259,6 +1260,21 @@ describe('Projects router (P4 Part 2)', () => {
       expect(stateService.getBranchProfileOverride('align-b1', 'plain-web')!.activeDeployMode).toBeUndefined();
     });
 
+    it('失效项目默认模式对齐整批拒绝，所有分支和 CI 状态保持原样', async () => {
+      stateService.addBuildProfile({ id: 'valid-api', projectId: 'default', name: 'API', dockerImage: 'node:20', workDir: '.', command: 'dev', containerPort: 3000,
+        deployModes: { dev: {}, express: { prebuilt: true } } });
+      stateService.addBuildProfile({ id: 'bad-worker', projectId: 'default', name: 'Worker', dockerImage: 'node:20', workDir: '.', command: 'dev', containerPort: 3001,
+        deployModes: { dev: {}, express: { prebuilt: true } } });
+      stateService.updateProject('default', { defaultDeployModes: { 'valid-api': 'express', 'bad-worker': 'removed-express' } });
+      for (const id of ['align-default-a', 'align-default-b']) stateService.addBranch({ id, projectId: 'default', branch: id, worktreePath: '/tmp/' + id, services: {}, status: 'idle', createdAt: new Date().toISOString(),
+        ciImageStatus: 'ready', ciTargetSha: 'a'.repeat(40), profileOverrides: { 'valid-api': { activeDeployMode: 'dev', env: { KEEP: 'yes' } } } });
+      const before = structuredClone(stateService.getAllBranches());
+      const response = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ code: 'invalid_default_deploy_mode' });
+      expect(stateService.getAllBranches()).toEqual(before);
+    });
+
     it('round-trips the CDS global variable inheritance opt-in', async () => {
       const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
       expect(enabled.status).toBe(200);
@@ -1616,6 +1632,36 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
   let server: http.Server;
   const REPOS_BASE = '/test-repos';
 
+  let config: any;
+  function enableCatalogStorageFixture() {
+    config.storageInstanceId='owned-test'; config.repoRoot=tmpDir;
+    const volumes=new Map<string,unknown>();
+    shell.addResponsePatternFirst(/^docker info /,()=>({stdout:'owned-test-daemon',stderr:'',exitCode:0}));
+    shell.addResponsePatternFirst(/^docker volume inspect (.*)$/,m=>{
+      const name=m[1].replace(/^'|'$/g,'');return volumes.has(name)?{stdout:JSON.stringify([volumes.get(name)]),stderr:'',exitCode:0}:{stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume',exitCode:1};
+    });
+    shell.addResponsePatternFirst(/^docker volume create (.*)$/,m=>{
+      const name=m[1].split(' ').at(-1)!.replace(/^'|'$/g,''),birth=stateService.getStorageBirth(name)!;
+      expect(birth.stage).toBe('issued');
+      volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(birth.binding),'cds.storage.birth':birth.birthNonce}});
+      return{stdout:name,stderr:'',exitCode:0};
+    });
+    const image='sha256:'+'a'.repeat(64),cid='c'.repeat(64);let helper:any,helperRemoved=false;
+    shell.addResponsePatternFirst(/^docker image inspect (.*)$/,m=>({stdout:m[1].includes('json .Config.User')?JSON.stringify('appuser'):JSON.stringify([image,m[1].includes('apache/kafka')||m[1].includes(image)?{'/etc/kafka/secrets':{},'/var/lib/kafka/data':{},'/mnt/shared/config':{}}:null]),stderr:'',exitCode:0}));
+    shell.addResponsePatternFirst(/^docker create (.*)$/,m=>{
+      const command=m[1],mounts=[...command.matchAll(/type=volume,source=([^,]+),dst=([^,]+),/g)];
+      const birth=stateService.getStorageBirth(mounts[0][1])!;
+      expect(birth.stage).toBe('confirmed');expect(mounts).toHaveLength(3);helperRemoved=false;
+      const raw=command.slice(command.lastIndexOf(' -ceu ')+6),program=raw.slice(1,-1).replaceAll("'\\''", "'");
+      helper={Id:cid,Name:'/cds-storage-init-'+birth.birthNonce,Image:image,Config:{User:'0:0',Entrypoint:['/bin/sh'],Cmd:['-ceu',program],Labels:{'cds.storage.init.birth':birth.birthNonce,'cds.storage.init.operation':birth.operationId}},State:{Status:'created',Running:false,Pid:0,ExitCode:0},HostConfig:{Privileged:false,NetworkMode:'none',ReadonlyRootfs:true,Memory:67108864,MemorySwap:67108864,PidsLimit:16,RestartPolicy:{Name:'no'},CapDrop:['ALL'],CapAdd:['CAP_CHOWN'],SecurityOpt:['no-new-privileges'],LogConfig:{Type:'json-file',Config:{'max-size':'1m','max-file':'1'}}},Mounts:mounts.map(x=>({Type:'volume',Name:x[1],Source:(volumes.get(x[1]) as any).Mountpoint,Destination:x[2],RW:true}))};
+      return{stdout:cid,stderr:'',exitCode:0};
+    });
+    shell.addResponsePatternFirst(/^docker inspect (.*)$/,m=>{expect(m[1].replace(/^'|'$/g,'')).toBe(cid);return helperRemoved?{exitCode:1,stdout:'[]',stderr:'error: no such object: '+cid}:{exitCode:0,stdout:JSON.stringify([helper]),stderr:''};});
+    shell.addResponsePatternFirst(/^docker start -a (.*)$/,m=>{expect(m[1]).toBe(cid);helper.State={Status:'exited',Running:false,Pid:0,ExitCode:0};return{exitCode:0,stdout:['0:1000:770','0:1000:770','0:1000:770'].join('\n'),stderr:''};});
+    shell.addResponsePatternFirst(/^docker rm (.*)$/,m=>{expect(m[1]).toBe(cid);expect(helper.State.Running).toBe(false);helperRemoved=true;return{exitCode:0,stdout:cid,stderr:''};});
+    return volumes;
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-clone-test-'));
     const stateFile = path.join(tmpDir, 'state.json');
@@ -1627,7 +1673,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
     // Build a minimal config with just reposBase — the rest of
     // CdsConfig is unused by the projects router.
-    const config = { reposBase: REPOS_BASE } as any;
+    config = { reposBase: REPOS_BASE };
 
     const app = express();
     app.use(express.json());
@@ -1683,6 +1729,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('creates selected infra presets and project env vars during onboarding', async () => {
+      enableCatalogStorageFixture();
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Railway Style',
         gitRepoUrl: 'https://github.com/example/railway-style.git',
@@ -1717,6 +1764,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('surfaces (not silently swallows) user customEnv overwritten by infra connection strings', async () => {
+      enableCatalogStorageFixture();
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Env Collision',
         gitRepoUrl: 'https://github.com/example/env-collision.git',
@@ -1739,6 +1787,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('applies infra presets (real secrets + env) to an existing project via /infra-presets', async () => {
+      enableCatalogStorageFixture();
       const created = await request(server, 'POST', '/api/projects', { name: 'Topo Preset' });
       expect(created.status).toBe(201);
       const pid = created.body.project.id;
@@ -1768,6 +1817,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('singleton guard: a 2nd same-type non-DB preset (kafka) is never created across repeated calls', async () => {
+      enableCatalogStorageFixture();
       // Kafka self-advertises as kafka:9092 in its container env; a 2nd instance would
       // collide with the 1st. Only DBs (supportsDbName) may multi-instance. The guard
       // must hold even when the 2nd request comes from a separate infra-presets call
@@ -1788,6 +1838,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('DB presets still multi-instance: a 2nd postgres call yields postgres-2 with its own connection string', async () => {
+      enableCatalogStorageFixture();
       const created = await request(server, 'POST', '/api/projects', { name: 'Multi PG' });
       const pid = created.body.project.id;
 
@@ -2423,7 +2474,7 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(fs.existsSync(`${repoPath}/db/seed.sql`)).toBe(true);
     });
 
-    it('全栈基础设施样例可通过沙盒创建并生成前后端与三类 infra', async () => {
+    it('全栈沙盒保留项目源码，未显式分配存储前不发布半组配置', async () => {
       const exampleRoot = path.join(process.cwd(), 'examples/fullstack-infra-smoke');
       const readExample = (relativePath: string) => fs.readFileSync(path.join(exampleRoot, relativePath), 'utf-8');
       const res = await request(server, 'POST', '/api/projects', {
@@ -2445,23 +2496,12 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(res.body.sandbox).toBe(true);
       expect(res.body.project.cloneStatus).toBe('ready');
 
-      const profiles = stateService.getBuildProfilesForProject(pid);
-      expect(profiles).toHaveLength(2);
-      const frontend = profiles.find((profile) => profile.id.startsWith('frontend'))!;
-      const backend = profiles.find((profile) => profile.id.startsWith('backend'))!;
-      expect(frontend.pathPrefixes).toEqual(['/']);
-      expect(backend.pathPrefixes).toEqual(['/api/']);
-
-      const infra = stateService.getInfraServicesForProject(pid);
-      expect(infra.map((service) => service.id).sort()).toEqual(['mysql', 'rabbitmq', 'redis']);
-      expect(infra.find((service) => service.id === 'mysql')?.volumes?.[0]?.containerPath).toBe('/var/lib/mysql');
-      expect(infra.find((service) => service.id === 'redis')?.volumes?.[0]?.containerPath).toBe('/data');
-      expect(infra.find((service) => service.id === 'rabbitmq')?.volumes?.[0]?.containerPath).toBe('/var/lib/rabbitmq');
-
-      const env = stateService.getCustomEnv(pid);
-      expect(env.MYSQL_URL).toContain('mysql://');
-      expect(env.REDIS_URL).toContain('redis://');
-      expect(env.RABBITMQ_URL).toContain('amqp://');
+      expect(fs.existsSync(path.join(res.body.project.repoPath,'cds-compose.yml'))).toBe(true);
+      expect(fs.existsSync(path.join(res.body.project.repoPath,'init.sql'))).toBe(true);
+      expect(stateService.getBuildProfilesForProject(pid)).toEqual([]);
+      expect(stateService.getInfraServicesForProject(pid)).toEqual([]);
+      expect(stateService.getCustomEnv(pid).MYSQL_URL).toBeUndefined();
+      expect(shell.commands.some(command=>/^docker (run|create|volume create) /.test(command))).toBe(false);
     });
 
     it('composeYaml + gitRepoUrl 互斥 — 返回 400', async () => {

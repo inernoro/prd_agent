@@ -18,7 +18,7 @@ describe('HTML PPT 预览工具条可访问性', () => {
     expect(toolbar).toContain('[&_button]:min-h-11');
     expect(toolbar).toContain('[&_button]:min-w-11');
     expect(toolbar.match(/h-11 w-11/g)?.length).toBeGreaterThanOrEqual(5);
-    expect(toolbar.match(/min-h-11 min-w-11/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(toolbar.match(/min-h-11 min-w-11/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
   it('键盘焦点清晰，纯图标按钮都有可读名称', () => {

@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 /**
  * Cross-project isolation regression tests for branches.ts.
  *
@@ -117,7 +118,7 @@ describe('Cross-project isolation on profiles/rules/export', () => {
     shell = new MockShellExecutor();
     shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     const worktreeService = new WorktreeService(shell, config.repoRoot);
-    const containerService = new ContainerService(shell, config);
+    const containerService = new ContainerService(shell, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
 
     const app = express();
     app.use(express.json());

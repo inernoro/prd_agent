@@ -6,8 +6,9 @@
  * 概览仪表盘：KPI 卡片 + ECharts 图表 + 最近活动流。需求/功能/缺陷为跨产品数据表。
  * 数据按可访问范围（admin 看全部），后端 /api/product/overview/*。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useProductListScope } from '@/lib/productListScope';
 import type { EChartsOption } from 'echarts';
 import {
   LayoutDashboard,
@@ -20,11 +21,16 @@ import {
   Share2,
   Settings,
   Upload,
+  Download,
   ArrowLeft,
-  Search,
+  Plus,
+  ClipboardCheck,
+  ListOrdered,
 } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { toProductOptions } from './comboboxOptions';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { ProductsSection } from './ProductsSection';
 import { CustomerModule } from './CustomerModule';
@@ -32,19 +38,16 @@ import { ProductSettingsHub } from './ProductSettingsHub';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
-import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { VersionWorkflowTab } from './VersionWorkflowTab';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
+import { downloadListCsv } from './listExport';
 import './product-cards.css';
 import {
   getOverviewStats,
   listProducts,
   getOverviewRequirements,
-  getOverviewReleases,
-  getOverviewInitiations,
-  type OverviewReleaseRow,
-  type OverviewInitiationRow,
   getOverviewDefects,
   type OverviewStats,
   type OverviewRequirementRow,
@@ -56,13 +59,15 @@ import { resolveRequirementStateLabel } from './requirementWorkflowUtils';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
-import { formatInitiationReviewScore } from './initiationWorkflowUtils';
-import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { filterByTracked } from './productRecordTrackStorage';
+import { useAuthStore } from '@/stores/authStore';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
+import { ReviewAgentPage } from './review/ReviewAgentPage';
+import { hasProductMenu, hasProductReviewPermission, PRODUCT_MAP_ADMIN, PRODUCT_MENU_KEYS, PRODUCT_MENU_SCOPED } from './productPermissionAccess';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
-const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'settings']);
+const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'review', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'settings']);
 
 function parseOverviewSection(value: string | null): Section {
   if (value && SECTION_KEYS.has(value as Section)) return value as Section;
@@ -71,23 +76,47 @@ function parseOverviewSection(value: string | null): Section {
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
-export function OverviewShell() {
+export function OverviewShell({ sectionOverride, children }: { sectionOverride?: Section; children?: ReactNode }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const permissions = useAuthStore((state) => state.permissions ?? []);
+  const isRoot = useAuthStore((state) => state.isRoot);
+  const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
+  const canUseReview = isRoot || hasProductReviewPermission(permissions, 'review-agent.use');
   // 与 SingleProductView 一致：分区由 URL ?section= 派生，避免 state 与地址栏不同步
-  const active: Section = parseOverviewSection(searchParams.get('section'));
+  const active: Section = canUseProduct ? (sectionOverride ?? (searchParams.has('section') ? parseOverviewSection(searchParams.get('section')) : PRODUCT_MENU_KEYS.find((key) => hasProductMenu(permissions, key, isRoot)) ?? 'dashboard')) : 'versions';
 
   const selectSection = useCallback((section: Section) => {
+    if (sectionOverride) {
+      navigate(section === 'dashboard' ? '/product-agent' : `/product-agent?section=${section}`);
+      return;
+    }
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (section === 'dashboard') next.delete('section');
       else next.set('section', section);
       return next;
     }, { replace: true });
-  }, [setSearchParams]);
+  }, [navigate, sectionOverride, setSearchParams]);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsError, setProductsError] = useState('');
+
+  const loadProducts = useCallback(async () => {
+    setProductsError('');
+    const all: Product[] = [];
+    for (let page = 1; ; page += 1) {
+      const result = await listProducts({ page, pageSize: 100 });
+      if (!result.success) {
+        setProductsError('产品筛选选项未能完整加载，请重试。');
+        return;
+      }
+      all.push(...result.data.items);
+      if (all.length >= result.data.total || result.data.items.length === 0) break;
+    }
+    setProducts(all);
+  }, []);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -97,31 +126,35 @@ export function OverviewShell() {
   }, []);
 
   useEffect(() => {
-    void loadStats();
-    void listProducts({ pageSize: 100 }).then((result) => {
-      if (result.success) setProducts(result.data.items);
-    });
-  }, [loadStats]);
+    if (canUseProduct) {
+      if (hasProductMenu(permissions, 'dashboard', isRoot)) void loadStats();
+      else setStatsLoading(false);
+      void loadProducts();
+    } else {
+      setStatsLoading(false);
+    }
+  }, [canUseProduct, loadStats, loadProducts, permissions, isRoot]);
 
-  const isAdmin = stats?.isAdmin ?? false;
+  const isAdmin = isRoot || permissions.includes(PRODUCT_MAP_ADMIN) || (stats?.isAdmin ?? false);
 
-  const navItems: NavItem<Section>[] = [
+  const navItems: NavItem<Section>[] = canUseProduct ? [
     { key: 'dashboard', label: '概览', icon: LayoutDashboard },
     { key: 'products', label: '产品', icon: Boxes },
     { key: 'requirements', label: '需求', icon: ListChecks },
+    { key: 'review', label: '评审', icon: ClipboardCheck, hidden: !canUseReview },
     { key: 'features', label: '功能', icon: Puzzle },
     { key: 'defects', label: '缺陷', icon: Bug },
     { key: 'versions', label: '版本', icon: Boxes },
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
-    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin, dividerBefore: true },
-  ];
+    { key: 'settings', label: '设置', icon: Settings, hidden: permissions.includes(PRODUCT_MENU_SCOPED) ? !hasProductMenu(permissions, 'settings', isRoot) : !isAdmin, dividerBefore: true },
+  ] : [{ key: 'versions', label: '版本', icon: Boxes }];
 
   return (
     <ProductAgentLayout
-      title="产品管理"
-      subtitle="全局总览"
+      title={canUseProduct ? '产品管理' : '版本号申领'}
+      subtitle={canUseProduct ? '全局总览' : '内部版本与正式版本'}
       topSlot={
         <button
           onClick={() => navigate('/')}
@@ -130,10 +163,14 @@ export function OverviewShell() {
           <ArrowLeft size={13} /> 返回首页
         </button>
       }
-      items={navItems}
+      items={navItems.filter((item) => hasProductMenu(permissions, item.key, isRoot))}
       active={active}
       onSelect={selectSection}
     >
+      {children ? (
+        <div className="h-full min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>{children}</div>
+      ) : (
+      <>
       {active === 'dashboard' && (
         <SectionShell title="概览仪表盘" desc={isAdmin ? '全局视角，跨全部产品' : '全局视角，跨我参与的产品'}>
           <DashboardSection stats={stats} loading={statsLoading} onGoto={selectSection} />
@@ -145,9 +182,14 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'requirements' && (
-        <SectionShell title="需求" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
-          <RequirementsTable isAdmin={isAdmin} products={products} />
+        <SectionShell title="需求" desc="全部产品的需求汇总；可按产品和处理人筛选，点击进入详情">
+          <RequirementsTable isAdmin={isAdmin} products={products} canUseReview={canUseReview} productsError={productsError} onRetryProducts={() => void loadProducts()} />
         </SectionShell>
+      )}
+      {active === 'review' && (
+        <div className="h-full min-h-0">
+          {canUseReview ? <ReviewAgentPage /> : <div className="p-6 text-sm text-token-muted">暂无评审权限，请联系管理员。</div>}
+        </div>
       )}
       {active === 'features' && (
         <div className="flex h-full min-h-0 flex-col">
@@ -166,8 +208,8 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示，列字段与单产品版本页对齐（含负责人/组员/会议时间等）；点击行进入详情；管理员可导入 Excel 历史数据">
-          <VersionOverviewSection isAdmin={isAdmin} products={products} />
+        <SectionShell title="版本">
+          <VersionWorkflowTab isAdmin={isAdmin} />
         </SectionShell>
       )}
       {active === 'customers' && (
@@ -192,6 +234,8 @@ export function OverviewShell() {
         </div>
       )}
       {active === 'settings' && <ProductSettingsHub />}
+      </>
+      )}
     </ProductAgentLayout>
   );
 }
@@ -326,64 +370,6 @@ function EmptyChart({ text }: { text: string }) {
 
 // ════════════════════════ 跨产品数据表 ════════════════════════
 
-function TableToolbar({
-  keyword,
-  setKeyword,
-  filterLabel,
-  filters,
-  filterValue,
-  setFilterValue,
-  extra,
-}: {
-  keyword: string;
-  setKeyword: (v: string) => void;
-  filterLabel?: string;
-  filters?: { value: string; label: string }[];
-  filterValue?: string;
-  setFilterValue?: (v: string) => void;
-  extra?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center gap-2 mb-3 flex-wrap">
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle">
-        <Search size={14} className="text-token-muted" />
-        <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索标题 / 编号" className="bg-transparent text-sm text-token-primary outline-none w-44" />
-      </div>
-      {filters && setFilterValue && (
-        <>
-          <button
-            onClick={() => setFilterValue('')}
-            className={`px-2.5 py-1 rounded-md text-xs border ${!filterValue ? 'bg-token-nested text-token-primary border-token-subtle' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-          >
-            {filterLabel ?? '全部'}
-          </button>
-          {filters.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setFilterValue(f.value)}
-              className={`px-2.5 py-1 rounded-md text-xs border ${filterValue === f.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </>
-      )}
-      {extra && <div className="ml-auto flex items-center gap-2">{extra}</div>}
-    </div>
-  );
-}
-
-/** 「我负责的」过滤开关。 */
-function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => setMine(!mine)}
-      className={`px-2.5 py-1 rounded-md text-xs border ${mine ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-    >
-      我负责的
-    </button>
-  );
-}
 
 const GRADE_BADGE = (g: string) => (
   <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g}</span>
@@ -391,10 +377,10 @@ const GRADE_BADGE = (g: string) => (
 const SEVERITY_BADGE = (label: string) => (
   <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{label}</span>
 );
-function AdminImportButton({ onClick }: { onClick: () => void }) {
+function AdminImportButton({ onClick, label = '导入历史数据' }: { onClick: () => void; label?: string }) {
   return (
     <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/20">
-      <Upload size={13} /> 导入历史数据
+      <Upload size={13} /> {label}
     </button>
   );
 }
@@ -402,18 +388,33 @@ function AdminImportButton({ onClick }: { onClick: () => void }) {
 function RequirementsTable({
   isAdmin,
   products,
+  canUseReview,
+  productsError,
+  onRetryProducts,
 }: {
   isAdmin: boolean;
   products: Product[];
+  canUseReview: boolean;
+  productsError: string;
+  onRetryProducts: () => void;
 }) {
   const navigate = useNavigate();
+  const { productId, setProductId } = useProductListScope();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mine, setMine] = useState(false);
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [error, setError] = useState('');
+  const requestSequence = useRef(0);
 
-  const productNameMap = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
+  const productOptions = useMemo(() => {
+    const options = new Map(toProductOptions(products).map((option) => [option.id, option]));
+    rows.forEach((row) => {
+      if (!options.has(row.productId)) options.set(row.productId, { id: row.productId, label: row.productName });
+    });
+    return [...options.values()];
+  }, [products, rows]);
+  const scopedRows = useMemo(() => rows.filter((row) => !productId || row.productId === productId), [rows, productId]);
   const fields = useMemo<FilterFieldDef<OverviewRequirementRow>[]>(() => [
     {
       key: 'grade',
@@ -421,17 +422,6 @@ function RequirementsTable({
       defaultVisible: true,
       options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })),
       test: (r, v) => r.grade === v,
-    },
-    {
-      key: 'product',
-      label: '产品',
-      defaultVisible: true,
-      options: (its) => distinctOptions(
-        its,
-        (r) => r.productId,
-        (id) => productNameMap.get(id) ?? its.find((r) => r.productId === id)?.productName ?? id,
-      ),
-      test: (r, v) => r.productId === v,
     },
     {
       key: 'assignee',
@@ -458,10 +448,10 @@ function RequirementsTable({
       ),
       test: (r, v) => (r.currentState ?? '') === v,
     },
-  ], [productNameMap]);
+  ], []);
 
   const { bar, filtered: filterBarFiltered } = useListFilter({
-    items: rows,
+    items: scopedRows,
     storageKey: 'pa-list-filters:overview-requirement',
     fields,
     keywordOf: (r) => `${r.requirementNo} ${r.title} ${r.productName}`,
@@ -476,13 +466,18 @@ function RequirementsTable({
   );
 
   const reload = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
-    const res = await getOverviewRequirements({ mine: mine || undefined });
+    setError('');
+    const res = await getOverviewRequirements();
+    if (sequence !== requestSequence.current) return;
     if (res.success) setRows(res.data.items);
+    else setError(res.error?.message ?? '需求加载失败，请重试。');
     setLoading(false);
-  }, [mine]);
+  }, []);
   useEffect(() => {
     void reload();
+    return () => { requestSequence.current += 1; };
   }, [reload]);
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(filtered, {
@@ -498,20 +493,32 @@ function RequirementsTable({
     ],
   });
 
-  if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
-    <div className="w-full min-w-0">
-      <div className="flex items-center gap-2 flex-wrap mb-3">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col gap-3">
+      <div className="flex shrink-0 items-center gap-2 flex-wrap">
+        <div role="group" aria-label="按产品筛选需求" className="w-56">
+          <ItemSearchSelect value={productId} onChange={setProductId} options={productOptions}
+            placeholder="输入产品名称或编号搜索" clearOptionLabel="全部产品" uiSize="sm" countUnit="个产品" />
+        </div>
         <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         <div className="flex shrink-0 items-center gap-2">
-          <MineToggle mine={mine} setMine={setMine} />
+          {canUseReview && (
+            <button type="button" onClick={() => navigate('/product-agent/requirements/assessments')} className="flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-primary hover-bg-soft">
+              <ListOrdered size={13} />需求评估
+            </button>
+          )}
+          <button type="button" disabled={!productId} title={productId ? '在所选产品中新建需求' : '请先选择需求所属产品'} onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-primary hover-bg-soft disabled:opacity-40"><Plus size={13} />新建需求</button>
+          <button type="button" disabled={loading || Boolean(error) || filtered.length === 0} onClick={() => downloadListCsv('需求-筛选结果.csv', ['ID', '标题', '产品', '分级', '状态', '处理人'], filtered.map((row) => [row.requirementNo, row.title, row.productName, row.grade, row.stateLabel ?? resolveRequirementStateLabel(row.currentState) ?? '', row.assigneeName ?? '']))} className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-secondary hover-bg-soft disabled:opacity-40"><Download size={13} />导出需求</button>
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
       </div>
+      {(error || productsError) && <div role="alert" className="shrink-0 rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">{error || productsError}<button type="button" onClick={() => error ? void reload() : onRetryProducts()} className="ml-3 hover:underline">重试</button></div>}
+      <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
+      {loading ? <MapSectionLoader text="正在加载需求…" /> : error ? null : <>
       <SelectionActionBar mode="entity" entityType="requirement" selection={selection} onDone={reload} onExport={exportSelected} />
       {filtered.length === 0 ? (
         <div className="text-center text-token-muted text-sm py-12">
-          {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}
+          {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}
         </div>
       ) : (
         <OverviewDataTable
@@ -532,7 +539,9 @@ function RequirementsTable({
           ]}
         />
       )}
-      {showImport && <ProductHistoryImportDialog type="requirement" products={products} crossProductRoute onClose={() => setShowImport(false)} onImported={reload} />}
+      </>}
+      </div>
+      {showImport && <ProductHistoryImportDialog type="requirement" products={productId ? products.filter((product) => product.id === productId) : products} crossProductRoute onClose={() => setShowImport(false)} onImported={reload} />}
     </div>
   );
 }
@@ -699,251 +708,6 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
   );
 }
 
-const VERSION_SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
-const WORKFLOW_STATUS_LABEL: Record<string, string> = {
-  draft: '草稿',
-  review_pending: 'Agent 评审中',
-  review_failed: '评审未通过',
-  decision_pending: '待确认评审方式',
-  owner_pending: '待负责人同意',
-  approved: '已取得立项号',
-  announcement_pending: '待填写上线公告',
-  released: '已上线',
-};
-
-function overviewProjectTypeLabel(projectType: string, customerSource?: string | null) {
-  if (projectType === 'custom') return customerSource?.trim() ? `定制项目 · ${customerSource.trim()}` : '定制项目';
-  return '非定制项目';
-}
-
-function OverviewVersionStatus({ status }: { status: string }) {
-  const good = status === 'approved' || status === 'released';
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>
-      {WORKFLOW_STATUS_LABEL[status] ?? status}
-    </span>
-  );
-}
-
-function overviewAnnouncementCell(row: OverviewReleaseRow) {
-  if (row.announcementUrl) {
-    return (
-      <a
-        href={row.announcementUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="text-cyan-300 hover:underline"
-        onClick={(event) => event.stopPropagation()}
-      >
-        查看公告
-      </a>
-    );
-  }
-  if (row.status === 'announcement_pending') return <span className="text-xs text-token-muted">待填写</span>;
-  return <span className="text-token-muted">-</span>;
-}
-
-function VersionOverviewSection({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
-  const [tab, setTab] = useState<'release' | 'initiation'>('release');
-  return (
-    <div>
-      <div className="mb-3 flex border-b border-token-subtle">
-        <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
-        <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</OverviewSubTab>
-      </div>
-      {tab === 'release' && <ReleaseOverviewTable isAdmin={isAdmin} products={products} />}
-      {tab === 'initiation' && <InitiationOverviewTable isAdmin={isAdmin} products={products} />}
-    </div>
-  );
-}
-
-function OverviewSubTab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`border-b-2 px-4 py-2 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover-text-primary'}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
-  const navigate = useNavigate();
-  const [rows, setRows] = useState<OverviewReleaseRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [showImport, setShowImport] = useState(false);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const result = await getOverviewReleases({ keyword: keyword.trim() || undefined });
-    if (result.success) setRows(result.data.items);
-    setLoading(false);
-  }, [keyword]);
-  useEffect(() => { void reload(); }, [reload]);
-
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
-    filename: 'overview-releases.csv',
-    headers: ['产品', 'V号', 'T号', '项目类别', '版本类别', '方案', '部门', '负责人', '组员', '上线日期', '状态'],
-    mapRow: (r) => [
-      resolveVersionProductLabel(r, r.productName),
-      r.vCode,
-      r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : ''),
-      overviewProjectTypeLabel(r.projectType),
-      VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
-      r.planName,
-      r.departmentName ?? '',
-      r.ownerName ?? '',
-      r.teamMemberNames.join('、'),
-      r.plannedReleaseAt ? formatVersionBasicDate(r.plannedReleaseAt) : '',
-      WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
-    ],
-  });
-
-  if (loading) return <MapSectionLoader text="正在加载正式版本…" />;
-  return (
-    <div>
-      <TableToolbar
-        keyword={keyword}
-        setKeyword={setKeyword}
-        extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
-      />
-      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      {rows.length === 0 ? <div className="py-12 text-center text-sm text-token-muted">没有正式版本</div> : (
-        <OverviewDataTable
-          tableKey="releases"
-          rows={rows}
-          selection={tableSelection}
-          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
-          columns={[
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-token-secondary" /> },
-            { key: 'vcode', header: '正式版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
-            { key: 'tcode', header: '内部版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-xs text-token-secondary">{r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : '-')}</span> },
-            { key: 'projectType', header: '项目类别', defaultWidth: 96, render: (r) => <span className="text-xs text-token-secondary">{overviewProjectTypeLabel(r.projectType)}</span> },
-            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-token-primary" /> },
-            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-token-secondary" /> },
-            { key: 'owner', header: '产品负责人（申领人）', defaultWidth: 120, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-token-secondary" /> },
-            { key: 'team', header: '项目组成员', defaultWidth: 140, render: (r) => <TruncateCell text={r.teamMemberNames.length > 0 ? r.teamMemberNames.join('、') : '-'} maxChars={18} className="text-xs text-token-secondary" /> },
-            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-token-muted">-</span> },
-            { key: 'releaseAt', header: '上线日期', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.plannedReleaseAt)}</span> },
-            { key: 'brand', header: '当前开放品牌', defaultWidth: 112, render: (r) => <TruncateCell text={r.openBrandScope || '上线全域开放'} maxChars={14} className="text-xs text-token-secondary" /> },
-            { key: 'requirements', header: '需求来源', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementTitles.length > 0 ? r.requirementTitles.join('、') : '-'} maxChars={20} className="text-xs text-token-secondary" /> },
-            { key: 'announcement', header: '上线公告地址', defaultWidth: 104, render: (r) => overviewAnnouncementCell(r) },
-            { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
-          ]}
-        />
-      )}
-      {showImport && (
-        <VersionWorkflowImportDialog
-          kind="release"
-          products={products}
-          onClose={() => setShowImport(false)}
-          onImported={async () => { setShowImport(false); await reload(); }}
-        />
-      )}
-    </div>
-  );
-}
-
-function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
-  const navigate = useNavigate();
-  const [rows, setRows] = useState<OverviewInitiationRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [showImport, setShowImport] = useState(false);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const result = await getOverviewInitiations({ keyword: keyword.trim() || undefined });
-    if (result.success) setRows(result.data.items);
-    setLoading(false);
-  }, [keyword]);
-  useEffect(() => { void reload(); }, [reload]);
-
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
-    filename: 'overview-initiations.csv',
-    headers: ['产品', '项目类别', 'T号', '版本类别', '方案', '部门', '负责人', '开发状态', 'Agent评审', '状态'],
-    mapRow: (r) => [
-      resolveVersionProductLabel(r, r.productName),
-      overviewProjectTypeLabel(r.projectType, r.customerSource),
-      r.tCode ?? '',
-      VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
-      r.planName,
-      r.departmentName ?? '',
-      r.ownerName ?? '',
-      r.developmentStatus,
-      formatInitiationReviewScore(r),
-      WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
-    ],
-  });
-
-  if (loading) return <MapSectionLoader text="正在加载内部版本…" />;
-  return (
-    <div>
-      <TableToolbar
-        keyword={keyword}
-        setKeyword={setKeyword}
-        extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
-      />
-      <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      {rows.length === 0 ? <div className="py-12 text-center text-sm text-token-muted">没有内部版本</div> : (
-        <OverviewDataTable
-          tableKey="initiations"
-          rows={rows}
-          selection={tableSelection}
-          onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
-          columns={[
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-token-secondary" /> },
-            { key: 'projectType', header: '项目类别', defaultWidth: 108, render: (r) => <span className="text-xs text-token-secondary">{overviewProjectTypeLabel(r.projectType, r.customerSource)}</span> },
-            { key: 'tcode', header: '立项号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '-'}</span> },
-            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-token-primary" /> },
-            { key: 'reqDesc', header: '项目需求描述', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementDescription ?? '-'} maxChars={20} className="text-xs text-token-secondary" /> },
-            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-token-secondary" /> },
-            { key: 'owner', header: '产品负责人', defaultWidth: 104, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-token-secondary" /> },
-            { key: 'draft1', header: '第一稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.firstDraftMeetingAt)}</span> },
-            { key: 'draft2', header: '第二稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.secondDraftMeetingAt)}</span> },
-            { key: 'draft3', header: '第三稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.thirdDraftMeetingAt)}</span> },
-            { key: 'projectAt', header: '立项时间', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.projectAt)}</span> },
-            { key: 'ui', header: '需UI设计', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{formatVersionBasicBool(r.needUiDesign)}</span> },
-            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-token-muted">-</span> },
-            { key: 'devStatus', header: '开发状态', defaultWidth: 88, render: (r) => <span className="text-xs text-token-secondary">{r.developmentStatus || '待开发'}</span> },
-            { key: 'remark', header: '备注', defaultWidth: 120, render: (r) => <TruncateCell text={r.remark ?? '-'} maxChars={16} className="text-xs text-token-muted" /> },
-            {
-              key: 'review',
-              header: 'Agent评审',
-              defaultWidth: 88,
-              resizable: false,
-              render: (r) => {
-                const scoreText = formatInitiationReviewScore(r);
-                if (scoreText === '-') return <span className="text-token-muted">-</span>;
-                return (
-                  <span className={
-                    r.reviewPassed === true ? 'text-emerald-300 text-xs'
-                      : r.reviewPassed === false ? 'text-rose-300 text-xs'
-                        : 'text-token-secondary text-xs'
-                  }>{scoreText}</span>
-                );
-              },
-            },
-            { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
-          ]}
-        />
-      )}
-      {showImport && (
-        <VersionWorkflowImportDialog
-          kind="initiation"
-          products={products}
-          onClose={() => setShowImport(false)}
-          onImported={async () => { setShowImport(false); await reload(); }}
-        />
-      )}
-    </div>
-  );
-}
 
 // ════════════════════════ 知识库 / 图谱 / 设置 ════════════════════════
 

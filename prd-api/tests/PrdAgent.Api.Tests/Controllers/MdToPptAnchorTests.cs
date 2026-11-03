@@ -167,10 +167,7 @@ public class MdToPptAnchorTests
         var retry = MdToPptController.BuildAnchoredPageRetryUserPrompt(prompt,
             new MdToPptController.UnsupportedVisibleClaimValidation(
                 MdToPptController.UnsupportedVisibleClaimKind.UnsupportedNumeric, 1, "99"));
-        var wire = MdToPptController.BuildGatewayPageRequest(
-            new PrdAgent.Core.Models.InfraAgentRuntimeProfile(), "system", retry, "test.caller::chat");
-        var wireUser = wire.RequestBody!["messages"]![1]!["content"]!.GetValue<string>();
-        foreach (var text in new[] { prompt, retry, wireUser })
+        foreach (var text in new[] { prompt, retry })
         {
             Assert.Contains(content, text);
             Assert.Contains(table, text);

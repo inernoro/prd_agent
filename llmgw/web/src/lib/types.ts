@@ -111,11 +111,13 @@ export type LlmLogListItem = {
   statusCode?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  reasoningTokens?: number | null;
   tokenUsageSource?: string | null;
   imageSuccessCount?: number | null;
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
+  costKind?: 'provider_actual' | 'official_baseline_estimate' | 'provider_policy_estimate' | 'unpriced' | 'no_usage' | null;
   priceSnapshotHash?: string | null;
   providerRequestId?: string | null;
   providerReportedCost?: number | null;
@@ -179,6 +181,10 @@ export type LlmLogDetail = {
   toolCallCount?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  cacheCreationInputTokens?: number | null;
+  cacheReadInputTokens?: number | null;
+  cacheCreationCountedInsideInput?: boolean | null;
   imageSuccessCount?: number | null;
   outputImages: LogImage[];
   outputImageCaptureStatus?: string | null;
@@ -197,6 +203,7 @@ export type LlmLogDetail = {
   costStatus?: string | null;
   /** 算不出钱时的人话原因。 */
   costUnpricedReason?: string | null;
+  costKind?: 'provider_actual' | 'official_baseline_estimate' | 'provider_policy_estimate' | 'unpriced' | 'no_usage' | null;
   estimatedCacheReadCost?: number | null;
   estimatedCacheWriteCost?: number | null;
   estimatedInputCost?: number | null;
@@ -1163,8 +1170,10 @@ export type CreateModelOfferingRequest = {
   maxConcurrency?: number;
   rateLimitPerMinute?: number;
   notes?: string;
+  /** 未传保持默认启用；迁移工具可显式 false，避免尚未完成的线路短暂接流量。 */
+  enabled?: boolean;
 };
-export type UpdateModelOfferingRequest = Omit<Partial<CreateModelOfferingRequest>, 'targetKind' | 'targetId'>;
+export type UpdateModelOfferingRequest = Omit<Partial<CreateModelOfferingRequest>, 'targetKind' | 'targetId' | 'enabled'>;
 
 // ── Exchange（无密钥，仅 hasKey）──
 export type ExchangeModelItem = {

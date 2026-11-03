@@ -118,6 +118,10 @@ public class HostedSite
     [BsonIgnore]
     public string? PdfAssetUrl { get; set; }
 
+    /// <summary>当前站点登记的可下载 PDF 相对路径，仅响应派生，不持久化。</summary>
+    [BsonIgnore]
+    public List<string> PdfFilePaths { get; set; } = new();
+
     // ── 所有权 ──
 
     /// <summary>所属用户 ID</summary>

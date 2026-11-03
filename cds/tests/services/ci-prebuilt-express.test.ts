@@ -11,7 +11,7 @@
  *  - dispatcher:非预构建工作流（ci.yml）/ SHA 不匹配 → ack 不动作
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -106,11 +106,43 @@ describe('极速版 — 纯函数', () => {
     expect(branch.profileOverrides!.api.activeDeployMode).toBe('express');
   });
 
-  it('applyDefaultDeployModesToBranch 跳过 profile 不存在的目标模式（不写脏配置）', () => {
-    const p = expressApiProfile();
-    const branch = {} as unknown as BranchEntry;
-    applyDefaultDeployModesToBranch(branch, { api: 'nonexistent' }, [p]);
-    expect(branch.profileOverrides?.api?.activeDeployMode).toBeUndefined();
+  it('applyDefaultDeployModesToBranch 拒绝失效默认模式，不能悄悄使用源码基线', () => {
+    const branch = {} as BranchEntry;
+    expect(() => applyDefaultDeployModesToBranch(branch, { api: 'removed-express' }, [expressApiProfile()]))
+      .toThrow(/项目默认模式.*已不存在/);
+    expect(branch.profileOverrides).toBeUndefined();
+  });
+
+  it('applyDefaultDeployModesToBranch 整批先校验，后项失效时前项也不修改', () => {
+    const api = expressApiProfile();
+    const worker = { ...api, id: 'worker' };
+    const branch = { profileOverrides: { api: { activeDeployMode: 'dev', env: { KEEP: 'yes' } } } } as BranchEntry;
+    const before = structuredClone(branch);
+    let error: unknown;
+    try { applyDefaultDeployModesToBranch(branch, { api: 'express', worker: 'removed-express' }, [api, worker]); }
+    catch (caught) { error = caught; }
+    expect(branch).toEqual(before);
+    expect(error).toMatchObject({ code: 'invalid_default_deploy_mode' });
+  });
+
+  it.each(['toString', 'constructor'])('applyDefaultDeployModesToBranch 不把继承属性 %s 当有效模式', mode => {
+    const branch = {} as BranchEntry;
+    expect(() => applyDefaultDeployModesToBranch(branch, { api: mode }, [expressApiProfile()]))
+      .toThrow(/项目默认模式.*已不存在/);
+    expect(branch.profileOverrides).toBeUndefined();
+  });
+
+  it('applyDefaultDeployModesToBranch 允许同名的自有模式对象，删除 Profile 的旧默认不阻断', () => {
+    const profile = { ...expressApiProfile(), deployModes: { constructor: { prebuilt: true } } };
+    const branch = {} as BranchEntry;
+    applyDefaultDeployModesToBranch(branch, { api: 'constructor', removedProfile: 'old' }, [profile]);
+    expect(branch.profileOverrides).toEqual({ api: { activeDeployMode: 'constructor' } });
+  });
+
+  it.each([undefined, null, ''])('applyDefaultDeployModesToBranch 保留已有空默认语义: %s', mode => {
+    const branch = { profileOverrides: { api: { activeDeployMode: 'express', env: { KEEP: 'yes' } } } } as BranchEntry;
+    applyDefaultDeployModesToBranch(branch, { api: mode } as Record<string, string>, [expressApiProfile()]);
+    expect(branch.profileOverrides?.api).toEqual({ activeDeployMode: '', env: { KEEP: 'yes' } });
   });
 
   it('classifyDeployRuntime 把 express 归类为 release', () => {
@@ -280,6 +312,37 @@ describe('极速版 — dispatcher', () => {
       repository: { id: 1, full_name: 'octocat/repo' },
     });
   }
+
+  it.each([false, true])('失效项目默认模式在新 webhook 分支创建前拒绝，dryRun=%s', async dryRun => {
+    stateService.updateProject('p1', { defaultDeployModes: { api: 'removed-express' } });
+    const create = vi.spyOn(MockWorktree.prototype, 'create');
+    try {
+      const result = await dispatcher.handle('push', { ref: 'refs/heads/feature', after: FULL_SHA, repository: { id: 1, full_name: 'octocat/repo' } }, { dryRun });
+      expect(result).toMatchObject({ action: 'project-dispatch-failed', message: expect.stringMatching(/项目默认模式.*已不存在/) });
+      expect(result.deployRequest).toBeUndefined();
+      expect(create).not.toHaveBeenCalled();
+      expect(stateService.getAllBranches()).toEqual([]);
+    } finally { create.mockRestore(); }
+  });
+
+  it('新 webhook 分支发布到 State 前已冻结项目默认，建 worktree 中途改默认不产生半分支', async () => {
+    stateService.updateBuildProfile('api', {cacheMounts:[{kind:'bind',hostPath:'/owned/fixture-config',containerPath:'/fixture-config',readOnly:true}]});
+    const create = vi.spyOn(MockWorktree.prototype, 'create').mockImplementationOnce(async () => {
+      stateService.updateProject('p1', { defaultDeployModes: { api: 'removed-express' } });
+    });
+    const originalAdd = stateService.addBranch.bind(stateService);
+    const add = vi.spyOn(stateService, 'addBranch').mockImplementation(entry => {
+      expect(entry.profileOverrides?.api?.activeDeployMode).toBe('express');
+      originalAdd(entry);
+    });
+    try {
+      const result = await pushOnce();
+      expect(result.action).toBe('ci-image-waiting');
+      expect(create).toHaveBeenCalledOnce();
+      expect(stateService.getAllBranches()).toHaveLength(1);
+      expect(stateService.getAllBranches()[0].profileOverrides?.api?.activeDeployMode).toBe('express');
+    } finally { create.mockRestore(); add.mockRestore(); }
+  });
 
   it('push 在极速版分支 → ci-image-waiting,不返回 deployRequest,置 waiting', async () => {
     const result = await pushOnce();

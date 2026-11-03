@@ -107,109 +107,6 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void OpenAiCompatibleProfile_UsesGatewayDirect()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Runtime = InfraAgentRuntimes.ClaudeSdk,
-            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
-            Model = "qwen-max",
-        };
-
-        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
-    }
-
-    [Fact]
-    public void AnthropicProfile_UsesGatewayDirect()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Runtime = InfraAgentRuntimes.ClaudeSdk,
-            Protocol = InfraAgentRuntimeProtocols.Anthropic,
-            Model = "claude-sonnet",
-        };
-
-        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
-    }
-
-    [Fact]
-    public void CustomRuntime_KeepsCdsAgentCompatibilityPath()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Runtime = InfraAgentRuntimes.Custom,
-            Protocol = InfraAgentRuntimeProtocols.Anthropic,
-            Model = "custom-agent-model",
-        };
-
-        Assert.False(MdToPptController.ShouldUseGatewayDirect(profile));
-    }
-
-    [Fact]
-    public void RunnableSlideFragment_RejectsFullHtmlAndScript()
-    {
-        Assert.False(MdToPptController.IsRunnableSlideFragment("<html><body><section>x</section></body></html>", anchored: false));
-        Assert.False(MdToPptController.IsRunnableSlideFragment("<section><script>alert(1)</script></section>", anchored: false));
-        Assert.True(MdToPptController.IsRunnableSlideFragment(
-            "<section><div class=\"pp-root\"><h2>产品发布</h2><div class=\"grid g3\"><div class=\"card\">A</div><div class=\"stat\">42%</div></div></div></section>",
-            anchored: false));
-    }
-
-    [Fact]
-    public void RunnableSlideFragment_RejectsGenericTitleAndPlainBulletPage()
-    {
-        Assert.False(MdToPptController.IsRunnableSlideFragment(
-            "<section><div class=\"pp-root\"><h2>封面</h2><ul><li>A</li><li>B</li></ul></div></section>",
-            anchored: false));
-        Assert.False(MdToPptController.IsRunnableSlideFragment(
-            "<section><div class=\"pp-root\"><h2>产品发布</h2><ul><li>A</li><li>B</li><li>C</li></ul></div></section>",
-            anchored: false));
-        Assert.True(MdToPptController.LooksLikeLowQualitySlide(
-            "<section><h2>总结</h2><ul><li>A</li><li>B</li></ul></section>"));
-    }
-
-    [Fact]
-    public void RunnableAnchoredSlide_AcceptsOfficialHtmlPptSectionRoot()
-    {
-        var slide = "<section class=\"slide s-cover hairlines\" data-title=\"封面\"><h1>产品发布</h1><div class=\"card\">A</div><div class=\"stat\">42%</div></section>";
-        Assert.True(MdToPptController.IsRunnableSlideFragment(slide, anchored: true));
-    }
-
-    [Fact]
-    public void GatewayPageRequest_PinsExpectedModelKeepsStreamAndOmitsTaskOutputCap()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
-            Model = "qwen-max",
-            TimeoutSeconds = 120,
-        };
-
-        var request = MdToPptController.BuildGatewayPageRequest(profile, "sys", "usr", "md-to-ppt-test::chat", "req1", "u1", "page1", "run-1");
-
-        Assert.True(request.Stream);
-        Assert.Equal("qwen-max", request.ExpectedModel);
-        Assert.Equal("md-to-ppt-test::chat", request.AppCallerCode);
-        Assert.Equal("req1", request.Context?.RequestId);
-        Assert.Equal("u1", request.Context?.UserId);
-        Assert.Equal("run-1", request.Context?.RunId);
-        Assert.False(request.RequestBody?.ContainsKey("max_tokens"));
-        Assert.False(request.RequestBody?.ContainsKey("max_completion_tokens"));
-    }
-
-    [Fact]
-    public void SystemGatewayProfile_ProvidesZeroConfigurationFallback()
-    {
-        var profile = MdToPptController.CreateSystemGatewayProfile("user-1");
-
-        Assert.Equal(MdToPptController.SystemGatewayProfileId, profile.Id);
-        Assert.Equal(string.Empty, profile.Model);
-        Assert.True(profile.IsDefault);
-        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
-        Assert.Equal("自动选择", MdToPptController.GenerationModelLabel(profile));
-    }
-
-    [Fact]
     public void RunnableDeckDocument_RejectsCssOnlyTruncationAndAcceptsRealDecks()
     {
         var truncated = "<!DOCTYPE html><html><head><style>" + new string('x', 220) +
@@ -366,6 +263,33 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
+    public void CompletePresentationDocument_RequiresCompleteBytesButNotAPlatformSlideFramework()
+    {
+        var customDeck = "<!doctype html><html><head><style>main{display:grid}</style></head>" +
+                         "<body><main data-opendesign-scene><canvas></canvas></main></body></html>";
+        var hiddenCustomDeck = "<!doctype html><html><head></head><body hidden><main>由上游设计的演示稿</main></body></html>";
+
+        Assert.True(MdToPptController.IsCompletePresentationDocument(customDeck));
+        Assert.True(MdToPptController.IsCompletePresentationDocument(hiddenCustomDeck));
+        Assert.False(MdToPptController.IsCompletePresentationDocument("<html><head></head><body></body></html>"));
+        Assert.False(MdToPptController.IsCompletePresentationDocument(
+            "<html><head></head><body><script>const deck = 1;</body></html>"));
+    }
+
+    [Fact]
+    public void PresentationBusinessFlow_DoesNotUseTheLegacySlideOrRevealClassifier()
+    {
+        var source = File.ReadAllText(LocateController());
+
+        Assert.DoesNotContain("!IsRunnableDeckDocument(parentRun.Html)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("!IsRunnableDeckDocument(manualEditHtml)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("!IsRunnableDeckDocument(req.HtmlContent)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("!IsRunnableDeckDocument(sourceRun.Html)", source, StringComparison.Ordinal);
+        Assert.Contains("IsCompletePresentationDocument(parentRun.Html)", source, StringComparison.Ordinal);
+        Assert.Contains("IsCompletePresentationDocument(sourceRun.Html)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SlideBlockScanner_AgreesWithValidatorAcrossQuotesAndCase()
     {
         var html = "<div class='SLIDE active'><h1>第一页</h1></div>" +
@@ -428,13 +352,13 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void PatchSlideIndex_UsesExplicitFieldThenBoundedPagePhrase()
+    public void PatchSlideIndex_UsesExplicitFieldThenSinglePagePhrase()
     {
         Assert.Equal(4, MdToPptController.ResolvePatchSlideIndex(4, "修改第 2 页"));
         Assert.Equal(2, MdToPptController.ResolvePatchSlideIndex(null, "仅调整第 2 页的布局"));
         Assert.Equal(12, MdToPptController.ResolvePatchSlideIndex(null, "重绘第十二页"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "生成 5 页演示稿"));
-        Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "修改第 99 页"));
+        Assert.Equal(99, MdToPptController.ResolvePatchSlideIndex(null, "修改第 99 页"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "删除第 3 页"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "第 2 页与第 3 页对调"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "把第 2 页移动到第 5 页"));
@@ -462,22 +386,6 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void GatewayPageRequest_CanExposeThinkingForWholeDeck()
-    {
-        var profile = MdToPptController.CreateSystemGatewayProfile("user-1");
-
-        var request = MdToPptController.BuildGatewayPageRequest(
-            profile,
-            "sys",
-            "usr",
-            "md-to-ppt-test::chat",
-            includeThinking: true);
-
-        Assert.True(request.IncludeThinking);
-        Assert.Null(request.ExpectedModel);
-    }
-
-    [Fact]
     public void ResolveTargetPages_UsesExplicitPageCountBeforeDefault()
     {
         var req = new MdToPptOutlineRequest { Content = "严格生成 2 页高级产品发布会 PPT" };
@@ -486,15 +394,83 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void NormalizeOutlinePayload_TrimsExtraPages()
+    public void NormalizeOutlinePayload_PreservesOpenDesignPagePlan()
     {
         var raw = "{\"totalPages\":4,\"summary\":\"x\",\"outline\":[" +
                   "{\"title\":\"A\",\"bullets\":[]}," +
                   "{\"title\":\"B\",\"bullets\":[]}," +
                   "{\"title\":\"C\",\"bullets\":[]}]}";
         var normalized = MdToPptController.NormalizeOutlinePayload(raw, 2);
-        Assert.Equal(2, normalized["totalPages"]?.GetValue<int>());
-        Assert.Equal(2, normalized["outline"]?.AsArray().Count);
+        Assert.Equal(3, normalized["totalPages"]?.GetValue<int>());
+        Assert.Equal(3, normalized["outline"]?.AsArray().Count);
+    }
+
+    [Fact]
+    public void AttachmentOutline_TreatsRequestedPageCountAsSuggestion()
+    {
+        MdToPptController.EnsureOutlinePageCount(
+            reportedPages: 1,
+            actualPages: 1,
+            targetPages: 20);
+
+        var ex = Assert.Throws<MdToPptOutlineContractException>(() =>
+            MdToPptController.EnsureOutlinePageCount(
+                reportedPages: 2,
+                actualPages: 1,
+                targetPages: 20));
+        Assert.Equal(MdToPptController.OutlinePageCountMismatchCode, ex.Code);
+        Assert.Contains("声明 2 页", ex.Message);
+        Assert.Contains("实际 1 页", ex.Message);
+    }
+
+    [Fact]
+    public void AttachmentOutline_AcceptsExactlyTwentyReportedAndActualPages()
+    {
+        MdToPptController.EnsureOutlinePageCount(
+            reportedPages: 20,
+            actualPages: 20,
+            targetPages: 20);
+
+        var ex = Assert.Throws<MdToPptOutlineContractException>(() =>
+            MdToPptController.EnsureOutlinePageCount(
+                reportedPages: 20,
+                actualPages: 21,
+                targetPages: 20));
+        Assert.Equal(MdToPptController.OutlinePageCountMismatchCode, ex.Code);
+    }
+
+    [Fact]
+    public void OutlineEndpoints_ValidateTheSameExactPageContractBeforeSuccess()
+    {
+        var source = File.ReadAllText(LocateController());
+        var nonStreamingValidation = source.IndexOf(
+            "EnsureOutlinePageCount(\n                reportedPages,",
+            StringComparison.Ordinal);
+        var nonStreamingNormalization = source.IndexOf(
+            "var normalized = NormalizeOutlinePayload(raw, targetPages);",
+            StringComparison.Ordinal);
+        var nonStreamingDone = source.IndexOf("outlineRun.Status = \"done\"", StringComparison.Ordinal);
+        Assert.True(
+            nonStreamingValidation > 0
+            && nonStreamingValidation < nonStreamingNormalization
+            && nonStreamingNormalization < nonStreamingDone,
+            "非流式大纲必须在归一化和持久化完成态前校验声明与数组自洽");
+
+        var streamingValidation = source.IndexOf(
+            "EnsureOutlinePageCount(ReadOutlineTotalPages(metaObj), emittedPages, targetPages);",
+            StringComparison.Ordinal);
+        var streamingPersist = source.IndexOf("await PersistOutlineAsync();", StringComparison.Ordinal);
+        var streamingDone = source.IndexOf("WriteEventAsync(\"done\", new { pages = emittedPages", StringComparison.Ordinal);
+        Assert.True(
+            streamingValidation > 0 && streamingValidation < streamingPersist && streamingPersist < streamingDone,
+            "流式大纲必须在持久化与 done 事件前校验页数");
+
+        Assert.DoesNotContain("metaObj[\"totalPages\"] = targetPages", source);
+        Assert.DoesNotContain("[\"totalPages\"] = targetPages", source);
+        Assert.Contains("totalPagesEl.TryGetInt32(out var reportedTotalPages)", source);
+        Assert.Contains("源文档只作为内容材料", source);
+        Assert.Contains("page 从 index=1", source);
+        Assert.Contains("errorCode = run.ErrorCode", source);
     }
 
     [Fact]
@@ -521,21 +497,6 @@ public class MdToPptSectionSanitizeTests
         Assert.False(MdToPptController.LooksLikeConsoleVisualMismatch(
             "<div class=\"console-dashboard\"><div class=\"panel metric\">指标</div><div class=\"panel queue\">任务队列</div><div class=\"panel preview\">发布状态</div></div>",
             "cobalt-grid"));
-    }
-
-    [Fact]
-    public void ConsoleDashboardFallbackSlide_UsesOperationalPanels()
-    {
-        var page = new MdToPptOutlinePageDto
-        {
-            Title = "控制台总览",
-            Bullets = new List<string> { "知识库引用", "生成海报教程文案 HTML", "自动发布到网页托管", "可预览可编辑" },
-        };
-        var html = MdToPptController.ConsoleDashboardFallbackSlide(null, page, 0, 2);
-        Assert.Contains("console-dashboard", html);
-        Assert.Contains("任务队列", html);
-        Assert.Contains("网页托管预览", html);
-        Assert.Contains("知识库引用", html);
     }
 
     [Fact]
@@ -570,5 +531,25 @@ public class MdToPptSectionSanitizeTests
         var noParent = MdToPptController.InheritPatchProvenance(null);
         Assert.Equal(DesignArtifactSourceSurfaces.HtmlPpt, noParent.SourceSurface);
         Assert.Empty(noParent.KnowledgeReferences);
+    }
+
+    private static string LocateController()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null
+               && !Directory.Exists(Path.Combine(directory.FullName, "prd-api", "src")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+
+        var path = Path.Combine(
+            directory!.FullName,
+            "prd-api",
+            "src",
+            "PrdAgent.Api",
+            "Controllers",
+            "Api",
+            "MdToPptController.cs");
+        Assert.True(File.Exists(path), $"找不到 {path}");
+        return path;
     }
 }

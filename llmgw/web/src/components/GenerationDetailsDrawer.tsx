@@ -8,11 +8,11 @@ import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Coins, Copy
 import { Link } from 'react-router-dom';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
-import { SectionLoader } from './ui';
+import { Chip, SectionLoader } from './ui';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
-import { DASH, appDisplayName, computeTokPerSec, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
+import { DASH, appDisplayName, computeTokPerSec, costKindBadgeLabel, costKindLabel, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
-function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: string; icon: ReactNode }) {
+function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: ReactNode; icon: ReactNode }) {
   return (
     <div
       style={{
@@ -26,7 +26,7 @@ function MetricCard({ title, value, note, icon }: { title: string; value: string
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-secondary)', color: 'var(--text-muted)' }}>{icon}{title}</div>
       <div className="tabular" style={{ marginTop: 4, fontSize: 'var(--fs-heading)', fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
-      {note ? <div style={{ fontSize: 'var(--fs-caption)', marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
+      {note ? <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, fontSize: 'var(--fs-caption)', marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
   );
 }
@@ -575,18 +575,31 @@ export function GenerationDetailsDrawer({
                     <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} icon={<Timer size={15} aria-hidden="true" />} />
                     <MetricCard title="生成速度" value={generationSpeed(detail)} note={detail.imageSuccessCount ? '图片为平均每张生成耗时' : undefined} icon={<Gauge size={15} aria-hidden="true" />} />
                     <MetricCard
-                      title="费用"
+                      title="金额"
                       value={detail.providerReportedCost == null
                         ? fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)
                         : fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
                       note={detail.providerReportedCost != null
-                        ? `Provider 实际${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
+                        ? <>
+                            <Chip
+                              label={costKindBadgeLabel(detail.costKind, detail.platformName || detail.provider)}
+                              color="var(--text-muted)"
+                              bg="var(--bg-elevated)"
+                              title={costKindLabel(detail.costKind, detail.platformName || detail.provider)}
+                            />
+                            {detail.reconciliationStatus ? <span style={{ marginLeft: 6 }}>{detail.reconciliationStatus}</span> : null}
+                          </>
                         : detail.estimatedCost == null
                           // 后端已经算过「为什么算不出」，直接把那句话端出来：
                           // 「缺输入单价」和「价格还是 CNY 口径」是两件要做不同事的情况，
                           // 笼统一句「未知」逼用户自己去猜该动哪儿。兜底文案保持不变。
                           ? (detail.costUnpricedReason || '未知：缺 token 或价格快照')
-                          : 'Gateway 估算 · 等待 Provider 对账'}
+                          : <Chip
+                              label={costKindBadgeLabel(detail.costKind, detail.platformName || detail.provider)}
+                              color="var(--text-muted)"
+                              bg="var(--bg-elevated)"
+                              title={costKindLabel(detail.costKind, detail.platformName || detail.provider)}
+                            />}
                       icon={<Coins size={15} aria-hidden="true" />}
                     />
                     <MetricCard
@@ -707,7 +720,12 @@ export function GenerationDetailsDrawer({
               {viewTab === 'audit' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <section>
-                    <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>费用与对账</div>
+                    <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>金额证据与对账</div>
+                    <Row k="金额性质" v={costKindLabel(detail.costKind, detail.platformName || detail.provider)} />
+                    <Row k="输入 Token" v={detail.inputTokens == null ? null : String(detail.inputTokens)} />
+                    <Row k="缓存读取 Token" v={detail.cacheReadInputTokens == null ? null : String(detail.cacheReadInputTokens)} />
+                    <Row k="缓存写入 Token" v={detail.cacheCreationInputTokens == null ? null : `${detail.cacheCreationInputTokens}${detail.cacheCreationCountedInsideInput ? '（已含在输入中）' : '（独立计数）'}`} />
+                    <Row k="推理 Token" v={detail.reasoningTokens == null ? null : `${detail.reasoningTokens}（已含在输出中）`} />
                     <Row k="价格币种" v={detail.priceCurrency} />
                     <Row k="输入价格 / 1M" v={detail.inputPricePerMillion == null ? null : String(detail.inputPricePerMillion)} />
                     <Row k="输出价格 / 1M" v={detail.outputPricePerMillion == null ? null : String(detail.outputPricePerMillion)} />

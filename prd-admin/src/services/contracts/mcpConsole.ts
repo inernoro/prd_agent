@@ -140,3 +140,17 @@ export type ListMcpCallsContract = (input: {
 
 
 export type GetMcpVisibleToolsContract = (keyId: string) => Promise<ApiResponse<McpVisibleToolsDto>>;
+
+export interface MapAgentSkillManifestDto {
+  key: string;
+  version: string;
+  sha256: string;
+  downloadUrl: string;
+  workBuddyDownloadUrl: string;
+  workBuddySha256: string;
+  installerUrl: string;
+  supportedHosts: string[];
+  workBuddyInstall: string;
+}
+
+export type GetMapAgentSkillManifestContract = () => Promise<ApiResponse<MapAgentSkillManifestDto>>;

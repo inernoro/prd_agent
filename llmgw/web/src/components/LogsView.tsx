@@ -32,6 +32,8 @@ import {
   fmtMs,
   fmtCompact,
   fmtCost,
+  costKindBadgeLabel,
+  costKindLabel,
   appDisplayName,
   statusBadgeStyle,
   shortModelName,
@@ -117,12 +119,12 @@ function formatOutputUsage(item: LlmLogListItem) {
   return DASH;
 }
 
-function formatRecordedCost(it: LlmLogListItem) {
-  if (it.providerReportedCost != null)
-    return fmtCost(it.providerReportedCost, it.providerCostCurrency || 'USD');
-  if (it.estimatedCost != null)
-    return fmtCost(it.estimatedCost, it.estimatedCostCurrency);
-  return '未计价';
+function recordedCostAmount(it: LlmLogListItem) {
+  return it.providerReportedCost != null
+    ? fmtCost(it.providerReportedCost, it.providerCostCurrency || 'USD')
+    : it.estimatedCost != null
+      ? fmtCost(it.estimatedCost, it.estimatedCostCurrency)
+      : null;
 }
 
 function formatThroughput(item: LlmLogListItem) {
@@ -849,16 +851,22 @@ export function LogsView() {
             {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
           </span>
         );
-      case 'cost':
+      case 'cost': {
+        const amount = recordedCostAmount(it);
+        const fullLabel = costKindLabel(it.costKind, it.platformName || it.provider);
+        const badgeLabel = costKindBadgeLabel(it.costKind, it.platformName || it.provider);
         return (
           <span
-            className="tabular"
-            style={{ color: 'var(--log-text-muted)' }}
-            title={it.providerReportedCost == null && it.estimatedCost == null ? '上游未返回费用，且当前模型尚未配置计价规则' : undefined}
+            style={{ display: 'inline-flex', minWidth: 0, flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}
+            title={fullLabel}
           >
-            {formatRecordedCost(it)}
+            <strong className="tabular" style={{ color: 'var(--text-primary)', fontWeight: 650 }}>
+              {amount ?? DASH}
+            </strong>
+            <Chip label={badgeLabel} color="var(--text-muted)" bg="var(--bg-elevated)" title={fullLabel} />
           </span>
         );
+      }
       case 'latency':
         return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
@@ -1119,7 +1127,7 @@ export function LogsView() {
     { label: '状态查询', value: fmtCompact(summary?.statusQueries) },
     { label: '成功率', value: successRate },
     { label: 'Token', value: fmtCompact(summary?.totalTokens) },
-    { label: '费用', value: fmtCost(summary?.estimatedCostUsd, 'USD') },
+    { label: 'Gateway 估算', value: fmtCost(summary?.estimatedCostUsd, 'USD') },
   ].filter((fact) => fact.value !== DASH);
 
   return (
@@ -1135,7 +1143,7 @@ export function LogsView() {
               {summaryFacts.map((fact) => (
                 <span key={fact.label}>{fact.label} <strong className="tabular">{fact.value}</strong></span>
               ))}
-              {summary?.unknownCostRequests ? <span className="lg-log-summary-warn">{summary.unknownCostRequests} 条费用未知</span> : null}
+              {summary?.unknownCostRequests ? <span className="lg-log-summary-warn">{summary.unknownCostRequests} 条未计价</span> : null}
             </p>
           ) : null}
         </div>
@@ -1373,7 +1381,7 @@ export function LogsView() {
         )}
       </Card>
 
-      {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与费用</strong><span>有完整价格快照时显示估算；缺价格保持未知，不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
+      {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与金额口径</strong><span>明确区分实际、估算、未计价和无用量，未知不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
 
       {selectedLogId ? (
         <GenerationDetailsDrawer

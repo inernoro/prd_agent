@@ -127,15 +127,21 @@ export function BackdropSettings(props: {
   const rotating = mode === 'auto';
 
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open) { setPanelPos(null); return; }
     const place = () => {
       const r = ref.current?.getBoundingClientRect();
       if (!r) return;
+      const visualViewport = window.visualViewport;
       // 夹紧算术走 lib/anchoredPanel 那一份：同样的算术在首页模型选择器也要用，
       // 抄第二份就会漂，而漂掉的表现是浮层跑出屏幕、用户点不到（形状 3）。
       setPanelPos(placeAnchoredPanel({
         anchor: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
-        viewport: { width: window.innerWidth, height: window.innerHeight },
+        viewport: {
+          width: visualViewport?.width ?? window.innerWidth,
+          height: visualViewport?.height ?? window.innerHeight,
+          top: visualViewport?.offsetTop, left: visualViewport?.offsetLeft,
+        },
+        height: panelRef.current?.getBoundingClientRect().height,
         prefer: 'below',
         align: 'end',
         width: 320,
@@ -145,11 +151,18 @@ export function BackdropSettings(props: {
     place();
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
+    const observer = new ResizeObserver(place);
+    if (panelRef.current) observer.observe(panelRef.current);
+    window.visualViewport?.addEventListener('resize', place);
+    window.visualViewport?.addEventListener('scroll', place);
     return () => {
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
+      observer.disconnect();
+      window.visualViewport?.removeEventListener('resize', place);
+      window.visualViewport?.removeEventListener('scroll', place);
     };
-  }, [open]);
+  }, [open, panelPos?.width]);
 
   useEffect(() => {
     if (!open) return;

@@ -100,6 +100,9 @@ public class MdToPptRun
 
     public string? Error { get; set; }
 
+    /// <summary>稳定失败码；历史记录缺失时为 null。</summary>
+    public string? ErrorCode { get; set; }
+
     public string? Model { get; set; }
 
     public string? Platform { get; set; }

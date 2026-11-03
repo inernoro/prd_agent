@@ -173,6 +173,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint, VisualModelMenuControl, VISUAL_MODEL_DESKTOP_MENU } from '@/components/visual-agent/VisualModelOptionContent';
 import { buildVisualAgentModelOptions, normalizeVisualModelOptionId, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
@@ -7187,9 +7188,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div
                             className="absolute left-3 top-3 text-[11px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center"
                             style={{
-                              background: 'rgba(168, 85, 247, 0.16)',
-                              border: '1px solid rgba(168, 85, 247, 0.30)',
-                              color: 'rgba(255,255,255,0.92)',
+                              background: 'color-mix(in srgb, var(--semantic-purple-text) 12%, var(--bg-elevated))',
+                              border: '1px solid var(--semantic-purple-border)',
+                              color: 'var(--semantic-purple-text)',
                             }}
                             title={
                               it.ratioAdjusted
@@ -8424,7 +8425,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           title="切换绘图模型"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <Sparkles size={10} className="shrink-0" />
+                          <VisualModelIcon model={effectiveModel} size={14} />
                           <span className="truncate max-w-[140px]">
                             {effectiveModel?.name || effectiveModel?.modelName || '选择模型'}
                           </span>
@@ -8435,13 +8436,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <DropdownMenu.Content
                           side="top"
                           align="start"
-                          sideOffset={10}
-                          className="surface-popover z-50 min-w-[320px] rounded-[18px] p-3"
+                          sideOffset={6}
+                          className="surface-popover z-50 rounded-[16px] p-1.5"
+                          style={{ width: isMobile ? 360 : VISUAL_MODEL_DESKTOP_MENU.width, padding: isMobile ? 6 : 0, maxWidth: 'calc(100vw - 16px)', maxHeight: isMobile ? 'var(--radix-dropdown-menu-content-available-height)' : `min(${VISUAL_MODEL_DESKTOP_MENU.maxHeight}px, var(--radix-dropdown-menu-content-available-height))`, display: 'flex', flexDirection: 'column' }}
                         >
-                          <div className="px-2 py-1 text-[11px] font-semibold text-token-muted">
-                            绘图模型
-                          </div>
+                          <VisualModelMenuHeading compact={!isMobile} count={allImageGenModels.length} />
 
+                          {isMobile ? (<>
                           {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
                           <div className="surface-inset mx-1 mb-1 flex items-center justify-between gap-2 rounded-[10px] px-2 py-1.5">
                             <div className="min-w-0 flex-1">
@@ -8480,7 +8481,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               />
                             </button>
                           </div>
-                          <div className="max-h-[320px] overflow-auto p-1">
+                          </>) : null}
+                          <div className="overflow-auto p-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                               {allImageGenModels.length === 0 ? (
                                 <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
                                   {modelsError ? (
@@ -8511,15 +8513,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               .map((m) => {
                                 const disabled = !m.enabled;
                                 const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
-                                const sourceLabel = disabled ? '暂不可用' : m.isDefault ? '默认模型' : '业务模型';
                                 return (
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full text-left rounded-[12px] px-3 py-2 hover-bg-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    className="w-full text-left rounded-[12px] px-3 py-3 hover-bg-soft disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
+                                    disabled={disabled}
+                                    aria-pressed={using}
                                     style={{
-                                      border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                                      background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
+                                      padding: isMobile ? undefined : VISUAL_MODEL_DESKTOP_MENU.rowPadding,
+                                      border: using ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                                      background: using ? 'var(--report-accent-soft)' : 'transparent',
                                     }}
                                     onClick={() => {
                                       setModelPrefAuto(false);
@@ -8527,40 +8531,38 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       setQuickModelOpen(false);
                                     }}
                                   >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1.5">
-                                          <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary, rgba(255,255,255,0.92))' }}>
-                                            {m.name || m.modelName}
-                                          </div>
-                                          {m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.20)', color: 'var(--accent-fg-violet)' }}>
-                                              专属
-                                            </span>
-                                          )}
-                                          {m.isDefault && !m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.18)', color: 'var(--accent-fg-success)' }}>
-                                              默认
-                                            </span>
-                                          )}
-                                          {m.isLegacy && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.18)', color: 'var(--accent-fg-amber)' }}>
-                                              传统
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="mt-0.5 truncate text-[11px] text-token-muted">
-                                          {m.subtitle || (disabled ? '当前不建议使用，可继续选择' : sourceLabel)}
-                                        </div>
-                                      </div>
-                                      <div className="ml-auto shrink-0">
-                                        {using ? <Check size={16} style={{ color: 'rgba(250,204,21,0.95)' }} /> : null}
-                                      </div>
-                                    </div>
+                                    <VisualModelOptionContent compact={!isMobile} model={m} selected={using} />
                                   </button>
                                 );
                               })}
                           </div>
+                          {!isMobile && <VisualModelMenuControl label="智能切换" description={smartModelFallback ? '发送前若当前模型不可用，会询问是否切换到其他可用模型' : '严格模式：直接使用你选的模型，不做任何切换'}>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={smartModelFallback}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSmartModelFallback(!smartModelFallback);
+                              }}
+                              className="shrink-0 relative inline-flex items-center rounded-full transition-colors"
+                              style={{
+                                width: 32,
+                                height: 18,
+                                background: smartModelFallback ? 'rgba(129, 140, 248, 0.7)' : 'rgba(255,255,255,0.15)',
+                              }}
+                              title={smartModelFallback ? '关闭后进入严格模式' : '打开后遇到不可用模型会询问切换'}
+                            >
+                              <span
+                                className="absolute top-0.5 rounded-full bg-white transition-transform"
+                                style={{
+                                  width: 14,
+                                  height: 14,
+                                  transform: smartModelFallback ? 'translateX(15px)' : 'translateX(2px)',
+                                }}
+                              />
+                            </button>                          </VisualModelMenuControl>}
+                          <VisualModelMenuHint compact={!isMobile} />
                         </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
@@ -9389,7 +9391,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       type="button"
                                       className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover-bg-soft"
                                       onClick={() => {
-                                        replaceMentionAtCursor(`@model(${m.name || m.modelName}) `);
+                                        replaceMentionAtCursor(`@model(${m.modelName}) `);
                                       }}
                                     >
                                       <div className="text-[13px] font-semibold truncate">{m.name || m.modelName}</div>
@@ -9597,7 +9599,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         aria-label="模型偏好"
                         title={effectiveModel ? `${effectiveModel.name || effectiveModel.modelName || ''} - 点击切换模型` : '选择模型'}
                       >
-                        <Sparkles size={10} className="shrink-0" />
+                        <VisualModelIcon model={effectiveModel} size={14} />
                         <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
                         <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                       </button>
@@ -9606,10 +9608,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <DropdownMenu.Content
                         side="top"
                         align="end"
-                        sideOffset={10}
-                        className="surface-popover z-50 w-[360px] max-w-[92vw] rounded-[16px] p-3"
+                        sideOffset={6}
+                        className="surface-popover z-50 flex min-h-0 flex-col rounded-[16px] p-1.5"
+                        style={{ width: isMobile ? 360 : VISUAL_MODEL_DESKTOP_MENU.width, padding: isMobile ? 6 : 0, maxWidth: 'calc(100vw - 16px)', maxHeight: isMobile ? 'var(--radix-dropdown-menu-content-available-height)' : `min(${VISUAL_MODEL_DESKTOP_MENU.maxHeight}px, var(--radix-dropdown-menu-content-available-height))` }}
                       >
-                        <div className="flex items-center justify-between gap-3">
+                        {isMobile ? (<>
+                        <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2">
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-token-primary">
                               提示词模式
@@ -9632,25 +9636,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         </div>
 
-                        {/* 分割线 + 选择模型小标题 + 推荐提示 */}
-                        <div className="mt-3 mb-2 flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-token-muted">
-                            选择模型
-                          </span>
-                          {serverDefaultModel && <span
-                            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                            style={{
-                              background: 'rgba(250,204,21,0.12)',
-                              border: '1px solid rgba(250,204,21,0.28)',
-                              color: 'var(--accent-fg-amber)',
-                            }}
-                          >
-                            <Sparkles size={10} />
-                            默认 {serverDefaultModel.name || serverDefaultModel.modelName}
-                          </span>}
-                        </div>
+                        </>) : null}
 
-                        <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+                        <VisualModelMenuHeading compact={!isMobile} count={allImageGenModels.length} />
+
+                        <div className="min-h-0 overflow-auto p-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                           {allImageGenModels.length === 0 ? (
                             <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed var(--border-subtle)' }}>
                               {modelsError ? (
@@ -9671,21 +9661,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </button>
                             </div>
                           ) : (
-                            <div className="space-y-1.5">
+                            <div className={isMobile ? "space-y-1.5" : undefined}>
                               {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
-                                  const meta = { subtitle: m.subtitle, description: m.description, recommended: m.isDefault };
                                   return (
                                     <button
                                       key={m.id}
                                       type="button"
                                       disabled={!m.enabled}
-                                      className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
+                                      aria-pressed={picked}
+                                      className="w-full text-left rounded-[12px] px-3 py-3 hover-bg-soft disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
                                       style={{
-                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid var(--border-subtle)',
-                                        background: picked ? 'rgba(250,204,21,0.07)' : 'var(--nested-block-bg)',
-                                        boxShadow: picked ? '0 0 0 3px rgba(250,204,21,0.08)' : 'none',
-                                        opacity: m.enabled ? 1 : 0.72,
+                                        padding: isMobile ? undefined : VISUAL_MODEL_DESKTOP_MENU.rowPadding,
+                                        border: picked ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                                        background: picked ? 'var(--report-accent-soft)' : 'transparent',
                                       }}
                                       onClick={() => {
                                         setModelPrefAuto(false);
@@ -9693,65 +9682,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         setModelPrefOpen(false);
                                       }}
                                     >
-                                      <div className="flex items-center gap-3">
-                                        {/* 选中指示：圆点/勾 */}
-                                        <span
-                                          className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full transition-colors"
-                                          style={{
-                                            background: picked ? 'rgba(250,204,21,0.95)' : 'transparent',
-                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid var(--border-subtle)',
-                                            color: picked ? '#1a1a1a' : 'transparent',
-                                          }}
-                                          aria-label={picked ? '已选择' : '未选择'}
-                                        >
-                                          <Check size={13} strokeWidth={3} />
-                                        </span>
-
-                                        <div className="min-w-0 flex-1">
-                                          {/* 标题行：名称 + 推荐徽标 */}
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="truncate text-[14px] font-semibold text-token-primary">
-                                              {m.name || m.modelName}
-                                            </span>
-                                            {meta.recommended && (
-                                              <span
-                                                className="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-semibold"
-                                                style={{
-                                                  background: 'rgba(250,204,21,0.16)',
-                                                  border: '1px solid rgba(250,204,21,0.3)',
-                                                  color: 'var(--accent-fg-amber)',
-                                                }}
-                                              >
-                                                <Sparkles size={9} />
-                                                默认
-                                              </span>
-                                            )}
-                                          </div>
-                                          {/* 副标题 */}
-                                          {meta.subtitle && (
-                                            <div className="mt-0.5 truncate text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                              {meta.subtitle}
-                                            </div>
-                                          )}
-                                          {/* 描述 */}
-                                          {meta.description && (
-                                            <div className="mt-1 text-[11px] leading-relaxed text-token-muted">
-                                              {meta.description}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
+                                      <VisualModelOptionContent compact={!isMobile} model={m} selected={picked} />
                                     </button>
                                   );
                                 })}
                             </div>
                           )}
-                          <div className="mt-2.5 px-1 text-[10px] leading-relaxed text-token-muted-faint">
-                            选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
-                          </div>
                         </div>
+                        {!isMobile && <VisualModelMenuControl label="优化提示词" description="开启后自动优化生图提示词；关闭后直接使用原始输入。业务模型不会静默切换，服务线路由网关管理。">
+                          <Switch checked={directPrompt} onCheckedChange={setDirectPrompt} ariaLabel="提示词模式" />
+                        </VisualModelMenuControl>}
+                        <VisualModelMenuHint compact={!isMobile} />
+                        {isMobile && <div className="shrink-0 px-3 pb-2 text-[10px] leading-relaxed text-token-muted-faint">
+                          选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
+                        </div>}
 
-                                              </DropdownMenu.Content>
+                      </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 

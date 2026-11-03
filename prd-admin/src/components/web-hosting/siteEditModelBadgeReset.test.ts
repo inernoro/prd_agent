@@ -15,19 +15,28 @@ const panel = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf
 describe('改写面板的模型徽章', () => {
   it('在进入 generating 的同一拍清空，且排在创建任务之前', () => {
     const source = panel;
-    const generatingAt = source.indexOf('setGenerating(true);');
+    const generateAt = source.indexOf('const generate = async');
+    expect(generateAt).toBeGreaterThan(-1);
+    const generatingAt = source.indexOf('setGenerating(true);', generateAt);
     expect(generatingAt).toBeGreaterThan(-1);
     const createAt = source.indexOf('await createHostedSiteEditRun(', generatingAt);
     expect(createAt, 'createHostedSiteEditRun 不见了，契约可能被挪走了').toBeGreaterThan(generatingAt);
 
-    const resetAt = source.indexOf('setResolvedModel(null);');
+    const resetAt = source.indexOf('setResolvedModel(null);', generateAt);
     expect(resetAt, '徽章从来没被清空过').toBeGreaterThan(-1);
     expect(resetAt, '清空排在了创建任务之后：创建期间顶上挂的是上一轮的模型')
       .toBeLessThan(createAt);
-    expect(resetAt).toBeGreaterThan(generatingAt - 400);
+    expect(resetAt).toBeGreaterThan(generatingAt);
+  });
 
-    // 只许有这一处清空——两处各写各的就是下一次只改好其中一个的起点。
-    const resets = source.split('setResolvedModel(null);').length - 1;
-    expect(resets).toBe(1);
+  it('重开中断任务时也在请求前清空上一轮模型徽章', () => {
+    const source = panel;
+    const restartAt = source.indexOf('const restartInterruptedRun = async');
+    expect(restartAt).toBeGreaterThan(-1);
+    const requestAt = source.indexOf('await restartDesignArtifactRun(', restartAt);
+    const resetAt = source.indexOf('setResolvedModel(null);', restartAt);
+    expect(requestAt).toBeGreaterThan(restartAt);
+    expect(resetAt).toBeGreaterThan(restartAt);
+    expect(resetAt).toBeLessThan(requestAt);
   });
 });

@@ -6,6 +6,25 @@ namespace PrdAgent.Tests;
 public class ProductEntityNumberingTests
 {
     [Theory]
+    [InlineData("T", "minor", "T6.19.6")]
+    [InlineData("T", "小版本", "T6.19.6")]
+    [InlineData("T", "medium", "T6.20.0")]
+    [InlineData("T", "中版本", "T6.20.0")]
+    [InlineData("T", "major", "T7.0.0")]
+    [InlineData("T", "大版本", "T7.0.0")]
+    [InlineData("V", "minor", "V6.19.6")]
+    [InlineData("V", "小版本", "V6.19.6")]
+    [InlineData("V", "medium", "V6.20.0")]
+    [InlineData("V", "中版本", "V6.20.0")]
+    [InlineData("V", "major", "V7.0.0")]
+    [InlineData("V", "大版本", "V7.0.0")]
+    public void WorkflowNumberingBumpsOnlySelectedSegmentAndResetsFollowingSegments(string prefix, string type, string expected)
+    {
+        Assert.Equal(expected, ProductEntityNumbering.NextWorkflowCode(prefix, type,
+            new[] { prefix + "6.9.99", prefix + "6.19.4", prefix + "6.19.5", prefix + "5.99.99" }));
+    }
+
+    [Theory]
     [InlineData("1007157", 1007157L)]
     [InlineData(" 42 ", 42L)]
     [InlineData("FEA-2026-0001", 0L)]

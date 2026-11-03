@@ -428,6 +428,10 @@ jobs:
 
       - name: Install video test dependencies
         run: |
+          # Azure 镜像源曾连续两轮卡在 deb 下载；使用官方 HTTPS 源，保留包签名与完整依赖校验。
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
@@ -822,6 +826,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install isolated quality browser
+        run: pnpm exec playwright-core install --with-deps chromium
 
       - name: Type check
         run: pnpm exec tsc --noEmit && pnpm run typecheck
