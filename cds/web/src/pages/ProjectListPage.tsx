@@ -1,4 +1,3 @@
-import { GenerationBoundary } from '@/components/motion/GenerationBoundary';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
@@ -850,7 +849,7 @@ export function ProjectListPage(): JSX.Element {
 
         {/* Project tile grid — only content in the workspace, like Railway. */}
         <section>
-          <GenerationBoundary loading={state.status === 'loading'}>
+          <div>
           {state.status === 'loading' ? <ProjectListSkeleton /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
@@ -872,7 +871,7 @@ export function ProjectListPage(): JSX.Element {
               ))}
             </div>
           ) : null}
-          </GenerationBoundary>
+          </div>
         </section>
 
         {canManageProjects ? <CreateProjectDialog

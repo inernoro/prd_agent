@@ -9,6 +9,7 @@ import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
+import { GenerationBoundary } from '@/components/motion/GenerationBoundary';
 import {
   requestAgentAccess,
   resolveAgentPageContext,
@@ -218,12 +219,15 @@ function activeNavKeyFor(pathname: string): AppNavKey {
  */
 export function ConsoleLayout(): JSX.Element {
   const { pathname } = useLocation();
+  const listPage = pathname === '/project-list' || pathname === '/branch-list' || pathname.startsWith('/branches/');
   return (
     <ShellFrameContext.Provider value={true}>
       <ShellChrome active={activeNavKeyFor(pathname)}>
-        <Suspense fallback={<ConsoleRouteFallback />}>
-          <Outlet />
-        </Suspense>
+        <GenerationBoundary key={pathname} enabled={listPage}>
+          <Suspense fallback={<ConsoleRouteFallback />}>
+            <Outlet />
+          </Suspense>
+        </GenerationBoundary>
       </ShellChrome>
     </ShellFrameContext.Provider>
   );

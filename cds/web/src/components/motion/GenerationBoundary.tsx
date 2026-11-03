@@ -2,90 +2,133 @@ import { type ReactNode, useLayoutEffect, useRef, useEffect, useState } from 're
 import { generate, type GenerationRun } from '@/lib/vendor/ui-generation/ui-generation';
 import '@/lib/vendor/ui-generation/ui-generation.css';
 
-const CARDS = '[aria-busy="true"] .cds-card-grid > article, [aria-busy="true"] .cds-branch-card-grid article';
+const CARDS = '.cds-card-grid > article, .cds-branch-card-grid article';
+const PENDING = '[aria-busy="true"] .cds-card-grid > article, [aria-busy="true"] .cds-branch-card-grid article';
 
-/** Only cold loading uses construction: existing content and SSE updates never replay. */
-export function GenerationBoundary({ loading, children }: {
-  loading: boolean; children: ReactNode;
-}): JSX.Element {
+/** One lifetime spans route-chunk loading, data loading and the native scan reveal. */
+export function GenerationBoundary({ enabled, children }: { enabled: boolean; children: ReactNode }): JSX.Element {
+  const root = useRef<HTMLDivElement>(null);
+  const [waiting, setWaiting] = useState(false);
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     setSlow(false);
-    if (!loading) return;
+    if (!waiting) return;
     const timer = setTimeout(() => setSlow(true), 6000);
     return () => clearTimeout(timer);
-  }, [loading]);
-  const root = useRef<HTMLDivElement>(null);
+  }, [waiting]);
+
   useLayoutEffect(() => {
     const host = root.current;
-    if (!host || !loading) return;
+    if (!host || !enabled) return;
     const media = matchMedia('(prefers-reduced-motion: reduce)');
     const device = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
-    if (media.matches || (device.deviceMemory != null && device.deviceMemory <= 4)
-      || (device.hardwareConcurrency > 0 && device.hardwareConcurrency <= 4) || device.connection?.saveData) {
-      return;
-    }
-    let runs: GenerationRun[] = [];
+    const supported = () => !media.matches && !(device.deviceMemory != null && device.deviceMemory <= 4)
+      && !(device.hardwareConcurrency > 0 && device.hardwareConcurrency <= 4) && !device.connection?.saveData;
+    let pending = false;
+    let interrupted = false;
+    let previous: HTMLElement[] = [];
+    let runs: Array<{ index: number; run: GenerationRun }> = [];
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let observer: ResizeObserver | undefined;
-    let stopped = false;
-    const cancel = () => {
-      stopped = true;
-      clearTimeout(timer);
-      runs.forEach((run) => run.cancel());
-      runs = [];
-      observer?.disconnect();
+    let sizes = new Map<Element, { width: number; height: number; left: number; top: number }>();
+    const cancelRuns = () => {
+      clearTimeout(timer); timer = undefined;
+      runs.forEach(({ run }) => run.cancel()); runs = [];
+      resize.disconnect(); sizes.clear();
     };
-    const interrupt = cancel;
+    const interrupt = () => { interrupted = true; cancelRuns(); };
+    const resize = new ResizeObserver((entries) => {
+      if (entries.some(({ target }) => {
+        const old = sizes.get(target), rect = target.getBoundingClientRect();
+        return old && (Math.abs(old.width - rect.width) > 1 || Math.abs(old.height - rect.height) > 1);
+      })) interrupt();
+    });
+    const observeSizes = () => {
+      resize.disconnect(); sizes = new Map();
+      for (const { run } of runs) {
+        const rect = run.element.getBoundingClientRect();
+        sizes.set(run.element, { width: rect.width, height: rect.height, left: rect.left, top: rect.top });
+        resize.observe(run.element);
+      }
+    };
     const play = () => {
-      if (stopped || document.hidden) return;
-      // Bound both DOM work and visual emphasis to two visible cards.
-      const cards = [...host.querySelectorAll<HTMLElement>(CARDS)].filter((el) => {
-        const rect = el.getBoundingClientRect();
-        return rect.width > 120 && rect.bottom > 0 && rect.top < innerHeight;
-      }).slice(0, 2);
-      if (!cards.length) return;
-      runs = cards.map((card) => generate(card, {
-        mode: 'skeleton', duration: 900, holdAt: .68,
-        maxParts: 18, keys: 2,
-      }));
-      // Overlay uses measured document coordinates: reveal immediately if they change.
-      observer = new ResizeObserver((entries) => {
-        if (entries.some((entry) => {
-          const run = runs.find((item) => item.element === entry.target);
-          const rect = run?.element.getBoundingClientRect();
-          const old = sizes.get(entry.target);
-          return rect && old && (Math.abs(rect.width - old.width) > 1 || Math.abs(rect.height - old.height) > 1);
-        })) interrupt();
+      timer = undefined;
+      if (!pending || interrupted || !supported() || document.hidden) return;
+      const cards = [...host.querySelectorAll<HTMLElement>(PENDING)];
+      runs = cards.flatMap((card, index) => {
+        const rect = card.getBoundingClientRect();
+        if (rect.width <= 120 || rect.bottom <= 0 || rect.top >= innerHeight) return [];
+        return [{ index, run: generate(card, {
+          mode: 'skeleton', duration: 1400, holdAt: .68, revealDuration: 720,
+          maxParts: 18, keys: 1, onFallback: interrupt,
+        }) }];
       });
-      const sizes = new Map<Element, DOMRect>(cards.map((card) => [card, card.getBoundingClientRect()]));
-      cards.forEach((card) => observer?.observe(card));
+      observeSizes();
     };
-    // Decoration belongs only to placeholders. Cleanup runs before the ready DOM is painted.
-    // Fast cached responses stay instant; requests and content never wait for this timer.
-    timer = setTimeout(play, 120);
-    const onVisibility = () => { if (document.hidden) interrupt(); };
+    const synchronize = () => {
+      const cards = [...host.querySelectorAll<HTMLElement>(PENDING)];
+      if (cards.length) {
+        if (!pending) {
+          cancelRuns(); pending = true; interrupted = false;
+          setWaiting(true);
+          timer = setTimeout(play, 120); // Cached/fast content never waits for decoration.
+        } else if (runs.length && cards.some((card, index) => card !== previous[index])) {
+          // Chunk fallback -> page skeleton: retain the same overlay and construction clock.
+          runs = runs.filter(({ index, run }) => {
+            if (cards[index] && run.handoff(cards[index])) return true;
+            run.cancel(); return false;
+          });
+          observeSizes();
+        }
+        previous = cards;
+        return;
+      }
+      if (!pending) {
+        // A real card deleted/reordered during the scan must not leave an overlay at its old position.
+        if (runs.some(({ run }) => {
+          const old = sizes.get(run.element), rect = run.element.getBoundingClientRect();
+          return !run.element.isConnected || (old && (Math.abs(old.left - rect.left) > 4 || Math.abs(old.top - rect.top) > 4));
+        })) interrupt();
+        return; // Refresh/SSE mutations never replay already-loaded content.
+      }
+      pending = false; previous = []; setWaiting(false);
+      clearTimeout(timer); timer = undefined;
+      const ready = [...host.querySelectorAll<HTMLElement>(CARDS)];
+      runs = runs.filter(({ index, run }) => {
+        if (!interrupted && supported() && ready[index] && run.handoff(ready[index], { reveal: true })) return true;
+        run.cancel(); return false;
+      });
+      observeSizes();
+      const revealing = runs;
+      void Promise.all(revealing.map(({ run }) => run.finished)).then(() => {
+        if (runs === revealing) { runs = []; resize.disconnect(); sizes.clear(); }
+      });
+    };
+    const mutation = new MutationObserver(synchronize);
+    mutation.observe(host, { childList: true, subtree: true });
+    synchronize();
+    const visibility = () => { if (document.hidden) interrupt(); };
     window.addEventListener('scroll', interrupt, true);
     window.addEventListener('resize', interrupt);
     host.addEventListener('pointerdown', interrupt, true);
     host.addEventListener('focusin', interrupt, true);
     host.addEventListener('keydown', interrupt, true);
     media.addEventListener('change', interrupt);
-    document.addEventListener('visibilitychange', onVisibility);
+    document.addEventListener('visibilitychange', visibility);
     return () => {
-      cancel();
+      mutation.disconnect(); cancelRuns();
       window.removeEventListener('scroll', interrupt, true);
       window.removeEventListener('resize', interrupt);
       host.removeEventListener('pointerdown', interrupt, true);
       host.removeEventListener('focusin', interrupt, true);
       host.removeEventListener('keydown', interrupt, true);
       media.removeEventListener('change', interrupt);
-      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('visibilitychange', visibility);
     };
-  }, [loading]);
-  return <div ref={root} data-generation-boundary>
+  }, [enabled]);
+
+  return <div ref={root} className="contents" data-generation-boundary>
     {children}
-    {loading && slow ? <p role="status" className="mt-3 text-sm text-muted-foreground">
+    {waiting && slow ? <p role="status" className="col-span-full px-6 pb-4 text-sm text-muted-foreground">
       正在等待服务器返回列表数据。
       <button type="button" className="ml-2 underline underline-offset-4" onClick={() => window.location.reload()}>重新加载</button>
     </p> : null}

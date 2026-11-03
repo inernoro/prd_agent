@@ -174,6 +174,7 @@ function buildOverlay(el, M, opts) {
   const root = svg("svg", { class: "t-gen-svg", width: f2(w), height: f2(h), viewBox: `0 0 ${f2(w)} ${f2(h)}` }, layer);
   document.body.appendChild(layer); el.__tGenLayer = layer; // in the page first: SVG geometry can only be measured once it renders
   const G = { el, layer, root, w, h, M: MG, n: (buildOverlay.n = (buildOverlay.n || 0) + 1), parts: [], keys: [] };
+  layer.dataset.generationRun = String(G.n);
   const defs = svg("defs", {}, root);
 
   // dot field + matrix rain columns
@@ -430,12 +431,84 @@ export function generate(el, options = {}) {
   if (typeof el === "string") el = document.querySelector(el);
   if (!el) throw new Error("UIGeneration: no element");
   if (el.__tGen) el.__tGen.cancel();
-  const prev = { opacity: el.__tGenOpacity !== undefined ? el.__tGenOpacity : el.style.opacity, clipPath: el.style.clipPath, filter: el.style.filter, transition: el.style.transition };
+  const snapshot = (element) => ({ opacity: element.__tGenOpacity !== undefined ? element.__tGenOpacity : element.style.opacity, clipPath: element.style.clipPath, filter: element.style.filter, transition: element.style.transition, contentVisibility: element.style.contentVisibility });
+  let prev = snapshot(el);
   const restore = () => Object.assign(el.style, prev);
   let resolve, raf = 0, timer = 0, G = null, stopped = false;
+  const D = Math.max(400, +opts.duration || DEFAULTS.duration);
+  let phaseStart = opts.startAt, phaseDuration = D, clockStart = 0, flowBase = 0, progress = phaseStart, elapsed = 0, slowFrames = 0;
   const finished = new Promise((r) => (resolve = r));
-  const finish = () => { if (stopped) return; stopped = true; cancelAnimationFrame(raf); clearTimeout(timer); if (G) G.layer.remove(); restore(); el.__tGen = null; if (opts.onDone) opts.onDone(el); resolve(el); };
-  const run = { finished, cancel: finish, element: el };
+  const finish = () => { if (stopped) return; stopped = true; cancelAnimationFrame(raf); clearTimeout(timer); if (G) G.layer.remove(); restore(); el.__tGen = null; delete el.__tGenLayer; if (opts.onDone) opts.onDone(el); resolve(el); };
+  const tick = (now) => {
+    if (stopped) return;
+    elapsed = flowBase + now - clockStart;
+    progress = phaseStart + (now - clockStart) / phaseDuration;
+    if (opts.holdAt != null) progress = Math.min(progress, opts.holdAt);
+    const started = performance.now();
+    frame(G, progress, elapsed, D);
+    // Assess this renderer's work, not unrelated browser scheduling pauses.
+    slowFrames = performance.now() - started > 14 ? slowFrames + 1 : 0;
+    if (slowFrames >= 3) { opts.onFallback?.(); return finish(); }
+    if (progress >= END) return finish();
+    // A completed waiting frame needs no continuous DOM writes. Handoff resumes it.
+    if (opts.holdAt != null && progress >= opts.holdAt) { raf = 0; return; }
+    raf = requestAnimationFrame(tick);
+  };
+  const handoff = (next, { reveal = false } = {}) => {
+    if (stopped || !next?.isConnected || reduced()) return false;
+    if (!G) {
+      if (reveal) return false; // The response beat the first drawing frame: show it directly.
+      if (next !== el) {
+        restore(); el.__tGen = null; delete el.__tGenLayer;
+        prev = snapshot(next); el = next; run.element = next;
+        next.__tGen = run; next.style.opacity = 0;
+      }
+      return true;
+    }
+    const nextPrev = next === el ? prev : snapshot(next);
+    // Visible cards using content-visibility:auto initially report their intrinsic placeholder size.
+    next.style.contentVisibility = "visible";
+    const before = G.layer.getBoundingClientRect(), after = next.getBoundingClientRect();
+    // Keep the established layout contract; incompatible/empty layouts reveal directly.
+    if (Math.abs(before.width - after.width) > 2 || Math.abs(before.height - after.height) > 2
+      || Math.abs(before.left - after.left) > 4 || Math.abs(before.top - after.top) > 4) {
+      next.style.contentVisibility = nextPrev.contentVisibility;
+      return false;
+    }
+    if (next !== el) {
+      restore(); el.__tGen = null; delete el.__tGenLayer;
+      prev = nextPrev; el = next; G.el = next; G.prev = prev;
+      next.__tGen = run; next.__tGenLayer = G.layer; run.element = next;
+    }
+    Object.assign(G.layer.style, { left: f2(after.left + scrollX) + "px", top: f2(after.top + scrollY) + "px" });
+    el.style.transition = "none";
+    if (reveal) {
+      cancelAnimationFrame(raf);
+      // The response supplies the real component's parts. Replace only the drawing inside
+      // the existing overlay atomically; the construction plane never disappears.
+      const layer = G.layer;
+      try {
+        const nextDrawing = buildOverlay(el, measure(el, opts), opts);
+        layer.replaceChildren(...nextDrawing.layer.childNodes);
+        nextDrawing.layer.remove();
+        G = { ...nextDrawing, layer, prev };
+        el.__tGenLayer = layer;
+      } catch {
+        if (el.__tGenLayer !== layer) el.__tGenLayer?.remove();
+        el.__tGenLayer = layer;
+        return false;
+      }
+      opts.holdAt = null;
+      phaseStart = Math.max(progress, PH.reveal[0]);
+      phaseDuration = Math.max(160, +opts.revealDuration || 720) / (END - phaseStart);
+      flowBase = elapsed; clockStart = performance.now();
+      progress = phaseStart;
+      frame(G, progress, elapsed, D); // Retain this exact wireframe while the real DOM commits.
+      slowFrames = 0; raf = requestAnimationFrame(tick);
+    } else frame(G, progress, elapsed, D);
+    return true;
+  };
+  const run = { finished, cancel: finish, handoff, element: el };
   el.__tGen = run;
 
   // reduced motion: no drawing, a plain fade
@@ -450,20 +523,7 @@ export function generate(el, options = {}) {
       if (stopped) return;
       try { const M = measure(el, opts); G = buildOverlay(el, M, opts); G.prev = prev; }
       catch (e) { if (el.__tGenLayer) el.__tGenLayer.remove(); G = null; console.warn("UIGeneration: could not build the overlay, showing the element", e); return finish(); }
-      const D = Math.max(400, +opts.duration || DEFAULTS.duration), t0 = performance.now();
-      let lastFrame = t0, slowFrames = 0;
-      const tick = (now) => {
-        if (stopped) return;
-        slowFrames = now - lastFrame > 48 ? slowFrames + 1 : 0;
-        lastFrame = now;
-        if (slowFrames >= 3) { opts.onFallback?.(); return finish(); } // CDS: fall back to the existing light skeleton
-        const t = now - t0, p = opts.holdAt == null
-          ? t / D + opts.startAt
-          : Math.min(t / D, opts.holdAt);
-        frame(G, p, t, D);
-        if (p >= END) return finish();
-        raf = requestAnimationFrame(tick);
-      };
+      clockStart = performance.now();
       raf = requestAnimationFrame(tick);
     });
   }, opts.delay);

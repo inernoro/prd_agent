@@ -1,4 +1,3 @@
-import { GenerationBoundary } from '@/components/motion/GenerationBoundary';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
 import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -4192,7 +4191,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             the old left "tracked / remote" two-list panel which the user
             said wasn't useful. Daily flow: focus the input, see all branches,
             type a few characters, click a row OR press Enter to preview. */}
-        <GenerationBoundary key={projectId} loading={state.status === 'loading'}>
+        <div key={projectId}>
         {state.status === 'loading' ? <BranchListSkeleton /> : null}
         {state.status === 'error' ? (
           <div className="mt-6">
@@ -4489,7 +4488,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           </div>
         ) : null}
 
-        </GenerationBoundary>
+        </div>
 
         {/* Ops drawer — slide-in panel for capacity / hosts / executors /
             batch / activity. Triggered by the "运维" button in the topbar. */}

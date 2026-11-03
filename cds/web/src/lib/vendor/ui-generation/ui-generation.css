@@ -30,3 +30,7 @@
 @media (prefers-reduced-motion: reduce) {
   .t-gen { display: none; }
 }
+
+/* The construction/scan owns these lists' entrance; a second page fade would flash underneath. */
+.cds-page-enter:has(.cds-card-grid),
+.cds-page-enter:has(.cds-branch-card-grid) { animation: none; }
