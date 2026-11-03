@@ -50,24 +50,57 @@ try {
     assert.deepEqual((await page.evaluate(() => window.__loadingTrace)).filter(f => f.overlays || f.modifiedCards), [], 'no construction overlay, clipping or hidden real cards at any frame');
     assert.equal(await page.locator('.t-gen').count(), 0);
   };
+  const filledPulse = async () => {
+    const style = await page.locator('.cds-loading-skeleton-line').first().evaluate(el => {
+      const s = getComputedStyle(el);
+      return { backgroundImage: s.backgroundImage, color: s.backgroundColor, shadow: s.boxShadow,
+        border: s.borderTopColor, duration: s.animationDuration, animation: s.animationName, opacity: Number(s.opacity) };
+    });
+    assert.equal(style.backgroundImage, 'none', 'solid fill without a bright sweeping gradient');
+    assert(!/rgba\([^)]*,\s*0\)$/.test(style.color), 'the placeholder has a visible fill');
+    assert.equal(style.shadow, 'none', 'no pale inset outline');
+    assert.equal(style.border, 'rgba(0, 0, 0, 0)', 'invisible border preserves geometry');
+    assert.equal(style.duration, '2s');
+    assert.notEqual(style.animation, 'none');
+    assert(style.opacity >= .7, 'breathing remains legible at its dimmest phase');
+  };
   const geometry = async selector => {
     await page.mouse.move(0, 0);
-    return page.locator(selector).first().evaluate(async el => {
-      await Promise.allSettled(el.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished));
+    return page.evaluate(async selector => {
+      const current = () => [...document.querySelectorAll(selector)].find(el => el.getBoundingClientRect().width > 0);
+      const initial = current();
+      if (!initial) throw new Error('No visible card to measure');
+      await Promise.allSettled(initial.getAnimations().filter(a => a.effect?.getComputedTiming().iterations !== Infinity).map(a => a.finished));
       const rect = node => { if (!node) return null; const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
-      return { card: rect(el), header: rect(el.querySelector('header')), footer: rect(el.querySelector('footer')) };
-    });
+      const measure = () => {
+        const el = current();
+        if (!el) throw new Error('Card disappeared before measurement');
+        return { card: rect(el), header: rect(el.querySelector('header')), footer: rect(el.querySelector('footer')) };
+      };
+      // A route-chunk skeleton is replaced by the page's data skeleton. Reselect
+      // the live node instead of measuring a detached element as a zero rectangle.
+      // Keep the original one-pixel contract and wait for layout motion to settle.
+      let last = JSON.stringify(measure()), stable = 0;
+      for (let frame = 0; frame < 60 && stable < 4; frame++) {
+        await new Promise(requestAnimationFrame);
+        const next = JSON.stringify(measure());
+        stable = next === last ? stable + 1 : 0; last = next;
+      }
+      if (stable < 4) throw new Error('Card geometry did not settle');
+      return measure();
+    }, selector);
   };
   const aligned = (label, before, after) => {
     for (const part of ['card', 'header', 'footer']) {
       assert.equal(Boolean(before[part]), Boolean(after[part]), label + ' ' + part);
-      if (before[part]) for (const axis of ['x', 'y', 'width', 'height']) assert(Math.abs(before[part][axis] - after[part][axis]) <= 1, `${label} ${part}.${axis}`);
+      if (before[part]) for (const axis of ['x', 'y', 'width', 'height']) assert(Math.abs(before[part][axis] - after[part][axis]) <= 1, `${label} ${part}.${axis}: ${before[part][axis]} -> ${after[part][axis]}`);
     }
     geometryResults.push({ label, before, after });
   };
   await page.goto(base + '/project-list');
   await page.waitForSelector('[aria-label="加载项目列表"]');
   const projectBefore = await geometry('[aria-busy="true"] .cds-card-grid article');
+  await filledPulse();
   await page.screenshot({ path: out + '/projects-skeleton.png' });
   await page.waitForSelector('article a[href="/branches/fixture-project"]');
   aligned('projects desktop', projectBefore, await geometry('[data-list-loading-boundary] article'));
@@ -80,6 +113,7 @@ try {
   await page.locator('article a[href="/branches/fixture-project"]').click();
   await page.waitForSelector('[aria-busy="true"] .cds-branch-card-grid article');
   const branchBefore = await geometry('[aria-busy="true"] .cds-branch-card-grid article');
+  await filledPulse();
   await page.screenshot({ path: out + '/branches-skeleton.png' });
   await page.waitForSelector('[data-branch-card-id]');
   aligned('branches desktop with tags', branchBefore, await geometry('[data-branch-card-id]'));
@@ -95,6 +129,7 @@ try {
     await page.goto(base + route);
     await page.waitForSelector(pending);
     const before = await geometry(pending);
+    await filledPulse();
     await page.screenshot({ path: out + '/' + label.replaceAll(' ', '-') + '-skeleton.png' });
     await page.waitForSelector(route === '/project-list' ? 'article a[href="/branches/fixture-project"]' : real);
     aligned(label, before, await geometry(real));
@@ -103,6 +138,8 @@ try {
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(base + '/project-list');
+  await page.waitForSelector('.cds-loading-skeleton-line');
+  assert.equal(await page.locator('.cds-loading-skeleton-line').first().evaluate(el => getComputedStyle(el).animationName), 'none');
   await page.waitForSelector('article a[href="/branches/fixture-project"]');
   await noEffect();
   await page.emulateMedia({ reducedMotion: 'no-preference' });
