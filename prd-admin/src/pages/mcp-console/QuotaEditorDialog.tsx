@@ -47,7 +47,15 @@ export function QuotaEditorDialog({
   const [saving, setSaving] = useState(false);
   const [webPublicExposureAllowed, setWebPublicExposureAllowed] = useState(false);
   const sessionRef = useRef(0);
-  const canEnableWebPublicExposure = client?.scopes.some((scope) => scope.toLowerCase() === 'web-pages:write') ?? false;
+  const selectedScopes = scopeDirty
+    ? (scopeMode === 'auto' ? picksToScopes(capabilities, autoPicks(capabilities)) : scopes)
+    : (client?.scopes ?? []);
+  const canEnableWebPublicExposure = selectedScopes.some(scope => scope.toLowerCase() === 'web-pages:write');
+
+  useEffect(() => {
+    // 尚未保存的发布授权必须随写权限一起取消；已有独立授权仍由用户显式关闭。
+    if (!canEnableWebPublicExposure && client?.webPublicExposureAllowed !== true) setWebPublicExposureAllowed(false);
+  }, [canEnableWebPublicExposure, client?.webPublicExposureAllowed]);
 
   useEffect(() => {
     sessionRef.current += 1;

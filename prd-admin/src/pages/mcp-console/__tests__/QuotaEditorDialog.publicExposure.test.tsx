@@ -222,3 +222,32 @@ describe('派生发布权限不进入普通授权清单', () => {
     expect(request).not.toHaveProperty('webPublicExposureAllowed');
   });
 });
+
+
+const web: McpCapabilityDto = { ...tasks, key: 'web', title: '网页托管', readScope: 'web-pages:read', writeScope: 'web-pages:write' };
+describe('发布授权跟随当前编辑权限', () => {
+  it('同次保存新增网页写权限和独立发布授权', async () => {
+    await render({ ...client, scopeMode: 'manual', scopes: ['web-pages:read'] }, true, [web]);
+    expect(checkbox().disabled).toBe(true);
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="网页托管访问权限"]')!;
+    await act(async () => { access.value = 'write'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(checkbox().disabled).toBe(false);
+    await act(async () => checkbox().click());
+    await save();
+    expect(updateAgentApiKey).toHaveBeenCalledWith(expect.objectContaining({
+      scopes: ['web-pages:read', 'web-pages:write'], webPublicExposureAllowed: true,
+    }));
+  });
+  it('删除编辑中的网页写权限时取消尚未保存的发布授权', async () => {
+    await render({ ...client, scopeMode: 'manual', scopes: ['web-pages:read', 'web-pages:write'] }, true, [web]);
+    await act(async () => checkbox().click());
+    expect(checkbox().checked).toBe(true);
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="网页托管访问权限"]')!;
+    await act(async () => { access.value = 'read'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(checkbox().checked).toBe(false);
+    expect(checkbox().disabled).toBe(true);
+    await save();
+    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0].scopes).toEqual(['web-pages:read']);
+    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('webPublicExposureAllowed');
+  });
+});
