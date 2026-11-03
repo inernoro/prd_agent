@@ -66,13 +66,12 @@ describe('色点：颜色不是唯一通道', () => {
     }
   });
 
-  it('色点的颜色按能力 key 查，不按 title 查', () => {
-    // 按 title 查会全部落到兜底中性色：五个点长得一模一样，颜色通道当场作废，
-    // 而界面照常渲染、测试照常绿 —— 写这个组件时当场犯过一次。
+  it('能力使用统一中性色，仍保留不同图标与档位形状', () => {
     const byKey = renderDot('write', { capKey: 'knowledge', title: '随便一个名字' }).style.background;
     expect(byKey).toBe(capabilityVisual('knowledge').text);
     const other = renderDot('write', { capKey: 'visual', title: '随便一个名字' }).style.background;
-    expect(other, '不同能力的点必须是不同颜色').not.toBe(byKey);
+    expect(other).toBe(byKey);
+    expect(capabilityVisual('knowledge').icon).not.toBe(capabilityVisual('visual').icon);
     // 圆环那一档的描边也走同一个颜色
     expect(renderDot('read', { capKey: 'knowledge' }).style.border).toContain(capabilityVisual('knowledge').text);
   });

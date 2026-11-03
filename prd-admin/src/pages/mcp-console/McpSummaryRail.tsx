@@ -28,7 +28,7 @@ export function McpSummaryRail({ overview, onCalls, onCapability, onSettings }: 
       <button className="mcp-rail-line mcp-rail-link" onClick={() => onCalls()}><span><Activity size={13} aria-hidden />工具调用</span><b>{today.calls}<small> 次</small><ArrowRight size={12} aria-hidden /></b></button>
       <div className="mcp-rail-line"><span><Image size={13} aria-hidden />生成图片</span><b>{today.images}<small> 张</small></b></div>
       <div className="mcp-rail-line"><span><PenLine size={13} aria-hidden />写入操作</span><b>{today.writes}<small> 次</small></b></div>
-      <div className="mcp-rail-results"><button onClick={() => onCalls('error')}><TriangleAlert size={12} aria-hidden />失败 <b>{today.failed}</b></button><button onClick={() => onCalls('denied')}><ShieldCheck size={12} aria-hidden />被拦截 <b>{today.denied}</b></button></div>
+      <div className="mcp-rail-results"><button data-alert={today.failed > 0} onClick={() => onCalls('error')}><TriangleAlert size={12} aria-hidden />失败 <b>{today.failed}</b></button><button data-alert={today.denied > 0} onClick={() => onCalls('denied')}><ShieldCheck size={12} aria-hidden />被拦截 <b>{today.denied}</b></button></div>
     </section>
     <section className="mcp-rail-card">
       <h2><Layers3 size={15} aria-hidden />能力覆盖<span>可用凭证</span></h2>
@@ -37,7 +37,7 @@ export function McpSummaryRail({ overview, onCalls, onCapability, onSettings }: 
         const Icon = visual.icon;
         const count = signals.filter(signal => signal.dots.some(dot => dot.key === cap.key && dot.tier !== 'none')).length;
         return <button key={cap.key} className="mcp-coverage-row" aria-label={`筛选已授权${cap.title}的客户端`} onClick={() => onCapability(cap.key)}>
-          <span className="mcp-coverage-icon" style={{ color: visual.text, background: visual.soft }}><Icon size={12} aria-hidden /></span><span>{cap.title}</span><span className="mcp-coverage-meter" aria-hidden><span style={{ width: `${active.length ? count / active.length * 100 : 0}%`, background: visual.text }} /></span><b>{count}<small> / {active.length}</small></b>
+          <span className="mcp-coverage-icon" style={{ color: visual.text, background: visual.soft }}><Icon size={12} aria-hidden /></span><span>{cap.title}</span><span className="mcp-coverage-meter" aria-hidden><span style={{ width: `${active.length ? count / active.length * 100 : 0}%`, background: 'var(--text-muted)' }} /></span><b>{count}<small> / {active.length}</small></b>
         </button>;
       })}</div>
       <p className="mcp-rail-note">点击能力可筛选已授权的客户端。</p>

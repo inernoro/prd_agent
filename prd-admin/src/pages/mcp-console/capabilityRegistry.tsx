@@ -20,47 +20,47 @@ export interface CapabilityVisual {
 export const CAPABILITY_VISUAL_REGISTRY: Record<string, CapabilityVisual> = {
   visual: {
     icon: Image,
-    text: 'var(--semantic-purple-text)',
-    soft: 'var(--semantic-purple-soft)',
-    border: 'var(--semantic-purple-border)',
+    text: 'var(--text-secondary)',
+    soft: 'var(--bg-sunken)',
+    border: 'var(--border-subtle)',
   },
   literary: {
     icon: PenLine,
-    text: 'var(--semantic-indigo-text)',
-    soft: 'var(--semantic-indigo-soft)',
-    border: 'var(--semantic-indigo-border)',
+    text: 'var(--text-secondary)',
+    soft: 'var(--bg-sunken)',
+    border: 'var(--border-subtle)',
   },
   knowledge: {
     icon: BookOpen,
-    text: 'var(--semantic-cyan-text)',
-    soft: 'var(--semantic-cyan-soft)',
-    border: 'var(--semantic-cyan-border)',
+    text: 'var(--text-secondary)',
+    soft: 'var(--bg-sunken)',
+    border: 'var(--border-subtle)',
   },
   web: {
     icon: Globe,
-    text: 'var(--semantic-success-text)',
-    soft: 'var(--semantic-success-soft)',
-    border: 'var(--semantic-success-border)',
+    text: 'var(--text-secondary)',
+    soft: 'var(--bg-sunken)',
+    border: 'var(--border-subtle)',
   },
   tasks: {
     icon: ListTodo,
-    text: 'var(--semantic-neutral-text)',
-    soft: 'var(--semantic-neutral-soft)',
-    border: 'var(--semantic-neutral-border)',
+    text: 'var(--text-secondary)',
+    soft: 'var(--bg-sunken)',
+    border: 'var(--border-subtle)',
   },
   market: {
     icon: Store,
-    text: 'var(--semantic-orange-text)',
-    soft: 'var(--semantic-orange-soft)',
-    border: 'var(--semantic-orange-border)',
+    text: 'var(--text-secondary)',
+    soft: 'var(--bg-sunken)',
+    border: 'var(--border-subtle)',
   },
 };
 
 const FALLBACK: CapabilityVisual = {
   icon: Store,
-  text: 'var(--semantic-neutral-text)',
-  soft: 'var(--semantic-neutral-soft)',
-  border: 'var(--semantic-neutral-border)',
+  text: 'var(--text-secondary)',
+  soft: 'var(--bg-sunken)',
+  border: 'var(--border-subtle)',
 };
 
 export function capabilityVisual(key: string): CapabilityVisual {
