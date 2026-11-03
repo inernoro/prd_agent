@@ -3,6 +3,8 @@ import { expect, test, devices, type Page } from '@playwright/test';
 const user = process.env.MAP_AI_USER;
 const password = process.env.MAP_ACCEPT_PASS;
 
+test.use({ trace: 'off', video: 'off', permissions: ['clipboard-write'] });
+
 async function login(page: Page) {
   await page.goto('/login');
   await page.locator('input[type="text"]').fill(user!);
@@ -40,7 +42,6 @@ async function checkClientSelection(page: Page) {
 
 test.describe('接入台真实导航与客户端引导', () => {
   test.skip(!user || !password || !process.env.E2E_BASE_URL, '需要预览域名和表单登录凭据');
-  test.use({ trace: 'off', video: 'off' });
 
   for (const theme of ['白天', '黑夜']) {
     test(`桌面${theme}可从账号菜单取得技能并选择 WorkBuddy`, async ({ page }, testInfo) => {
@@ -57,7 +58,13 @@ test.describe('接入台真实导航与客户端引导', () => {
   }
 
   test.describe('移动触控', () => {
-    test.use({ ...devices['iPhone 13'], defaultBrowserType: 'chromium' });
+    test.use({
+      viewport: devices['iPhone 13'].viewport,
+      userAgent: devices['iPhone 13'].userAgent,
+      deviceScaleFactor: devices['iPhone 13'].deviceScaleFactor,
+      isMobile: true,
+      hasTouch: true,
+    });
 
     test('从导航菜单进入并完成客户端切换', async ({ page }, testInfo) => {
       await login(page);
