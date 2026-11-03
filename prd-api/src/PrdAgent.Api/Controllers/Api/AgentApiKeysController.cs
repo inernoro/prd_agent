@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers; // OpenApiController.ScopeCall（位于父命名空间，显式 using 让跨命名空间引用更清晰）
@@ -249,6 +252,7 @@ public class AgentApiKeysController : ControllerBase
         public string? Description { get; set; }
         public List<string>? Scopes { get; set; }
         public bool? IsActive { get; set; }
+        public bool? WebPublicExposureAllowed { get; set; }
 
         // 接入台（MCP）配额上限。null = 不改；配额触顶时的提示就是指这里，
         // 光有提示没有入口等于告诉用户一条走不通的路。
@@ -310,6 +314,18 @@ public class AgentApiKeysController : ControllerBase
     [HttpPatch("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateRequest req, CancellationToken ct)
     {
+        // 默认认证策略兼容 AgentApiKey；改独立授权时必须另外验证真实用户 JWT，不能相信同一调用方的声明。
+        if (req.WebPublicExposureAllowed.HasValue)
+        {
+            var jwt = await HttpContext.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
+            var jwtUserId = jwt.Principal?.FindFirst("sub")?.Value
+                ?? jwt.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var callerUserId = this.GetUserIdOrNull();
+            if (!jwt.Succeeded || string.IsNullOrWhiteSpace(callerUserId)
+                || !string.Equals(jwtUserId, callerUserId, StringComparison.Ordinal))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "请登录 MAP，在智能体接入台的客户端设置中调整对外发布授权"));
+        }
         var userId = this.GetRequiredUserId();
         var key = await _keyService.GetByIdAsync(id, ct);
         if (key == null || key.OwnerUserId != userId)
@@ -399,11 +415,23 @@ public class AgentApiKeysController : ControllerBase
                 "更新固定模型时必须同时传 mcpLiteraryImageModelMode=fixed。"));
         }
 
+        if (req.WebPublicExposureAllowed == true)
+        {
+            var resultingMode = ResultingScopeMode(key.ScopeMode, explicitScopeMode, req.Scopes != null);
+            var resultingScopes = McpCapabilityCatalog.EffectiveScopesFor(
+                resultingMode, req.Scopes ?? key.Scopes, ownedPermissions);
+            if (!AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out _)
+                || !resultingScopes.Contains(McpCapabilityCatalog.ScopeWebPagesWrite, StringComparer.OrdinalIgnoreCase))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "当前客户端没有可用的网页写入权限，请先恢复密钥或网页写入授权"));
+        }
+
         await _keyService.UpdateMetadataAsync(
             id, req.Name, req.Description, req.Scopes, req.IsActive, ct,
             new AgentApiKeyQuotaPatch(req.McpDailyImageQuota, req.McpDailyWriteQuota, req.McpRateLimitPerMin),
             explicitScopeMode,
-            literaryImageModelPatch);
+            literaryImageModelPatch,
+            req.WebPublicExposureAllowed);
 
         var reloaded = await _keyService.GetByIdAsync(id, ct);
         return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
@@ -492,6 +520,7 @@ public class AgentApiKeysController : ControllerBase
             // 这件事已经在两处投影上各漏过一次。
             scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, now),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            webPublicExposureAllowed = k.WebPublicExposureAllowed,
             mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
                 ? "fixed"
                 : "follow-user-panel",
