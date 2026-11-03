@@ -90,6 +90,7 @@
   .mcp-settings-section:nth-child(2) { grid-column: auto; grid-row: auto; }
 }
 @media(max-width:639px) {
+  .mcp-tabs button { padding: 0 8px; }
   .mcp-summary { padding: 10px 12px; }
   .mcp-summary strong { font-size: 12px; }
   .mcp-summary > span { font-size: 10px; }
