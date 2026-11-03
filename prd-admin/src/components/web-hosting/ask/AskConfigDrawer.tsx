@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, RotateCw, Trash2, X } from 'lucide-react';
+import { CircleHelp, Gauge, MessageCircle, MessageSquare, Plus, RotateCw, Trash2, Users, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { getSiteAskConfig, regenerateSiteAskQuestions, updateSiteAskConfig, type SiteAskConfig } from '@/services/real/webPages';
+import { SiteSettingsRow, SiteSettingsToggleRow } from '../SiteSettingsRows';
 import { ASK_MAX_WELCOME_LENGTH } from './askTypes';
 
 interface Props {
@@ -158,7 +159,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
         style={{
           position: embedded ? 'relative' : 'absolute', top: 0, right: 0, bottom: 0, width: embedded ? '100%' : 'min(520px, 94vw)', minHeight: 0,
           display: 'flex', flexDirection: 'column',
-          background: 'var(--panel-solid, var(--bg-elevated))',
+          background: embedded ? 'transparent' : 'var(--panel-solid, var(--bg-elevated))',
           borderLeft: embedded ? undefined : '1px solid var(--border-subtle)',
           boxShadow: embedded ? undefined : 'var(--shadow-glass-drawer)',
           color: 'var(--text-primary)',
@@ -178,167 +179,120 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
           <MapSectionLoader text="正在读取配置…" />
         ) : (
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: embedded ? '0 4px 0 0' : 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <fieldset onChange={() => setSaved(false)} onClick={() => setSaved(false)} disabled={saving || regenerating || !configReady} className="space-y-4">
-            <section className="space-y-4 rounded-xl border border-token-subtle p-4">
-            <h3 className="text-xs font-semibold text-token-secondary">提问权限</h3>
-            <Row
-              label="开放提问"
-              hint="让访客围绕本页向 AI 提问。未单独设置时沿用个人默认。"
-            >
-              {/* 只挡「关 → 开」，永远保留「开 → 关」这条退路。
-                  两个方向一起挡会造成一种没法自救的状态：HTML 站重传成视频之后形态变成不支持，
-                  但 AskEnabled 还是 true，开关又被灰掉——owner 想关都关不掉，
-                  而已发出去的分享还挂着一个每次必 422 的提问入口。
-                  后端 PUT 也只拒绝「开」，两边判据一致。 */}
-              <Toggle
-                ariaLabel="开放提问"
-                checked={enabled}
-                onChange={(next) => {
-                  setEnabled(next);
-                  setEnabledDirty(true);
-                }}
-                disabled={!!unsupportedReason && !enabled}
-              />
-            </Row>
-
-            {/* 不支持的形态（如视频包装站）如实说明，而不是让 owner 打开一个
-                每个访客都会失败的开关。判定源在服务端，前端不自己判。 */}
-            {unsupportedReason && (
-              <div style={{
-                marginTop: -8, padding: '8px 10px', borderRadius: 8,
-                background: 'var(--bg-card)', border: '1px solid var(--border-subtle)',
-                fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6,
-              }}>
-                {unsupportedReason}
-                {enabled && '（这个站点当前仍开着提问，访客每次提问都会失败，建议关掉。）'}
+            <fieldset onChange={() => setSaved(false)} onClick={() => setSaved(false)} disabled={saving || regenerating || !configReady}>
+              <div className="site-settings-group">
+                <SiteSettingsToggleRow icon={<MessageCircle size={12} />} label="开放提问" hint="未单独设置时沿用个人默认。">
+                  <Toggle ariaLabel="开放提问" checked={enabled}
+                    onChange={(next) => { setEnabled(next); setEnabledDirty(true); }}
+                    disabled={!!unsupportedReason && !enabled} />
+                </SiteSettingsToggleRow>
+                <SiteSettingsToggleRow icon={<Users size={12} />} label="允许未登录访客提问" hint="关闭后，访客需要先登录才能提问。">
+                  <Toggle ariaLabel="允许未登录访客提问" checked={allowAnonymous} onChange={setAllowAnonymous} />
+                </SiteSettingsToggleRow>
               </div>
-            )}
-
-            <Row label="允许未登录访客提问" hint="关闭后，分享链接上的访客需要先登录才能提问。">
-              <Toggle ariaLabel="允许未登录访客提问" checked={allowAnonymous} onChange={setAllowAnonymous} />
-            </Row>
-
-            </section>
-            <section className="space-y-3 rounded-xl border border-token-subtle p-4">
-              <h3 className="text-xs font-semibold text-token-secondary">开场内容</h3>
-              <label htmlFor={`ask-welcome-${siteId}`} className="block text-xs text-token-secondary">欢迎语</label>
-              <textarea
-                id={`ask-welcome-${siteId}`}
-                value={welcome}
-                onChange={(e) => setWelcome(e.target.value)}
-                rows={2}
-                // 与后端同一个上限。后端超长是截断（展示文案，截短不改变行为），
-                // 这里把边界前移到打字时，用户不会写完一大段才发现被砍
-                maxLength={ASK_MAX_WELCOME_LENGTH}
-                placeholder={`关于「${siteTitle}」，有什么想了解的？`}
-                style={inputStyle}
-              />
-
-            <details className="rounded-lg border border-token-subtle p-3">
-              <summary className="cursor-pointer text-xs font-medium text-token-secondary">开场问题 · {questions.length}/{maxQuestions}</summary>
-              <div className="mt-3" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <div style={{ fontSize: 13 }}>开场问题题库</div>
-                {/* 来源标签：自动填的东西不能是黑箱，用户得看得出这几句是谁写的 */}
-                <span
-                  style={{
-                    fontSize: 10.5, padding: '2px 7px', borderRadius: 5, flexShrink: 0,
-                    fontFamily: 'var(--font-code, ui-monospace, monospace)',
-                    background: questionsSource === 'manual' ? 'var(--bg-tertiary)' : 'var(--semantic-info-soft)',
-                    color: 'var(--text-muted)',
-                  }}
-                >
-                  {questionsSource === 'manual' ? '你自己写的' : '系统读正文生成'}
-                </span>
-                <button
-                  onClick={() => void regenerate()}
-                  disabled={regenerating || !!unsupportedReason}
-                  title="重新读一遍这一页的正文，写一批新的开场问题；会覆盖现在这几条"
-                  style={{
-                    marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-                    height: 26, padding: '0 9px', borderRadius: 7,
-                    border: '1px solid var(--border-subtle)', background: 'transparent',
-                    color: 'var(--text-muted)', fontSize: 11.5,
-                    cursor: regenerating || unsupportedReason ? 'default' : 'pointer',
-                  }}
-                >
-                  {regenerating ? <MapSpinner size={12} /> : <RotateCw size={12} />}
-                  {regenerating ? '正在读正文…' : '重新生成'}
-                </button>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.6 }}>
-                供访客一键提问。手动编辑后，不再被自动生成覆盖。
-              </div>
-              {regenNote && (
-                <div style={{ fontSize: 12, color: 'var(--accent-primary)', marginBottom: 8, lineHeight: 1.6 }}>
-                  {regenNote}
-                </div>
-              )}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {questions.map((q, i) => (
-                  <div key={q} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}>
-                    <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>{q}</span>
-                    <button
-                      onClick={() => {
-                        setQuestions((prev) => prev.filter((_, idx) => idx !== i));
-                        setQuestionsSource('manual');
-                        setQuestionsDirty(true);
-                        setRegenNote(null);
+              {unsupportedReason && <p className="mt-2 text-[11px] text-token-muted">
+                {unsupportedReason}{enabled && '（当前仍开着提问，建议关闭。）'}
+              </p>}
+              <div className="site-settings-group mt-2.5">
+                <SiteSettingsRow icon={<MessageSquare size={12} />} label="欢迎语" value={welcome || '默认欢迎语'}>
+                  <textarea id={`ask-welcome-${siteId}`} aria-label="欢迎语" value={welcome}
+                    onChange={(e) => setWelcome(e.target.value)} rows={2} maxLength={ASK_MAX_WELCOME_LENGTH}
+                    placeholder={`关于「${siteTitle}」，有什么想了解的？`} style={inputStyle} />
+                </SiteSettingsRow>
+                <SiteSettingsRow icon={<CircleHelp size={12} />} label="开场问题" value={`${questions.length}/${maxQuestions} 条`}>
+                  <div className="mt-3" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    {/* 来源标签：自动填的东西不能是黑箱，用户得看得出这几句是谁写的 */}
+                    <span
+                      style={{
+                        fontSize: 10.5, padding: '2px 7px', borderRadius: 5, flexShrink: 0,
+                        fontFamily: 'var(--font-code, ui-monospace, monospace)',
+                        background: questionsSource === 'manual' ? 'var(--bg-tertiary)' : 'var(--semantic-info-soft)',
+                        color: 'var(--text-muted)',
                       }}
-                      aria-label={`删除「${q}」`}
-                      style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}
                     >
-                      <Trash2 size={14} />
+                      {questionsSource === 'manual' ? '你自己写的' : '系统读正文生成'}
+                    </span>
+                    <button
+                      onClick={() => void regenerate()}
+                      disabled={regenerating || !!unsupportedReason}
+                      title="重新读一遍这一页的正文，写一批新的开场问题；会覆盖现在这几条"
+                      style={{
+                        marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                        height: 26, padding: '0 9px', borderRadius: 7,
+                        border: '1px solid var(--border-subtle)', background: 'transparent',
+                        color: 'var(--text-muted)', fontSize: 11.5,
+                        cursor: regenerating || unsupportedReason ? 'default' : 'pointer',
+                      }}
+                    >
+                      {regenerating ? <MapSpinner size={12} /> : <RotateCw size={12} />}
+                      {regenerating ? '正在读正文…' : '重新生成'}
                     </button>
                   </div>
-                ))}
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.6 }}>
+                    供访客一键提问。手动编辑后，不再被自动生成覆盖。
+                  </div>
+                  {regenNote && (
+                    <div style={{ fontSize: 12, color: 'var(--accent-primary)', marginBottom: 8, lineHeight: 1.6 }}>
+                      {regenNote}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {questions.map((q, i) => (
+                      <div key={q} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}>
+                        <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>{q}</span>
+                        <button
+                          onClick={() => {
+                            setQuestions((prev) => prev.filter((_, idx) => idx !== i));
+                            setQuestionsSource('manual');
+                            setQuestionsDirty(true);
+                            setRegenNote(null);
+                          }}
+                          aria-label={`删除「${q}」`}
+                          style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <input
+                      value={draft}
+                      maxLength={maxLength}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          addQuestion();
+                        }
+                      }}
+                      placeholder={atLibraryCap ? `最多 ${maxQuestions} 条，删掉一条再加` : '添加一个开场问题…'}
+                      disabled={atLibraryCap}
+                      style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+                    />
+                    <button
+                      onClick={addQuestion}
+                      disabled={!draft.trim() || atLibraryCap}
+                      aria-label="添加"
+                      style={{
+                        width: 38, height: 38, borderRadius: 9, border: 'none', flexShrink: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: draft.trim() && !atLibraryCap ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
+                        color: draft.trim() && !atLibraryCap ? 'var(--button-primary-fg)' : 'var(--text-muted)',
+                        cursor: draft.trim() && !atLibraryCap ? 'pointer' : 'default',
+                      }}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                </SiteSettingsRow>
+                <SiteSettingsRow icon={<Gauge size={12} />} label="每日提问上限" value={dailyLimit === 0 ? '沿用默认' : `${dailyLimit} 次`}>
+                  <label htmlFor={`ask-limit-${siteId}`}>填 0 沿用系统默认；达到上限后当天停止接受提问。</label>
+                  <input id={`ask-limit-${siteId}`} type="number" min={0} value={dailyLimit}
+                    onChange={(e) => setDailyLimit(Math.max(0, Number(e.target.value) || 0))}
+                    style={{ ...inputStyle, width: 140 }} />
+                </SiteSettingsRow>
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <input
-                  value={draft}
-                  maxLength={maxLength}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                      e.preventDefault();
-                      addQuestion();
-                    }
-                  }}
-                  placeholder={atLibraryCap ? `最多 ${maxQuestions} 条，删掉一条再加` : '添加一个开场问题…'}
-                  disabled={atLibraryCap}
-                  style={{ ...inputStyle, flex: 1 }}
-                />
-                <button
-                  onClick={addQuestion}
-                  disabled={!draft.trim() || atLibraryCap}
-                  aria-label="添加"
-                  style={{
-                    width: 38, height: 38, borderRadius: 9, border: 'none', flexShrink: 0,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: draft.trim() && !atLibraryCap ? 'var(--button-primary-bg)' : 'var(--bg-tertiary)',
-                    color: draft.trim() && !atLibraryCap ? 'var(--button-primary-fg)' : 'var(--text-muted)',
-                    cursor: draft.trim() && !atLibraryCap ? 'pointer' : 'default',
-                  }}
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
-            </details>
-            </section>
-
-            <section className="space-y-2 rounded-xl border border-token-subtle p-4">
-              <label htmlFor={`ask-limit-${siteId}`} className="block text-xs font-semibold text-token-secondary">每日提问上限</label>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
-                填 0 沿用系统默认；达到上限后当天停止接受提问。
-              </div>
-              <input
-                id={`ask-limit-${siteId}`}
-                type="number"
-                min={0}
-                value={dailyLimit}
-                onChange={(e) => setDailyLimit(Math.max(0, Number(e.target.value) || 0))}
-                style={{ ...inputStyle, width: 140 }}
-              />
-            </section>
             </fieldset>
 
             {saved && <div role="status" className="text-xs text-token-secondary">提问设置已保存</div>}
@@ -346,17 +300,17 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
           </div>
         )}
 
-        <div style={{ padding: 14, borderTop: '1px solid var(--border-faint)', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
-          <button disabled={saving || regenerating} onClick={onClose} style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid var(--border-subtle)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer' }}>
+        <div className="site-settings-footer" style={embedded ? undefined : { padding: 14 }}>
+          <button disabled={saving || regenerating} onClick={onClose} style={{  border: '1px solid var(--border-subtle)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 11.5, cursor: 'pointer' }}>
             {embedded ? '关闭' : '取消'}
           </button>
           <button
             onClick={() => void save()}
             disabled={saving || loading || regenerating || !configReady}
             style={{
-              padding: '8px 16px', borderRadius: 9, border: 'none', fontSize: 13,
+              border: 'none',
               display: 'flex', alignItems: 'center', gap: 6,
-              background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)',
+              background: 'var(--accent-primary)', color: 'var(--accent-on-solid)',
               cursor: saving || loading ? 'default' : 'pointer',
             }}
           >
@@ -373,28 +327,16 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
-  padding: '9px 11px',
-  borderRadius: 9,
+  padding: '8px',
+  borderRadius: 8,
   border: '1px solid var(--border-subtle)',
   background: 'var(--bg-input)',
   color: 'var(--text-primary)',
-  fontSize: 13,
+  fontSize: 12,
   outline: 'none',
   fontFamily: 'inherit',
   resize: 'vertical',
 };
-
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13 }}>{label}</div>
-        {hint && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3, lineHeight: 1.6 }}>{hint}</div>}
-      </div>
-      <div style={{ flexShrink: 0, paddingTop: 2 }}>{children}</div>
-    </div>
-  );
-}
 
 function Toggle({ checked, onChange, disabled, ariaLabel }: { ariaLabel: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (

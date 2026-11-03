@@ -20,6 +20,7 @@ const button = (text: string) => Array.from(container.querySelectorAll('button')
 function input(label: string, value: string) {
   act(() => {
     const element = container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+    element.closest('details')?.querySelector('summary')?.click();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value);
     element.dispatchEvent(new Event('input', { bubbles: true }));
   });
@@ -36,6 +37,18 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe('网页设置', () => {
+  it('默认展示当前值，展开编辑再收起仍保留输入', async () => {
+    await renderForm();
+    const row = container.querySelector<HTMLInputElement>('[aria-label="网页标题"]')!.closest('details')!;
+    expect(row.open).toBe(false);
+    expect(row.querySelector('summary')!.textContent).toContain('原标题');
+    input('网页标题', '新的标题草稿');
+    expect(row.open).toBe(true);
+    act(() => row.querySelector('summary')!.click());
+    expect(row.open).toBe(false);
+    expect(row.querySelector('summary')!.textContent).toContain('新的标题草稿');
+    expect(updateSite).not.toHaveBeenCalled();
+  });
   it('读取失败时禁止提交默认值', async () => {
     vi.mocked(getSite).mockResolvedValue(fail);
     await renderForm();
