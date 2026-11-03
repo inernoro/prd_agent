@@ -285,16 +285,16 @@ public partial class WebPagesOpenApiController
             .FirstOrDefaultAsync(CancellationToken.None);
         if (share == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享不存在或无权操作"));
         var visibility = NormalizeShareVisibility(request.Visibility);
-        var effectiveVisibility = visibility ?? share.Visibility;
-        if (IsExternalVisibility(effectiveVisibility))
+        var external = IsExternallyAccessibleShare(share, visibility);
+        if (external)
         {
             var grantError = RequireWebExposureGrant();
             if (grantError != null) return grantError;
         }
-        if (IsExternalVisibility(effectiveVisibility) && request.ExpiresInDays != null && !request.ConfirmedExposure)
+        if (external && request.ExpiresInDays != null && !request.ConfirmedExposure)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "修改对外分享有效期前，请确认用户意图并传 confirmedExposure=true"));
         // 放宽范围或延续对外暴露时，均重新核查当前线上内容引用的私有资料。
-        if (!share.IsRevoked && IsExternalVisibility(effectiveVisibility)
+        if (!share.IsRevoked && external
             && (visibility != null && visibility != share.Visibility || request.ExpiresInDays != null))
         {
             var refusal = await EnforceSharePrivateSourcesAsync(share, request.ConfirmedPrivateSourceFingerprint);
@@ -325,7 +325,7 @@ public partial class WebPagesOpenApiController
         var share = await _db.WebPageShareLinks.Find(s => s.Id == shareId && s.CreatedBy == userId)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (share == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享不存在或无权操作"));
-        if (!share.IsRevoked && IsExternalVisibility(share.Visibility))
+        if (!share.IsRevoked && IsExternallyAccessibleShare(share))
         {
             var grantError = RequireWebExposureGrant();
             if (grantError != null) return grantError;

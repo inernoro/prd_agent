@@ -110,12 +110,71 @@ public sealed class McpPublicExposureGrantTests
     }
 
     [Theory]
+    [InlineData("missing", false, false, "share", false, true)]
+    [InlineData("null", false, false, "share", false, true)]
+    [InlineData("", false, false, "share", true, true)]
+    [InlineData("public", false, false, "share", false, true)]
+    [InlineData("logged-in", false, false, "share", true, true)]
+    [InlineData("owner-only", false, false, "share", false, false)]
+    [InlineData("missing", true, false, "share", false, false)]
+    [InlineData("null", false, true, "share", false, false)]
+    [InlineData("owner-only", false, true, "visit", false, true)]
+    [InlineData("null", false, true, "VISIT", true, true)]
+    [InlineData("public", true, true, "visit", false, false)]
+    [InlineData("public", false, false, "share", true, true)]
+    public async Task 真实Mongo旧分享判据与读取路径一致_缺省公开和访问链不能漏掉(
+        string visibility, bool revoked, bool expired, string purpose, bool multiSite, bool external)
+    {
+        var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27017";
+        var name = $"mcp_exposure_{Guid.NewGuid():N}";
+        var db = new MongoDbContext(connection, name);
+        try
+        {
+            var share = new WebPageShareLink { CreatedBy = "another-owner", IsRevoked = revoked,
+                SiteId = multiSite ? null : "s", SiteIds = multiSite ? ["other", "s"] : [],
+                Visibility = visibility, Purpose = purpose,
+                ExpiresAt = expired ? DateTime.UtcNow.AddDays(-1) : null };
+            var raw = share.ToBsonDocument();
+            var visibilityField = BsonClassMap.LookupClassMap(typeof(WebPageShareLink))
+                .GetMemberMap(nameof(WebPageShareLink.Visibility)).ElementName;
+            if (visibility == "missing") raw.Remove(visibilityField);
+            else if (visibility == "null") raw[visibilityField] = BsonNull.Value;
+            await db.Database.GetCollection<BsonDocument>("web_page_share_links").InsertOneAsync(raw);
+            var site = new HostedSite { Id = "s", OwnerUserId = "u", Visibility = "private" };
+            var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+            sites.Setup(x => x.GetByIdAsync("s", "u", It.IsAny<CancellationToken>())).ReturnsAsync(site);
+            sites.Setup(x => x.CanEditSiteAsync(site, "u", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            if (!external)
+                sites.Setup(x => x.UpdateAsync("s", "u", "changed", null, null, null, null,
+                    It.IsAny<CancellationToken>())).ReturnsAsync(site);
+            var controller = WebController(sites.Object, db);
+            var result = await controller.UpdatePage("s", new() { Title = "changed" });
+            if (external)
+            {
+                Denied(result);
+                Denied(await controller.GetUploadInfo("s"));
+                using var body = new MemoryStream("<h1>changed</h1>"u8.ToArray());
+                Denied(await controller.ReuploadFile("s", new FormFile(body, 0, body.Length, "file", "entry.html"), null, null));
+            }
+            else result.ShouldBeOfType<OkObjectResult>();
+            sites.VerifyAll(); sites.VerifyNoOtherCalls();
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Theory]
     [InlineData("public", false)]
     [InlineData("logged-in", false)]
     [InlineData("public", true)]
-    public async Task 对外分享修改与续期不能用确认参数越过授权(string visibility, bool renewal)
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    [InlineData("owner-only", false, "visit")]
+    [InlineData("owner-only", true, "VISIT")]
+    public async Task 对外分享修改与续期不能用确认参数越过授权(string? visibility, bool renewal, string purpose = "share")
     {
-        var share = new WebPageShareLink { Id = "share", SiteId = "s", CreatedBy = "u", Visibility = visibility };
+        var share = new WebPageShareLink { Id = "share", SiteId = "s", CreatedBy = "u", Visibility = visibility!, Purpose = purpose };
         var links = ShareCollection(share);
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         var controller = WebController(sites.Object, ShareDatabase(links.Object));
