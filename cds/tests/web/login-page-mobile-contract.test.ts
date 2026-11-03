@@ -13,6 +13,11 @@ describe('CDS 登录页手机端主任务契约', () => {
 
     const mobileBlockStart = stylesheet.indexOf('@media (max-width: 640px) {', stylesheet.indexOf('.cds-auth-footer'));
     const mobileBlock = stylesheet.slice(mobileBlockStart, mobileBlockStart + 900);
+    const mobilePage = mobileBlock.match(/\.cds-auth-page\s*\{([^}]*)\}/)?.[1];
+    expect(mobilePage).toMatch(/(?:^|[;\n])\s*height:\s*100vh;/);
+    expect(mobilePage).toMatch(/(?:^|[;\n])\s*height:\s*100dvh;/);
+    const mobileStage = mobileBlock.match(/\.cds-auth-stage\s*\{([^}]*)\}/)?.[1];
+    expect(mobileStage).toMatch(/(?:^|[;\n])\s*min-height:\s*0;/);
     expect(mobileBlock).toContain('.cds-auth-stage {');
     expect(mobileBlock).toContain('justify-content: flex-start;');
     expect(mobileBlock).toContain('overflow-y: auto;');
