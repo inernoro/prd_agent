@@ -231,8 +231,8 @@
   .mcp-event:not(.mcp-event-compact) .mcp-event-kind { display: none; }
 }
 
-/* Bound reading width instead of stretching client cards across ultrawide screens. */
-.mcp-console { width: 100%; max-width: 1520px; margin-inline: auto; }
+/* Match the full-width layout of the surrounding admin pages. */
+.mcp-console { width: 100%; }
 @media(min-width:1024px) {
   .mcp-client-row { padding: 10px 12px; }
   .mcp-client-row[data-manual=true] { padding-left: 11px; }
@@ -242,3 +242,15 @@
   .mcp-recent-section .mcp-event-compact .mcp-event-row > * { grid-column: auto; grid-row: auto; }
   .mcp-recent-section .mcp-event-compact .mcp-event-kind { text-align: left; }
 }
+
+.mcp-call-trend { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border-subtle); }
+.mcp-call-trend header { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+.mcp-call-trend header span, .mcp-call-trend p { color: var(--text-muted); font-size: 10.5px; }
+.mcp-call-trend header span:last-child { margin-left: auto; }
+.mcp-call-trend p { padding-top: 8px; }
+@media(max-width:639px) { .mcp-call-trend header { flex-wrap: wrap; gap: 4px 8px; } .mcp-call-trend header span:last-child { margin-left: 0; } }
+
+.mcp-client-history { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; color: var(--text-secondary); }
+.mcp-client-history:hover { color: var(--accent-primary); }
+.mcp-authorize { margin-left: 8px; padding: 1px 8px; border: 1px solid currentColor; border-radius: 5px; white-space: nowrap; }
+.mcp-authorize:disabled { opacity: .6; cursor: wait; }

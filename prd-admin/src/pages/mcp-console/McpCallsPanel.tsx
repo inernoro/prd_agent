@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ChevronRight, ExternalLink } from 'lucide-react';
 import { PrdLoader } from '@/components/ui/PrdLoader';
+import { authorizeMcpCall } from '@/services/real/mcpConsole';
+import { toast } from '@/lib/toast';
 import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
 import { safeArtifactHref } from './artifactHref';
@@ -59,6 +61,8 @@ export function McpCallsPanel({
   clients,
   refreshToken = 0,
   initialStatus = '',
+  initialKeyId = '',
+  onAuthorized,
   compact = false,
   onViewAll,
 }: {
@@ -66,13 +70,15 @@ export function McpCallsPanel({
   /** 页面顶部「刷新」每点一次加一。记录列表自己拉自己的数据，不进依赖就永远是旧的。 */
   refreshToken?: number;
   initialStatus?: string;
+  initialKeyId?: string;
+  onAuthorized?: () => void;
   compact?: boolean;
   onViewAll?: () => void;
 }) {
   const [items, setItems] = useState<McpCallLogDto[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [keyId, setKeyId] = useState<string>('');
+  const [keyId, setKeyId] = useState<string>(initialKeyId);
   const [status, setStatus] = useState<string>(initialStatus);
   const [skip, setSkip] = useState(0);
   const limit = compact ? 5 : 50;
@@ -252,6 +258,7 @@ export function McpCallsPanel({
               key={group.id}
               group={group}
               compact={compact}
+              onAuthorized={() => { void load(); onAuthorized?.(); }}
               expanded={expandedId === group.id}
               onToggle={() => setExpandedId(expandedId === group.id ? null : group.id)}
             />
@@ -266,20 +273,26 @@ export function McpCallsPanel({
 function EventRow({
   group,
   compact = false,
+  onAuthorized,
   expanded,
   onToggle,
 }: {
   group: CallGroup;
+  onAuthorized?: () => void;
   compact?: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const [granting, setGranting] = useState(false);
+  const [grantError, setGrantError] = useState<string | null>(null);
   const st = STATUS_STYLE[group.status] ?? STATUS_STYLE.success;
   // pending 不是失败：不整行染色、也不给「下一步」（没什么要他做的，等就完了）
   const bad = group.status === 'error' || group.status === 'denied';
   const href = safeArtifactHref(group.artifact?.url);
   const title = group.first.toolName;
-  const nextStep = NEXT_STEP[group.status];
+  const nextStep = group.last.authorizationScope
+    ? '点击「授权」补充该工具所需权限，然后在客户端重新发起调用。'
+    : NEXT_STEP[group.status];
 
   return (
     <div
@@ -331,7 +344,18 @@ function EventRow({
           <span className="flex items-start gap-1.5 text-[12px] leading-relaxed" style={{ color: st.color }}>
             <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden />
             {group.last.errorMessage || '服务端没有留下可读的原因。'}
+            {group.last.authorizationScope && <button className="mcp-authorize" disabled={granting} title={`为此 Key 增加 ${group.last.authorizationScope}`} onClick={async () => {
+              setGranting(true); setGrantError(null);
+              try {
+                const result = await authorizeMcpCall(group.last.id);
+                if (!result.success) throw new Error(result.error?.message || '授权失败');
+                toast.success('已授权，可在客户端重新发起调用'); onAuthorized?.();
+              } catch (error) { setGrantError(error instanceof Error ? error.message : '授权失败，请重试'); }
+              finally { setGranting(false); }
+            }}>{granting ? '授权中…' : '授权'}</button>}
+
           </span>
+          {grantError && <span role="alert" className="text-[11px]">{grantError}</span>}
           {nextStep && (
             <span className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
               {nextStep}

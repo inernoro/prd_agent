@@ -73,6 +73,8 @@ export interface McpCallArtifactDto {
 }
 
 export interface McpCallLogDto {
+  /** 当前服务端确认可追加的最小工具权限；额度拒绝等情况为空。 */
+  authorizationScope?: string | null;
   id: string;
   keyId: string;
   keyName: string;
@@ -91,7 +93,15 @@ export interface McpCallLogDto {
   createdAt: string;
 }
 
+export interface McpCallTrendDto {
+  sinceUtc: string;
+  untilUtc: string;
+  points: Array<{ hourUtc: string; calls: number }>;
+}
+
 export interface McpConsoleOverviewDto {
+  /** 服务端完整日志聚合；旧服务缺字段时显示不可用，不伪造零值。 */
+  callTrend?: McpCallTrendDto;
   endpointUrl: string;
   /**
    * 这个人**有没有过**任何一次调用 —— 不带时间下界，与下面所有「今天」的数字不同源。
