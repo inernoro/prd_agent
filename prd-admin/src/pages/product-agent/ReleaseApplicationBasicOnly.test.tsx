@@ -125,7 +125,7 @@ describe('正式申领只填写基础信息', () => {
     expect(button('确认并获取正式版本号')?.disabled).toBe(true);
     const noTapd = [...host.querySelectorAll('label')].find((label) => label.textContent?.trim() === '无 TAPD 链接')!.querySelector('input')!;
     expect(noTapd.checked).toBe(false);
-    await change('TAPD 需求名称 *', '需求一');
+    expect(host.textContent).not.toContain('TAPD 需求名称');
     await change('TAPD 链接 *', 'https://www.tapd.cn.example.org/1');
     expect(button('确认并获取正式版本号')?.disabled).toBe(true);
     await change('TAPD 链接 *', 'https://www.tapd.cn/1');
@@ -143,7 +143,7 @@ describe('正式申领只填写基础信息', () => {
     expect(api.createRelease).toHaveBeenCalledWith('app', expect.objectContaining({ ownerId: 'me', teamMemberIds: ['me'], plannedTrainingMinutes: 0 }));
     const request = api.createRelease.mock.calls[0][1];
     expect(request.noTapdLinks).toBe(false);
-    expect(request.tapdLinks.map((link: { title: string }) => link.title)).toEqual(['需求一', '需求二', '需求三']);
+    expect(request.tapdLinks.map((link: { url: string }) => link.url)).toEqual(['https://www.tapd.cn/1', 'https://www.tapd.cn/2', 'https://www.tapd.cn/3']);
     expect(request.initiationId).toBe('source'); expect(request.manualTCode).toBeUndefined();
     expect(request.featureManifest).toBeUndefined(); expect(request.additionalRequirementIds).toBeUndefined();
     expect(onCreated).toHaveBeenCalled();

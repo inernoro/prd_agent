@@ -21,7 +21,7 @@ internal static class ProductVersionCopyTemplate
     public static string Build(ProductRelease item)
     {
         var tapdSources = item.TapdLinks is { Count: > 0 }
-            ? "\n" + string.Join("\n", item.TapdLinks.Select(link => $"【{link.Title}】\n{link.Url}"))
+            ? "\n" + string.Join("\n", item.TapdLinks.Select(link => string.IsNullOrWhiteSpace(link.Title) ? link.Url : $"【{link.Title}】\n{link.Url}"))
             : null;
         var text = VersionRegistrationCopyTemplate.BuildFormal(new VersionRegistration {
         Kind = VersionRegistrationKind.Formal,

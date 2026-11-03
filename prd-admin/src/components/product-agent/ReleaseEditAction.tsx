@@ -4,6 +4,8 @@ import { Button } from '@/components/design/Button';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { updateRelease, type ReleaseBasicUpdate } from '@/services/real/productAgent';
 import type { ProductRelease } from '@/pages/product-agent/types';
+import { ReleaseTapdFields } from '@/pages/product-agent/ReleaseTapdFields';
+import { invalidReleaseTapdLinks } from '@/pages/product-agent/releaseTapdLinks';
 
 type Props = { release: ProductRelease; userNames?: ReadonlyMap<string, string>; onSaved: (release: ProductRelease) => void | Promise<void> };
 const TEXT_FIELDS = [
@@ -32,6 +34,11 @@ function ReleaseEditor({ release, userNames, onSaved, onClose }: Props & { onClo
     isGlobalOpen: release.isGlobalOpen == null ? '' : release.isGlobalOpen ? 'yes' : 'no',
   };
   const [draft, setDraft] = useState(initial);
+  const storedTapdLinks = release.tapdLinks?.length ? release.tapdLinks : [{ title: '', url: '' }];
+  const [tapdLinks, setTapdLinks] = useState(storedTapdLinks);
+  const [noTapdLinks, setNoTapdLinks] = useState(release.noTapdLinks === true);
+  const tapdChanged = noTapdLinks !== (release.noTapdLinks === true)
+    || (!noTapdLinks && JSON.stringify(tapdLinks) !== JSON.stringify(storedTapdLinks));
   const [teamIds, setTeamIds] = useState(release.teamMemberIds);
   const [names, setNames] = useState(() => new Map(userNames));
   const [busy, setBusy] = useState(false);
@@ -39,11 +46,19 @@ function ReleaseEditor({ release, userNames, onSaved, onClose }: Props & { onClo
   const submitting = useRef(false);
   const change = (key: keyof typeof draft, value: string) => setDraft((previous) => ({ ...previous, [key]: value }));
   const dirty = Object.keys(initial).some((key) => draft[key as keyof typeof draft] !== initial[key as keyof typeof initial])
-    || JSON.stringify(teamIds) !== JSON.stringify(release.teamMemberIds);
+    || tapdChanged || JSON.stringify(teamIds) !== JSON.stringify(release.teamMemberIds);
   const save = async () => {
     if (submitting.current || !dirty) return;
     if (!draft.planName.trim()) { setError('方案名称不能为空。'); return; }
     const body: ReleaseBasicUpdate = { expectedUpdatedAt: release.updatedAt };
+    if (tapdChanged) {
+      if (invalidReleaseTapdLinks(noTapdLinks, tapdLinks)) {
+        setError('请填写有效的 TAPD 链接，或勾选「无 TAPD 链接」。');
+        return;
+      }
+      body.noTapdLinks = noTapdLinks;
+      body.tapdLinks = noTapdLinks ? [] : tapdLinks.map(({ title, url }) => ({ title: title.trim(), url: url.trim() }));
+    }
     for (const key of ['planName', 'ownerId', 'demandSource', 'departmentName', 'planUrl', 'contractParty', 'openBrandScope', 'requirementDescription', 'remark'] as const)
       if (draft[key] !== initial[key]) body[key] = draft[key].trim();
     if (body.ownerId === '') { setError('请选择有效的产品负责人。'); return; }
@@ -92,6 +107,9 @@ function ReleaseEditor({ release, userNames, onSaved, onClose }: Props & { onClo
         <UserSearchSelect value="" onChange={(id) => { if (id) setTeamIds((previous) => [...new Set([...previous, id])]); }} onSelectUser={(user) => setNames((previous) => new Map(previous).set(user.userId, user.displayName || user.username))} placeholder="添加项目组成员" />
       </div>
       {(['requirementDescription', 'remark'] as const).map((key) => <label key={key} className="space-y-1 text-xs text-token-secondary sm:col-span-2">{key === 'remark' ? '备注' : '项目需求描述'}<textarea rows={2} value={draft[key]} onChange={(event) => change(key, event.target.value)} className={inputClass} /></label>)}
+      <div className="sm:col-span-2">
+        <ReleaseTapdFields noLinks={noTapdLinks} links={tapdLinks} onNoLinksChange={setNoTapdLinks} onLinksChange={setTapdLinks} disabled={busy} />
+      </div>
       {error && <p role="alert" className="text-sm text-token-secondary sm:col-span-2">{error}</p>}
     </fieldset>}
     actions={<><Button size="sm" disabled={busy} onClick={onClose}>取消</Button><Button size="sm" disabled={busy || !dirty} onClick={() => void save()}>{busy ? '正在保存…' : '保存修改'}</Button></>} />;

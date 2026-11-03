@@ -23,7 +23,7 @@ public class ProductVersionClaimGuardTests
     [Theory]
     [InlineData("missing")]
     [InlineData("invalid")]
-    [InlineData("missing-name")]
+    [InlineData("links-only")]
     [InlineData("none")]
     [InlineData("links")]
     public async Task FormalReleaseRequiresTapdUnlessExplicitlyAbsent(string scenario)
@@ -32,16 +32,16 @@ public class ProductVersionClaimGuardTests
         await SeedWorkflowNumberingAsync(fixture);
         var request = NumberingReleaseRequest();
         request.NoTapdLinks = scenario == "none";
-        if (scenario is "invalid" or "missing-name" or "links")
+        if (scenario is "invalid" or "links-only" or "links")
         {
             request.TapdLinks = new()
             {
-                new() { Title = scenario == "missing-name" ? "" : " 需求一 ", Url = scenario == "invalid" ? "https://tapd.cn.example.org/1" : "https://www.tapd.cn/1" },
-                new() { Title = "需求二", Url = "https://www.tapd.cn/2" },
+                new() { Title = scenario == "links-only" ? "" : " 需求一 ", Url = scenario == "invalid" ? "https://tapd.cn.example.org/1" : "https://www.tapd.cn/1" },
+                new() { Title = scenario == "links-only" ? "" : "需求二", Url = "https://www.tapd.cn/2" },
             };
         }
         var result = await fixture.Controller().CreateRelease("product", request);
-        if (scenario is "missing" or "invalid" or "missing-name")
+        if (scenario is "missing" or "invalid")
         {
             var response = Assert.IsType<ApiResponse<object>>(Assert.IsType<BadRequestObjectResult>(result).Value);
             Assert.Contains("TAPD", response.Error!.Message);
@@ -54,11 +54,47 @@ public class ProductVersionClaimGuardTests
         var saved = await fixture.Db.ProductReleases.Find(x => x.InitiationId == request.InitiationId).SingleAsync();
         Assert.Equal(scenario == "none", saved.NoTapdLinks);
         if (scenario == "none") Assert.Empty(saved.TapdLinks);
+        else if (scenario == "links-only")
+        {
+            Assert.All(saved.TapdLinks, link => Assert.Empty(link.Title));
+            Assert.Contains("需求来源：\nhttps://www.tapd.cn/1\nhttps://www.tapd.cn/2", ProductVersionCopyTemplate.Build(saved));
+        }
         else
         {
             Assert.Equal(new[] { "需求一", "需求二" }, saved.TapdLinks.Select(link => link.Title));
             Assert.Contains("需求来源：\n【需求一】\nhttps://www.tapd.cn/1\n【需求二】\nhttps://www.tapd.cn/2", ProductVersionCopyTemplate.Build(saved));
         }
+    }
+
+    [Fact]
+    public async Task HistoricalFormalVersionAcceptsTapdLinksWithoutNames()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var controller = fixture.Controller();
+        const string id = "numbering-v-base";
+        await fixture.Db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductRelease>.Update.Set(x => x.CreatedBy, "me"));
+        var before = await fixture.Db.ProductReleases.Find(x => x.Id == id).SingleAsync();
+        var update = new UpdateProductReleaseRequest
+        {
+            ExpectedUpdatedAt = before.UpdatedAt,
+            TapdLinks = new() { new() { Url = "https://example.org/1" } },
+        };
+        Assert.IsType<BadRequestObjectResult>(await controller.UpdateRelease(id, update));
+        update.TapdLinks = new() { new() { Url = "https://www.tapd.cn/1" } };
+        Assert.IsType<OkObjectResult>(await controller.UpdateRelease(id, update));
+        var saved = await fixture.Db.ProductReleases.Find(x => x.Id == id).SingleAsync();
+        Assert.Equal("https://www.tapd.cn/1", Assert.Single(saved.TapdLinks).Url);
+        Assert.Equal(before.VCode, saved.VCode);
+        Assert.False(saved.NoTapdLinks);
+        Assert.IsType<OkObjectResult>(await controller.UpdateRelease(id, new()
+        {
+            ExpectedUpdatedAt = saved.UpdatedAt, NoTapdLinks = true,
+        }));
+        var cleared = await fixture.Db.ProductReleases.Find(x => x.Id == id).SingleAsync();
+        Assert.True(cleared.NoTapdLinks);
+        Assert.Empty(cleared.TapdLinks);
     }
 
     [Fact]

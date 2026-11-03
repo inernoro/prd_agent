@@ -27,6 +27,28 @@ beforeEach(() => { vi.clearAllMocks(); host = document.createElement('div'); doc
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
 describe('正式版本资料编辑', () => {
+  it('历史记录可补填 TAPD 链接并保存，无需填写名称', async () => {
+    await mount(); await click('编辑');
+    expect(host.textContent).not.toContain('TAPD 需求名称');
+    expect(host.querySelector<HTMLInputElement>('input[type=url]')?.value).toBe('');
+    await change('TAPD 链接', 'https://www.tapd.cn/1');
+    await click('保存修改');
+    expect(api.updateRelease).toHaveBeenCalledWith('v', {
+      expectedUpdatedAt: release.updatedAt, noTapdLinks: false,
+      tapdLinks: [{ title: '', url: 'https://www.tapd.cn/1' }],
+    });
+  });
+  it('已保存的 TAPD 链接会回填，可显式改为无链接', async () => {
+    await mount({ ...release, tapdLinks: [{ title: '旧名称', url: 'https://www.tapd.cn/2' }] });
+    await click('编辑');
+    expect(host.querySelector<HTMLInputElement>('input[type=url]')?.value).toBe('https://www.tapd.cn/2');
+    const checkbox = host.querySelector<HTMLInputElement>('input[type=checkbox]')!;
+    await act(async () => checkbox.click());
+    await click('保存修改');
+    expect(api.updateRelease).toHaveBeenCalledWith('v', {
+      expectedUpdatedAt: release.updatedAt, noTapdLinks: true, tapdLinks: [],
+    });
+  });
   it('立即回填当前V资料，取消不保存、不触发行跳转', async () => {
     await mount(); await click('编辑');
     expect(host.querySelector('[role=dialog] h3')?.textContent).toBe('编辑正式版本资料');

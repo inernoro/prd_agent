@@ -298,6 +298,8 @@ export function getRelease(id: string) {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}`);
 }
 export type ReleaseBasicUpdate = {
+  noTapdLinks?: boolean;
+  tapdLinks?: Array<{ title: string; url: string }>;
   expectedUpdatedAt: string;
   planName?: string;
   ownerId?: string;

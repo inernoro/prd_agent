@@ -51,9 +51,23 @@ public partial class ProductAgentController
             && !(request.PlannedTrainingMinutes ?? item.PlannedTrainingMinutes).HasValue)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "全域开放请填写预计培训时长。"));
 
+        List<ProductReleaseTapdLink>? tapdLinks = null;
+        var noTapdLinks = request.NoTapdLinks == true;
+        if (request.NoTapdLinks.HasValue || request.TapdLinks != null)
+        {
+            var tapdError = NormalizeReleaseTapdLinks(noTapdLinks, request.TapdLinks, out tapdLinks);
+            if (tapdError != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, tapdError));
+        }
+
         // 只更新资料白名单；编号、应用、来源T、状态和通知队列均不参与更新。
         var updates = new List<UpdateDefinition<ProductRelease>> { Builders<ProductRelease>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow) };
         var update = Builders<ProductRelease>.Update;
+        if (tapdLinks != null)
+        {
+            updates.Add(update.Set(x => x.NoTapdLinks, (bool?)noTapdLinks));
+            updates.Add(update.Set(x => x.TapdLinks, tapdLinks));
+        }
         if (request.PlanName != null) updates.Add(update.Set(x => x.PlanName, request.PlanName.Trim()));
         if (request.DemandSource != null) updates.Add(update.Set(x => x.DemandSource, request.DemandSource.Trim()));
         if (request.DepartmentName != null) updates.Add(update.Set(x => x.DepartmentName, request.DepartmentName.Trim()));
@@ -88,11 +102,36 @@ public partial class ProductAgentController
         await ProductReleaseDeletion.AnnotateAsync(_db, new[] { result }, userId);
         return Ok(ApiResponse<object>.Ok(result));
     }
+
+    private static string? NormalizeReleaseTapdLinks(bool noLinks, List<ProductReleaseTapdLink?>? input, out List<ProductReleaseTapdLink> links)
+    {
+        links = new();
+        if (noLinks) return null;
+        if (input is not { Count: > 0 })
+            return "请填写 TAPD 链接，或勾选「无 TAPD 链接」。";
+
+        foreach (var link in input)
+        {
+            var title = link?.Title?.Trim() ?? string.Empty;
+            var url = link?.Url?.Trim();
+            if (title.Any(char.IsControl) || string.IsNullOrWhiteSpace(url)
+                || url.Any(char.IsWhiteSpace) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
+                || !string.IsNullOrEmpty(uri.UserInfo)
+                || (uri.Host != "tapd.cn" && !uri.Host.EndsWith(".tapd.cn", StringComparison.OrdinalIgnoreCase)))
+                return "每条链接都必须是有效的 TAPD 链接。";
+            links.Add(new ProductReleaseTapdLink { Title = title, Url = url });
+        }
+        links = links.DistinctBy(link => link.Url).ToList();
+        return null;
+    }
 }
 
 public sealed class UpdateProductReleaseRequest
 {
     public DateTime? ExpectedUpdatedAt { get; set; }
+    public bool? NoTapdLinks { get; set; }
+    public List<ProductReleaseTapdLink?>? TapdLinks { get; set; }
     public string? PlanName { get; set; }
     public string? OwnerId { get; set; }
     public List<string>? TeamMemberIds { get; set; }
