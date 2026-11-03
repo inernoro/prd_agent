@@ -56,6 +56,15 @@ describe('源文件形态判定', () => {
     expect(plan.reason).toContain('视频');
   });
 
+  it('图片包装站没有原图下载地址时说明边界，不能显示内部类型名', () => {
+    const plan = planSourceDownload({ title: '产品照片', wrappedAssetType: 'image', fileCount: 2 });
+    expect(plan.kind).toBe('unavailable');
+    if (plan.kind !== 'unavailable') throw new Error('unreachable');
+    expect(plan.reason).toContain('图片');
+    expect(plan.reason).not.toContain('image');
+    expect(plan.reason).toContain('原始文件');
+  });
+
   /**
    * 入口文件**自己**就超过离线打包上限的，内嵌之后只会更大，按下去必然失败——按之前就说清并给替代路径。
    */

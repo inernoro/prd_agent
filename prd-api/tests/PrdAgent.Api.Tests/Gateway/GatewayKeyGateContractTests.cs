@@ -3265,6 +3265,7 @@ public class GatewayKeyGateContractTests
             var resolveResponse = await app.GetTestClient().SendAsync(resolve);
 
             resolveResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await resolveResponse.Content.ReadFromJsonAsync<GatewayModelResolution>())!.Success.ShouldBeTrue();
             authorizer.SourceSystem.ShouldBe("external");
             gateway.LastResolveTenantId.ShouldBe("tenant-test");
 
@@ -5131,6 +5132,17 @@ public class GatewayKeyGateContractTests
         }
 
         public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null, string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+        {
+            LastResolveTenantId = _contextAccessor?.Current?.TenantId;
+            LastResolveExpectedModel = expectedModel;
+            LastResolvePinnedPlatformId = pinnedPlatformId;
+            LastResolvePinnedModelId = pinnedModelId;
+            return Task.FromResult(Resolve(expectedModel));
+        }
+
+        public Task<GatewayModelResolution> ResolveModelMetadataAsync(
+            string appCallerCode, string modelType, string? expectedModel = null,
+            string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
         {
             LastResolveTenantId = _contextAccessor?.Current?.TenantId;
             LastResolveExpectedModel = expectedModel;

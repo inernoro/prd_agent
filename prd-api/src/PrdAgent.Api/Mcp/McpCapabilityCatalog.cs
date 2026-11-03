@@ -109,7 +109,7 @@ public static class McpCapabilityCatalog
         {
             Key = "web",
             Title = "网页托管",
-            Summary = "智能体写完一页 HTML 直接托管，回给你一条能点开的地址。",
+            Summary = "托管 HTML、原始 ZIP 和图片，更新原站，并按你的明确要求设置分享范围和永久有效。",
             ReadScope = ScopeWebPagesRead,
             WriteScope = ScopeWebPagesWrite,
             WriteNeedsApproval = true,
@@ -133,7 +133,7 @@ public static class McpCapabilityCatalog
             // 「勾了也多不出任何工具」的空头 scope，卡片文案还写着「能把技能包发上去」。
             // 那个 scope 本身仍然有效（市场上传 REST 接口在用），只是不该出现在接入台的向导里。
             Title = "海鲜市场",
-            Summary = "去技能市场找技能、把技能取到自己名下。上传技能包要传 zip，MCP 传不了二进制，这一期只能在网页里发。",
+            Summary = "去技能市场找技能、下载并安装技能包；市场上传尚未开放为 MCP 工具，可从网页入口发布。",
             ReadScope = ScopeMarketplaceRead,
             WriteScope = null,
             WriteNeedsApproval = false,

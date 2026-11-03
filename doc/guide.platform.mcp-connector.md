@@ -1,127 +1,68 @@
-# MAP MCP 连接器接入 · 指南
+# MAP 智能体连接器 · 指南
 
-> **版本**：v1.1 | **日期**：2026-09-23 | **状态**：已落地
+> **版本**：v2.0 | **日期**：2026-11-03 | **状态**：已落地
 
-**一句话**：把本平台接入外部智能体，用按能力授权的密钥完成资料检索、文学图文创作和私有归档。
-**谁该读**：要在外部智能体里用本平台能力的人。
-**读完能做什么**：三步接入并用命令行验证工具确实可调。
+**一句话**：从智能体接入台取得客户端配置与配套技能，连接后以实际工具调用核验，再按需要原样上传网站和管理分享。
+**谁该读**：使用 Codex、WorkBuddy 或 Claude 接入 MAP 的用户，以及帮助团队配置接入的人。
+**读完能做什么**：找到接入入口，安装和更新技能，区分当前授权、实际连接、站点可见性和分享范围。
 
----
+## 接入入口
 
-## 这是什么
+登录 MAP，在账号菜单打开“智能体接入台”，也可从百宝箱进入。手机端打开导航菜单后选择同名入口。
 
-MAP 现在是一个 **MCP（Model Context Protocol）连接器**——和 GitHub、Slack 在 Claude / Codex 里一样，填一个网址 + 一把密钥，Claude / Codex 就能直接调用 MAP 的开放能力（搜索海鲜市场技能、读知识库等）。
+点击“接入新的”，选择客户端并命名；默认 Codex，其次 WorkBuddy，Claude 的原有方式保留。生成后密钥只显示一次，保存接入配置；不要把它提交到版本库、截图或发给他人。
 
-底层不是新业务，是给已有开放接口加了一层 MCP 协议适配：远程 `/api/mcp` 端点把 MAP 的开放接口「翻译」成 MCP 工具，`tools/call` 回环转发到真实接口。鉴权、权限全部复用 `sk-ak` AgentApiKey + scope。
+| 客户端 | 连接配置怎么使用 | 技能怎么安装 |
+|---|---|---|
+| Codex | 按接入台说明合并到受信任项目的客户端配置，保留其它连接 | 复制安装指令，在当前项目安装；显式客户端参数会确保创建其可发现的项目技能目录 |
+| WorkBuddy | 从自定义连接器进入 MCP 配置，合并接入台生成的配置并启用 | 下载 WorkBuddy 专用技能 ZIP，通过“添加技能”的上传入口导入 |
+| Claude Code | 执行接入台生成的连接命令 | 复制对应安装指令，安装到项目已有宿主目录 |
+| Claude 桌面 | 在支持远程 HTTP MCP 的客户端中按其配置入口操作 | 使用客户端支持的技能导入方式；以当前版本的官方能力为准 |
 
-| 维度 | 值 |
-|------|-----|
-| 端点 | `https://<你的域名>/api/mcp` |
-| 传输 | Streamable HTTP（JSON-RPC 2.0） |
-| 鉴权 | `Authorization: Bearer sk-ak-...` |
-| 设计 / 债务 | [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) / [doc/debt.platform.md](./debt.platform.md) |
+完整接入提示词包含连接、技能下载、安装、版本检查与工具调用自检。仅复制配置也可以，但仍需安装技能才能获得完整操作流程。
 
-## 三步接入
+授权自检只证明服务端允许这把密钥看到哪些工具，不代表客户端已经连接。必须在客户端列出工具，并调用一条只读工具，收到实际结果后才算连通。
 
-### 第 1 步：生成 sk-ak 密钥
+## 技能下载和版本更新
 
-登录 MAP → 百宝箱 → 智能体接入 → 连接新客户端，按需勾选能力；也可从海鲜市场右上角「接入 AI」创建市场专用密钥：
-- `marketplace.skills:read` —— 用海鲜市场工具
-- `document-store:read` —— 用知识库工具
-- `literary-agent:use` —— 建稿、改稿、文学配图及私有文件夹归档
+接入台常驻“MAP 配套技能”区域，已有连接也能下载技能、复制安装、版本检查和更新指令，无需重新签发密钥。
 
-明文密钥只显示一次，复制好。
+网页显示的是服务发布版本，无法读取电脑中的已装版本。Codex 的项目安装器会报告本地版本、线上版本和本地修改；更新前校验包摘要，本地改动或未知同名目录会阻止覆盖，失败时保留原安装。不要通过删除本地文件绕过冲突。
 
-### 第 2 步：在 Claude / Codex 里加连接器
+WorkBuddy 使用专用 ZIP 导入包。检查已导入技能详情中的版本，再下载新版、保留本地修改并重新导入；重载技能或新开对话后实际调用。项目安装器不能代替 WorkBuddy 的导入操作。
 
-- **Claude（自定义连接器 / Desktop 新版）**：添加远程 MCP server → URL 填 `https://<域名>/api/mcp` → 认证方式选 Bearer / 自定义 Header，值填 `Bearer sk-ak-...`
-- **Codex（`config.toml`）**：配 HTTP transport 的 MCP server，headers 带 `Authorization = "Bearer sk-ak-..."`
+下载技能无需业务密钥。公开技能包不包含账号凭据，同一技能正文按客户端适配交付。客户端配置、下载源和摘要应来自当前接入台；不要照搬其它部署的地址。
 
-### 第 3 步：用
+## 网站原样上传与更新
 
-对 Claude 说「搜一下海鲜市场关于 X 的技能」或「列一下我的知识库 / 读某篇文档」，它会自动调对应工具。
+用户提供多页面 ZIP 时，按当前工具清单取得文件上传指引，用返回的短期凭证上传原文件。保留目录、HTML、脚本、样式、图片和相对链接，不把它改造成单页 HTML 作为替代。
 
-## 常用读取工具
+更新既有网站时，先读取站点，再为这个站点取得重传入口。完成后站点标识应保持不变，并检查入口、子页面跳转、图片和一项脚本交互。
 
-完整工具清单以接入台和当前密钥实际能看到的列表为准，不是固定五项。
+独立图片与网站内的图片资源是不同用途；支持格式、容量、上传状态和失败原因以当前服务返回为准。MCP 原文件直传上限为 29 MiB，为代理的请求上限预留表单空间；解包容量与直传容量分别返回。更大的文件使用网页托管的分片上传。图片托管不代表新增了图片内容问答能力。
 
-| 工具 | 作用 | 所需 scope |
-|------|------|-----------|
-| `marketplace_search_skills` | 搜海鲜市场技能（关键词 / 标签 / 热度 / 最新） | marketplace.skills:read |
-| `marketplace_get_skill` | 按 id 取技能详情 | marketplace.skills:read |
-| `knowledge_base_list_stores` | 列我自己 + 团队共享的知识库 | document-store:read |
-| `knowledge_base_list_entries` | 列某知识库下的文档条目（扁平含嵌套） | document-store:read |
-| `knowledge_base_read_entry` | 读某文档条目正文 | document-store:read |
+## 公开与永久分享
 
-> `document-store:write` 隐含 read；持写 scope 的密钥也能用知识库读工具。
+站点可见性与分享链接的访问范围、有效期分别管理。已生成站点地址不代表已经公开，已生成分享也不代表永久。
 
-## 快速验证（curl）
+在用户明确要求公开后，按工具说明设置公开并创建分享。若服务提示引用了私有资料，应先展示来源，取得明确选择后提交对应确认，不能跳过核查。
 
-```bash
-KEY="sk-ak-你的密钥"
-URL="https://<域名>/api/mcp"
-
-# 列当前密钥有权使用的工具
-curl -s "$URL" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | python3 -m json.tool
-
-# 调海鲜市场搜索
-curl -s "$URL" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"marketplace_search_skills","arguments":{"sort":"hot","limit":3}}}' | python3 -m json.tool
-
-# 列我的知识库
-curl -s "$URL" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"knowledge_base_list_stores","arguments":{}}}' | python3 -m json.tool
-```
-
-## 从文章到配图与私有文件夹
-
-1. 让智能体先写文章，并明确哪些段落需要什么画面。建稿时把整篇放进带配图标记的正文，每个标记独占一行写成 `[插图]: 画面描述`（全角冒号、`【插图】` 也认），单篇 1-20 个；描述不能为空。可以同时指定文件夹；不给标题时取正文第一行。
-2. 建稿回执里直接带配图方案版本和每个标记的序号，不必再读一遍。同一个幂等键只对应一篇：内容不同会被拒绝，而不是把上一篇当作新建结果返回。
-3. 用户点名风格或水印（例如「全域粉销风格」「水印配置1」）时，智能体先查一次本账号可选的风格、水印和尺寸，再在生图时按名称或 ID 传入；传 none 表示不用。指定过一次后，这篇文章会记住：之后「重画一张」「按新稿重新配」不再提风格水印，也沿用上次那套；从没指定过才用账号当前启用的那套。回执会写明这次实际套用了哪一套、来源是本次指定、沿用上次还是账号默认。在网页编辑页重画也按这篇文章记住的那套来，顶栏的风格、水印显示「本文 · 名称」，在那里改就是改这篇文章的选择。
-4. 生图可一次提交多个标记，每个标记在服务端各跑一个任务，关掉客户端也不会断。之后读工作区就能一次看到全部标记的状态和图片地址；重试同一次请求不会重复生成。
-5. 改稿后要重新配图，先用 `format=marked` 读回带标记的整篇（标记里是当前描述，含用户在网页上改过的），改完原样写回即可：描述没变的标记直接沿用原图，回执的 `needsGeneration` 列出真正要重画的标记，只给它们提交生图；旧版本的图不会被删除，只是不再挂在正文上。完成后读取图文 Markdown，或从「文学创作」打开原工作区查看；页面头部「历史配图」能看到这篇文章生成过的全部图（含智能体生成的、改稿前的）。
-6. 只想换一张图的画面描述，不必整篇重写：用「改单张描述」工具，带上读稿时的版本令牌；用户在网页上刚改过就会被拒，重读后再改。改完再对这一张生图。
-7. 用户想要回以前的某张图：先列出这篇文章的历史配图拿到图片编号，再「放回」到指定位置，不重新生成、不消耗额度，换下的那张也留在历史里。网页「历史配图」里每张旧图同样有「放回」按钮，并标出它什么时候、因为什么被换下。每次换稿前正文挂着的那组图会被存档：用户说「恢复成上传前用的」，智能体直接取最近一组；带标记写回时描述对得上的会自动沿用，不必逐张放回。
-8. 移动到文件夹会连文章和配图一起归档，不会额外建空白文章，也不等于公开发布。
-
-文件夹是文章分组，页面的「新建文件夹和文章」会明确说明同时创建文章。MCP 不负责外部社交平台投稿或客户端本地目录写入。
-
-## 共享其他 Agent / appName 的功能（动态工具）
-
-任何 Agent 的开放接口都能挂上 MCP，**零代码**——平台管理员登记一条 `AgentOpenEndpoint`：
-
-```
-POST /api/admin/agent-open-endpoints
-{ "agentKey":"report-agent", "path":"/api/report/weekly/generate",
-  "httpMethod":"POST", "requiredScopes":["agent.report-agent:call"],
-  "requestExampleJson":"{...}" }
-```
-
-登记后 `tools/list` 自动多一个工具 `report-agent__call__<id>`；用户的 sk-ak 带上 `agent.report-agent:call` scope，该工具就出现在他的 Claude / Codex 里，`tools/call` 回环到真实接口。
-
-> **关键约束**：被登记的目标接口必须对 sk-ak 友好——`[Authorize(AuthenticationSchemes="ApiKey")] + [RequireScope("agent.{key}:{action}")] + 读 boundUserId`。
-> 不要登记走 `GetRequiredUserId()`（只读 sub）且在 `PublicRoutes` 豁免的接口（如 document-store 的 stores/entries 业务路由），那样 sk-ak 回环会 401（参见知识库为何另建 `/api/open/document-store`）。
-
-## AI / 自动化无人值守签发（规划中）
-
-理想情况下，带 `AiAccessKey` 全局超级密钥的自动化应能代用户签发 scoped sk-ak、端到端验证开放接口，无需人工进 UI。
-
-> **当前状态**：曾试过在 `AgentApiKeysController` 同时挂 `Bearer,AiAccessKey` 双方案，但「同请求同时带 JWT + 全局 key」时 `FindFirst(sub)` 会选错用户（Bugbot Medium）。已撤回。
-> **正确做法**（见 [debt.platform.md](./debt.platform.md)）：单独建一个**只接受 `AiAccessKey` 方案**的专用签发端点（单身份、无歧义），而不是给用户自助管理端点叠加全局密钥。`AiAccessKey` 鉴权器本身（`X-AI-Access-Key` + `X-AI-Impersonate`）是既有设计，不动。
+用户要求公开永久时，要读回确认分享范围为匿名公开、到期时间为空，并以未登录浏览器打开实际返回的分享链接。需要收回时撤销指定分享，再验证旧链接不能访问；撤销分享不会删除站点。
 
 ## 排障
 
-| 现象 | 原因 / 处理 |
-|------|-----------|
-| `POST /api/mcp` 返回 200 html | 端点必须在 `/api/` 前缀下（反代只把 `/api/*` 转后端）；确认是 `/api/mcp` 不是 `/mcp` |
-| 401 UNAUTHORIZED | 密钥无效 / 过期 / 被撤销，或没带 `Authorization: Bearer` |
-| `tools/list` 返回空 | 密钥 scope 不覆盖任何工具；补 `marketplace.skills:read` / `document-store:read` |
-| 某工具 `isError:true` 401 | 目标开放接口对 sk-ak 不友好（见上「关键约束」） |
-| 下载链接是 localhost | 回环未转发 host 头（已修：转发 `X-Forwarded-Host/Proto`） |
+| 看到的情况 | 如何处理 |
+|---|---|
+| 客户端连上但无工具 | 检查这把密钥的授权范围与账号现有权限，并重新执行只读自检 |
+| 技能文件已下载但无法调用 | 检查客户端可发现的位置或是否完成导入，再重载技能 |
+| 网页版本新，本机还是旧版本 | 执行本机版本检查或查看 WorkBuddy 的已装技能详情，不能以网页版本代替 |
+| 文件上传被拒或短期凭证失效 | 重新获取指定操作的上传指引，核对大小、格式、原密钥是否仍有效 |
+| 当前工具不支持某操作 | 说明当前 MCP 未开放哪一步，回到 MAP 网页入口；不要断言整个平台不支持 |
+| 分享链接需要登录或有到期时间 | 读回真实分享设置，按用户要求修改并重新验证 |
 
-## 相关
+## 参考
 
-- [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) —— 设计与实施
-- [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— AgentApiKey + AgentOpenEndpoint 上游设计
-- `.claude/rules/no-rootless-tree.md` —— 借用法则（连接器借现成桩，不重建）
+- [能力对照表与实施看板](./plan.platform.mcp-capability-completion.md)
+- [OpenAI MCP 文档](https://developers.openai.com/codex/mcp)
+- [WorkBuddy 连接器规范](https://open.workbuddy.cn/docs/connector)
+- [WorkBuddy 技能规范](https://open.workbuddy.cn/docs/skill)

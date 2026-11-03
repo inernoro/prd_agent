@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services.Mcp;
@@ -20,6 +21,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
     private readonly IConfiguration _configuration;
     private readonly IAdminPermissionService _permissionService;
     private readonly McpLoopbackSignal _mcpLoopback;
+    private readonly IDataProtectionProvider? _uploadProtection;
 
     public ApiKeyAuthenticationHandler(
         IOptionsMonitor<ApiKeyAuthenticationOptions> options,
@@ -29,7 +31,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         IAgentApiKeyService agentApiKeyService,
         IConfiguration configuration,
         IAdminPermissionService permissionService,
-        McpLoopbackSignal mcpLoopback)
+        McpLoopbackSignal mcpLoopback,
+        IDataProtectionProvider? uploadProtection = null)
         : base(options, logger, encoder)
     {
         _openPlatformService = openPlatformService;
@@ -37,6 +40,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         _configuration = configuration;
         _permissionService = permissionService;
         _mcpLoopback = mcpLoopback;
+        _uploadProtection = uploadProtection;
     }
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -70,6 +74,20 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         else
         {
             apiKey = authHeaderValue.Trim();
+        }
+
+        // 文件上传凭证只有十分钟且绑定具体上传路径；解包后仍走下面的密钥查找、撤销和当前权限核验。
+        // 原始 key 与短期凭证都不写日志、不改写请求头，调用审计仍关联原 agentApiKeyId。
+        var isUploadTicket = apiKey.StartsWith(McpHostedSiteUploadTicket.Prefix, StringComparison.Ordinal);
+        if (isUploadTicket)
+        {
+            if (_uploadProtection == null || !McpHostedSiteUploadTicket.TryRead(
+                    _uploadProtection, apiKey, requestMethod, requestPath ?? string.Empty, out var delegatedKey))
+            {
+                AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.UploadCredentialInvalid);
+                return AuthenticateResult.Fail("上传凭证已失效或不适用于此操作，请重新获取上传凭证");
+            }
+            apiKey = delegatedKey;
         }
 
         // 如果不是 sk- 开头的 API Key，静默跳过让其他认证方案处理（如 JWT）
@@ -107,7 +125,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             if (lookup == null)
             {
                 Logger.LogWarning("[401] AgentApiKey 无效/过期/已撤销 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
-                    requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
+                    requestPath, requestMethod, clientIp, isUploadTicket ? "<upload-credential>" : apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
                 AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AgentKeyInvalid);
                 return AuthenticateResult.Fail("Invalid, expired or revoked AgentApiKey");
             }
@@ -197,7 +215,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         if (app == null)
         {
             Logger.LogWarning("[401] API Key无效或未激活 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
-                requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
+                requestPath, requestMethod, clientIp, isUploadTicket ? "<upload-credential>" : apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
             AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.OpenPlatformKeyInvalid);
             return AuthenticateResult.Fail("Invalid or inactive API Key");
         }
