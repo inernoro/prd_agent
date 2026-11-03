@@ -839,6 +839,88 @@ public class VideoSceneConcurrencyTests
         authorityCancellationObserved.ShouldBeTrue();
     }
 
+    [Theory]
+    [InlineData(0.43)]
+    [InlineData(null)]
+    public async Task CancelledDirectJob_ShouldPollUpstreamUntilTerminalAndPreserveUnknownCost(double? finalCost)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("direct-cancel-reconcile", test.OwnerId);
+        run.Status = VideoGenRunStatus.Rendering;
+        run.Mode = VideoGenMode.Direct;
+        run.DirectVideoJobId = "cancelled-direct-upstream";
+        run.WorkerLeaseId = "worker:direct-cancel";
+        run.CancelRequested = true;
+        await test.SaveRunAsync(run);
+        var calls = 0;
+        test.VideoClient.Setup(client => client.GetStatusAsync(
+                It.IsAny<string>(), run.DirectVideoJobId, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                var pending = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+                pending.Status.ShouldBe(VideoGenRunStatus.Rendering);
+                pending.EndedAt.ShouldBeNull();
+                return ++calls == 1
+                    ? new OpenRouterVideoStatus { Status = "in_progress" }
+                    : new OpenRouterVideoStatus { Status = "completed", Cost = finalCost, VideoUrl = "https://example.invalid/cancelled.mp4" };
+            });
+        var worker = test.CreateWorker();
+        worker.DirectVideoPollInterval = TimeSpan.FromMilliseconds(1);
+        await worker.ProcessDirectVideoGenAsync(run, CancellationToken.None);
+        calls.ShouldBe(2);
+        var reconciled = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        reconciled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        reconciled.DirectVideoUpstreamStatus.ShouldBe("completed");
+        reconciled.DirectVideoReconciledAt.ShouldNotBeNull();
+        reconciled.DirectVideoCost.ShouldBe(finalCost);
+        reconciled.VideoAssetUrl.ShouldBeNull();
+        test.VideoClient.Verify(client => client.SubmitAsync(It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        test.VideoClient.Verify(client => client.DownloadVideoBytesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CancelledQueuedDirectJob_ShouldRemainResumableForUpstreamReconciliation()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("direct-cancel-resume", test.OwnerId);
+        run.Status = VideoGenRunStatus.Queued;
+        run.Mode = VideoGenMode.Direct;
+        run.DirectVideoJobId = "resumable-direct-upstream";
+        await test.SaveRunAsync(run);
+        (await test.CreateService().CancelRunAsync(run.Id, run.OwnerAdminId, run.AppKey)).ShouldBeTrue();
+        var pending = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        pending.Status.ShouldBe(VideoGenRunStatus.Queued);
+        pending.CancelRequested.ShouldBeTrue();
+        pending.EndedAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task CancelledDirectJob_PollingWindowExpiryShouldReleaseForReconciliationNotFakeTerminal()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("direct-cancel-window", test.OwnerId);
+        run.Status = VideoGenRunStatus.Rendering;
+        run.Mode = VideoGenMode.Direct;
+        run.DirectVideoJobId = "pending-direct-upstream";
+        run.WorkerLeaseId = "worker:direct-window";
+        run.CancelRequested = true;
+        await test.SaveRunAsync(run);
+        test.VideoClient.Setup(client => client.GetStatusAsync(
+                It.IsAny<string>(), run.DirectVideoJobId, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoStatus { Status = "in_progress" });
+        var worker = test.CreateWorker();
+        worker.DirectVideoPollingWindow = TimeSpan.FromMilliseconds(25);
+        worker.DirectVideoPollInterval = TimeSpan.FromMilliseconds(1);
+        await worker.ProcessDirectVideoGenAsync(run, CancellationToken.None);
+        var pending = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        pending.Status.ShouldBe(VideoGenRunStatus.Queued);
+        pending.DirectVideoJobId.ShouldBe(run.DirectVideoJobId);
+        pending.CurrentPhase.ShouldBe("videogen-reconciling");
+        pending.WorkerLeaseId.ShouldBeNull();
+        pending.DirectVideoReconciledAt.ShouldBeNull();
+        pending.EndedAt.ShouldBeNull();
+    }
+
     [Fact]
     public async Task DirectCompletion_ShouldDeleteUnreferencedAssetAfterLosingRunLease()
     {
