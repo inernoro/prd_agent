@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SharePageActions, SharePageTitle } from './SharePageControls';
+import { SharePageActions, SharePageTitle, ShareMoreMenu } from './SharePageControls';
 import { updateSite, type SharedSiteInfo } from '@/services/real/webPages';
 
 vi.mock('@/services/real/webPages', () => ({ updateSite: vi.fn() }));
@@ -41,5 +41,37 @@ describe('阅读页作者操作', () => {
     act(() => root.render(<MemoryRouter initialEntries={['/s/wp/token']}><SharePageActions site={site} compact onSettingsSaved={vi.fn()} /><Location /></MemoryRouter>));
     act(() => (container.querySelector('[aria-label="返回网页托管"]') as HTMLButtonElement).click());
     expect(container.querySelector('output')?.textContent).toBe('/web-pages?focusSite=site-a');
+  });
+});
+
+
+describe('更多网页操作', () => {
+  it('保存副本等异步操作保留菜单，继续展示进度与结果', () => {
+    const action = vi.fn();
+    act(() => root.render(<ShareMoreMenu><button role="menuitem" data-menu-keep-open onClick={action}>保存副本</button></ShareMoreMenu>));
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!.click());
+    act(() => document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
+    expect(action).toHaveBeenCalledOnce();
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+  });
+  it('低频操作默认折叠；可用方向键和 Escape，点击操作后关闭', async () => {
+    const action = vi.fn();
+    act(() => root.render(<ShareMoreMenu><button role="menuitem" onClick={action}>全屏演示</button><a role="menuitem" href="#new">新窗口打开</a></ShareMoreMenu>));
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="更多"]')!;
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(trigger.textContent).toBe('');
+    act(() => trigger.click());
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)); });
+    const items = document.querySelectorAll<HTMLElement>('[role="menuitem"]');
+    expect(document.activeElement).toBe(items[0]);
+    act(() => items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })));
+    expect(document.activeElement).toBe(items[1]);
+    act(() => items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    act(() => trigger.click());
+    act(() => document.querySelector<HTMLButtonElement>('[role="menuitem"]')!.click());
+    expect(action).toHaveBeenCalledOnce();
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
 });
