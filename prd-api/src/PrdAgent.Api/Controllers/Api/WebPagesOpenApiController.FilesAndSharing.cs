@@ -13,7 +13,10 @@ namespace PrdAgent.Api.Controllers.Api;
 
 public partial class WebPagesOpenApiController
 {
-    private const long MaxUploadRequestSize = HostedSiteUploadLimits.MaxPackageBytes + 1024 * 1024;
+    // 仓库内 Nginx 请求上限为 30 MiB；预留 1 MiB 给 multipart 边界和元数据。
+    // 解包后的资源限制仍由 HostedSiteUploadLimits 约束，不能当作直传容量发布给客户端。
+    internal const long MaxDirectUploadFileBytes = 29L * 1024 * 1024;
+    private const long MaxUploadRequestSize = MaxDirectUploadFileBytes + 1024 * 1024;
 
     /// <summary>MCP 取得受限上传凭证；原文件由客户端直接 multipart 上传，不经过模型转写。</summary>
     [HttpGet("upload-info")]
@@ -45,19 +48,21 @@ public partial class WebPagesOpenApiController
             uploadToken = token,
             expiresAt,
             authorization = "Authorization: Bearer <uploadToken>",
-            maxPackageBytes = HostedSiteUploadLimits.MaxPackageBytes,
-            maxSingleFileBytes = HostedSiteUploadLimits.MaxSingleFileBytes,
+            maxPackageBytes = MaxDirectUploadFileBytes,
+            maxSingleFileBytes = MaxDirectUploadFileBytes,
+            maxExpandedPackageBytes = HostedSiteUploadLimits.MaxPackageBytes,
+            maxExtractedFileBytes = HostedSiteUploadLimits.MaxSingleFileBytes,
             supportedExtensions = new[] { ".html", ".htm", ".zip", ".md", ".markdown", ".pdf", ".mp4", ".m4v", ".webm", ".mov", ".ogg", ".ogv" }
                 .Concat(WebPagesController.ImageExtensions).OrderBy(x => x, StringComparer.Ordinal).ToList(),
             fields = new[] { "file", "title", "description", "folder", "tags", "uploadId", "clientRequestId" },
-            instruction = "将原始文件作为 file 字段上传；不要把 ZIP 重写成单页，不要把文件转为 base64。凭证仅用于本次指定上传路径，十分钟内有效；原密钥撤销或权限变化后立即失效。上传成功后读回 siteId 和文件清单核验。",
+            instruction = "将原始文件作为 file 字段上传，直传文件最多 29 MiB；更大的文件请使用网页托管的分片上传。不要把 ZIP 重写成单页，不要把文件转为 base64。凭证仅用于本次指定上传路径，十分钟内有效；原密钥撤销或权限变化后立即失效。上传成功后读回 siteId 和文件清单核验。",
         }));
     }
 
     [HttpPost("upload")]
     [RequireScope(ScopeWrite)]
     [RequestSizeLimit(MaxUploadRequestSize)]
-    [RequestFormLimits(MultipartBodyLengthLimit = HostedSiteUploadLimits.MaxPackageBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxDirectUploadFileBytes)]
     public Task<IActionResult> UploadFile(IFormFile file, [FromForm] string? title,
         [FromForm] string? description, [FromForm] string? folder, [FromForm] string? tags,
         [FromForm] string? uploadId, [FromForm] string? clientRequestId)
@@ -66,7 +71,7 @@ public partial class WebPagesOpenApiController
     [HttpPost("pages/{siteId}/reupload")]
     [RequireScope(ScopeWrite)]
     [RequestSizeLimit(MaxUploadRequestSize)]
-    [RequestFormLimits(MultipartBodyLengthLimit = HostedSiteUploadLimits.MaxPackageBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxDirectUploadFileBytes)]
     public Task<IActionResult> ReuploadFile(string siteId, IFormFile file,
         [FromForm] string? uploadId, [FromForm] string? clientRequestId)
         => StoreUploadedFileAsync(file, siteId, null, null, null, null, uploadId, clientRequestId);
@@ -149,6 +154,8 @@ public partial class WebPagesOpenApiController
         if (bytes <= 0) return "文件不能为空";
         if (extension is not ".zip" and not ".html" and not ".htm" && !WebPagesController.IsWrappedUploadExtension(extension))
             return "请上传 HTML、ZIP、图片、PDF、Markdown 或支持的视频文件";
+        if (bytes > MaxDirectUploadFileBytes)
+            return "直传文件不能超过 29 MiB，请使用网页托管的分片上传";
         return WebPagesController.ValidateUploadSize(bytes, extension);
     }
 

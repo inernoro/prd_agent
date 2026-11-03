@@ -104,12 +104,49 @@ public sealed class McpWebHostingCompletionTests
     [Theory]
     [InlineData(".zip", 0, false)]
     [InlineData(".png", 1, true)]
-    [InlineData(".zip", 1048576000L, true)]
+    [InlineData(".zip", 30408704L, true)]
+    [InlineData(".zip", 30408705L, false)]
+    [InlineData(".png", 30408704L, true)]
+    [InlineData(".png", 30408705L, false)]
+    [InlineData(".zip", 1048576000L, false)]
     [InlineData(".html", 524288001L, false)]
     [InlineData(".zip", 5242880001L, false)]
     [InlineData(".exe", 1, false)]
-    public void 上传类型和容量_遵循共享约束(string extension, long bytes, bool allowed)
+    public void 上传类型和容量_同时遵循直传和共享约束(string extension, long bytes, bool allowed)
         => (WebPagesOpenApiController.ValidateUploadedFile(bytes, extension) == null).ShouldBe(allowed);
+
+    [Fact]
+    public async Task 上传指引区分直传与解包上限_为代理预留表单空间()
+    {
+        var controller = Controller(new Mock<IHostedSiteService>(MockBehavior.Strict).Object);
+        controller.Request.Headers.Authorization = "Bearer sk-ak-synthetic-upload-limits";
+        controller.HttpContext.RequestServices = new ServiceCollection()
+            .AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider()).BuildServiceProvider();
+        var info = Body(await controller.GetUploadInfo());
+        info.GetProperty("maxPackageBytes").GetInt64().ShouldBe(29L * 1024 * 1024);
+        info.GetProperty("maxSingleFileBytes").GetInt64().ShouldBe(29L * 1024 * 1024);
+        info.GetProperty("maxExpandedPackageBytes").GetInt64().ShouldBe(HostedSiteUploadLimits.MaxPackageBytes);
+        info.GetProperty("maxExtractedFileBytes").GetInt64().ShouldBe(HostedSiteUploadLimits.MaxSingleFileBytes);
+        foreach (var name in new[] { nameof(WebPagesOpenApiController.UploadFile), nameof(WebPagesOpenApiController.ReuploadFile) })
+        {
+            var method = typeof(WebPagesOpenApiController).GetMethod(name)!;
+            ((Microsoft.AspNetCore.Http.Metadata.IRequestSizeLimitMetadata)method.GetCustomAttribute<RequestSizeLimitAttribute>()!)
+                .MaxRequestBodySize.ShouldBe(30L * 1024 * 1024);
+            method.GetCustomAttribute<RequestFormLimitsAttribute>()!.MultipartBodyLengthLimit.ShouldBe(29L * 1024 * 1024);
+        }
+    }
+
+    [Fact]
+    public async Task 超出直传上限_创建和重传均在调用站点服务前拒绝()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        using var empty = new MemoryStream();
+        var file = new FormFile(empty, 0, WebPagesOpenApiController.MaxDirectUploadFileBytes + 1, "file", "large.zip");
+        var controller = Controller(sites.Object);
+        (await controller.UploadFile(file, null, null, null, null, null, null)).ShouldBeOfType<BadRequestObjectResult>();
+        (await controller.ReuploadFile("existing", file, null, null)).ShouldBeOfType<BadRequestObjectResult>();
+        sites.VerifyNoOtherCalls();
+    }
 
     [Fact]
     public async Task 公开永久分享_透传零天_团队编辑者按同一分享权限放行()

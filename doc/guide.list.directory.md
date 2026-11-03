@@ -226,7 +226,7 @@
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
 - [LLM Gateway 故障止血与恢复 · 指南](./guide.platform.llm-gateway.incident-recovery.md) `guide.platform.llm-gateway.incident-recovery`
-- [MAP 智能体连接器 · 接入指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
+- [MAP 智能体连接器 · 指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
 - [MongoDB 索引维护 · 指南](./guide.platform.mongodb-indexes.md) `guide.platform.mongodb-indexes`
 - [PRD Agent 系统原则速查（命名原则索引） · 指南](./guide.platform.principles.md) `guide.platform.principles`
 - [PRD Agent 快速部署 · 指南](./guide.platform.quickstart.md) `guide.platform.quickstart`
