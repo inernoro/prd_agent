@@ -178,3 +178,16 @@
   .mcp-summary-rail { display: flex; align-items: stretch; }
   .mcp-coverage-meter { width: 70px; }
 }
+
+/* Client details collapse independently; recent calls follow content without a blank spacer. */
+.mcp-client-content > * { flex-shrink: 0; }
+#mcp-clients-list > .mcp-client-list { margin-top: 12px; }
+#mcp-clients-list > .mcp-list-footer { margin-top: 10px; }
+.mcp-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; }
+.mcp-section-heading h2, .mcp-section-heading > button:first-child { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.mcp-section-heading span { font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
+.mcp-section-heading > button:last-child { font-size: 11px; color: var(--text-muted); }
+.mcp-section-heading > button:hover { color: var(--text-primary); }
+.mcp-recent-section { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--border-subtle); }
+.mcp-history-scope { font-size: 11px; line-height: 1.7; color: var(--text-muted); }
+.mcp-history-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 11px; color: var(--text-muted); }

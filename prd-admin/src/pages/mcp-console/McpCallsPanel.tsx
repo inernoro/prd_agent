@@ -43,7 +43,7 @@ const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; b
 const NEXT_STEP: Record<string, string> = {
   denied:
     '它没这块权限，或者今天的额度用完了。在「客户端」中点击对应的「管理」，检查授权范围和每日额度。',
-  error: '平台这边没做成，原因就是上面那句。同样的活儿让它再做一次通常就过了。',
+  error: '请根据错误原因检查参数或服务状态；重试写入前先确认是否已产生结果。',
 };
 
 /**
@@ -59,17 +59,23 @@ export function McpCallsPanel({
   clients,
   refreshToken = 0,
   initialStatus = '',
+  compact = false,
+  onViewAll,
 }: {
   clients: McpClientDto[];
   /** 页面顶部「刷新」每点一次加一。记录列表自己拉自己的数据，不进依赖就永远是旧的。 */
   refreshToken?: number;
   initialStatus?: string;
+  compact?: boolean;
+  onViewAll?: () => void;
 }) {
   const [items, setItems] = useState<McpCallLogDto[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [keyId, setKeyId] = useState<string>('');
   const [status, setStatus] = useState<string>(initialStatus);
+  const [skip, setSkip] = useState(0);
+  const limit = compact ? 5 : 50;
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // 读失败要留一个**持续存在**的错误态。只弹一下 toast 的话，界面会退到两种更糟的样子：
   // 首次加载显示「还没有调用记录」（把「没读到」说成「你还没用过」），
@@ -87,26 +93,29 @@ export function McpCallsPanel({
   // 请求却还带着那个 keyId：**看到的筛选条件和实际在筛的不是一回事**，
   // 而这块面板是审计用的，它一旦开始说谎就不如没有。所以跟着 clients 收回来。
   useEffect(() => {
-    if (keyId && !clients.some((c) => c.keyId === keyId)) setKeyId('');
+    if (keyId && !clients.some((c) => c.keyId === keyId)) { setKeyId(''); setSkip(0); }
   }, [clients, keyId]);
 
   const load = useCallback(async () => {
     const gen = ++loadGenRef.current;
     setLoading(true);
-    const res = await listMcpCalls({ keyId: keyId || undefined, status: status || undefined, limit: 50 });
-    if (gen !== loadGenRef.current) return;
-    if (!res.success || !res.data) {
-      setLoadError(res.error?.message || '调用记录没读到，可能是网络断开或服务端异常。');
+    setExpandedId(null);
+    try {
+      const res = await listMcpCalls({ keyId: keyId || undefined, status: status || undefined, skip, limit });
+      if (gen !== loadGenRef.current) return;
+      if (!res.success || !res.data) throw new Error(res.error?.message || '服务暂时不可用，请稍后重试。');
+      setLoadError(null);
+      setItems(res.data.items);
+      setTotal(res.data.total);
+    } catch (error) {
+      if (gen !== loadGenRef.current) return;
+      setLoadError(error instanceof Error ? error.message : '连接中断，请稍后重试。');
       setItems([]);
       setTotal(0);
-      setLoading(false);
-      return;
+    } finally {
+      if (gen === loadGenRef.current) setLoading(false);
     }
-    setLoadError(null);
-    setItems(res.data.items);
-    setTotal(res.data.total);
-    setLoading(false);
-  }, [keyId, status]);
+  }, [keyId, status, skip, limit]);
 
   useEffect(() => {
     void load();
@@ -131,13 +140,15 @@ export function McpCallsPanel({
   const filteredOut = status ? items.length - groups.length : 0;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className={`flex min-h-0 flex-col gap-3 ${compact ? '' : 'flex-1'}`}>
+      {compact && <div className="mcp-section-heading"><h2>最近请求 <span>最近 5 次工具调用</span></h2><button onClick={onViewAll}>全部记录</button></div>}
+      <p className="mcp-history-scope">当前环境 · 当前账号 · 全部日期。仅记录工具调用；初始化、工具列表查询和其他接口请求不计入。</p>
       {/* 筛选 */}
-      <div className="flex flex-wrap items-center gap-2">
+      {!compact && <div className="flex flex-wrap items-center gap-2">
         <select
           aria-label="筛选调用客户端"
           value={keyId}
-          onChange={(e) => setKeyId(e.target.value)}
+          onChange={(e) => { setKeyId(e.target.value); setSkip(0); }}
           className="h-8 rounded-[9px] px-2.5 text-[12px]"
           style={{
             background: 'var(--bg-card)',
@@ -155,7 +166,7 @@ export function McpCallsPanel({
         <select
           aria-label="筛选调用结果"
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
+          onChange={(e) => { setStatus(e.target.value); setSkip(0); }}
           className="h-8 rounded-[9px] px-2.5 text-[12px]"
           style={{
             background: 'var(--bg-card)',
@@ -169,13 +180,13 @@ export function McpCallsPanel({
           <option value="error">失败</option>
         </select>
         <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-          {status
+          {loading ? '正在读取记录…' : loadError ? '记录暂不可用' : status
             ? `共 ${total} 次调用，这一档里最近 ${groups.length} 条${
                 filteredOut > 0 ? `（另有 ${filteredOut} 条按传输结果算成功、但产物还没出来，在「全部结果」里看）` : ''
               }`
             : `最近 ${items.length} 次调用折成 ${groups.length} 件事（共 ${total} 次）`}
         </span>
-      </div>
+      </div>}
 
       {loading ? (
         <div className="flex flex-1 items-center justify-center">
@@ -192,7 +203,7 @@ export function McpCallsPanel({
           <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {loadError}
             <br />
-            这不是「你还没用过」——已经发生过的调用都还在，只是这次没取回来。
+            此次未能取得日志，无法判断是否有调用记录。
           </p>
           <button
             type="button"
@@ -211,50 +222,55 @@ export function McpCallsPanel({
           {/* 「一条都没有」和「这一档筛没了」是两件事。上一版共用同一段引导语，于是
               正上方的计数行刚说「另有 N 条被滤掉」，这里就说「还没有调用记录，去接一台客户端」
               —— 同一屏自己打架，而且把一个筛选结果说成了空历史。 */}
-          {status || filteredOut > 0 ? (
+          {keyId || status || skip > 0 || filteredOut > 0 ? (
             <>
               <p className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                这一档里没有记录
+                当前筛选下没有记录
               </p>
               <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                 {filteredOut > 0
                   ? `最近这一页里有 ${filteredOut} 条按传输结果算成功、但产物还没出来，它们不算在这一档里。把上面的筛选切回「全部结果」就能看到。`
-                  : '换个筛选条件看看，或者切回「全部结果」。'}
+                  : '当前客户端或结果条件下没有匹配记录，可以清除筛选查看全部历史。'}
               </p>
+              <button className="mcp-button" onClick={() => { setKeyId(''); setStatus(''); setSkip(0); }}>清除筛选</button>
             </>
           ) : (
             <>
               <p className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                还没有调用记录
+                当前环境暂无工具调用记录
               </p>
               <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                连上客户端后，对它说一句「把这周的周报做成一页网页托管上去」，它调用平台能力的每一步都会出现在这里。
+                已成功读取日志，但当前账号在本环境下尚无记录。请确认客户端连接的是本页的连接地址，并实际调用一项工具；仅连接或查询工具列表不会产生这里的记录。
               </p>
             </>
           )}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto pr-0.5">
+        <div className={`flex min-h-0 flex-col gap-2 pr-0.5 ${compact ? '' : 'flex-1 overflow-auto'}`}>
           {groups.map((group) => (
             <EventRow
               key={group.id}
               group={group}
+              compact={compact}
               expanded={expandedId === group.id}
               onToggle={() => setExpandedId(expandedId === group.id ? null : group.id)}
             />
           ))}
         </div>
       )}
+      {!compact && !loadError && (total > limit || skip > 0) && <div className="mcp-history-pagination"><button className="mcp-button" disabled={loading || skip === 0} onClick={() => setSkip(value => Math.max(0, value - limit))}>上一页</button><span>第 {Math.floor(skip / limit) + 1} 页 · 共 {total} 次工具调用</span><button className="mcp-button" disabled={loading || skip + limit >= total} onClick={() => setSkip(value => value + limit)}>下一页</button></div>}
     </div>
   );
 }
 
 function EventRow({
   group,
+  compact = false,
   expanded,
   onToggle,
 }: {
   group: CallGroup;
+  compact?: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -263,7 +279,7 @@ function EventRow({
   const bad = group.status === 'error' || group.status === 'denied';
   const href = safeArtifactHref(group.artifact?.url);
   const title =
-    group.artifact?.title || group.first.argumentsPreview || group.first.toolName;
+    group.artifact?.title || (compact ? group.first.toolName : group.first.argumentsPreview || group.first.toolName);
   const nextStep = NEXT_STEP[group.status];
 
   return (
@@ -271,8 +287,8 @@ function EventRow({
       className="flex flex-col rounded-[12px]"
       style={{
         // 失败/被挡下整行染色 —— 一条红色徽章在一屏灰字里根本扫不出来
-        background: bad ? st.bg : 'var(--bg-card)',
-        border: `1px solid ${bad ? st.border : 'var(--border-subtle)'}`,
+        background: bad && !compact ? st.bg : 'var(--bg-card)',
+        border: `1px solid ${bad && !compact ? st.border : 'var(--border-subtle)'}`,
       }}
     >
       {/* 展开钮与「打开」是**兄弟**，不是父子。
@@ -299,9 +315,10 @@ function EventRow({
         </span>
         <span
           className="min-w-[180px] flex-1 truncate text-[12.5px] font-medium"
-          style={{ color: bad ? st.color : 'var(--text-primary)' }}
+          style={{ color: bad && !compact ? st.color : 'var(--text-primary)' }}
         >
           {title}
+          {title !== group.first.toolName && <code className="block truncate text-[10.5px] font-normal" style={{ color: 'var(--text-muted)' }}>{group.first.toolName}</code>}
         </span>
 
         {group.imageCount > 0 && (
@@ -350,7 +367,7 @@ function EventRow({
       </div>
 
       {/* 失败不用点开就能看到「为什么」和「下一步」—— 要点开才知道的原因，等于没给 */}
-      {bad && (
+      {bad && (!compact || expanded) && (
         <div className="flex flex-col gap-1 px-3.5 pb-2.5" style={{ paddingLeft: 46 }}>
           <span className="flex items-start gap-1.5 text-[12px] leading-relaxed" style={{ color: st.color }}>
             <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden />
@@ -369,6 +386,8 @@ function EventRow({
           className="flex flex-col gap-2.5 rounded-b-[11px] px-3.5 py-3"
           style={{ background: 'var(--bg-sunken)', borderTop: '1px solid var(--border-faint)' }}
         >
+          <DetailRow label="工具" value={group.first.toolName} mono />
+          <DetailRow label="记录编号" value={group.first.id} mono />
           <DetailRow label="它发过来的参数" value={group.first.argumentsPreview || '（无参数）'} mono />
           {group.artifact?.url && <DetailRow label="产物地址" value={group.artifact.url} mono />}
           {/* 没有可点地址时至少把 id 露出来（如还没跑完的生图 run）：

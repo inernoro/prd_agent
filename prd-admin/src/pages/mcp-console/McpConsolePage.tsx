@@ -39,6 +39,7 @@ export default function McpConsolePage() {
   const [callsStatus, setCallsStatus] = useState('');
   const [callsView, setCallsView] = useState(0);
   const [search, setSearch] = useState('');
+  const [clientsExpanded, setClientsExpanded] = useState(true);
   const [filter, setFilter] = useState('all');
   const loadGenRef = useRef(0);
   const skillState = useMapAgentSkillManifest();
@@ -99,14 +100,18 @@ export default function McpConsolePage() {
       <section className="mcp-settings-section"><h2 className="shrink-0">平台能力</h2><p>能力和可授权范围由你的系统权限决定。未拥有的权限无法授予客户端。</p><div className="mcp-capability-catalog">{capabilities.map(cap => { const Icon = capabilityVisual(cap.key).icon; return <details key={cap.key}><summary><Icon size={17} aria-hidden /><strong>{cap.title}</strong><span>{cap.availableToMe ? `${grantableToolCount(cap)} 个可授权工具` : '当前账号无权授权'}</span><ChevronRight size={14} aria-hidden /></summary><p>{cap.summary}</p>{cap.tools.map(tool => <div className="mcp-tool" key={tool.name}><code>{tool.name}</code><span>{tool.description}</span></div>)}</details>; })}</div></section>
       <MapAgentSkillPanel state={skillState} endpointUrl={overview.endpointUrl} />
       <section className="mcp-settings-section"><h2 className="shrink-0">配置说明</h2><p>点击“接入客户端”，填写名称后即可复制 Codex、WorkBuddy、Claude Code 或 Claude Desktop 配置。默认跟随你的权限，也可在高级设置中自定义授权。</p><p>在 AI 客户端发起任务后，可通过“调用记录”查看执行结果和产物。停止授权请在客户端的“管理”中撤销接入，历史记录会保留。</p><button className="mcp-button" onClick={() => setGuideOpen(true)}><BookOpen size={14} aria-hidden />查看接入指南</button></section>
-    </div> : <div className="mcp-client-workspace lg:min-h-0 lg:flex-1"><div className="mcp-client-content lg:min-h-0">
-      <div className="mcp-list-toolbar"><label className="mcp-search"><Search size={15} aria-hidden /><input aria-label="搜索客户端名称或凭证前缀" placeholder="搜索名称或凭证前缀" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="筛选客户端" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">全部客户端</option><option value="active">凭证可用</option><option value="unavailable">凭证不可用</option><option value="manual">自定义授权</option><optgroup label="按能力筛选">{capabilities.map(cap => <option key={cap.key} value={`cap:${cap.key}`}>{cap.title}授权</option>)}</optgroup></select><span className="mcp-list-hint">已接入不代表在线，最近调用以实际记录为准</span></div>
-      <div className="mcp-client-list lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }} role="list" aria-label="已接入客户端">
+    </div> : <div className="mcp-client-workspace lg:min-h-0 lg:flex-1"><div className="mcp-client-content lg:min-h-0 lg:overflow-y-auto">
+      <div className="mcp-section-heading"><button type="button" aria-expanded={clientsExpanded} aria-controls="mcp-clients-list" onClick={() => setClientsExpanded(value => !value)}><ChevronRight size={14} className={clientsExpanded ? 'rotate-90' : undefined} aria-hidden />已接入客户端 <span>{clients.length}</span></button><button onClick={() => setClientsExpanded(value => !value)}>{clientsExpanded ? '收起客户端' : '展开客户端'}</button></div>
+      <div id="mcp-clients-list" hidden={!clientsExpanded}>
+      <div className="mcp-list-toolbar"><label className="mcp-search"><Search size={15} aria-hidden /><input aria-label="搜索客户端名称或凭证前缀" placeholder="搜索名称或凭证前缀" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="筛选客户端" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">全部客户端</option><option value="active">凭证可用</option><option value="unavailable">凭证不可用</option><option value="manual">自定义授权</option><optgroup label="按能力筛选">{capabilities.map(cap => <option key={cap.key} value={`cap:${cap.key}`}>{cap.title}授权</option>)}</optgroup></select><span className="mcp-list-hint">已接入不代表在线，工具调用以本环境日志为准</span></div>
+      <div className="mcp-client-list" style={{ overscrollBehavior: 'contain' }} role="list" aria-label="已接入客户端">
 
         {visibleClients.length ? visibleClients.map(client => <ClientRow key={client.keyId} client={client} capabilities={capabilities} onEditQuota={() => setQuotaTarget(client)} />) : <div className="mcp-empty"><Plug size={30} aria-hidden /><h2 className="shrink-0">{clients.length ? '没有匹配的客户端' : '当前没有已接入的客户端'}</h2><p>{clients.length ? '试试其他名称或调整筛选条件。' : overview.hasHistory ? '历史调用记录仍然保留，可以查看记录或重新接入。' : '接入 Codex 或 Claude Code，让 AI 使用你在平台上的能力。'}</p>{clients.length ? <button className="mcp-button" onClick={() => { setSearch(''); setFilter('all'); }}>清除筛选</button> : <div className="mcp-inline-actions"><button className="mcp-button mcp-primary" onClick={() => setConnectOpen(true)}>接入客户端</button>{overview.hasHistory && <button className="mcp-button" onClick={() => viewCalls()}>查看调用记录</button>}</div>}</div>}
       </div>
       <footer className="mcp-list-footer"><span>共 {visibleClients.length} 个客户端{filter !== 'all' || search ? `（全部 ${clients.length} 个）` : ''}</span><button onClick={() => setGuideOpen(true)}>首次使用 MCP？查看接入指南<ArrowRight size={13} aria-hidden /></button></footer>
-    </div><McpSummaryRail overview={overview} onCalls={viewCalls} onCapability={key => { setSearch(''); setFilter(`cap:${key}`); }} onSettings={() => setTab('settings')} /></div>}
+      </div>
+      <section className="mcp-recent-section" aria-label="最近请求"><McpCallsPanel clients={clients} refreshToken={refreshToken} compact onViewAll={() => viewCalls()} /></section>
+    </div><McpSummaryRail overview={overview} onCalls={viewCalls} onCapability={key => { setClientsExpanded(true); setSearch(''); setFilter(`cap:${key}`); }} onSettings={() => setTab('settings')} /></div>}
     <QuotaEditorDialog client={quotaTarget} open={quotaTarget !== null} capabilities={capabilities} onOpenChange={next => { if (!next) setQuotaTarget(null); }} onSaved={() => void load()} onRevoke={() => { setRevokeTarget(quotaTarget); setQuotaTarget(null); }} />
     <RevokeClientDialog client={revokeTarget} open={revokeTarget !== null} onOpenChange={next => { if (!next) setRevokeTarget(null); }} onRevoked={() => void load()} />
     <ConnectAgentDialog skillState={skillState} open={connectOpen} onOpenChange={setConnectOpen} capabilities={capabilities} endpointUrl={overview.endpointUrl} onCreated={() => void load()} />
@@ -134,7 +139,7 @@ export function ClientRow({ client, capabilities, onEditQuota }: { client: McpCl
       const granted = cap.tier !== 'none';
       return <span className="mcp-capability-label" data-tier={cap.tier} key={cap.key} style={granted ? { color: visual.text, background: visual.soft, borderColor: visual.border } : undefined}><Icon size={12} aria-hidden />{cap.title}<span>{accessLabels[cap.tier]}</span></span>;
     })}{signal.extraScopes.length > 0 && <span className="mcp-extra-scopes">另有 {signal.extraScopes.length} 项独立接口</span>}</div>
-    <div className="mcp-client-bottom"><div className="mcp-client-usage"><span><Image size={12} aria-hidden />生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span><PenLine size={12} aria-hidden />写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div><div className="mcp-client-last"><Clock3 size={11} aria-hidden />今日 {client.todayCalls} 次 · {client.lastUsedAt ? <>最近调用 <RelativeTime value={client.lastUsedAt} /></> : '尚未调用'}</div></div>
+    <div className="mcp-client-bottom"><div className="mcp-client-usage"><span><Image size={12} aria-hidden />生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span><PenLine size={12} aria-hidden />写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div><div className="mcp-client-last"><Clock3 size={11} aria-hidden />今日 {client.todayCalls} 次 · {client.lastUsedAt ? <>凭证最近使用 <RelativeTime value={client.lastUsedAt} /></> : '凭证尚未使用'}</div></div>
     {missing.length > 0 && <p className="mcp-missing">另有 {missing.length} 项能力可在“管理”中开放。</p>}
   </div>;
 }
