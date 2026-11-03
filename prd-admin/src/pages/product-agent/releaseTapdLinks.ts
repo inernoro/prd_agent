@@ -11,9 +11,24 @@ export function isTapdUrl(value: string) {
 }
 
 export function parseReleaseTapdLinks(text: string): ReleaseTapdLink[] {
-  const urls = Array.from(text.matchAll(/https?:\/\/[^\s<>()【】。，；、]+/gi),
-    (match) => match[0].replace(/[.,;]+$/, ''));
-  return [...new Set(urls.filter(isTapdUrl))].map((url) => ({ title: '', url }));
+  return extractReleaseTapdLinks(text).links;
+}
+
+export function extractReleaseTapdLinks(text: string) {
+  const urls = new Set<string>();
+  const remainingText = text.replace(/https?:\/\/[^\s<>()[\]{}"'“”‘’（）【】《》。，；、！？：]+/gi, (match) => {
+    const url = match.replace(/[.,;!]+$/, '');
+    if (!isTapdUrl(url)) return match;
+    urls.add(url);
+    return match.slice(url.length);
+  });
+  return { text: remainingText, links: [...urls].map((url) => ({ title: '', url })) };
+}
+
+export function appendReleaseTapdLinks(current: ReleaseTapdLink[], recognized: ReleaseTapdLink[]) {
+  const rows = current.filter((link) => link.url.trim());
+  const existing = new Set(rows.map((link) => link.url.trim()));
+  return [...rows, ...recognized.filter((link) => !existing.has(link.url))];
 }
 
 export function invalidReleaseTapdLinks(noLinks: boolean, links: ReleaseTapdLink[]) {

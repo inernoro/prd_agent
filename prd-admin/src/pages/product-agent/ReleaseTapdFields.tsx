@@ -1,6 +1,6 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import { Button } from '@/components/design/Button';
-import { invalidReleaseTapdLinks, parseReleaseTapdLinks, type ReleaseTapdLink } from './releaseTapdLinks';
+import { appendReleaseTapdLinks, invalidReleaseTapdLinks, parseReleaseTapdLinks, type ReleaseTapdLink } from './releaseTapdLinks';
 
 type Props = {
   noLinks: boolean;
@@ -18,11 +18,7 @@ export function ReleaseTapdFields({ noLinks, links, onNoLinksChange, onLinksChan
     const recognized = parseReleaseTapdLinks(value);
     setHint(recognized.length ? `已识别 ${recognized.length} 条 TAPD 链接，请核对。` : '未识别到 TAPD 链接，可在下方手动填写。');
     if (!recognized.length) return;
-    onLinksChange((current) => {
-      const rows = current.filter((link) => link.url.trim());
-      const existing = new Set(rows.map((link) => link.url.trim()));
-      return [...rows, ...recognized.filter((link) => !existing.has(link.url))];
-    });
+    onLinksChange((current) => appendReleaseTapdLinks(current, recognized));
   }
 
   return <section aria-label="TAPD 需求" className="space-y-3 border-t border-token-subtle pt-4">

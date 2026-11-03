@@ -8,7 +8,7 @@ import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { loadProductVersionList } from '@/lib/productVersionList';
 import { ReleasePlanPicker } from './ReleasePlanPicker';
-import { invalidReleaseTapdLinks, type ReleaseTapdLink } from './releaseTapdLinks';
+import { appendReleaseTapdLinks, extractReleaseTapdLinks, invalidReleaseTapdLinks, type ReleaseTapdLink } from './releaseTapdLinks';
 import { ReleaseTapdFields } from './ReleaseTapdFields';
 import { filterReleasePlans } from './releasePlanOptions';
 import { Dialog } from '@/components/ui/Dialog';
@@ -437,6 +437,15 @@ export function ReleaseWorkflowDetail({
     if (temporary) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
+  const prepareReleaseNotice = (text: string) => {
+    const extracted = extractReleaseTapdLinks(text);
+    if (extracted.links.length) {
+      setNoTapdLinks(false);
+      setTapdLinks((current) => appendReleaseTapdLinks(current, extracted.links));
+    }
+    return { text: extracted.text, linkCount: extracted.links.length };
+  };
+
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
     const parsedInitiations = parsed.initiationCandidates ?? [];
     const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
@@ -814,7 +823,8 @@ export function ReleaseWorkflowDetail({
         <div className={isNew && !temporary ? 'space-y-6' : 'space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5'}>
           {isNew ? (
             <>
-              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
+              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion}
+                prepareText={temporary ? undefined : prepareReleaseNotice} />
               {temporary ? <>
                 {ownerField}
                 <InfoBox>临时优化需求请在「需求」标签页选择要上线的需求条目。</InfoBox>
