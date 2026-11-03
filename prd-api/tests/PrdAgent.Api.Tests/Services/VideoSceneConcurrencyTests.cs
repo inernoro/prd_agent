@@ -79,6 +79,10 @@ public class VideoSceneConcurrencyTests
         test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
         test.Run.EndedAt.ShouldBeNull();
         test.Field("DirectVideoReconciledAt").ShouldBeNull();
+        test.OtherQueuedRun = new VideoGenRun();
+        await test.ClaimAsync();
+        test.OtherQueuedRun!.Status.ShouldBe(VideoGenRunStatus.Rendering);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
         await test.ClaimAsync();
         test.Run.Status.ShouldBe(VideoGenRunStatus.Rendering);
         test.Status = () => new OpenRouterVideoStatus { Status = "completed", Cost = 0.43 };
@@ -166,12 +170,13 @@ public class VideoSceneConcurrencyTests
     // This fixture never constructs MongoClient or an application host. All persistence and upstream calls are strict mocks.
     private sealed class DirectCancellationFixture : IDisposable
     {
-        public VideoGenRun Run { get; private set; } = new()
+        public VideoGenRun Run = new()
         {
             Id = "synthetic-direct-cancellation", OwnerAdminId = "synthetic-owner", Mode = VideoGenMode.Direct,
             Status = VideoGenRunStatus.Rendering, CancelRequested = true, DirectVideoJobId = "synthetic-upstream-job",
-            DirectVideoModel = "recorded-model", DirectPrompt = "synthetic prompt",
+            DirectVideoModel = "recorded-model", StartedAt = DateTime.UtcNow,
         };
+        public VideoGenRun OtherQueuedRun = null!;
         public Mock<IOpenRouterVideoClient> Client { get; } = new(MockBehavior.Strict);
         public bool CancelAtDownloadingPhase { get; set; }
         public bool CancelAtFailureWrite { get; set; }
@@ -193,11 +198,14 @@ public class VideoSceneConcurrencyTests
             var collection = new Mock<IMongoCollection<VideoGenRun>>(MockBehavior.Strict);
             collection.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),
                     It.IsAny<FindOptions<VideoGenRun, VideoGenRun>>(), It.IsAny<CancellationToken>()))
-                .Returns((FilterDefinition<VideoGenRun> filter, FindOptions<VideoGenRun, VideoGenRun> _, CancellationToken token) =>
+                .Returns((FilterDefinition<VideoGenRun> filter, FindOptions<VideoGenRun, VideoGenRun> options, CancellationToken token) =>
                 {
                     if (ProbeScheduling) ObserveSchedulingRead(filter, token);
+                    var rows = new[] { Run, OtherQueuedRun }.OfType<VideoGenRun>().Where(row => Matches(filter, row));
+                    if (options.Sort?.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry)) is { } order)
+                        rows = rows.OrderBy(row => new BsonArray(order.Elements.Select(key => row.ToBsonDocument().GetValue(key.Name, BsonNull.Value))));
                     var cursor = new Mock<IAsyncCursor<VideoGenRun>>(MockBehavior.Strict);
-                    cursor.SetupGet(x => x.Current).Returns(Matches(filter) ? [BsonSerializer.Deserialize<VideoGenRun>(Run.ToBsonDocument())] : []);
+                    cursor.SetupGet(x => x.Current).Returns(rows.Select(row => BsonSerializer.Deserialize<VideoGenRun>(row.ToBsonDocument())).ToArray());
                     cursor.SetupSequence(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true).ReturnsAsync(false);
                     cursor.Setup(x => x.Dispose());
                     return Task.FromResult(cursor.Object);
@@ -221,7 +229,7 @@ public class VideoSceneConcurrencyTests
                         _backgroundStop?.Cancel();
                     }
                     if (!Matches(filter)) return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(0, 0, null));
-                    Apply(update);
+                    Apply(update, ref Run);
                     return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(1, 1, null));
                 });
             collection.Setup(x => x.FindOneAndUpdateAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),
@@ -241,9 +249,10 @@ public class VideoSceneConcurrencyTests
                         SchedulingPaths.Add("legacy-export");
                         return Task.FromResult<VideoGenRun>(null!);
                     }
+                    if (!Matches(filter) && OtherQueuedRun != null && Matches(filter, OtherQueuedRun))
+                        return Task.FromResult(Apply(update, ref OtherQueuedRun));
                     Matches(filter).ShouldBeTrue();
-                    Apply(update);
-                    return Task.FromResult(BsonSerializer.Deserialize<VideoGenRun>(Run.ToBsonDocument()));
+                    return Task.FromResult(Apply(update, ref Run));
                 });
             var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
             database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs", null)).Returns(collection.Object);
@@ -259,12 +268,10 @@ public class VideoSceneConcurrencyTests
             database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks", null)).Returns(exports.Object);
             var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
             typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, database.Object);
-            if (offering == null)
-                Client.Setup(x => x.GetStatusAsync(It.IsAny<string>(), "synthetic-upstream-job", "recorded-model", CancellationToken.None))
-                    .Returns(() => Task.FromResult(Status()));
-            else
-                Client.Setup(x => x.GetStatusForOfferingAsync(It.IsAny<string>(), "synthetic-upstream-job", "recorded-model", offering, CancellationToken.None))
-                    .Returns(() => Task.FromResult(Status()));
+            Client.Setup<Task<OpenRouterVideoStatus>>(offering == null
+                ? x => x.GetStatusAsync(It.IsAny<string>(), "synthetic-upstream-job", "recorded-model", CancellationToken.None)
+                : x => x.GetStatusForOfferingAsync(It.IsAny<string>(), "synthetic-upstream-job", "recorded-model", offering, CancellationToken.None))
+                .Returns(() => Task.FromResult(Status()));
             _services = new ServiceCollection().AddSingleton(Client.Object)
                 .AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>().BuildServiceProvider();
             var events = new Mock<IRunEventStore>(MockBehavior.Strict);
@@ -309,21 +316,22 @@ public class VideoSceneConcurrencyTests
             }
         }
 
-        private bool Matches(FilterDefinition<VideoGenRun> filter)
+        private bool Matches(FilterDefinition<VideoGenRun> filter, VideoGenRun? row = null)
         {
-            var actual = Run.ToBsonDocument();
+            var actual = (row ?? Run).ToBsonDocument();
             var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
             return query.All(field => field.Value is BsonDocument operation
                 ? operation.ElementCount == 1 && operation.Contains("$ne") && !actual.GetValue(field.Name, BsonNull.Value).Equals(operation["$ne"])
                 : actual.GetValue(field.Name, BsonNull.Value).Equals(field.Value));
         }
-        private void Apply(UpdateDefinition<VideoGenRun> update)
+        private VideoGenRun Apply(UpdateDefinition<VideoGenRun> update, ref VideoGenRun row)
         {
-            var body = Run.ToBsonDocument();
+            var body = row.ToBsonDocument();
             var rendered = update.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
             rendered.AsBsonDocument.ElementCount.ShouldBe(1);
             foreach (var field in rendered["$set"].AsBsonDocument) body[field.Name] = field.Value;
-            Run = BsonSerializer.Deserialize<VideoGenRun>(body);
+            row = BsonSerializer.Deserialize<VideoGenRun>(body);
+            return BsonSerializer.Deserialize<VideoGenRun>(row.ToBsonDocument());
         }
         public Task ClaimAsync() => (Task)typeof(VideoGenRunWorker).GetMethod("ClaimQueuedRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(_worker, [CancellationToken.None])!;

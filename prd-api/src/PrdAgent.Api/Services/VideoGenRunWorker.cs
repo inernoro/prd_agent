@@ -82,14 +82,12 @@ public class VideoGenRunWorker : BackgroundService
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "VideoGen 任务失败: runId={RunId}", queued.Id);
-                        if (queued.Mode == VideoGenMode.Direct)
+                        if (queued.Mode == VideoGenMode.Direct
+                            && await _db.VideoGenRuns.Find(x => x.Id == queued.Id).FirstOrDefaultAsync(CancellationToken.None) is { } fresh
+                            && !string.IsNullOrWhiteSpace(fresh.DirectVideoJobId))
                         {
-                            var fresh = await _db.VideoGenRuns.Find(x => x.Id == queued.Id).FirstOrDefaultAsync(CancellationToken.None);
-                            if (fresh != null && !string.IsNullOrWhiteSpace(fresh.DirectVideoJobId))
-                            {
-                                await FailDirectRunAsync(fresh, fresh.DirectVideoJobId, false, "VIDEOGEN_ERROR", ex.Message);
-                                continue;
-                            }
+                            await FailDirectRunAsync(fresh, fresh.DirectVideoJobId, false, "VIDEOGEN_ERROR", ex.Message);
+                            continue;
                         }
                         await FailRunAsync(queued, "VIDEOGEN_ERROR", ex.Message);
                     }
@@ -234,6 +232,7 @@ public class VideoGenRunWorker : BackgroundService
         var fb = Builders<VideoGenRun>.Filter;
         // 先 peek 看下 Mode（避免错误置 status）
         var pending = await _db.VideoGenRuns.Find(fb.Eq(x => x.Status, VideoGenRunStatus.Queued))
+            .SortBy(x => x.StartedAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id)
             .FirstOrDefaultAsync(ct);
         if (pending == null) return null;
 
@@ -251,7 +250,7 @@ public class VideoGenRunWorker : BackgroundService
             .Set(x => x.PhaseProgress, 1);
 
         var run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
-            fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
+            fb.Eq(x => x.Id, pending.Id) & fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
             update,
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
@@ -394,15 +393,14 @@ public class VideoGenRunWorker : BackgroundService
                 continue;
             }
 
-            var observed = await _db.VideoGenRuns.UpdateOneAsync(
+            fresh = await _db.VideoGenRuns.FindOneAndUpdateAsync(
                 DirectJobFilter(run, submitResult.JobId!),
                 Builders<VideoGenRun>.Update
                     .Set(x => x.DirectVideoUpstreamStatus, status.Status)
                     .Set(x => x.DirectVideoCost, status.Cost)
                     .Set(x => x.DirectVideoReconciledAt, status.IsTerminal ? DateTime.UtcNow : (DateTime?)null),
-                cancellationToken: CancellationToken.None);
-            if (observed.MatchedCount != 1) return;
-            fresh = await _db.VideoGenRuns.Find(DirectJobFilter(run, submitResult.JobId!)).FirstOrDefaultAsync(CancellationToken.None);
+                new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+                CancellationToken.None);
             if (fresh == null) return;
             if (status.IsTerminal && fresh.CancelRequested)
             {
@@ -483,8 +481,7 @@ public class VideoGenRunWorker : BackgroundService
                         cancellationToken: CancellationToken.None);
                     if (completed.MatchedCount != 1)
                     {
-                        fresh = await _db.VideoGenRuns.Find(DirectJobFilter(run, submitResult.JobId!)).FirstOrDefaultAsync(CancellationToken.None);
-                        if (fresh?.CancelRequested == true) await CancelRunAsync(run, submitResult.JobId);
+                        await CancelRunAsync(run, submitResult.JobId);
                         return;
                     }
 
@@ -528,12 +525,6 @@ public class VideoGenRunWorker : BackgroundService
                 new { phase = fresh.CancelRequested ? "videogen-reconciling" : "videogen-polling", progress, status = status.Status });
         }
 
-        var final = await _db.VideoGenRuns.Find(DirectJobFilter(run, submitResult.JobId!)).FirstOrDefaultAsync(CancellationToken.None);
-        if (final?.CancelRequested == true)
-        {
-            await RequeueCancelledDirectJobAsync(run, submitResult.JobId!);
-            return;
-        }
         await FailDirectRunAsync(run, submitResult.JobId!, false, "OPENROUTER_TIMEOUT", $"视频生成超过 {maxWaitMinutes} 分钟未完成");
     }
 
@@ -542,20 +533,11 @@ public class VideoGenRunWorker : BackgroundService
            & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
            & Builders<VideoGenRun>.Filter.Eq(x => x.DirectVideoJobId, jobId);
 
-    private Task RequeueCancelledDirectJobAsync(VideoGenRun run, string jobId)
-        => _db.VideoGenRuns.UpdateOneAsync(
-            DirectJobFilter(run, jobId) & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, true),
-            Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Queued).Set(x => x.CurrentPhase, "videogen-reconciling"),
-            cancellationToken: CancellationToken.None);
-
     private async Task FailDirectRunAsync(VideoGenRun run, string jobId, bool upstreamTerminal, string errorCode, string errorMessage)
     {
         await FailRunAsync(run, errorCode, errorMessage,
             DirectJobFilter(run, jobId) & Builders<VideoGenRun>.Filter.Ne(x => x.CancelRequested, true));
-        var fresh = await _db.VideoGenRuns.Find(DirectJobFilter(run, jobId)).FirstOrDefaultAsync(CancellationToken.None);
-        if (fresh?.CancelRequested != true) return;
-        if (upstreamTerminal) await CancelRunAsync(run, jobId);
-        else await RequeueCancelledDirectJobAsync(run, jobId);
+        await CancelRunAsync(run, jobId, upstreamTerminal);
     }
 
     private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage, FilterDefinition<VideoGenRun>? guard = null)
@@ -575,18 +557,18 @@ public class VideoGenRunWorker : BackgroundService
         await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = userMessage });
     }
 
-    private async Task CancelRunAsync(VideoGenRun run, string? submittedJobId = null)
+    private async Task CancelRunAsync(VideoGenRun run, string? submittedJobId = null, bool upstreamTerminal = true)
     {
         var filter = submittedJobId == null ? Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
             : DirectJobFilter(run, submittedJobId) & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, true);
         var cancelled = await _db.VideoGenRuns.UpdateOneAsync(
             filter,
             Builders<VideoGenRun>.Update
-                .Set(x => x.Status, VideoGenRunStatus.Cancelled)
-                .Set(x => x.CurrentPhase, "cancelled")
-                .Set(x => x.EndedAt, DateTime.UtcNow),
+                .Set(x => x.Status, upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.Queued)
+                .Set(x => x.CurrentPhase, upstreamTerminal ? "cancelled" : "videogen-reconciling")
+                .Set(x => x.EndedAt, upstreamTerminal ? DateTime.UtcNow : (DateTime?)null),
             cancellationToken: CancellationToken.None);
-        if (cancelled.ModifiedCount != 1) return;
+        if (cancelled.ModifiedCount != 1 || !upstreamTerminal) return;
 
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 

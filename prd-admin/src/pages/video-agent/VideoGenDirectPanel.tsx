@@ -495,7 +495,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           <div className="text-[11px] text-token-muted flex items-center gap-3 flex-wrap">
             <span className="inline-flex items-center gap-1"><Clock size={11} /> 视频生成通常需要 1-3 分钟，离开页面也会继续执行</span>
             {currentRun?.directVideoCost != null && (
-              <span>本次费用：${currentRun.directVideoCost.toFixed(3)}</span>
+              <span>{currentRun.directVideoReconciledAt || currentRun.status === 'Completed' ? '本次费用' : '待核对费用'}：${currentRun.directVideoCost.toFixed(3)}</span>
             )}
             {isCancelled && currentRun.directVideoJobId && currentRun.directVideoCost == null && (
               <span>供应商未返回最终费用，不代表免费</span>
@@ -514,7 +514,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
             <div className="flex-1" />
             {currentRun?.directVideoCost != null && (
               <span style={{ color: 'var(--text-muted)' }}>
-                费用 ${currentRun.directVideoCost.toFixed(3)}
+                {currentRun.directVideoReconciledAt || currentRun.status === 'Completed' ? '费用' : '待核对费用'} ${currentRun.directVideoCost.toFixed(3)}
               </span>
             )}
             {isCancelled && currentRun.directVideoJobId && currentRun.directVideoCost == null && (
