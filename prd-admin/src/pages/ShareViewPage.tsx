@@ -24,10 +24,10 @@ import {
   tryExitNativeFullscreen,
 } from '@/components/web-hosting/shareFullscreen';
 import {
-  DIRECT_PREVIEW_SANDBOX,
+  directPreviewSandbox,
   SRCDOC_PREVIEW_SANDBOX,
   canUseSrcDocPreview,
-  hasFetchableHtml,
+  shouldFetchPreviewHtml,
   resolvePreviewSource,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
@@ -259,6 +259,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         description: updated.description,
         siteUrl: updated.siteUrl,
         entryFile: updated.entryFile,
+        contentShape: updated.contentShape,
+        requiresPreviewBridge: updated.requiresPreviewBridge,
         totalSize: updated.totalSize,
         fileCount: updated.files.length,
         coverImageUrl: updated.coverImageUrl,
@@ -413,11 +415,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || !token || !hasFetchableHtml(site)) {
-      // 包装资产站（PDF/视频）注定走直链，没有可等的正文——直接落到 settled，
+    if (!site || !token || !shouldFetchPreviewHtml(site)) {
+      // 多文件网站和包装资产站（PDF/视频）走真实地址——直接落到 settled，
       // 让 resolvePreviewSource 立刻给 direct，不要让这类站点白等一个超时窗口。
       setEmbeddedHtml(null);
       setEmbeddedHtmlError(null);
+      setLateHtml(null);
+      setIsDeck(false);
       setPreviewFetch(site ? { siteUrl: site.siteUrl, settled: true } : null);
       setDirectFallbackFor(null);
       return;
@@ -772,7 +776,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
      * 判据本体在 previewHtml.ts 的 resolvePreviewSource（那里有完整缘由）。
      */
     const previewSource = resolvePreviewSource({
-      fetchable: hasFetchableHtml(site),
+      fetchable: shouldFetchPreviewHtml(site),
       inlineHtml: iframeHtml,
       // 对不上 siteUrl 就当这一趟还没开始，绝不拿上一趟的结论去判 direct
       settled: previewFetch?.siteUrl === site.siteUrl && previewFetch.settled,
@@ -992,7 +996,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             srcDoc={previewSource === 'srcdoc' && iframeHtml ? pdfDownload.decorateHtml(iframeHtml) : undefined}
             title={site.title}
             style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
-            sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX}
+            sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(site.siteUrl)}
             // 全屏权限归 `allow`（Permissions Policy）管，**不是** sandbox 的取值。
             // 这里原先写的 `allow-fullscreen` 不是合法 sandbox flag，Chrome 会报
             // "Error while parsing the 'sandbox' attribute: 'allow-fullscreen' is an

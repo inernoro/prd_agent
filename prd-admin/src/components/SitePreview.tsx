@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, LayoutTemplate } from 'lucide-react';
 import {
-  DIRECT_PREVIEW_SANDBOX,
+  directPreviewSandbox,
   SRCDOC_PREVIEW_SANDBOX,
 } from '@/components/web-hosting/previewHtml';
 import { useSitePreviewHtml, type SitePreviewHtmlSite } from '@/components/web-hosting/useSitePreviewHtml';
@@ -183,7 +183,7 @@ export function SitePreview({
           src={srcDoc ? undefined : src}
           srcDoc={srcDoc || undefined}
           title="preview"
-          sandbox={srcDoc ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX}
+          sandbox={srcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(src)}
           loading="lazy"
           onLoad={() => setLoaded(true)}
           onError={() => setAttempt((a) => (a < MAX_RETRIES ? a + 1 : a))}
