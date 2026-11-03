@@ -1,4 +1,4 @@
-import { BookOpen, Globe, Image, PenLine, Store, type LucideIcon } from 'lucide-react';
+import { BookOpen, Globe, Image, ListTodo, PenLine, Store, type LucideIcon } from 'lucide-react';
 
 /**
  * 能力卡的视觉登记表 —— 图标与配色按 `capability.key` 查，不在组件里写 switch。
@@ -41,6 +41,12 @@ export const CAPABILITY_VISUAL_REGISTRY: Record<string, CapabilityVisual> = {
     text: 'var(--semantic-success-text)',
     soft: 'var(--semantic-success-soft)',
     border: 'var(--semantic-success-border)',
+  },
+  tasks: {
+    icon: ListTodo,
+    text: 'var(--semantic-neutral-text)',
+    soft: 'var(--semantic-neutral-soft)',
+    border: 'var(--semantic-neutral-border)',
   },
   market: {
     icon: Store,

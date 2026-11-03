@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRight, BookOpen, ChevronRight, Copy, Plug, Plus, RefreshCw, Search, ShieldCheck, Settings2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, ChevronRight, Copy, Plug, Plus, RefreshCw, Search, ShieldCheck, Settings2, Activity, SlidersHorizontal, Image, PenLine, Clock3 } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { PrdLoader } from '@/components/ui/PrdLoader';
@@ -16,11 +16,13 @@ import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
 import { grantableToolCount } from './scopePlan';
 import { clientSignal } from './signalEncoding';
+import { clientVisual } from './clientVisualRegistry';
+import { McpSummaryRail } from './McpSummaryRail';
 import { secureSameSiteEndpoint } from './endpointUrl';
 import './mcp-console.css';
 
 type Tab = 'clients' | 'calls' | 'settings';
-const TABS: Array<{ key: Tab; label: string }> = [{ key: 'clients', label: '客户端' }, { key: 'calls', label: '调用记录' }, { key: 'settings', label: '接入配置' }];
+const TABS: Array<{ key: Tab; label: string; icon: typeof Plug }> = [{ key: 'clients', label: '客户端', icon: Plug }, { key: 'calls', label: '调用记录', icon: Activity }, { key: 'settings', label: '接入配置', icon: Settings2 }];
 
 /** Reuses the authenticated app shell, backend capability catalog and key lifecycle. */
 export default function McpConsolePage() {
@@ -67,8 +69,8 @@ export default function McpConsolePage() {
   const capabilities = useMemo(() => overview?.capabilities ?? [], [overview]);
   const visibleClients = useMemo(() => clients.filter(client => {
     const matches = `${client.name} ${client.keyPrefix}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
-    return matches && (filter === 'all' || (filter === 'active' && client.isActive) || (filter === 'unavailable' && !client.isActive) || (filter === 'manual' && client.scopeMode === 'manual'));
-  }), [clients, search, filter]);
+    return matches && (filter === 'all' || (filter === 'active' && client.isActive) || (filter === 'unavailable' && !client.isActive) || (filter === 'manual' && client.scopeMode === 'manual') || (filter.startsWith('cap:') && client.isActive && clientSignal(client, capabilities).dots.some(cap => cap.key === filter.slice(4) && cap.tier !== 'none')));
+  }), [clients, search, filter, capabilities]);
   const viewCalls = (status = '') => { setCallsStatus(status); setCallsView(n => n + 1); setTab('calls'); };
 
   if (loading) return <div className="flex h-full items-center justify-center"><PrdLoader size={44} /></div>;
@@ -79,7 +81,7 @@ export default function McpConsolePage() {
   return <div className="mcp-console flex min-h-full flex-col lg:h-full lg:min-h-0">
     <header className="mcp-header">
       <h1 className="shrink-0 whitespace-nowrap"><Plug size={19} aria-hidden />智能体接入台</h1>
-      <div className="mcp-tabs" role="tablist" aria-label="接入管理视图">{TABS.map(item => <button type="button" role="tab" key={item.key} aria-selected={tab === item.key} onClick={() => item.key === 'calls' ? viewCalls() : setTab(item.key)}>{item.label}{item.key === 'clients' && <span>{clients.length}</span>}</button>)}</div>
+      <div className="mcp-tabs" role="tablist" aria-label="接入管理视图">{TABS.map(item => <button type="button" role="tab" key={item.key} aria-selected={tab === item.key} onClick={() => item.key === 'calls' ? viewCalls() : setTab(item.key)}>{<item.icon size={13} aria-hidden />}{item.label}{item.key === 'clients' && <span>{clients.length}</span>}</button>)}</div>
       <div className="mcp-header-actions">
         <Button size="sm" aria-label={refreshing ? '正在刷新' : '刷新'} disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden className={refreshing ? 'animate-spin' : undefined} /><span className="hidden lg:inline">刷新</span></Button>
         <Button size="sm" aria-label="接入指南" className="mcp-guide-button" onClick={() => setGuideOpen(true)}><BookOpen size={14} aria-hidden />接入指南</Button>
@@ -97,14 +99,14 @@ export default function McpConsolePage() {
       <section className="mcp-settings-section"><h2 className="shrink-0">平台能力</h2><p>能力和可授权范围由你的系统权限决定。未拥有的权限无法授予客户端。</p><div className="mcp-capability-catalog">{capabilities.map(cap => { const Icon = capabilityVisual(cap.key).icon; return <details key={cap.key}><summary><Icon size={17} aria-hidden /><strong>{cap.title}</strong><span>{cap.availableToMe ? `${grantableToolCount(cap)} 个可授权工具` : '当前账号无权授权'}</span><ChevronRight size={14} aria-hidden /></summary><p>{cap.summary}</p>{cap.tools.map(tool => <div className="mcp-tool" key={tool.name}><code>{tool.name}</code><span>{tool.description}</span></div>)}</details>; })}</div></section>
       <MapAgentSkillPanel state={skillState} endpointUrl={overview.endpointUrl} />
       <section className="mcp-settings-section"><h2 className="shrink-0">配置说明</h2><p>点击“接入客户端”，填写名称后即可复制 Codex、WorkBuddy、Claude Code 或 Claude Desktop 配置。默认跟随你的权限，也可在高级设置中自定义授权。</p><p>在 AI 客户端发起任务后，可通过“调用记录”查看执行结果和产物。停止授权请在客户端的“管理”中撤销接入，历史记录会保留。</p><button className="mcp-button" onClick={() => setGuideOpen(true)}><BookOpen size={14} aria-hidden />查看接入指南</button></section>
-    </div> : <div className="mcp-client-content lg:min-h-0 lg:flex-1">
-      <div className="mcp-list-toolbar"><label className="mcp-search"><Search size={15} aria-hidden /><input aria-label="搜索客户端名称或凭证前缀" placeholder="搜索名称或凭证前缀" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="筛选客户端" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">全部客户端</option><option value="active">凭证可用</option><option value="unavailable">凭证不可用</option><option value="manual">自定义授权</option></select><span className="mcp-list-hint">已接入不代表在线，最近调用以实际记录为准</span></div>
+    </div> : <div className="mcp-client-workspace lg:min-h-0 lg:flex-1"><div className="mcp-client-content lg:min-h-0">
+      <div className="mcp-list-toolbar"><label className="mcp-search"><Search size={15} aria-hidden /><input aria-label="搜索客户端名称或凭证前缀" placeholder="搜索名称或凭证前缀" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="筛选客户端" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">全部客户端</option><option value="active">凭证可用</option><option value="unavailable">凭证不可用</option><option value="manual">自定义授权</option><optgroup label="按能力筛选">{capabilities.map(cap => <option key={cap.key} value={`cap:${cap.key}`}>{cap.title}授权</option>)}</optgroup></select><span className="mcp-list-hint">已接入不代表在线，最近调用以实际记录为准</span></div>
       <div className="mcp-client-list lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }} role="list" aria-label="已接入客户端">
 
         {visibleClients.length ? visibleClients.map(client => <ClientRow key={client.keyId} client={client} capabilities={capabilities} onEditQuota={() => setQuotaTarget(client)} />) : <div className="mcp-empty"><Plug size={30} aria-hidden /><h2 className="shrink-0">{clients.length ? '没有匹配的客户端' : '当前没有已接入的客户端'}</h2><p>{clients.length ? '试试其他名称或调整筛选条件。' : overview.hasHistory ? '历史调用记录仍然保留，可以查看记录或重新接入。' : '接入 Codex 或 Claude Code，让 AI 使用你在平台上的能力。'}</p>{clients.length ? <button className="mcp-button" onClick={() => { setSearch(''); setFilter('all'); }}>清除筛选</button> : <div className="mcp-inline-actions"><button className="mcp-button mcp-primary" onClick={() => setConnectOpen(true)}>接入客户端</button>{overview.hasHistory && <button className="mcp-button" onClick={() => viewCalls()}>查看调用记录</button>}</div>}</div>}
       </div>
       <footer className="mcp-list-footer"><span>共 {visibleClients.length} 个客户端{filter !== 'all' || search ? `（全部 ${clients.length} 个）` : ''}</span><button onClick={() => setGuideOpen(true)}>首次使用 MCP？查看接入指南<ArrowRight size={13} aria-hidden /></button></footer>
-    </div>}
+    </div><McpSummaryRail overview={overview} onCalls={viewCalls} onCapability={key => { setSearch(''); setFilter(`cap:${key}`); }} onSettings={() => setTab('settings')} /></div>}
     <QuotaEditorDialog client={quotaTarget} open={quotaTarget !== null} capabilities={capabilities} onOpenChange={next => { if (!next) setQuotaTarget(null); }} onSaved={() => void load()} onRevoke={() => { setRevokeTarget(quotaTarget); setQuotaTarget(null); }} />
     <RevokeClientDialog client={revokeTarget} open={revokeTarget !== null} onOpenChange={next => { if (!next) setRevokeTarget(null); }} onRevoked={() => void load()} />
     <ConnectAgentDialog skillState={skillState} open={connectOpen} onOpenChange={setConnectOpen} capabilities={capabilities} endpointUrl={overview.endpointUrl} onCreated={() => void load()} />
@@ -116,15 +118,23 @@ export function ClientRow({ client, capabilities, onEditQuota }: { client: McpCl
   const signal = clientSignal(client, capabilities);
   const missing = client.missingCapabilities ?? [];
   const unavailable = !client.isActive ? client.unusableReason === 'expired' ? '已过期' : '已停用' : null;
+  const identity = clientVisual(client.name);
+  const IdentityIcon = identity.icon;
+  const ModeIcon = signal.pinned ? SlidersHorizontal : ShieldCheck;
   const accessLabels = { write: '可执行', full: '已开放', read: '只读', none: '未开放' };
-  return <div className="mcp-client-row" role="listitem" style={{ flexShrink: 0 }}>
+  return <div className="mcp-client-row" data-manual={signal.pinned} data-unavailable={!client.isActive} role="listitem" style={{ flexShrink: 0 }}>
     <div className="mcp-client-top">
-      <div className="mcp-client-identity"><strong>{client.name}</strong><span className="mcp-client-mode">{signal.pinned ? '自定义授权' : '跟随我的权限'}</span>{unavailable && <span className="mcp-unavailable">{unavailable}</span>}</div>
+      <div className="mcp-client-identity"><span className="mcp-client-avatar" style={{ color: identity.text, background: identity.soft }} title="按客户端名称匹配的图标"><IdentityIcon size={20} aria-hidden /></span><div className="mcp-client-heading"><strong>{client.name}</strong><span className="mcp-client-mode" data-manual={signal.pinned}><ModeIcon size={11} aria-hidden />{signal.pinned ? '自定义授权' : '跟随我的权限'}</span>{unavailable && <span className="mcp-unavailable">{unavailable}</span>}</div></div>
       <code className="mcp-key-prefix" title="凭证前缀：用于区分同名客户端">{client.keyPrefix}…</code>
       <Button size="sm" onClick={onEditQuota} aria-label={`管理 ${client.name} ${client.keyPrefix}`}><Settings2 size={13} aria-hidden />管理</Button>
     </div>
-    <div className="mcp-client-capabilities" aria-label="授权范围">{signal.dots.map(cap => <span className="mcp-capability-label" data-tier={cap.tier} key={cap.key}>{cap.title}<span>{accessLabels[cap.tier]}</span></span>)}{signal.extraScopes.length > 0 && <span className="mcp-extra-scopes">另有 {signal.extraScopes.length} 项独立接口</span>}</div>
-    <div className="mcp-client-bottom"><div className="mcp-client-usage"><span>生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span>写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div><div className="mcp-client-last">今日 {client.todayCalls} 次 · {client.lastUsedAt ? <>最近调用 <RelativeTime value={client.lastUsedAt} /></> : '尚未调用'}</div></div>
+    <div className="mcp-client-capabilities" aria-label="授权范围">{signal.dots.map(cap => {
+      const visual = capabilityVisual(cap.key);
+      const Icon = visual.icon;
+      const granted = cap.tier !== 'none';
+      return <span className="mcp-capability-label" data-tier={cap.tier} key={cap.key} style={granted ? { color: visual.text, background: visual.soft, borderColor: visual.border } : undefined}><Icon size={12} aria-hidden />{cap.title}<span>{accessLabels[cap.tier]}</span></span>;
+    })}{signal.extraScopes.length > 0 && <span className="mcp-extra-scopes">另有 {signal.extraScopes.length} 项独立接口</span>}</div>
+    <div className="mcp-client-bottom"><div className="mcp-client-usage"><span><Image size={12} aria-hidden />生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span><PenLine size={12} aria-hidden />写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div><div className="mcp-client-last"><Clock3 size={11} aria-hidden />今日 {client.todayCalls} 次 · {client.lastUsedAt ? <>最近调用 <RelativeTime value={client.lastUsedAt} /></> : '尚未调用'}</div></div>
     {missing.length > 0 && <p className="mcp-missing">另有 {missing.length} 项能力可在“管理”中开放。</p>}
   </div>;
 }
