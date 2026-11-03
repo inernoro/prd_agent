@@ -238,6 +238,8 @@ export function createRelease(productId: string, body: {
   historyConfirmationToken?: string;
   initiationId?: string;
   isTemporaryOptimization: boolean;
+  noTapdLinks?: boolean;
+  tapdLinks?: Array<{ title: string; url: string }>;
   planName?: string;
   ownerId: string;
   openBrandScope?: string;

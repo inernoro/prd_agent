@@ -88,6 +88,10 @@ export function buildReleaseBasicInfoRows(
 
   return [
     { label: '产品', value: resolveVersionProductLabel(release, productName) },
+    ...(release.tapdLinks?.length ? [{
+      label: 'TAPD 链接',
+      value: <ul className="space-y-1">{release.tapdLinks.map(({ title, url }) => <li key={url}><a href={url} target="_blank" rel="noreferrer" className="break-all text-cyan-300 hover:underline">{title}</a></li>)}</ul>,
+    }] : release.noTapdLinks === true ? [{ label: 'TAPD 链接', value: '无 TAPD 链接' }] : []),
     { label: '正式版本号', value: <span className="font-mono text-cyan-200">{release.vCode?.trim() || DASH}</span> },
     {
       label: '内部版本号',

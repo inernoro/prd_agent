@@ -20,6 +20,47 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class ProductVersionClaimGuardTests
 {
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("invalid")]
+    [InlineData("missing-name")]
+    [InlineData("none")]
+    [InlineData("links")]
+    public async Task FormalReleaseRequiresTapdUnlessExplicitlyAbsent(string scenario)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var request = NumberingReleaseRequest();
+        request.NoTapdLinks = scenario == "none";
+        if (scenario is "invalid" or "missing-name" or "links")
+        {
+            request.TapdLinks = new()
+            {
+                new() { Title = scenario == "missing-name" ? "" : " 需求一 ", Url = scenario == "invalid" ? "https://tapd.cn.example.org/1" : "https://www.tapd.cn/1" },
+                new() { Title = "需求二", Url = "https://www.tapd.cn/2" },
+            };
+        }
+        var result = await fixture.Controller().CreateRelease("product", request);
+        if (scenario is "missing" or "invalid" or "missing-name")
+        {
+            var response = Assert.IsType<ApiResponse<object>>(Assert.IsType<BadRequestObjectResult>(result).Value);
+            Assert.Contains("TAPD", response.Error!.Message);
+            Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(x => x.InitiationId == request.InitiationId));
+            Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
+            return;
+        }
+
+        Assert.IsType<OkObjectResult>(result);
+        var saved = await fixture.Db.ProductReleases.Find(x => x.InitiationId == request.InitiationId).SingleAsync();
+        Assert.Equal(scenario == "none", saved.NoTapdLinks);
+        if (scenario == "none") Assert.Empty(saved.TapdLinks);
+        else
+        {
+            Assert.Equal(new[] { "需求一", "需求二" }, saved.TapdLinks.Select(link => link.Title));
+            Assert.Contains("需求来源：\n【需求一】\nhttps://www.tapd.cn/1\n【需求二】\nhttps://www.tapd.cn/2", ProductVersionCopyTemplate.Build(saved));
+        }
+    }
+
     [Fact]
     public async Task EditFormalVersionUpdatesOnlyItsBasicInformationWithoutTouchingTNumberOrNotification()
     {
@@ -774,6 +815,7 @@ public class ProductVersionClaimGuardTests
     }
 
     private static CreateReleaseRequest NumberingReleaseRequest(string source = "numbering-source") => new() {
+        NoTapdLinks = true,
         InitiationId = source, OwnerId = "me", TeamMemberIds = new() { "me" }, VersionType = "major",
         PlannedReleaseAt = DateTime.UtcNow.AddDays(1), PlannedTrainingMinutes = 30,
         FeatureManifest = new() { new() { FeatureId = "feature", ChangeType = FeatureChangeType.Added } },
@@ -1239,7 +1281,7 @@ public class ProductVersionClaimGuardTests
             Id = "source", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", Status = "approved", PlanName = "测试方案",
         });
         var request = new CreateReleaseRequest {
-            InitiationId = "source", OwnerId = "me", TeamMemberIds = new() { "me" },
+            InitiationId = "source", OwnerId = "me", TeamMemberIds = new() { "me" }, NoTapdLinks = true,
             PlannedReleaseAt = DateTime.UtcNow.AddDays(1), PlannedTrainingMinutes = 30,
             FeatureManifest = new() { new() { FeatureId = "feature", ChangeType = FeatureChangeType.Added } },
         };
