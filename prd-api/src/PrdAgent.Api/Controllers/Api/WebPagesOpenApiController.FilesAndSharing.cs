@@ -28,9 +28,10 @@ public partial class WebPagesOpenApiController
             var site = await _sites.GetByIdAsync(siteId, GetBoundUserId(), CancellationToken.None);
             if (site == null || !await _sites.CanEditSiteAsync(site, GetBoundUserId(), CancellationToken.None))
                 return MissingSite();
+            var grantError = await RequireSiteContentExposureGrantAsync(site);
+            if (grantError != null) return grantError;
         }
-        var bearer = Request.Headers.Authorization.ToString();
-        var apiKey = bearer.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? bearer[7..].Trim() : bearer.Trim();
+        var apiKey = PrdAgent.Api.Authentication.ApiKeyCredentialHeaders.Read(Request) ?? string.Empty;
         if (!apiKey.StartsWith("sk-ak-", StringComparison.Ordinal))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_CREDENTIALS, "请通过已连接的 MAP 智能体密钥获取上传凭证"));
         var protection = HttpContext.RequestServices.GetService<IDataProtectionProvider>();
@@ -92,6 +93,8 @@ public partial class WebPagesOpenApiController
         {
             var target = await _sites.GetByIdAsync(siteId, userId, CancellationToken.None);
             if (target == null || !await _sites.CanEditSiteAsync(target, userId, CancellationToken.None)) return MissingSite();
+            var grantError = await RequireSiteContentExposureGrantAsync(target);
+            if (grantError != null) return grantError;
         }
         var progressId = ScopedUploadId(uploadId);
         var sourceRef = BuildSourceRef(clientRequestId);
@@ -199,6 +202,10 @@ public partial class WebPagesOpenApiController
     {
         var error = ValidateMetadata(request);
         if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
+        var target = await _sites.GetByIdAsync(siteId, GetBoundUserId(), CancellationToken.None);
+        if (target == null || !await _sites.CanEditSiteAsync(target, GetBoundUserId(), CancellationToken.None)) return MissingSite();
+        var grantError = await RequireSiteContentExposureGrantAsync(target);
+        if (grantError != null) return grantError;
         var site = await _sites.UpdateAsync(siteId, GetBoundUserId(), request.Title, request.Description,
             request.Tags, request.Folder, null, CancellationToken.None);
         return site == null ? MissingSite() : Ok(ApiResponse<object>.Ok(SiteDto(site)));
@@ -220,6 +227,11 @@ public partial class WebPagesOpenApiController
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "visibility 只能是 private 或 public"));
         if (visibility == "public" && !request.ConfirmedExposure)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "公开网页前，请明确确认用户要求公开，再传 confirmedExposure=true"));
+        if (visibility == "public")
+        {
+            var grantError = RequireWebExposureGrant();
+            if (grantError != null) return grantError;
+        }
         var fingerprintError = ValidatePrivateSourceFingerprint(request.ConfirmedPrivateSourceFingerprint);
         if (fingerprintError != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, fingerprintError));
         var userId = GetBoundUserId();
@@ -274,6 +286,11 @@ public partial class WebPagesOpenApiController
         if (share == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享不存在或无权操作"));
         var visibility = NormalizeShareVisibility(request.Visibility);
         var effectiveVisibility = visibility ?? share.Visibility;
+        if (IsExternalVisibility(effectiveVisibility))
+        {
+            var grantError = RequireWebExposureGrant();
+            if (grantError != null) return grantError;
+        }
         if (IsExternalVisibility(effectiveVisibility) && request.ExpiresInDays != null && !request.ConfirmedExposure)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "修改对外分享有效期前，请确认用户意图并传 confirmedExposure=true"));
         // 放宽范围或延续对外暴露时，均重新核查当前线上内容引用的私有资料。
@@ -310,6 +327,8 @@ public partial class WebPagesOpenApiController
         if (share == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享不存在或无权操作"));
         if (!share.IsRevoked && IsExternalVisibility(share.Visibility))
         {
+            var grantError = RequireWebExposureGrant();
+            if (grantError != null) return grantError;
             if (!request.ConfirmedExposure)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "延长对外分享前，请确认用户意图并传 confirmedExposure=true"));
             var refusal = await EnforceSharePrivateSourcesAsync(share, request.ConfirmedPrivateSourceFingerprint);

@@ -572,8 +572,8 @@ export function ClientRow({
           <button
             type="button"
             onClick={onEditQuota}
-            aria-label="调整这台客户端的用量与模型设置"
-            title="调整这台客户端的用量与模型设置"
+            aria-label="客户端设置"
+            title="客户端设置"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] sm:h-8 sm:w-auto sm:gap-1.5 sm:px-2.5"
             style={{
               background: 'var(--bg-sunken)',

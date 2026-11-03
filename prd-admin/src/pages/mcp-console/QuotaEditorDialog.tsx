@@ -11,7 +11,7 @@ const LIMITS = {
 } as const;
 
 /**
- * 调整某把密钥的用量上限。
+ * 调整某把密钥的用量、模型和独立公开发布授权。
  *
  * 存在的理由很直接：配额触顶时后端会提示「可以在密钥管理里调高」，
  * 没有这个入口那句提示就是一条走不通的路。
@@ -35,15 +35,18 @@ export function QuotaEditorDialog({
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [webPublicExposureAllowed, setWebPublicExposureAllowed] = useState(false);
+  const canEnableWebPublicExposure = client?.scopes.some((scope) => scope.toLowerCase() === 'web-pages:write') ?? false;
 
   useEffect(() => {
-    if (!client) return;
+    if (!client || !open) return;
     setImage(String(client.dailyImageQuota));
     setWrite(String(client.dailyWriteQuota));
     setRate(String(client.rateLimitPerMin));
     setModelMode(client.mcpLiteraryImageModelMode === 'fixed' ? 'fixed' : 'follow-user-panel');
     setFixedModel(client.mcpLiteraryImageModelPublicId || '');
-  }, [client]);
+    setWebPublicExposureAllowed(client.webPublicExposureAllowed === true);
+  }, [client, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -82,7 +85,9 @@ export function QuotaEditorDialog({
         return;
       }
     }
-    if (modelMode === 'fixed' && !fixedModel) {
+    const modelSettingsChanged = modelMode !== (client.mcpLiteraryImageModelMode ?? 'follow-user-panel')
+      || (modelMode === 'fixed' && fixedModel !== (client.mcpLiteraryImageModelPublicId ?? ''));
+    if (modelSettingsChanged && modelMode === 'fixed' && !fixedModel) {
       toast.error('请选择模型', '固定模式必须选择一个文生图与图生图都可用的模型');
       return;
     }
@@ -91,15 +96,20 @@ export function QuotaEditorDialog({
     const res = await updateAgentApiKey({
       id: client.keyId,
       ...parsed,
-      mcpLiteraryImageModelMode: modelMode,
-      mcpLiteraryImageModelPublicId: modelMode === 'fixed' ? fixedModel : undefined,
+      ...(modelSettingsChanged ? {
+        mcpLiteraryImageModelMode: modelMode,
+        mcpLiteraryImageModelPublicId: modelMode === 'fixed' ? fixedModel : undefined,
+      } : {}),
+      ...(webPublicExposureAllowed === (client.webPublicExposureAllowed === true)
+        ? {}
+        : { webPublicExposureAllowed }),
     });
     setSaving(false);
     if (!res.success) {
       toast.error('保存失败', res.error?.message);
       return;
     }
-    toast.success('上限已更新');
+    toast.success('客户端设置已更新');
     onSaved();
     onOpenChange(false);
   };
@@ -121,6 +131,30 @@ export function QuotaEditorDialog({
           <QuotaField label={LIMITS.image.label} hint="1-500" value={image} onChange={setImage} />
           <QuotaField label={LIMITS.write.label} hint="1-2000" value={write} onChange={setWrite} />
           <QuotaField label={LIMITS.rate.label} hint="1-600" value={rate} onChange={setRate} />
+
+          <div className="mt-1 flex flex-col gap-2 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+            <label className="flex items-start gap-2 text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <input
+                type="checkbox"
+                checked={webPublicExposureAllowed}
+                disabled={saving || (!webPublicExposureAllowed && !canEnableWebPublicExposure)}
+                onChange={(event) => setWebPublicExposureAllowed(event.target.checked)}
+                aria-describedby="mcp-web-public-exposure-hint"
+              />
+              <span>允许这台客户端对外发布网页</span>
+            </label>
+            <p id="mcp-web-public-exposure-hint" className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              允许公开或登录可见分享、永久分享与续期，以及更新已对外分享的站点内容。默认关闭，自动授权不会开启。
+            </p>
+            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              关闭后只阻止后续发布；已有分享链接请在网页托管中撤销。
+            </p>
+            {!canEnableWebPublicExposure && !webPublicExposureAllowed && (
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                需先授予网页托管写入权限，才能开启对外发布。
+              </p>
+            )}
+          </div>
 
           <div className="mt-1 flex flex-col gap-2 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
             <span className="text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>

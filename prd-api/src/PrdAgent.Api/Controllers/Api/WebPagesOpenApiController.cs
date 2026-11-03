@@ -217,6 +217,8 @@ public partial class WebPagesOpenApiController : ControllerBase
         var days = req?.ExpiresInDays ?? 7;
         if (IsExternalVisibility(visibility))
         {
+            var grantError = RequireWebExposureGrant();
+            if (grantError != null) return grantError;
             var refusal = await EnforcePrivateSourcesAsync([site],
                 PrdAgent.Api.Services.HostedSitePrivateSourceActions.ShareCreate,
                 req?.ConfirmedPrivateSourceFingerprint);
