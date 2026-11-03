@@ -4,6 +4,7 @@ import type {
   GetMcpConsoleOverviewContract,
   GetMcpVisibleToolsContract,
   ListMcpCallsContract,
+  GetMapAgentSkillManifestContract,
 } from '@/services/contracts/mcpConsole';
 
 export const getMcpConsoleOverviewReal: GetMcpConsoleOverviewContract = async () => {
@@ -24,4 +25,8 @@ export const listMcpCallsReal: ListMcpCallsContract = async (input) => {
 
 export const getMcpVisibleToolsReal: GetMcpVisibleToolsContract = async (keyId) => {
   return await apiRequest(api.mcpConsole.visibleTools(encodeURIComponent(keyId)), { method: 'GET' });
+};
+
+export const getMapAgentSkillManifestReal: GetMapAgentSkillManifestContract = async () => {
+  return await apiRequest('/api/official-skills/map-agent/manifest', { method: 'GET', auth: false });
 };
