@@ -66,6 +66,8 @@ public static class McpCapabilityCatalog
     public const string ScopeLiteraryUse = "literary-agent:use";
     public const string ScopeWebPagesRead = "web-pages:read";
     public const string ScopeWebPagesWrite = "web-pages:write";
+    // 不在普通 scope 白名单中：只能由独立的用户授权字段派生，不能靠传 scopes 或自动模式自授。
+    public const string ScopeWebPagesPublish = "web-pages:publish";
     public const string ScopeMarketplaceRead = "marketplace.skills:read";
     public const string ScopeMarketplaceWrite = "marketplace.skills:write";
     public const string ScopeDocStoreRead = "document-store:read";
@@ -109,7 +111,7 @@ public static class McpCapabilityCatalog
         {
             Key = "web",
             Title = "网页托管",
-            Summary = "托管 HTML、原始 ZIP 和图片，更新原站，并按你的明确要求设置分享范围和永久有效。",
+            Summary = "托管 HTML、原始 ZIP 和图片；对外分享及已对外站点更新，需在客户端设置中单独开启对外发布授权。",
             ReadScope = ScopeWebPagesRead,
             WriteScope = ScopeWebPagesWrite,
             WriteNeedsApproval = true,
@@ -220,6 +222,7 @@ public static class McpCapabilityCatalog
             ? AutoScopesFor(ownedPermissions)
             : (storedScopes ?? Enumerable.Empty<string>())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Where(s => !string.Equals(s, ScopeWebPagesPublish, StringComparison.OrdinalIgnoreCase))
                 .Where(s => !PermissionCheckedScopes.Contains(s) || PermissionsAllowScope(ownedPermissions, s))
                 .ToList();
 
@@ -239,9 +242,13 @@ public static class McpCapabilityCatalog
         AgentApiKey key,
         IReadOnlyCollection<string> ownedPermissions,
         DateTime nowUtc)
-        => AgentApiKey.IsUsableAt(key, nowUtc, out _)
-            ? EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions)
-            : Array.Empty<string>();
+    {
+        if (!AgentApiKey.IsUsableAt(key, nowUtc, out _)) return Array.Empty<string>();
+        var scopes = EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions).ToList();
+        if (key.WebPublicExposureAllowed && scopes.Contains(ScopeWebPagesWrite, StringComparer.OrdinalIgnoreCase))
+            scopes.Add(ScopeWebPagesPublish);
+        return scopes;
+    }
 
     public static McpCapability? ByScope(string scope) =>
         All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));
