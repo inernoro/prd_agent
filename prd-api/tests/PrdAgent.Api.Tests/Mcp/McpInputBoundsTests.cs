@@ -96,6 +96,14 @@ public class McpInputBoundsTests
 
         ["CreateShareRequest.Title"] = Bound.Metadata,
         ["CreateShareRequest.Description"] = Bound.Metadata,
+        ["CreateShareRequest.Visibility"] = Bound.FiniteShape,
+        ["CreateShareRequest.ConfirmedPrivateSourceFingerprint"] = Bound.FiniteShape,
+        ["VisibilityRequest.Visibility"] = Bound.FiniteShape,
+        ["VisibilityRequest.ConfirmedPrivateSourceFingerprint"] = Bound.FiniteShape,
+        ["ShareSettingsRequest.Visibility"] = Bound.FiniteShape,
+        ["ShareSettingsRequest.ConfirmedPrivateSourceFingerprint"] = Bound.FiniteShape,
+        ["RevokeShareRequest.Reason"] = Bound.Metadata,
+        ["RenewPageShareRequest.ConfirmedPrivateSourceFingerprint"] = Bound.FiniteShape,
 
         // 管理面绑定模型池：这两个是模型 id 列表，要在模型目录里查得到才生效
         ["SetBindingRequest.ChatModels"] = Bound.MustExist,
@@ -368,7 +376,7 @@ public class McpInputBoundsTests
     private static string RepoPath(string relative)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        while (dir != null && !(Directory.Exists(Path.Combine(dir.FullName, ".git")) || File.Exists(Path.Combine(dir.FullName, ".git")))) dir = dir.Parent;
         dir.ShouldNotBeNull("找不到仓库根");
         return Path.Combine(dir!.FullName, relative);
     }

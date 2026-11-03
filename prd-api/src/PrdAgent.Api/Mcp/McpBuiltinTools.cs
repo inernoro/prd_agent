@@ -85,7 +85,7 @@ public static class McpBuiltinTools
             if (!string.Equals(t.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
             if (PathTemplateMatches(t.PathTemplate, path)) return t;
         }
-        return null;
+        return MatchFileTransport(method, path, template: false);
     }
 
     /// <summary>
@@ -107,6 +107,21 @@ public static class McpBuiltinTools
             if (!string.Equals(t.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
             if (RouteTemplatesEqual(t.PathTemplate, routeTemplate)) return t;
         }
+        return MatchFileTransport(method, routeTemplate, template: true);
+    }
+
+    /// <summary>原文件传输与 JSON 操作共用身份、配额和审计，不能变成直连绕过通道。</summary>
+    private static McpToolDef? MatchFileTransport(string method, string path, bool template)
+    {
+        if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return null;
+        var routes = new[]
+        {
+            (Path: "/api/open/web-pages/upload", Tool: "map_web_publish_page"),
+            (Path: "/api/open/web-pages/pages/{siteId}/reupload", Tool: "map_web_update_page"),
+        };
+        foreach (var route in routes)
+            if (template ? RouteTemplatesEqual(route.Path, path) : PathTemplateMatches(route.Path, path))
+                return All.First(t => t.Name == route.Tool);
         return null;
     }
 
@@ -544,7 +559,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_publish_page",
-            Description = "把一整页 HTML 托管成站点，返回可以直接打开的地址。适合把生成的报告、看板、演示页交付给用户。只收 HTML 文本（不支持 zip、图片等二进制），单页上限 4MB。",
+            Description = "把一整页 HTML 托管成站点，返回可以直接打开的地址。适合把生成的报告、看板、演示页交付给用户。此工具收 HTML 文本，单页上限 4MB；原样上传 ZIP、图片等文件请先调用 map_web_get_upload_info，再用返回的短期凭证走 multipart 上传。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "POST",
             PathTemplate = "/api/open/web-pages/pages",
@@ -573,7 +588,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_create_share",
-            Description = "给某个托管站点建一条分享链接（默认 7 天有效）。链接是 owner-only 的：只有用户自己和他的团队打得开，不会公开到互联网。",
+            Description = "给托管站点建分享链接，默认 owner-only、7 天。用户明确要求公开时传 visibility=public、confirmedExposure=true；expiresInDays=0 表示永久。返回实际可见范围和到期时间；有私有资料引用时先向用户说明并取得指纹确认。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "POST",
             PathTemplate = "/api/open/web-pages/pages/{siteId}/share",
@@ -581,7 +596,150 @@ public static class McpBuiltinTools
             {
                 new() { Name = "siteId", In = "path", Required = true, Description = "站点 id（来自 map_web_publish_page 或 map_web_list_pages）" },
                 new() { Name = "title", In = "body", Description = "分享标题，留空用站点标题" },
-                new() { Name = "expiresInDays", In = "body", Type = "integer", Description = "有效期天数，1-90，默认 7" },
+                new() { Name = "expiresInDays", In = "body", Type = "integer", Description = "0 = 永久，1-365 = 天数；省略默认 7" },
+                new() { Name = "visibility", In = "body", EnumValues = new[] { "owner-only", "logged-in", "public" }, Description = "谁能打开；省略默认 owner-only" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "仅在用户明确要求对外分享时传 true；public/logged-in 必填 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Description = "用户确认所列私有资料对外后，传核查返回的 fingerprint；不可自行代替用户确认" },
+            },
+        },
+
+        // 文件与分享管理：原文件走 multipart，结构化操作继续走 MCP。
+        new McpToolDef
+        {
+            Name = "map_web_get_upload_info",
+            Description = "取得原文件上传地址和十分钟短期凭证。客户端用 multipart 的 file 字段直接上传本地 ZIP、图片、HTML、PDF、Markdown或视频，不要重写文件或转base64。凭证只允许所选上传路径；传 siteId 则更新原站，不新建站。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "GET", PathTemplate = "/api/open/web-pages/upload-info",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "query", Type = "string", Required = false, Description = "要替换的原站 ID；新建时不传" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_upload_progress",
+            Description = "查询上传解包进度，计数来自真实上传。只查询当前用户发起的 uploadId。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/upload-progress/{uploadId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "uploadId", In = "path", Type = "string", Required = true, Description = "上传表单传入的 uploadId" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_page",
+            Description = "读取有权访问的站点详情、可见性、入口和资源文件清单；用于确认 ZIP 多页面与图片保留情况。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+                new() { Name = "offset", In = "query", Type = "integer", Description = "文件清单起点，默认0；filesHasMore=true 时继续读取" },
+                new() { Name = "limit", In = "query", Type = "integer", Description = "每次文件数，默认200，上限1000" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_page_content",
+            Description = "读取有编辑权限的站点入口 HTML 源码，最多2MB；PDF、视频等包装站请读取详情中的原文件，不支持源码读取。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}/content",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_update_page",
+            Description = "修改原站标题、描述、文件夹或标签，不新建站。改文件请调用 map_web_get_upload_info(siteId) 后上传原文件。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "原站 ID" },
+                new() { Name = "title", In = "body", Type = "string", Required = false, Description = "新标题" },
+                new() { Name = "description", In = "body", Type = "string", Required = false, Description = "新描述" },
+                new() { Name = "folder", In = "body", Type = "string", Required = false, Description = "新文件夹，空串表示未分类" },
+                new() { Name = "tags", In = "body", Type = "array", Required = false, Description = "新标签数组", ItemsType = "string" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_set_visibility",
+            Description = "修改站点可见性 private/public，仅站点创建者可改。公开前必须明确用户意图并传 confirmedExposure=true；不等于修改分享链接的可见性或有效期。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}/visibility",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+                new() { Name = "visibility", In = "body", Type = "string", Required = true, Description = "private 或 public" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Required = false, Description = "用户明确要求公开才传 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Type = "string", Required = false, Description = "用户确认当前私有资料后传核查返回的 fingerprint" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_get_private_sources",
+            Description = "在公开或对外分享之前核查站点引用的私有资料。返回指纹与资料清单，仅有分享权限的用户可查；取得用户确认后才可带指纹公开。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "GET", PathTemplate = "/api/open/web-pages/pages/{siteId}/private-sources",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "path", Type = "string", Required = true, Description = "站点 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_list_shares",
+            Description = "列出当前用户创建的分享，包含已撤销条目。可按站点筛选；读回实际可见范围、到期时间、链接状态。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesRead,
+            Method = "GET", PathTemplate = "/api/open/web-pages/shares",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "siteId", In = "query", Type = "string", Required = false, Description = "可选站点 ID" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_update_share",
+            Description = "就地修改自己创建的分享链接可见范围和有效期；expiresInDays=0 为永久，其他天数从现在重算；已撤销链接不能复活。对外范围必须用户明确要求并传 confirmedExposure=true。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "PATCH", PathTemplate = "/api/open/web-pages/shares/{shareId}",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "shareId", In = "path", Type = "string", Required = true, Description = "分享 ID" },
+                new() { Name = "visibility", In = "body", Type = "string", Required = false, Description = "owner-only、logged-in 或 public" },
+                new() { Name = "expiresInDays", In = "body", Type = "integer", Required = false, Description = "0 永久；1-365天，从现在重算" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Required = false, Description = "用户明确要求对外分享才传 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Type = "string", Required = false, Description = "用户确认私有资料后传核查指纹" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_renew_share",
+            Description = "延长自己创建的分享链接有效期；在现有到期日或当前时间的较晚者上加天数。设永久请用 map_web_update_share expiresInDays=0。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "POST", PathTemplate = "/api/open/web-pages/shares/{shareId}/renew",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "shareId", In = "path", Type = "string", Required = true, Description = "分享 ID" },
+                new() { Name = "extendDays", In = "body", Type = "integer", Required = true, Description = "延长天数，1-365" },
+                new() { Name = "confirmedExposure", In = "body", Type = "boolean", Description = "延长对外分享前，用户明确要求时传 true" },
+                new() { Name = "confirmedPrivateSourceFingerprint", In = "body", Description = "用户确认当前私有资料后传核查指纹" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_web_revoke_share",
+            Description = "撤销自己创建的分享链接，立即停止通过该链接访问，不删除原站。撤销不可恢复，用户明确要求收回链接后调用。",
+            RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
+            Method = "POST", PathTemplate = "/api/open/web-pages/shares/{shareId}/revoke",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "shareId", In = "path", Type = "string", Required = true, Description = "分享 ID" },
+                new() { Name = "reason", In = "body", Type = "string", Required = false, Description = "撤销原因，可选" },
             },
         },
 
