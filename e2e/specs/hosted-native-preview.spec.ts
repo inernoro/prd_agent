@@ -55,11 +55,19 @@ test.afterAll(async () => { if (directory) await rm(directory, { recursive: true
 test.use({ trace: 'off', video: 'off' });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   const hostedOrigin = options.sameOrigin ? new URL(String(test.info().project.use.baseURL)).origin : origin;
   const siteEntry = options.sameOrigin ? entry.replace(origin, hostedOrigin) : entry;
+  const site = {
+    id: 'qa-native', title: '临时预览测试', siteUrl: siteEntry, entryFile: 'index.html',
+    contentShape: options.shape, wrappedAssetType: options.wrapper,
+    pdfFilePaths: options.pdfFilePaths, requiresPreviewBridge: options.requiresPreviewBridge,
+    totalSize: 3000, entrySize: 600, fileCount: 10, viewerCanEdit: false,
+    ownerUserId: 'qa-preview-user', files: [], tags: [], folder: '', sourceType: 'upload',
+    createdAt: '2026-11-03T00:00:00Z', updatedAt: '2026-11-03T00:00:00Z', askEnabled: false,
+  };
   await page.route(`${hostedOrigin}/sites/qa/nested/**`, async route => {
     const url = new URL(route.request().url());
     requests.push(url.pathname);
@@ -72,14 +80,17 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   });
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
-    let data: unknown = {};
+    let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
-      data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [{
-        id: 'qa-native', title: '临时预览测试', siteUrl: siteEntry, entryFile: 'index.html',
-        contentShape: options.shape, wrappedAssetType: options.wrapper,
-        pdfFilePaths: options.pdfFilePaths, requiresPreviewBridge: options.requiresPreviewBridge,
-        totalSize: 3000, entrySize: 600, fileCount: 10, viewerCanEdit: false,
-      }] };
+      data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site] };
+    } else if (path === '/api/authz/me') {
+      data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+    } else if (path === '/api/web-pages') {
+      data = { items: [site], total: 1 };
+    } else if (path === '/api/changelog/current-week') {
+      data = { weekStart: '2026-11-02', weekEnd: '2026-11-08', fetchedAt: site.createdAt,
+        dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0,
+        daysOffset: 0, hasMore: false, fragments: [] };
     } else if (path.endsWith('/download/pdf')) {
       await route.fulfill({ contentType: 'application/pdf', headers: { 'Content-Disposition': 'attachment; filename="lesson.pdf"' }, body: '%PDF-1.4\n%%EOF' });
       return;
@@ -89,16 +100,53 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     } else if (path.endsWith('/comments')) {
       data = { comments: [] };
     }
-    await route.fulfill({ json: { success: true, data } });
+    await route.fulfill({ json: { success: true, data, error: null } });
   });
-  await page.goto('/s/wp/qa-native');
-  await expect(page.locator('iframe[title="临时预览测试"]')).toBeVisible();
-  return { requests, contentRequests: () => contentRequests, frame: page.frameLocator('iframe[title="临时预览测试"]') };
+  if (options.modal) {
+    await page.addInitScript(() => localStorage.setItem('prd-admin-auth', JSON.stringify({
+      state: { isAuthenticated: true, user: { userId: 'qa-preview-user', username: 'qa-preview-user', displayName: '预览验收用户', role: 'ADMIN' },
+        token: 'qa-preview-token', refreshToken: 'qa-preview-refresh', sessionKey: 'qa-preview-session',
+        permissions: ['access', 'web-pages.read'], permissionsLoaded: true, isRoot: false,
+        menuCatalog: [], menuCatalogLoaded: true, cdnBaseUrl: '', permFingerprint: 'qa-preview' }, version: 0,
+    })));
+    await page.goto('/web-pages');
+    const card = page.locator('[data-tour-id="webpages-card"]').filter({ hasText: site.title });
+    await expect(card).toBeVisible();
+    await card.hover();
+    await card.getByRole('button', { name: '更多' }).filter({ visible: true }).first().click();
+    // 固定父页时钟，让输入操作稳定发生在 1.5 秒等待窗内，不依赖 CI 机器速度。
+    await page.clock.install({ time: new Date('2026-11-03T12:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-11-03T12:00:01Z'));
+    await page.getByText('评论管理', { exact: true }).click();
+  } else {
+    await page.goto('/s/wp/qa-native');
+  }
+  const preview = options.modal ? page.getByRole('dialog').locator('iframe') : page.locator('iframe[title="临时预览测试"]');
+  await expect(preview).toBeVisible();
+  return { requests, contentRequests: () => contentRequests, frame: preview.contentFrame() };
 }
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
   test.describe(`托管对抗样本 ${viewport.width}px`, () => {
     test.use({ viewport });
+
+    test('站内弹窗越过等待窗口后不重载，保留输入和地址状态', async ({ page }, testInfo) => {
+      const { requests, contentRequests } = await serve(page, { shape: 'multi-file', modal: true });
+      const iframe = page.getByRole('dialog').locator('iframe');
+      const original = await iframe.elementHandle();
+      const frame = iframe.contentFrame();
+      await expect(frame.locator('#result')).toHaveText('fetch-ok:entry');
+      await frame.getByLabel('保留输入').fill('等待结束后仍保留');
+      await frame.locator('#state').click();
+      const loads = requests.filter(path => path.endsWith('/index.html')).length;
+      await page.clock.runFor(1600);
+      expect(await original!.evaluate(element => element.isConnected)).toBe(true);
+      await expect(frame.getByLabel('保留输入')).toHaveValue('等待结束后仍保留');
+      expect(await frame.locator('body').evaluate(() => location.href)).toContain('?case=changed#step');
+      expect(requests.filter(path => path.endsWith('/index.html'))).toHaveLength(loads);
+      expect(contentRequests()).toBe(0);
+      await page.screenshot({ path: testInfo.outputPath('native-modal-state.png') });
+    });
 
     test('多文件 URL、嵌套页面、模块、fetch、资源及隔离均保持浏览器语义', async ({ page }, testInfo) => {
       const errors: string[] = [];

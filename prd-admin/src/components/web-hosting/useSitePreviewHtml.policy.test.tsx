@@ -2,11 +2,20 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { getSiteContent } from '@/services/real/webPages';
+import { getSiteContent, type HostedSite } from '@/services/real/webPages';
 import { ok } from '@/types/api';
 import { __resetSitePreviewHtmlCache, useSitePreviewHtml, type SitePreviewHtmlSite } from './useSitePreviewHtml';
+import SitePreviewModal from './SitePreviewModal';
 
-vi.mock('@/services/real/webPages', () => ({ getSiteContent: vi.fn() }));
+vi.mock('@/services/real/webPages', () => ({ getSiteContent: vi.fn(), getSiteAskConfig: vi.fn(), setSiteCommentsEnabled: vi.fn() }));
+vi.mock('./useHostedPdfDownload', async () => {
+  const { useRef } = await import('react');
+  return { useHostedPdfDownload: () => ({ iframeRef: useRef(null), notifyFrame: vi.fn(), decorateHtml: (html: string) => html }), HostedPdfDownloadStatus: () => null };
+});
+vi.mock('./CommentsSection', () => ({ default: () => null }));
+vi.mock('./ask/AskPanelInline', () => ({ default: () => null }));
+vi.mock('./ask/AskConfigDrawer', () => ({ default: () => null }));
+vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: () => null }));
 const host = document.createElement('div');
 let root: ReturnType<typeof createRoot>;
 let observed: ReturnType<typeof useSitePreviewHtml>;
@@ -47,4 +56,32 @@ it('旧站点仍能取回正文并注入原资源基址', async () => {
   await act(async () => root.render(<Probe value={site} />));
   expect(observed.srcDoc).toContain('<base href="https://storage.example/test/">');
   expect(observed.srcDoc).toContain('旧站点');
+});
+
+it('原地址弹窗结束等待时保留同一个 iframe，发布新地址仍能更新文档', async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal('requestAnimationFrame', vi.fn());
+  const hosted = { ...site, contentShape: 'multi-file', title: '原地址预览', askEnabled: false } as HostedSite;
+  try {
+    await act(async () => root.render(<SitePreviewModal site={hosted} onClose={() => {}} />));
+    const frame = document.querySelector('iframe')!;
+    expect(frame.src).toBe(hosted.siteUrl);
+    expect(getSiteContent).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1499));
+    expect(document.querySelector('iframe')).toBe(frame);
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(document.querySelector('iframe')).toBe(frame);
+    expect(frame.isConnected).toBe(true);
+
+    const next = { ...hosted, siteUrl: `${hosted.siteUrl}?v=2` };
+    await act(async () => root.render(<SitePreviewModal site={next} onClose={() => {}} />));
+    expect(frame.src).toBe(next.siteUrl);
+    await act(async () => vi.advanceTimersByTime(1600));
+    expect(document.querySelector('iframe')).toBe(frame);
+    expect(frame.src).toBe(next.siteUrl);
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
 });

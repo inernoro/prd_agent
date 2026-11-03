@@ -348,7 +348,8 @@ export default function SitePreviewModal({
             <HostedPdfDownloadStatus status={pdfDownload.status} />
             <iframe
               ref={iframeRef}
-              key={renderMode}
+              // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
+              key={useSrcDoc ? 'srcdoc' : 'direct'}
               src={useSrcDoc ? undefined : previewSource.src}
               srcDoc={useSrcDoc && srcDoc ? pdfDownload.decorateHtml(srcDoc) : undefined}
               className="w-full h-full"
