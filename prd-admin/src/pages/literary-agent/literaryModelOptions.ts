@@ -72,6 +72,9 @@ export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): Lite
       bestActualModels.set(identity, model);
     }
   }
+  for (const model of candidates.filter((model) => model.isDefault)) {
+    bestActualModels.get(`${model.actualPlatformId}:${model.actualModelId}`)!.isDefault = true;
+  }
   return [...bestActualModels.values()];
 }
 

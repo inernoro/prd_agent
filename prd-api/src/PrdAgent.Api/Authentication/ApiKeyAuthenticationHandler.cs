@@ -49,31 +49,10 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         var requestMethod = Request.Method;
         var clientIp = Context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        // 从 Authorization header 提取 API Key；缺陷分享提示词历史上使用 X-AI-Access-Key，
-        // 这里兼容 sk-ak 临时密钥，避免外部 Agent 拿到分享文本后无法发表评论。
-        if (!Request.Headers.TryGetValue("Authorization", out var authHeader))
-        {
-            if (!Request.Headers.TryGetValue("X-AI-Access-Key", out authHeader))
-            {
-                return AuthenticateResult.NoResult();
-            }
-        }
-
-        var authHeaderValue = authHeader.ToString();
-        if (string.IsNullOrWhiteSpace(authHeaderValue))
+        var apiKey = ApiKeyCredentialHeaders.Read(Request);
+        if (string.IsNullOrWhiteSpace(apiKey))
         {
             return AuthenticateResult.NoResult();
-        }
-
-        // 支持 "Bearer sk-xxx" 格式
-        string apiKey;
-        if (authHeaderValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-        {
-            apiKey = authHeaderValue["Bearer ".Length..].Trim();
-        }
-        else
-        {
-            apiKey = authHeaderValue.Trim();
         }
 
         // 文件上传凭证只有十分钟且绑定具体上传路径；解包后仍走下面的密钥查找、撤销和当前权限核验。
@@ -167,8 +146,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             // 「它此刻拿得到什么」只此一处推导（McpCapabilityCatalog.EffectiveScopesFor），
             // 接入台面板、授权自检、密钥管理页读的是同一个函数 —— 抄第二份的那一刻，
             // 就是下一次「面板说已授权、这里每个请求都拒」的起点。
-            var declaredScopes = McpCapabilityCatalog.EffectiveScopesFor(
-                key.ScopeMode, storedScopes, ownerPermissions ?? Array.Empty<string>());
+            var declaredScopes = McpCapabilityCatalog.EffectiveScopesForKey(
+                key, ownerPermissions ?? Array.Empty<string>(), DateTime.UtcNow);
 
             // 被剥掉的那几个要留痕：权限回收之后智能体会突然少几个工具，
             // 日志里没有这一行的话，排障时只看得到「它就是调不动」。

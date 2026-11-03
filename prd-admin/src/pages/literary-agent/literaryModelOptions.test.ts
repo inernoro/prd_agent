@@ -65,12 +65,12 @@ describe('buildLiteraryModelOptions', () => {
       id, code: `public-${id}`,
       models: [{ ...pool().models[0], healthStatus, isRecoveryProbeAvailable: true }],
     });
-    const better = entry('a', betterHealth);
+    const better = pool({ ...entry('a', betterHealth), isDefault: betterHealth === worseHealth });
     const worse = entry('z', worseHealth);
-    const unrelated = pool({ id: 'other', code: 'other-public', models: [{ ...pool().models[0], actualModelId: 'future-image-1699' }] });
+    const unrelated = pool({ id: 'other', code: 'other-public', isDefault: false, models: [{ ...pool().models[0], actualModelId: 'future-image-1699' }] });
     for (const candidates of [[worse, unrelated, better], [better, unrelated, worse]]) {
       const options = buildLiteraryModelOptions(candidates);
-      expect(options.map((model) => model.modelName)).toEqual([better.code, unrelated.code]);
+      expect(options.map((model) => [model.modelName, model.isDefault])).toEqual([[better.code, true], [unrelated.code, false]]);
       expect(selectLiteraryModelOption(options, 'pool_a')?.modelName).toBe(better.code);
     }
   });
