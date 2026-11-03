@@ -675,7 +675,7 @@ function ScopeDisclosure({
       )}
 
       <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-        站点删除不开放。访问与分享范围遵循你的权限和资料确认；生图每天有额度上限。
+        站点删除不开放。对外发布需在客户端设置中单独开启，分享仍需权限和资料确认；生图每天有额度上限。
       </p>
     </div>
   );
