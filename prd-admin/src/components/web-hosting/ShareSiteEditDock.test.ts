@@ -9,16 +9,16 @@ const SOURCE = fs.readFileSync(path.join(HERE, 'ShareSiteEditDock.tsx'), 'utf8')
 describe('分享页所有者修改入口', () => {
   it('只做入口投射，复用完整站点读取与既有修改面板', () => {
     expect(SOURCE).toContain('getSite(siteId)');
-    expect(SOURCE).toContain('<SiteEditPanel site={site} onPublished={handlePublished} />');
+    expect(SOURCE).toContain('<SiteEditPanel site={site} onPublished={handlePublished} compact />');
     expect(SOURCE).toContain('onPublished(updated)');
   });
 
-  it('抽屉通过 portal 挂载，并满足全高与内部可收缩约束', () => {
+  it('修改工具使用标准弹窗和受限高度，保留键盘退出', () => {
     expect(SOURCE).toContain('createPortal(');
     expect(SOURCE).toContain("position: 'fixed'");
-    expect(SOURCE).toContain('top: 0');
-    expect(SOURCE).toContain('bottom: 0');
-    expect(SOURCE).toContain('minHeight: 0');
+    expect(SOURCE).toContain('<Dialog open={open}');
+    expect(SOURCE).toContain('maxWidth={640}');
+    expect(SOURCE).toContain('h-[min(65dvh,640px)] min-h-0');
     expect(SOURCE).toContain('shouldCloseOnEscape(event)');
   });
 

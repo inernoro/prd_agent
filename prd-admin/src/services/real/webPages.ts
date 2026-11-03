@@ -1310,6 +1310,8 @@ export interface SharedSiteInfo {
    * 反而看得见。匿名访问恒为 false。
    */
   viewerCanEdit?: boolean;
+  /** 服务端确认的网页作者身份，不是分享链接创建者。 */
+  viewerIsOwner?: boolean;
 }
 
 export interface ShareViewData {

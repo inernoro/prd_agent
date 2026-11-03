@@ -283,6 +283,7 @@ export function SiteCard({
     <div
       data-tour-id="webpages-card"
       data-card
+      data-hosted-site-id={site.id}
       /* h-full + flex 链：grid item 本来就被拉伸到行高，但内部盒子是内容高，
          于是同一行的卡片下边缘参差（标题一行/两行、有无标签都会差几十像素）。
          设计稿的 grid 是默认 stretch，卡片在行内等高——这条链把高度真正传下去。 */

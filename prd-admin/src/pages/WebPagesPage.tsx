@@ -39,7 +39,7 @@ import {
   copySiteToTeam,
 } from '@/services';
 import type { HostedSite, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
-import { getSiteAskConfig } from '@/services/real/webPages';
+import { getSite, getSiteAskConfig } from '@/services/real/webPages';
 import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
@@ -101,7 +101,9 @@ import SiteWorkbench, { type WorkbenchTarget } from '@/components/web-hosting/wo
 import GenerateSiteMenu from '@/components/web-hosting/GenerateSiteMenu';
 import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSettingsDrawer';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { listMyTeams } from '@/services/real/teams';
+import { returnedSiteSpace, highlightReturnedSite } from '@/components/web-hosting/returnToHostedSite';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
 import {
   buildWebPageGroupSlot,
@@ -371,6 +373,9 @@ export type { SiteCaps };
 
 export default function WebPagesPage() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const focusSiteId = new URLSearchParams(location.search).get('focusSite');
+  const [returnTarget, setReturnTarget] = useState<HostedSite | null>(null);
   const { isMobile } = useBreakpoint();
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
@@ -544,9 +549,30 @@ export default function WebPagesPage() {
    */
   const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
 
+  useEffect(() => {
+    if (!focusSiteId) return;
+    let active = true;
+    void Promise.all([getSite(focusSiteId), listMyTeams()]).then(([siteResult, teamResult]) => {
+      if (!active) return;
+      if (!siteResult.success) throw new Error('网页不存在，或你已没有访问权限');
+      const target = siteResult.data;
+      const space = returnedSiteSpace(target, teamResult.success ? teamResult.data.items.map((item) => item.team.id) : [], readLastSpace());
+      if (!space) throw new Error('暂时无法进入这个网页所属的团队空间');
+      setKeyword(''); setActiveTag(null); setActiveSource(null);
+      setActiveFolder(null); setActiveGroupId(null); setWorkspaceTab('library');
+      setCurrentSpace(space); rememberSpace(space);
+      setReturnTarget(target);
+    }).catch((error: unknown) => {
+      if (active) toast.error('无法定位网页', error instanceof Error ? error.message : '请稍后重试');
+    });
+    return () => { active = false; };
+  }, [focusSiteId]);
+
   // ─── Load ───
 
+  const loadGeneration = useRef(0);
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     setLoading(true);
     const res = await listSites({
       keyword: keyword || undefined,
@@ -557,6 +583,7 @@ export default function WebPagesPage() {
       scope: teamScope.scope,
       teamId: teamScope.teamId,
     });
+    if (generation !== loadGeneration.current) return;
     if (res.success) {
       setSites(res.data.items);
       setTotal(res.data.total);
@@ -643,6 +670,7 @@ export default function WebPagesPage() {
         load();
         return;
       }
+      setReturnTarget(prev => prev?.id === id ? null : prev);
       setSites(prev => prev.filter(s => s.id !== id));
       setTotal(prev => prev - 1);
       loadMeta();
@@ -654,6 +682,7 @@ export default function WebPagesPage() {
     if (!confirm(`确定删除选中的 ${selectedIds.size} 个站点？`)) return;
     const res = await batchDeleteSites([...selectedIds]);
     if (res.success) {
+      setReturnTarget(null);
       setSelectedIds(new Set());
       load();
       loadMeta();
@@ -783,8 +812,15 @@ export default function WebPagesPage() {
   // 分组：保持服务端排序顺序，仅按 first-seen 切分节（排序与分组并存）
   // 当前空间的网页：个人空间=我拥有且未进任何团队空间的（客户端剔除）；团队空间=后端已按 Id 过滤
   const spaceSites = useMemo(
-    () => (currentSpace.kind === 'team' ? sites : sites.filter((s) => !(s.sharedTeamIds && s.sharedTeamIds.length))),
-    [sites, currentSpace],
+    () => {
+      const items = currentSpace.kind === 'team' ? sites : sites.filter((s) => !s.sharedTeamIds?.length);
+      // 深链目标可能在列表前 200 条之外，使用已授权的单站点读取结果补入一次。
+      const targetInSpace = returnTarget && (currentSpace.kind === 'team'
+        ? returnTarget.sharedTeamIds?.includes(currentSpace.teamId) : !returnTarget.sharedTeamIds?.length);
+      return returnTarget && targetInSpace && !keyword && !activeTag && !activeSource && !items.some((item) => item.id === returnTarget.id)
+        ? [returnTarget, ...items] : items;
+    },
+    [sites, currentSpace, returnTarget, keyword, activeTag, activeSource],
   );
   const spaceFolderCanonicalNames = useMemo(() => new Map(
     spaceSites
@@ -843,6 +879,21 @@ export default function WebPagesPage() {
       ))
       : spaceSites;
   }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind, personalFolderCanonicalNames]);
+  useEffect(() => {
+    if (loading || !focusSiteId || returnTarget?.id !== focusSiteId || !displaySites.some((site) => site.id === focusSiteId)) return;
+    const element = Array.from(document.querySelectorAll<HTMLElement>('[data-hosted-site-id]'))
+      .find((item) => item.dataset.hostedSiteId === focusSiteId);
+    if (!element) return;
+    const cleanup = highlightReturnedSite(element);
+    const timer = window.setTimeout(() => {
+      cleanup();
+      const query = new URLSearchParams(location.search);
+      query.delete('focusSite');
+      navigate({ pathname: location.pathname, search: query.toString() }, { replace: true });
+    }, 2600);
+    return () => { clearTimeout(timer); cleanup(); };
+  }, [loading, focusSiteId, returnTarget, displaySites, location.pathname, location.search, navigate]);
+
   // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
   const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;
   // 树导航的分组计数（来自当前空间已加载的站点）
@@ -3027,6 +3078,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   return (
     <div
       className={`group flex items-center gap-4 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      data-hosted-site-id={site.id}
       data-dock-draggable={canDrag ? 'true' : 'false'}
       style={{
         background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',

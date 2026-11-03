@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Check, Clock3, Eye, History, ImagePlus, RefreshCw, RotateCcw, Send, Server, ShieldCheck, Square, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import KnowledgeEntryPicker from '@/components/knowledge/KnowledgeEntryPicker';
+import SiteEditComposer from './SiteEditComposer';
 import type { HostedSite, HostedSiteRevision } from '@/services/real/webPages';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
@@ -40,9 +41,11 @@ interface Props {
   onPublished: (site: HostedSite) => void;
   /** 由卡片或预览顶栏决定先看修改输入还是版本历史。 */
   focusSection?: 'compose' | 'history';
+  compact?: boolean;
 }
 
-export default function SiteEditPanel({ site, onPublished, focusSection = 'compose' }: Props) {
+export default function SiteEditPanel({ site, onPublished, focusSection = 'compose', compact = false }: Props) {
+  const [activeTab, setActiveTab] = useState<'compose' | 'history'>(focusSection);
   const {
     instruction,
     setInstruction,
@@ -209,6 +212,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
   const recoverFromVersionConflict = (action: 'refresh' | 'regenerate') => {
     if (action === 'refresh') {
+      setActiveTab('history');
       setRecoveryNotice(null);
       void loadHistory();
       historyRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -230,6 +234,14 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
   return (
     <div className="flex h-full min-h-0 flex-col text-token-primary">
+      {compact && <div className="flex shrink-0 gap-4 border-b border-token-subtle px-4" role="tablist" aria-label="网页修改">
+        {([['compose', '修改'], ['history', '版本']] as const).map(([tab, label]) => <button
+          key={tab} type="button" role="tab" aria-selected={activeTab === tab}
+          onClick={() => setActiveTab(tab)}
+          className={`min-h-11 border-b-2 px-1 text-sm ${activeTab === tab ? 'border-blue-500 text-token-primary' : 'border-transparent text-token-muted'}`}>
+          {label}
+        </button>)}
+      </div>}
       {recoveryNotice && (
         <div role="alert" className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 p-3">
           <div className="flex items-start gap-2">
@@ -385,6 +397,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
         <div
           ref={composeRef}
+          hidden={compact}
           tabIndex={-1}
           data-dialog-initial-focus={focusSection === 'compose' ? 'true' : undefined}
           className="scroll-mt-2 border-b border-token-subtle p-3 outline-none sm:p-4"
@@ -554,7 +567,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
           )}
         </div>
 
-        {(generating || previewHtml) && (
+        {compact && activeTab === 'compose' && !generating && !previewHtml && <div className="flex min-h-40 flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+          <WandSparkles size={22} className="text-token-muted" />
+          <p className="text-sm text-token-secondary">想改哪里，直接告诉我</p>
+          <p className="text-xs text-token-muted">可从输入框旁添加参考内容</p>
+        </div>}
+        {(generating || previewHtml) && (!compact || activeTab === 'compose') && (
           <section
             ref={progressRef}
             aria-label="AI 修改进度"
@@ -729,6 +747,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
         <div
           ref={historyRef}
+          hidden={compact && activeTab !== 'history'}
           tabIndex={-1}
           data-dialog-initial-focus={focusSection === 'history' ? 'true' : undefined}
           className="scroll-mt-2 p-3 outline-none sm:p-4"
@@ -830,7 +849,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                         type="button"
                         title="预览这个版本"
                         aria-label="预览这个版本"
-                        onClick={() => void openRevision(item.id)}
+                        onClick={() => { setActiveTab('compose'); void openRevision(item.id); }}
                         className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium text-token-secondary hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                       >
                         <Eye size={13} />
@@ -896,6 +915,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
           )}
         </div>
       </div>
+      {compact && activeTab === 'compose' && <SiteEditComposer
+        instruction={instruction} setInstruction={setInstruction} generating={generating} generate={generate}
+        stopGeneration={stopGeneration} activeRunId={activeRunId} stopRequested={stopRequested}
+        recentKnowledge={recentKnowledge} selectedKnowledge={selectedKnowledge} setSelectedKnowledge={setSelectedKnowledge}
+        loadingKnowledge={loadingKnowledge} screenshots={screenshots} screenshotsSupported={screenshotsSupported} addScreenshots={addScreenshots}
+      />}
     </div>
   );
 }

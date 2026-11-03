@@ -130,6 +130,8 @@
   }
 
   .share-topbar-actions {
+    max-width: 68%;
+    overflow-x: auto;
     gap: 2px;
   }
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { WandSparkles, X } from 'lucide-react';
+import { WandSparkles } from 'lucide-react';
+import { Dialog } from '@/components/ui/Dialog';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { toast } from '@/lib/toast';
@@ -108,59 +109,10 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
       )}
 
       {open && site && (
-        <>
-          <div
-            onClick={() => setOpen(false)}
-            className="surface-backdrop"
-            style={{ position: 'fixed', inset: 0, zIndex: 68 }}
-          />
-          <aside
-            className="surface-tone-dark border-l border-l-token-subtle"
-            aria-label="网页修改面板"
-            style={{
-              position: 'fixed',
-              top: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 69,
-              width: 'min(440px, 100vw)',
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'var(--bg-primary)',
-              boxShadow: '-16px 0 48px rgba(0,0,0,0.38)',
-            }}
-          >
-            <div
-              className="border-b border-b-token-subtle"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, padding: '10px 12px 10px 16px' }}
-            >
-              <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 }}>网页修改</span>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                title="关闭修改面板"
-                aria-label="关闭修改面板"
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 8,
-                  border: 'none',
-                  background: 'var(--nested-block-bg)',
-                  color: 'var(--text-secondary)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-              <SiteEditPanel site={site} onPublished={handlePublished} />
-            </div>
-          </aside>
-        </>
+        <Dialog open={open} onOpenChange={setOpen} title="帮我修改" maxWidth={640}
+          content={<div className="h-[min(65dvh,640px)] min-h-0">
+            <SiteEditPanel site={site} onPublished={handlePublished} compact />
+          </div>} />
       )}
     </>,
     document.body,

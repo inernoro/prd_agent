@@ -645,3 +645,9 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 | 设计档位表（12 块画板，带画布 sha256） | `.claude/skills/design-replication/exports/web-hosting-v2/design-spec.{json,md}` |
 | 阅读页样例数据（录制-回放） | `.claude/skills/design-replication/fixtures/web-hosting-v2/11-reader/` |
 | 逐画板切图与逐条文案 | 复刻技能 `extract-design.mjs` 的产出（`design/index.json` + `text-<画板>.txt`） |
+
+### 阅读页管理与修改窗口（2026-11-03）
+
+阅读页作者可直接改标题、配置提问，返回列表按站点定位并短暂高亮。改标题只更新站点元信息，不轮换分享 token；单页阅读标题改为使用当前站点标题，避免分享时的旧标题覆盖新名称。合集仍保留分享标题。
+
+返回定位需要当前账号有站点读取权限；没有所属团队访问权限时明确提示，普通访客返回个人网页托管而不强行定位别人的资产。编辑窗口引用和图片统一从添加菜单进入，版本为顶部页签，生成、预览、发布与回退协议沿用原实现。

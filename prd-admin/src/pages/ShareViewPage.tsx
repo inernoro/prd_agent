@@ -14,6 +14,7 @@ import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
+import { SharePageTitle, SharePageActions } from '@/components/web-hosting/SharePageControls';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -837,11 +838,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
             <div className="share-topbar-title">
               <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
-              <span>{data.title || site.title}</span>
+              <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
+                ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
+              } : current)} />
             </div>
             {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
                 这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
             <div className="share-topbar-actions">
+              <SharePageActions site={site} compact={isMobile} onSettingsSaved={async () => {
+                if (!token) return;
+                const result = await viewSiteShare(token, password || undefined);
+                if (!result.success) throw new Error('refresh failed');
+                setData(result.data);
+              }} />
               {!site.pdfAssetUrl && (
                 <button
                   className="share-topbar-btn"
