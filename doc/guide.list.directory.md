@@ -226,7 +226,7 @@
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
 - [LLM Gateway 故障止血与恢复 · 指南](./guide.platform.llm-gateway.incident-recovery.md) `guide.platform.llm-gateway.incident-recovery`
-- [MAP MCP 连接器接入 · 指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
+- [MAP 智能体连接器 · 接入指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
 - [MongoDB 索引维护 · 指南](./guide.platform.mongodb-indexes.md) `guide.platform.mongodb-indexes`
 - [PRD Agent 系统原则速查（命名原则索引） · 指南](./guide.platform.principles.md) `guide.platform.principles`
 - [PRD Agent 快速部署 · 指南](./guide.platform.quickstart.md) `guide.platform.quickstart`
@@ -280,6 +280,8 @@
 - [技能触发消歧 · 规则](./rule.skill.trigger-disambiguation.md) `rule.skill.trigger-disambiguation`
 
 ### 五、计划
+
+- [MCP 接入与能力补齐 · 计划](./plan.platform.mcp-capability-completion.md) `plan.platform.mcp-capability-completion`
 
 - [文档说人话标准推广 · 计划](./plan.doc.readability.rollout.md) `plan.doc.readability.rollout`
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`

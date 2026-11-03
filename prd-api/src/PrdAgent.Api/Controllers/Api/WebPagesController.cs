@@ -48,6 +48,19 @@ public class WebPagesController : ControllerBase
         ".md", ".markdown",
     };
 
+    internal static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".ico", ".bmp",
+    };
+
+    internal static bool IsWrappedUploadExtension(string ext)
+        => VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext)
+           || ImageExtensions.Contains(ext) || ext == ".pdf";
+
+    internal static string? WrappedUploadType(string ext)
+        => ext == ".pdf" ? "pdf" : VideoExtensions.Contains(ext) ? "video"
+            : MarkdownExtensions.Contains(ext) ? "markdown" : ImageExtensions.Contains(ext) ? "image" : null;
+
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
     private readonly ITeamService _teams;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -350,7 +363,7 @@ public class WebPagesController : ControllerBase
             {
                 site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, file.FileName, title, description, folder, tagList);
             }
-            else if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+            else if (IsWrappedUploadExtension(ext))
             {
                 // 视频 / PDF / Markdown：现场生成 index.html 壳子 + 原文件，打包成 ZIP 走现有路径
                 // 标题留空时用文件名（去扩展名）兜底，避免 ZIP 路径把视频/PDF 全落成"未命名站点"
@@ -360,17 +373,14 @@ public class WebPagesController : ControllerBase
                     : title!.Trim();
                 var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, effectiveTitle);
                 // 写 marker，下游靠它判定包装站，避免"用户上传的 index.html + report.pdf"被误判
-                var assetType = ext == ".pdf" ? "pdf"
-                    : VideoExtensions.Contains(ext) ? "video"
-                    : MarkdownExtensions.Contains(ext) ? "markdown"
-                    : null;
+                var assetType = WrappedUploadType(ext);
                 site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType, uploadId: uploadId);
             }
             else
             {
                 return BadRequest(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
-                    "支持的文件类型：.html / .htm / .zip / .md / .markdown / .pdf / .mp4 / .m4v / .webm / .mov / .ogg / .ogv"));
+                    "支持的文件类型：HTML / ZIP / Markdown / PDF / 视频 / PNG / JPG / GIF / WebP / SVG / AVIF / ICO / BMP"));
             }
 
             return Ok(ApiResponse<object>.Ok(site));
@@ -417,7 +427,7 @@ public class WebPagesController : ControllerBase
     // ─────────────────────────────────────────────
 
     /// <summary>把媒体文件（视频/PDF/Markdown）包装成可托管的 ZIP（含 index.html 壳子 + 原文件）</summary>
-    private static byte[] BuildWrapperZip(string originalFileName, byte[] fileBytes, string ext, string? title)
+    internal static byte[] BuildWrapperZip(string originalFileName, byte[] fileBytes, string ext, string? title)
     {
         // 资产文件名做安全清洗，避免路径穿越
         var safeAssetName = SanitizeFileName(originalFileName);
@@ -427,6 +437,7 @@ public class WebPagesController : ControllerBase
         var indexHtml = ext switch
         {
             ".pdf" => BuildPdfWrapper(safeAssetName, displayTitle),
+            _ when ImageExtensions.Contains(ext) => BuildImageWrapper(safeAssetName, displayTitle),
             _ when VideoExtensions.Contains(ext) => BuildVideoWrapper(safeAssetName, displayTitle, ext),
             _ when MarkdownExtensions.Contains(ext) => BuildMarkdownWrapper(fileBytes, displayTitle),
             _ => throw new InvalidOperationException($"未识别的包装类型: {ext}"),
@@ -451,6 +462,19 @@ public class WebPagesController : ControllerBase
             }
         }
         return ms.ToArray();
+    }
+
+    private static string BuildImageWrapper(string assetName, string title)
+    {
+        var safeTitle = HtmlEscape(title);
+        var urlAsset = UrlEncodeFilename(assetName);
+        return $$$"""
+        <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1"><title>{{{safeTitle}}}</title>
+        <style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center}
+        img{display:block;max-width:100%;max-height:100vh;object-fit:contain}</style></head>
+        <body><img src="{{{urlAsset}}}" alt="{{{safeTitle}}}"></body></html>
+        """;
     }
 
     private static string SanitizeFileName(string raw)
@@ -1348,14 +1372,11 @@ public class WebPagesController : ControllerBase
 
         // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
         string? wrappedAssetType = null;
-        if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+        if (IsWrappedUploadExtension(ext))
         {
             fileBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title: null);
             uploadName = Path.ChangeExtension(file.FileName, ".zip");
-            wrappedAssetType = ext == ".pdf" ? "pdf"
-                : VideoExtensions.Contains(ext) ? "video"
-                : MarkdownExtensions.Contains(ext) ? "markdown"
-                : null;
+            wrappedAssetType = WrappedUploadType(ext);
         }
 
         try

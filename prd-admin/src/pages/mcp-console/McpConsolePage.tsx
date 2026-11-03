@@ -33,6 +33,7 @@ import { clientSignal, tierLabel } from './signalEncoding';
 import { CapabilityDot, SignalLegend } from './SignalDots';
 import { quotaFillPercent } from './quotaMeter';
 import { secureSameSiteEndpoint } from './endpointUrl';
+import { MapAgentSkillPanel, useMapAgentSkillManifest } from './MapAgentSkillPanel';
 
 /**
  * 智能体接入台。
@@ -44,6 +45,7 @@ import { secureSameSiteEndpoint } from './endpointUrl';
  * 「2 台客户端今天调了 47 次，其中 1 次没成」比四个孤零零的大数有用得多。
  */
 export default function McpConsolePage() {
+  const skillState = useMapAgentSkillManifest();
   const [overview, setOverview] = useState<McpConsoleOverviewDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
@@ -326,7 +328,7 @@ export default function McpConsolePage() {
             </div>
 
             {clients.length === 0 ? (
-              <EmptyHint text="还没有客户端接进来。点这一页顶上那行里的「接入新的」，起个名字复制一段配置就完事，两分钟就能连上。" />
+              <EmptyHint text="还没有客户端接进来。点「接入新的」，选择 Codex 或 WorkBuddy，复制完整提示词完成连接和技能安装。" />
             ) : (
               <>
                 {/* 图例整屏只出现这一次 —— 它是这套色点的说明书，替代的是原来每张卡上
@@ -386,6 +388,8 @@ export default function McpConsolePage() {
               </p>
             </SectionCard>
 
+            <MapAgentSkillPanel state={skillState} endpointUrl={overview.endpointUrl} />
+
             <SectionCard title="出了问题去哪看">
               <p className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                 切到上面的
@@ -425,6 +429,7 @@ export default function McpConsolePage() {
         onOpenChange={setConnectOpen}
         capabilities={capabilities}
         endpointUrl={overview.endpointUrl}
+        skillState={skillState}
         onCreated={() => void load()}
       />
     </div>
