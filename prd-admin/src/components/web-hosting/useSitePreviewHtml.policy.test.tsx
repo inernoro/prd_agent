@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getSiteContent } from '@/services/real/webPages';
+import { ok } from '@/types/api';
 import { __resetSitePreviewHtmlCache, useSitePreviewHtml, type SitePreviewHtmlSite } from './useSitePreviewHtml';
 
 vi.mock('@/services/real/webPages', () => ({ getSiteContent: vi.fn() }));
@@ -37,12 +38,12 @@ it('相同 URL 的站点类型变化不会复用旧正文，迟到响应不能�
   await act(async () => root.render(<Probe value={{ ...site, contentShape: 'self-contained-html' }} />));
   expect(getSiteContent).toHaveBeenCalledOnce();
   await act(async () => root.render(<Probe value={{ ...site, contentShape: 'multi-file' }} />));
-  await act(async () => finish({ success: true, data: content('<html><head></head><body>旧正文</body></html>') }));
+  await act(async () => finish(ok(content('<html><head></head><body>旧正文</body></html>'))));
   expect(observed).toEqual({ srcDoc: null, error: null, loading: false });
 });
 
 it('旧站点仍能取回正文并注入原资源基址', async () => {
-  vi.mocked(getSiteContent).mockResolvedValue({ success: true, data: content('<html><head></head><body>旧站点</body></html>') });
+  vi.mocked(getSiteContent).mockResolvedValue(ok(content('<html><head></head><body>旧站点</body></html>')));
   await act(async () => root.render(<Probe value={site} />));
   expect(observed.srcDoc).toContain('<base href="https://storage.example/test/">');
   expect(observed.srcDoc).toContain('旧站点');
