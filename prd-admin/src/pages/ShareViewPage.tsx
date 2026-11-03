@@ -13,6 +13,7 @@ import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-ho
 import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import ShareAssistantLauncher from '@/components/web-hosting/ShareAssistantLauncher';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
 import { SharePageTitle, SharePageActions, ShareMoreMenu } from '@/components/web-hosting/SharePageControls';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
@@ -1110,6 +1111,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           </>
         )}
 
+        <ShareAssistantLauncher hidden={isFullscreen || showComments} isMobile={isMobile}>
         {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
             开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
         {token && data.ask?.enabled && (
@@ -1133,7 +1135,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             <ShareSiteEditDock
               siteId={site.id}
               isMobile={isMobile}
-              adjacentToAsk={Boolean(token && data.ask?.enabled)}
               hidden={isFullscreen || showComments || askState !== 'collapsed'}
               onPublished={handleOwnerSitePublished}
             />
@@ -1141,6 +1142,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             <PrivateSourceConfirmHost />
           </>
         )}
+        </ShareAssistantLauncher>
       </div>
     );
   }

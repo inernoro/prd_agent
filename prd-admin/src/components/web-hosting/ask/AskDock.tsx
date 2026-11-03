@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, ChevronUp, Clock, Plus, Send, X } from 'lucide-react';
 import { MapMarkGlyph } from '@/components/ui/MapBrandMark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -13,6 +13,7 @@ import { ASK_ERROR_CODES, ASK_MAX_QUESTION_LENGTH, type AskSource } from './askT
 import { useAskQuota } from './useAskQuota';
 import { useAskStream } from './useAskStream';
 import './askDock.css';
+import { ShareAssistantContext, useShareAssistantAction } from '../shareAssistantContext';
 
 /** 起手态最多同时浮出几条提示，其余收进「+N」。四条以上会绕到第二行，把正文顶掉一截 */
 const HINTS_VISIBLE = 3;
@@ -69,6 +70,9 @@ function boxToStyle(b: AskDockBox) {
 export default function AskDock({
   source, title, welcome, openingQuestions, allowAnonymous, isMobile, safeBottom, hidden, onStateChange,
 }: Props) {
+  const assistant = useContext(ShareAssistantContext);
+  const integrated = !!assistant;
+  const dockHidden = hidden || (!!assistant?.activeId && assistant.activeId !== 'ask');
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const {
     messages, status, phaseMessage, elapsedSeconds, model, gateError,
@@ -112,7 +116,7 @@ export default function AskDock({
   // 下面那个 effect 才有机会把门收起来——否则窗口过了面板还锁着。
   const quotaRetryAt = gateError?.retryAfterMs ?? null;
   const { quota, refresh: refreshQuota } = useAskQuota(
-    source, !hidden && state !== 'collapsed', quotaRetryAt,
+    source, !dockHidden && state !== 'collapsed', quotaRetryAt,
   );
   // 每问完一次（成功或失败）都重算：失败里含「读不到正文」那档，后端会把额度退回来，
   // 只在成功时减一会让用户看到一个偏小的数，而他并没有被扣。
@@ -159,7 +163,10 @@ export default function AskDock({
     const to = askDockGeometry(next, viewportRef.current);
     const reduced = typeof window !== 'undefined'
       && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (reduced || typeof el.animate !== 'function') {
+    if (reduced || typeof el.animate !== 'function' || (integrated && (prev === 'collapsed' || next === 'collapsed'))) {
+      animRef.current?.cancel();
+      animRef.current = null;
+      setMoving(false);
       Object.assign(el.style, boxToStyle(to));
       return;
     }
@@ -206,7 +213,7 @@ export default function AskDock({
       Object.assign(el.style, boxToStyle(askDockGeometry(stateRef.current, viewportRef.current)));
       setMoving(false);
     };
-  }, []);
+  }, [integrated]);
 
   const submit = useCallback((text: string) => {
     const q = text.trim();
@@ -225,8 +232,10 @@ export default function AskDock({
     window.setTimeout(() => barInputRef.current?.focus(), 240);
   }, [blocked, morphTo]);
 
+  useShareAssistantAction('ask', openFromPill, { active: state !== 'collapsed', busy: isBusy, rounds });
+
   // 落位：首次挂载、视口变化、从隐藏态回来，都要把几何重新贴一次
-  useEffect(() => { applyStatic(stateRef.current); }, [applyStatic, viewport, hidden]);
+  useEffect(() => { applyStatic(stateRef.current); }, [applyStatic, viewport, dockHidden]);
 
   useEffect(() => {
     const onResize = () => setViewportSize({ width: window.innerWidth, height: window.innerHeight });
@@ -240,7 +249,7 @@ export default function AskDock({
 
   // 键盘：⌘K 唤起 / 逐级后退。hidden 时不抢——那会儿盖在最上面的不是我们。
   useEffect(() => {
-    if (hidden) return;
+    if (dockHidden) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -259,7 +268,7 @@ export default function AskDock({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [hidden, openFromPill, morphTo, rounds]);
+  }, [dockHidden, openFromPill, morphTo, rounds]);
 
   useEffect(() => { onStateChange?.(state); }, [state, onStateChange]);
 
@@ -303,7 +312,7 @@ export default function AskDock({
     <div
       ref={rootRef}
       className="ask-dock-root"
-      style={{ display: hidden ? 'none' : 'block' }}
+      style={{ display: dockHidden ? 'none' : 'block' }}
       aria-hidden={hidden || undefined}
     >
       {/* 浮在长条上方的提示。不放进长条内部：它们要能换行、要能一颗颗弹出来，
@@ -400,6 +409,7 @@ export default function AskDock({
         aria-label="向我提问"
         style={{
           position: 'fixed', zIndex: 60, overflow: 'hidden',
+          display: integrated && state === 'collapsed' ? 'none' : undefined,
           color: 'var(--text-primary)',
           cursor: state === 'collapsed' ? 'pointer' : 'default',
           ...(state === 'collapsed'
