@@ -9,7 +9,7 @@ import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
-import { GenerationBoundary } from '@/components/motion/GenerationBoundary';
+import { ListLoadingBoundary } from '@/components/skeletons/ListLoadingBoundary';
 import {
   requestAgentAccess,
   resolveAgentPageContext,
@@ -223,11 +223,11 @@ export function ConsoleLayout(): JSX.Element {
   return (
     <ShellFrameContext.Provider value={true}>
       <ShellChrome active={activeNavKeyFor(pathname)}>
-        <GenerationBoundary key={pathname} enabled={listPage}>
+        <ListLoadingBoundary key={pathname} enabled={listPage}>
           <Suspense fallback={<ConsoleRouteFallback />}>
             <Outlet />
           </Suspense>
-        </GenerationBoundary>
+        </ListLoadingBoundary>
       </ShellChrome>
     </ShellFrameContext.Provider>
   );

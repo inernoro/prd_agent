@@ -3620,6 +3620,12 @@
     animation: cds-page-enter 200ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
 
+  /* Aligned list skeletons swap directly to content without a second page entrance. */
+  .cds-page-enter:has(.cds-card-grid),
+  .cds-page-enter:has(.cds-branch-card-grid) {
+    animation: none;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .cds-page-enter {
       animation: none;
@@ -3963,6 +3969,8 @@
   }
 
   .cds-project-card {
+    /* Match the project title, canvas and margins rather than the shorter branch card. */
+    contain-intrinsic-size: auto 18.09375rem;
     --project-node-size: 3.5rem;
     --project-node-icon-size: 1.75rem;
     --project-node-gap: 0.875rem;
