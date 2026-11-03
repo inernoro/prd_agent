@@ -10,7 +10,7 @@ import CommentsSection from './CommentsSection';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
-import { DIRECT_PREVIEW_SANDBOX, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
+import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
@@ -370,7 +370,7 @@ export default function SitePreviewModal({
               // 跨域这一层隔离仍在（PDF 来自托管域名，拿不到 MAP 的同源能力）。
               sandbox={previewSource.usingNativePdfViewer
                 ? undefined
-                : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX} allow-modals`}
+                : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(previewSource.src)} allow-modals`}
               title={site.title}
             />
           </div>
