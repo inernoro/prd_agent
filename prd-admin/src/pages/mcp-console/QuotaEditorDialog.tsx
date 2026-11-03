@@ -132,8 +132,7 @@ export function QuotaEditorDialog({
       onOpenChange={(next) => { if (!saving) onOpenChange(next); }}
       title="客户端权限与设置"
       description={client ? `客户端：${client.name}（${client.keyPrefix}…）` : undefined}
-      maxWidth={420}
-      contentStyle={{ position: 'fixed', top: 16, bottom: 16, right: 16, height: 'calc(100dvh - 32px)', maxHeight: 'calc(100dvh - 32px)', width: 'min(420px, calc(100vw - 32px))' }}
+      maxWidth={460}
       content={
         <div className="flex flex-col gap-3.5">
           <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>权限与额度按客户端独立生效。已接入不代表客户端当前在线。</p>

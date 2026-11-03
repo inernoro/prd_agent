@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRight, BookOpen, ChevronRight, Copy, Plug, Plus, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, ChevronRight, Copy, Plug, Plus, RefreshCw, Search, ShieldCheck, Settings2 } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
+import { Button } from '@/components/design/Button';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { getMcpConsoleOverview } from '@/services';
@@ -73,18 +74,22 @@ export default function McpConsolePage() {
   if (loading) return <div className="flex h-full items-center justify-center"><PrdLoader size={44} /></div>;
   if (!overview) return <div className="mcp-load-error"><ShieldCheck size={26} aria-hidden /><h1>接入数据暂时不可用</h1><p>{loadError} 已有授权和调用记录不会因此丢失。</p><button className="mcp-button mcp-primary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? '正在重试…' : '重新加载'}</button></div>;
   const today = overview.today;
-  const stats = [{ label: '已接入客户端', value: clients.length }, { label: '今日调用', value: today.calls }, { label: '今日生图', value: today.images, unit: '张' }, { label: '今日写入', value: today.writes, unit: '次' }];
+
 
   return <div className="mcp-console flex min-h-full flex-col lg:h-full lg:min-h-0">
     <header className="mcp-header">
-      <div className="mcp-heading"><h1 className="shrink-0 whitespace-nowrap"><Plug size={23} aria-hidden />MCP 接入管理</h1><p>连接 AI 客户端，管理平台能力、使用额度与调用记录。</p></div>
-      <div className="mcp-header-actions"><button className="mcp-button mcp-guide-button" onClick={() => setGuideOpen(true)}><BookOpen size={15} aria-hidden />接入指南</button><button className="mcp-button mcp-primary" onClick={() => setConnectOpen(true)}><Plus size={16} aria-hidden />接入客户端</button></div>
-    </header>
-    <section className="mcp-metrics" aria-label="今日概览">{stats.map(stat => <dl key={stat.label}><dt>{stat.label}</dt><dd>{stat.value}<span>{stat.unit}</span></dd></dl>)}<span className="mcp-utc" title="统计和额度按 UTC 自然日重置，北京时间每天 08:00 重置">今日 · UTC</span></section>
-    <div className="mcp-control-bar">
+      <h1 className="shrink-0 whitespace-nowrap"><Plug size={19} aria-hidden />智能体接入台</h1>
       <div className="mcp-tabs" role="tablist" aria-label="接入管理视图">{TABS.map(item => <button type="button" role="tab" key={item.key} aria-selected={tab === item.key} onClick={() => item.key === 'calls' ? viewCalls() : setTab(item.key)}>{item.label}{item.key === 'clients' && <span>{clients.length}</span>}</button>)}</div>
-      <button type="button" className="mcp-refresh" aria-label={refreshing ? '正在刷新' : '刷新'} disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={15} aria-hidden className={refreshing ? 'animate-spin' : undefined} /><span className="hidden lg:inline">刷新</span></button>
-    </div>
+      <div className="mcp-header-actions">
+        <Button size="sm" aria-label={refreshing ? '正在刷新' : '刷新'} disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={14} aria-hidden className={refreshing ? 'animate-spin' : undefined} /><span className="hidden lg:inline">刷新</span></Button>
+        <Button size="sm" aria-label="接入指南" className="mcp-guide-button" onClick={() => setGuideOpen(true)}><BookOpen size={14} aria-hidden />接入指南</Button>
+        <Button size="sm" variant="primary" onClick={() => setConnectOpen(true)}><Plus size={14} aria-hidden />接入客户端</Button>
+      </div>
+    </header>
+    <section className="mcp-summary" aria-label="今日概览">
+      <strong>已接入 {clients.length} 个客户端，今天调用 {today.calls} 次。</strong>
+      <span>生图 {today.images} 张 · 写入 {today.writes} 次 · 今日统计与额度按 UTC 自然日计算</span>
+    </section>
     {loadError && <div className="mcp-alert" role="alert"><AlertTriangle size={16} aria-hidden /><span>刷新失败：{loadError} 当前保留上次加载的数据。</span><button onClick={() => void refresh()} disabled={refreshing}>重试</button></div>}
     {(today.failed > 0 || today.denied > 0) && <div className="mcp-alert"><AlertTriangle size={17} aria-hidden /><span>{today.failed > 0 && <>今日有 <b>{today.failed} 次</b>调用失败</>}{today.failed > 0 && today.denied > 0 && '；'}{today.denied > 0 && <>{today.denied} 次被权限或额度限制拦截</>}</span>{today.failed > 0 && <button onClick={() => viewCalls('error')}>查看失败记录<ArrowRight size={14} aria-hidden /></button>}{today.denied > 0 && <button onClick={() => viewCalls('denied')}>查看被拦截记录<ChevronRight size={14} aria-hidden /></button>}</div>}
     {tab === 'calls' ? <div className="mcp-tab-content lg:min-h-0 lg:flex-1"><McpCallsPanel key={callsView} clients={clients} refreshToken={refreshToken} initialStatus={callsStatus} /></div> : tab === 'settings' ? <div className="mcp-settings lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
@@ -94,8 +99,8 @@ export default function McpConsolePage() {
       <section className="mcp-settings-section"><h2 className="shrink-0">配置说明</h2><p>点击“接入客户端”，填写名称后即可复制 Codex、WorkBuddy、Claude Code 或 Claude Desktop 配置。默认跟随你的权限，也可在高级设置中自定义授权。</p><p>在 AI 客户端发起任务后，可通过“调用记录”查看执行结果和产物。停止授权请在客户端的“管理”中撤销接入，历史记录会保留。</p><button className="mcp-button" onClick={() => setGuideOpen(true)}><BookOpen size={14} aria-hidden />查看接入指南</button></section>
     </div> : <div className="mcp-client-content lg:min-h-0 lg:flex-1">
       <div className="mcp-list-toolbar"><label className="mcp-search"><Search size={15} aria-hidden /><input aria-label="搜索客户端名称或凭证前缀" placeholder="搜索名称或凭证前缀" value={search} onChange={e => setSearch(e.target.value)} /></label><select aria-label="筛选客户端" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">全部客户端</option><option value="active">凭证可用</option><option value="unavailable">凭证不可用</option><option value="manual">自定义授权</option></select><span className="mcp-list-hint">已接入不代表在线，最近调用以实际记录为准</span></div>
-      <div className="mcp-client-list lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }} role="table" aria-label="已接入客户端">
-        <div className="mcp-client-grid mcp-table-head" role="row">{['客户端', '授权范围', '今日用量', '最近调用', '操作'].map(label => <div role="columnheader" key={label}>{label}</div>)}</div>
+      <div className="mcp-client-list lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }} role="list" aria-label="已接入客户端">
+
         {visibleClients.length ? visibleClients.map(client => <ClientRow key={client.keyId} client={client} capabilities={capabilities} onEditQuota={() => setQuotaTarget(client)} />) : <div className="mcp-empty"><Plug size={30} aria-hidden /><h2 className="shrink-0">{clients.length ? '没有匹配的客户端' : '当前没有已接入的客户端'}</h2><p>{clients.length ? '试试其他名称或调整筛选条件。' : overview.hasHistory ? '历史调用记录仍然保留，可以查看记录或重新接入。' : '接入 Codex 或 Claude Code，让 AI 使用你在平台上的能力。'}</p>{clients.length ? <button className="mcp-button" onClick={() => { setSearch(''); setFilter('all'); }}>清除筛选</button> : <div className="mcp-inline-actions"><button className="mcp-button mcp-primary" onClick={() => setConnectOpen(true)}>接入客户端</button>{overview.hasHistory && <button className="mcp-button" onClick={() => viewCalls()}>查看调用记录</button>}</div>}</div>}
       </div>
       <footer className="mcp-list-footer"><span>共 {visibleClients.length} 个客户端{filter !== 'all' || search ? `（全部 ${clients.length} 个）` : ''}</span><button onClick={() => setGuideOpen(true)}>首次使用 MCP？查看接入指南<ArrowRight size={13} aria-hidden /></button></footer>
@@ -110,13 +115,16 @@ export default function McpConsolePage() {
 export function ClientRow({ client, capabilities, onEditQuota }: { client: McpClientDto; capabilities: McpCapabilityDto[]; onEditQuota: () => void }) {
   const signal = clientSignal(client, capabilities);
   const missing = client.missingCapabilities ?? [];
-  const scopeText = signal.grantedCount === 0 ? '未开放平台能力' : signal.readOnlyCount > 0 ? `${signal.grantedCount - signal.readOnlyCount} 项完整授权 · ${signal.readOnlyCount} 项只读` : `已开放 ${signal.grantedCount} 项能力`;
   const unavailable = !client.isActive ? client.unusableReason === 'expired' ? '已过期' : '已停用' : null;
-  return <div className="mcp-client-grid mcp-client-row" role="row" style={{ flexShrink: 0 }}>
-    <div role="cell" className="mcp-client-identity"><span className="mcp-client-icon"><Plug size={20} aria-hidden /></span><div><strong>{client.name}</strong><code title="凭证前缀：用于区分同名客户端">{client.keyPrefix}…</code>{unavailable && <span className="mcp-unavailable">{unavailable}</span>}</div></div>
-    <div role="cell" className="mcp-client-scope"><span>{scopeText}</span><small>{signal.pinned ? '自定义授权' : '跟随我的权限'}{signal.extraScopes.length > 0 && ` · 另有 ${signal.extraScopes.length} 项独立接口`}</small>{missing.length > 0 && <small className="mcp-missing">另有 {missing.length} 项能力可在“管理”中开放</small>}</div>
-    <div role="cell" className="mcp-client-usage"><span>生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span>写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div>
-    <div role="cell" className="mcp-client-last">{client.lastUsedAt ? <RelativeTime value={client.lastUsedAt} /> : '尚未调用'}<small>今日 {client.todayCalls} 次</small></div>
-    <div role="cell" className="mcp-client-actions"><button className="mcp-manage" onClick={onEditQuota} aria-label={`管理 ${client.name} ${client.keyPrefix}`}><ShieldCheck size={14} aria-hidden />管理</button></div>
+  const accessLabels = { write: '可执行', full: '已开放', read: '只读', none: '未开放' };
+  return <div className="mcp-client-row" role="listitem" style={{ flexShrink: 0 }}>
+    <div className="mcp-client-top">
+      <div className="mcp-client-identity"><strong>{client.name}</strong><span className="mcp-client-mode">{signal.pinned ? '自定义授权' : '跟随我的权限'}</span>{unavailable && <span className="mcp-unavailable">{unavailable}</span>}</div>
+      <code className="mcp-key-prefix" title="凭证前缀：用于区分同名客户端">{client.keyPrefix}…</code>
+      <Button size="sm" onClick={onEditQuota} aria-label={`管理 ${client.name} ${client.keyPrefix}`}><Settings2 size={13} aria-hidden />管理</Button>
+    </div>
+    <div className="mcp-client-capabilities" aria-label="授权范围">{signal.dots.map(cap => <span className="mcp-capability-label" data-tier={cap.tier} key={cap.key}>{cap.title}<span>{accessLabels[cap.tier]}</span></span>)}{signal.extraScopes.length > 0 && <span className="mcp-extra-scopes">另有 {signal.extraScopes.length} 项独立接口</span>}</div>
+    <div className="mcp-client-bottom"><div className="mcp-client-usage"><span>生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span>写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div><div className="mcp-client-last">今日 {client.todayCalls} 次 · {client.lastUsedAt ? <>最近调用 <RelativeTime value={client.lastUsedAt} /></> : '尚未调用'}</div></div>
+    {missing.length > 0 && <p className="mcp-missing">另有 {missing.length} 项能力可在“管理”中开放。</p>}
   </div>;
 }

@@ -51,7 +51,7 @@ test.describe('接入台真实导航与客户端引导', () => {
       await page.getByRole('menuitemradio', { name: theme, exact: true }).click();
       await page.getByRole('menuitem', { name: '智能体接入台', exact: true }).click();
       await expect(page).toHaveURL(/\/mcp-console/);
-      await expect(page.getByRole('heading', { name: 'MCP 接入管理', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: '智能体接入台', exact: true })).toBeVisible();
       await checkClientSelection(page);
       await page.screenshot({ path: testInfo.outputPath(`mcp-${theme}.png`) });
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);

@@ -11,11 +11,11 @@ describe('接入管理响应式安全边界', () => {
     expect(page).toContain('min-h-full flex-col lg:h-full lg:min-h-0');
     expect(page).not.toMatch(/className="[^"]*(?<!:)\boverflow-y-auto\b/);
     expect(page).toContain('lg:overflow-y-auto');
-    expect(css).toContain('.mcp-client-grid.mcp-client-row{min-width:0');
+    expect(css).not.toMatch(/min-width:\s*720px/);
   });
-  it('移动端保留管理入口，表格布局在小屏转换为分行展示', () => {
+  it('移动端保留管理入口，紧凑页头横滚而不堆叠', () => {
     expect(css).toContain('@media(max-width:639px)');
-    expect(css).toContain('.mcp-client-actions{grid-column:2;grid-row:1}');
+    expect(css).toMatch(/\.mcp-header\s*\{[^}]*overflow-x:\s*auto/);
     expect(page).toContain('aria-label={`管理 ${client.name} ${client.keyPrefix}`}');
   });
   it('图标刷新按钮有无障碍名称', () => {
