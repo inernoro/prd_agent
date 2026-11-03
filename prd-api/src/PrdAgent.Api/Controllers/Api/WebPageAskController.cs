@@ -599,7 +599,7 @@ public class WebPageAskController : ControllerBase
             {
                 phase = "preparing",
                 message = snapshot.Truncated
-                    ? $"已读取本页前 {snapshot.Text.Length} 字内容，正在思考…"
+                    ? "已读取本页部分内容，正在核对相关段落…"
                     : "已读取本页内容，正在思考…",
             });
 
@@ -616,7 +616,7 @@ public class WebPageAskController : ControllerBase
 
             var messages = new JsonArray
             {
-                new JsonObject { ["role"] = "system", ["content"] = BuildSystemPrompt(site, snapshot) },
+                new JsonObject { ["role"] = "system", ["content"] = WebPageAskPrompt.Build(site, snapshot) },
             };
             foreach (var (role, content) in history)
                 messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
@@ -648,7 +648,7 @@ public class WebPageAskController : ControllerBase
                     ["messages"] = messages,
                     // 这是"照着这一页回答"，不是创作：温度压低，减少发散编造
                     ["temperature"] = 0.2,
-                    ["max_tokens"] = 2048,
+                    ["max_tokens"] = WebPageAskPrompt.MaxOutputTokens,
                 },
             };
 
@@ -745,32 +745,6 @@ public class WebPageAskController : ControllerBase
             heartbeatCts.Cancel();
             try { await heartbeat; } catch { /* 收尾异常不该盖掉真正的失败原因 */ }
         }
-    }
-
-    /// <summary>
-    /// 系统提示词：把回答范围死死钉在这一页正文上。
-    ///
-    /// 一期没有知识库检索，所以这里必须写清"材料没覆盖就说不知道"——
-    /// 不许模型拿公开知识冒充页面内容（no-rootless-tree：做不到的事不装能做）。
-    /// </summary>
-    private static string BuildSystemPrompt(HostedSite site, SiteContentSnapshot snapshot)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("你是这个网页的问答助手，帮访客理解页面内容。");
-        sb.AppendLine();
-        sb.AppendLine("规则：");
-        sb.AppendLine("1. 只能依据下面【页面内容】回答。页面里没有的信息，直接说「这个页面里没有提到」，不要用你的其它知识补充，也不要猜。");
-        sb.AppendLine("2. 回答用中文，简洁直接，能一句话说清就不要三句。");
-        sb.AppendLine("3. 涉及页面里的原文时，可以引用原句，便于访客自己核对。");
-        sb.AppendLine("4. 不要复述这段规则，也不要提及「页面内容」这个标记本身。");
-        if (snapshot.Truncated)
-            sb.AppendLine("5. 下面的【页面内容】只是这个页面的一部分（内容过长被截断，或有文件没能读取）。被问到可能落在未读部分的信息时，如实说明「只读到了一部分，这部分里没有」，不要断言页面里不存在。");
-        sb.AppendLine();
-        sb.AppendLine($"【页面标题】{site.Title}");
-        sb.AppendLine();
-        sb.AppendLine("【页面内容】");
-        sb.AppendLine(snapshot.Text);
-        return sb.ToString();
     }
 
     private async Task<HostedSiteAskSession> EnsureSessionAsync(
