@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { getLiteraryAgentAllModels, updateAgentApiKey } from '@/services';
-import type { McpClientDto } from '@/services/contracts/mcpConsole';
+import type { McpCapabilityDto, McpClientDto } from '@/services/contracts/mcpConsole';
 import { toast } from '@/lib/toast';
+import { accessLevel, changeCapabilityAccess, type AccessLevel } from './editAuthorization';
+import { autoPicks, picksToScopes } from './scopePlan';
+import { clientSignal } from './signalEncoding';
 
 const LIMITS = {
   image: { min: 1, max: 500, label: '每日生图张数' },
@@ -21,12 +24,19 @@ export function QuotaEditorDialog({
   open,
   onOpenChange,
   onSaved,
+  capabilities,
+  onRevoke,
 }: {
   client: McpClientDto | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
+  capabilities: McpCapabilityDto[];
+  onRevoke: () => void;
 }) {
+  const [scopeMode, setScopeMode] = useState<'auto' | 'manual'>('auto');
+  const [scopes, setScopes] = useState<string[]>([]);
+  const [scopeDirty, setScopeDirty] = useState(false);
   const [image, setImage] = useState('');
   const [write, setWrite] = useState('');
   const [rate, setRate] = useState('');
@@ -38,6 +48,9 @@ export function QuotaEditorDialog({
 
   useEffect(() => {
     if (!client) return;
+    setScopeMode(client.scopeMode);
+    setScopes(client.scopes);
+    setScopeDirty(false);
     setImage(String(client.dailyImageQuota));
     setWrite(String(client.dailyWriteQuota));
     setRate(String(client.rateLimitPerMin));
@@ -58,6 +71,7 @@ export function QuotaEditorDialog({
           .filter((code) => code && text.has(code));
         setModelOptions(Array.from(new Set(both)));
       })
+      .catch(() => { if (!cancelled) toast.error('模型目录未能加载，请稍后重试'); })
       .finally(() => {
         if (!cancelled) setModelsLoading(false);
       });
@@ -65,7 +79,11 @@ export function QuotaEditorDialog({
   }, [open]);
 
   const save = async () => {
-    if (!client) return;
+    if (!client || saving) return;
+    if (scopeDirty && scopeMode === 'manual' && scopes.length === 0 && client.scopeMode === 'auto') {
+      toast.error('请至少保留一项授权', '如需停止全部访问，请使用“撤销接入”。');
+      return;
+    }
     const parsed = {
       mcpDailyImageQuota: Number(image),
       mcpDailyWriteQuota: Number(write),
@@ -88,44 +106,59 @@ export function QuotaEditorDialog({
     }
 
     setSaving(true);
-    const res = await updateAgentApiKey({
-      id: client.keyId,
-      ...parsed,
-      mcpLiteraryImageModelMode: modelMode,
-      mcpLiteraryImageModelPublicId: modelMode === 'fixed' ? fixedModel : undefined,
-    });
-    setSaving(false);
-    if (!res.success) {
-      toast.error('保存失败', res.error?.message);
-      return;
-    }
-    toast.success('上限已更新');
-    onSaved();
-    onOpenChange(false);
+    try {
+      const res = await updateAgentApiKey({
+        id: client.keyId,
+        ...parsed,
+        ...(scopeDirty ? { scopeMode, ...(scopeMode === 'manual' ? { scopes } : {}) } : {}),
+        mcpLiteraryImageModelMode: modelMode,
+        mcpLiteraryImageModelPublicId: modelMode === 'fixed' ? fixedModel : undefined,
+      });
+      if (!res.success) {
+        toast.error('保存失败', res.error?.message);
+        return;
+      }
+      toast.success('客户端权限与设置已更新');
+      onSaved();
+      onOpenChange(false);
+    } catch {
+      toast.error('保存失败', '请检查网络后重试，当前编辑内容已保留。');
+    } finally { setSaving(false); }
   };
 
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
-      title="调整客户端设置"
-      description={client ? `这把钥匙：${client.name}（${client.keyPrefix}…）` : undefined}
-      maxWidth={440}
+      onOpenChange={(next) => { if (!saving) onOpenChange(next); }}
+      title="客户端权限与设置"
+      description={client ? `客户端：${client.name}（${client.keyPrefix}…）` : undefined}
+      maxWidth={420}
+      contentStyle={{ position: 'fixed', top: 16, bottom: 16, right: 16, height: 'calc(100dvh - 32px)', maxHeight: 'calc(100dvh - 32px)', width: 'min(420px, calc(100vw - 32px))' }}
       content={
         <div className="flex flex-col gap-3.5">
-          <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            上限是给智能体设的安全绳：它重试成本极低，没有上限时一个循环就能把当天的模型额度烧光。
-            额度按 UTC 自然日重置。
-          </p>
+          <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>权限与额度按客户端独立生效。已接入不代表客户端当前在线。</p>
+          <h3 className="text-[13px] font-semibold">平台能力</h3>
+          <label className="mcp-scope-mode"><input type="checkbox" checked={scopeMode === 'auto'} disabled={saving} onChange={(e) => { setScopeMode(e.target.checked ? 'auto' : 'manual'); setScopeDirty(true); }} />跟随我的权限（自动包含平台新增能力）</label>
+          <div className="mcp-permission-table">{capabilities.map(cap => {
+            const shown = scopeMode === 'auto' ? picksToScopes(capabilities, autoPicks(capabilities)) : scopes;
+            const current = accessLevel(cap, shown);
+            return <label className="mcp-permission-row" key={cap.key}><span>{cap.title}{!cap.availableToMe && <small>当前账号无权授权</small>}</span><select aria-label={`${cap.title}访问权限`} disabled={saving || scopeMode === 'auto' || !cap.availableToMe} value={current} onChange={e => { setScopes(previous => changeCapabilityAccess(previous, cap, e.target.value as AccessLevel)); setScopeDirty(true); }}>
+              <option value="none">未开放</option>
+              {cap.readScope && <option value="read">{cap.writeScope ? '只读' : '可查询'}</option>}
+              {cap.writeScope && <option value="write" disabled={!cap.writeAvailableToMe && current !== 'write'}>可执行</option>}
+            </select></label>;
+          })}</div>
+          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>取消“跟随我的权限”后可逐项调整。只读仅可查询，不能新增或修改。</p>
+          {client && clientSignal(client, capabilities).extraScopes.length > 0 && <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>另有 {clientSignal(client, capabilities).extraScopes.length} 项独立接口授权。自定义调整平台能力时保留这些授权；切换为自动模式后按平台能力重新计算。</p>}
+          <h3 className="border-t pt-3 text-[13px] font-semibold" style={{ borderColor: 'var(--border-subtle)' }}>使用额度</h3>
+          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>每日额度按 UTC 自然日重置，北京时间每天 08:00 重置。</p>
 
           <QuotaField label={LIMITS.image.label} hint="1-500" value={image} onChange={setImage} />
           <QuotaField label={LIMITS.write.label} hint="1-2000" value={write} onChange={setWrite} />
           <QuotaField label={LIMITS.rate.label} hint="1-600" value={rate} onChange={setRate} />
 
-          <div className="mt-1 flex flex-col gap-2 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
-            <span className="text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              文学配图模型
-            </span>
+          <details className="mt-1 flex flex-col gap-2 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+            <summary className="cursor-pointer text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>文学配图模型</summary>
             <label className="flex items-start gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
               <input
                 type="radio"
@@ -168,11 +201,12 @@ export function QuotaEditorDialog({
                 )}
               </span>
             </label>
-          </div>
+          </details>
 
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
+              disabled={saving}
               onClick={() => onOpenChange(false)}
               className="h-9 rounded-[10px] px-4 text-[13px] font-medium"
               style={{
@@ -190,9 +224,10 @@ export function QuotaEditorDialog({
               className="h-9 rounded-[10px] px-4 text-[13px] font-semibold disabled:opacity-60"
               style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
             >
-              {saving ? '保存中…' : '保存'}
+              {saving ? '保存中…' : '保存设置'}
             </button>
           </div>
+          <div className="flex items-center gap-3 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}><button type="button" disabled={saving} onClick={onRevoke} className="shrink-0 text-[12px]" style={{ color: 'var(--semantic-danger-text)' }}>撤销接入</button><p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>凭证立即失效，历史调用记录保留。</p></div>
         </div>
       }
     />
@@ -220,6 +255,7 @@ function QuotaField({
       </span>
       <input
         value={value}
+        aria-label={label}
         inputMode="numeric"
         onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, ''))}
         className="h-8 w-[92px] rounded-[9px] px-2.5 text-right text-[13px] tabular-nums"

@@ -42,7 +42,7 @@ const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; b
  */
 const NEXT_STEP: Record<string, string> = {
   denied:
-    '它没这块权限，或者今天的额度用完了。切到「能力与客户端」能看到这把钥匙拿得到什么，也能在那一行调上限。',
+    '它没这块权限，或者今天的额度用完了。在「客户端」中点击对应的「管理」，检查授权范围和每日额度。',
   error: '平台这边没做成，原因就是上面那句。同样的活儿让它再做一次通常就过了。',
 };
 
@@ -58,16 +58,18 @@ const NEXT_STEP: Record<string, string> = {
 export function McpCallsPanel({
   clients,
   refreshToken = 0,
+  initialStatus = '',
 }: {
   clients: McpClientDto[];
   /** 页面顶部「刷新」每点一次加一。记录列表自己拉自己的数据，不进依赖就永远是旧的。 */
   refreshToken?: number;
+  initialStatus?: string;
 }) {
   const [items, setItems] = useState<McpCallLogDto[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [keyId, setKeyId] = useState<string>('');
-  const [status, setStatus] = useState<string>('');
+  const [status, setStatus] = useState<string>(initialStatus);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // 读失败要留一个**持续存在**的错误态。只弹一下 toast 的话，界面会退到两种更糟的样子：
   // 首次加载显示「还没有调用记录」（把「没读到」说成「你还没用过」），
@@ -133,6 +135,7 @@ export function McpCallsPanel({
       {/* 筛选 */}
       <div className="flex flex-wrap items-center gap-2">
         <select
+          aria-label="筛选调用客户端"
           value={keyId}
           onChange={(e) => setKeyId(e.target.value)}
           className="h-8 rounded-[9px] px-2.5 text-[12px]"
@@ -150,6 +153,7 @@ export function McpCallsPanel({
           ))}
         </select>
         <select
+          aria-label="筛选调用结果"
           value={status}
           onChange={(e) => setStatus(e.target.value)}
           className="h-8 rounded-[9px] px-2.5 text-[12px]"

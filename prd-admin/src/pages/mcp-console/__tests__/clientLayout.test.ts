@@ -11,7 +11,7 @@ it('滚动列的客户端卡片不能被 flex 挤成条带', () => {
     dailyWriteQuota: 20, rateLimitPerMin: 60, todayImages: 0, todayWrites: 0,
   };
   const rendered = renderToStaticMarkup(createElement(ClientRow, {
-    client, capabilities: [], onRevoke: () => {}, onEditQuota: () => {},
+    client, capabilities: [], onEditQuota: () => {},
   }));
   const rootStyle = rendered.match(/^<div[^>]*style="([^"]*)"/)?.[1] ?? '';
   const declarations = Object.fromEntries(rootStyle.split(';').filter(Boolean).map(pair => pair.split(':').map(x => x.trim())));

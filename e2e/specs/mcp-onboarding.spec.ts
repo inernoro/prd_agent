@@ -14,6 +14,7 @@ async function login(page: Page) {
 }
 
 async function checkClientSelection(page: Page) {
+  await page.getByRole('tab', { name: '接入配置', exact: true }).click();
   const panel = page.getByRole('region', { name: 'MAP 配套技能', exact: true });
   await expect(panel).toContainText('服务发布版本');
   const codexDownload = await panel.getByRole('link', { name: '下载技能 ZIP' }).getAttribute('href');
@@ -25,7 +26,7 @@ async function checkClientSelection(page: Page) {
   await panel.getByRole('button', { name: '复制版本检查', exact: true }).click();
   await expect(panel.getByRole('button', { name: '复制版本检查已复制', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: '接入新的', exact: true }).click();
+  await page.getByRole('button', { name: '接入客户端', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: '接入你的智能体' });
   await expect(dialog.getByRole('button', { name: 'Codex', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(dialog.getByRole('textbox')).toHaveValue('我的 Codex');
@@ -50,7 +51,7 @@ test.describe('接入台真实导航与客户端引导', () => {
       await page.getByRole('menuitemradio', { name: theme, exact: true }).click();
       await page.getByRole('menuitem', { name: '智能体接入台', exact: true }).click();
       await expect(page).toHaveURL(/\/mcp-console/);
-      await expect(page.getByRole('heading', { name: '智能体接入台', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'MCP 接入管理', exact: true })).toBeVisible();
       await checkClientSelection(page);
       await page.screenshot({ path: testInfo.outputPath(`mcp-${theme}.png`) });
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);

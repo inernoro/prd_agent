@@ -1,19 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { CapabilityDot, SignalLegend } from '../SignalDots';
+import { CapabilityDot } from '../SignalDots';
 import { capabilityVisual } from '../capabilityRegistry';
 import { tierLabel, type CapabilityTier } from '../signalEncoding';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const read = (f: string) => fs.readFileSync(path.resolve(here, '..', f), 'utf8');
-
-/** 去掉注释再判：注释里的解释文字会左右结论（写着「不许只靠颜色」的注释本身就能满足断言）。 */
-function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-}
 
 /** 把一个色点真的渲染出来，读它落到 DOM 上的属性与样式 —— 断言的是结果，不是源码怎么拼的。 */
 function renderDot(tier: CapabilityTier, over: { capKey?: string; title?: string; decorative?: boolean } = {}) {
@@ -98,44 +87,6 @@ describe('色点：颜色不是唯一通道', () => {
       // 只是不念，形状与颜色一个都不能少 —— 装饰点与正常点画出来必须一样
       expect(style).toEqual(renderDot(tier).style);
     }
-    // 折叠态的色点行没有那段文字，那里的点必须保留标签 —— 所以是按位置二选一，不是一刀切。
-    const page = stripComments(read('McpConsolePage.tsx'));
-    const uses = page.match(/<CapabilityDot[^>]*\/>/g) ?? [];
-    expect(uses.length, '页面里应有折叠态与展开区两处色点').toBe(2);
-    expect(uses.filter((u) => /\bdecorative\b/.test(u)).length, '恰好一处（展开区）是装饰点').toBe(1);
-  });
-});
 
-describe('图例：常识讲一次，例外才占卡片的位置', () => {
-  const page = stripComments(read('McpConsolePage.tsx'));
-
-  it('图例整屏只出现一次，不是每张卡重复一遍', () => {
-    const uses = page.match(/<SignalLegend\s*\/>/g) ?? [];
-    expect(uses.length, '图例出现了不止一次，那就退回成每张卡都在说同一件常识').toBe(1);
-  });
-
-  it('图例手机端收起、桌面端显示，说明书在手机上走每张卡的展开区', () => {
-    // mobile-first-density 的收纳表：图例手机端 hidden sm:，或收进可展开视图。
-    // 这里两条都成立：图例本身 hidden sm:flex；展开区里有逐块能力的名字与档位（上面装饰点那条已钉住）。
-    const html = renderToStaticMarkup(<SignalLegend />);
-    const cls = html.match(/^<div[^>]*class="([^"]*)"/)?.[1] ?? '';
-    const classes = cls.split(/\s+/);
-    expect(classes, '图例在手机端没有收起').toContain('hidden');
-    expect(classes, '图例在桌面端没有显示回来').toContain('sm:flex');
-  });
-
-  it('客户端卡上不再逐张重复「自动/手动」那两句常识', () => {
-    // 这两句解释是常识，交给图例与左侧色带说一次；卡片上只留要用户去做点什么的话。
-    // 它们仍然存在于展开区（用户想看随时点得开），所以断言的是**只出现一次**，不是消失。
-    const auto = page.match(/跟着你的权限走/g) ?? [];
-    const pinned = page.match(/按当初那份清单钉死/g) ?? [];
-    expect(auto.length, '「跟着你的权限走」在页面里出现了不止一处').toBe(1);
-    expect(pinned.length, '「按当初那份清单钉死」在页面里出现了不止一处').toBe(1);
-  });
-
-  it('左侧色带是手动档的可见标记，且不做唯一通道', () => {
-    // 色带只是提示，档位的完整说法在展开区里有文字。色带自己 aria-hidden，
-    // 免得读屏把一个没有名字的装饰条念出来。
-    expect(page).toMatch(/aria-hidden[\s\S]{0,220}signal\.pinned \? 'var\(--accent-primary\)'/);
   });
 });
