@@ -21,6 +21,7 @@ import { McpSummaryRail } from './McpSummaryRail';
 import { secureSameSiteEndpoint } from './endpointUrl';
 import { McpCallTrendChart } from './McpCallTrendChart';
 import './mcp-console.css';
+import { accessLabel } from './editAuthorization';
 
 type Tab = 'clients' | 'calls' | 'settings';
 const TABS: Array<{ key: Tab; label: string; icon: typeof Plug }> = [{ key: 'clients', label: '客户端', icon: Plug }, { key: 'calls', label: '调用记录', icon: Activity }, { key: 'settings', label: '接入配置', icon: Settings2 }];
@@ -115,7 +116,7 @@ export default function McpConsolePage() {
       </div>
       </div>
     </div><McpSummaryRail overview={overview} onCalls={viewCalls} onCapability={key => { setClientsExpanded(true); setSearch(''); setFilter(`cap:${key}`); }} onSettings={() => setTab('settings')} /></div>}
-    <QuotaEditorDialog client={quotaTarget} open={quotaTarget !== null} capabilities={capabilities} onOpenChange={next => { if (!next) setQuotaTarget(null); }} onSaved={() => void load()} onRevoke={() => { setRevokeTarget(quotaTarget); setQuotaTarget(null); }} />
+    <QuotaEditorDialog client={quotaTarget} open={quotaTarget !== null} capabilities={capabilities} onOpenChange={next => { if (!next) setQuotaTarget(null); }} onSaved={load} onRevoke={() => { setRevokeTarget(quotaTarget); setQuotaTarget(null); }} />
     <RevokeClientDialog client={revokeTarget} open={revokeTarget !== null} onOpenChange={next => { if (!next) setRevokeTarget(null); }} onRevoked={() => void load()} />
     <ConnectAgentDialog skillState={skillState} open={connectOpen} onOpenChange={setConnectOpen} capabilities={capabilities} endpointUrl={overview.endpointUrl} onCreated={() => void load()} />
     <Dialog open={guideOpen} onOpenChange={setGuideOpen} title="接入 AI 客户端" maxWidth={520} content={<div className="mcp-guide"><p>让 Codex、Claude Code 等 AI 客户端通过 MCP 使用你在平台上的能力。</p>{[{ title: '创建客户端，复制配置', text: '点击“接入客户端”填写名称，系统会生成独立凭证及客户端配置。凭证仅显示一次，请及时保存。' }, { title: '将配置添加到 AI 客户端', text: '按接入窗口中的 Claude Code、Claude Desktop 或 Codex 配置说明操作。默认授权跟随你的系统权限，可随时在“管理”中调整。' }, { title: '发起任务，查看执行结果', text: '在客户端中发起任务，返回“调用记录”检查结果。失败或被拦截的调用会显示原因和后续操作。' }].map((step, index) => <div className="mcp-guide-step" key={step.title}><span>{index + 1}</span><div><h3>{step.title}</h3><p>{step.text}</p></div></div>)}<button className="mcp-button mcp-primary" onClick={() => { setGuideOpen(false); setConnectOpen(true); }}>接入客户端<ArrowRight size={14} aria-hidden /></button></div>} />
@@ -129,7 +130,6 @@ export function ClientRow({ client, capabilities, onEditQuota, onHistory }: { cl
   const identity = clientVisual(client.name);
   const IdentityIcon = identity.icon;
   const ModeIcon = signal.pinned ? SlidersHorizontal : ShieldCheck;
-  const accessLabels = { write: '可执行', full: '已开放', read: '只读', none: '未开放' };
   return <div className="mcp-client-row" data-manual={signal.pinned} data-unavailable={!client.isActive} role="listitem" style={{ flexShrink: 0 }}>
     <div className="mcp-client-top">
       <div className="mcp-client-identity"><span className="mcp-client-avatar" style={{ color: identity.text, background: identity.soft }} title="按客户端名称匹配的图标"><IdentityIcon size={20} aria-hidden /></span><div className="mcp-client-heading"><strong>{client.name}</strong><span className="mcp-client-mode" data-manual={signal.pinned}><ModeIcon size={11} aria-hidden />{signal.pinned ? '自定义授权' : '跟随我的权限'}</span>{unavailable && <span className="mcp-unavailable">{unavailable}</span>}</div></div>
@@ -140,9 +140,11 @@ export function ClientRow({ client, capabilities, onEditQuota, onHistory }: { cl
       const visual = capabilityVisual(cap.key);
       const Icon = visual.icon;
       const granted = cap.tier !== 'none';
-      return <span className="mcp-capability-label" data-tier={cap.tier} key={cap.key} style={granted ? { color: visual.text, background: visual.soft, borderColor: visual.border } : undefined}><Icon size={12} aria-hidden />{cap.title}<span>{accessLabels[cap.tier]}</span></span>;
+      const definition = capabilities.find(item => item.key === cap.key);
+      const label = cap.tier === 'full' ? '已开放' : accessLabel({ key: cap.key, writeScope: definition?.writeScope }, cap.tier);
+      return <span className="mcp-capability-label" data-tier={cap.tier} key={cap.key} style={granted ? { color: visual.text, background: visual.soft, borderColor: visual.border } : undefined}><Icon size={12} aria-hidden />{cap.title}<span>{label}</span></span>;
     })}{signal.extraScopes.length > 0 && <span className="mcp-extra-scopes">另有 {signal.extraScopes.length} 项独立接口</span>}</div>
-    <div className="mcp-client-bottom"><div className="mcp-client-usage"><span><Image size={12} aria-hidden />生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span><PenLine size={12} aria-hidden />写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div><div className="mcp-client-last">{onHistory && <button className="mcp-client-history" onClick={onHistory} aria-label={`查看 ${client.name} ${client.keyPrefix} 的历史`}><History size={13} aria-hidden />历史</button>}<Clock3 size={11} aria-hidden />今日 {client.todayCalls} 次 · {client.lastUsedAt ? <>凭证最近使用 <RelativeTime value={client.lastUsedAt} /></> : '凭证尚未使用'}</div></div>
+    <div className="mcp-client-bottom"><div className="mcp-client-usage"><span><Image size={12} aria-hidden />生图 <b>{client.todayImages}</b> / {client.dailyImageQuota} 张</span><span><PenLine size={12} aria-hidden />写入 <b>{client.todayWrites}</b> / {client.dailyWriteQuota} 次</span></div><div className="mcp-client-last">{onHistory && <button className="mcp-client-history" onClick={onHistory} aria-label={`查看 ${client.name} ${client.keyPrefix} 的历史`}><History size={13} aria-hidden />历史</button>}<Clock3 size={11} aria-hidden />今日 {client.todayCalls} 次 · {client.lastUsedAt ? <>凭证最近使用 <RelativeTime value={client.lastUsedAt} refreshIntervalMs={0} /></> : '凭证尚未使用'}</div></div>
     {missing.length > 0 && <p className="mcp-missing">另有 {missing.length} 项能力可在“管理”中开放。</p>}
   </div>;
 }

@@ -3142,6 +3142,8 @@ public class HostedSiteService : IHostedSiteService
                 Description = s.Description,
                 SiteUrl = s.SiteUrl,
                 EntryFile = s.EntryFile,
+                ContentShape = HostedSiteContentShapeRules.Resolve(s),
+                RequiresPreviewBridge = s.RequiresPreviewBridge,
                 TotalSize = s.TotalSize,
                 // 入口那一份自己的大小。前端拿它判「取正文的代理装不装得下」——
                 // 拿 TotalSize 近似只对单文件站成立，多文件站里入口超 2MB 的会漏（Codex 第四轮 P2）。

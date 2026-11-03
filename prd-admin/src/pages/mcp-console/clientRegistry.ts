@@ -110,6 +110,7 @@ export function buildConnectionPrompt(
     CLIENT_REGISTRY[client].configLocation,
     '合并以下连接配置，保留其它已有服务；密钥仅用于本机连接，不写入项目版本库或公开技能包。',
     CLIENT_REGISTRY[client].config(endpointUrl, key),
+    '对外发布默认关闭，自动模式也不会开启。需要公开或登录可见分享、续期或更新已对外站点时，由用户登录 MAP，在目标客户端设置中单独开启授权；确认参数和资料指纹不能替代授权，也不要尝试改走网页后台写接口。',
     manifest
       ? buildSkillPrompt(client, manifest, endpointUrl, 'install')
       : `再读取 ${skillManifestUrl(endpointUrl)}，按该清单下载、校验并安装 map-agent 技能；清单读取失败时报告失败，不要跳过技能安装。`,
