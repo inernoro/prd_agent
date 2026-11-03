@@ -191,3 +191,49 @@
 .mcp-recent-section { margin-top: 4px; padding-top: 14px; border-top: 1px solid var(--border-subtle); }
 .mcp-history-scope { font-size: 11px; line-height: 1.7; color: var(--text-muted); }
 .mcp-history-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 11px; color: var(--text-muted); }
+
+/* Wide screens use the former horizontal whitespace for recent requests. */
+.mcp-client-area { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.mcp-client-area > * { flex-shrink: 0; min-width: 0; }
+.mcp-event { display: flex; flex-direction: column; border-radius: 10px; flex-shrink: 0; }
+.mcp-event-header { display: grid; grid-template-columns: minmax(0,1fr) 52px; align-items: center; }
+.mcp-event-row { display: grid; grid-template-columns: 14px 145px minmax(110px,180px) minmax(0,1fr) 60px 65px 70px; align-items: center; gap: 12px; padding: 12px 14px; min-width: 0; flex: 1; text-align: left; font-size: 12px; }
+.mcp-event-chevron, .mcp-event-time, .mcp-event-kind, .mcp-event-duration { color: var(--text-muted); }
+.mcp-event-time, .mcp-event-duration { font-size: 11px; font-variant-numeric: tabular-nums; }
+.mcp-event-client { color: var(--text-secondary); }
+.mcp-event-client, .mcp-event-tool { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-event-tool { color: var(--text-primary); font-weight: 550; }
+.mcp-event-tool small { display: block; color: var(--text-muted); font-size: 10.5px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.mcp-event-kind { font-size: 10.5px; }
+.mcp-event-duration { text-align: right; }
+.mcp-event-status { justify-self: end; border-radius: 5px; padding: 2px 5px; font-size: 10px; white-space: nowrap; }
+.mcp-event-compact .mcp-event-row { grid-template-columns: 14px minmax(0,1fr) 65px 70px; gap: 7px 10px; }
+.mcp-event-compact .mcp-event-time { grid-column: 2 / 4; grid-row: 1; }
+.mcp-event-compact .mcp-event-status { grid-column: 4; grid-row: 1; }
+.mcp-event-compact .mcp-event-tool { grid-column: 2 / 5; grid-row: 2; }
+.mcp-event-compact .mcp-event-client { grid-column: 2; grid-row: 3; font-size: 11px; }
+.mcp-event-compact .mcp-event-kind { grid-column: 3; grid-row: 3; text-align: right; }
+.mcp-event-compact .mcp-event-duration { grid-column: 4; grid-row: 3; }
+@media(min-width:1600px) {
+  .mcp-client-area { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(360px,1fr); gap: 16px; overflow: hidden; }
+  .mcp-client-content, .mcp-client-area > .mcp-recent-section { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .mcp-client-area > .mcp-recent-section { margin-top: 0; padding: 0 0 0 16px; border-top: 0; border-left: 1px solid var(--border-subtle); }
+  .mcp-client-area .mcp-list-hint { display: none; }
+  .mcp-client-area .mcp-client-bottom { align-items: start; flex-direction: column; gap: 7px; }
+}
+@media(max-width:1023px) {
+  .mcp-event:not(.mcp-event-compact) .mcp-event-row { grid-template-columns: 14px 145px minmax(0,1fr) 65px 70px; gap: 7px 10px; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-tool { grid-column: 2 / 6; grid-row: 2; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-duration { grid-column: 4; grid-row: 1; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-status { grid-column: 5; grid-row: 1; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-kind { grid-column: 4; grid-row: 3; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-client { grid-column: 2 / 4; grid-row: 3; }
+}
+@media(max-width:639px) {
+  .mcp-event:not(.mcp-event-compact) .mcp-event-row { grid-template-columns: 14px minmax(0,1fr) 50px 60px; gap: 7px; padding: 11px; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-tool { grid-column: 2 / 5; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-time { grid-column: 2 / 4; grid-row: 1; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-duration { grid-column: 4; grid-row: 3; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-status { grid-column: 4; }
+  .mcp-event:not(.mcp-event-compact) .mcp-event-kind { display: none; }
+}

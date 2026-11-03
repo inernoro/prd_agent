@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Image, PenLine } from 'lucide-react';
+import { AlertTriangle, ChevronRight, ExternalLink } from 'lucide-react';
 import { PrdLoader } from '@/components/ui/PrdLoader';
 import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
@@ -129,7 +129,7 @@ export function McpCallsPanel({
   // 跟刚选的条件当场打架。这里丢掉的那些不会消失 —— 它们在「全部结果」里照常看得到。
   const groups = useMemo(() => {
     if (!status) return groupCalls(items);
-    return items.map(soloGroup).filter((g) => g.status === status);
+    return items.map(soloGroup).filter((g) => g.status === status).sort((a, b) => Date.parse(eventTime(b)) - Date.parse(eventTime(a)));
   }, [items, status]);
 
   // 服务端按纯 HTTP 结果分页取 50 条，这一道语义过滤发生在**取完之后**。
@@ -142,7 +142,7 @@ export function McpCallsPanel({
   return (
     <div className={`flex min-h-0 flex-col gap-3 ${compact ? '' : 'flex-1'}`}>
       {compact && <div className="mcp-section-heading"><h2>最近请求 <span>最近 5 次工具调用</span></h2><button onClick={onViewAll}>全部记录</button></div>}
-      <p className="mcp-history-scope">当前环境 · 当前账号 · 全部日期。仅记录工具调用；初始化、工具列表查询和其他接口请求不计入。</p>
+      <p className="mcp-history-scope">最新在前 · 本地时间 · 当前环境 · 当前账号 · 全部日期。仅记录工具调用；初始化、工具列表查询和其他接口请求不计入。</p>
       {/* 筛选 */}
       {!compact && <div className="flex flex-wrap items-center gap-2">
         <select
@@ -278,79 +278,38 @@ function EventRow({
   // pending 不是失败：不整行染色、也不给「下一步」（没什么要他做的，等就完了）
   const bad = group.status === 'error' || group.status === 'denied';
   const href = safeArtifactHref(group.artifact?.url);
-  const title =
-    group.artifact?.title || (compact ? group.first.toolName : group.first.argumentsPreview || group.first.toolName);
+  const title = group.first.toolName;
   const nextStep = NEXT_STEP[group.status];
 
   return (
     <div
-      className="flex flex-col rounded-[12px]"
+      className={`mcp-event ${compact ? 'mcp-event-compact' : ''}`}
+      data-call-id={group.first.id}
       style={{
-        // 失败/被挡下整行染色 —— 一条红色徽章在一屏灰字里根本扫不出来
-        background: bad && !compact ? st.bg : 'var(--bg-card)',
-        border: `1px solid ${bad && !compact ? st.border : 'var(--border-subtle)'}`,
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-subtle)',
       }}
     >
       {/* 展开钮与「打开」是**兄弟**，不是父子。
           原来「打开」那个 <a> 长在这个 <button> 里 —— 嵌套交互控件的无障碍树是无效的：
           读屏用户会把链接当成展开钮的一部分，键盘 Tab 到的东西也说不准。
           布局仍是一行：button 吃掉剩余宽度，链接贴右。 */}
-      <div className="flex items-center">
+      <div className="mcp-event-header">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3.5 py-2.5 text-left"
+        className="mcp-event-row"
       >
-        {expanded ? (
-          <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} aria-hidden />
-        ) : (
-          <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} aria-hidden />
-        )}
-        <span className="w-[86px] shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+        <ChevronRight size={14} className={expanded ? 'mcp-event-chevron rotate-90' : 'mcp-event-chevron'} aria-hidden />
+        <time className="mcp-event-time" dateTime={eventTime(group)} title={new Date(eventTime(group)).toLocaleString('zh-CN')}>
           {eventClock(eventTime(group))}
-        </span>
-        <span className="w-[110px] shrink-0 truncate text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-          {group.first.keyName}
-        </span>
-        <span
-          className="min-w-[180px] flex-1 truncate text-[12.5px] font-medium"
-          style={{ color: bad && !compact ? st.color : 'var(--text-primary)' }}
-        >
-          {title}
-          {title !== group.first.toolName && <code className="block truncate text-[10.5px] font-normal" style={{ color: 'var(--text-muted)' }}>{group.first.toolName}</code>}
-        </span>
-
-        {group.imageCount > 0 && (
-          <span className="flex shrink-0 items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            <Image size={11} aria-hidden />
-            {group.imageCount} 张
-          </span>
-        )}
-        {group.imageCount === 0 && group.isWrite && (
-          <span className="flex shrink-0 items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            <PenLine size={11} aria-hidden />
-            写入
-          </span>
-        )}
-        {group.multiStep && (
-          <span
-            className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[10.5px]"
-            style={{ background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
-          >
-            {group.steps.length} 步
-          </span>
-        )}
-
-        <span className="w-[56px] shrink-0 text-right text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-          {group.elapsedMs > 0 ? `${(group.elapsedMs / 1000).toFixed(1)}s` : '—'}
-        </span>
-        <span
-          className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[10px] font-semibold"
-          style={{ background: st.bg, border: `1px solid ${st.border}`, color: st.color }}
-        >
-          {st.label}
-        </span>
+        </time>
+        <span className="mcp-event-client" title={group.first.keyName}>{group.first.keyName}</span>
+        <span className="mcp-event-tool" title={title}>{title}{group.artifact?.title && <small>{group.artifact.title}</small>}</span>
+        <span className="mcp-event-kind">{group.multiStep ? `${group.steps.length} 步` : group.imageCount > 0 ? `${group.imageCount} 张图` : group.isWrite ? '写入' : '读取'}</span>
+        <span className="mcp-event-duration">{group.elapsedMs > 0 && group.elapsedMs < 1000 ? `${Math.round(group.elapsedMs)}ms` : group.elapsedMs >= 1000 ? `${(group.elapsedMs / 1000).toFixed(1)}s` : '—'}</span>
+        <span className="mcp-event-status" style={{ background: st.bg, border: `1px solid ${st.border}`, color: st.color }}>{st.label}</span>
       </button>
       {href && (
         <a
@@ -366,8 +325,8 @@ function EventRow({
       )}
       </div>
 
-      {/* 失败不用点开就能看到「为什么」和「下一步」—— 要点开才知道的原因，等于没给 */}
-      {bad && (!compact || expanded) && (
+      {/* 统一行高；状态始终可见，原因与参数在展开区展示。 */}
+      {bad && expanded && (
         <div className="flex flex-col gap-1 px-3.5 pb-2.5" style={{ paddingLeft: 46 }}>
           <span className="flex items-start gap-1.5 text-[12px] leading-relaxed" style={{ color: st.color }}>
             <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden />
