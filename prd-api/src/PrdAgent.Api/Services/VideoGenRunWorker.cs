@@ -66,10 +66,9 @@ public class VideoGenRunWorker : BackgroundService
                 //   - storyboard  → 走 ProcessScriptingAsync 拆分镜 (Scripting → Editing)
                 // 队列处理后先让既有其它路径执行一轮，避免取消核对重入队后持续独占 worker。
                 var queued = yieldQueuedOnce ? null : await ClaimQueuedRunAsync(stoppingToken);
-                yieldQueuedOnce = false;
+                yieldQueuedOnce = queued != null;
                 if (queued != null)
                 {
-                    yieldQueuedOnce = true;
                     _logger.LogInformation("[VideoGenWorker] Claimed run: runId={RunId}, mode={Mode}",
                         queued.Id, queued.Mode);
                     try
@@ -232,7 +231,7 @@ public class VideoGenRunWorker : BackgroundService
         var fb = Builders<VideoGenRun>.Filter;
         // 先 peek 看下 Mode（避免错误置 status）
         var pending = await _db.VideoGenRuns.Find(fb.Eq(x => x.Status, VideoGenRunStatus.Queued))
-            .SortBy(x => x.StartedAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id)
+            .SortBy(x => x.QueueEnteredAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id)
             .FirstOrDefaultAsync(ct);
         if (pending == null) return null;
 
@@ -365,9 +364,13 @@ public class VideoGenRunWorker : BackgroundService
 
         while (DateTime.UtcNow < deadline)
         {
+            // 用户取消
             var fresh = await _db.VideoGenRuns.Find(DirectJobFilter(run, submitResult.JobId!)).FirstOrDefaultAsync(CancellationToken.None);
             if (fresh == null) return;
-            if (fresh.CancelRequested) await UpdatePhaseAsync(run, "videogen-reconciling", progress);
+            if (fresh?.CancelRequested == true)
+            {
+                await UpdatePhaseAsync(run, "videogen-reconciling", progress);
+            }
 
             await Task.Delay(DirectVideoPollInterval, CancellationToken.None);
 
@@ -561,12 +564,13 @@ public class VideoGenRunWorker : BackgroundService
     {
         var filter = submittedJobId == null ? Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
             : DirectJobFilter(run, submittedJobId) & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, true);
+        var update = Builders<VideoGenRun>.Update
+            .Set(x => x.Status, upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.Queued)
+            .Set(x => x.CurrentPhase, upstreamTerminal ? "cancelled" : "videogen-reconciling")
+            .Set(x => x.EndedAt, upstreamTerminal ? DateTime.UtcNow : (DateTime?)null);
         var cancelled = await _db.VideoGenRuns.UpdateOneAsync(
             filter,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.Status, upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.Queued)
-                .Set(x => x.CurrentPhase, upstreamTerminal ? "cancelled" : "videogen-reconciling")
-                .Set(x => x.EndedAt, upstreamTerminal ? DateTime.UtcNow : (DateTime?)null),
+            upstreamTerminal ? update : update.Set(x => x.QueueEnteredAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (cancelled.ModifiedCount != 1 || !upstreamTerminal) return;
 

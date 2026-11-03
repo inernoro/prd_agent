@@ -362,6 +362,8 @@ public class VideoGenRun
 
     public string OwnerAdminId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    [BsonDefaultValue(null)]
+    public DateTime? QueueEnteredAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
     public bool CancelRequested { get; set; }

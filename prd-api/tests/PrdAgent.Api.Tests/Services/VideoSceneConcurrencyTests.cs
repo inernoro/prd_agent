@@ -73,18 +73,24 @@ public class VideoSceneConcurrencyTests
     public async Task DirectCancellationMock_WindowExpiryShouldRequeueSameJobWithoutFakeTerminal()
     {
         using var test = new DirectCancellationFixture("recorded-offering");
+        test.Run.CreatedAt = DateTime.UnixEpoch;
+        test.Run.QueueEnteredAt = DateTime.UnixEpoch;
+        test.OtherQueuedRun = new VideoGenRun { QueueEnteredAt = DateTime.UnixEpoch.AddSeconds(1) };
+        var historical = new BsonDocument(test.Run.ToBsonDocument().Where(field => field.Name != nameof(VideoGenRun.QueueEnteredAt)));
+        BsonSerializer.Deserialize<VideoGenRun>(historical).QueueEnteredAt.ShouldBeNull();
         await test.ProcessAsync(TimeSpan.Zero);
         test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
         test.Run.CurrentPhase.ShouldBe("videogen-reconciling");
         test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
         test.Run.EndedAt.ShouldBeNull();
         test.Field("DirectVideoReconciledAt").ShouldBeNull();
-        test.OtherQueuedRun = new VideoGenRun();
         await test.ClaimAsync();
         test.OtherQueuedRun!.Status.ShouldBe(VideoGenRunStatus.Rendering);
         test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.OtherQueuedRun = new VideoGenRun();
         await test.ClaimAsync();
         test.Run.Status.ShouldBe(VideoGenRunStatus.Rendering);
+        test.OtherQueuedRun.Status.ShouldBe(VideoGenRunStatus.Queued);
         test.Status = () => new OpenRouterVideoStatus { Status = "completed", Cost = 0.43 };
         await test.ProcessAsync();
         test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
@@ -239,14 +245,12 @@ public class VideoSceneConcurrencyTests
                     options.ReturnDocument.ShouldBe(ReturnDocument.After);
                     var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
                     var deletionName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.DeletionRequestedAt)).ElementName;
-                    if (query.Contains(deletionName))
+                    if (query.Contains(deletionName) || ProbeScheduling && query.Contains(nameof(VideoGenRun.ExportRequested)))
                     {
-                        Run.DeletionRequestedAt.ShouldBeNull();
-                        return Task.FromResult<VideoGenRun>(null!);
-                    }
-                    if (ProbeScheduling && query.Contains(nameof(VideoGenRun.ExportRequested)))
-                    {
-                        SchedulingPaths.Add("legacy-export");
+                        if (query.Contains(deletionName))
+                            Run.DeletionRequestedAt.ShouldBeNull();
+                        else
+                            SchedulingPaths.Add("legacy-export");
                         return Task.FromResult<VideoGenRun>(null!);
                     }
                     if (!Matches(filter) && OtherQueuedRun != null && Matches(filter, OtherQueuedRun))
@@ -290,15 +294,11 @@ public class VideoSceneConcurrencyTests
         {
             token.ThrowIfCancellationRequested();
             var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
-            if (query.GetValue(nameof(VideoGenRun.Status), BsonNull.Value) == VideoGenRunStatus.Queued)
+            if (query.GetValue(nameof(VideoGenRun.Status), BsonNull.Value) == VideoGenRunStatus.Queued && ++QueuedReads == 2)
             {
-                if (++QueuedReads == 2)
-                {
-                    // Bound the old scheduler deterministically; never wait another real polling window.
-                    _backgroundStop!.Cancel();
-                    token.ThrowIfCancellationRequested();
-                }
-                return;
+                // Bound the old scheduler deterministically; never wait another real polling window.
+                _backgroundStop!.Cancel();
+                token.ThrowIfCancellationRequested();
             }
             if (!query.TryGetValue(nameof(VideoGenRun.Scenes), out var scenes)) return;
             var status = scenes["$elemMatch"][nameof(VideoGenScene.Status)];
