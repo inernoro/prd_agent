@@ -192,7 +192,7 @@
 .mcp-history-scope { font-size: 11px; line-height: 1.7; color: var(--text-muted); }
 .mcp-history-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 10px; font-size: 11px; color: var(--text-muted); }
 
-/* Wide screens use the former horizontal whitespace for recent requests. */
+/* Client list and recent requests stay in one vertical flow at every width. */
 .mcp-client-area { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .mcp-client-area > * { flex-shrink: 0; min-width: 0; }
 .mcp-event { display: flex; flex-direction: column; border-radius: 10px; flex-shrink: 0; }
@@ -214,13 +214,6 @@
 .mcp-event-compact .mcp-event-client { grid-column: 2; grid-row: 3; font-size: 11px; }
 .mcp-event-compact .mcp-event-kind { grid-column: 3; grid-row: 3; text-align: right; }
 .mcp-event-compact .mcp-event-duration { grid-column: 4; grid-row: 3; }
-@media(min-width:1600px) {
-  .mcp-client-area { display: grid; grid-template-columns: minmax(0,1.3fr) minmax(360px,1fr); gap: 16px; overflow: hidden; }
-  .mcp-client-content, .mcp-client-area > .mcp-recent-section { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-  .mcp-client-area > .mcp-recent-section { margin-top: 0; padding: 0 0 0 16px; border-top: 0; border-left: 1px solid var(--border-subtle); }
-  .mcp-client-area .mcp-list-hint { display: none; }
-  .mcp-client-area .mcp-client-bottom { align-items: start; flex-direction: column; gap: 7px; }
-}
 @media(max-width:1023px) {
   .mcp-event:not(.mcp-event-compact) .mcp-event-row { grid-template-columns: 14px 145px minmax(0,1fr) 65px 70px; gap: 7px 10px; }
   .mcp-event:not(.mcp-event-compact) .mcp-event-tool { grid-column: 2 / 6; grid-row: 2; }
@@ -236,4 +229,16 @@
   .mcp-event:not(.mcp-event-compact) .mcp-event-duration { grid-column: 4; grid-row: 3; }
   .mcp-event:not(.mcp-event-compact) .mcp-event-status { grid-column: 4; }
   .mcp-event:not(.mcp-event-compact) .mcp-event-kind { display: none; }
+}
+
+/* Bound reading width instead of stretching client cards across ultrawide screens. */
+.mcp-console { width: 100%; max-width: 1520px; margin-inline: auto; }
+@media(min-width:1024px) {
+  .mcp-client-row { padding: 10px 12px; }
+  .mcp-client-row[data-manual=true] { padding-left: 11px; }
+  .mcp-client-avatar { width: 30px; height: 30px; border-radius: 8px; }
+  .mcp-client-capabilities, .mcp-client-bottom { margin-top: 8px; }
+  .mcp-recent-section .mcp-event-compact .mcp-event-row { grid-template-columns: 14px 140px minmax(100px,150px) minmax(0,1fr) 48px 56px 58px; gap: 8px; padding: 10px 12px; }
+  .mcp-recent-section .mcp-event-compact .mcp-event-row > * { grid-column: auto; grid-row: auto; }
+  .mcp-recent-section .mcp-event-compact .mcp-event-kind { text-align: left; }
 }
