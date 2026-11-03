@@ -1,3 +1,5 @@
+import { BranchListOverview } from '@/components/branch/BranchListOverview';
+
 /**
  * 页面级加载骨架的 SSOT（2026-09-17）。
  *
@@ -19,9 +21,12 @@ const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] 
 
 export function BranchListSkeleton(): JSX.Element {
   return (
-    <div aria-busy="true" aria-live="polite" aria-label="加载项目与本地分支列表">
-      {/* 不再在骨架顶上放一行「加载…」文案：它把骨架撑得比正文高，切换那一帧整片网格往上跳（2026-09-17 用户圈出）；
-          加载什么由 aria-label 给读屏，肉眼看骨架本身就知道在加载。 */}
+    <div className="mt-6" aria-busy="true" aria-live="polite" aria-label="加载项目与本地分支列表">
+      <BranchListOverview loading summary={<div className="cds-loading-skeleton-line h-6 w-72 max-w-full" />}>
+        <div className="cds-loading-skeleton-line h-7 w-52 shrink-0" />
+        <div className="cds-loading-skeleton-line h-8 w-56 shrink-0" />
+        <div className="cds-loading-skeleton-line h-8 w-24 shrink-0" />
+      </BranchListOverview>
       <div className="cds-branch-card-grid">
         {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
           <article
@@ -29,10 +34,13 @@ export function BranchListSkeleton(): JSX.Element {
             className="flex h-[15.25rem] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
             {/* 头部:分支名 + 状态徽标 */}
-            <div className="flex items-center justify-between gap-3 px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-4" style={{ width }} />
-              <div className="cds-loading-skeleton-line h-5 w-14 shrink-0 rounded-full" />
-            </div>
+            <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
+              <div className="flex h-8 min-w-0 flex-1 items-center gap-3">
+                <div className="cds-loading-skeleton-line h-4 w-4 shrink-0 rounded-full" />
+                <div className="cds-loading-skeleton-line h-4" style={{ width }} />
+              </div>
+              <div className="cds-loading-skeleton-line h-8 w-8 shrink-0 rounded-md" />
+            </header>
             {/* 身体:几行元信息 */}
             <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-5 py-4">
               <div className="cds-loading-skeleton-line h-3 w-1/2" style={{ animationDelay: '0.1s' }} />
@@ -40,10 +48,10 @@ export function BranchListSkeleton(): JSX.Element {
               <div className="cds-loading-skeleton-line h-3 w-2/5" style={{ animationDelay: '0.26s' }} />
             </div>
             {/* 尾部:操作条 */}
-            <div className="mt-auto flex h-[3.5rem] shrink-0 items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5">
+            <footer className="mt-auto flex h-[3.5rem] shrink-0 items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5">
               <div className="cds-loading-skeleton-line h-3 w-24" />
               <div className="cds-loading-skeleton-line h-7 w-20 rounded-md" />
-            </div>
+            </footer>
           </article>
         ))}
       </div>
@@ -68,8 +76,10 @@ export function ProjectListSkeleton(): JSX.Element {
             key={index}
             className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
-            <header className="px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-[1.125rem]" style={{ width }} />
+            <header className="flex items-start justify-between gap-3 px-5 pt-5">
+              <div className="flex h-[1.59375rem] w-full items-center">
+                <div className="cds-loading-skeleton-line h-[1.125rem]" style={{ width }} />
+              </div>
             </header>
             <div
               className="relative mx-3 my-3 h-[13.75rem] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"

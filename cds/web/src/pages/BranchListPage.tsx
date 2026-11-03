@@ -1,4 +1,5 @@
 import { GenerationBoundary } from '@/components/motion/GenerationBoundary';
+import { BranchListOverview } from '@/components/branch/BranchListOverview';
 import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
@@ -4191,14 +4192,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             the old left "tracked / remote" two-list panel which the user
             said wasn't useful. Daily flow: focus the input, see all branches,
             type a few characters, click a row OR press Enter to preview. */}
-        <GenerationBoundary key={projectId} loading={state.status === 'loading'} ready={state.status === 'ok'}>
-        {state.status === 'loading' ? (
-          <div className="mt-6">
-            {/* 骨架屏镜像真实分支卡网格(cds-branch-card-grid + 固定 15.25rem 卡形状),
-                加载完成时无缝切到真数据;不再用通用的几行横条骨架。 */}
-            <BranchListSkeleton />
-          </div>
-        ) : null}
+        <GenerationBoundary key={projectId} loading={state.status === 'loading'}>
+        {state.status === 'loading' ? <BranchListSkeleton /> : null}
         {state.status === 'error' ? (
           <div className="mt-6">
             <ErrorBlock message={state.message} />
@@ -4223,15 +4218,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             with more columns before falling back to stretched rows. */}
         {state.status === 'ok' ? (
           <div className="mt-6">
-            {/* 标签过滤栏:仅在有激活过滤时出现。点 × 清除过滤,恢复显示全部分支。
-                还原 legacy app.js:2778-2792 的 renderTagFilterBar 行为,但改为
-                只在 active 时显示一行简单 chip(单标签过滤,不做 multi-select)。 */}
-            {/* 2026-05-07 wave 2.4:Tag filter bar — 列出所有 tags 横排,
-                点击 chip 切换过滤;再次点击清除。激活的 tag chip 高亮。 */}
+            {/* 统计、视图和标签共用骨架已预留的工具条，返回数据不会再插入一行挤下卡片。 */}
             {branches.length > 0 || viewPreferencesKey ? (
               /* 一句话汇总（2026-09-29）：先说「所以呢」——几个要处理、几个在动——再把每张卡都
                  重复的共享基础设施、全项目共用的构建槽收到这里说一次。 */
-              <div className="mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2" data-testid="branch-overview-bar">
+              <BranchListOverview summary={
                 <h2 className="min-w-0 text-[1.625rem] font-bold leading-tight tracking-tight text-foreground">
                   <span>{branchOverview.total} 个分支</span>
                   {branchOverview.parts.length > 0 ? '：' : ''}
@@ -4242,7 +4233,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                     </span>
                   ))}
                 </h2>
-                <div className="flex flex-wrap items-center gap-2">
+              }>
                   {branchOverview.sharedInfra.length > 0 ? (() => {
                     const broken = branchOverview.sharedInfra.filter((resource) => resource.status === 'error');
                     const stopped = branchOverview.sharedInfra.filter((resource) => resource.status !== 'running' && resource.status !== 'error');
@@ -4336,38 +4327,37 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       </DropdownItem>
                     </DropdownMenu>
                   ) : null}
-                </div>
-              </div>
-            ) : null}
-            {allTags.length > 0 ? (
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted-foreground">标签:</span>
-                {allTags.map((tag) => {
-                  const active = activeTagFilter === tag;
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => setActiveTagFilter(active ? null : tag)}
-                      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors ${
-                        active
-                          ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
-                          : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'
-                      }`}
-                      title={active ? '清除过滤' : `按 #${tag} 过滤`}
-                    >
-                      <Tags className="h-3 w-3" />
-                      <span>#{tag}</span>
-                      {active ? <X className="h-3 w-3" /> : null}
-                    </button>
-                  );
-                })}
-                {activeTagFilter ? (
-                  <span className="text-xs text-muted-foreground">
-                    共 {sortedBranches.length} 个分支
-                  </span>
+                {allTags.length > 0 ? (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs text-muted-foreground">标签:</span>
+                    {allTags.map((tag) => {
+                      const active = activeTagFilter === tag;
+                      return (
+                        <button
+                          key={tag}
+                          type="button"
+                          onClick={() => setActiveTagFilter(active ? null : tag)}
+                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors ${
+                            active
+                              ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
+                              : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                          }`}
+                          title={active ? '清除过滤' : `按 #${tag} 过滤`}
+                        >
+                          <Tags className="h-3 w-3" />
+                          <span>#{tag}</span>
+                          {active ? <X className="h-3 w-3" /> : null}
+                        </button>
+                      );
+                    })}
+                    {activeTagFilter ? (
+                      <span className="text-xs text-muted-foreground">
+                        共 {sortedBranches.length} 个分支
+                      </span>
+                    ) : null}
+                  </div>
                 ) : null}
-              </div>
+              </BranchListOverview>
             ) : null}
             {branches.length === 0 ? (
               <div className="cds-surface-raised cds-hairline px-8 py-16">

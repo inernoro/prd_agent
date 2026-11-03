@@ -120,12 +120,17 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     expect(projectList).not.toMatch(/function ProjectListSkeleton/);
   });
 
-  it('列表骨架顶上不再放一行「加载…」文案：它把骨架撑得比正文高，切换那一帧整片网格往上跳', () => {
+  it('分支骨架为统计和筛选保留与正文相同的布局槽，不额外插入加载文案', () => {
     const src = stripComments(read('components/skeletons/PageSkeletons.tsx'));
     expect(src).not.toContain('CdsLogoLoader');
     const branch = renderToStaticMarkup(pageSkeletonForPath('/branch-list'));
-    // 第一个子元素就是卡片网格，前面没有任何说明行
-    expect(branch).toMatch(/aria-live="polite"[^>]*><div class="cds-branch-card-grid"/);
+    const ready = read('pages/BranchListPage.tsx');
+    expect(ready).toContain('<BranchListOverview summary=');
+    expect(src).toContain('<BranchListOverview loading summary=');
+    expect(branch.indexOf('data-branch-summary-slot')).toBeLessThan(branch.indexOf('cds-branch-card-grid'));
+    expect(branch.indexOf('data-branch-controls-slot')).toBeLessThan(branch.indexOf('cds-branch-card-grid'));
+    expect(branch).toContain('class="mt-6"');
+    expect(branch).not.toMatch(/tabindex="0"/);
     expect(branch).not.toContain('加载项目与本地分支列表</');
   });
 

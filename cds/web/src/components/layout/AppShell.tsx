@@ -236,14 +236,21 @@ export function ConsoleLayout(): JSX.Element {
  */
 function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
+  const projectList = pathname === '/project-list';
+  const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
+  const listPage = projectList || branchList;
   return (
     <>
-      <header className="cds-topbar" aria-hidden>
+      {listPage ? <TopBar
+        centerWide={projectList}
+        left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
+        center={<div className="cds-loading-skeleton-line h-9 w-full" aria-hidden />}
+      /> : <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
           <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
         </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
-      </header>
+      </header>}
       <main className="cds-main">
         {/*
           骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：
