@@ -266,6 +266,8 @@ export interface InitiationMeetingDraftRound {
 }
 
 export interface ProductRelease {
+  noTapdLinks?: boolean | null;
+  tapdLinks?: Array<{ title: string; url: string }>;
   voidReason?: string | null;
   voidedBy?: string | null;
   voidedAt?: string | null;

@@ -1535,6 +1535,26 @@ public partial class ProductAgentController : ControllerBase
         if (!ownerExists)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选产品负责人不存在"));
 
+        var tapdLinks = new List<ProductReleaseTapdLink>();
+        if (!request.IsTemporaryOptimization && !request.NoTapdLinks)
+        {
+            if (request.TapdLinks is not { Count: > 0 })
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写 TAPD 需求名称和链接，或勾选「无 TAPD 链接」。"));
+            foreach (var link in request.TapdLinks)
+            {
+                var title = link?.Title?.Trim();
+                var url = link?.Url?.Trim();
+                if (string.IsNullOrWhiteSpace(title) || title.Any(char.IsControl) || string.IsNullOrWhiteSpace(url)
+                    || url.Any(char.IsWhiteSpace) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                    || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
+                    || !string.IsNullOrEmpty(uri.UserInfo)
+                    || (uri.Host != "tapd.cn" && !uri.Host.EndsWith(".tapd.cn", StringComparison.OrdinalIgnoreCase)))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "每条需求都需填写名称和有效的 TAPD 链接。"));
+                tapdLinks.Add(new ProductReleaseTapdLink { Title = title, Url = url });
+            }
+            tapdLinks = tapdLinks.DistinctBy(link => link.Url).ToList();
+        }
+
         var versionType = request.IsTemporaryOptimization ? "minor" : initiation?.VersionType ?? NormalizeVersionType(request.VersionType);
         var previousRelease = await FindLatestReleaseWithManifestAsync(productId);
         var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
@@ -1555,6 +1575,8 @@ public partial class ProductAgentController : ControllerBase
             InitiationId = initiation?.Id,
             TCode = initiation?.TCode,
             IsTemporaryOptimization = request.IsTemporaryOptimization,
+            NoTapdLinks = request.IsTemporaryOptimization ? null : request.NoTapdLinks,
+            TapdLinks = tapdLinks,
             PlanName = request.IsTemporaryOptimization ? request.PlanName?.Trim() ?? "临时优化需求" : initiation!.PlanName,
             VersionType = versionType,
             SystemName = initiation?.SystemName ?? productSystemName,
@@ -8207,6 +8229,8 @@ public class UpdateInitiationMeetingRequest
 
 public class CreateReleaseRequest
 {
+    public bool NoTapdLinks { get; set; }
+    public List<ProductReleaseTapdLink?>? TapdLinks { get; set; }
     public string? HistoryConfirmationToken { get; set; }
     public string? InitiationId { get; set; }
     public string? ManualTCode { get; set; }

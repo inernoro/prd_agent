@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { loadProductVersionList } from '@/lib/productVersionList';
 import { ReleasePlanPicker } from './ReleasePlanPicker';
+import { isTapdUrl, parseReleaseTapdLinks, type ReleaseTapdLink } from './releaseTapdLinks';
 import { filterReleasePlans } from './releasePlanOptions';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -161,6 +162,22 @@ export function ReleaseWorkflowDetail({
   const [remark, setRemark] = useState('');
   const [isGlobalOpen, setIsGlobalOpen] = useState('');
   const [openBrandScope, setOpenBrandScope] = useState('上线全域开放');
+  const [noTapdLinks, setNoTapdLinks] = useState(false);
+  const [tapdLinks, setTapdLinks] = useState<ReleaseTapdLink[]>([{ title: '', url: '' }]);
+  const [tapdPaste, setTapdPaste] = useState('');
+  const [tapdHint, setTapdHint] = useState('');
+  const tapdInvalid = !temporary && !noTapdLinks
+    && (!tapdLinks.length || tapdLinks.some((link) => !link.title.trim() || !isTapdUrl(link.url)));
+  const recognizeTapd = (value: string) => {
+    const recognized = parseReleaseTapdLinks(value);
+    setTapdHint(recognized.length ? `已识别 ${recognized.length} 条，请核对下方名称和链接。` : '未识别到 TAPD 链接，可在下方手动填写。');
+    if (!recognized.length) return;
+    setTapdLinks((current) => {
+      const rows = current.filter((link) => link.title.trim() || link.url.trim());
+      const existing = new Set(rows.map((link) => link.url.trim()));
+      return [...rows, ...recognized.filter((link) => !existing.has(link.url))];
+    });
+  };
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const historyScope = JSON.stringify([productId, initiationId, planName]);
@@ -481,6 +498,10 @@ export function ReleaseWorkflowDetail({
   };
 
   const saveNew = async () => {
+    if (tapdInvalid) {
+      setMessage('请填写有效的 TAPD 需求名称和链接，或勾选「无 TAPD 链接」。');
+      return;
+    }
     if (!temporary && !planName.trim()) {
       setMessage('请填写产品方案名称');
       return;
@@ -528,6 +549,8 @@ export function ReleaseWorkflowDetail({
       historyConfirmationToken,
       initiationId: temporary ? undefined : initiationId,
       isTemporaryOptimization: temporary,
+      noTapdLinks: temporary ? undefined : noTapdLinks,
+      tapdLinks: temporary ? undefined : noTapdLinks ? [] : tapdLinks.map(({ title, url }) => ({ title: title.trim(), url: url.trim() })),
       planName: temporary ? temporaryPlanName : planName.trim() || undefined,
       ownerId,
       openBrandScope: effectiveOpenBrandScope,
@@ -832,6 +855,38 @@ export function ReleaseWorkflowDetail({
                   {ownerField}
                   {memberField}
                 </section>
+                <section aria-label="TAPD 需求" className="space-y-3 border-t border-token-subtle pt-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-sm font-semibold text-token-primary">TAPD 链接{noTapdLinks ? '' : ' *'}</h2>
+                    <label className="flex items-center gap-2 text-sm text-token-secondary">
+                      <input type="checkbox" checked={noTapdLinks} disabled={busy} onChange={(event) => setNoTapdLinks(event.target.checked)} />
+                      无 TAPD 链接
+                    </label>
+                  </div>
+                  {!noTapdLinks && <fieldset disabled={busy} className="space-y-3">
+                    <label className="block space-y-1 text-xs text-token-secondary">
+                      粘贴 TAPD 需求名称和链接（支持多条）
+                      <textarea rows={2} value={tapdPaste} className="block w-full rounded-lg border border-token-subtle bg-token-nested p-2 text-sm"
+                        onChange={(event) => setTapdPaste(event.target.value)}
+                        onPaste={(event) => {
+                          const value = event.clipboardData.getData('text');
+                          if (!value) return;
+                          event.preventDefault();
+                          setTapdPaste(value);
+                          recognizeTapd(value);
+                        }} />
+                    </label>
+                    <SecondaryButton disabled={!tapdPaste.trim()} onClick={() => recognizeTapd(tapdPaste)}>识别链接</SecondaryButton>
+                    {tapdHint && <p role="status" className="text-xs text-token-secondary">{tapdHint}</p>}
+                    {tapdLinks.map((link, index) => <div key={index} className="grid items-end gap-2 sm:grid-cols-[1fr_1.5fr_auto]">
+                      <Field label="TAPD 需求名称 *"><Input value={link.title} onChange={(event) => setTapdLinks((rows) => rows.map((row, i) => i === index ? { ...row, title: event.target.value } : row))} /></Field>
+                      <Field label="TAPD 链接 *"><Input type="url" value={link.url} placeholder="https://www.tapd.cn/…" onChange={(event) => setTapdLinks((rows) => rows.map((row, i) => i === index ? { ...row, url: event.target.value } : row))} /></Field>
+                      {tapdLinks.length > 1 && <SecondaryButton onClick={() => setTapdLinks((rows) => rows.filter((_, i) => i !== index))}>移除</SecondaryButton>}
+                    </div>)}
+                    <SecondaryButton onClick={() => setTapdLinks((rows) => [...rows, { title: '', url: '' }])}>添加链接</SecondaryButton>
+                    {tapdInvalid && <p className="text-xs text-token-muted">每条需求都需填写名称和有效的 TAPD 链接。</p>}
+                  </fieldset>}
+                </section>
                 <section aria-label="上线安排" className="space-y-4 border-t border-token-subtle pt-5">
                   <h2 className="text-sm font-semibold text-token-primary">上线安排</h2>
                   {scheduleFields}
@@ -929,7 +984,7 @@ export function ReleaseWorkflowDetail({
             {isNew ? (
               <PrimaryButton
                 onClick={() => void saveNew()}
-                disabled={busy || basicInvalid || (temporary && manifestInvalid)}
+                disabled={busy || basicInvalid || tapdInvalid || (temporary && manifestInvalid)}
               >
                 {busy ? <><Loader2 size={14} className="animate-spin" /> 处理中...</> : '确认并获取正式版本号'}
               </PrimaryButton>

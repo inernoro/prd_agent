@@ -95,8 +95,16 @@ public class InitiationMeetingDraftRound
     public string? Notes { get; set; }
 }
 
+public sealed class ProductReleaseTapdLink
+{
+    public string Title { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+}
+
 public class ProductRelease
 {
+    public bool? NoTapdLinks { get; set; }
+    public List<ProductReleaseTapdLink> TapdLinks { get; set; } = new();
     public ProductClaimNotification? ClaimNotification { get; set; }
     [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
     public bool CanDelete { get; set; }

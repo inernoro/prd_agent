@@ -206,7 +206,7 @@ public class ProductVersionSourceLifecycleTests
         }
         public static CreateInitiationRequest Request() => new() { LinkedProductId = "product", PlanName = "测试应用（删除后重申领）", ReviewSubmissionId = "source", ReviewMeetingRequired = false };
         public static CreateReleaseRequest ReleaseRequest(string initiationId) => new() {
-            InitiationId = initiationId, OwnerId = "me", TeamMemberIds = new() { "me" }, PlannedReleaseAt = DateTime.UtcNow.AddDays(1), PlannedTrainingMinutes = 30,
+            InitiationId = initiationId, NoTapdLinks = true, OwnerId = "me", TeamMemberIds = new() { "me" }, PlannedReleaseAt = DateTime.UtcNow.AddDays(1), PlannedTrainingMinutes = 30,
             FeatureManifest = new() { new() { FeatureId = "feature", ChangeType = FeatureChangeType.Added } },
         };
         public async Task<ProductInitiation> CreateIssuedAsync()

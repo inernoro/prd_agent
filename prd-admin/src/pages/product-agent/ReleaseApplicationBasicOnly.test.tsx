@@ -122,10 +122,28 @@ describe('正式申领只填写基础信息', () => {
     expect(host.textContent).not.toContain('产品方案名称 *');
     expect(host.textContent).not.toContain('在「需求」标签页查看与追加');
     await change('上线日期 *', '2026-10-26'); await change('预计培训时长（分钟）*', '0');
+    expect(button('确认并获取正式版本号')?.disabled).toBe(true);
+    const noTapd = [...host.querySelectorAll('label')].find((label) => label.textContent?.trim() === '无 TAPD 链接')!.querySelector('input')!;
+    expect(noTapd.checked).toBe(false);
+    await change('TAPD 需求名称 *', '需求一');
+    await change('TAPD 链接 *', 'https://www.tapd.cn.example.org/1');
+    expect(button('确认并获取正式版本号')?.disabled).toBe(true);
+    await change('TAPD 链接 *', 'https://www.tapd.cn/1');
+    const paste = [...host.querySelectorAll('label')].find((label) => label.textContent?.startsWith('粘贴 TAPD'))!.querySelector('textarea')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(paste, '需求来源：\n【需求二】\nhttps://www.tapd.cn/2\n【需求三】\nhttps://www.tapd.cn/3');
+      paste.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button('识别链接')!.click());
+    expect([...host.querySelectorAll<HTMLInputElement>('input[type=url]')].map((input) => input.value)).toEqual([
+      'https://www.tapd.cn/1', 'https://www.tapd.cn/2', 'https://www.tapd.cn/3',
+    ]);
     expect(button('确认并获取正式版本号')?.disabled).toBe(false);
     await act(async () => button('确认并获取正式版本号')?.click());
     expect(api.createRelease).toHaveBeenCalledWith('app', expect.objectContaining({ ownerId: 'me', teamMemberIds: ['me'], plannedTrainingMinutes: 0 }));
     const request = api.createRelease.mock.calls[0][1];
+    expect(request.noTapdLinks).toBe(false);
+    expect(request.tapdLinks.map((link: { title: string }) => link.title)).toEqual(['需求一', '需求二', '需求三']);
     expect(request.initiationId).toBe('source'); expect(request.manualTCode).toBeUndefined();
     expect(request.featureManifest).toBeUndefined(); expect(request.additionalRequirementIds).toBeUndefined();
     expect(onCreated).toHaveBeenCalled();
@@ -150,9 +168,16 @@ describe('正式申领只填写基础信息', () => {
     await change('预计培训时长（分钟）*', '30');
     await change('立项号 *', source.id);
     expect(host.textContent).not.toContain('预计培训时长（分钟）*');
+    const noTapd = [...host.querySelectorAll('label')].find((label) => label.textContent?.trim() === '无 TAPD 链接')!.querySelector('input')!;
+    expect(button('确认并获取正式版本号')?.disabled).toBe(true);
+    await act(async () => noTapd.click());
+    expect(host.querySelector('input[type=url]')).toBeNull();
     expect(button('确认并获取正式版本号')?.disabled).toBe(false);
+    await act(async () => noTapd.click());
+    expect(button('确认并获取正式版本号')?.disabled).toBe(true);
+    await act(async () => noTapd.click());
     await act(async () => button('确认并获取正式版本号')?.click());
-    expect(api.createRelease).toHaveBeenCalledWith('app', expect.objectContaining({ initiationId: source.id, plannedTrainingMinutes: undefined }));
+    expect(api.createRelease).toHaveBeenCalledWith('app', expect.objectContaining({ initiationId: source.id, plannedTrainingMinutes: undefined, noTapdLinks: true, tapdLinks: [] }));
   });
 
   it('已发号详情保留需求功能及缺陷页签，不删除历史入口', async () => {
