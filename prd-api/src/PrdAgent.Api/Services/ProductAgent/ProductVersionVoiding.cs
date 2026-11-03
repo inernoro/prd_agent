@@ -8,7 +8,7 @@ namespace PrdAgent.Api.Services.ProductAgent;
 /// <summary>作废只标记业务记录并保留编号；与物理删除及来源释放完全分开。</summary>
 public static class ProductVersionVoiding
 {
-    public static async Task<bool> ApplyAsync(MongoDbContext db, string collectionName, string id,
+    public static async Task<BsonDocument?> ApplyAsync(MongoDbContext db, string collectionName, string id,
         string applicationId, string expectedOwner, string actor, string reason)
     {
         if (collectionName is not ("product_initiations" or "product_releases" or "version_registrations"))
@@ -20,10 +20,10 @@ public static class ProductVersionVoiding
         var f = Builders<BsonDocument>.Filter;
         var current = await collection.Find(f.Eq("_id", id) & f.Ne("IsDeleted", true)).FirstOrDefaultAsync();
         if (current == null || current.GetValue("Status", "").AsString == "voided"
-            || current.GetValue("CreatedBy", "").AsString != expectedOwner) return false;
+            || current.GetValue("CreatedBy", "").AsString != expectedOwner) return null;
         var notification = current.GetValue("ClaimNotification", BsonNull.Value);
         var noticeStatus = notification.IsBsonDocument ? notification.AsBsonDocument.GetValue("Status", "").AsString : null;
-        if (noticeStatus == "sending") return false;
+        if (noticeStatus == "sending") return null;
         var now = DateTime.UtcNow;
         var update = Builders<BsonDocument>.Update.Set("Status", "voided")
             .Set("StatusBeforeVoid", current.GetValue("Status", ""))
@@ -39,6 +39,7 @@ public static class ProductVersionVoiding
         }
         else unchanged &= f.Eq("ClaimNotification", BsonNull.Value);
         await lease.EnsureHeldAsync();
-        return (await collection.UpdateOneAsync(unchanged, update, cancellationToken: CancellationToken.None)).ModifiedCount == 1;
+        return (await collection.UpdateOneAsync(unchanged, update, cancellationToken: CancellationToken.None)).ModifiedCount == 1
+            ? current : null;
     }
 }

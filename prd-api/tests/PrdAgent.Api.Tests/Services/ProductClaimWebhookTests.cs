@@ -108,7 +108,8 @@ public class ProductClaimWebhookTests
     {
         await using var f = new Fixture();
         await f.EnableAsync();
-        var item = new ProductRelease { ProductId = "product", VCode = "V1.2.3", OwnerId = "owner", OwnerName = "负责人", PlanName = "测试方案" };
+        var item = new ProductRelease { ProductId = "product", VCode = "V1.2.3", OwnerId = "owner", OwnerName = "负责人", PlanName = "测试方案",
+            TapdLinks = new() { new() { Url = "https://www.tapd.cn/1" } } };
         item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(f.Db, item, "owner", true, true);
         await f.Db.ProductReleases.InsertOneAsync(item);
         using var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton(f.Protection).AddSingleton<IHttpClientFactory>(f.Http).BuildServiceProvider();
@@ -121,6 +122,36 @@ public class ProductClaimWebhookTests
         await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t", Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.Status, "cancelled"));
         await f.ProcessTAsync();
         Assert.Single(f.Http.Bodies);
+    }
+
+    [Theory]
+    [InlineData(true, "void", "【版本作废】", "原版本号保留")]
+    [InlineData(false, "delete", "【版本删除】", "后续按保留的记录发号")]
+    public async Task OperationNoticeUsesWebhookWithoutMentionOrDuplicate(bool formal, string action, string heading, string result)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Db.ProductAgentSettings.UpdateOneAsync(_ => true, Builders<ProductAgentSettings>.Update.Set(x => x.ClaimWebhook.DebugMode, true));
+        var when = new DateTime(2026, 11, 3, 7, 20, 0, DateTimeKind.Utc);
+        var code = formal ? "V4.26.5" : "T6.18.17";
+        for (var attempt = 0; attempt < 2; attempt++)
+            Assert.True(await ProductVersionOperationNotice.QueueAsync(f.Db, formal, action, "row", code,
+                "品牌商后台基础", "卡券功能优化", "周泽腾", "本次范围调整，原记录不再使用", when));
+        var notices = ProductVersionOperationNotice.Collection(f.Db);
+        var config = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        using var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton(f.Protection).AddSingleton<IHttpClientFactory>(f.Http).BuildServiceProvider();
+        await ProductClaimWebhookWorker.ProcessAsync(notices, config, formal, services, CancellationToken.None, operationNotice: true);
+        await ProductClaimWebhookWorker.ProcessAsync(notices, config, formal, services, CancellationToken.None, operationNotice: true);
+        Assert.Equal("sent", (await notices.Find(_ => true).SingleAsync()).ClaimNotification.Status);
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        var text = payload.RootElement.GetProperty("text");
+        Assert.Equal(1, text.EnumerateObject().Count());
+        var content = text.GetProperty("content").GetString()!;
+        Assert.StartsWith(heading, content);
+        Assert.Contains(code, content);
+        Assert.Contains("操作人：周泽腾", content);
+        Assert.Contains("2026.11.03 15:20（北京时间）", content);
+        Assert.Contains(result, content);
     }
 
     [Theory]

@@ -18,7 +18,7 @@ public static class ProductClaimNotificationQueue
                 VersionType = t.VersionType, NeedUiDesign = t.NeedUiDesign, IsAiPoc = t.IsAiPoc, DemandSource = t.DemandSource,
                 PlanName = t.PlanName, PlannedProjectAt = t.PlannedProjectAt, OwnerName = t.OwnerName },
             ProductRelease v => new ProductRelease { VCode = v.VCode, ProjectType = v.ProjectType, VersionType = v.VersionType,
-                IsGlobalOpen = v.IsGlobalOpen, DemandSource = v.DemandSource, PlanName = v.PlanName, PlanUrl = v.PlanUrl,
+                IsGlobalOpen = v.IsGlobalOpen, DemandSource = v.DemandSource, TapdLinks = v.TapdLinks, PlanName = v.PlanName, PlanUrl = v.PlanUrl,
                 ProjectMemberNames = v.ProjectMemberNames, PlannedReleaseAt = v.PlannedReleaseAt,
                 PlannedTrainingMinutes = v.PlannedTrainingMinutes, OwnerName = v.OwnerName },
             _ => throw new InvalidOperationException("不支持的申领通知类型"),

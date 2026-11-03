@@ -1182,8 +1182,10 @@ public partial class ProductAgentController : ControllerBase
             && x.TCode == item.TCode && x.UpdatedAt == item.UpdatedAt, CancellationToken.None);
         if (deleted.DeletedCount == 0)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后重新核对，未重复删除。"));
+        var notificationQueued = await QueueVersionOperationNoticeAsync(false, "delete", id,
+            item.TCode, applicationName, applicationId, item.PlanName, userId, reason);
         await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "initiation:" + id);
-        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, notificationQueued }));
     }
 
     [HttpPost("initiations/{id}/review")]
@@ -1426,8 +1428,10 @@ public partial class ProductAgentController : ControllerBase
             && (x.ClaimNotification == null || x.ClaimNotification.Status != "sending"), CancellationToken.None);
         if (deleted.DeletedCount == 0)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后重新核对，未重复删除。"));
+        var notificationQueued = await QueueVersionOperationNoticeAsync(true, "delete", id,
+            item.VCode, item.AppName, queuedApplicationId, item.PlanName, userId, reason);
         await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "release:" + id);
-        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, notificationQueued }));
     }
 
     [HttpPut("releases/{id}/feature-manifest")]

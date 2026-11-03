@@ -1,6 +1,7 @@
 import { useId, useRef, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
+import { toast } from '@/lib/toast';
 import { deleteInitiation, deleteRelease, voidProductVersion } from '@/services/real/productAgent';
 
 type DeleteProps = { id: string; code: string; status?: string; voidReason?: string | null; canDelete?: boolean; onDeleted: () => void | Promise<void> };
@@ -31,6 +32,7 @@ function VersionActions({ id, code, status, voidReason, canDelete, onDeleted, ki
     try {
       const result = mode === 'void' ? await voidProductVersion(variant.kind, id, normalizedReason) : await variant.remove(id, normalizedReason);
       if (!result.success) { setError(result.error?.message ?? `${label}未成功，请稍后重试。`); return; }
+      if (result.data?.notificationQueued === false) toast.warning(`${label}已完成，企微通知未能排队。`);
       setMode(null); await onDeleted();
     } catch { setError(`${label}结果暂未确认，请刷新原记录核对后重试。`); }
     finally { submitting.current = false; setBusy(false); }
@@ -46,7 +48,7 @@ function VersionActions({ id, code, status, voidReason, canDelete, onDeleted, ki
         <label htmlFor={reasonId} className="block font-medium text-token-primary">{label}理由 *</label>
         <textarea id={reasonId} required rows={3} value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)}
           placeholder={`请填写${label}理由，至少6个字符`} className="w-full rounded-md border border-token-subtle bg-token-nested p-2 text-token-primary" />
-        <p className="text-xs text-token-muted">去除首尾空白后至少6个字符，理由将被保留。</p>
+        <p className="text-xs text-token-muted">去除首尾空白后至少6个字符，理由将被保留。启用企微通知时，操作成功后会推送通知。</p>
         {error && <p role="alert">{error}</p>}</div>}
       actions={<><Button size="sm" disabled={busy} onClick={() => setMode(null)}>取消</Button><Button size="sm" disabled={busy || !reasonValid} onClick={() => void confirm()}>{busy ? `正在${label}…` : `确认${label}`}</Button></>} />}
   </span>;

@@ -67,6 +67,36 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
+    public async Task FormalVoidAndPhysicalDeleteEachQueueOnlyAfterSuccess()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductAgentSettings.InsertOneAsync(new ProductAgentSettings
+        {
+            ClaimWebhook = new ProductClaimWebhookConfig { Enabled = true },
+        });
+        const string id = "numbering-v-base";
+        await fixture.Db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductRelease>.Update.Set(x => x.CreatedBy, "me").Set(x => x.PlanName, "卡券功能优化"));
+        var controller = fixture.Controller(notify: true);
+        var notices = ProductVersionOperationNotice.Collection(fixture.Db);
+        Assert.IsType<BadRequestObjectResult>(await controller.VoidVersion(new()
+        {
+            Kind = "V", Id = id, Reason = "太短",
+        }));
+        Assert.Empty(await notices.Find(_ => true).ToListAsync());
+        var request = new ProductVersionVoidOperationRequest { Kind = "V", Id = id, Reason = "计划范围变更，本次版本作废" };
+        Assert.IsType<OkObjectResult>(await controller.VoidVersion(request));
+        Assert.IsType<ConflictObjectResult>(await controller.VoidVersion(request));
+        Assert.IsType<OkObjectResult>(await controller.DeleteRelease(id, new ProductVersionVoidRequest { Reason = "重复登记，删除此版本记录" }));
+        Assert.False(await fixture.Db.ProductReleases.Find(x => x.Id == id).AnyAsync());
+        var pending = await notices.Find(_ => true).ToListAsync();
+        Assert.Equal(2, pending.Count);
+        Assert.Contains(pending, notice => notice.Text.StartsWith("【版本作废】") && notice.Text.Contains("原版本号保留"));
+        Assert.Contains(pending, notice => notice.Text.StartsWith("【版本删除】") && notice.Text.Contains("重复登记，删除此版本记录"));
+    }
+
+    [Fact]
     public async Task HistoricalFormalVersionAcceptsTapdLinksWithoutNames()
     {
         await using var fixture = await Fixture.CreateAsync();

@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.ProductAgent;
@@ -53,9 +54,37 @@ public partial class ProductAgentController
         }
         if (owner != userId && !manager)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人或产品管理人员可作废该记录。"));
-        if (!await ProductVersionVoiding.ApplyAsync(_db, collection, id, applicationId, owner, userId, reason))
+        var previous = await ProductVersionVoiding.ApplyAsync(_db, collection, id, applicationId, owner, userId, reason);
+        if (previous == null)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已作废、已变化或通知正在发送，请刷新后核对。"));
-        return Ok(ApiResponse<object>.Ok(new { voided = true }));
+        var formal = request.Kind == "V";
+        var legacy = collection == "version_registrations";
+        var notificationQueued = await QueueVersionOperationNoticeAsync(formal, "void", legacy ? "legacy:" + id : id,
+            Text(previous, legacy ? "Code" : formal ? "VCode" : "TCode"),
+            Text(previous, legacy ? "ApplicationName" : "AppName"), applicationId,
+            Text(previous, "PlanName"), userId, reason);
+        return Ok(ApiResponse<object>.Ok(new { voided = true, notificationQueued }));
+    }
+
+    private static string? Text(BsonDocument record, string field)
+        => record.TryGetValue(field, out var value) && value.IsString ? value.AsString : null;
+
+    private async Task<bool?> QueueVersionOperationNoticeAsync(bool formal, string action, string id,
+        string? code, string? application, string applicationId, string? plan, string userId, string reason)
+    {
+        if (!CanNotifyClaims()) return null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(application))
+                application = await _db.Products.Find(x => x.Id == applicationId).Project(x => x.Name).FirstOrDefaultAsync();
+            var actor = await ResolveInitiationApplicantNameAsync(userId) ?? userId;
+            return await ProductVersionOperationNotice.QueueAsync(_db, formal, action, id, code, application, plan, actor, reason, DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "版本操作已完成，通知未能入队。操作 {Action}，记录 {RecordId}", action, id);
+            return false;
+        }
     }
 }
 

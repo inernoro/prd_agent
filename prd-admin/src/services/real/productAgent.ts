@@ -211,13 +211,13 @@ export function syncInitiationReview(id: string, submissionId: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/review`, { method: 'POST', body: { submissionId } });
 }
 export function voidProductVersion(kind: 'T' | 'V', id: string, reason: string) {
-  return apiRequest<{ voided: boolean }>('/api/product/version-workflow/void', { method: 'POST', body: { kind, id, reason } });
+  return apiRequest<{ voided: boolean; notificationQueued?: boolean | null }>('/api/product/version-workflow/void', { method: 'POST', body: { kind, id, reason } });
 }
 export function deleteInitiation(id: string, reason: string) {
-  return apiRequest<{ deleted: boolean }>(`/api/product/initiations/${id}`, { method: 'DELETE', body: { reason } });
+  return apiRequest<{ deleted: boolean; notificationQueued?: boolean | null }>(`/api/product/initiations/${id}`, { method: 'DELETE', body: { reason } });
 }
 export function deleteRelease(id: string, reason: string) {
-  return apiRequest<{ deleted: boolean }>(`/api/product/releases/${id}`, { method: 'DELETE', body: { reason } });
+  return apiRequest<{ deleted: boolean; notificationQueued?: boolean | null }>(`/api/product/releases/${id}`, { method: 'DELETE', body: { reason } });
 }
 export function decideInitiation(id: string, body: {
   reviewMeetingRequired: boolean;
