@@ -52,6 +52,28 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
 describe('客户端独立公开发布授权', () => {
+  it.each(['write', 'refresh'] as const)('在%s阶段取消并打开另一客户端后，旧保存不能关闭新编辑器', async (stage) => {
+    let finish!: () => void;
+    if (stage === 'write') {
+      vi.mocked(updateAgentApiKey).mockImplementationOnce(() => new Promise((resolve) => {
+        finish = () => resolve({ success: true, data: { item: null }, error: null });
+      }));
+    } else onSaved.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await render();
+    await act(async () => checkbox().click());
+    await save();
+    const cancel = [...container.querySelectorAll('button')].find((item) => item.textContent === '取消');
+    await act(async () => cancel!.click());
+    await render(client, false);
+    await render({ ...client, keyId: 'another-client', name: '另一台客户端' }, true);
+    expect(checkbox().checked).toBe(false);
+    expect(checkbox().disabled).toBe(false);
+    onOpenChange.mockClear();
+    await act(async () => finish());
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(checkbox().checked).toBe(false);
+  });
   it('列表读回完成前保留保存中状态，避免立即重开读到旧授权', async () => {
     let finishRefresh!: () => void;
     onSaved.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRefresh = resolve; }));

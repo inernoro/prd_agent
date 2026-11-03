@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { getLiteraryAgentAllModels, updateAgentApiKey } from '@/services';
 import type { McpClientDto } from '@/services/contracts/mcpConsole';
@@ -36,7 +36,19 @@ export function QuotaEditorDialog({
   const [modelsLoading, setModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [webPublicExposureAllowed, setWebPublicExposureAllowed] = useState(false);
+  const sessionRef = useRef(0);
   const canEnableWebPublicExposure = client?.scopes.some((scope) => scope.toLowerCase() === 'web-pages:write') ?? false;
+
+  useEffect(() => {
+    sessionRef.current += 1;
+    setSaving(false);
+    return () => { sessionRef.current += 1; };
+  }, [client?.keyId, open]);
+
+  const changeOpen = (next: boolean) => {
+    if (!next) sessionRef.current += 1;
+    onOpenChange(next);
+  };
 
   useEffect(() => {
     if (!client || !open) return;
@@ -93,6 +105,7 @@ export function QuotaEditorDialog({
     }
 
     setSaving(true);
+    const session = sessionRef.current;
     const res = await updateAgentApiKey({
       id: client.keyId,
       ...parsed,
@@ -105,21 +118,23 @@ export function QuotaEditorDialog({
         : { webPublicExposureAllowed }),
     });
     if (!res.success) {
+      if (session !== sessionRef.current) return;
       setSaving(false);
       toast.error('保存失败', res.error?.message);
       return;
     }
     // 列表读回后再关闭：否则立即重开会把旧客户端快照重新写进开关。
     await onSaved();
+    if (session !== sessionRef.current) return;
     setSaving(false);
     toast.success('客户端设置已更新');
-    onOpenChange(false);
+    changeOpen(false);
   };
 
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={changeOpen}
       title="调整客户端设置"
       description={client ? `这把钥匙：${client.name}（${client.keyPrefix}…）` : undefined}
       maxWidth={440}
@@ -209,7 +224,7 @@ export function QuotaEditorDialog({
           <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
-              onClick={() => onOpenChange(false)}
+              onClick={() => changeOpen(false)}
               className="h-9 rounded-[10px] px-4 text-[13px] font-medium"
               style={{
                 background: 'var(--bg-card)',
