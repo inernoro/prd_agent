@@ -441,8 +441,9 @@ export function generate(el, options = {}) {
   const finish = () => { if (stopped) return; stopped = true; cancelAnimationFrame(raf); clearTimeout(timer); if (G) G.layer.remove(); restore(); el.__tGen = null; delete el.__tGenLayer; if (opts.onDone) opts.onDone(el); resolve(el); };
   const tick = (now) => {
     if (stopped) return;
-    elapsed = flowBase + now - clockStart;
-    progress = phaseStart + (now - clockStart) / phaseDuration;
+    const phaseElapsed = Math.max(0, now - clockStart);
+    elapsed = flowBase + phaseElapsed;
+    progress = phaseStart + phaseElapsed / phaseDuration;
     if (opts.holdAt != null) progress = Math.min(progress, opts.holdAt);
     const started = performance.now();
     frame(G, progress, elapsed, D);
@@ -454,54 +455,60 @@ export function generate(el, options = {}) {
     if (opts.holdAt != null && progress >= opts.holdAt) { raf = 0; return; }
     raf = requestAnimationFrame(tick);
   };
-  const handoff = (next, { reveal = false } = {}) => {
+  const handoff = (next, { reveal = false, revealDelay = 0 } = {}) => {
     if (stopped || !next?.isConnected || reduced()) return false;
-    if (!G) {
-      if (reveal) return false; // The response beat the first drawing frame: show it directly.
+    if (!G && !reveal) {
       if (next !== el) {
         restore(); el.__tGen = null; delete el.__tGenLayer;
         prev = snapshot(next); el = next; run.element = next;
-        next.__tGen = run; next.style.opacity = 0;
+        next.__tGen = run;
       }
       return true;
     }
     const nextPrev = next === el ? prev : snapshot(next);
     // Visible cards using content-visibility:auto initially report their intrinsic placeholder size.
     next.style.contentVisibility = "visible";
-    const before = G.layer.getBoundingClientRect(), after = next.getBoundingClientRect();
-    // Keep the established layout contract; incompatible/empty layouts reveal directly.
-    if (Math.abs(before.width - after.width) > 2 || Math.abs(before.height - after.height) > 2
-      || Math.abs(before.left - after.left) > 4 || Math.abs(before.top - after.top) > 4) {
+    const before = G?.layer.getBoundingClientRect(), after = next.getBoundingClientRect();
+    // Chunk/data placeholders and real groups can both relocate cards. Rebuild only
+    // the drawing inside their retained plane, atomically before the next paint.
+    const moved = before && (Math.abs(before.width - after.width) > 2 || Math.abs(before.height - after.height) > 2
+      || Math.abs(before.left - after.left) > 4 || Math.abs(before.top - after.top) > 4);
+    if (after.width <= 0 || after.height <= 0) {
       next.style.contentVisibility = nextPrev.contentVisibility;
       return false;
     }
     if (next !== el) {
       restore(); el.__tGen = null; delete el.__tGenLayer;
-      prev = nextPrev; el = next; G.el = next; G.prev = prev;
-      next.__tGen = run; next.__tGenLayer = G.layer; run.element = next;
+      prev = nextPrev; el = next;
+      if (G) { G.el = next; G.prev = prev; next.__tGenLayer = G.layer; }
+      next.__tGen = run; run.element = next;
     }
-    Object.assign(G.layer.style, { left: f2(after.left + scrollX) + "px", top: f2(after.top + scrollY) + "px" });
     el.style.transition = "none";
-    if (reveal) {
-      cancelAnimationFrame(raf);
+    if (reveal || moved) {
       // The response supplies the real component's parts. Replace only the drawing inside
       // the existing overlay atomically; the construction plane never disappears.
-      const layer = G.layer;
+      const layer = G?.layer;
       try {
         const nextDrawing = buildOverlay(el, measure(el, opts), opts);
-        layer.replaceChildren(...nextDrawing.layer.childNodes);
-        nextDrawing.layer.remove();
-        G = { ...nextDrawing, layer, prev };
-        el.__tGenLayer = layer;
+        if (layer) {
+          layer.replaceChildren(...nextDrawing.layer.childNodes);
+          Object.assign(layer.style, { left: f2(after.left + scrollX) + "px", top: f2(after.top + scrollY) + "px", width: f2(after.width) + "px", height: f2(after.height) + "px" });
+          nextDrawing.layer.remove();
+        }
+        G = { ...nextDrawing, layer: layer || nextDrawing.layer, prev };
+        el.__tGenLayer = G.layer;
       } catch {
         if (el.__tGenLayer !== layer) el.__tGenLayer?.remove();
         el.__tGenLayer = layer;
         return false;
       }
+    }
+    if (reveal) {
+      cancelAnimationFrame(raf); clearTimeout(timer);
       opts.holdAt = null;
       phaseStart = Math.max(progress, PH.reveal[0]);
       phaseDuration = Math.max(160, +opts.revealDuration || 720) / (END - phaseStart);
-      flowBase = elapsed; clockStart = performance.now();
+      flowBase = elapsed; clockStart = performance.now() + Math.max(0, Math.min(320, +revealDelay || 0));
       progress = phaseStart;
       frame(G, progress, elapsed, D); // Retain this exact wireframe while the real DOM commits.
       slowFrames = 0; raf = requestAnimationFrame(tick);
@@ -511,16 +518,21 @@ export function generate(el, options = {}) {
   const run = { finished, cancel: finish, handoff, element: el };
   el.__tGen = run;
 
+  if (opts.revealOnly && !reduced()) {
+    if (!handoff(el, { reveal: true, revealDelay: opts.revealDelay })) finish();
+    return run;
+  }
+
   // reduced motion: no drawing, a plain fade
   if (reduced()) {
     el.style.opacity = 0;
     timer = setTimeout(() => { el.style.transition = "opacity 200ms ease-out"; el.style.opacity = prev.opacity || ""; timer = setTimeout(finish, 220); }, opts.delay);
     return run;
   }
-  el.style.opacity = 0; // hidden until its reveal
   timer = setTimeout(() => {
-    requestAnimationFrame(() => {
+    raf = requestAnimationFrame(() => {
       if (stopped) return;
+      el.style.opacity = 0; // Keep the lightweight placeholder until this card's turn.
       try { const M = measure(el, opts); G = buildOverlay(el, M, opts); G.prev = prev; }
       catch (e) { if (el.__tGenLayer) el.__tGenLayer.remove(); G = null; console.warn("UIGeneration: could not build the overlay, showing the element", e); return finish(); }
       clockStart = performance.now();

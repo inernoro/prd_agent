@@ -8,3 +8,9 @@ response, and a renderer-cost fallback. Completed waiting frames pause instead
 of rewriting static SVG on every frame. It uses only
 `skeleton` mode; the illustrative agent log and token counters are never enabled.
 Styles use CDS theme tokens and keep overlays below dialogs.
+
+Visible cards form an overlapping document-order wave (up to 320ms between the
+first and last start). Real grouped cards are remeasured and the retained plane
+is repositioned atomically; extra real cards also receive a synchronous scan
+plane. Queued construction keeps its lightweight placeholder until it starts.
+Fast responses skip decoration, and any interaction cancels the entire wave.

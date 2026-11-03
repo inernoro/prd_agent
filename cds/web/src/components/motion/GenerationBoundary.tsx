@@ -4,6 +4,13 @@ import '@/lib/vendor/ui-generation/ui-generation.css';
 
 const CARDS = '.cds-card-grid > article, .cds-branch-card-grid article';
 const PENDING = '[aria-busy="true"] .cds-card-grid > article, [aria-busy="true"] .cds-branch-card-grid article';
+const visible = (card: HTMLElement) => {
+  const rect = card.getBoundingClientRect();
+  return rect.width > 120 && rect.bottom > 0 && rect.top < innerHeight;
+};
+// A short overlapping wave, never a queue of complete animations.
+const stagger = (index: number, count: number) => index * Math.min(80, 320 / Math.max(1, count - 1));
+const motion = { mode: 'skeleton' as const, duration: 1400, holdAt: .68, revealDuration: 640, maxParts: 18, keys: 1 };
 
 /** One lifetime spans route-chunk loading, data loading and the native scan reveal. */
 export function GenerationBoundary({ enabled, children }: { enabled: boolean; children: ReactNode }): JSX.Element {
@@ -54,12 +61,12 @@ export function GenerationBoundary({ enabled, children }: { enabled: boolean; ch
       timer = undefined;
       if (!pending || interrupted || !supported() || document.hidden) return;
       const cards = [...host.querySelectorAll<HTMLElement>(PENDING)];
+      const visibleCount = cards.filter(visible).length;
+      let order = 0;
       runs = cards.flatMap((card, index) => {
-        const rect = card.getBoundingClientRect();
-        if (rect.width <= 120 || rect.bottom <= 0 || rect.top >= innerHeight) return [];
+        if (!visible(card)) return [];
         return [{ index, run: generate(card, {
-          mode: 'skeleton', duration: 1400, holdAt: .68, revealDuration: 720,
-          maxParts: 18, keys: 1, onFallback: interrupt,
+          ...motion, delay: stagger(order++, visibleCount), onFallback: interrupt,
         }) }];
       });
       observeSizes();
@@ -93,10 +100,23 @@ export function GenerationBoundary({ enabled, children }: { enabled: boolean; ch
       pending = false; previous = []; setWaiting(false);
       clearTimeout(timer); timer = undefined;
       const ready = [...host.querySelectorAll<HTMLElement>(CARDS)];
-      runs = runs.filter(({ index, run }) => {
-        if (!interrupted && supported() && ready[index] && run.handoff(ready[index], { reveal: true })) return true;
-        run.cancel(); return false;
-      });
+      const waitingRuns = new Map(runs.map(({ index, run }) => [index, run]));
+      const reveal = runs.length > 0 && !interrupted && supported();
+      const visibleCount = ready.filter(visible).length;
+      let order = 0;
+      runs = reveal ? ready.flatMap((card, index) => {
+        if (!visible(card)) return [];
+        const revealDelay = stagger(order++, visibleCount);
+        const run = waitingRuns.get(index);
+        if (run?.handoff(card, { reveal: true, revealDelay })) {
+          waitingRuns.delete(index);
+          return [{ index, run }];
+        }
+        // Group headers/counts can move cards or introduce more than six real cards.
+        // Measure their final DOM too; never leave the trailing cards as a plain swap.
+        return [{ index, run: generate(card, { ...motion, revealOnly: true, revealDelay, onFallback: interrupt }) }];
+      }) : [];
+      waitingRuns.forEach((run) => run.cancel());
       observeSizes();
       const revealing = runs;
       void Promise.all(revealing.map(({ run }) => run.finished)).then(() => {

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 const out=process.env.CDS_MOTION_EVIDENCE || '/tmp/cds-generation-motion';await fs.mkdir(out,{recursive:true});
 const browser=await chromium.launch({headless:true});
-let delay=1800,fail=false,member=false,chunkDelay=1200;const errors=[],unknown=new Set();
+let delay=1800,fail=false,member=false,many=false,chunkDelay=1200;const errors=[],unknown=new Set();
 const context=await browser.newContext({viewport:{width:1360,height:900}});
 await context.addInitScript(()=>{
  Object.defineProperty(navigator,'hardwareConcurrency',{get:()=>location.search.includes('fixture-low-perf')?2:8});Object.defineProperty(navigator,'deviceMemory',{get:()=>location.search.includes('fixture-low-perf')?2:8});
@@ -16,7 +16,9 @@ await context.addInitScript(()=>{
   const ids=[...document.querySelectorAll('.t-gen')].map(el=>el.dataset.generationRun);
   const pending=document.querySelector('[aria-busy="true"] article');
   const rect=el=>{if(!el)return null;const r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height];};
-  if(window.__motionTrace.length<3000)window.__motionTrace.push({ready:!!card,ids,opacity:card?.style.opacity??'',clip:card?.style.clipPath??'',pending:!!pending,rect:rect(card||pending),layer:rect(document.querySelector('.t-gen'))});
+  const scanCards=[...document.querySelectorAll('article a[href^="/branches/"]')].map(e=>e.closest('article'));
+  scanCards.push(...document.querySelectorAll('[data-branch-card-id]'));
+  if(window.__motionTrace.length<3000)window.__motionTrace.push({at:performance.now(),scanCards:scanCards.map((e,i)=>({id:e.dataset.branchCardId||String(i),opacity:e.style.opacity,clip:e.style.clipPath,rect:rect(e)})),layers:[...document.querySelectorAll('.t-gen')].map(rect),ready:!!card,ids,opacity:card?.style.opacity??'',clip:card?.style.clipPath??'',pending:!!pending,rect:rect(card||pending),layer:rect(document.querySelector('.t-gen'))});
   requestAnimationFrame(sample);
  };
  requestAnimationFrame(sample);
@@ -30,6 +32,8 @@ await context.route('**/api/**',async route=>{
  if(pathname==='/api/projects'||pathname==='/api/projects/fixture-project')await new Promise(r=>setTimeout(r,delay));
  if(fail&&pathname==='/api/projects')return route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'fixture: 请求失败，可刷新重试'})});
  let body=resolveFixture(pathname);if(body===null)unknown.add(pathname);
+ if(many&&pathname==='/api/projects')body={...body,projects:Array.from({length:9},(_,i)=>({...body.projects[0],id:i?'fixture-project-'+i:'fixture-project',name:'错峰样例项目 '+(i+1),aliasName:'错峰样例项目 '+(i+1)}))};
+ if(many&&pathname==='/api/branches')body={...body,branches:Array.from({length:8},(_,i)=>({...body.branches[0],id:'fixture-many-'+i,branch:'feature/ordered-'+i,status:i?'idle':'running',services:i?{}:body.branches[0].services}))};
  if(member&&pathname==='/api/auth/status')body={...body,user:{...body.user,isSystemOwner:false}};
  if(member&&pathname==='/api/projects')body={...body,canManageProjects:false};
  await route.fulfill({contentType:'application/json',body:JSON.stringify(body??{})});
@@ -56,6 +60,8 @@ const sameGeometry=(label,before,after)=>{
 const noReadyOverlay=async()=>{
  const trace=await page.evaluate(()=>window.__motionTrace);
  assert.deepEqual(trace.filter(f=>f.ready&&f.opacity!==''&&Number(f.opacity)<.99&&f.ids.length===0),[],'a hidden real card must always retain its original overlay');
+ const uncovered=trace.flatMap(f=>f.scanCards.filter(c=>c.opacity!==''&&Number(c.opacity)<.99&&!f.layers.some(r=>r&&c.rect&&r.every((v,i)=>Math.abs(v-c.rect[i])<2))));
+ assert.deepEqual(uncovered,[],'every hidden real card has an overlay at its actual geometry, including moved/trailing cards');
 };
 const layerIds=()=>page.locator('.t-gen').evaluateAll(es=>es.map(e=>e.dataset.generationRun));
 const sameOverlay=async(before,label)=>{
@@ -105,6 +111,34 @@ sameGeometry('branches desktop with tags',branchBefore,await geometry('[data-bra
 await noReadyOverlay();
 await page.screenshot({path:out+'/branches-light-ready.png'});
 console.log('PASS project card -> branch list -> real branch data; same-overlay native scan, no blank frame');
+// More real cards than placeholders and a dormant-group header change the final layout.
+// Every visible card must scan at its new geometry, in a bounded overlapping wave.
+const orderedScan=async(label,selector,count)=>{
+ await page.waitForSelector('.t-gen');
+ await page.waitForFunction(({selector,count})=>document.querySelectorAll(selector).length===count,{selector,count});
+ const visible=await page.locator(selector).evaluateAll(es=>es.filter(e=>{const r=e.getBoundingClientRect();return r.width>120&&r.top<innerHeight&&r.bottom>0;}).length);
+ assert(visible>6,label+' covers real cards beyond the six placeholders');
+ assert.equal(await page.locator('.t-gen').count(),visible,label+' scans all visible final cards');
+ await page.waitForTimeout(160);
+ const opacity=await page.locator(selector).evaluateAll(es=>es.filter(e=>{const r=e.getBoundingClientRect();return r.top<innerHeight&&r.bottom>0;}).map(e=>Number(e.style.opacity)));
+ assert(opacity[0]>opacity.at(-1)+.1,label+' first card reveals before last');
+ await page.screenshot({path:out+'/'+label+'-ordered-scan.png'});
+ await page.waitForTimeout(1100);
+ assert.equal(await page.locator('.t-gen').count(),0);
+ const starts=new Map(),trace=await page.evaluate(()=>window.__motionTrace);
+ for(const f of trace)for(const c of f.scanCards)if(c.clip&&Number(c.opacity)>.02&&!starts.has(c.id))starts.set(c.id,f.at);
+ const documentOrder=trace.find(f=>f.scanCards.length===count).scanCards.filter(c=>c.rect[1]<900&&c.rect[1]+c.rect[3]>0);
+ const times=documentOrder.map(c=>starts.get(c.id));
+ assert.equal(times.length,visible,label+' each real card participated');
+ assert(times.every(Number.isFinite),label+' all visible cards start revealing');
+ assert(times.every((t,i)=>!i||t>=times[i-1]),label+' starts follow document order');
+ assert(times.at(-1)-times[0]>=180&&times.at(-1)-times[0]<480,label+' wave is staggered and bounded');
+ await noReadyOverlay();
+ console.log('PASS '+label+' all visible cards, final-geometry overlays, ordered wave '+Math.round(times.at(-1)-times[0])+'ms');
+};
+many=true;await page.goto(base+'/project-list');await orderedScan('projects-many','[data-generation-boundary] article',9);
+await page.locator('article a[href="/branches/fixture-project"]').click();await orderedScan('branches-many','[data-branch-card-id]',8);
+many=false;
 // Theme and mobile.
 await page.getByRole('button',{name:'切换到黑天主题',exact:true}).click();
 await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');
