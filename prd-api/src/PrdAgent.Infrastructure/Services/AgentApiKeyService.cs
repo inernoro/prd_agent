@@ -129,7 +129,8 @@ public class AgentApiKeyService : IAgentApiKeyService
         CancellationToken ct = default,
         AgentApiKeyQuotaPatch? quota = null,
         AgentApiKeyScopeMode? scopeMode = null,
-        AgentApiKeyLiteraryImageModelPatch? literaryImageModel = null)
+        AgentApiKeyLiteraryImageModelPatch? literaryImageModel = null,
+        bool? webPublicExposureAllowed = null)
     {
         var updates = new List<UpdateDefinition<AgentApiKey>>();
         if (name != null) updates.Add(Builders<AgentApiKey>.Update.Set(k => k.Name, name.Trim()));
@@ -153,6 +154,8 @@ public class AgentApiKeyService : IAgentApiKeyService
             updates.Add(Builders<AgentApiKey>.Update.Set(k => k.ScopeMode, mode));
         if (isActive.HasValue)
             updates.Add(Builders<AgentApiKey>.Update.Set(k => k.IsActive, isActive.Value));
+        if (webPublicExposureAllowed.HasValue)
+            updates.Add(Builders<AgentApiKey>.Update.Set(k => k.WebPublicExposureAllowed, webPublicExposureAllowed.Value));
 
         // 配额与元数据必须落在同一次写里：分两次写时第二次失败，调用方收到的是「更新失败」，
         // 而名字/scope 已经改了 —— 用户照报错重试，状态和提示对不上。

@@ -22,7 +22,7 @@ internal static class McpSourceGuard
     public static string Read(string repoRelativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        while (dir != null && !(Directory.Exists(Path.Combine(dir.FullName, ".git")) || File.Exists(Path.Combine(dir.FullName, ".git")))) dir = dir.Parent;
         dir.ShouldNotBeNull("找不到仓库根，无法做源码守卫");
         var full = Path.Combine(dir!.FullName, repoRelativePath);
         File.Exists(full).ShouldBeTrue($"被守的文件不在了：{repoRelativePath}（改名了就同步改这里）");
@@ -49,7 +49,7 @@ internal static class McpSourceGuard
     public static string[] EnumerateRelative(string repoRelativeDir, string searchPattern)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        while (dir != null && !(Directory.Exists(Path.Combine(dir.FullName, ".git")) || File.Exists(Path.Combine(dir.FullName, ".git")))) dir = dir.Parent;
         dir.ShouldNotBeNull("找不到仓库根，无法枚举被守文件");
         var full = Path.Combine(dir!.FullName, repoRelativeDir);
         Directory.Exists(full).ShouldBeTrue($"被守目录不在了：{repoRelativeDir}（改名了就同步改这里）");

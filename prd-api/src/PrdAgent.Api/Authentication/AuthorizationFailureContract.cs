@@ -19,6 +19,7 @@ public static class AuthorizationFailureContract
     public const string AiKeyInvalid = "AUTH_AI_KEY_INVALID";
     public const string AiIdentityRequired = "AUTH_AI_IDENTITY_REQUIRED";
     public const string AiIdentityUnavailable = "AUTH_AI_IDENTITY_UNAVAILABLE";
+    public const string UploadCredentialInvalid = "AUTH_UPLOAD_CREDENTIAL_INVALID";
     public const string AgentKeyInvalid = "AUTH_AGENT_KEY_INVALID";
     public const string OpenPlatformKeyInvalid = "AUTH_OPEN_PLATFORM_KEY_INVALID";
     public const string StableSmokeNotConfigured = "AUTH_STABLE_SMOKE_NOT_CONFIGURED";
@@ -49,6 +50,7 @@ public static class AuthorizationFailureContract
         AiKeyInvalid => new(code, "自动化访问凭据与当前环境不一致。", "从权威配置重新同步 AI Access Key 后重试"),
         AiIdentityRequired => new(code, "自动化请求缺少目标身份。", "补充已授权的自动化用户名后重试"),
         AiIdentityUnavailable => new(code, "自动化目标身份当前不可用。", "检查专用账号状态与允许名单后重试"),
+        UploadCredentialInvalid => new(code, "上传凭证已失效或不适用于这个网页，请重新获取上传凭证后重试。", "重新调用 map_web_get_upload_info，使用新凭证和返回的上传地址"),
         AgentKeyInvalid => new(code, "Agent 授权已失效或不可用。", "重新签发或续期 Agent API Key 后重试"),
         OpenPlatformKeyInvalid => new(code, "开放平台调用凭据已失效或不可用。", "在开放平台重新签发调用凭据后重试"),
         StableSmokeNotConfigured => new(code, "稳定冒烟签名身份尚未在当前环境配置。", "同步签名公钥和允许主机后重试"),

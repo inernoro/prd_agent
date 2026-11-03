@@ -1153,6 +1153,8 @@ public static class DesignArtifactWorkspaceContract
                     run.PresentationInput.RepairCandidateHtmlHash,
                 },
             }, JsonOptions);
+        if (run.PresentationInput?.StyleOverride == true)
+            semantic = JsonSerializer.SerializeToUtf8Bytes(new { inputRevision = HashBytes(semantic), styleOverride = true }, JsonOptions);
         // Keep the existing HTML-only revision algorithm for callers without a
         // server file snapshot; complete edits additionally bind every file digest.
         if (currentFiles != null || originalFiles != null)
@@ -1275,6 +1277,7 @@ public static class DesignArtifactWorkspaceContract
                 presentationContract.Remove("repairCandidate");
             if (string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanHash))
                 presentationContract.Remove("sourcePlan");
+            if (run.PresentationInput.StyleOverride) presentationContract["styleOverride"] = true;
             completeTask["presentationContract"] = presentationContract;
             task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
         }
@@ -1585,6 +1588,18 @@ public static class DesignArtifactWorkspaceContract
             new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType)));
         if (!string.Equals(manifest.ArtifactRevision, expectedRevision, StringComparison.Ordinal))
             throw new InvalidOperationException("远程设计产物清单与文件校验结果不一致，请重新生成");
+    }
+
+    public static IReadOnlyList<DesignWorkspaceFile> RebuildPublicManifest(IReadOnlyList<DesignWorkspaceFile> files)
+    {
+        var original = files.Single(file => file.Path == "manifest.json");
+        var entries = files.Where(file => file.Path != "manifest.json")
+            .OrderBy(file => file.Path, StringComparer.Ordinal)
+            .Select(file => new DesignArtifactManifestFile(file.Path, file.Sha256, file.Size, file.MediaType)).ToArray();
+        var manifest = new DesignArtifactManifest(DesignArtifactWorkspaceBroker.ManifestSchemaVersion,
+            ComputePublicArtifactRevision(entries), "index.html", entries);
+        var replacement = ToFile("manifest.json", original.MediaType, JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions));
+        return files.Select(file => file.Path == "manifest.json" ? replacement : file).ToArray();
     }
 
     public static string ComputePublicArtifactRevision(IEnumerable<DesignArtifactManifestFile> files)

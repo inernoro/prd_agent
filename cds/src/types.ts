@@ -566,6 +566,8 @@ export interface CacheMount {
 
 export interface StorageBinding {
   version: 1;
+  /** Fixed server-owned log policy; never a request-supplied path/device/quota. */
+  policy?: 'xxl-task-logs-v1';
   purpose: 'cache' | 'persistent';
   instanceId: string;
   projectId: string;

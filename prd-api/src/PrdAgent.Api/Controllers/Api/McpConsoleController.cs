@@ -138,6 +138,7 @@ public class McpConsoleController : ControllerBase
             // 旁边却列一串它根本调不动的能力，是同一行自己说两种话。
             scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, nowUtc),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            webPublicExposureAllowed = k.WebPublicExposureAllowed,
             mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
                 ? "fixed"
                 : "follow-user-panel",
@@ -317,7 +318,7 @@ public class McpConsoleController : ControllerBase
     /// 于是用户看到「已连接、已授权」，而它发的每个请求都被拒。
     /// </summary>
     private static IReadOnlyList<string> EffectiveScopesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
-        => McpCapabilityCatalog.EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions);
+        => McpCapabilityCatalog.EffectiveScopesForKey(key, ownedPermissions, DateTime.UtcNow);
 
     /// <summary>
     /// 「你自己有、但没开给这台客户端」的能力。只对手动模式成立。

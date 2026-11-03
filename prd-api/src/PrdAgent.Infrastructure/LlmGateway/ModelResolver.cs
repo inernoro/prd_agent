@@ -93,6 +93,20 @@ public class ModelResolver : IModelResolver
             resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
     }
 
+    public async Task<ModelResolutionResult> ResolveMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+    {
+        var resolved = await ResolveCoreAsync(
+            appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct, readOnlyMetadata: true);
+        return await ApplyCatalogGateAsync(
+            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
+    }
+
     /// <summary>
     /// 名录门（白名单的第二道，也是最后一道）。
     ///
@@ -485,7 +499,8 @@ public class ModelResolver : IModelResolver
         string? expectedModel = null,
         string? pinnedPlatformId = null,
         string? pinnedModelId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool readOnlyMetadata = false)
     {
         var gatewayConfigRequired = !string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal)
                                     || DisableMapConfigFallbackForRegisteredAppCallers();
@@ -531,13 +546,13 @@ public class ModelResolver : IModelResolver
         // 第二档：对外模型目录。钉死了具体上游模型时不走目录——那是精确语义，见第三档。
         if (string.IsNullOrWhiteSpace(pinnedPlatformId) && string.IsNullOrWhiteSpace(pinnedModelId))
         {
-            var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct);
+            var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct, readOnlyMetadata: readOnlyMetadata);
             if (logical is not null)
                 return logical;
 
             if (string.IsNullOrWhiteSpace(expectedModel))
             {
-                var byDefault = await TryResolveDefaultLogicalModelAsync(appCallerCode, modelType, ct);
+                var byDefault = await TryResolveDefaultLogicalModelAsync(appCallerCode, modelType, ct, readOnlyMetadata: readOnlyMetadata);
                 if (byDefault is not null)
                     return byDefault;
             }
@@ -1188,7 +1203,8 @@ public class ModelResolver : IModelResolver
         string modelType,
         string? expectedModel,
         CancellationToken ct,
-        IReadOnlyCollection<ModelGroup>? allowedGroups = null)
+        IReadOnlyCollection<ModelGroup>? allowedGroups = null,
+        bool readOnlyMetadata = false)
     {
         if (_gatewayDb is null || string.IsNullOrWhiteSpace(expectedModel))
             return null;
@@ -1214,7 +1230,7 @@ public class ModelResolver : IModelResolver
         if (logical is null)
             return null;
 
-        return await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct);
+        return await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct, readOnlyMetadata);
     }
 
     /// <summary>
@@ -1232,7 +1248,8 @@ public class ModelResolver : IModelResolver
         string appCallerCode,
         string modelType,
         CancellationToken ct,
-        IReadOnlyCollection<ModelGroup>? allowedGroups = null)
+        IReadOnlyCollection<ModelGroup>? allowedGroups = null,
+        bool readOnlyMetadata = false)
     {
         if (_gatewayDb is null) return null;
 
@@ -1270,7 +1287,7 @@ public class ModelResolver : IModelResolver
             .FirstOrDefaultAsync(ct);
         if (logical is null) return null;
 
-        var resolved = await ResolveFromLogicalModelAsync(logical, appCallerCode, logical.PublicId, allowedGroups, ct);
+        var resolved = await ResolveFromLogicalModelAsync(logical, appCallerCode, logical.PublicId, allowedGroups, ct, readOnlyMetadata);
         if (resolved is null || resolved.Success) return resolved;
 
         _logger.LogWarning(
@@ -1284,7 +1301,8 @@ public class ModelResolver : IModelResolver
         string appCallerCode,
         string? expectedModel,
         IReadOnlyCollection<ModelGroup>? allowedGroups,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool readOnlyMetadata = false)
     {
         if (_gatewayDb is null) return null;
 
@@ -1325,7 +1343,19 @@ public class ModelResolver : IModelResolver
         // 没有这一步，GatewayRouteSelection 把熔断线路剔出队列就是一扇单向门：Offering 被摘掉
         // 之后再也拿不到一次成功来翻身，只能等人去控制台改密钥。租约保证同一时刻只有一个请求在试。
         // 它刻意不进那个纯函数——要抢租约、要写库。面板也因此不把它当成确定的下一跳。
-        var halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
+        GatewayModelOffering? halfOpen;
+        if (readOnlyMetadata)
+        {
+            // 与目录相同的资格判据，只取快照；租约由随后真正执行的请求原子认领。
+            var now = DateTime.UtcNow;
+            var cutoff = now.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
+                _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
+            halfOpen = available.Where(x => x.Enabled && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                    x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
+                .OrderBy(x => x.Priority).FirstOrDefault();
+        }
+        else
+            halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
         if (halfOpen is not null)
         {
             var probe = await TryBuildLogicalOfferingResolutionAsync(logical, halfOpen, expectedModel, ct);
