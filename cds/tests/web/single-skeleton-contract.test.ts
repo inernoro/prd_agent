@@ -21,7 +21,10 @@ import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCa
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
 import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
 import { branchNoticeVisible } from '../../web/src/components/BranchDetailDrawer.js';
-import { OverviewPanel } from '../../web/src/components/branch/OverviewPanel.js';
+import { BranchDetailLoadingSkeleton, LoadingBlock } from '../../web/src/pages/cds-settings/components.js';
+import { MonitorCenterSkeleton } from '../../web/src/pages/status/primitives.js';
+import { CommonLoadingSkeleton } from '../../web/src/pages/cds-settings/tabs/LoadingPagesTab.js';
+import { MetricsSkeleton, OverviewPanel } from '../../web/src/components/branch/OverviewPanel.js';
 
 const SRC = path.resolve(__dirname, '../../web/src');
 const read = (rel: string): string => fs.readFileSync(path.join(SRC, rel), 'utf8');
@@ -141,7 +144,7 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     const project = renderToStaticMarkup(pageSkeletonForPath('/project-list'));
     expect(project).toContain('cds-card-grid');
     expect(project).not.toContain('cds-branch-card-grid');
-    const generic = renderToStaticMarkup(pageSkeletonForPath('/reports'));
+    const generic = renderToStaticMarkup(pageSkeletonForPath('/release-console'));
     expect(generic).not.toContain('cds-card-grid');
     expect(generic).toContain('cds-loading-skeleton-panel');
   });
@@ -151,5 +154,54 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     const fallback = settings.slice(settings.indexOf('function SettingsTabFallback'), settings.indexOf('function SettingsTabFallback') + 400);
     expect(fallback).toContain('<LoadingBlock');
     expect(fallback).not.toContain('CdsLogoLoader');
+  });
+});
+
+
+describe('统一骨架：路由、数据和预览共用组件', () => {
+  const markup = (node: ReturnType<typeof createElement>) => renderToStaticMarkup(node);
+
+  it('监控、分支详情、通用局部页的路由等待与数据等待轮廓一致', () => {
+    expect(markup(pageSkeletonForPath('/status'))).toBe(markup(createElement(MonitorCenterSkeleton)));
+    expect(markup(pageSkeletonForPath('/branch-panel/fixture'))).toBe(markup(createElement(BranchDetailLoadingSkeleton)));
+    for (const route of ['/reports', '/task-schedule', '/branch-topology', '/release-center', '/settings/fixture', '/cds-settings']) {
+      expect(markup(pageSkeletonForPath(route))).toBe(markup(createElement(LoadingBlock)));
+    }
+  });
+
+  it('预览展示实际的页面骨架，不再用 Logo 点阵替代', () => {
+    for (const [scenarioId, expected] of [
+      ['project-list', pageSkeletonForPath('/project-list')],
+      ['branch-list', pageSkeletonForPath('/branch-list')],
+      ['branch-detail', createElement(BranchDetailLoadingSkeleton)],
+      ['relation-flow', createElement(RelationCardSkeleton, { variant: 'row' })],
+      ['metrics', createElement(MetricsSkeleton, { filled: 0, windowLabel: '近 30 分钟', note: '正在读取指标历史' })],
+      ['container-logs', createElement(LoadingBlock)],
+    ] as const) {
+      expect(markup(createElement(CommonLoadingSkeleton, { scenarioId }))).toBe(markup(expected));
+    }
+    const source = stripComments(read('pages/cds-settings/tabs/LoadingPagesTab.tsx'));
+    expect(source).not.toContain('ShapeGridSkeletonPreview');
+    expect(source).not.toContain('ShapeGridWaitingPreview');
+    expect(source).not.toContain('CdsLogoLoader');
+  });
+
+  it('关系与指标的占位统一走共享样式，保留真实说明和图表轮廓', () => {
+    const relation = markup(createElement(RelationCardSkeleton, { variant: 'row' }));
+    const metrics = markup(createElement(MetricsSkeleton, { filled: 0, windowLabel: '近 30 分钟', note: '正在读取指标历史' }));
+    for (const html of [relation, metrics]) {
+      expect(html).toContain('cds-loading-skeleton-line');
+      expect(html).toContain('cds-loading-skeleton-panel');
+      expect(html).not.toContain('animate-pulse');
+      expect(html).not.toContain('linear-gradient');
+    }
+    expect(metrics).toContain('height:38%');
+    expect(metrics).toContain('正在读取指标历史');
+  });
+
+  it('监控柱条均分空间，不再每根都占父容器全宽', () => {
+    const monitor = markup(createElement(MonitorCenterSkeleton));
+    expect(monitor).toContain('cds-loading-skeleton-line min-w-0 flex-1');
+    expect(monitor).not.toContain('w-full shrink-0');
   });
 });

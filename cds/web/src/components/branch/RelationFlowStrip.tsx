@@ -420,11 +420,11 @@ function LaneHead({ title, note, mono }: { title: string; note: string; /** 标�
 
 /** 加载 / 失败态用同一副骨架：卡片不会在算完那一刻突然长出 200px，把下面的入口卡顶跑。 */
 export function RelationFlowSkeleton({ note, tone = 'muted' }: { note: string; tone?: 'muted' | 'bad' }): JSX.Element {
-  const ghost = (w: number, i: number) => <div key={i} className="min-w-0 flex-1 rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-background/60 motion-safe:animate-pulse" style={{ maxWidth: w, height: ROW_H, animationDelay: `${i * 120}ms` }} />;
+  const ghost = (w: number, i: number) => <div key={i} className="min-w-0 flex-1 rounded-[0.75rem] cds-loading-skeleton-panel" style={{ maxWidth: w, height: ROW_H, animationDelay: `${i * 120}ms` }} />;
   return (
     <div className="relative flex flex-col overflow-hidden rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 pb-4 pt-3.5" data-testid="relation-strip-skeleton">
       {/* 与真实流向条同一副外形：一行泳道标题 + 一排 chip，数据到了只换内容不换高度 */}
-      <div className="mb-3 h-[1.125rem] w-40 rounded bg-background/60 motion-safe:animate-pulse" />
+      <div className="mb-3 cds-loading-skeleton-line h-[1.125rem] w-40 rounded" />
       <div className="flex items-center justify-center gap-8">{[W.entry, W.shell, W.member, W.infra].map((w, i) => ghost(w, i))}</div>
       <div className={`absolute inset-x-0 bottom-1.5 text-center text-[0.8125rem] ${tone === 'bad' ? 'text-bad' : 'text-muted-foreground'}`}>{note}</div>
     </div>

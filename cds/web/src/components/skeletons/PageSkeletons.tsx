@@ -1,3 +1,5 @@
+import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
+import { MonitorCenterSkeleton } from '@/pages/status/primitives';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
 
 /**
@@ -15,8 +17,7 @@ import { BranchListOverview } from '@/components/branch/BranchListOverview';
  * 页面落到 ConsoleGenericSkeleton。守卫：tests/web/single-skeleton-contract.test.ts。
  */
 /** 分支列表加载骨架:逐张镜像真实 BranchCard(固定 15.25rem + 头/身/尾三段,2026-09-29 等高改版),
- *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部一行品牌 loader
- *  说明"在加载什么"。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
+ *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部保留统计和筛选槽位。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
 const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] as const;
 
 export function BranchListSkeleton(): JSX.Element {
@@ -62,8 +63,8 @@ export function BranchListSkeleton(): JSX.Element {
 /**
  * 项目列表骨架屏 —— 用「即将出现的内容形状」占位,而不是一个孤零零的居中 logo。
  * 骨架卡逐张镜像真实 ProjectCard(标题条 + 220px 点阵画布 + 底部状态行),
- * 加载完成时视觉无缝切换到真数据。节点分片错相位 shimmer,整片"活着"不发呆。
- * 顶部保留一行带品牌 loader 的说明,让用户明确"在加载什么"(预期管理)。
+ * 加载完成时视觉无缝切换到真数据。节点使用共享轻呼吸,整片"活着"不发呆。
+ * 与就绪页面保留同一张卡片的标题、画布和状态槽。
  */
 const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const;
 
@@ -131,5 +132,11 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 export function pageSkeletonForPath(pathname: string): JSX.Element {
   if (pathname === '/project-list' || pathname === '/project-list/') return <ProjectListSkeleton />;
   if (pathname.startsWith('/branches/') || pathname === '/branch-list') return <BranchListSkeleton />;
+  if (pathname === '/status') return <MonitorCenterSkeleton />;
+  if (pathname === '/branch-panel' || pathname.startsWith('/branch-panel/')) return <BranchDetailLoadingSkeleton />;
+  if (pathname === '/cds-settings' || pathname.startsWith('/settings/') ||
+      ['/reports', '/task-schedule', '/branch-topology', '/release-center'].includes(pathname)) {
+    return <LoadingBlock />;
+  }
   return <ConsoleGenericSkeleton />;
 }

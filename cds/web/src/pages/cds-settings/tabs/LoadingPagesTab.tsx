@@ -3,8 +3,11 @@ import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerC
 
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
-import { Section } from '@/pages/cds-settings/components';
+import { BranchDetailLoadingSkeleton, LoadingBlock, Section } from '@/pages/cds-settings/components';
+import { BranchListSkeleton, ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
+import { MetricsSkeleton } from '@/components/branch/OverviewPanel';
+import { RelationCardSkeleton } from '@/components/branch/RelationCard';
+import { MonitorCenterSkeleton } from '@/pages/status/primitives';
 import { BranchDrawerSkeleton } from '@/components/branch/BranchDrawerSkeleton';
 import { PreviewPreparingSurface } from '@/pages/PreviewPreparingPage';
 import { cn } from '@/lib/utils';
@@ -53,6 +56,9 @@ const failedBranchScenarios: LoadingScenario[] = [
 ];
 
 const commonLoadingScenarios: LoadingScenario[] = [
+  { id: 'monitor-center', label: '监控中心', status: 'loading' },
+  { id: 'relation-flow', label: '服务关系', status: 'loading' },
+  { id: 'metrics', label: '指标曲线', status: 'loading' },
   { id: 'branch-list', label: '分支列表', status: 'loading', loadingLabel: '加载项目与本地分支列表' },
   { id: 'project-list', label: '项目列表', status: 'loading', loadingLabel: '加载项目列表' },
   { id: 'branch-detail', label: '分支详情', status: 'loading', loadingLabel: '加载分支详情' },
@@ -199,8 +205,14 @@ const loadingPageGroups: LoadingPageGroup[] = [
 ];
 
 export function LoadingPagesTab(): JSX.Element {
-  const [pageId, setPageId] = useState('branch-detail-loading');
-  const [scenarioId, setScenarioId] = useState(branchScenarios[0].id);
+  const [pageId, setPageId] = useState(() => {
+    const requested = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('loadingPage');
+    return loadingPages.some((item) => item.id === requested) ? requested! : 'branch-detail-loading';
+  });
+  const [scenarioId, setScenarioId] = useState(() => {
+    const requested = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('loadingScenario');
+    return requested || branchScenarios[0].id;
+  });
   const [reloadKey, setReloadKey] = useState(0);
 
   const page = loadingPages.find((item) => item.id === pageId) || loadingPages[0];
@@ -265,6 +277,7 @@ export function LoadingPagesTab(): JSX.Element {
                           <button
                             key={item.id}
                             type="button"
+                            aria-pressed={active}
                             onClick={() => {
                               setPageId(item.id);
                               if (item.scenarios && !item.scenarios.some((entry) => entry.id === scenarioId)) {
@@ -302,6 +315,7 @@ export function LoadingPagesTab(): JSX.Element {
                 <button
                   key={item.id}
                   type="button"
+                  aria-pressed={scenario?.id === item.id}
                   onClick={() => setScenarioId(item.id)}
                   className={cn(
                     'h-8 rounded-md border px-3 text-xs transition-colors',
@@ -342,27 +356,18 @@ export function LoadingPagesTab(): JSX.Element {
                 status="准备中"
               />
             ) : page.id === 'container-log-loading' ? (
-              <ShapeGridSkeletonPreview tone="log" label="正在加载容器日志" />
+              <LoadingBlock label="正在加载容器日志" />
             ) : page.id === 'cds-home-loading' ? (
-              <ShapeGridWaitingPreview
-                compact
-                heading="CDS 首页加载中"
-                subtitle="正在读取项目、分支与运行状态。"
-                branch="project-list"
-                status="同步中"
-                services={['项目列表', '运行状态']}
-              />
+              <ProjectListSkeleton />
             ) : page.id === 'common-loading-block' ? (
-              <ShapeGridSkeletonPreview
-                label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'}
-              />
+              <CommonLoadingSkeleton scenarioId={scenario?.id || 'branch-list'} label={scenario?.loadingLabel || '加载中'} />
             ) : page.id === 'common-error-block' ? (
               <PartialErrorPreview
                 label="读取失败"
                 detail="请求返回异常或会话过期时，在当前内容区域内给出明确提示。"
               />
             ) : (
-              <ShapeGridSkeletonPreview label="加载中" />
+              <LoadingBlock />
             )}
           </div>
         </div>
@@ -371,110 +376,17 @@ export function LoadingPagesTab(): JSX.Element {
   );
 }
 
-function ShapeGridWaitingPreview({
-  heading,
-  subtitle,
-  branch,
-  status,
-  services,
-  compact = false,
-}: {
-  heading: string;
-  subtitle: string;
-  branch: string;
-  status: string;
-  services: string[];
-  compact?: boolean;
-}): JSX.Element {
-  return (
-    <div className="relative h-full overflow-hidden bg-[#120f17] text-[#f7f5ff]">
-      <ShapeGrid
-        className="absolute inset-0 h-full w-full"
-        direction="diagonal"
-        speed={0.39}
-        squareSize={34}
-        shape="hexagon"
-        borderColor="rgba(255,255,255,0.09)"
-        hoverFillColor="rgba(255,255,255,0.035)"
-        hoverTrailAmount={0}
-      />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(56.25rem_38.75rem_at_52%_46%,rgba(255,255,255,0.08),transparent_36%,rgba(18,15,23,0.82)_100%),linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.22)_48%,rgba(18,15,23,0.84))]" />
-      <main className="relative z-10 grid h-full grid-cols-1 items-center px-[clamp(1.25rem,6vw,5.75rem)] py-[clamp(2rem,7vw,5.75rem)] lg:grid-cols-[minmax(17.5rem,45rem)_minmax(0,1fr)]">
-        <section className="max-w-[45rem] [text-shadow:0_2px_1.875rem_rgba(0,0,0,0.72)]">
-          <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[0.6875rem] uppercase tracking-[0.28em] text-[#ded8ef]">
-            <CdsLogoLoader size="sm" className="text-[#f7f5ff]" />
-            CDS Waiting Room
-          </div>
-          <h1 className={cn('max-w-full leading-[0.96] tracking-normal', compact ? 'text-[clamp(2.125rem,4.5vw,3.875rem)]' : 'text-[clamp(2.625rem,5.6vw,5.125rem)]')}>
-            <span className="inline-block bg-[linear-gradient(120deg,rgba(247,245,255,0.76)_0%,rgba(247,245,255,0.76)_38%,#fff_48%,rgba(255,255,255,0.96)_52%,rgba(247,245,255,0.76)_62%,rgba(247,245,255,0.76)_100%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shiny-text_3.2s_linear_infinite]">
-              {heading}
-            </span>
-          </h1>
-          <p className="mt-6 max-w-[36.25rem] text-[clamp(0.9375rem,1.45vw,1.25rem)] leading-[1.75] text-white/62">{subtitle}</p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <span className="rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 font-mono text-xs text-[#dde3ea] backdrop-blur-md">{branch}</span>
-            <span className="rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs text-[#dde3ea] backdrop-blur-md">状态 · {status}</span>
-          </div>
-          <div className="mt-8 flex max-w-[38.75rem] flex-col gap-3">
-            {services.map((service, index) => (
-              <div key={service} className="relative flex items-center gap-3 overflow-hidden border-t border-white/10 py-3 text-[0.9375rem]">
-                <span className="h-2 w-2 rounded-full bg-[#dbe4ee] shadow-[0_0_0.875rem_#dbe4ee]" />
-                <span>{service} · {index === 0 ? '进行中' : '等待中'}</span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-7 w-[min(38.75rem,100%)] rounded-[1.125rem] border border-white/12 bg-white/[0.035] p-4 backdrop-blur-md">
-            <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/70">
-              <span>预计处理进度</span>
-              <strong className="font-mono text-[0.9375rem] text-slate-50">{compact ? '42%' : '68%'}</strong>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <span className={cn('block h-full rounded-full bg-[linear-gradient(90deg,#fff,#9f5050)] shadow-[0_0_1.125rem_rgba(255,255,255,0.22)]', compact ? 'w-[42%]' : 'w-[68%]')} />
-            </div>
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-}
-
-function ShapeGridSkeletonPreview({
-  label,
-  tone = 'compact',
-}: {
-  label: string;
-  tone?: 'detail' | 'compact' | 'log' | 'home';
-}): JSX.Element {
-  const expanded = tone === 'detail' || tone === 'home';
-
-  return (
-    <div
-      className={cn(
-        'cds-shape-panel flex items-center justify-center rounded-md border border-dashed border-border text-muted-foreground',
-        expanded ? 'min-h-[20rem] px-8 py-10' : 'min-h-[10.5rem] px-4 py-5',
-      )}
-    >
-      <ShapeGrid
-        className="cds-shape-backdrop"
-        direction="diagonal"
-        speed={0.1}
-        squareSize={expanded ? 40 : 34}
-        hoverTrailAmount={0}
-      />
-      <div className={cn('relative z-10 flex items-center', expanded ? 'max-w-xl flex-col gap-3 text-center' : 'gap-2')}>
-        <CdsLogoLoader
-          label={label}
-          size={expanded ? 'md' : 'sm'}
-          className="text-sm font-medium text-muted-foreground"
-        />
-        {expanded ? (
-          <p className="max-w-lg text-sm leading-6 text-muted-foreground/75">
-            CDS 正在读取当前区域所需的数据，完成后会在原位置替换为真实内容。
-          </p>
-        ) : null}
-      </div>
-    </div>
-  );
+/** 预览直接复用生产组件，避免预览与真实等待各画一套。 */
+export function CommonLoadingSkeleton({ scenarioId, label = '加载中' }: { scenarioId: string; label?: string }): JSX.Element {
+  switch (scenarioId) {
+    case 'project-list': return <ProjectListSkeleton />;
+    case 'branch-list': return <BranchListSkeleton />;
+    case 'branch-detail': return <BranchDetailLoadingSkeleton />;
+    case 'monitor-center': return <div className="h-[36rem] min-w-0"><MonitorCenterSkeleton /></div>;
+    case 'relation-flow': return <RelationCardSkeleton variant="row" />;
+    case 'metrics': return <MetricsSkeleton filled={0} windowLabel="近 30 分钟" note="正在读取指标历史" />;
+    default: return <LoadingBlock label={label} />;
+  }
 }
 
 function PartialErrorPreview({ label, detail }: { label: string; detail: string }): JSX.Element {
