@@ -15,6 +15,7 @@ try {
   await context.route('**/api/**', async route => {
     const pathname = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
     if (isEventStream(pathname)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
+    if (pathname === '/api/projects' || pathname === '/api/releases/center') await new Promise(r => setTimeout(r, 1200));
     if (pathname === '/api/overview/topology') {
       await new Promise(r => setTimeout(r, 1200));
       return route.fulfill({ status: failOverview ? 500 : 200, contentType: 'application/json', body: JSON.stringify(failOverview ? { error: 'fixture: 读取失败，请刷新重试' } : { generatedAt: new Date().toISOString(), summary: { errors: 0, warnings: 0, infos: 0 }, projects: [] }) });
@@ -58,7 +59,13 @@ try {
   await page.locator('[data-testid="request-list"] [data-content-loading="table"]').waitFor();
   await page.getByText(/还没有 Agent 请求/).waitFor();
   assert.equal(await page.locator('[data-content-loading]').count(), 0);
+  await page.goto(base + '/release-console');
+  await page.getByRole('status', { name: '读取发布项目列表', exact: true }).waitFor();
+  assert.equal(await page.getByText('没有匹配的项目。', { exact: true }).count(), 0);
+  await page.getByRole('status', { name: '读取发布环境列表', exact: true }).waitFor();
+  assert.equal(await page.getByText('这个项目还没有发布目标，去发布中心添加环境。', { exact: true }).count(), 0);
+  await page.getByRole('status', { name: '读取发布环境列表', exact: true }).waitFor({ state: 'hidden' });
   assert.deepEqual(errors, []);
-  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, agentFirstLoadNoBlank: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
-  console.log('PASS shared content skeleton; 6s status; scene cleanup; dark390; reduced motion; data/error/retry; Agent first load; no page errors');
+  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, agentFirstLoadNoBlank: true, releaseConsoleNoPrematureEmpty: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
+  console.log('PASS shared content skeleton; 6s status; scene cleanup; dark390; reduced motion; data/error/retry; Agent first load; release-console pending/empty separation; no page errors');
 } finally { await browser.close(); }
