@@ -20,6 +20,38 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class ProductVersionClaimGuardTests
 {
+    [Fact]
+    public async Task VersionExportResolvesUniqueHistoryNamesAndKeepsAmbiguousIdsBlank()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertManyAsync(new[]
+        {
+            new User { UserId = "owner", DisplayName = "负责人" },
+            new User { UserId = "member", DisplayName = "成员实名" },
+            new User { UserId = "ambiguous-1", DisplayName = "重名" },
+            new User { UserId = "ambiguous-2", DisplayName = "重名" },
+        });
+        await fixture.Db.ProductReleases.InsertManyAsync(new[]
+        {
+            new ProductRelease { Id = "old-export", ProductId = "product", VCode = "V1.2.3",
+                OwnerName = "负责人", TeamMemberIds = new() { "成员实名", "简称", "重名", "member" } },
+            new ProductRelease { Id = "valid-export", ProductId = "product", VCode = "V1.2.4",
+                OwnerId = "owner", OwnerName = "重名", TeamMemberIds = new() { "member" } },
+        });
+        var action = Assert.IsType<OkObjectResult>(await fixture.Controller(admin: true).OverviewReleases(workflow: true));
+        var result = Assert.IsType<ProductVersionListResult<ProductRelease>>(Assert.IsType<ApiResponse<object>>(action.Value).Data);
+        var history = result.Items.Single(row => row.Record.Id == "old-export").ExportFields!;
+        Assert.Equal("测试系统", history.SystemName);
+        Assert.Equal("owner", history.OwnerId);
+        Assert.Equal(new[] { "member" }, history.TeamMemberIds);
+        var current = result.Items.Single(row => row.Record.Id == "valid-export").ExportFields!;
+        Assert.Equal("owner", current.OwnerId);
+        Assert.Equal(new[] { "member" }, current.TeamMemberIds);
+        var stored = await fixture.Db.ProductReleases.Find(row => row.Id == "old-export").SingleAsync();
+        Assert.Null(stored.OwnerId);
+        Assert.Equal(new[] { "成员实名", "简称", "重名", "member" }, stored.TeamMemberIds);
+    }
+
     [Theory]
     [InlineData("missing")]
     [InlineData("invalid")]

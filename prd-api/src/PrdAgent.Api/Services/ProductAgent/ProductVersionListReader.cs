@@ -5,7 +5,10 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Api.Services.ProductAgent;
 
 // Read DTOs only: legacy rows are never written into the product workflow collections.
-public sealed record ProductVersionListRow<T>(T Record, VersionRegistration? LegacyRegistration = null);
+public sealed record ProductVersionListRow<T>(T Record, VersionRegistration? LegacyRegistration = null,
+    ProductVersionExportFields? ExportFields = null);
+
+public sealed record ProductVersionExportFields(string? SystemName, string? OwnerId, IReadOnlyList<string> TeamMemberIds);
 public sealed record ProductVersionListResult<T>(
     List<ProductVersionListRow<T>> Items, Dictionary<string, string> RequirementNames,
     IReadOnlyDictionary<string, string>? ApplicationAliases = null);

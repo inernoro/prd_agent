@@ -7283,8 +7283,13 @@ public partial class ProductAgentController : ControllerBase
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
         if (workflow)
-            return Ok(ApiResponse<object>.Ok(await ProductVersionListReader.ReadReleasesAsync(
-                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
+        {
+            var result = await ProductVersionListReader.ReadReleasesAsync(
+                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage));
+            return Ok(ApiResponse<object>.Ok(await WithVersionExportFieldsAsync(result, row => new(
+                row.ProductId, row.AppName, row.SystemName, row.OwnerId, row.OwnerName ?? row.LegacyData.GetValueOrDefault("产品负责人"),
+                row.TeamMemberIds, row.ProjectMemberNames))));
+        }
         var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
         await ProductReleaseDeletion.AnnotateAsync(_db, items, GetUserId());
         var names = await ProductNamesAsync(items.Select(r => r.ProductId));
@@ -7370,8 +7375,13 @@ public partial class ProductAgentController : ControllerBase
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
         if (workflow)
-            return Ok(ApiResponse<object>.Ok(await ProductVersionListReader.ReadInitiationsAsync(
-                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
+        {
+            var result = await ProductVersionListReader.ReadInitiationsAsync(
+                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage));
+            return Ok(ApiResponse<object>.Ok(await WithVersionExportFieldsAsync(result, row => new(
+                row.LinkedProductId ?? row.ProductId, row.AppName, row.SystemName, row.OwnerId,
+                row.OwnerName ?? row.LegacyData.GetValueOrDefault("产品负责人"), [], []))));
+        }
         var items = await FindInScopeAsync<ProductInitiation>(scope, i => i.ProductId, i => i.IsDeleted);
         var names = await ProductNamesAsync(items.Select(i => i.ProductId));
         var userNames = await UserNamesAsync(items.SelectMany(i => new[] { i.OwnerId, i.PrimaryOwnerId, i.CreatedBy }));

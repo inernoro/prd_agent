@@ -1,4 +1,5 @@
 import type { ProductInitiation, ProductRelease, Requirement } from './types';
+import type { WorkflowVersionRecord } from '@/services/real/productAgent';
 import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 
 export const VERSION_WORKFLOW_STATUS_LABEL: Record<string, string> = {
@@ -15,7 +16,7 @@ export function initiationExportConfig(productId: string, productName: string, n
   return {
     filename: `内部版本-T-${productId}.csv`,
     headers: ['产品', '内部版本号', '项目类别', '客户来源', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '项目组成员', '第一稿会议时间', '第二稿会议时间', '第三稿会议时间', '立项时间', '计划立项时间', '是否需要 UI 设计', '是否属于 AI POC 项目', '方案地址', '开发状态', '备注', '关联需求ID', '状态', '系统名称', '产品负责人ID', '作废原因', '作废时间'],
-    mapRow: (item: ProductInitiation) => safeRow([
+    mapRow: (item: WorkflowVersionRecord<ProductInitiation>) => safeRow([
       productNames?.get(item.linkedProductId || item.productId) || productName || resolveVersionProductLabel(item), item.tCode ?? '',
       item.projectType === 'custom' ? '定制项目' : '非定制项目', item.customerSource ?? '',
       VERSION_SCALE_LABEL[item.versionType], item.planName, item.demandSource ?? '', item.requirementDescription ?? '',
@@ -26,7 +27,9 @@ export function initiationExportConfig(productId: string, productName: string, n
       formatVersionBasicDate(item.plannedProjectAt), formatVersionBasicBool(item.needUiDesign),
       formatVersionBasicBool(item.isAiPoc), item.planUrl ?? '', item.developmentStatus ?? '', item.remark ?? '',
       item.requirementIds.join('、'), VERSION_WORKFLOW_STATUS_LABEL[item.status] ?? item.status,
-      item.systemName ?? '', item.ownerId ?? '', item.voidReason ?? '', item.voidedAt ?? '',
+      item.exportFields?.systemName ?? item.systemName ?? '',
+      item.exportFields ? item.exportFields.ownerId ?? '' : item.ownerId && names.has(item.ownerId) ? item.ownerId : '',
+      item.voidReason ?? '', item.voidedAt ?? '',
     ]),
   };
 }
@@ -37,7 +40,7 @@ export function releaseExportConfig(productId: string, productName: string, name
   return {
     filename: `正式版本-V-${productId}.csv`,
     headers: ['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长（分钟）', '是否全域开放', '当前开放品牌', '合同签订方', '备注', '关联需求', '关联需求ID', '上线公告地址', '状态', '系统名称', '产品负责人ID', '项目组成员ID', '实际上线时间', 'TAPD 链接', '无 TAPD 链接', '作废原因', '作废时间'],
-    mapRow: (item: ProductRelease) => safeRow([
+    mapRow: (item: WorkflowVersionRecord<ProductRelease>) => safeRow([
       productNames?.get(item.productId) || productName || resolveVersionProductLabel(item), item.vCode, item.tCode ?? '',
       item.projectType === 'custom' ? '定制项目' : '非定制项目', item.isTemporaryOptimization ? '临时优化需求' : VERSION_SCALE_LABEL[item.versionType], item.planName,
       item.demandSource ?? '', item.requirementDescription ?? '', item.departmentName ?? '',
@@ -47,7 +50,9 @@ export function releaseExportConfig(productId: string, productName: string, name
       formatVersionBasicBool(item.isGlobalOpen), item.openBrandScope ?? '', item.contractParty ?? '', item.remark ?? '',
       item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、'), item.requirementIds.join('、'),
       item.announcementUrl ?? '', VERSION_WORKFLOW_STATUS_LABEL[item.status] ?? item.status,
-      item.systemName ?? '', item.ownerId ?? '', item.teamMemberIds.join('、'), item.releasedAt ?? '',
+      item.exportFields?.systemName ?? item.systemName ?? '',
+      item.exportFields ? item.exportFields.ownerId ?? '' : item.ownerId && names.has(item.ownerId) ? item.ownerId : '',
+      (item.exportFields?.teamMemberIds ?? item.teamMemberIds.filter((id) => names.has(id))).join('、'), item.releasedAt ?? '',
       item.tapdLinks?.length ? JSON.stringify(item.tapdLinks) : '', formatVersionBasicBool(item.noTapdLinks),
       item.voidReason ?? '', item.voidedAt ?? '',
     ]),
