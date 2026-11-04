@@ -142,8 +142,9 @@ public class HostedSiteReviewVersionAccessTests
             current.PublishedEntryCosKey = site.Files[0].CosKey;
             current.PublishedAssetKeys = new() { site.Files[0].CosKey };
             await db.HostedSiteRevisions.InsertOneAsync(current);
+            const string legacyHtml = "<link rel='stylesheet' href='style.css'><h1>旧版中文 private V1</h1>";
             var objects = new Dictionary<string, byte[]> {
-                [legacyEntry] = System.Text.Encoding.UTF8.GetBytes("<link rel='stylesheet' href='style.css'><h1>private V1</h1>"),
+                [legacyEntry] = System.Text.Encoding.UTF8.GetBytes(legacyHtml),
                 [legacyStyle] = System.Text.Encoding.UTF8.GetBytes("h1{color:red}"),
                 [site.Files[0].CosKey] = System.Text.Encoding.UTF8.GetBytes("<h1>public V2</h1>"),
             };
@@ -180,6 +181,9 @@ public class HostedSiteReviewVersionAccessTests
             Assert.StartsWith(prefix + ".versions/", archived.PublishedEntryCosKey);
             Assert.All(archived.PublishedAssetKeys, key => Assert.StartsWith(prefix + ".versions/", key));
             Assert.Contains("private V1", System.Text.Encoding.UTF8.GetString(objects[archived.PublishedEntryCosKey!]));
+            Assert.Equal(System.Text.Encoding.UTF8.GetBytes(legacyHtml), objects[archived.PublishedEntryCosKey!]);
+            storage.Verify(x => x.UploadToKeyAsync(archived.PublishedEntryCosKey!, It.IsAny<byte[]>(), "text/html; charset=utf-8",
+                It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Once);
             Assert.Contains(archived.PublishedAssetKeys, key => key.EndsWith("/style.css") && objects.ContainsKey(key));
             Assert.Equal(failDelete, objects.ContainsKey(legacyEntry));
             var live = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();

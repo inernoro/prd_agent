@@ -58,7 +58,9 @@ public class HostedSiteService : IHostedSiteService
                 {
                     var bytes = await _storage.TryDownloadBytesAsync(oldKey, ct)
                         ?? throw new InvalidOperationException("旧版资源读取失败，暂不能对外分享或覆盖网页");
-                    await _storage.UploadToKeyAsync(newKey, bytes, GetMimeType(Path.GetExtension(LogicalPath(oldKey)!)), ct, SiteCacheControl);
+                    var mimeType = GetMimeType(Path.GetExtension(LogicalPath(oldKey)!));
+                    if (mimeType == "text/html") mimeType = "text/html; charset=utf-8";
+                    await _storage.UploadToKeyAsync(newKey, bytes, mimeType, ct, SiteCacheControl);
                 }
                 var oldEntry = revision.PublishedEntryCosKey;
                 var newEntry = oldEntry != null && mapping.TryGetValue(oldEntry, out var mappedEntry) ? mappedEntry : oldEntry;
