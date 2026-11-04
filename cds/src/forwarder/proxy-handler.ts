@@ -236,6 +236,7 @@ export class ProxyHandler {
       route = masterRoute;
     }
 
+    this.previewActivity.record(route?.branchId, req.headers);
     // 服务没在跑（building / starting / error）时不把请求打到死端口（plan.cds.service-relations 第二批）：
     // 转给 master 让它按分支与服务状态出等待页 / 错误页。此前默认站重建期间用户看到的是上游错误，
     // 或被发布器塞给碰巧在跑的另一个服务。healthState 缺省（老路由表 / 测试桩）按 running 对待。
@@ -312,7 +313,6 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
-    this.previewActivity.record(route.branchId, req.headers);
     const requestKind = classifyHttpRequestKind({
       layer: 'forwarder',
       method: req.method || 'GET',

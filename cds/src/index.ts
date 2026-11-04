@@ -2874,7 +2874,7 @@ let shutdownInProgress = false;
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
 let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
-if (process.env.CDS_USE_FORWARDER === '1' || process.env.CDS_FORWARDER_PORT) {
+if (process.env.CDS_USE_FORWARDER === '1') {
   const diagnosticsPort = Number.parseInt(process.env.CDS_FORWARDER_PORT || '9090', 10);
   schedulerService.setPreviewActivitySource(() => readForwarderPreviewActivity(diagnosticsPort), isTrustedProbeFingerprint);
   previewActivitySelfCheck = wireSchedulerPreviewActivitySelfCheck(schedulerService, activeServerEventLogStore, () => localServerEventLogReady);

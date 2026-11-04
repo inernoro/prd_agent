@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
+import type { RouteHealthState } from '../../src/forwarder/types.js';
 import { resolveRoute } from '../../src/forwarder/route-resolver.js';
 import { createDiagnosticRouter } from '../../src/forwarder/diagnostic-routes.js';
 import { RouteWatcher } from '../../src/forwarder/route-watcher.js';
@@ -61,7 +62,7 @@ function upgrade(port: number, url = '/ws', headers: Record<string, string> = {}
   });
 }
 
-async function fixture() {
+async function fixture(healthState: RouteHealthState = 'running') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-preview-activity-'));
   cleanup.unshift(async () => { await flushAllJsonStateStores(); fs.rmSync(root, { recursive: true, force: true }); });
   const state = new StateService(path.join(root, 'state.json')); state.load();
@@ -96,7 +97,7 @@ async function fixture() {
     record: record => { logs.push(JSON.stringify(record)); },
     beginActive: record => { logs.push(JSON.stringify(record)); return 'active'; },
     completeActive: () => {},
-  } });
+  }, ...(healthState !== 'running' ? { unknownHostFallbackHost: '127.0.0.1', unknownHostFallbackPort: upstreamPort } : {}) });
   cleanup.push(async () => { proxy.destroy(); });
   const watcher = new RouteWatcher({ mongoConnect: async () => { throw new Error('本夹具不读取路由存储'); },
     jsonFallbackPath: '/dev/null', saveSnapshot: false, logger: {} });
@@ -104,7 +105,7 @@ async function fixture() {
   app.use(createDiagnosticRouter({ watcher, proxy }));
   app.use((req, res) => { void proxy.handle(req, res, req.headers.host === 'file.example.invalid'
     ? { _id: 'file-route', host: 'file.example.invalid', upstreamPort, branchId: 'file',
-      profileId: 'api', weight: 100, healthState: 'running' } : null); });
+      profileId: 'api', weight: 100, healthState } : null); });
   const server = http.createServer(app);
   server.on('upgrade', (req, socket, head) => {
     const route = resolveRoute([{ _id: 'file-route', host: 'file.example.invalid', upstreamPort,
@@ -134,6 +135,14 @@ async function growHostStats(port: number): Promise<void> {
 }
 
 describe('真实forwarder访问到master调度时钟', () => {
+  it.each(['unhealthy', 'unknown'] as const)('原路由%s转等待页仍保留真实预览访问活动', async health => {
+    const f = await fixture(health);
+    expect((await f.access('/documents')).body).toBe('业务响应');
+    await f.scheduler.tick();
+    expect(f.cooled).toEqual(['quiet']);
+    expect(f.proxy.getStats().previewActivity.branches[0]).toMatchObject({ branchId: 'file', userAt: expect.any(Number) });
+  });
+
   it.each(['user', 'forged-probe'] as const)('WS-first %s真实101握手按原路由活动保护FILE', async kind => {
     const f = await fixture();
     const marker = `${f.marker[0] === 'a' ? 'b' : 'a'}${f.marker.slice(1)}`;

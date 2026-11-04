@@ -278,7 +278,9 @@ describe('forwarder活动收据的有限资格与恢复', () => {
     expect(source('forwarder/diagnostic-routes.ts')).toContain('previewActivity: stats.previewActivity');
     expect(source('forwarder/diagnostic-routes.ts')).toContain('opts.watcher.onChange(routes => opts.proxy.reconcilePreviewActivityRoutes(routes))');
     const handler = source('forwarder/proxy-handler.ts');
-    expect(handler.indexOf('this.previewActivity.record(route.branchId, req.headers)'))
-      .toBeLessThan(handler.indexOf('const activeRequestId ='));
+    const record = handler.indexOf('this.previewActivity.record(route?.branchId, req.headers)');
+    expect(record).toBeGreaterThan(handler.indexOf('route = masterRoute;'));
+    expect(record).toBeLessThan(handler.indexOf('route.healthState'));
+    expect(record).toBeLessThan(handler.indexOf('const activeRequestId ='));
   });
 });

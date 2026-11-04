@@ -65,6 +65,30 @@ async function fixture() {
 }
 
 describe('真实Scheduler事件到常设自检的有限闭环', () => {
+  it.each([undefined, '0', '1'])('实际启动接线在forwarder开关%s与预设端口并存时遵守启用状态', async enabled => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-activity-startup-')); roots.push(root);
+    const state = new StateService(path.join(root, 'state.json')); state.load();
+    const accessedAt = new Date(Date.now() - 60_000).toISOString();
+    state.addBranch({ id: 'idle', projectId: 'default', branch: 'codex/idle', services: {}, status: 'running', heatState: 'hot',
+      worktreePath: path.join(root, 'idle'), createdAt: accessedAt, lastAccessedAt: accessedAt });
+    const scheduler = new SchedulerService(state, { enabled: true, maxHotBranches: 1, idleTTLSeconds: 1, tickIntervalSeconds: 60, pinnedBranches: [] });
+    const cooled: string[] = []; scheduler.setCoolFn(async id => { cooled.push(id); });
+    const index = fs.readFileSync(path.resolve(import.meta.dirname, '../../src/index.ts'), 'utf8');
+    const start = index.indexOf('if (process.env.CDS_USE_FORWARDER', index.indexOf('const schedulerService = new SchedulerService'));
+    const end = index.indexOf('// coolFn:', start); expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    let reads = 0;
+    const wire = new Function('process', 'schedulerService', 'readForwarderPreviewActivity', 'isTrustedProbeFingerprint',
+      'wireSchedulerPreviewActivitySelfCheck', 'activeServerEventLogStore', 'localServerEventLogReady',
+      `let previewActivitySelfCheck; ${index.slice(start, end)}; return previewActivitySelfCheck;`);
+    wire({ env: { CDS_USE_FORWARDER: enabled, CDS_FORWARDER_PORT: '9090' } }, scheduler,
+      async () => { reads++; throw new Error('本例没有forwarder'); }, isTrustedProbeFingerprint,
+      selfCheck.wireSchedulerPreviewActivitySelfCheck, { record: () => {} }, false);
+    await scheduler.tick();
+    expect(reads).toBe(enabled === '1' ? 1 : 0);
+    expect(cooled).toEqual(enabled === '1' ? [] : ['idle']);
+    expect(scheduler.getSnapshot().previewActivity?.status).toBe(enabled === '1' ? 'unknown' : undefined);
+  });
+
   it('实际unknown只记一次，短暂恢复尚未落库也不能假绿；持久历史跨新实例保留6h', async () => {
     const f = await fixture(); const first = f.create();
     await first.scheduler.tick(); await first.scheduler.tick();
