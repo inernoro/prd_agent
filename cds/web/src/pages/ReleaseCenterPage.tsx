@@ -133,6 +133,8 @@ export function ReleaseCenterPage(): JSX.Element {
   const [projectId, setProjectId] = useState(initialProject);
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const loadedScope = useRef(projectId);
+  const [refreshing, setRefreshing] = useState(false);
   const [archivedTargets, setArchivedTargets] = useState<ReleaseTarget[]>([]);
   // 通知深链 `?target=&run=` 指名要看哪个目标的哪次发布。只在首次挂载时取一次：
   // 之后用户在页面里切目标不该被 URL 上的旧参数拽回去。
@@ -176,16 +178,20 @@ export function ReleaseCenterPage(): JSX.Element {
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     // silent：后台轮询用——不闪 loading 骨架，数据到了原地替换（变化可感知但不清屏）。
-    if (!opts?.silent) setState({ status: 'loading' });
+    if (!opts?.silent) setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : { status: 'loading' });
+    setRefreshing(true);
     try {
       const [center, targets] = await Promise.all([
         apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`),
         apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`),
       ]);
+      loadedScope.current = projectId;
       setState({ status: 'ok', center, hosts: targets.remoteHosts || [] });
       setArchivedTargets(targets.archivedTargets || []);
     } catch (err) {
       if (!opts?.silent) setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setRefreshing(false);
     }
   }, [projectId]);
 
@@ -631,8 +637,8 @@ export function ReleaseCenterPage(): JSX.Element {
           right={(
             <>
               <PaletteHint />
-              <Button variant="outline" size="sm" onClick={() => void load()}>
-                <RefreshCw />
+              <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
+                <RefreshCw className={refreshing ? 'animate-spin' : ''} />
                 刷新
               </Button>
               <Button variant="outline" size="sm" onClick={openCreateWizard}>

@@ -108,10 +108,11 @@ try {
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
       assert.deepEqual(errors, []);
-    } catch (e) { result.failure = String(e); result.requests = [...new Set(requests)]; await fs.writeFile(path.join(out, `failed-${scene.kind}.html`), await page.content()); }
+    } catch (e) { await page.screenshot({path:path.join(out,`failure-${scene.kind}.jpg`)}); result.failure = String(e); result.requests = [...new Set(requests)]; await fs.writeFile(path.join(out, `failed-${scene.kind}.html`), await page.content()); }
     finally { code.release(); data.release(); await context.close(); }
     results.push(result);
     console.log(`${result.failure ? 'FAIL' : 'PASS'} ${route} same=${result.sameShape} geometry=${result.maxGeometryDelta}`);
+    if (result.failure) console.log(result.failure.slice(0,2000));
   }
   if (!before && !only) {
     try {

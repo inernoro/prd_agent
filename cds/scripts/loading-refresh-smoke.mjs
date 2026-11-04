@@ -3,11 +3,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
-/** 实际页面读接口的合成验收；从不保存表单、授权或发起部署。 */
+/** 实际页面的合成验收；GET/PUT 均被本机拦截，不保存真实配置、授权或发起部署。 */
 export async function verifyLoadingRefresh(browser, base, out) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
-  let projectGate, relationGate, projectRequested, relationRequested, releaseProject, releaseRelation, failProject = false, failRelation = false;
-  let projectCount = 0, relationCount = 0, projectRequestSeen, relationRequestSeen;
+  let projectGate, relationGate, projectRequested, relationRequested, releaseProject, releaseRelation, centerGate, centerRequested, releaseCenter, centerRequestSeen, failProject = false, failRelation = false;
+  let projectCount = 0, relationCount = 0, projectRequestSeen, relationRequestSeen, savedProject;
   const errors = [];
   await context.route('**/api/**', async route => {
     const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
@@ -17,10 +17,16 @@ export async function verifyLoadingRefresh(browser, base, out) {
     if (/\/identity-history$/.test(p)) payload = {records:[],nextCursor:null,coverage:'complete'};
     if (p === '/api/cds-system/connections') payload = { connections: [] };
     if (p === '/api/projects/fixture-project') {
+      if (route.request().method() === 'PUT') {
+        savedProject = {...payload,...route.request().postDataJSON()};
+        return route.fulfill({json:{project:savedProject}});
+      }
+      payload = savedProject ?? payload;
       projectCount++; projectRequestSeen?.();
       if (projectGate) await projectGate;
       if (failProject) return route.fulfill({ status: 400, json: { error: '合成：项目读取失败' } });
     }
+    if (p === '/api/releases/center' && centerGate) {centerRequestSeen?.(); await centerGate;}
     if (p.endsWith('/service-graph')) {
       relationCount++; relationRequestSeen?.();
       if (relationGate) await relationGate;
@@ -48,6 +54,10 @@ export async function verifyLoadingRefresh(browser, base, out) {
     holdProject(); await page.getByRole('button', { name: '刷新项目设置', exact: true }).click(); await projectRequested;
     await page.getByRole('link', { name: '项目列表', exact: true }).click(); await name.waitFor({state:'hidden'}); releaseProject(); projectGate = null;
     await page.goBack(); await name.waitFor(); assert.notEqual(await name.inputValue(), '尚未保存的名称');
+    await name.fill('  已保存的名称  ');
+    await page.locator('form').filter({has:name}).getByRole('button',{name:'保存修改',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('input[maxlength="60"]')?.value==='已保存的名称');
+    assert.equal(await name.inputValue(),'已保存的名称');
     await page.screenshot({ path: path.join(out, 'project-refresh-ready.jpg') });
     await page.goto(base + '/branch-relations/fixture-branch-alpha');
     await page.locator('[data-testid="relation-workspace"]').waitFor();
@@ -59,7 +69,14 @@ export async function verifyLoadingRefresh(browser, base, out) {
     failRelation = true; await page.getByRole('button', { name: '刷新', exact: true }).click(); await page.getByRole('alert').filter({ hasText: '合成：关系读取失败' }).waitFor();
     assert(await page.locator('[data-testid="relation-workspace"]').isVisible());
     failRelation = false; await page.getByRole('button', { name: '刷新', exact: true }).click(); await page.getByRole('alert').filter({ hasText: '合成：关系读取失败' }).waitFor({ state: 'hidden' });
+    await page.goto(base + '/release-center?project=fixture-project');
+    await page.getByRole('button',{name:/^全环境矩阵/}).waitFor();
+    centerRequested = new Promise(r=>centerRequestSeen=r); centerGate = new Promise(r=>releaseCenter=r);
+    await page.getByRole('button',{name:'刷新',exact:true}).first().click(); await centerRequested;
+    assert.equal(await page.locator('[data-release-center-skeleton]').count(),0);
+    assert(await page.getByRole('button',{name:/^全环境矩阵/}).isVisible());
+    releaseCenter(); centerGate=null;
     assert.deepEqual(errors, []);
-    return { projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, errors };
-  } finally { releaseProject?.(); releaseRelation?.(); await context.close(); }
+    return { projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, errors };
+  } finally { releaseProject?.(); releaseRelation?.(); releaseCenter?.(); await context.close(); }
 }

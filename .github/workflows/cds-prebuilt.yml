@@ -85,6 +85,14 @@ jobs:
           pnpm -C cds smoke:loading http://127.0.0.1:8870 --out "$RUNNER_TEMP/cds-loading-continuity"
           CDS_LOADING_EVIDENCE="$RUNNER_TEMP/cds-loading-neighbors" node cds/scripts/loading-coverage-smoke.mjs http://127.0.0.1:8870
 
+      - name: Archive loading acceptance failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-loading-failure-${{ github.sha }}
+          path: ${{ runner.temp }}/cds-loading-*
+          retention-days: 7
+
       - name: Write prebuilt manifest
         run: |
           cat > cds/cds-prebuilt-manifest.json <<JSON

@@ -1344,9 +1344,11 @@ export function GeneralTab({
   }
 
   const previousProject = useRef(project);
+  const acceptSavedDraft = useRef(false);
   useEffect(() => {
     const previous = previousProject.current;
-    const changedProject = previous.id !== project.id;
+    const changedProject = previous.id !== project.id || acceptSavedDraft.current;
+    acceptSavedDraft.current = false;
     // 刷新同步远端变化，同时保留用户尚未保存的字段；骨架和后台刷新都不能抹掉输入。
     setName(value => changedProject || value === (previous.name || '') ? project.name || '' : value);
     setAliasName(value => changedProject || value === (previous.aliasName || '') ? project.aliasName || '' : value);
@@ -1390,6 +1392,7 @@ export function GeneralTab({
           resourceChipDisplay,
         },
       });
+      acceptSavedDraft.current = true;
       onSaved(result.project);
       onToast('项目设置已保存');
     } catch (err) {
