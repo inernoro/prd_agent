@@ -587,7 +587,11 @@ export function buildWidgetScript(
       if(!visibleObstacle(el))return;
       for(var node=el;node;node=node.parentElement){
         var position=window.getComputedStyle(node).position;
-        if(position==='fixed'||position==='sticky'){add(node);break;}
+        if(position==='fixed'||position==='sticky'){
+          var appFrame=node===document.body||node===document.documentElement||node.matches('main,[role="main"],[role="application"]');
+          // 应用布局外壳提供定位上下文，语义节点自身才是本次浮层；普通浮层包装仍整体保留。
+          add(node!==el&&appFrame?el:node);break;
+        }
       }
     });
     document.querySelectorAll('button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,[role="heading"][aria-level="1"]').forEach(add);
@@ -599,6 +603,7 @@ export function buildWidgetScript(
     var maxX=right-r.width,maxY=bottom-r.height,midX=(left+maxX)/2,midY=(top+maxY)/2;
     // 有限候选：保留安全原位，其次同高两边、四角和四边中点，不猜某个应用的导航高度。
     var candidates=[[r.left,r.top],[left,r.top],[maxX,r.top],[left,top],[maxX,top],[left,maxY],[maxX,maxY],[left,midY],[maxX,midY],[midX,top],[midX,maxY]];
+    var previous={x:pos.x,y:pos.y,left:root.style.left,bottom:root.style.bottom};
     root.setAttribute('data-cds-placement','blocked');
     for(var i=0;i<candidates.length;i++){
       var x=candidates[i][0],y=candidates[i][1];
@@ -614,6 +619,8 @@ export function buildWidgetScript(
       root.setAttribute('data-cds-placement','clear');
       return;
     }
+    pos.x=previous.x;pos.y=previous.y;
+    root.style.left=previous.left;root.style.bottom=previous.bottom;
   }
 
   function scheduleWidgetAvoidance(){

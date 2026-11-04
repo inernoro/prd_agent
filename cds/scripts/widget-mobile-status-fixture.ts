@@ -15,7 +15,7 @@ declare global {
 
 const output = process.env.CDS_WIDGET_FIXTURE_OUTPUT || mkdtempSync(path.join(tmpdir(), 'cds-widget-mobile-'));
 mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ headless: true, executablePath: process.env.CDS_CHROMIUM_PATH || undefined });
+const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'], executablePath: process.env.CDS_CHROMIUM_PATH || undefined });
 const results: { name: string; status: string; detail?: string; geometry?: Record<string, unknown> }[] = [];
 const externalRequests: string[] = [];
 const pageErrors: string[] = [];
@@ -174,6 +174,34 @@ try {
     const measured = await geometry(page);
     assert.equal(measured.safe, true, '写入候选后真实 BCR 必须仍在12px安全区内');
     assert.equal(measured.overlap, false);
+  });
+  await check('rejected-real-position-restores-origin', async page => {
+    await settle(page);
+    await page.locator('#cds-widget').evaluate(el => { (el as HTMLElement).style.transform = 'translateX(100px)'; });
+    const before = await geometry(page);
+    assert.equal(before.safe, true);
+    await page.evaluate(() => {
+      const box = document.createElement('section'); box.id = 'fixture-status'; box.setAttribute('role', 'status');
+      box.style.cssText = 'position:fixed;left:100px;right:0;top:0;bottom:0;z-index:70;background:#fff';
+      box.textContent = '所有真实落位均不可用'; document.body.append(box);
+    });
+    await settle(page);
+    const after = await geometry(page);
+    assert.equal(after.placement, 'blocked');
+    assert.deepEqual([after.x, after.y], [before.x, before.y], '真实落位拒绝不能留下被拒绝的候选位置');
+  });
+  for (const host of ['shell', 'body']) await check(`fixed-${host}-semantic-region`, async page => {
+    await page.evaluate(host => {
+      const shell = host === 'body' ? document.body : document.createElement('main');
+      shell.style.cssText = 'position:fixed;inset:0';
+      if (host !== 'body') document.body.append(shell);
+      const box = document.createElement('section'); box.id = 'fixture-status'; box.setAttribute('role', 'status');
+      box.style.cssText = 'position:absolute;left:8px;right:8px;bottom:80px;height:64px;background:#fff;z-index:70';
+      box.textContent = '固定应用容器内的真实状态内容'; shell.append(box);
+    }, host);
+    await settle(page);
+    assert.equal((await geometry(page)).placement, 'clear', '固定应用外壳不能冒充整屏语义浮层');
+    assert.equal((await geometry(page)).overlap, false);
   });
   await check('no-safe-slot', async page => {
     await addFloat(page, 'alert');
