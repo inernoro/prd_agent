@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildWidgetScript } from '../../src/widget-script.js';
+import { readFileSync } from 'node:fs';
 
 describe('widget bridge polling gate', () => {
   const original = process.env.CDS_BRIDGE_ENABLED;
@@ -30,8 +31,7 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};');
     expect(script).toContain('@media (max-width:640px)');
     expect(script).toContain('#cds-widget .cds-branch,#cds-widget .cds-mode{display:none}');
-    expect(script).toContain('#cds-widget .cds-badge:not(.is-expanded){width:44px;height:44px;min-width:44px;max-width:44px');
-    expect(script).toContain('#cds-widget .cds-badge:not(.is-expanded) .cds-badge-main>:not(button[data-action="toggle"]){display:none}');
+    // 44px 和同步/失败可读性由真实 IIFE/CSS 夹具断言，不再把错误的通配隐藏规则锁成合同。
     expect(script).toContain('#cds-widget .cds-panel{width:calc(100vw - 24px)');
     expect(script).toContain('max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain');
     expect(script).toContain('data-action="close-panel" title="关闭 CDS 诊断面板" aria-label="关闭 CDS 诊断面板"');
@@ -97,5 +97,14 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('  render();\n  scheduleMobileCompact(4000);');
     expect(script).toContain('if(!isMobileViewport()||expanded)return;');
     expect(script).toContain('if(!expanded)scheduleMobileCompact(8000);');
+  });
+
+  it('把生产徽标浏览器夹具接在已安装 Chromium 的既有离线入口', () => {
+    const smoke = readFileSync(new URL('../../scripts/mobile-layout-smoke.mjs', import.meta.url), 'utf8');
+    const fixture = readFileSync(new URL('../../scripts/widget-mobile-status-fixture.ts', import.meta.url), 'utf8');
+    expect(smoke).toContain('if (OFFLINE && !only) execFileSync(');
+    expect(smoke).toContain("new URL('./widget-mobile-status-fixture.ts', import.meta.url)");
+    expect(fixture).toContain('buildWidgetScript(');
+    expect(fixture).toContain("provenance: 'deterministic-fixture'");
   });
 });
