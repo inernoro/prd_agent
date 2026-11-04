@@ -15,9 +15,10 @@ import {
 } from '@/services/real/webPages';
 import { freshPptSessionPath } from '@/pages/md-to-ppt-agent/sessionContext';
 import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
-import { chooseDesignRuntime, displayedDesignRuntime, runtimeFallbackNotice } from '../siteEditPreview';
+import { REQUIRED_WEB_PAGE_RUNTIME, displayedDesignRuntime, requiredWebPageRuntime } from '../siteEditPreview';
 import {
   formatGenerationClock,
+  formatCompletedRunDuration,
   generationEtaShort,
   pickGenerationTiming,
   remainingEstimateText,
@@ -30,7 +31,7 @@ import {
   MAX_GENERATE_ATTACHMENTS,
   useDesignAttachmentUploads,
 } from '../designAttachments';
-import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, orderRuntimeCards, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
+import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
 import { useSiteGenerationRun } from './useSiteGenerationRun';
 import {
   OUTPUT_FORM_ORDER,
@@ -81,12 +82,6 @@ export interface GenerationIntro {
 const MAX_KNOWLEDGE = 3;
 const DEFAULT_REQUEST = '把这些资料做成一个清晰好读、适合发给客户看的网页';
 
-function durationText(seconds: number): string {
-  const s = Math.max(0, Math.round(seconds));
-  const m = Math.floor(s / 60);
-  return m > 0 ? `${m} 分 ${String(s % 60).padStart(2, '0')} 秒` : `${s} 秒`;
-}
-
 export default function NewSiteStage({
   source,
   destinationTeamId,
@@ -115,8 +110,6 @@ export default function NewSiteStage({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
   const [runtimesLoaded, setRuntimesLoaded] = useState(false);
-  const [settingsDefaultRuntime, setSettingsDefaultRuntime] = useState<string | null>(null);
-  const [selectedRuntime, setSelectedRuntime] = useState('open-design');
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
   /** 本部署最近 30 天的真实耗时；拿不到就是 null，预估退回经验值并明说。 */
   const [timingStats, setTimingStats] = useState<DesignTimingStats | null>(null);
@@ -155,9 +148,6 @@ export default function NewSiteStage({
       if (!active) return;
       if (runtimes.success) {
         setCapabilities(runtimes.data.runtimes);
-        setSettingsDefaultRuntime(runtimes.data.defaultRuntime);
-        const runtimeId = chooseDesignRuntime(runtimes.data.runtimes, runtimes.data.defaultRuntime);
-        if (runtimeId) setSelectedRuntime(runtimeId);
       }
       setRuntimesLoaded(true);
     });
@@ -216,14 +206,15 @@ export default function NewSiteStage({
     return () => { active = false; };
   }, []);
 
-  const enabledRuntimes = useMemo(() => orderRuntimeCards(capabilities.filter((item) => item.enabled)), [capabilities]);
-  const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
+  const requestRuntime = useMemo(
+    () => requiredWebPageRuntime(capabilities, 'generate'),
+    [capabilities],
+  );
   const visibleRuntime = displayedDesignRuntime(
     capabilities,
-    requestRuntime?.id ?? selectedRuntime,
+    requestRuntime?.id ?? REQUIRED_WEB_PAGE_RUNTIME,
     run.generating ? run.activeRunRuntime : null,
   );
-  const fallbackNotice = runtimeFallbackNotice(capabilities, settingsDefaultRuntime, requestRuntime?.id);
   const selectedStyle = styleSelection?.kind === 'preset'
     ? styles.find((style) => style.id === styleSelection.styleId) ?? null
     : null;
@@ -232,9 +223,9 @@ export default function NewSiteStage({
     || titleFromFileName(uploads.items.find((item) => item.status !== 'failed')?.fileName ?? '')
     || undefined;
   const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;
-  const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
-  const requestTiming = pickGenerationTiming(timingStats, requestRuntime?.id);
-  const eta = generationEtaShort(requestRuntime?.id, requestTiming);
+  const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
+  const requestTiming = pickGenerationTiming(timingStats, REQUIRED_WEB_PAGE_RUNTIME);
+  const eta = generationEtaShort(REQUIRED_WEB_PAGE_RUNTIME, requestTiming);
   /**
    * 说明行只放一行：耗时 · 过程中会怎样。没有真实统计时标明是经验值；统计还在读或读不到要分开说，
    * 读不到若也写成「经验值」，统计接口坏了会被一直当成样本少（降级不许静默）。
@@ -257,11 +248,11 @@ export default function NewSiteStage({
     onGenerated(done.id, {
       request: sent?.text || run.recoveredTitle || '生成网页',
       chips: sent?.chips ?? [],
-      durationText: durationText(run.elapsedSeconds),
+      durationText: formatCompletedRunDuration(done.durationSeconds),
       runtimeLabel: sent?.runtimeLabel || (visibleRuntime ? runtimeCardTitle(visibleRuntime) : '设计执行器'),
       styleName: run.runInfo?.styleName ?? sent?.styleName,
     });
-  }, [onGenerated, run.completedSite, run.elapsedSeconds, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
+  }, [onGenerated, run.completedSite, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
 
   const addFiles = (files: File[]) => {
     const rejected = uploads.addFiles(files);
@@ -372,7 +363,6 @@ export default function NewSiteStage({
     void run.start({
       instruction: text,
       title,
-      runtimeId: requestRuntime.id,
       sourceSurface: source ? 'knowledge-base' : 'web-hosting',
       knowledge: selectedKnowledge,
       styleId: selectionStyleId(styleSelection),
@@ -435,7 +425,6 @@ export default function NewSiteStage({
           provenance={runProvenanceText(run.runInfo)}
           steps={steps.length > 0 ? steps : [{ key: 'start', label: '正在提交资料', state: 'active' }]}
           activity={`${run.phase || '正在准备'}${run.lastEventAtMs ? ` · 最近一次回应 ${Math.max(0, Math.round((Date.now() - run.lastEventAtMs) / 1000))} 秒前` : ''}`}
-          thinking={run.thinking}
           onStop={() => void run.stop()}
           stopRequested={run.stopRequested}
           canStop={Boolean(run.activeRunId)}
@@ -446,11 +435,19 @@ export default function NewSiteStage({
         <AssistantBubble tone="warning">
           <p className="font-semibold">{run.notice.tone === 'error' ? '这次没有做成' : '说明'}</p>
           <p className="text-[12px] text-token-secondary">{run.notice.text}</p>
-          <p className="text-[12px] text-token-secondary">资料和要求还在下面的输入框里，改一改或直接再点一次生成。</p>
+          {run.restartableRunId ? (
+            <button
+              type="button"
+              onClick={() => void run.restart()}
+              className="mt-1 inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-medium text-token-primary focus-visible:outline-none focus-visible:ring-2"
+              style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)' }}
+            >
+              按原资料和要求重新开始
+            </button>
+          ) : (
+            <p className="text-[12px] text-token-secondary">资料和要求还在下面的输入框里，改一改或直接再点一次生成。</p>
+          )}
         </AssistantBubble>
-      )}
-      {fallbackNotice && !run.generating && (
-        <p className="rounded-lg px-2.5 py-2 text-[11px]" style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>{fallbackNotice}</p>
       )}
       <div ref={conversationEndRef} />
     </>
@@ -487,21 +484,6 @@ export default function NewSiteStage({
               </span>
             )}
           </OptionChip>
-          {enabledRuntimes.length > 1 ? (
-            <Segmented
-              label="生成方式"
-              value={requestRuntime?.id ?? ''}
-              disabled={run.generating}
-              onChange={setSelectedRuntime}
-              options={enabledRuntimes.map((item) => ({
-                value: item.id,
-                label: runtimeCardTitle(item).replace('生成', '').replace('设计', ''),
-                title: RUNTIME_CARD_REGISTRY[item.id]?.description ?? item.label,
-              }))}
-            />
-          ) : requestRuntime ? (
-            <span className="text-[12px] text-token-muted">{runtimeCardTitle(requestRuntime)}</span>
-          ) : null}
         </>
       )}
     </>

@@ -274,6 +274,20 @@ describe('release control plane project-scope isolation', () => {
     expect(stateService.getReleaseTarget('target-a')?.projectIdentity).toEqual({ projectId: 'proj-a', projectSlug: 'a' });
   });
 
+  it('defaults new targets to the standard project file and persists an explicitly selected standalone script', async () => {
+    const res = await request(server, 'POST', '/api/releases/targets', { 'X-Test-Key': KEY_A }, {
+      projectId: 'proj-a', name: 'Project script', privateKeyRef: 'proj-a-host-key',
+      host: '127.0.0.1', port: 22, user: 'root', appPath: '/srv/app', healthcheckUrl: 'https://a.example.test/healthz',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.target.strategy).toMatchObject({ mode: 'project-script', scriptFile: 'cds-release.sh' });
+    expect(res.body.target.ssh.deployCommand).toBe('');
+    const script = '#!/bin/bash\nset -eu\n# check / deploy\n';
+    const patched = await request(server, 'PATCH', `/api/releases/targets/${res.body.target.id}`, { 'X-Test-Key': KEY_A }, { strategy: { mode: 'managed-script', script } });
+    expect(patched.status).toBe(200);
+    expect(patched.body.target.strategy).toMatchObject({ mode: 'managed-script', script });
+  });
+
   it('returns 409 when patching a second active canonical target into the same environment', async () => {
     stateService.upsertReleaseTarget({
       ...releaseTarget('target-a-primary', 'proj-a'),

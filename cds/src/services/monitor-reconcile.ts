@@ -77,6 +77,7 @@ function toMonitor(
     healthOp: item.op as NonNullable<UptimeCustomMonitor['healthOp']>,
     healthValue: item.value ?? '',
     intervalSeconds: item.intervalSeconds,
+    timeoutMs: existing?.timeoutMs ?? 15_000,
     projectId: input.projectId,
     enabled: true,
     observeMode: item.observeMode,
@@ -103,7 +104,7 @@ function toMonitor(
 function sameShape(a: UptimeCustomMonitor, b: UptimeCustomMonitor): boolean {
   const pick = (m: UptimeCustomMonitor) => JSON.stringify([
     m.name, m.url, m.healthComponentId, m.healthField, m.healthOp, m.healthValue,
-    m.intervalSeconds, m.observeMode, m.sampleCountPath, m.publicVisible, m.publicName, m.enabled, m.environment,
+    m.intervalSeconds, m.timeoutMs, m.observeMode, m.sampleCountPath, m.publicVisible, m.publicName, m.enabled, m.environment,
   ]);
   return pick(a) === pick(b);
 }

@@ -77,6 +77,27 @@ public static class ProductImportProductRouting
         return (null, label.Trim(), false);
     }
 
+    /// <summary>版本历史导入只接受唯一匹配，避免相似产品名导致误入库。</summary>
+    public static (string? ProductId, string? Label, bool Matched) ResolveUniqueVersionProductIdByLabel(
+        IReadOnlyList<Product> products,
+        string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label)) return (null, null, false);
+        var query = label.Trim();
+        var exact = products.Where(p =>
+            string.Equals(p.Name.Trim(), query, StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(p.Code) && string.Equals(p.Code.Trim(), query, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (exact.Count == 1) return (exact[0].Id, query, true);
+        if (exact.Count > 1) return (null, query, false);
+        var fuzzy = products.Where(p =>
+            !string.IsNullOrWhiteSpace(p.Name)
+            && (p.Name.Trim().Contains(query, StringComparison.OrdinalIgnoreCase)
+                || query.Contains(p.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        return fuzzy.Count == 1 ? (fuzzy[0].Id, query, true) : (null, query, false);
+    }
+
     public static string? MatchProductByLabel(IReadOnlyList<Product> products, string label)
     {
         var q = label.Trim();

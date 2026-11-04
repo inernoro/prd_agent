@@ -63,7 +63,7 @@ export interface CallGroup {
  */
 export function groupCalls(items: McpCallLogDto[]): CallGroup[] {
   // 入参是列表接口的顺序（最新在前）。按时间正序走一遍才分得清「谁是发起、谁是后续查看」。
-  const chronological = [...items].reverse();
+  const chronological = [...items].reverse().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
   const buckets: McpCallLogDto[][] = [];
   const keyOf = (item: McpCallLogDto) => {

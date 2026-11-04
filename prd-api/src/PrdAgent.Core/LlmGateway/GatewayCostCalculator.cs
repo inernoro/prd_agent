@@ -71,7 +71,8 @@ public static class GatewayCostCalculator
             outputTokens: tokenUsage?.OutputTokens ?? 0,
             cacheReadTokens: tokenUsage?.CacheReadInputTokens ?? 0,
             cacheWriteTokens: tokenUsage?.CacheCreationInputTokens ?? 0,
-            countCall: countCall);
+            countCall: countCall,
+            cacheWriteCountedInsideInput: tokenUsage?.CacheCreationCountedInsideInput == true);
 
     /// <summary>纯参数形态，供单测直接喂值。</summary>
     public static GatewayCostBreakdown Calculate(
@@ -86,7 +87,8 @@ public static class GatewayCostCalculator
         int outputTokens,
         int cacheReadTokens,
         int cacheWriteTokens,
-        bool countCall)
+        bool countCall,
+        bool cacheWriteCountedInsideInput = false)
     {
         var normalizedCurrency = string.IsNullOrWhiteSpace(currency)
             ? null
@@ -103,6 +105,16 @@ public static class GatewayCostCalculator
         if (CacheReadCountedInsideInput(protocol) && cacheRead > 0 && cacheRead <= rawInput)
         {
             billableInput = rawInput - cacheRead;
+        }
+        // OpenAI Responses 可在 input_tokens_details.cache_write_tokens 中返回缓存写入量，
+        // 这部分同样已经包含在 input_tokens。只有解析器明确识别到这个 nested 形态时才扣，
+        // 根级 cache_creation_input_tokens 仍按 Claude 的独立计数处理。
+        if (CacheReadCountedInsideInput(protocol)
+            && cacheWriteCountedInsideInput
+            && cacheWrite > 0
+            && cacheWrite <= billableInput)
+        {
+            billableInput -= cacheWrite;
         }
 
         // 没配缓存价不等于缓存免费，只等于「不知道」——按输入全价算。高估会促使人把价格补上，

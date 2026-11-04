@@ -1012,3 +1012,18 @@ sessionStorage——存的是录音正文全文（会议、访谈、商务沟通
 | 录音交付页对照台（开发期） | `prd-admin/mock.html`、`prd-admin/src/dev/recordingConsistencyMock.tsx` |
 | 录音转文字入口与失败文案 | `prd-admin/src/components/doc-browser/DocBrowser.tsx`（`TranscribeHeroCard`）、`prd-admin/src/pages/document-store/recordingVault.ts`（`describeBackgroundTranscriptionBanner` / `describeFailedTranscription`） |
 | 录音播放器与转录跟读 | `prd-admin/src/components/doc-browser/AudioWavePlayer.tsx`、`prd-admin/src/components/doc-browser/TranscriptKaraoke.tsx`、`prd-admin/src/components/file-preview/FilePreview.tsx` |
+
+## 文件上传状态收口边界（2026-10-14）
+
+- 原缺陷 `DEF-STSMK-FILE-STATE-001` 保留编号。本次只区分请求体传输与正文解析，明确等待时间，并保留服务端已确认的坏文件恢复说明；不改解析协议、格式能力、录音或短视频业务。
+- 字节到 99% 仍可能在上传；请求体发完只说明进入解析等待，只有真实成功回执与正文回读才能说明成功。延迟真实响应交付的用例只证明等待反馈，不能作为解析性能、OCR 或模型可用的证据。
+- 既有 `FILE-003` 的慢路径回归仅在 CDS 执行，正式环境不注入响应延迟。原 `FILE-004`、`FILE-005`、`REG-file-001` 与格式回读用例保留，不用本轮窄复测替代 48 小时矩阵。
+- 提交时真实预览验收尚未完成：必须固定部署版本，用正常登录与导航完成中文文件名 TXT、第二种格式、损坏文件失败恢复、刷新正文、原件字节和清理回读，再由主轨核验报告决定合并。CI 通过不能关闭此边界。
+
+### 同包审查更正（2026-10-15）
+
+首版把 `FILE-003` 替换为仅解析计时且跳过正式环境，不能满足原矩阵。这一处在同包内更正：保留原大文件文件名/百分比与超限预警，CDS融合追加明确解析计时；正式环境保留无故障注入的最小小文件安全变体，不以这次窄包自行解锁生产写入。读屏只播报标题与阶段变化，计时继续视觉可读但不每秒公告。首版记录与首次失败不删除；新版本仍需独立真实验收。
+
+失败清理边界追加：放行的真实上传可能仍在写正文，必须等待其完整回执收敛后再删除本轮库。若回执超时或连接中断而无法确认写入结束，保留已捕获的本轮库ID作为恢复起点并判失败，禁止用并发级联删除制造孤儿条目或伪报清理完成；不更改服务端清理协议。
+
+未发出请求与在途请求分开：安装回执等待器不代表上传已经开始，必须用实际request事件判断；若选择文件前就失败且确实未发出上传，请正常清理空的自有库，不等待不存在的回执或留库。

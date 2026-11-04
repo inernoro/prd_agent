@@ -16,6 +16,7 @@
  */
 
 import type { LayerContentKind } from './layerContentAnalysis';
+import { CANVAS_GENERATOR_LABEL } from './canvasElementLabels';
 
 // ============ 类型定义 ============
 
@@ -70,6 +71,7 @@ export type PersistedCanvasElementV1 =
       w?: number;
       h?: number;
       z?: number;
+      name?: string;
       shapeType?: 'rect' | 'circle' | 'triangle' | 'star';
       fill?: string;
       stroke?: string;
@@ -85,6 +87,7 @@ export type PersistedCanvasElementV1 =
       w?: number;
       h?: number;
       z?: number;
+      name?: string;
       text?: string;
       fontSize?: number;
       textColor?: string;
@@ -456,7 +459,7 @@ export function persistedV1ToCanvas(
       out.push({
         key: id,
         createdAt: Date.now(),
-        prompt: String(el.prompt ?? el.name ?? 'Image Generator'),
+        prompt: String(el.prompt ?? el.name ?? CANVAS_GENERATOR_LABEL),
         src: '',
         status: 'done',
         kind: 'generator',
@@ -473,7 +476,7 @@ export function persistedV1ToCanvas(
       out.push({
         key: id,
         createdAt: Date.now(),
-        prompt: '',
+        prompt: String(el.name ?? ''),
         src: '',
         status: 'done',
         kind: 'shape',
@@ -489,7 +492,7 @@ export function persistedV1ToCanvas(
       out.push({
         key: id,
         createdAt: Date.now(),
-        prompt: '',
+        prompt: String(el.name ?? ''),
         src: '',
         status: 'done',
         kind: 'text',

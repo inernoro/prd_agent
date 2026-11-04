@@ -51,13 +51,15 @@ public static class AskAccessPolicy
     /// 灰掉开关并说明原因——三处必须同一个答案，否则就会出现「开关打得开、
     /// 每个访客都吃 422」这种把用户耍着玩的状态。
     ///
-    /// 视频包装站没有任何可读文本：让模型对着标题编，比明说不支持更糟
+    /// 视频和图片包装站没有可供当前提问服务读取的文本：让模型对着标题编，比明说不支持更糟
     /// （no-rootless-tree：做不到的事不装能做）。
     /// </summary>
     public static string? UnsupportedReason(string? wrappedAssetType)
         => string.Equals(wrappedAssetType, "video", StringComparison.OrdinalIgnoreCase)
             ? "这是一个视频页面，没有可供阅读的文字内容，暂不支持提问。"
-            : null;
+            : string.Equals(wrappedAssetType, "image", StringComparison.OrdinalIgnoreCase)
+                ? "这是一个图片页面，尚未接入图片内容理解，暂不支持提问。"
+                : null;
 
     /// <summary>
     /// 这个站点现在开不开提问。**唯一判定源**，所有「要不要给提问入口」的地方都走它。
@@ -72,7 +74,7 @@ public static class AskAccessPolicy
     /// 优先级是：站点单独设置 &gt; owner 个人默认 &gt; 系统默认关闭。这样用户能在全局设置
     /// 决定所有未单独配置站点的默认行为，同时保留某个站点明确开关的能力。
     ///
-    /// 形态不支持（视频站）永远压过默认值：开关打得开、每个访客吃 422 是耍用户。
+    /// 形态不支持（视频或图片站）永远压过默认值：开关打得开、每个访客吃 422 是耍用户。
     /// </summary>
     public static bool IsAskOn(
         bool? askEnabled,

@@ -83,6 +83,8 @@ public sealed class BuiltInDesignArtifactProviderDefinitionSource : IDesignArtif
         [DesignArtifactOperations.Generate, DesignArtifactOperations.Edit];
     private static readonly string[] WebPageSources =
         [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase];
+    private static readonly string[] OpenDesignSources =
+        [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase, DesignArtifactSourceSurfaces.HtmlPpt];
 
     public IEnumerable<DesignArtifactProviderDefinition> GetDefinitions()
     {
@@ -97,7 +99,8 @@ public sealed class BuiltInDesignArtifactProviderDefinitionSource : IDesignArtif
             WebPageSources);
         yield return Remote(
             DesignArtifactRuntimes.OpenDesign,
-            "OpenDesign");
+            "OpenDesign",
+            supportsPresentations: true);
         yield return Remote(
             DesignArtifactRuntimes.Codex,
             "Codex");
@@ -106,15 +109,17 @@ public sealed class BuiltInDesignArtifactProviderDefinitionSource : IDesignArtif
             "Claude");
     }
 
-    private static DesignArtifactProviderDefinition Remote(string id, string label) => new(
+    private static DesignArtifactProviderDefinition Remote(string id, string label, bool supportsPresentations = false) => new(
         id,
         label,
         DesignArtifactAdapterKinds.RemoteAgent,
         DesignArtifactExecutionOwners.CdsRemoteAgent,
         DesignArtifactIsolationModes.SessionContainer,
-        [DesignArtifactTypes.WebPage],
+        supportsPresentations
+            ? [DesignArtifactTypes.WebPage, DesignArtifactTypes.HtmlPpt]
+            : [DesignArtifactTypes.WebPage],
         WebPageOperations,
-        WebPageSources);
+        supportsPresentations ? OpenDesignSources : WebPageSources);
 }
 
 public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatalog

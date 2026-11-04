@@ -1,4 +1,5 @@
 import { WorktreeService } from './worktree.js';
+import { reclaimDeploymentSources, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -143,6 +144,12 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
       return out.split('\n').filter(Boolean);
     },
     removeImage: async (image) => {
+      // ps.Image 可能是 digest、ID 或另一个 tag。删除前直接按 daemon 的
+      // image identity 查全部容器（含停止），不能等 rmi 已经取消 tag 后再检查。
+      const currentRefs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000, run).catch(() => '__ERR__ 容器引用查询未确认');
+      if (currentRefs.startsWith('__ERR__') || currentRefs.trim() !== '') {
+        return `${IMAGE_HELD_PREFIX}有容器引用或引用检查失败，未执行普通删除、未强制删除`;
+      }
       const out = await execDocker(['rmi', image], 60_000, run);
       if (!out.startsWith('__ERR__')) return null;
       const err = out.replace('__ERR__ ', '');
@@ -221,6 +228,7 @@ export const defaultDockerPrune: DockerPruneFn = createDockerPrune(execDockerDet
 
 /** Report returned by a single sweep pass. */
 export interface JanitorSweepReport {
+  deploymentSources?: DeploymentSourceRetentionReport;
   timestamp: string;
   /** Branches removed by this pass. */
   removedBranches: string[];
@@ -277,6 +285,7 @@ export interface JanitorSweepReport {
 /** 孤儿 worktree 对账所需的磁盘读写（注入点：测试里换成假实现，不碰磁盘）。 */
 export interface DirectoryRemovalOptions {
   beforeStart: () => void; identity?: WorktreeDirectoryIdentity; entryOnly: boolean; allowedBase: string;
+  sourceOnly?: boolean;
 }
 export interface OrphanWorktreeFs {
   /**
@@ -285,7 +294,7 @@ export interface OrphanWorktreeFs {
    * `knownProjectIds` 是**白名单**，不是提示：只有名字在其中的顶层目录才是项目桶，
    * 其余一律整个跳过（既不当桶往下枚举，也不当候选）。见实现里的注释。
    */
-  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<WorktreeEnumeration>;
+  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<WorktreeEnumeration & { sourceBuckets?: string[] }>;
   /** 当前被任何容器（含已停止）bind-mount 的宿主路径。查不到时返回 null。 */
   listMountedHostPaths: () => Promise<string[] | null>;
   /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
@@ -306,6 +315,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
   listWorktreeDirs: async (base, knownProjectIds) => {
     const out: DiskWorktreeDir[] = [];
     const unreadable: string[] = [];
+    const sourceBuckets = new Set<string>();
     // 项目桶白名单（Codex PR #1275 二轮 P1）。此前是「顶层每个目录都当项目桶」，
     // 在**从扁平布局迁移过来的存量部署**上会酿成删活代码：
     // FU-04 的 migrateFlatLayoutIfNeeded 采用符号链接而非移动——原来的
@@ -351,6 +361,20 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
         continue;
       }
       for (const slug of slugs) {
+        if (slug.name === '.deployment-sources') {
+          // Never offer the whole source bucket for deletion, but keep its project discoverable.
+          const sourceRoot = path.join(projDir, slug.name);
+          if (!slug.isDirectory()) { sourceBuckets.add(proj.name); continue; }
+          try {
+            const buckets = await fs.promises.readdir(sourceRoot, { withFileTypes: true });
+            for (const bucket of buckets) {
+              if (!bucket.isDirectory() || (await fs.promises.readdir(path.join(sourceRoot, bucket.name))).length) {
+                sourceBuckets.add(proj.name); break;
+              }
+            }
+          } catch { unreadable.push(sourceRoot); }
+          continue;
+        }
         // 桶内条目认两种形态：真实目录，以及**指向真实 worktree 的符号链接**——
         // 扁平布局迁移留下的 `<base>/default/<slug>` 正是后者（Codex 六轮 P2）。
         // 此前 isDirectory() 一票否决把别名整个漏掉，而它的真身在顶层又被项目桶
@@ -393,12 +417,17 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
         }
       }
     }
-    return { dirs: out, unreadable };
+    return { dirs: out, unreadable, ...(sourceBuckets.size ? { sourceBuckets: [...sourceBuckets] } : {}) };
   },
   listMountedHostPaths: () => listMountedHostPaths(execDockerDetailed),
   readDirectoryIdentity: readWorktreeDirectoryIdentity,
   removeDir: async (dir, options) => {
     options?.beforeStart();
+    if (options?.sourceOnly && options.identity) {
+      const { removeOwnedDirectory } = await import('./worktree-directory-removal-process.js');
+      if (await removeOwnedDirectory({ ...options, dir, identity: options.identity }) !== 'removed') throw new WorktreeClaimHeldError();
+      return null;
+    }
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       return null;
@@ -474,7 +503,7 @@ export function createJanitorDockerAdapters(shell: IShellExecutor): {
         const result = await shell.execOwnedOperation(`${shellQuoteArg(process.execPath)} --max-old-space-size=128 ${sourceRuntime ? '--import tsx ' : ''}${shellQuoteArg(worker)}`, {
           cwd: fileURLToPath(new URL('../../', import.meta.url)),
           executionLane: 'operation', timeout: 60_000, beforeStart: options.beforeStart,
-          stdin: JSON.stringify({ dir, allowedBase: options.allowedBase, identity: options.identity, entryOnly: options.entryOnly }),
+          stdin: JSON.stringify({ dir, allowedBase: options.allowedBase, identity: options.identity, entryOnly: options.entryOnly, sourceOnly: options.sourceOnly }),
         });
         if (result.exitCode !== 0) return '目录回收执行失败，已保留本轮回收记录。';
         let status: unknown;
@@ -519,6 +548,8 @@ export interface JanitorSnapshot {
     } | null;
     /** 孤儿 worktree 对账摘要。null = 本次未执行。 */
     orphanWorktrees: { removed: number; failed: number; deferred: number } | null;
+    deploymentSources?: { scanned: number; attempted: number; removed: number; failed: number; held: number; deferred: number;
+      heldReasons?: Partial<Record<DeploymentSourceHoldReason, number>> };
     dockerPrune: string[] | null;
     errors: number;
   } | null;
@@ -580,6 +611,7 @@ export class JanitorService {
   /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
   private firstSweepHandle: NodeJS.Timeout | null = null;
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
+  private deploymentSourceCursor: string | undefined;
   /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
   private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
@@ -769,7 +801,7 @@ export class JanitorService {
       );
     }
     if (tombstones.length && !enumerationBroken) {
-      const stillThere = new Set<string>();
+      const stillThere = new Set(enumeration.sourceBuckets || []);
       const removedSet = new Set(removed);
       for (const d of diskDirs) {
         if (removedSet.has(normalizeWorktreePath(d.path))) continue;
@@ -954,6 +986,13 @@ export class JanitorService {
               deferred: report.orphanWorktrees.deferred,
             }
             : null,
+          ...(report.deploymentSources ? { deploymentSources: {
+            scanned: report.deploymentSources.scanned, attempted: report.deploymentSources.attempted,
+            removed: report.deploymentSources.removed.length, failed: report.deploymentSources.failed.length,
+            held: Object.keys(report.deploymentSources.held).length,
+            ...(Object.keys(report.deploymentSources.held).length ? { heldReasons: summarizeDeploymentSourceHolds(report.deploymentSources.held) } : {}),
+            deferred: report.deploymentSources.deferred,
+          } } : {}),
           dockerPrune: report.dockerPrune?.reclaimed ?? null,
           errors: report.errors.length,
         };
@@ -1147,6 +1186,15 @@ export class JanitorService {
     //      而孤儿目录已经不属于任何分支，删它不涉及用户的分支资产。
     if (this.config.orphanWorktrees !== false) {
       try {
+        report.deploymentSources = await reclaimDeploymentSources({ base: this.worktreeBase,
+          projectIds: [...this.stateService.getProjects().map(p => p.id),
+            ...this.stateService.getDeletedProjectWorktreeBuckets().map(p => p.projectId)],
+          branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
+          nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
+        const sources = report.deploymentSources;
+        this.deploymentSourceCursor = sources.lastAttemptedPath ?? sources.lastScannedPath ?? this.deploymentSourceCursor;
+        if (sources.scanned || sources.failed.length || Object.keys(sources.held).length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
+        for (const f of sources.failed) report.errors.push(`deployment source: ${f.path}: ${f.error}`);
         report.orphanWorktrees = await this.runOrphanWorktreeReconcile();
         const o = report.orphanWorktrees;
         if (o.removed.length || o.deferred || o.failed.length) {

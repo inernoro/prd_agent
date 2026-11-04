@@ -203,8 +203,10 @@ function listRootSqlFiles(searchPath: string): string[] {
   return out.slice(0, 8);
 }
 
-function detectTypeormConfig(searchPath: string): string | null {
-  return firstExisting(searchPath, [
+const DATABASE_INIT_SOURCE_FILES = {
+  prisma: ['prisma/schema.prisma'],
+  drizzle: ['drizzle.config.ts', 'drizzle.config.js', 'drizzle.config.mjs', 'drizzle.config.cjs'],
+  typeorm: [
     'ormconfig.json',
     'ormconfig.js',
     'ormconfig.ts',
@@ -214,18 +216,38 @@ function detectTypeormConfig(searchPath: string): string | null {
     'data-source.js',
     'src/data-source.ts',
     'src/data-source.js',
-  ]);
-}
-
-function detectSequelizeConfig(searchPath: string): string | null {
-  return firstExisting(searchPath, [
+  ],
+  sequelize: [
     '.sequelizerc',
     'config/config.json',
     'config/config.js',
     'config/database.js',
     'sequelize.config.js',
     'sequelize.config.cjs',
-  ]);
+  ],
+  django: ['manage.py'],
+  alembic: ['alembic.ini'],
+};
+
+/** Same signal list as the filesystem detector, checked against an exact Git tree. */
+export function hasDatabaseInitializationSource(paths: readonly string[], workDirs: readonly string[]): boolean {
+  const files = new Set(Object.values(DATABASE_INIT_SOURCE_FILES).flat());
+  const roots = new Set(['.', ...workDirs].map(dir =>
+    path.normalize(dir).split(path.sep).join('/').replace(/\/+$/, '') || '/'));
+  if ([...roots].some(dir => path.posix.isAbsolute(dir) || dir === '..' || dir.startsWith('../'))) return true;
+  return [...roots].some(root => paths.some(file => {
+    const relative = root === '.' ? file : file.startsWith(root + '/') ? file.slice(root.length + 1) : '';
+    return files.has(relative) || relative === 'db/migrate' || relative.startsWith('db/migrate/')
+      || (!relative.includes('/') && /\.sql$/i.test(relative));
+  }));
+}
+
+function detectTypeormConfig(searchPath: string): string | null {
+  return firstExisting(searchPath, DATABASE_INIT_SOURCE_FILES.typeorm);
+}
+
+function detectSequelizeConfig(searchPath: string): string | null {
+  return firstExisting(searchPath, DATABASE_INIT_SOURCE_FILES.sequelize);
 }
 
 function nodeMigrationCommand(searchPath: string, tool: 'prisma' | 'drizzle-kit' | 'typeorm' | 'sequelize-cli', args: string): string {
@@ -277,7 +299,7 @@ export function detectDatabaseInitialization(searchPath: string): DatabaseInitRe
   if (!fs.existsSync(searchPath)) return [];
   const out: DatabaseInitRecommendation[] = [];
 
-  const prismaSchema = firstExisting(searchPath, ['prisma/schema.prisma']);
+  const prismaSchema = firstExisting(searchPath, DATABASE_INIT_SOURCE_FILES.prisma);
   if (prismaSchema) {
     const command = nodeMigrationCommand(searchPath, 'prisma', 'migrate deploy');
     out.push(recommendation({
@@ -291,12 +313,7 @@ export function detectDatabaseInitialization(searchPath: string): DatabaseInitRe
     }));
   }
 
-  const drizzleConfig = firstExisting(searchPath, [
-    'drizzle.config.ts',
-    'drizzle.config.js',
-    'drizzle.config.mjs',
-    'drizzle.config.cjs',
-  ]);
+  const drizzleConfig = firstExisting(searchPath, DATABASE_INIT_SOURCE_FILES.drizzle);
   if (drizzleConfig) {
     const command = nodeMigrationCommand(searchPath, 'drizzle-kit', 'migrate');
     out.push(recommendation({
@@ -338,7 +355,7 @@ export function detectDatabaseInitialization(searchPath: string): DatabaseInitRe
     }));
   }
 
-  const managePy = firstExisting(searchPath, ['manage.py']);
+  const managePy = firstExisting(searchPath, DATABASE_INIT_SOURCE_FILES.django);
   if (managePy) {
     out.push(recommendation({
       kind: 'django',
@@ -351,7 +368,7 @@ export function detectDatabaseInitialization(searchPath: string): DatabaseInitRe
     }));
   }
 
-  const alembicIni = firstExisting(searchPath, ['alembic.ini']);
+  const alembicIni = firstExisting(searchPath, DATABASE_INIT_SOURCE_FILES.alembic);
   if (alembicIni) {
     out.push(recommendation({
       kind: 'alembic',

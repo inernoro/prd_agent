@@ -63,7 +63,7 @@ describe('fetchCdsPrebuilt', () => {
     expect(cmds.some((c) => c.startsWith(`docker pull ${REF}`))).toBe(true);
     expect(cmds.some((c) => c.startsWith('docker rm -f cafe1234beef'))).toBe(true); // 清理容器
     // create 必须带显式命令，否则 FROM scratch 镜像无 CMD → "No command specified" 创建失败
-    expect(cmds.some((c) => c === `docker create ${REF} ${DOCKER_CREATE_PLACEHOLDER_CMD}`)).toBe(true);
+    expect(cmds.some((c) => c === `docker create --log-driver json-file --log-opt max-size=50m --log-opt max-file=3 ${REF} ${DOCKER_CREATE_PLACEHOLDER_CMD}`)).toBe(true);
   });
 
   it('docker pull 失败 → ok:false（调用方回退现编）', async () => {

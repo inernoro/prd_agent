@@ -17,7 +17,7 @@
  */
 
 export type AnchorRect = { top: number; bottom: number; left: number; right: number };
-export type PanelViewport = { width: number; height: number };
+export type PanelViewport = { width: number; height: number; top?: number; left?: number };
 
 export type AnchoredPanelPlacement = {
   top: number;
@@ -39,6 +39,8 @@ export type AnchoredPanelOptions = {
   width: number;
   /** 想要的高度上限；不传 = 用满那一侧的可用空间。 */
   maxHeight?: number;
+  /** 已渲染面板的实际高度。高度上限不能代替内容高度参与定位。 */
+  height?: number;
   /** 视口四周安全边。 */
   margin?: number;
   /** 面板与触发器之间的间隙。 */
@@ -51,7 +53,13 @@ export type AnchoredPanelOptions = {
 };
 
 export function placeAnchoredPanel(opts: AnchoredPanelOptions): AnchoredPanelPlacement {
-  const { anchor, viewport, prefer } = opts;
+  const { viewport, prefer } = opts;
+  const originTop = viewport.top ?? 0;
+  const originLeft = viewport.left ?? 0;
+  const anchor = {
+    top: opts.anchor.top - originTop, bottom: opts.anchor.bottom - originTop,
+    left: opts.anchor.left - originLeft, right: opts.anchor.right - originLeft,
+  };
   const margin = opts.margin ?? 8;
   const gap = opts.gap ?? 6;
   const minHeight = opts.minHeight ?? 120;
@@ -73,7 +81,7 @@ export function placeAnchoredPanel(opts: AnchoredPanelOptions): AnchoredPanelPla
   // 只比「哪边空间大」会在两边都够用时无谓地翻来翻去，位置就不稳定了。
   const preferSpace = prefer === 'above' ? spaceAbove : spaceBelow;
   const otherSpace = prefer === 'above' ? spaceBelow : spaceAbove;
-  const wanted = Math.min(desired, Math.max(minHeight, 0));
+  const wanted = Math.min(desired, Math.max(opts.height ?? minHeight, 0));
   const side: 'above' | 'below' = preferSpace >= wanted || preferSpace >= otherSpace
     ? prefer
     : (prefer === 'above' ? 'below' : 'above');
@@ -89,9 +97,10 @@ export function placeAnchoredPanel(opts: AnchoredPanelOptions): AnchoredPanelPla
 
   // 同理，top 也要夹回视口。空间不够时宁可盖住触发器，也不能把内容顶到屏幕外。
   // 右界可能小于左界（视口比面板还矮），先取 max 保证区间非空。
-  const rawTop = side === 'above' ? anchor.top - gap - maxHeight : anchor.bottom + gap;
-  const maxTop = Math.max(margin, viewport.height - maxHeight - margin);
+  const height = Math.min(maxHeight, Math.max(0, opts.height ?? maxHeight));
+  const rawTop = side === 'above' ? anchor.top - gap - height : anchor.bottom + gap;
+  const maxTop = Math.max(margin, viewport.height - height - margin);
   const top = Math.min(Math.max(margin, rawTop), maxTop);
 
-  return { top, left, width, maxHeight, side };
+  return { top: top + originTop, left: left + originLeft, width, maxHeight, side };
 }

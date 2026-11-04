@@ -1,9 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FileSpreadsheet, Upload, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { importOverviewVersionWorkflow, importVersionWorkflow } from '@/services/real/productAgent';
-import type { Product } from './types';
+import type { VersionApplicationProduct } from '@/services/real/productAgent';
 import { resolveImportProductId } from './productImportRouting';
 import {
   parseVersionWorkflowImportFile,
@@ -24,7 +24,7 @@ export function VersionWorkflowImportDialog({
   onImported,
 }: {
   kind: VersionWorkflowImportKind;
-  products: Product[];
+  products: VersionApplicationProduct[];
   defaultProductId?: string;
   fixedProductId?: string;
   onClose: () => void;
@@ -37,10 +37,18 @@ export function VersionWorkflowImportDialog({
   const [message, setMessage] = useState('');
   const productNameById = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
 
-  const importableRows = useMemo(
-    () => (kind === 'release' ? rows.filter((row) => row.code) : rows),
-    [kind, rows],
-  );
+  // 保留所有原始行给服务端归档；缺编号或无法匹配的行也应写进导入快照的错误清单。
+  const importableRows = rows;
+
+  const canImportRow = useCallback((row: VersionWorkflowImportRow) => {
+    if (kind === 'release' && !row.code) return false;
+    const resolved = resolveImportProductId(products, {
+      appName: row.appName,
+      systemName: row.systemName,
+      legacyData: row.legacyData,
+    });
+    return resolved.matched && (!fixedProductId || resolved.productId === fixedProductId);
+  }, [kind, products, fixedProductId]);
 
   const previewRows = useMemo(
     () => importableRows.slice(0, 30).map((row) => {
@@ -52,22 +60,19 @@ export function VersionWorkflowImportDialog({
       return {
         row,
         appLabel: row.appName ?? row.legacyData?.['产品'] ?? row.systemName ?? '-',
-        productName: resolved.matched && resolved.productId
+        productName: (kind !== 'release' || row.code) && resolved.matched && resolved.productId
+          && (!fixedProductId || resolved.productId === fixedProductId)
           ? (productNameById.get(resolved.productId) ?? resolved.label ?? '-')
-          : '跳过（未匹配）',
-        matched: resolved.matched,
+          : '跳过（无编号或产品不匹配）',
+        matched: canImportRow(row),
       };
     }),
-    [importableRows, products, productNameById],
+    [importableRows, products, productNameById, kind, fixedProductId, canImportRow],
   );
 
   const matchedCount = useMemo(
-    () => importableRows.filter((row) => resolveImportProductId(products, {
-      appName: row.appName,
-      systemName: row.systemName,
-      legacyData: row.legacyData,
-    }).matched).length,
-    [importableRows, products],
+    () => importableRows.filter(canImportRow).length,
+    [importableRows, canImportRow],
   );
 
   const skippedCount = importableRows.length - matchedCount;
@@ -105,8 +110,8 @@ export function VersionWorkflowImportDialog({
     setBusy(true);
     const payloadRows = importableRows.map(({ sourceRow: _sourceRow, ...row }) => row);
     const result = fixedProductId
-      ? await importVersionWorkflow(fixedProductId, { kind, rows: payloadRows })
-      : await importOverviewVersionWorkflow({ kind, rows: payloadRows });
+      ? await importVersionWorkflow(fixedProductId, { kind, rows: payloadRows, sourceFileName: fileName })
+      : await importOverviewVersionWorkflow({ kind, rows: payloadRows, sourceFileName: fileName });
     setBusy(false);
     if (!result.success) {
       setMessage(result.error?.message ?? '导入失败');
@@ -114,17 +119,12 @@ export function VersionWorkflowImportDialog({
     }
     const created = result.data.created ?? 0;
     const errorCount = result.data.errors?.length ?? 0;
-    const unmatched = result.data.unmatched?.length ?? 0;
     if (created === 0) {
       setMessage(errorCount > 0 ? `导入未写入任何记录，${errorCount} 条被跳过或校验失败。` : '导入未写入任何记录，请检查「应用」列与系统产品名称是否一致。');
       return;
     }
     setMessage(
-      [
-        `导入完成：新增 ${created} 条`,
-        unmatched > 0 ? `${unmatched} 条「应用」未匹配已跳过` : '',
-        errorCount > 0 ? `${errorCount} 条校验失败` : '',
-      ].filter(Boolean).join('，') + '。',
+      `导入完成并留存快照：新增 ${created} 条${errorCount > 0 ? `，${errorCount} 条未写入（原因可在存档查看）` : ''}。`,
     );
     await onImported();
   };

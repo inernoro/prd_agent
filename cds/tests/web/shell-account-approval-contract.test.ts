@@ -35,7 +35,7 @@ const agentMapSource = fs.readFileSync(
   'utf8',
 );
 const agentMissionRegistrySource = fs.readFileSync(
-  path.resolve(process.cwd(), 'web/src/lib/agent-mission-registry.ts'),
+  path.resolve(process.cwd(), 'src/shared/agent-mission-registry.ts'),
   'utf8',
 );
 const agentOnboardingSource = fs.readFileSync(
@@ -155,8 +155,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMissionRegistrySource).toContain("'startup-diagnostics'");
     expect(agentMissionRegistrySource).toContain("'api-diagnostics'");
     expect(agentMissionRegistrySource).toContain("'code-review'");
-    expect(agentOnboardingSource).toContain('二、静默检查认证');
-    expect(agentOnboardingSource).toContain('全局通行证属于认证提权');
+    expect(agentOnboardingSource).toContain('buildAgentSetupUrl(');
+    expect(agentOnboardingSource).toContain('复用现有授权');
+    expect(agentDialogSource).toContain("useState<TabKey>('connect')");
     expect(globalAgentAccessSource).toContain('if (!open) return undefined');
     expect(globalAgentAccessSource).toContain('setProjects(null)');
     expect(globalAgentAccessSource).toContain('if (!nextOpen) setRequestedContextId(undefined)');

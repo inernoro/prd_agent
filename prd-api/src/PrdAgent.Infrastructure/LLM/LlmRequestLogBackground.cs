@@ -137,8 +137,10 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.ResponseHeaders, done.ResponseHeaders)
             .Set(l => l.InputTokens, done.InputTokens)
             .Set(l => l.OutputTokens, done.OutputTokens)
+            .Set(l => l.ReasoningTokens, done.ReasoningTokens)
             .Set(l => l.CacheCreationInputTokens, done.CacheCreationInputTokens)
             .Set(l => l.CacheReadInputTokens, done.CacheReadInputTokens)
+            .Set(l => l.CacheCreationCountedInsideInput, done.CacheCreationCountedInsideInput)
             .Set(l => l.TokenUsageSource, done.TokenUsageSource)
             .Set(l => l.ImageSuccessCount, done.ImageSuccessCount)
             .Set(l => l.AnswerText, answerText)
@@ -164,6 +166,7 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.EstimatedCostUsd, done.EstimatedCostUsd)
             .Set(l => l.CostStatus, done.CostStatus)
             .Set(l => l.CostUnpricedReason, done.CostUnpricedReason)
+            .Set(l => l.CostKind, done.CostKind)
             .Set(l => l.ProviderReportedCost, done.ProviderReportedCost)
             .Set(l => l.ProviderCostCurrency, done.ProviderCostCurrency);
         if (done.OutputImagePayloads is { Count: > 0 })

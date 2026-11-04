@@ -28,7 +28,26 @@
 - 同一项目同一环境最多有一个启用的 `isCanonical=true` 目标。
 - `projectIdentity` 由服务端从 Project 生成，调用方不得传入并期望覆盖。
 
-## existing-script
+## project-script（新目标默认）
+
+```json
+{ "mode": "project-script", "scriptFile": "cds-release.sh" }
+```
+
+文件为安全仓库相对路径；默认名 `cds-release.sh`。项目 CI 必须测试同一文件的
+`check`；CDS 要求同一完整提交 CI 成功，读取 Git blob、校验 Bash 语法和正文
+SHA-256，在指定提交的隔离目录先 check 再 deploy。缺脚本或失败不得换模式兜底。
+
+## managed-script（明确选择的备选）
+
+```json
+{ "mode": "managed-script", "script": "#!/bin/bash\nset -eu\n# implement check / deploy\n" }
+```
+
+由 CDS 单独保存正文，须单独审查，不属于项目 CI 已测试正文。禁止硬编码密钥，
+最大 256 KiB；同样检查语法、正文哈希和 check，再执行 deploy。
+
+## existing-script（仅存量兼容）
 
 ```json
 {

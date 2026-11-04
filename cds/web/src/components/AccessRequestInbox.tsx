@@ -35,6 +35,7 @@ interface AccessRequest {
   createdAt: string;
   decidedAt?: string;
   creationReceiptEnabled?: boolean;
+  receiptArchived?: boolean;
   deliveredAt?: string;
   requestedProject?: { name: string; repository?: string };
   createdProject?: { id: string; name: string; createdAt: string };

@@ -5,7 +5,8 @@ import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 export interface CardMoreAction {
   label: string;
   icon: React.ReactNode;
-  onClick: () => void;
+  /** 菜单关闭后仍存在的触发按钮，供后续分享浮层锚定。 */
+  onClick: (anchor: HTMLElement) => void;
   danger?: boolean;
 }
 
@@ -93,7 +94,7 @@ export function CardIconAction({
 /**
  * kebab 菜单。
  *
- * `touchActions` 是「hover 层等价项」的条数：这些项在桌面端 hover 条里已经有了，
+ * `touchActions` 是「分享 + hover 层等价项」的条数：这些项在桌面端 hover 条里已经有了，
  * 在菜单里仍然保留并置顶，触屏与键盘用户才有等价可达路径（设计稿屏 2 的操作分层要求）。
  * 置顶那几项与其余低频配置之间画一条分隔线，避免读成同一组。
  */
@@ -135,7 +136,7 @@ export function CardMoreButton({ actions, touchActions = 0, onScrim }: { actions
                 style={{ color: action.danger ? 'var(--semantic-danger-text)' : 'var(--text-secondary)' }}
                 onClick={() => {
                   setOpen(false);
-                  action.onClick();
+                  if (anchorRef.current) action.onClick(anchorRef.current);
                 }}
               >
                 <span className="inline-flex w-4 shrink-0 items-center justify-center">{action.icon}</span>

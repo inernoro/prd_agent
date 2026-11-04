@@ -21,7 +21,7 @@
  */
 
 import { build } from 'esbuild';
-import { readdir } from 'node:fs/promises';
+import { readdir, mkdir, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,6 +62,13 @@ await build({
   // (ESM module resolution 要求),esbuild 保持原样不动
   logLevel: 'info',
 });
+
+// Assets read at runtime belong in the emitted tree, including source-free prebuilt installs.
+for (const relative of ['services/preview-demo-snapshot.json']) {
+  const destination = path.join(outDir, relative);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await copyFile(path.join(srcDir, relative), destination);
+}
 
 const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);
 console.log(`[build-dist-esbuild] 完成,耗时 ${elapsed}s`);

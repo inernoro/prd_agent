@@ -1,3 +1,5 @@
+using PrdAgent.Core.Models;
+
 namespace PrdAgent.Api.Services;
 
 /// <summary>
@@ -76,17 +78,42 @@ internal sealed record OpenDesignFailureStage
 /// </summary>
 internal sealed class OpenDesignRemoteDiagnosticException : Exception
 {
-    internal OpenDesignRemoteDiagnosticException(string? code, string diagnostic)
+    internal OpenDesignRemoteDiagnosticException(
+        string? code,
+        string diagnostic,
+        OpenDesignRemoteFailureDetails? details = null)
         : base(string.IsNullOrWhiteSpace(code) ? diagnostic : $"[{code}] {diagnostic}")
     {
         RemoteCode = code;
         Diagnostic = diagnostic;
+        Details = details;
     }
 
     internal string? RemoteCode { get; }
 
     internal string Diagnostic { get; }
+
+    internal OpenDesignRemoteFailureDetails? Details { get; }
+
+    internal DesignArtifactRuntimeFailure? ToRuntimeFailure()
+    {
+        if (string.IsNullOrWhiteSpace(RemoteCode)) return null;
+        return new DesignArtifactRuntimeFailure
+        {
+            Code = RemoteCode,
+            IssueCodes = Details?.IssueCodes.ToList() ?? [],
+            RepairAttempts = Details?.RepairAttempts,
+            RepairBudgetExhausted = Details?.RepairBudgetExhausted,
+            BrowserQualityEvidence = Details?.BrowserQualityEvidence,
+        };
+    }
 }
+
+internal sealed record OpenDesignRemoteFailureDetails(
+    IReadOnlyList<string> IssueCodes,
+    int? RepairAttempts,
+    bool? RepairBudgetExhausted,
+    DesignArtifactBrowserQualityFailureEvidence? BrowserQualityEvidence = null);
 
 internal static class OpenDesignFailureMessage
 {
@@ -98,15 +125,19 @@ internal static class OpenDesignFailureMessage
     /// </summary>
     private static readonly (string[] Codes, string Reason, string NextStep)[] KnownRemoteCodes =
     [
-        (["design_output_quality_rejected", "design_output_invalid", "design_output_missing",
+        (["design_output_quality_rejected", "design_browser_quality_rejected", "design_output_invalid", "design_output_missing",
           "design_output_too_large", "design_output_too_many_files"],
             "生成出来的页面没有通过发布前的校验",
-            "直接重新发起一次；反复出现就缩小设计要求或减少引用的知识后再试"),
+            "已保留最后一版预览；可按原要求重新发起，反复出现就缩小设计要求或减少引用的知识后再试"),
+        (["browser_quality_unavailable"],
+            "隔离浏览器没有完成最终桌面与移动端检查",
+            "最后一版预览仍保留；稍后按原要求重试，持续出现请管理员检查设计执行服务的浏览器状态"),
         (["open_design_run_timeout"],
             "远端设计执行超时",
             "缩小设计要求的范围或减少引用的知识篇数后重新发起"),
         (["workspace_package_invalid", "workspace_package_hash_mismatch", "workspace_transfer_invalid",
           "workspace_transfer_too_large", "workspace_transfer_required", "workspace_copy_failed",
+          "workspace_quality_evidence_unsupported",
           "workspace_commit_invalid_response"],
             "远端与 MAP 之间传递任务资料或结果时失败",
             "重新发起一次；连续失败请管理员检查 CDS 与 MAP 之间的连接"),
@@ -130,12 +161,21 @@ internal static class OpenDesignFailureMessage
     internal static InvalidOperationException Failure(
         OpenDesignFailureStage stage,
         string? remoteReason,
-        string? remoteCode = null)
+        string? remoteCode = null,
+        OpenDesignRemoteFailureDetails? details = null)
     {
         var diagnostic = string.IsNullOrWhiteSpace(remoteReason) ? null : remoteReason.Trim();
+        var structuredDiagnostic = diagnostic != null
+                                   || !string.IsNullOrWhiteSpace(remoteCode)
+                                   || details != null
+            ? new OpenDesignRemoteDiagnosticException(
+                remoteCode?.Trim(),
+                diagnostic ?? "remote failure without diagnostic text",
+                details)
+            : null;
         return new InvalidOperationException(
             Describe(stage, remoteReason, remoteCode),
-            diagnostic == null ? null : new OpenDesignRemoteDiagnosticException(remoteCode?.Trim(), diagnostic));
+            structuredDiagnostic);
     }
 
     internal static string Describe(OpenDesignFailureStage stage, string? remoteReason, string? remoteCode = null)

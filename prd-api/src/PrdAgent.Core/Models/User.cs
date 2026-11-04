@@ -106,6 +106,10 @@ public class User
     /// <summary>米多星球 SSO 绑定主体哈希（归一化后加盐 SHA-256，不保存手机号明文）</summary>
     public string? MiduoSsoSubjectHash { get; set; }
 
+    /// <summary>已验证企微提醒身份的密文，绑定本账号及SSO主体哈希，不向人员目录或登录响应暴露。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? NotificationIdentityProtected { get; set; }
+
     /// <summary>米多星球 SSO 绑定主体脱敏展示值</summary>
     public string? MiduoSsoSubjectMasked { get; set; }
 

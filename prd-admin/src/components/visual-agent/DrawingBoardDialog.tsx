@@ -60,6 +60,8 @@ export type DrawingBoardChatMsg = { role: 'user' | 'assistant'; content: string 
 export interface DrawingBoardDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** 提交宿主工作区的就绪资格；不限制绘画与草稿准备。 */
+  canSubmit?: boolean;
   /** 确认后回调：传出画布 data URI + 对话记录 + 建议尺寸 供图片生成使用 */
   onConfirm: (dataUri: string, chatHistory: DrawingBoardChatMsg[], sizeHint: string) => void;
 }
@@ -83,6 +85,7 @@ export function DrawingBoardDialog({
   open,
   onOpenChange,
   onConfirm,
+  canSubmit = true,
 }: DrawingBoardDialogProps) {
   // ── Canvas state ──
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -388,6 +391,7 @@ export function DrawingBoardDialog({
 
   // ── Confirm: export canvas ──
   const handleConfirm = useCallback(() => {
+    if (!canSubmit) return;
     const cvs = canvasRef.current;
     if (!cvs) return;
     const dataUri = cvs.toDataURL('image/png');
@@ -395,7 +399,7 @@ export function DrawingBoardDialog({
       .filter(m => m.content.trim())
       .map(m => ({ role: m.role, content: m.content }));
     onConfirm(dataUri, chatHistory, `${canvasDims.w}x${canvasDims.h}`);
-  }, [onConfirm, messages, canvasDims.w, canvasDims.h]);
+  }, [onConfirm, messages, canvasDims.w, canvasDims.h, canSubmit]);
 
   // ── Cleanup on close ──
   useEffect(() => {
@@ -590,6 +594,7 @@ export function DrawingBoardDialog({
             border: '1px solid rgba(34,197,94,0.3)',
           }}
           onClick={handleConfirm}
+          disabled={!canSubmit}
         >
           <Check size={15} />
           确认，使用草图生成

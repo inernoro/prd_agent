@@ -62,6 +62,11 @@ public class HostedSite
     [BsonIgnore]
     public string ContentShape { get; set; } = HostedSiteContentShapes.MultiFile;
 
+    /// <summary>课程附件依赖预览层的受控下载桥；保持既有内联预览，不入库。</summary>
+    [BsonIgnore]
+    public bool RequiresPreviewBridge => HostedSitePdfFiles.Paths(this).Count > 0
+        || Files?.Any(file => string.Equals(file.Path, "downloads/tutorial-package.json", StringComparison.OrdinalIgnoreCase)) == true;
+
     /// <summary>
     /// 内容指针切换后待删除的旧对象 key。与 Files 在同一个站点文档中原子更新，
     /// 后台清理器按站点 ID 唯一领取并幂等重试。
@@ -117,6 +122,10 @@ public class HostedSite
     /// </summary>
     [BsonIgnore]
     public string? PdfAssetUrl { get; set; }
+
+    /// <summary>当前站点登记的可下载 PDF 相对路径，仅响应派生，不持久化。</summary>
+    [BsonIgnore]
+    public List<string> PdfFilePaths { get; set; } = new();
 
     // ── 所有权 ──
 

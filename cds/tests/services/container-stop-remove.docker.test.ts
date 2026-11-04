@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, afterAll } from 'vitest';
 import { execSync } from 'node:child_process';
 import { ContainerService } from '../../src/services/container.js';
@@ -58,7 +59,7 @@ const makeConfig = (): CdsConfig => ({
 
 describe.skipIf(!TEST_IMAGE_OK)('ContainerService stop/remove against real docker', () => {
   const shell = new ShellExecutor();
-  const svc = new ContainerService(shell, makeConfig());
+  const svc = new ContainerService(shell, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
   const name = `cds-verify-${Date.now()}`;
   const REASON = '集成测试停止（保留容器）';
 

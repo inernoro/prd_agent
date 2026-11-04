@@ -1,13 +1,18 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { DatabasePassService } from '../../src/services/database-pass.js';
 import { createBranchRouter } from '../../src/routes/branches.js';
+import { createOperatorConsoleRouter } from '../../src/routes/operator-console.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
+import { executeSqlConsole } from '../../src/services/sql-console-executor.js';
+import { SqlConsoleExecutionError, type SqlConsoleResult } from '../../src/services/sql-console-results.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
@@ -52,11 +57,16 @@ async function request(
   });
 }
 
+function sqlResult(columns: string[] = [], rows: Array<Array<string | null>> = [], output = 'SQL 执行完成。'): SqlConsoleResult {
+  return { columns, rows, rowCount: rows.length, resultSets: columns.length ? [{ columns, rows, rowCount: rows.length }] : [], output };
+}
+
 function makeHarness(): {
   tmpDir: string;
   config: CdsConfig;
   stateService: StateService;
   shell: MockShellExecutor;
+  sqlExecutor: ReturnType<typeof vi.fn<typeof executeSqlConsole>>;
   app: express.Express;
 } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-resource-db-'));
@@ -97,11 +107,13 @@ function makeHarness(): {
   };
   stateService.addBranch(branch);
   const shell = new MockShellExecutor();
+  shell.addResponsePattern(/docker inspect --format '\{"id":/, () => ({ stdout: JSON.stringify({ id: 'a'.repeat(64), running: true }), stderr: '', exitCode: 0 }));
+  const sqlExecutor = vi.fn<typeof executeSqlConsole>().mockResolvedValue(sqlResult());
   const worktreeService = new WorktreeService(shell);
   const containerService = new ContainerService(shell, config, {
     getDockerNetwork: () => 'cds-proj-prd-agent',
     getProjectSlug: () => 'prd-agent',
-  });
+  }, undefined, undefined, undefined, unitBindMountInspector);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -114,16 +126,16 @@ function makeHarness(): {
         authProvider: 'legacy',
       };
     }
-    if (req.headers['x-test-project-key'] === '1') {
-      (req as any).cdsProjectKey = { projectId: 'prd-agent', keyId: 'test-key' };
+    if (req.headers['x-test-project-key']) {
+      (req as any).cdsProjectKey = { projectId: req.headers['x-test-project-key'] === '1' ? 'prd-agent' : 'other-project', keyId: 'test-key' };
     }
     if (req.headers['x-test-ai-session'] === '1') {
       (req as any)._aiSession = { id: 'test-ai', agentName: 'test', token: 'token', approvedAt: '', expiresAt: '' };
     }
     next();
   });
-  app.use('/api', createBranchRouter({ stateService, worktreeService, containerService, shell, config }));
-  return { tmpDir, config, stateService, shell, app };
+  app.use('/api', createBranchRouter({ stateService, worktreeService, containerService, shell, config, sqlConsoleExecutor: sqlExecutor }));
+  return { tmpDir, config, stateService, shell, app, sqlExecutor };
 }
 
 describe('resource database access', () => {
@@ -131,12 +143,57 @@ describe('resource database access', () => {
   let tmpDir = '';
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
     server = null;
     if (tmpDir && fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it.each([{}, {MYSQL_USER:'application',MYSQL_PASSWORD:'application-secret'}])('issues MySQL passes with explicitly empty root authentication: %j',async extra=>{
+    const harness=makeHarness();tmpDir=harness.tmpDir;
+    harness.stateService.addInfraService({id:'mysql-pass',projectId:'prd-agent',name:'mysql-pass',dockerImage:'mysql:8',containerPort:3306,hostPort:3311,containerName:'mysql-pass',status:'running',dbName:'qa',env:{MYSQL_ALLOW_EMPTY_PASSWORD:'yes',MYSQL_DATABASE:'qa',...extra},volumes:[]});
+    harness.shell.addResponsePattern(/cat \/var\/lib\/mysql\/ca.pem/,()=>({stdout:'-----BEGIN CERTIFICATE-----test',stderr:'',exitCode:0}));
+    const target=vi.fn();
+    vi.spyOn(DatabasePassService.prototype,'prepare').mockImplementation(async function(scope){const resolved=await (this as any).target(scope);target(resolved);return {id:'prepared'} as any;});
+    await new Promise<void>(resolve=>{server=harness.app.listen(0,'127.0.0.1',resolve);});
+    const result=await request(server!,'POST','/api/branches/main-branch/resources/infra%3Amysql-pass/database-passes',{allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});
+    expect(result.status).toBe(200);expect(target).toHaveBeenCalledWith(expect.objectContaining({adminUser:'root',adminPassword:''}));
+  });
+  it.each(['main-branch','legacy-branch'])('旧 TCP 入口未关闭前不签发通行证，包含同库其他分支：%s',async legacyBranch=>{
+    const h=makeHarness();tmpDir=h.tmpDir;
+    h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{MONGO_INITDB_ROOT_USERNAME:'root',MONGO_INITDB_ROOT_PASSWORD:'private'},volumes:[]});
+    if(legacyBranch!=='main-branch')h.stateService.addBranch({...h.stateService.getBranch('main-branch')!,id:legacyBranch,branch:'legacy'});
+    h.stateService.upsertResourceExternalAccess({projectId:'prd-agent',branchId:legacyBranch,resourceId:'infra:mongo-pass',kind:'tcp',enabled:true,proxyContainerName:'old-mongo-proxy',targetHost:'shared-mongo-pass',targetPort:27017,allowlist:['203.0.113.1/32'],expiresAt:new Date(Date.now()+3600000).toISOString()});
+    h.shell.addResponsePattern(/^docker rm -f /,()=>({stdout:'',stderr:'',exitCode:0}));
+    const prepare=vi.spyOn(DatabasePassService.prototype,'prepare').mockResolvedValue({id:'prepared'} as any);
+    await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    const endpoint='/api/branches/main-branch/resources/infra%3Amongo-pass/database-passes',headers={'x-test-cookie-auth':'1'};
+    const denied=await request(server!,'POST',endpoint,{allowlist:['192.0.2.1/32']},headers);expect(denied.status).toBe(409);expect(denied.body.error).toContain('旧版 TCP');expect(prepare).not.toHaveBeenCalled();
+    const closed=await request(server!,'PUT','/api/branches/'+legacyBranch+'/resources/infra%3Amongo-pass/external-access',{enabled:false},headers);expect(closed.status).toBe(200);
+    expect((await request(server!,'POST',endpoint,{allowlist:['192.0.2.1/32']},headers)).status).toBe(200);expect(prepare).toHaveBeenCalledOnce();
+  });
+  it('资源 ID 或项目不同但代理指向同一数据库时仍拒绝签发',async()=>{
+    const h=makeHarness();tmpDir=h.tmpDir;h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{},volumes:[]});
+    h.stateService.upsertResourceExternalAccess({projectId:'other',branchId:'other',resourceId:'infra:old-name',kind:'tcp',enabled:true,targetHost:'shared-mongo-pass',targetPort:27017,proxyContainerName:'old-proxy',allowlist:['203.0.113.1/32']});
+    const prepare=vi.spyOn(DatabasePassService.prototype,'prepare').mockResolvedValue({id:'prepared'} as any);await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    expect((await request(server!,'POST','/api/branches/main-branch/resources/infra%3Amongo-pass/database-passes',{allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'})).status).toBe(409);expect(prepare).not.toHaveBeenCalled();
+  });
+  it('关闭通行证开关后，有待回收账号的实例仍不能打开旧 TCP 入口',async()=>{
+    const h=makeHarness();tmpDir=h.tmpDir;vi.stubEnv('CDS_DATABASE_PASS_ENABLED','0');vi.stubEnv('CDS_RESOURCE_TCP_ENABLED','1');vi.stubEnv('CDS_RESOURCE_TCP_HOST','192.0.2.20');vi.stubEnv('CDS_RESOURCE_TCP_BIND_IP','192.0.2.20');
+    h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{},volumes:[]});
+    const pending=vi.spyOn(DatabasePassService.prototype,'hasUnreclaimedPassesForTarget').mockReturnValue(true);await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    const result=await request(server!,'PUT','/api/branches/main-branch/resources/infra%3Amongo-pass/external-access',{enabled:true,ttlMinutes:30,allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});
+    expect(result.status).toBe(409);expect(result.body.error).toContain('待回收');expect(pending).toHaveBeenCalledWith({runtime:'mongodb',port:27018},{projectId:'prd-agent',resourceId:'infra:mongo-pass',shared:false});expect(h.shell.commands.some(c=>c.startsWith('docker run -d'))).toBe(false);
+  });
+  it('通行证准备与共享实例其他分支的旧入口更新互斥，开关变化也不能并发绕过',async()=>{
+    const h=makeHarness();tmpDir=h.tmpDir;vi.stubEnv('CDS_DATABASE_PASS_ENABLED','0');vi.stubEnv('CDS_RESOURCE_TCP_ENABLED','1');vi.stubEnv('CDS_RESOURCE_TCP_HOST','192.0.2.20');vi.stubEnv('CDS_RESOURCE_TCP_BIND_IP','192.0.2.20');
+    h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{},volumes:[]});h.stateService.addBranch({...h.stateService.getBranch('main-branch')!,id:'other-branch',branch:'other'});
+    let release:()=>void=()=>{};const wait=new Promise<void>(resolve=>{release=resolve;});const prepare=vi.spyOn(DatabasePassService.prototype,'prepare').mockImplementation(async()=>{await wait;return {id:'prepared'} as any;});await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    const preparing=request(server!,'POST','/api/branches/main-branch/resources/infra%3Amongo-pass/database-passes',{allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});
+    try{await vi.waitFor(()=>expect(prepare).toHaveBeenCalledOnce());const concurrent=await request(server!,'PUT','/api/branches/other-branch/resources/infra%3Amongo-pass/external-access',{enabled:true,ttlMinutes:30,allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});expect(concurrent.status).toBe(409);expect(concurrent.body.error).toContain('正在更新');expect(h.shell.commands.some(c=>c.startsWith('docker run -d'))).toBe(false);}finally{release();await preparing;}
+  });
   it('selects an existing business MongoDB database when the configured default is missing', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;
@@ -248,7 +305,7 @@ describe('resource database access', () => {
     const connection = {
       type: 'local', host: '', port: 0, projectId: 'project-b', serviceId: 'mongodb', database: 'app',
     };
-    const first = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection });
+    const first = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection }, { 'x-test-cookie-auth': '1' });
     expect(first.status).toBe(200);
     expect(harness.shell.commands.at(-1)).toContain('--port');
     expect(harness.shell.commands.at(-1)).toContain('27018');
@@ -257,7 +314,7 @@ describe('resource database access', () => {
 
     const ambiguous = await request(server!, 'POST', '/api/data-migrations/list-databases', {
       connection: { type: 'local', host: '', port: 0, database: 'app' },
-    });
+    }, { 'x-test-cookie-auth': '1' });
     expect(ambiguous.body.databases).toEqual([]);
     expect(ambiguous.body.error).toMatch(/不唯一/);
 
@@ -267,7 +324,7 @@ describe('resource database access', () => {
         MONGO_INITDB_ROOT_PASSWORD: 'project-b-new-canary',
       },
     }, 'project-b');
-    const second = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection });
+    const second = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection }, { 'x-test-cookie-auth': '1' });
     expect(second.status).toBe(200);
     expect(harness.shell.commands.at(-1)).not.toContain('project-b-new-canary');
     expect(harness.shell.stdins.at(-1)).toBe('project-b-new-canary\n');
@@ -718,16 +775,8 @@ describe('resource database access', () => {
       env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'pw', POSTGRES_DB: 'app' },
       volumes: [],
     });
-    harness.shell.addResponsePattern(/information_schema\.tables/, () => ({
-      stdout: 'table_schema\ttable_name\ttable_type\npublic\tusers\tBASE TABLE\naudit\tevents\tBASE TABLE\n',
-      stderr: '',
-      exitCode: 0,
-    }));
-    harness.shell.addResponsePattern(/SELECT \* FROM "audit"\."events" LIMIT 50/, () => ({
-      stdout: 'id\tname\n1\tcreated\n',
-      stderr: '',
-      exitCode: 0,
-    }));
+    harness.sqlExecutor.mockResolvedValue(sqlResult(['table_schema', 'table_name', 'table_type'], [["public", "users", "BASE TABLE"], ["audit", "events", "BASE TABLE"]]));
+    harness.sqlExecutor.mockImplementation(async options => options.sql.includes('information_schema.tables') ? sqlResult(['table_schema', 'table_name', 'table_type'], [['public', 'users', 'BASE TABLE'], ['audit', 'events', 'BASE TABLE']]) : sqlResult(['id', 'name'], [['1', 'created']]));
     harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
@@ -744,7 +793,209 @@ describe('resource database access', () => {
     expect(preview.status).toBe(200);
     expect(preview.body.schema).toBe('audit');
     expect(preview.body.table).toBe('events');
-    expect(harness.shell.commands.some((cmd) => cmd.includes('SELECT * FROM "audit"."events" LIMIT 50'))).toBe(true);
+    expect(harness.sqlExecutor.mock.calls.some(([options]) => options.sql === 'SELECT * FROM "audit"."events" LIMIT 50' && options.readOnly)).toBe(true);
+  });
+
+  it('只读多查询返回独立结果集，写入混入被拦且一个进程执行全部查询', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-results', projectId: 'prd-agent', name: 'MySQL results', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 19001, containerName: 'cds-mysql-results', status: 'running', dbName: 'app', env: { MYSQL_ROOT_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    harness.sqlExecutor.mockResolvedValue({ ...sqlResult(['a'], [['1']]), resultSets: [{ columns: ['a'], rows: [['1']], rowCount: 1 }, { columns: ['b'], rows: [['2']], rowCount: 1 }] });
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const url = '/api/branches/main-branch/resources/infra%3Amysql-results/data/query';
+    const result = await request(server!, 'POST', url, { sql: 'SELECT 1 AS a; SELECT 2 AS b' }, { 'x-test-project-key': '1' });
+    expect(result.status).toBe(200);
+    expect(result.body.resultSets.map((item: any) => item.rows)).toEqual([[['1']], [['2']]]);
+    expect(harness.sqlExecutor).toHaveBeenCalledTimes(1);
+    expect(harness.sqlExecutor.mock.calls[0][0]).toMatchObject({ sql: 'SELECT 1 AS a; SELECT 2 AS b', readOnly: true });
+    const denied = await request(server!, 'POST', url, { sql: 'SELECT 1; UPDATE sample SET n=2' }, { 'x-test-project-key': '1' });
+    expect(denied.status).toBe(400);
+    expect(harness.sqlExecutor).toHaveBeenCalledTimes(1);
+  });
+
+  it('PostgreSQL SELECT INTO 不能绕过项目 Key 的写入审批，普通查询仍使用只读事务', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'postgres-policy', projectId: 'prd-agent', name: 'PostgreSQL policy', dockerImage: 'postgres:16', containerPort: 5432, hostPort: 19002, containerName: 'cds-postgres-policy', status: 'running', dbName: 'app', env: { POSTGRES_USER: 'app', POSTGRES_PASSWORD: 'pw', POSTGRES_DB: 'app' }, volumes: [] });
+    await new Promise<void>(resolve => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const base = '/api/branches/main-branch/resources/infra%3Apostgres-policy/data';
+    for (const sql of ['SELECT id INTO qa_copy FROM qa_items', 'SELECT 1; SELECT id INTO/**/TEMP qa_copy FROM qa_items']) {
+      expect((await request(server!, 'POST', `${base}/query`, { sql }, { 'x-test-project-key': '1' })).status).toBe(400);
+      expect((await request(server!, 'POST', `${base}/query-write`, { sql, confirmResourceName: 'PostgreSQL policy' }, { 'x-test-project-key': '1' })).status).toBe(403);
+    }
+    expect(harness.sqlExecutor).not.toHaveBeenCalled();
+    expect((await request(server!, 'POST', `${base}/query`, { sql: 'SELECT 1' }, { 'x-test-project-key': '1' })).status).toBe(200);
+    expect(harness.sqlExecutor.mock.calls[0][0]).toMatchObject({ runtime: 'postgres', readOnly: true });
+  });
+
+  it('SSH 连接说明只生成本地转发命令，保留凭据权限且拒绝非法目标', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-ssh', projectId: 'prd-agent', name: 'MySQL SSH', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 19001, containerName: 'cds-mysql-ssh', status: 'running', dbName: 'app', env: { MYSQL_USER: 'app_user', MYSQL_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const url = '/api/branches/main-branch/resources/infra%3Amysql-ssh/connection-string?scope=ssh&localPort=13306&sshTarget=root%40mycds';
+    expect((await request(server!, 'GET', url, undefined, { 'x-test-ai-session': '1' })).status).toBe(403);
+    expect((await request(server!, 'GET', url, undefined, { 'x-test-project-key': 'other' })).status).toBe(403);
+    const result = await request(server!, 'GET', url, undefined, { 'x-test-cookie-auth': '1' });
+    expect(result.status).toBe(200);
+    expect(result.body.sshCommand).toContain('127.0.0.1:13306:127.0.0.1:19001');
+    expect(result.body.connectionString).toContain('@127.0.0.1:13306/');
+    expect(result.body.maskedConnectionString).not.toContain(':pw@');
+    expect((await request(server!, 'GET', url.replace('root%40mycds', 'root%40mycds%3Btouch'), undefined, { 'x-test-cookie-auth': '1' })).status).toBe(400);
+    expect(harness.shell.commands.some((cmd) => cmd.includes('docker run') || cmd.startsWith('ssh '))).toBe(false);
+  });
+
+  it('批量修改只启动一个数据库连接，输出原始结果；失败和普通项目 Key 不能报成功', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-batch', projectId: 'prd-agent', name: 'MySQL batch', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 3306, containerName: 'cds-mysql-batch', status: 'running', dbName: 'app', env: { MYSQL_ROOT_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    harness.sqlExecutor.mockImplementation(async options => {
+      if (options.sql.includes('missing_table')) throw new SqlConsoleExecutionError('missing_table', sqlResult([], [], 'Query OK, 1 row affected'));
+      return sqlResult([], [], 'Query OK, 1 row affected\nQuery OK, 1 row affected');
+    });
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const base = '/api/branches/main-branch/resources/infra%3Amysql-batch/data/query-write';
+    const fullNetwork=await request(server!, 'POST', '/api/branches/main-branch/resources/infra%3Amysql-batch/database-passes', {allowlist:['0.0.0.0/1','128.0.0.0/1'],ttlMinutes:30}, {'x-test-cookie-auth':'1'});
+    expect(fullNetwork.status).toBe(409);expect(fullNetwork.body.error).toContain('覆盖全部');
+
+    const sql = 'UPDATE sample SET n=1; UPDATE sample SET n=2';
+    const body = { sql, confirmResourceName: 'MySQL batch' };
+    const denied = await request(server!, 'POST', base, body, { 'x-test-project-key': '1' });
+    expect(denied.status).toBe(403);
+    expect(harness.sqlExecutor).not.toHaveBeenCalled();
+    const ambiguous = await request(server!, 'POST', base, { ...body, sql: String.raw`UPDATE demo SET x='a\'; LOAD/**/DATA INFILE '/tmp/p' INTO TABLE demo; SELECT 'x'` }, { 'x-test-cookie-auth': '1' });
+    expect(ambiguous.status).toBe(400);
+    expect(harness.sqlExecutor).not.toHaveBeenCalled();
+    for (const marker of ['/*!', '/*M!']) {
+      const executable = await request(server!, 'POST', base, { ...body, sql: `UPDATE sample SET n=1; ${marker} SHUTDOWN */` }, { 'x-test-cookie-auth': '1' });
+      expect(executable.status).toBe(400); expect(executable.body.error).toContain('可执行注释');
+      expect(harness.sqlExecutor).not.toHaveBeenCalled();
+    }
+    const success = await request(server!, 'POST', base, body, { 'x-test-cookie-auth': '1' });
+    expect(success.status).toBe(200);
+    expect(success.body.output).toContain('1 row affected');
+    expect(harness.sqlExecutor).toHaveBeenCalledTimes(1);
+    expect(harness.sqlExecutor.mock.calls[0][0]).toMatchObject({ sql, readOnly: false });
+    const failure = await request(server!, 'POST', base, { ...body, sql: 'UPDATE sample SET n=1; UPDATE missing_table SET n=2' }, { 'x-test-cookie-auth': '1' });
+    expect(failure.status).toBe(500);
+    expect(failure.body.error).toContain('missing_table');
+    expect(failure.body.partialResult.output).toContain('Query OK');
+  });
+
+  it('Agent 只能申请自己项目的具体 SQL，批准前不执行，不能自批，批准后返回实际结果', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-approval', projectId: 'prd-agent', name: 'MySQL approval', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 3306, containerName: 'cds-mysql-approval', status: 'running', dbName: 'app', env: { MYSQL_ROOT_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    harness.sqlExecutor.mockResolvedValue(sqlResult([], [], 'Query OK, 1 row affected'));
+    harness.app.use('/api', createOperatorConsoleRouter({ stateService: harness.stateService, shell: harness.shell, repoRoot: harness.tmpDir }));
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const body = { opId: 'database.sql', args: { projectId: 'prd-agent', branchId: 'main-branch', resourceId: 'infra:mysql-approval', sql: 'UPDATE sample SET n=1; UPDATE sample SET n=2' } };
+    const endpoint = '/api/cds-system/operator/request';
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-project-key': 'other' })).status).toBe(403);
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-ai-session': '1' })).status).toBe(403);
+    const pending = await request(server!, 'POST', endpoint, body, { 'x-test-project-key': '1' });
+    expect(pending.status).toBe(202);
+    expect(pending.body.request.status).toBe('pending');
+    expect(harness.sqlExecutor).not.toHaveBeenCalled();
+    const id = pending.body.request.id;
+    const approve = `/api/cds-system/operator/requests/${id}/approve`;
+    expect((await request(server!, 'POST', approve, { scope: 'once' }, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', approve, { scope: 'once' }, { 'x-test-cookie-auth': '1' })).status).toBe(200);
+    let done;
+    for (let i = 0; i < 50; i += 1) {
+      done = await request(server!, 'GET', `/api/cds-system/operator/requests/${id}`, undefined, { 'x-test-cookie-auth': '1' });
+      if (done.body.request.status === 'completed') break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(done!.body.request.status).toBe('completed');
+    expect(done!.body.request.result.details.output).toContain('1 row affected');
+    expect(harness.sqlExecutor).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['mysql', 'mongodb'].flatMap(runtime => ['database', 'port', 'password', 'container', 'runtime', 'service'].map(change => ({ runtime, change }))))(
+    'rejects stale $runtime approval after $change changes, without executing', async ({ runtime, change }) => {
+      const h = makeHarness(); tmpDir = h.tmpDir;
+      const mongo = runtime === 'mongodb';
+      const service = { id: 'approval-target', projectId: 'prd-agent', name: 'approval target', dockerImage: mongo ? 'mongo:7' : 'mysql:8', containerPort: mongo ? 27017 : 3306, hostPort: 23000, containerName: 'qa-approval', status: 'running' as const, dbName: 'qa', createdAt: '2026-10-19T00:00:00.000Z', env: mongo ? { MONGO_INITDB_ROOT_USERNAME: 'admin', MONGO_INITDB_ROOT_PASSWORD: 'private-original', MONGO_INITDB_DATABASE: 'qa' } : { MYSQL_ROOT_PASSWORD: 'private-original', MYSQL_DATABASE: 'qa' }, volumes: [] };
+      h.stateService.addInfraService(service);
+      h.app.use('/api', createOperatorConsoleRouter({ stateService: h.stateService, shell: h.shell, repoRoot: h.tmpDir }));
+      await new Promise<void>((resolve) => { server = h.app.listen(0, '127.0.0.1', resolve); });
+      const args = { projectId: 'prd-agent', branchId: 'main-branch', resourceId: 'infra:approval-target', ...(mongo ? { write: { collection: 'items', action: 'insertOne', document: { _id: change } } } : { sql: `UPDATE items SET qty=2 /* ${change} */` }), databaseTarget: { binding: 'forged' } };
+      const endpoint = '/api/cds-system/operator/request';
+      const pending = await request(server!, 'POST', endpoint, { opId: mongo ? 'database.mongo' : 'database.sql', args }, { 'x-test-project-key': '1' });
+      expect(pending.body.request.status).toBe('pending');
+      expect(pending.body.request.args.databaseTarget.containerId).toBe('a'.repeat(64));
+      expect(JSON.stringify(pending.body.request)).not.toContain('private-original');
+      expect(pending.body.request.args.databaseTarget.binding).not.toBe('forged');
+      if (change === 'database') h.stateService.updateInfraService(service.id, { dbName: 'new_database', env: mongo ? { ...service.env, MONGO_INITDB_DATABASE: 'new_database' } : { ...service.env, MYSQL_DATABASE: 'new_database' } });
+      if (change === 'port') h.stateService.updateInfraService(service.id, { hostPort: 23001 });
+      if (change === 'password') h.stateService.updateInfraService(service.id, { env: mongo ? { ...service.env, MONGO_INITDB_ROOT_PASSWORD: 'rotated-private' } : { ...service.env, MYSQL_ROOT_PASSWORD: 'rotated-private' } });
+      if (change === 'container') h.shell.addResponsePatternFirst(/docker inspect --format '\{"id":/, () => ({ stdout: JSON.stringify({ id: 'b'.repeat(64), running: true }), stderr: '', exitCode: 0 }));
+      if (change === 'runtime') h.stateService.updateInfraService(service.id, { dockerImage: mongo ? 'mysql:8' : 'postgres:17' });
+      if (change === 'service') h.stateService.updateInfraService(service.id, { createdAt: '2026-10-19T00:01:00.000Z' });
+      const id = pending.body.request.id;
+      await request(server!, 'POST', `/api/cds-system/operator/requests/${id}/approve`, { scope: 'once' }, { 'x-test-cookie-auth': '1' });
+      let done;
+      for (let i = 0; i < 50; i++) {
+        done = await request(server!, 'GET', `/api/cds-system/operator/requests/${id}`, undefined, { 'x-test-cookie-auth': '1' });
+        if (done.body.request.status === 'failed') break;
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      expect(done!.body.request.status).toBe('failed');
+      expect(h.sqlExecutor).not.toHaveBeenCalled();
+      expect(h.shell.commands.filter(command => command.includes('insertOne'))).toHaveLength(0);
+    },
+  );
+
+  it('项目 Agent 不能读取或创建全局迁移，所有者可读取', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    expect((await request(server!, 'GET', '/api/data-migrations', undefined, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', '/api/data-migrations', {}, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'GET', '/api/data-migrations/another/log', undefined, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', '/api/data-migrations/local-dump', { projectId: 'project-b', database: 'qa' }, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', '/api/data-migrations/local-restore?projectId=project-b', {}, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect(harness.shell.commands).toHaveLength(0);
+    expect((await request(server!, 'GET', '/api/data-migrations', undefined, { 'x-test-cookie-auth': '1' })).status).toBe(200);
+  });
+
+  it('静态机器Key、Agent会话和伪造peer标记都不能覆盖恢复；合法所有者仍进入目标校验',async()=>{
+    const harness=makeHarness();tmpDir=harness.tmpDir;
+    await new Promise<void>(resolve=>{server=harness.app.listen(0,'127.0.0.1',resolve);});
+    for(const headers of [{},{'x-test-project-key':'1'},{'x-test-ai-session':'1'},{'x-cds-peer-call':'1'}]){
+      const response=await request(server!,'POST','/api/data-migrations/local-restore?projectId=prd-agent',{},headers);
+      expect(response.status).toBe(403);expect(response.body.error).toBe('migration_restore_approval_required');
+    }
+    expect(harness.shell.commands).toHaveLength(0);
+    const owner=await request(server!,'POST','/api/data-migrations/local-restore?projectId=prd-agent',{}, {'x-test-cookie-auth':'1'});
+    expect(owner.status).toBe(409);expect(owner.body.error).toContain('没有可供迁移');
+    expect(harness.shell.commands).toHaveLength(0);
+  });
+
+  it('MongoDB Agent 具体写入只在本次批准后执行，错误项目和自批不能越权', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mongo-approval', projectId: 'prd-agent', name: 'Mongo approval', dockerImage: 'mongo:7', containerPort: 27017, hostPort: 27017, containerName: 'qa-mongo', status: 'running', dbName: 'qa', env: { MONGO_INITDB_ROOT_USERNAME: 'admin', MONGO_INITDB_ROOT_PASSWORD: 'pw', MONGO_INITDB_DATABASE: 'qa' }, volumes: [] });
+    harness.shell.addResponsePattern(/insertOne/, () => ({ stdout: '{"acknowledged":true,"insertedId":"qa1"}\n', stderr: '', exitCode: 0 }));
+    harness.app.use('/api', createOperatorConsoleRouter({ stateService: harness.stateService, shell: harness.shell, repoRoot: harness.tmpDir }));
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const body = { opId: 'database.mongo', args: { projectId: 'prd-agent', branchId: 'main-branch', resourceId: 'infra:mongo-approval', write: { database: 'qa', collection: 'items', action: 'insertOne', document: { _id: 'qa1', text: 'db.dropDatabase()' } } } };
+    const endpoint = '/api/cds-system/operator/request';
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-project-key': 'other' })).status).toBe(403);
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-ai-session': '1' })).status).toBe(403);
+    const before = harness.shell.commands.filter((item) => item.includes('insertOne')).length;
+    const pending = await request(server!, 'POST', endpoint, body, { 'x-test-project-key': '1' });
+    expect(pending.status).toBe(202);
+    expect(harness.shell.commands.filter((item) => item.includes('insertOne'))).toHaveLength(before);
+    const id = pending.body.request.id;
+    expect((await request(server!, 'POST', `/api/cds-system/operator/requests/${id}/approve`, { scope: 'once' }, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', `/api/cds-system/operator/requests/${id}/approve`, { scope: 'once' }, { 'x-test-cookie-auth': '1' })).status).toBe(200);
+    let done;
+    for (let i = 0; i < 50; i++) {
+      done = await request(server!, 'GET', `/api/cds-system/operator/requests/${id}`, undefined, { 'x-test-cookie-auth': '1' });
+      if (['completed', 'failed'].includes(done.body.request.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(done!.body.request.status).toBe('completed');
+    expect(done!.body.request.result.details.result.acknowledged).toBe(true);
+    expect(done!.body.request.approvedBy).toBe('owner');
+    expect(harness.shell.commands.filter((item) => item.includes('insertOne'))).toHaveLength(before + 1);
   });
 
   it('runs MySQL DDL and CRUD against the branch-selected database', async () => {
@@ -766,13 +1017,9 @@ describe('resource database access', () => {
     harness.stateService.setCustomEnvVar('MYSQL_DATABASE', 'branch_app', 'main-branch');
     harness.stateService.setCustomEnvVar('MYSQL_USER', 'cds_main', 'main-branch');
     harness.stateService.setCustomEnvVar('MYSQL_PASSWORD', 'branch-pw', 'main-branch');
-    harness.shell.addResponsePattern(/docker exec .* mysql /, (match) => {
-      const cmd = match.input || '';
-      if (cmd.includes('SELECT * FROM `cds_workbench_acceptance`')) {
-        return { stdout: 'id\tname\n1\tAda\n', stderr: '', exitCode: 0 };
-      }
-      return { stdout: '', stderr: '', exitCode: 0 };
-    });
+    const mysqlCa = '-----BEGIN CERTIFICATE-----\nqa-resource-ca\n-----END CERTIFICATE-----';
+    harness.shell.addResponsePattern(/docker exec 'cds-mysql-main' cat \/var\/lib\/mysql\/ca.pem/, () => ({ stdout: mysqlCa, stderr: '', exitCode: 0 }));
+    harness.sqlExecutor.mockImplementation(async options => options.sql.startsWith('SELECT') ? sqlResult(['id', 'name'], [['1', 'Ada']]) : sqlResult());
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
     });
@@ -790,10 +1037,10 @@ describe('resource database access', () => {
     expect([create.status, insert.status, select.status, update.status, remove.status, drop.status]).toEqual([200, 200, 200, 200, 200, 200]);
     expect(select.body.database).toBe('branch_app');
     expect(select.body.rows).toEqual([['1', 'Ada']]);
-    const mysqlCommands = harness.shell.commands.filter((cmd) => cmd.includes(' mysql '));
-    expect(mysqlCommands).toHaveLength(6);
-    expect(mysqlCommands.every((cmd) => cmd.includes("-u'cds_main'") && cmd.includes("-p'branch-pw'") && cmd.includes("'branch_app'"))).toBe(true);
-    expect(mysqlCommands.some((cmd) => cmd.includes("'shared_app'"))).toBe(false);
+    expect(harness.sqlExecutor).toHaveBeenCalledTimes(6);
+    expect(harness.sqlExecutor.mock.calls.every(([o]) => o.user === 'cds_main' && o.password === 'branch-pw' && o.database === 'branch_app')).toBe(true);
+    expect(harness.sqlExecutor.mock.calls.map(([o]) => o.readOnly)).toEqual([false, false, true, false, false, false]);
+    expect(harness.sqlExecutor.mock.calls.every(([o]) => o.mysqlCa === mysqlCa)).toBe(true);
   });
 
   it('runs PostgreSQL DDL and CRUD against the branch-selected database', async () => {
@@ -815,18 +1062,7 @@ describe('resource database access', () => {
     harness.stateService.setCustomEnvVar('POSTGRES_DB', 'branch_pg', 'main-branch');
     harness.stateService.setCustomEnvVar('POSTGRES_USER', 'cds_main', 'main-branch');
     harness.stateService.setCustomEnvVar('POSTGRES_PASSWORD', 'branch-pw', 'main-branch');
-    harness.shell.addResponsePattern(/docker exec .* psql /, (match) => {
-      const cmd = match.input || '';
-      if (cmd.includes('SELECT * FROM "public"."cds_workbench_acceptance"')) {
-        return { stdout: 'id\tname\n1\tAda\n', stderr: '', exitCode: 0 };
-      }
-      if (cmd.includes('CREATE TABLE')) return { stdout: 'CREATE TABLE\n', stderr: '', exitCode: 0 };
-      if (cmd.includes('INSERT INTO')) return { stdout: 'INSERT 0 1\n', stderr: '', exitCode: 0 };
-      if (cmd.includes('UPDATE')) return { stdout: 'UPDATE 1\n', stderr: '', exitCode: 0 };
-      if (cmd.includes('DELETE FROM')) return { stdout: 'DELETE 1\n', stderr: '', exitCode: 0 };
-      if (cmd.includes('DROP TABLE')) return { stdout: 'DROP TABLE\n', stderr: '', exitCode: 0 };
-      return { stdout: '', stderr: '', exitCode: 0 };
-    });
+    harness.sqlExecutor.mockImplementation(async options => options.sql.startsWith('SELECT') ? sqlResult(['id', 'name'], [['1', 'Ada']]) : sqlResult());
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
     });
@@ -844,10 +1080,10 @@ describe('resource database access', () => {
     expect([create.status, insert.status, select.status, update.status, remove.status, drop.status]).toEqual([200, 200, 200, 200, 200, 200]);
     expect(select.body.database).toBe('branch_pg');
     expect(select.body.rows).toEqual([['1', 'Ada']]);
-    const pgCommands = harness.shell.commands.filter((cmd) => cmd.includes(' psql '));
-    expect(pgCommands).toHaveLength(6);
-    expect(pgCommands.every((cmd) => cmd.includes("PGPASSWORD='branch-pw'") && cmd.includes("-U 'cds_main'") && cmd.includes("-d 'branch_pg'"))).toBe(true);
-    expect(pgCommands.some((cmd) => cmd.includes("'shared_pg'"))).toBe(false);
+    expect(harness.sqlExecutor).toHaveBeenCalledTimes(6);
+    expect(harness.sqlExecutor.mock.calls.every(([o]) => o.user === 'cds_main' && o.password === 'branch-pw' && o.database === 'branch_pg')).toBe(true);
+    expect(harness.sqlExecutor.mock.calls.map(([o]) => o.readOnly)).toEqual([false, false, true, false, false, false]);
+    expect(harness.sqlExecutor.mock.calls.every(([o]) => o.mysqlCa === undefined)).toBe(true);
   });
 
   it('resolves PostgreSQL service env templates before workbench queries and init SQL', async () => {
@@ -873,11 +1109,7 @@ describe('resource database access', () => {
     harness.stateService.setCustomEnvVar('CDS_POSTGRES_USER', 'resolved_user', 'prd-agent');
     harness.stateService.setCustomEnvVar('CDS_POSTGRES_PASSWORD', 'resolved-pw', 'prd-agent');
     harness.stateService.setCustomEnvVar('CDS_POSTGRES_DB', 'resolved_db', 'prd-agent');
-    harness.shell.addResponsePattern(/information_schema\.tables/, () => ({
-      stdout: 'table_schema\ttable_name\ttable_type\npublic\tusers\tBASE TABLE\n',
-      stderr: '',
-      exitCode: 0,
-    }));
+    harness.sqlExecutor.mockResolvedValue(sqlResult(['table_schema', 'table_name', 'table_type'], [["public", "users", "BASE TABLE"]]));
     harness.shell.addResponsePattern(/printf %s .* docker exec -i -e PGPASSWORD=.* psql /, () => ({
       stdout: 'CREATE TABLE\n',
       stderr: '',
@@ -903,7 +1135,8 @@ describe('resource database access', () => {
     expect(init.status).toBe(200);
     expect(init.body.database).toBe('resolved_db');
     const pgCommands = harness.shell.commands.filter((cmd) => cmd.includes(' psql '));
-    expect(pgCommands.length).toBeGreaterThanOrEqual(2);
+    expect(pgCommands).toHaveLength(1);
+    expect(harness.sqlExecutor.mock.calls[0][0]).toMatchObject({ user: 'resolved_user', password: 'resolved-pw', database: 'resolved_db', readOnly: true });
     expect(pgCommands.every((cmd) => cmd.includes("PGPASSWORD='resolved-pw'") && cmd.includes("-U 'resolved_user'") && cmd.includes("-d 'resolved_db'"))).toBe(true);
     expect(pgCommands.some((cmd) => cmd.includes('${'))).toBe(false);
   });
@@ -941,11 +1174,7 @@ describe('resource database access', () => {
     harness.stateService.setCustomEnvVar('POSTGRES_HOST', 'postgres-a', 'main-branch');
     harness.stateService.setCustomEnvVar('POSTGRES_USER', 'cds_branch_a', 'main-branch');
     harness.stateService.setCustomEnvVar('POSTGRES_PASSWORD', 'branch-a-pw', 'main-branch');
-    harness.shell.addResponsePattern(/information_schema\.tables/, () => ({
-      stdout: 'table_schema\ttable_name\ttable_type\npublic\tusers\tBASE TABLE\n',
-      stderr: '',
-      exitCode: 0,
-    }));
+    harness.sqlExecutor.mockResolvedValue(sqlResult(['table_schema', 'table_name', 'table_type'], [["public", "users", "BASE TABLE"]]));
     harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
@@ -954,11 +1183,8 @@ describe('resource database access', () => {
     const tables = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Apostgres-b/data/tables');
 
     expect(tables.status).toBe(200);
-    const pgCommands = harness.shell.commands.filter((cmd) => cmd.includes(' psql '));
-    expect(pgCommands.length).toBeGreaterThanOrEqual(1);
-    expect(pgCommands.some((cmd) => cmd.includes('cds_branch_a') || cmd.includes('branch-a-pw')), 'A 的分支凭据泄漏进了 B').toBe(false);
-    expect(pgCommands.every((cmd) => cmd.includes("-U 'service_b_user'"))).toBe(true);
-    expect(pgCommands.every((cmd) => cmd.includes("PGPASSWORD='service-b-pw'"))).toBe(true);
+    expect(harness.sqlExecutor).toHaveBeenCalledTimes(1);
+    expect(harness.sqlExecutor.mock.calls[0][0]).toMatchObject({ user: 'service_b_user', password: 'service-b-pw', database: 'shared_b', readOnly: true });
   });
 
   /**
