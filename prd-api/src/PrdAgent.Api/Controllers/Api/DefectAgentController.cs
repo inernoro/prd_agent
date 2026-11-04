@@ -559,6 +559,24 @@ public class DefectAgentController : ControllerBase
     {
         var userId = GetUserId();
 
+        var requestId = DefectSubmissionPersistence.RequestId("create", userId, request.ClientRequestId);
+        var fingerprint = DefectSubmissionPersistence.PayloadFingerprint(new
+        {
+            request.TemplateId, request.Title, request.Content, request.AssigneeUserId,
+            request.Severity, request.Priority, request.ProjectId, request.TeamId
+        });
+        if (requestId != null)
+        {
+            var recovered = await _db.DefectReports.Find(x => x.Id == requestId).FirstOrDefaultAsync(ct);
+            if (recovered != null)
+                return recovered.CreationFingerprint == fingerprint
+                    ? Ok(ApiResponse<object>.Ok(new { defect = recovered }))
+                    : Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次创建请求已用于另一份内容，请恢复原草稿后保存修改"));
+        }
+        if (request.Severity != null && !DefectSeverity.All.Contains(request.Severity)
+            || request.Priority != null && !DefectPriority.All.Contains(request.Priority))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "严重程度或优先级无效"));
+
         // 查询报告人信息
         var reporter = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var reporterAvatarFileName = reporter?.AvatarFileName;
@@ -613,7 +631,8 @@ public class DefectAgentController : ControllerBase
 
         var defect = new DefectReport
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = requestId ?? Guid.NewGuid().ToString("N"),
+            CreationFingerprint = requestId == null ? null : fingerprint,
             DefectNo = defectNo,
             TemplateId = request.TemplateId,
             Title = title,
@@ -635,7 +654,9 @@ public class DefectAgentController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        await _db.DefectReports.InsertOneAsync(defect, cancellationToken: ct);
+        defect = await DefectSubmissionPersistence.CreateOrRecoverAsync(_db.DefectReports, defect, ct);
+        if (requestId != null && defect.CreationFingerprint != fingerprint)
+            return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次创建请求已用于另一份内容，请恢复原草稿后保存修改"));
 
         _logger.LogInformation("[{AppKey}] Defect created: {DefectNo} by {UserId}", AppKey, defectNo, userId);
 
@@ -663,14 +684,17 @@ public class DefectAgentController : ControllerBase
         if (defect.Status != DefectStatus.Draft && defect.Status != DefectStatus.Awaiting)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能编辑草稿或待补充状态的缺陷"));
 
-        // 保存当前版本到历史（如果有实质性修改）
-        var hasChanges = (!string.IsNullOrWhiteSpace(request.Title) && request.Title.Trim() != defect.Title)
-                      || (!string.IsNullOrWhiteSpace(request.Content) && request.Content.Trim() != defect.RawContent);
+        if (request.Severity != null && !DefectSeverity.All.Contains(request.Severity)
+            || request.Priority != null && !DefectPriority.All.Contains(request.Priority))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "严重程度或优先级无效"));
 
+        var update = Builders<DefectReport>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .Inc(x => x.EditRevision, 1);
+        var hasChanges = request.Title != null && request.Title.Trim() != defect.Title
+            || request.Content != null && request.Content.Trim() != defect.RawContent;
         if (hasChanges)
         {
-            defect.Versions ??= new List<DefectVersion>();
-            defect.Versions.Add(new DefectVersion
+            update = update.Push(x => x.Versions, new DefectVersion
             {
                 Version = defect.Version,
                 Title = defect.Title,
@@ -680,20 +704,44 @@ public class DefectAgentController : ControllerBase
                 ModifiedByName = userName,
                 ModifiedAt = DateTime.UtcNow,
                 ChangeNote = request.ChangeNote
-            });
-            defect.Version++;
+            }).Inc(x => x.Version, 1);
         }
-
-        if (!string.IsNullOrWhiteSpace(request.Title))
-            defect.Title = DefectTitleNormalizer.NormalizeTitle(request.Title, request.Content ?? defect.RawContent);
-        if (!string.IsNullOrWhiteSpace(request.Content))
-            defect.RawContent = request.Content.Trim();
+        if (request.Title != null)
+            update = update.Set(x => x.Title, DefectTitleNormalizer.NormalizeTitle(request.Title, request.Content ?? defect.RawContent));
+        if (request.Content != null)
+            update = update.Set(x => x.RawContent, request.Content.Trim());
         if (request.StructuredData != null)
-            defect.StructuredData = request.StructuredData;
-
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+            update = update.Set(x => x.StructuredData, request.StructuredData);
+        if (request.TemplateId != null)
+            update = update.Set(x => x.TemplateId, string.IsNullOrWhiteSpace(request.TemplateId) ? null : request.TemplateId);
+        if (request.Severity != null)
+            update = update.Set(x => x.Severity, request.Severity);
+        if (request.Priority != null)
+            update = update.Set(x => x.Priority, request.Priority);
+        if (request.AssigneeUserId != null)
+        {
+            var assignee = string.IsNullOrWhiteSpace(request.AssigneeUserId) ? null
+                : await _db.Users.Find(x => x.UserId == request.AssigneeUserId).FirstOrDefaultAsync(ct);
+            update = update.Set(x => x.AssigneeId, assignee?.UserId)
+                .Set(x => x.AssigneeAvatarFileName, assignee?.AvatarFileName)
+                .Set(x => x.AssigneeName, assignee?.DisplayName ?? assignee?.Username);
+        }
+        if (request.ProjectId != null)
+        {
+            var project = string.IsNullOrWhiteSpace(request.ProjectId) ? null
+                : await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
+            update = update.Set(x => x.ProjectId, project?.Id).Set(x => x.ProjectName, project?.Name);
+        }
+        if (request.TeamId != null)
+        {
+            var team = string.IsNullOrWhiteSpace(request.TeamId) ? null
+                : await _db.ReportTeams.Find(x => x.Id == request.TeamId).FirstOrDefaultAsync(ct);
+            update = update.Set(x => x.TeamId, team?.Id).Set(x => x.TeamName, team?.Name);
+        }
+        var saved = await DefectSubmissionPersistence.UpdateDraftAsync(_db.DefectReports, defect, update, ct);
+        if (saved == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "草稿状态或内容已改变，请重新加载后保存"));
+        defect = saved;
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -891,23 +939,32 @@ public class DefectAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限提交此缺陷"));
 
         if (defect.Status != DefectStatus.Draft && defect.Status != DefectStatus.Awaiting)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能提交草稿或待补充状态的缺陷"));
+            return defect.SubmittedAt != null
+                ? Ok(ApiResponse<object>.Ok(new { defect }))
+                : BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能提交草稿或待补充状态的缺陷"));
 
         if (string.IsNullOrWhiteSpace(defect.RawContent))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷描述不能为空"));
 
-        // 简化处理：直接设为已提交（后续可改为异步 AI 审核）
-        defect.Status = DefectStatus.Submitted;
-        defect.SubmittedAt = DateTime.UtcNow;
-        defect.ReporterUnread = false;
-        defect.AssigneeUnread = !string.IsNullOrEmpty(defect.AssigneeId);
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        // 自动采集用户 API 日志作为附件
+        // Mongo 原子认领提交；只有状态迁移赢家执行采集及通知，重放不回退后续状态。
+        var submitted = await DefectSubmissionPersistence.TrySubmitAsync(_db.DefectReports, defect, ct);
+        if (submitted == null)
+        {
+            var current = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+            if (current != null && current.SubmittedAt != null
+                && current.Status != DefectStatus.Draft && current.Status != DefectStatus.Awaiting)
+                return Ok(ApiResponse<object>.Ok(new { defect = current }));
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "草稿已改变，请保存最新内容后重试提交"));
+        }
+        defect = submitted;
+        var existingAttachmentIds = defect.Attachments.Select(x => x.Id).ToHashSet();
         var clientId = await ResolveBoundClientIdAsync(ct);
         await CollectUserApiLogsAsync(defect, userId, clientId, ct);
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var collected = defect.Attachments.Where(x => !existingAttachmentIds.Contains(x.Id)).ToList();
+        if (collected.Count > 0)
+            await _db.DefectReports.UpdateOneAsync(x => x.Id == id,
+                Builders<DefectReport>.Update.PushEach(x => x.Attachments, collected), cancellationToken: ct);
+        defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct) ?? defect;
 
         _logger.LogInformation("[{AppKey}] Defect submitted: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
@@ -1437,9 +1494,13 @@ public class DefectAgentController : ControllerBase
     /// </summary>
     [HttpPost("defects/{id}/attachments")]
     [RequestSizeLimit(MaxAttachmentBytes)]
-    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, [FromForm] string? description, CancellationToken ct)
+    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, [FromForm] string? description, CancellationToken ct, [FromForm] string? clientRequestId = null)
     {
         var userId = GetUserId();
+        clientRequestId = string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim();
+        if (clientRequestId?.Length > 256)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "附件请求标识最长256个字符"));
+
 
         if (file == null || file.Length <= 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "文件不能为空"));
@@ -1463,13 +1524,38 @@ public class DefectAgentController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        // 上传到存储
+        var attachmentId = DefectSubmissionPersistence.RequestId($"attachment:{id}", userId, clientRequestId)
+            ?? Guid.NewGuid().ToString("N");
         var mime = file.ContentType ?? "application/octet-stream";
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainDefectAgent, type: "img");
+        var fingerprint = DefectSubmissionPersistence.PayloadFingerprint(new
+        {
+            file.FileName, MimeType = mime, Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+            ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+        });
+        var existing = defect.Attachments.FirstOrDefault(x => x.Id == attachmentId);
+        if (existing != null)
+            return existing.RequestFingerprint == fingerprint
+                ? Ok(ApiResponse<object>.Ok(new { attachment = existing, defect }))
+                : Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次附件请求已用于另一文件，请重新选择文件"));
 
+        StoredAsset stored;
+        try
+        {
+            stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainDefectAgent,
+                type: "img", fileName: file.FileName);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[{AppKey}] Attachment storage failed for defect {DefectId}", AppKey, id);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail("ATTACHMENT_STORAGE_FAILED", "附件暂时无法保存，已保留草稿，请重试"));
+        }
         var attachment = new DefectAttachment
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = attachmentId,
+            ClientRequestId = clientRequestId,
+            RequestFingerprint = fingerprint,
             FileName = file.FileName ?? "unknown",
             FileSize = file.Length,
             MimeType = mime,
@@ -1477,11 +1563,12 @@ public class DefectAgentController : ControllerBase
             Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
             UploadedAt = DateTime.UtcNow
         };
-
-        defect.Attachments.Add(attachment);
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        defect = await DefectSubmissionPersistence.AppendAttachmentAsync(_db.DefectReports, id, attachment, ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+        attachment = defect.Attachments.First(x => x.Id == attachmentId);
+        if (attachment.RequestFingerprint != fingerprint)
+            return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次附件请求已用于另一文件，请重新选择文件"));
 
         return Ok(ApiResponse<object>.Ok(new { attachment, defect }));
     }
@@ -1505,10 +1592,9 @@ public class DefectAgentController : ControllerBase
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
 
-        defect.Attachments.Remove(attachment);
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
+        await _db.DefectReports.UpdateOneAsync(x => x.Id == defectId,
+            Builders<DefectReport>.Update.PullFilter(x => x.Attachments, x => x.Id == attachmentId)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -6328,6 +6414,7 @@ public class UpdateTemplateRequest
 
 public class CreateDefectRequest
 {
+    public string? ClientRequestId { get; set; }
     public string? TemplateId { get; set; }
     public string? Title { get; set; }
     public string? Content { get; set; }
@@ -6340,6 +6427,12 @@ public class CreateDefectRequest
 
 public class UpdateDefectRequest
 {
+    public string? TemplateId { get; set; }
+    public string? AssigneeUserId { get; set; }
+    public string? Severity { get; set; }
+    public string? Priority { get; set; }
+    public string? ProjectId { get; set; }
+    public string? TeamId { get; set; }
     public string? Title { get; set; }
     public string? Content { get; set; }
     public Dictionary<string, string>? StructuredData { get; set; }
