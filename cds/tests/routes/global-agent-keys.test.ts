@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -22,6 +23,7 @@ import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
 async function request(
   server: http.Server,
   method: string,
@@ -68,7 +70,7 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
   let shell: MockShellExecutor;
   let server: http.Server;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-globalkeys-test-'));
     const stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile, tmpDir);
@@ -111,9 +113,11 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
       }
       next();
     });
-    app.use('/api', createProjectsRouter({ stateService, shell }));
+    app.use('/api', createProjectsRouter({ stateService, shell, config: { reposBase: tmpDir } as any }));
 
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
+    if (!server.address()) await once(server, 'listening');
+    expect(server.address()).toMatchObject({ family: 'IPv4', address: '127.0.0.1' });
   });
 
   afterEach(async () => {
@@ -234,7 +238,7 @@ describe('Global Agent Keys — 统一授权作用域', () => {
   let shell: MockShellExecutor;
   let server: http.Server;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-keyscope-test-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     stateService.load();
@@ -273,8 +277,10 @@ describe('Global Agent Keys — 统一授权作用域', () => {
       }
       next();
     });
-    app.use('/api', createProjectsRouter({ stateService, shell }));
-    server = app.listen(0);
+    app.use('/api', createProjectsRouter({ stateService, shell, config: { reposBase: tmpDir } as any }));
+    server = listenLoopbackFixture(app);
+    if (!server.address()) await once(server, 'listening');
+    expect(server.address()).toMatchObject({ family: 'IPv4', address: '127.0.0.1' });
   });
 
   afterEach(async () => {
