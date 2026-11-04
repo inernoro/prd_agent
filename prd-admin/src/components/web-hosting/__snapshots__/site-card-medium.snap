@@ -34,13 +34,8 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
           button .h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.max-sm:min-w-11.max-sm:w-11.min-h-7.min-w-[26px].pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
             svg
     div .flex.flex-1.flex-col {gap:5px;padding:10px 11px 11px}
-      div .flex.gap-1.items-center.min-w-0 {height:20px}
-        div .flex.flex-1.flex-wrap.gap-1.items-center.min-w-0
-        span .shrink-0
-          span .h-[18px].inline-flex.items-center.justify-center.w-[18px]
-            "我"
       div .flex.gap-1.5.items-center.min-w-0
-        h3 .flex-1.min-w-0.truncate
+        h3 .min-w-0.truncate
           "多租户架构设计"
       div .flex.flex-wrap.gap-x-1.5.items-center
         span

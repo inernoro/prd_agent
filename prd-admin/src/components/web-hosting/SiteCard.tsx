@@ -494,25 +494,17 @@ export function SiteCard({
 
         {/* ── 信息层：只放「它现在怎么样」 ── */}
         <div className="flex flex-1 flex-col" style={{ padding: SPEC.pad, gap: SPEC.gap }}>
-          {!isSmall && (
+          {!isSmall && (ownerCard || isPublic || (site.sharedTeamIds?.length ?? 0) > 0) && (
             <div className="flex min-w-0 items-center gap-1" style={{ height: 20 }}>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{statusChips}</div>
-              {/* 第四个状态（归属人）本身就是头像，不占胶囊位；个人空间没有 ownerCard 时兜底成「我」 */}
-              <span className="shrink-0" title={ownerCard?.displayName ?? '我创建的'}>
-                {ownerCard ? (
+              {ownerCard && (
+                <span className="shrink-0" title={ownerCard.displayName}>
                   <UserAvatar
                     src={resolveAvatarUrl({ avatarFileName: ownerCard.avatarFileName })}
                     className="h-[18px] w-[18px] rounded-full"
                   />
-                ) : (
-                  <span
-                    className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full"
-                    style={{ background: 'var(--avatar-bg-neutral)', color: 'var(--text-secondary)', fontSize: 9 }}
-                  >
-                    我
-                  </span>
-                )}
-              </span>
+                </span>
+              )}
             </div>
           )}
 
@@ -520,7 +512,7 @@ export function SiteCard({
               截断了也不丢信息——title 属性给全文，右栏「站点上下文」也显示完整标题。 */}
           <div className="flex min-w-0 items-center gap-1.5">
             <h3
-              className="min-w-0 flex-1 truncate cursor-pointer hover:underline"
+              className="min-w-0 truncate cursor-pointer hover:underline"
               style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: 'var(--tracking-title)', color: 'var(--text-primary)' }}
               onClick={onVisit}
               title={site.title}
