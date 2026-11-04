@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react';
+import { act, type ReactNode, type MouseEventHandler } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Simulate } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,12 +8,21 @@ import type { DefectAttachment, DefectReport } from '@/services/contracts/defect
 import { useDefectSubmission } from '../useDefectSubmission';
 import { DefectSubmitPanel } from '@/pages/defect-agent/components/DefectSubmitPanel';
 import { useDefectStore } from '@/stores/defectStore';
+import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
+import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 
-const calls = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), upload: vi.fn(), remove: vi.fn(), submit: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn() }));
-vi.mock('@/services', () => ({ createDefect: calls.create, updateDefect: calls.update, addDefectAttachment: calls.upload, deleteDefectAttachment: calls.remove, submitDefect: calls.submit }));
-vi.mock('@/lib/toast', () => ({ toast: { success: calls.success, error: calls.error, dismiss: calls.dismiss } }));
-vi.mock('@/components/design/GlassCard', () => ({ GlassCard: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
-vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: () => null }));
+const calls = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), upload: vi.fn(), remove: vi.fn(), submit: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn(), warning: vi.fn() }));
+vi.mock('@/services', () => ({
+  createDefect: calls.create, updateDefect: calls.update, addDefectAttachment: calls.upload, deleteDefectAttachment: calls.remove, submitDefect: calls.submit,
+  analyzeDefectImage: vi.fn(),
+  listDefectTemplates: vi.fn(async () => ({ success: true, data: { items: [] } })),
+  getDefectUsers: vi.fn(async () => ({ success: true, data: { items: [] } })),
+  previewApiLogs: vi.fn(async () => ({ success: true, data: { totalCount: 0, errorCount: 0, items: [] } })),
+}));
+vi.mock('@/lib/toast', () => ({ toast: { success: calls.success, error: calls.error, dismiss: calls.dismiss, warning: calls.warning } }));
+vi.mock('@/components/design/GlassCard', () => ({ GlassCard: ({ children, onClick }: { children: ReactNode; onClick?: MouseEventHandler<HTMLDivElement> }) => <div onClick={onClick}>{children}</div> }));
+vi.mock('@/components/ui/SuccessConfettiButton', () => ({ SuccessConfettiButton: ({ onAction, readyText, disabled }: { onAction: () => Promise<unknown>; readyText: string; disabled?: boolean }) => <button data-tour-id="defect-submit-global" disabled={disabled} onClick={() => { void onAction(); }}>{readyText}</button> }));
+vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <input aria-label="提交给" value={value} onChange={event => onChange(event.target.value)} /> }));
 vi.mock('@/hooks/useBreakpoint', () => ({ useIsMobile: () => false }));
 vi.mock('@/lib/useAiPreviewStream', () => ({ useAiPreviewStream: () => ({ open: false }) }));
 
@@ -50,6 +59,160 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.useRealTimers();
+    sessionStorage.removeItem('defect-agent-last-assignee');
+    useGlobalDefectStore.setState({ showDialog: false, prefill: null, onCreated: null });
+  });
+
+  async function openEntry(entry: 'global' | 'panel') {
+    vi.useFakeTimers();
+    sessionStorage.setItem('defect-agent-last-assignee', 'self');
+    if (entry === 'global') {
+      useGlobalDefectStore.getState().openDialog({ onCreated });
+      await act(async () => root.render(<GlobalDefectSubmitDialog />));
+    } else {
+      useDefectStore.setState({ defects: [], templates: [], users: [], projects: [], showSubmitPanel: true });
+      function PageHost() {
+        return useDefectStore(state => state.showSubmitPanel) ? <DefectSubmitPanel /> : null;
+      }
+      await act(async () => root.render(<PageHost />));
+    }
+    const textarea = document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')!;
+    await act(async () => Simulate.change(textarea, { target: { value: input.content } } as never));
+    return {
+      isOpen: () => entry === 'global' ? useGlobalDefectStore.getState().showDialog : useDefectStore.getState().showSubmitPanel,
+      submit: () => document.querySelector<HTMLButtonElement>(`[data-tour-id="${entry === 'global' ? 'defect-submit-global' : 'defect-submit'}"]`)!,
+      close: () => document.querySelector<HTMLButtonElement>('[aria-label="关闭提交缺陷"]')!,
+      backdrop: () => document.querySelector<HTMLElement>('[role="dialog"]')!,
+    };
+  }
+
+  it('结果待确认时reset不能丢弃同一提交身份', async () => {
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return fail('NETWORK_ERROR', '提交响应丢失');
+    });
+    await act(async () => { await current.submit(input, []); });
+    await act(async () => current.reset());
+    expect(current.confirmationPending).toBe(true);
+    expect(current.savedDefect?.id).toBe('draft-1');
+    await act(async () => { expect(await current.submit(input, [])).toBe(true); });
+    expect(calls.create.mock.calls[1][0].clientRequestId).toBe(calls.create.mock.calls[0][0].clientRequestId);
+    expect(calls.update).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
+
+  it('待确认重试暂读到草稿且保存失败，仍保留未知结果与身份直到核实', async () => {
+    calls.submit.mockResolvedValueOnce(fail('NETWORK_ERROR', '最终提交响应丢失'));
+    await act(async () => { await current.submit(input, []); });
+    calls.update.mockResolvedValueOnce(fail('VERSION_CONFLICT', '保存冲突'));
+    await act(async () => { await current.submit(input, []); });
+    expect(current.confirmationPending).toBe(true);
+    await act(async () => { expect(current.reset()).toBe(false); });
+    // 先前请求在暂读draft之后完成；不能因这次失败而改用新身份创建另一单。
+    draft = { ...draft, status: 'submitted' };
+    await act(async () => { expect(await current.submit(input, [])).toBe(true); });
+    expect(new Set(calls.create.mock.calls.map(([request]) => request.clientRequestId)).size).toBe(1);
+    expect(calls.submit.mock.calls.map(([request]) => request.id)).toEqual(['draft-1', 'draft-1']);
+  });
+
+  it.each(['content', 'assignee'] as const)('待确认回查仍为草稿且%s无效时，只核对原身份、不写入无效编辑', async field => {
+    calls.submit.mockResolvedValueOnce(fail('NETWORK_ERROR', '最终提交响应丢失'));
+    await act(async () => { await current.submit(input, []); });
+    const edited = { ...input, ...(field === 'content' ? { content: '' } : { assigneeUserId: '' }) };
+    await act(async () => { expect(await current.submit(edited, [])).toBe(false); });
+    expect(current.confirmationPending).toBe(true);
+    expect(calls.update).toHaveBeenCalledTimes(1);
+    expect(calls.upload).not.toHaveBeenCalled();
+    expect(calls.submit).toHaveBeenCalledTimes(1);
+    await act(async () => { expect(current.reset()).toBe(false); });
+    draft = { ...draft, status: 'submitted' };
+    await act(async () => { expect(await current.submit(edited, [])).toBe(false); });
+    expect(current.unappliedChanges).toBe(true);
+    expect(current.confirmationPending).toBe(false);
+    expect(calls.update).toHaveBeenCalledTimes(1);
+    expect(calls.submit).toHaveBeenCalledTimes(1);
+    expect(new Set(calls.create.mock.calls.map(([request]) => request.clientRequestId)).size).toBe(1);
+  });
+
+  it.each([['global', 'content'], ['panel', 'content'], ['global', 'assignee'], ['panel', 'assignee']] as const)('%s待确认后清空%s仍可核实原单，并保留当前未保存编辑', async (entry, field) => {
+    const ui = await openEntry(entry);
+    const selector = field === 'content' ? '[aria-label="问题描述"]' : '[aria-label="提交给"]';
+    const edit = async (value: string) => act(async () => Simulate.change(document.querySelector(selector)!, { target: { value } } as never));
+    await edit('');
+    if (field === 'content') expect(ui.submit().disabled).toBe(true);
+    else await act(async () => ui.submit().click());
+    expect(calls.create).not.toHaveBeenCalled();
+    await edit(field === 'content' ? input.content : 'self');
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return fail('NETWORK_ERROR', '提交响应丢失');
+    });
+    await act(async () => ui.submit().click());
+    await edit('');
+    expect(ui.submit().disabled).toBe(false);
+    await act(async () => ui.submit().click());
+    expect(calls.create).toHaveBeenCalledTimes(2);
+    expect(calls.create.mock.calls[1][0].clientRequestId).toBe(calls.create.mock.calls[0][0].clientRequestId);
+    expect(calls.update).toHaveBeenCalledTimes(1);
+    expect(calls.submit).toHaveBeenCalledTimes(1);
+    expect(calls.success).not.toHaveBeenCalled();
+    expect(document.querySelector(selector)?.getAttribute('value') ?? (document.querySelector(selector) as HTMLTextAreaElement).value).toBe('');
+    expect(ui.isOpen()).toBe(true);
+    expect(ui.close().disabled).toBe(false);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('当前修改尚未保存');
+    await act(async () => ui.close().click());
+    expect(ui.isOpen()).toBe(false);
+  });
+
+  it.each(['global', 'panel'] as const)('%s待确认时关闭按钮、遮罩及快捷键不丢会话，重试确认后正常关闭', async entry => {
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return fail('NETWORK_ERROR', '提交响应丢失');
+    });
+    const ui = await openEntry(entry);
+    await act(async () => ui.submit().click());
+    expect(ui.close().disabled).toBe(true);
+    await act(async () => { ui.close().click(); Simulate.click(ui.backdrop()); });
+    if (entry === 'global') {
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true }));
+      });
+    }
+    expect(ui.isOpen()).toBe(true);
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')?.value).toBe(input.content);
+    await act(async () => { ui.submit().click(); await vi.advanceTimersByTimeAsync(1600); });
+    expect(ui.isOpen()).toBe(false);
+    expect(calls.create.mock.calls[1][0].clientRequestId).toBe(calls.create.mock.calls[0][0].clientRequestId);
+    expect(calls.update).toHaveBeenCalledTimes(1);
+    expect(calls.submit.mock.calls.map(([request]) => request.id)).toEqual(['draft-1', 'draft-1']);
+    expect(calls.success).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['global', 'panel'] as const)('%s同帧提交与关闭不会卸载进行中的会话，提交前失败后仍可关闭', async entry => {
+    let failSave!: (value: ReturnType<typeof fail>) => void;
+    calls.create.mockReturnValueOnce(new Promise(resolve => { failSave = resolve; }));
+    const ui = await openEntry(entry);
+    await act(async () => { ui.submit().click(); Simulate.click(ui.backdrop()); });
+    expect(ui.isOpen()).toBe(true);
+    await act(async () => failSave(fail('NETWORK_ERROR', '保存失败')));
+    expect(ui.close().disabled).toBe(false);
+    await act(async () => ui.close().click());
+    expect(ui.isOpen()).toBe(false);
+    expect(calls.submit).not.toHaveBeenCalled();
+  });
+
+  it('全局确认成功后先关闭再重开，旧关闭定时器不能清除新草稿', async () => {
+    const ui = await openEntry('global');
+    await act(async () => ui.submit().click());
+    await act(async () => ui.close().click());
+    await act(async () => useGlobalDefectStore.getState().openDialog());
+    const textarea = document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')!;
+    await act(async () => Simulate.change(textarea, { target: { value: '新草稿内容' } } as never));
+    await act(async () => vi.advanceTimersByTimeAsync(1600));
+    expect(ui.isOpen()).toBe(true);
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')?.value).toBe('新草稿内容');
   });
 
   it('附件业务失败立即停止，不调用最终提交；重试复用草稿和附件身份', async () => {

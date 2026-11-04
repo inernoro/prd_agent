@@ -100,6 +100,9 @@ export function DefectSubmitPanel() {
     },
   });
   const { submitting } = submission;
+  const closeIfIdle = () => {
+    if (submission.reset()) setShowSubmitPanel(false);
+  };
   // polishStream.open 跟随通用 modal 的 open 状态: 弹窗打开期间禁用按钮防止重复触发
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [showExample, setShowExample] = useState(false);
@@ -295,11 +298,11 @@ export function DefectSubmitPanel() {
 
   // Submit defect
   const handleSubmit = async () => {
-    if (!content.trim()) {
+    if (!content.trim() && !submission.confirmationPending) {
       toast.warning('请输入问题描述');
       return;
     }
-    if (!assigneeUserId) {
+    if (!assigneeUserId && !submission.confirmationPending) {
       // 用字段级闪烁代替右上角 toast：视觉聚焦到真正需要填写的那个控件
       setAssigneeFlashTick((t) => t + 1);
       toast.warning('请选择提交用户');
@@ -340,7 +343,7 @@ export function DefectSubmitPanel() {
         'surface-backdrop fixed inset-0 z-[200] flex justify-center',
         isMobile ? 'items-stretch p-0' : 'items-center p-4'
       )}
-      onClick={() => { if (!submitting) setShowSubmitPanel(false); }}
+      onClick={closeIfIdle}
     >
       <GlassCard
         glow
@@ -371,8 +374,8 @@ export function DefectSubmitPanel() {
           </div>
           <button
             aria-label="关闭提交缺陷"
-            disabled={submitting}
-            onClick={() => { if (!submitting) setShowSubmitPanel(false); }}
+            disabled={submitting || submission.confirmationPending}
+            onClick={closeIfIdle}
             className="p-2 rounded-lg hover-bg-soft transition-colors text-token-muted"
           >
             <X size={18} />
@@ -384,7 +387,7 @@ export function DefectSubmitPanel() {
           <div role="alert" className="shrink-0 px-3 py-2 text-[12px] text-token-error">
             {submission.error}
             {submission.savedDefect && !submission.unappliedChanges && <div>{submission.confirmationPending
-              ? `缺陷 ${submission.savedDefect.defectNo} 已保存，提交结果待确认；重试会核对服务端结果。`
+              ? `缺陷 ${submission.savedDefect.defectNo} 已保存，提交结果待确认；请重试确认，确认后即可关闭。`
               : `草稿 ${submission.savedDefect.defectNo} 已保存，尚未提交；重试会继续此草稿。`}</div>}
             {submission.unappliedChanges && <Button variant="ghost" size="sm" onClick={submission.reset}>保留当前内容并开始新提交</Button>}
           </div>
@@ -708,7 +711,7 @@ export function DefectSubmitPanel() {
                 size="sm"
                 data-tour-id="defect-submit"
                 onClick={handleSubmit}
-                disabled={submitting || !content.trim()}
+                disabled={submitting || (!content.trim() && !submission.confirmationPending)}
               >
                 {submitting ? (
                   <MapSpinner size={14} />

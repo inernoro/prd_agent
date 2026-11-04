@@ -58,7 +58,8 @@ export function useDefectSubmission(options: Options) {
   useEffect(() => () => dismissFailure(), [dismissFailure]);
 
   const reset = useCallback(() => {
-    if (busyRef.current) return;
+    // 未确认的最终提交可能已在服务器完成，不能用关闭/重置抹去恢复身份。
+    if (busyRef.current || confirmationRef.current) return false;
     dismissFailure();
     attemptRef.current = null;
     setSavedDefect(null);
@@ -67,6 +68,7 @@ export function useDefectSubmission(options: Options) {
     setConfirmationPending(false);
     setUnappliedChanges(false);
     confirmationRef.current = false;
+    return true;
   }, [dismissFailure]);
 
   const submit = useCallback(async (input: DraftInput, attachments: SubmissionAttachment[]): Promise<boolean> => {
@@ -102,7 +104,7 @@ export function useDefectSubmission(options: Options) {
       if (!created.success) throw created.error;
       if (!created.data?.defect) throw new Error('草稿保存未完成');
       let defect = created.data.defect;
-      confirmingSubmission = false;
+      // 一次暂读draft不能排除先前提交仍在完成；失败重试须保留未知结果直到最终核实。
       setSavedDefect(defect);
       if (attempt.notifiedDraftId !== defect.id) {
         attempt.notifiedDraftId = defect.id;
@@ -110,6 +112,15 @@ export function useDefectSubmission(options: Options) {
       }
 
       if (defect.status === 'draft' || defect.status === 'awaiting') {
+        // 待确认时允许无效的当前编辑先回查，但未提交的原单仍须通过原有必填规则。
+        if (confirmingSubmission && (!normalized(currentSnapshot.input.content) || !normalized(currentSnapshot.input.assigneeUserId))) {
+          const message = !normalized(currentSnapshot.input.content)
+            ? '提交结果仍待确认，请补充问题描述后重试。'
+            : '提交结果仍待确认，请选择提交用户后重试。';
+          setError(message);
+          failureToastRef.current = toast.error('提交结果待确认', message);
+          return false;
+        }
         const updated = await updateDefect({
           ...currentSnapshot.input, id: defect.id,
           templateId: currentSnapshot.input.templateId ?? '',

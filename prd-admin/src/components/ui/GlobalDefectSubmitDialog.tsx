@@ -130,21 +130,41 @@ export function GlobalDefectSubmitDialog() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentsRef = useRef<AnalyzedAttachment[]>([]);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+  const cancelScheduledClose = useCallback(() => {
+    if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; cancelScheduledClose(); };
+  }, [cancelScheduledClose]);
   const submission = useDefectSubmission({
     onCreated: (defect) => onCreated?.({ id: defect.id, title: defect.title || extractTitleFromContent(content) || '未命名缺陷' }),
     onSubmitted: () => {
-      setTimeout(() => {
+      if (!mountedRef.current) return;
+      cancelScheduledClose();
+      closeTimerRef.current = setTimeout(() => {
+        closeTimerRef.current = null;
+        if (!mountedRef.current) return;
         setContent('');
         clearAttachments();
         setSeverity(DefectSeverity.Trivial);
         closeDialog();
       }, 1500);
     },
+    onRecovered: cancelScheduledClose,
   });
-  const { submitting, reset: resetSubmission } = submission;
+  const { submitting, reset: resetSubmissionState } = submission;
+  const resetSubmission = useCallback(() => {
+    if (!resetSubmissionState()) return false;
+    cancelScheduledClose();
+    return true;
+  }, [resetSubmissionState, cancelScheduledClose]);
   const closeIfIdle = useCallback(() => {
-    if (!submitting) closeDialog();
-  }, [submitting, closeDialog]);
+    if (resetSubmission()) closeDialog();
+  }, [resetSubmission, closeDialog]);
   useEffect(() => {
     if (!showDialog) resetSubmission();
   }, [showDialog, resetSubmission]);
@@ -274,13 +294,14 @@ export function GlobalDefectSubmitDialog() {
 
         e.preventDefault();
         e.stopPropagation();
-        useGlobalDefectStore.getState().toggleDialog();
+        if (showDialog) closeIfIdle();
+        else useGlobalDefectStore.getState().openDialog();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [showDialog, polishStream.open, submitting]);
+  }, [showDialog, polishStream.open, submitting, closeIfIdle]);
 
   // 应用预填草稿（行为洞察「转为缺陷」复用本面板时携带）：打开瞬间把标题/正文/严重度/指派人灌进表单。
   // title 作为正文首行（本面板用首行提取标题），避免再开一个标题输入框，复用既有「首行即标题」交互。
@@ -450,11 +471,11 @@ export function GlobalDefectSubmitDialog() {
 
   // Submit defect - 返回 boolean 供 SuccessConfettiButton 使用
   const handleSubmit = async (): Promise<boolean> => {
-    if (!content.trim()) {
+    if (!content.trim() && !submission.confirmationPending) {
       toast.warning('请输入问题描述');
       return false;
     }
-    if (!assigneeUserId) {
+    if (!assigneeUserId && !submission.confirmationPending) {
       // 字段级闪烁聚焦控件，toast 兜底保证用户明确看到原因
       setAssigneeFlashTick((t) => t + 1);
       toast.warning('请选择提交用户');
@@ -520,7 +541,7 @@ export function GlobalDefectSubmitDialog() {
           <button
             onClick={closeIfIdle}
             aria-label="关闭提交缺陷"
-            disabled={submitting}
+            disabled={submitting || submission.confirmationPending}
             className="p-2 rounded-lg text-token-muted hover-bg-soft transition-colors"
           >
             <X size={18} />
@@ -533,7 +554,7 @@ export function GlobalDefectSubmitDialog() {
             {submission.error}
             {submission.savedDefect && !submission.unappliedChanges && (
               <div>{submission.confirmationPending
-                ? `缺陷 ${submission.savedDefect.defectNo} 已保存，提交结果待确认；重试会核对服务端结果。`
+                ? `缺陷 ${submission.savedDefect.defectNo} 已保存，提交结果待确认；请重试确认，确认后即可关闭。`
                 : `草稿 ${submission.savedDefect.defectNo} 已保存，尚未提交；重试会继续此草稿。`}</div>
             )}
             {submission.unappliedChanges && <Button variant="ghost" size="sm" onClick={submission.reset}>保留当前内容并开始新提交</Button>}
@@ -964,7 +985,7 @@ export function GlobalDefectSubmitDialog() {
                 loadingText={submission.progress || '提交中'}
                 successText="已提交"
                 showLoadingText
-                disabled={!content.trim()}
+                disabled={!content.trim() && !submission.confirmationPending}
                 onAction={handleSubmit}
                 successHoldMs={1200}
               />
