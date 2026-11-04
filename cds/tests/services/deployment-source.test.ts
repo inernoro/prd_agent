@@ -48,7 +48,7 @@ describe('真实Git部署源码隔离', () => {
 
   it.each(['missing-worktree', 'missing-git', 'corrupt-git', 'external-missing',
     'missing-without-capability', 'escaped-managed', 'late-sentinel', 'late-empty', 'existing-empty',
-    'owner-after-auth', 'owner-after-fetch', 'owner-before-dispatch', 'cleanup-on-prune', 'cleanup-on-add'] as const)(
+    'owner-after-auth', 'owner-after-fetch', 'owner-before-dispatch', 'owner-before-add', 'owner-before-add-nonempty', 'owner-before-add-replaced', 'owner-after-add-retry', 'cleanup-on-prune', 'cleanup-on-add'] as const)(
     'LRU冷恢复仅重建缺失工作树并保留现存登记目录：%s', async scenario => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cds-source-cold-')));
     try {
@@ -83,8 +83,16 @@ describe('真实Git部署源码隔离', () => {
           cleanupFaults++;
           throw cleanupFailure;
         }
-        if (cold && scenario === 'owner-before-dispatch' && command === 'git worktree prune') {
+        if (cold && scenario === 'owner-after-add-retry' && command.startsWith('git worktree add ')) {
+          options?.beforeStart?.();
+          return shell.exec("printf 'missing but already registered worktree\\n' >&2; exit 1", options);
+        }
+        if (cold && (scenario === 'owner-after-add-retry' && command === 'git worktree prune' && commands.filter(c => c === command).length === 2
+          || scenario === 'owner-before-dispatch' && command === 'git worktree prune'
+          || scenario.startsWith('owner-before-add') && command.startsWith('git worktree add '))) {
           revoked = true;
+          if (scenario === 'owner-before-add-nonempty') fs.writeFileSync(path.join(current, 'sentinel.txt'), '保留写入');
+          if (scenario === 'owner-before-add-replaced') { fs.renameSync(current, current + '.reserved'); fs.mkdirSync(current); }
           options?.beforeStart?.();
         }
         if (revoked && /^git (?:fetch|worktree (?:add|prune))/.test(command)) afterRevocation.push(command);
@@ -138,8 +146,17 @@ describe('真实Git部署源码隔离', () => {
           .rejects.toMatchObject({ code: scenario === 'existing-empty'
             ? 'deployment-worktree-unavailable' : 'deployment-worktree-recovery-failed' });
         if (scenario.startsWith('owner-')) {
-          expect(fs.existsSync(current)).toBe(false);
+          expect(fs.existsSync(current)).toBe(scenario === 'owner-before-add-nonempty' || scenario === 'owner-before-add-replaced' || scenario === 'owner-after-add-retry');
+          if (scenario === 'owner-before-add-nonempty') expect(fs.readFileSync(path.join(current, 'sentinel.txt'), 'utf8')).toBe('保留写入');
+          if (scenario === 'owner-before-add-replaced') { expect(fs.readdirSync(current)).toEqual([]); expect(fs.existsSync(current + '.reserved')).toBe(true); }
           expect(afterRevocation).toEqual([]);
+          if (scenario === 'owner-after-add-retry') { expect(fs.readdirSync(current)).toEqual([]); expect(commands.filter(c => c.startsWith('git worktree add '))).toHaveLength(1); }
+          if (scenario === 'owner-before-add') {
+            cold = false; revoked = false;
+            const retry = await service.prepareDeploymentSource('main', current, sha, repo, recovery);
+            expect(retry.afterFull).toBe(sha);
+            expect(fs.readFileSync(path.join(retry.sourcePath, 'version.txt'), 'utf8')).toBe('cold-recovery');
+          }
         } else {
           expect(fs.readdirSync(current)).toEqual(scenario === 'late-sentinel' ? ['sentinel.txt'] : []);
           if (scenario === 'late-sentinel') expect(fs.readFileSync(path.join(current, 'sentinel.txt'), 'utf8')).toBe('陌生目录必须保留');

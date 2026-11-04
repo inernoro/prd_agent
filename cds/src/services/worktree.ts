@@ -418,18 +418,33 @@ export class WorktreeService {
         || current.dev !== owned.dev || current.ino !== owned.ino : current) throw new Error('冷恢复目录已被占用');
     };
     const shell: IShellExecutor = !cold ? this.shell : { exec: async (command, options) => {
+      let reservedHere = false;
       const qualify = (): void => {
         check();
         if (command.startsWith('git worktree add ') && !owned) {
           fs.mkdirSync(path.dirname(targetDir), { recursive: true });
           fs.mkdirSync(targetDir); // 独占缺失路径；陌生空目录也不能被git add写入。
           owned = fs.lstatSync(targetDir);
+          reservedHere = true;
           check();
         }
       };
       qualify();
-      const result = await this.shell.exec(command, { ...options,
-        beforeStart: () => { options?.beforeStart?.(); qualify(); } });
+      let startRejected = false;
+      let result: Awaited<ReturnType<IShellExecutor['exec']>>;
+      try { result = await this.shell.exec(command, { ...options, beforeStart: () => {
+        try { options?.beforeStart?.(); qualify(); }
+        catch (error) { startRejected = true; throw error; }
+      } }); } catch (error) {
+        if (startRejected && reservedHere && owned && (error as { code?: string } | null)?.code !== 'cleanup') {
+          try {
+            const current = fs.lstatSync(targetDir);
+            if (canonicalRecoveryPath(targetDir) === cold!.key && current.isDirectory()
+              && !current.isSymbolicLink() && current.dev === owned.dev && current.ino === owned.ino) fs.rmdirSync(targetDir);
+          } catch { /* 仅移除本次尚未派发的空预留；陌生、非空及不可核实目录均保留。 */ }
+        }
+        throw error;
+      }
       check(); // cleanup异常直接传播，不能被后到资格错误覆盖掉原repo未知围栏。
       return result;
     } };
