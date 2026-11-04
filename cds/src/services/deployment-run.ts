@@ -243,6 +243,14 @@ export class DeploymentRunService {
     });
   }
 
+  /** 与正常交接共用原保存回执，未领取的可靠待办不要求在关闸期间开始执行。 */
+  canPreserveQueuedRun(id: string, coordinator: BranchOperationCoordinator): boolean {
+    const run = this.get(id);
+    if (!run?.operationId || run.operationGeneration === undefined) return false;
+    const pending = coordinator.getUnclaimedPending(run.operationId, run.operationGeneration);
+    return Boolean(pending && this.canPreservePending(pending));
+  }
+
   /** 只承认 begin 或恢复后已实际确认保存的原 sealed 意图；未确认或失败均拒绝。 */
   private canPreservePending(pending: PendingWebhookDeploy): boolean {
     const run = this.getForOperation(pending.operationId, pending.generation);

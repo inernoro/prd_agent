@@ -2492,6 +2492,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     source: string;
     timeoutMs?: number;
     ownerActive?: () => boolean;
+    isQueuedPreserved?: (id: string) => boolean;
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
   }): Promise<void> {
     const timeoutMs = context.timeoutMs ?? resolveSelfUpdateDrainTimeoutMs({});
@@ -2506,7 +2507,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ...collectDrainableRuns({
           deploymentRuns: stateService.getDeploymentRuns() as unknown as DrainableRun[],
           releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
-        }),
+        }).filter(run => run.kind === 'release' || !context.isQueuedPreserved?.(run.id)),
         // Pull/stop and other branch writes may have no deployment-run record.
         ...(branchOperationCoordinator?.getRestartBlockingOperations() || []).map((op) => ({
           id: `operation:${op.operationId}`, status: 'preparing', branchId: op.branchId,
@@ -2565,6 +2566,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       trigger: context.trigger, branch: context.branch, toSha: context.toSha,
       source: context.source, timeoutMs: context.timeoutMs, onProgress: context.onProgress,
       ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+      isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
     });
     context.onSafeToRestart();
     selfMaintenance.setPhase(maintenanceOwner, 'flush');
@@ -24784,6 +24786,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         trigger: 'manual', branch, source: 'api.self-restart',
         timeoutMs: resolveSelfUpdateDrainTimeoutMs(req.body),
         ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+        isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
         onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
       });
       const restartFlush = await flushSelfUpdateStateBeforeRestart({
@@ -25054,6 +25057,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       await drainDeploysBeforeSelfUpdateRestart({
         trigger: 'manual', branch: branch || '', source: 'api.self-update', timeoutMs: restartDrainTimeoutMs,
         ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+        isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
         onProgress: (status, title) => send('drain-deploys', status, title),
       });
       timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
@@ -25972,6 +25976,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       await drainDeploysBeforeSelfUpdateRestart({
         trigger: 'force-sync', branch: branch || '', source: 'api.self-force-sync', timeoutMs: restartDrainTimeoutMs,
         ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
+        isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
         onProgress: (status, title) => send('drain-deploys', status, title),
       });
       timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });

@@ -16,6 +16,9 @@ import { MockShellExecutor, ShellExecutor } from '../../src/services/shell-execu
 import { IsolatedShellExecutor, OperationExecutionError } from '../../src/services/isolated-shell-executor.js';
 import { SelfMaintenanceRuntime } from '../../src/services/self-maintenance-runtime.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { captureDeploymentInput } from '../../src/services/deployment-input.js';
+import { readDeploymentIntent } from '../../src/services/deployment-intent.js';
 import { endSelfUpdateDrain, selfUpdateDrainBlockReason } from '../../src/services/deploy-drain.js';
 import { setRestartWait } from '../../src/services/self-restart-wait.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
@@ -50,6 +53,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
   let root: string, state: StateService, server: http.Server, shell: MockShellExecutor;
   let maintenance: SelfMaintenanceRuntime, filesPool: IsolatedShellExecutor;
   let coordinator: BranchOperationCoordinator;
+  let deploymentRuns: DeploymentRunService;
   let ownedCommands: string[];
   let fullWorkflow: boolean, child: EventEmitter & Pick<ChildProcess, 'pid' | 'exitCode' | 'signalCode'>;
   let permitWrites: string[], childExitCode: number | undefined;
@@ -174,12 +178,13 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     maintenance = new SelfMaintenanceRuntime(controlledShell, root, () => {});
     state = new StateService(path.join(root, 'state.json'), root); state.load();
     coordinator = new BranchOperationCoordinator();
+    deploymentRuns = new DeploymentRunService(state);
     const config = { repoRoot: root, worktreeBase: path.join(root, 'worktrees'), masterPort: 9900,
       workerPort: 5500, dockerNetwork: 'test', portStart: 10001, sharedEnv: {},
       rootDomains: ['example.test'], jwt: { secret: 'fixture', issuer: 'fixture' },
       mode: 'standalone', executorPort: 9901 } as CdsConfig;
     const app = express(); app.use(express.json());
-    app.use('/api', createBranchRouter({ stateService: state, shell: controlledShell, config, selfMaintenanceRuntime: maintenance, branchOperationCoordinator: coordinator,
+    app.use('/api', createBranchRouter({ stateService: state, shell: controlledShell, config, selfMaintenanceRuntime: maintenance, branchOperationCoordinator: coordinator, deploymentRunService: deploymentRuns,
       worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config) }));
     server = listenLoopbackFixture(app);
     if (!server.listening) await once(server, 'listening');
@@ -525,6 +530,73 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     await allBusy();
     release.resolve(); await finished.promise; await nextTurn();
     expect((await post('self-update-dry-run')).status).toBe(200);
+  });
+
+  it.each(['self-update', 'self-force-sync', 'self-restart'] as const)('%s保留已确认保存的原产物等待，不将未领取意图误作在途写者', async endpoint => {
+    fullWorkflow = true; vi.stubEnv('CDS_SECRET_KEY', '17'.repeat(32));
+    if (!state.getProject('default')) state.addProject({ id: 'default', name: '原待办归属项目', slug: 'owned-fixture' } as any);
+    expect(state.getProject('default')).toBeDefined();
+    state.addBranch({ id: 'artifact-waiter', projectId: 'default', branch: 'main', worktreePath: root,
+      createdAt: new Date().toISOString(), status: 'idle', services: {} });
+    const input = captureDeploymentInput(state.getBranch('artifact-waiter')!, [{ id: 'api', projectId: 'default',
+      name: 'API', dockerImage: 'fixture/api', workDir: '.', containerPort: 3000, command: 'node index.js', prebuiltImage: true }], {});
+    input.targetCommitSha = sha; input.configHash = 'fixture-config';
+    input.artifactAdmission = { state: 'waiting', targetCommitSha: sha, checkedAt: '', reason: 'missing', artifacts: [] };
+    const request = { branchId: 'artifact-waiter', projectId: 'default', kind: 'deploy' as const,
+      trigger: 'webhook' as const, commitSha: sha, commitPinned: true, configHash: input.configHash };
+    const decision = coordinator.begin(request, { waitForArtifacts: true });
+    expect(decision.status).toBe('merged');
+    coordinator.rememberDeploymentInput(decision.operationId, decision.generation, input);
+    const run = await deploymentRuns.begin({ projectId: 'default', branchId: request.branchId, trigger: 'webhook', initialStatus: 'queued',
+      operationId: decision.operationId, operationGeneration: decision.generation, operationAdmissionGeneration: decision.generation,
+      commitSha: sha, configHash: input.configHash, executionInput: { request, input } });
+    const originalIntent = structuredClone(state.getState().deploymentIntents![run.id]);
+    expect(readDeploymentIntent(run, originalIntent)).toEqual(input);
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'state.json'), 'utf8')).deploymentIntents[run.id]).toEqual(originalIntent);
+    const { entered, fire } = observeRestartTimers();
+    const first = post(endpoint);
+    const reachedHandoff = await Promise.race([entered.then(() => true), first.then(() => false)]);
+    expect.soft(reachedHandoff, '可靠未领取等待应跨原正常重启保留，不等不可能运行的产物刷新').toBe(true);
+    if (!reachedHandoff) { expect.soft((await first).raw).toContain('event: done'); return; }
+    expect(deploymentRuns.get(run.id)?.status).toBe('queued');
+    expect(coordinator.getActiveOperations()).toEqual([]);
+    fire(endpoint === 'self-force-sync' ? 0 : 500);
+    expect((await first).raw).toContain('event: done');
+    expect(permitWrites).toEqual(['restart\n']); expect(process.exit).not.toHaveBeenCalled();
+    await state.flush();
+    const reopened = new StateService(path.join(root, 'state.json')); reopened.load();
+    const nextCoordinator = new BranchOperationCoordinator(), recovered = new DeploymentRunService(reopened);
+    expect(recovered.restoreQueued(nextCoordinator).map(value => value.id)).toEqual([run.id]);
+    await recovered.waitForAcceptance(run.id);
+    expect(reopened.getState().deploymentIntents![run.id]).toEqual(originalIntent);
+    expect(recovered.get(run.id)?.status).toBe('queued'); expect(recovered.get(run.id)?.failure).toBeUndefined();
+    expect(nextCoordinator.getArtifactWaiters()).toMatchObject([{ pending: { operationId: decision.operationId, generation: decision.generation },
+      input: { artifactAdmission: { state: 'waiting', targetCommitSha: sha } } }]);
+    expect(nextCoordinator.drainReady()).toEqual([]);
+    expect(recovered.restoreQueued(nextCoordinator).map(value => value.id)).toEqual([run.id]);
+    expect(nextCoordinator.getArtifactWaiters()).toHaveLength(1);
+    await recovered.waitForAcceptance(run.id); await reopened.flush();
+    fire(15_000);
+  });
+
+  it.each(['claimed-replay', 'reserved-continuation'] as const)('%s原资格过期后，首轮排空沿用既有失效结算而非永远等待', async mode => {
+    const now = Date.now(), clock = vi.spyOn(Date, 'now').mockReturnValue(now - 60 * 60_000);
+    try {
+      const active = coordinator.begin({ projectId: 'default', branchId: 'expired', kind: mode === 'claimed-replay' ? 'pull' : 'force-rebuild',
+        profileId: 'api', trigger: 'manual', continueWith: mode === 'reserved-continuation' ? 'deploy-profile' : undefined });
+      expect(active.status).toBe('started');
+      if (mode === 'claimed-replay') expect(coordinator.begin({ projectId: 'default', branchId: 'expired',
+        kind: 'deploy', trigger: 'webhook', commitSha: sha }).status).toBe('merged');
+      const claimed = coordinator.completeAll(active.lease!, 'completed');
+      if (mode === 'claimed-replay') expect(claimed).toHaveLength(1);
+    } finally { clock.mockRestore(); }
+    expect(coordinator.getActiveOperations()).toEqual([]);
+    const reply = await post('self-update', { branch: 'main', force: true, drainTimeoutMs: 0 });
+    // 原Mock fetch明确终止后续流程；只断言排空通过，不把Mock冒维护完成。
+    expect.soft(ownedCommands).toContain('git fetch --all --prune');
+    expect.soft(reply.raw).toContain('fixture fetch stopped');
+    expect.soft(reply.raw).not.toContain('self_update_restart_cancelled');
+    expect(restartSpawn).not.toHaveBeenCalled();
   });
 
   function holdFinalFlush(call = 2) {

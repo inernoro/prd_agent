@@ -429,7 +429,9 @@ describe('已受理部署的持久输入与重启恢复', () => {
     { name: '保存成功但真实ENOENT无PID', flush: 'flushed', pid: false, status: 'queued' },
     { name: '真实保存失败且有PID', flush: 'failed', pid: true, status: 'queued' },
     { name: '原保存超时且有PID', flush: 'timeout', pid: true, status: 'queued' },
+    { name: '中断后的最终保存超时且迟到真实写入', flush: 'flushed', pid: true, status: 'queued', finalTimeout: true },
   ] as const)('实际重启调度门禁：$name', async scenario => {
+    const finalTimeout = 'finalTimeout' in scenario && scenario.finalTimeout;
     const record = vi.fn();
     const { run, service, coordinator, blocker } = await accepted(undefined, { record });
     const originalIntent = structuredClone(state.getState().deploymentIntents![run.id]);
@@ -452,9 +454,9 @@ describe('已受理部署的持久输入与重启恢复', () => {
     const writeGate = new Promise<void>(resolve => { release = resolve; });
     const writing = new Promise<void>(resolve => { entered = resolve; });
     const originalRename = fs.promises.rename.bind(fs.promises);
-    let faulted = false;
-    const rename = scenario.flush === 'flushed' ? undefined : vi.spyOn(fs.promises, 'rename').mockImplementation(async (...args) => {
-      if (!faulted && args[1] === file) {
+    let faulted = false, finalStage = false;
+    const rename = scenario.flush === 'flushed' && !finalTimeout ? undefined : vi.spyOn(fs.promises, 'rename').mockImplementation(async (...args) => {
+      if (!faulted && args[1] === file && (!finalTimeout || finalStage)) {
         faulted = true; entered();
         if (scenario.flush === 'failed') throw new Error('synthetic restart state failure');
         await writeGate;
@@ -477,7 +479,13 @@ describe('已受理部署的持久输入与重启恢复', () => {
     };
     const exit = vi.fn();
     const interrupt = coordinator.interruptAll.bind(coordinator);
-    const tap = vi.spyOn(coordinator, 'interruptAll').mockImplementation((...args) => { trace.push('interrupt'); interrupt(...args); });
+    const tap = vi.spyOn(coordinator, 'interruptAll').mockImplementation((...args) => {
+      trace.push('interrupt'); interrupt(...args);
+      if (finalTimeout) {
+        finalStage = true;
+        state.getState().nextPortIndex++; state.save([{ kind: 'global' }]);
+      }
+    });
     let write = Promise.resolve();
     try {
       state.save(); write = state.flush();
@@ -518,8 +526,8 @@ describe('已受理部署的持久输入与重启恢复', () => {
       expect(boundaryError).toBeUndefined(); expect(child).toBeDefined();
       const closed = closeResult = await close!;
       expect(timedOut).toBe(false);
-      const handedOff = scenario.flush === 'flushed' && scenario.pid;
-      expect(tap).toHaveBeenCalledTimes(handedOff ? 1 : 0);
+      const handedOff = scenario.flush === 'flushed' && scenario.pid && !finalTimeout;
+      expect(tap).toHaveBeenCalledTimes(handedOff || finalTimeout ? 1 : 0);
       if (scenario.pid) { expect(Number.isSafeInteger(pidAtReturn) && pidAtReturn! > 0).toBe(true); expect(closed).toEqual({ code: handedOff ? 0 : 1, signal: null }); expect(errors).toEqual([]); }
       else { expect(pidAtReturn).toBeUndefined(); expect(errors).toEqual(['ENOENT']); }
       expect(outcome === null).toBe(handedOff); expect(exit).not.toHaveBeenCalled();
@@ -532,15 +540,21 @@ describe('已受理部署的持久输入与重启恢复', () => {
         // 调度器不独立开前置部署闸；实际路由只在同票finish成功后恢复准入。
         expect(releaseGate).not.toHaveBeenCalled();
         expect(restartWait).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'spawning' }));
-        expect(blocker.isCurrent()).toBe(true);
-        expect(coordinator.getActive('b')?.operationId).toBe(blocker.operationId);
+        if (finalTimeout) {
+          expect(faulted).toBe(true);
+          expect(blocker.isCurrent()).toBe(false); expect(coordinator.getActiveOperations()).toEqual([]);
+        } else {
+          expect(blocker.isCurrent()).toBe(true);
+          expect(coordinator.getActive('b')?.operationId).toBe(blocker.operationId);
+        }
         expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
         expect(state.getState().deploymentIntents![run.id]).toEqual(originalIntent);
         expect(service.get(run.id)?.failure).toBeUndefined();
       }
       expect(service.get(run.id)?.status).toBe(scenario.status);
-      expect(record.mock.calls.some(([event]) => event.operationId === run.operationId && event.action === 'branch.operation.deferred')).toBe(handedOff);
-      expect(coordinator.drainReady()).toEqual([]);
+      expect(record.mock.calls.some(([event]) => event.operationId === run.operationId && event.action === 'branch.operation.deferred')).toBe(handedOff || finalTimeout);
+      if (finalTimeout) expect(coordinator.getPendingWebhookDeploy('b')?.operationId).toBe(run.operationId);
+      else expect(coordinator.drainReady()).toEqual([]);
       release(); await write.catch(() => {}); rename?.mockRestore();
       if (scenario.flush === 'failed') await expect(state.flush()).rejects.toThrow('synthetic restart state failure');
       // Assertions above captured the failed gate. Only a new explicit write can
@@ -550,9 +564,12 @@ describe('已受理部署的持久输入与重启恢复', () => {
       expect(persisted.deploymentRuns[run.id].status).toBe(scenario.status);
       expect(Boolean(persisted.deploymentIntents[run.id])).toBe(scenario.status === 'queued');
       expect(persisted.deploymentIntents[run.id]).toEqual(originalIntent);
-      if (!handedOff) {
+      if (!handedOff && !finalTimeout) {
         const ready = coordinator.completeAll(blocker, 'completed');
         expect(ready).toMatchObject([{ operationId: run.operationId, generation: run.operationGeneration }]);
+        expect(coordinator.drainReady()).toEqual([]);
+      } else if (finalTimeout) {
+        expect(coordinator.drainReady()).toMatchObject([{ operationId: run.operationId, generation: run.operationGeneration }]);
         expect(coordinator.drainReady()).toEqual([]);
       }
     } finally {

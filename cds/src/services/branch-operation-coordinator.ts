@@ -712,8 +712,18 @@ export class BranchOperationCoordinator {
   }
 
   getRestartBlockingOperations(): Array<{ operationId: string; branchId: string }> {
+    this.prunePendingReplayClaims();
+    this.pruneReservedContinuations();
     return [...this.active.values(), ...[...this.pendingReplayClaims.values()].map(claim => claim.pending),
       ...this.reservedContinuations.values()];
+  }
+
+  /** 排空与正常交接只保留同一原身份、尚未领取且没有执行资格的待办。 */
+  getUnclaimedPending(operationId: string, generation: number): PendingWebhookDeploy | undefined {
+    const same = (item: { operationId: string; generation: number }) => item.operationId === operationId && item.generation === generation;
+    if ([...this.active.values()].some(same) || [...this.pendingReplayClaims.values()].some(claim => same(claim.pending))
+      || [...this.reservedContinuations.values()].some(same)) return undefined;
+    return [...this.pendingWebhookDeploys.values()].find(same);
   }
 
   interruptAll(reason: string, source: string, options: { normalShutdown?: boolean } = {}): void {
@@ -729,10 +739,7 @@ export class BranchOperationCoordinator {
     }
     for (const [key, pending] of this.pendingWebhookDeploys) {
       const { operationId, generation } = pending;
-      const sameIdentity = (item: { operationId: string; generation: number }) => item.operationId === operationId && item.generation === generation;
-      const unclaimed = ![...this.active.values()].some(sameIdentity)
-        && ![...this.pendingReplayClaims.values()].some(claim => sameIdentity(claim.pending))
-        && ![...this.reservedContinuations.values()].some(sameIdentity);
+      const unclaimed = this.getUnclaimedPending(operationId, generation) === pending;
       const preserved = options.normalShutdown === true && unclaimed && [...this.normalShutdownPendingGuards].some(guard => {
         try { return guard(pending); } catch { return false; }
       });
@@ -1022,16 +1029,21 @@ export class BranchOperationCoordinator {
   }
 
   private getUsableReservedContinuation(branchId: string, request?: BranchOperationRequest): ReservedContinuation | null {
+    this.pruneReservedContinuations(branchId, request);
+    return [...this.reservedContinuations.values()].find(reserved => reserved.branchId === branchId
+      && (!request || this.operationsConflict(request, reserved.request))) || null;
+  }
+
+  private pruneReservedContinuations(branchId?: string, request?: BranchOperationRequest): void {
     for (const [key, reserved] of this.reservedContinuations) {
-      if (reserved.branchId !== branchId || (request && !this.operationsConflict(request, reserved.request))) continue;
-      if (Date.now() <= reserved.expiresAt) return reserved;
+      if ((branchId && reserved.branchId !== branchId) || (request && !this.operationsConflict(request, reserved.request))) continue;
+      if (Date.now() <= reserved.expiresAt) continue;
       this.reservedContinuations.delete(key);
       this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
         reason: 'reserved continuation expired', reserved: true,
       });
-      this.cancelPendingWebhookDeploy(branchId, 'reserved continuation expired before manual deploy continuation arrived', {}, reserved.request);
+      this.cancelPendingWebhookDeploy(reserved.branchId, 'reserved continuation expired before manual deploy continuation arrived', {}, reserved.request);
     }
-    return null;
   }
 
   private cancelReservedContinuations(request: BranchOperationRequest, reason: string): void {
