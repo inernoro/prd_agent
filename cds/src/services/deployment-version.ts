@@ -107,6 +107,7 @@ export class DeploymentVersionService {
         ...current,
         name: snapshot.name,
         dockerImage: snapshot.artifactImage,
+        buildScope: snapshot.buildScope ? [...snapshot.buildScope] : undefined,
         command: snapshot.runtimeCommand,
         containerPort: snapshot.containerPort,
         containerWorkDir: snapshot.containerWorkDir,
@@ -139,6 +140,7 @@ export class DeploymentVersionService {
       profileId: profile.id,
       name: profile.name,
       artifactImage,
+      buildScope: profile.buildScope ? [...profile.buildScope] : undefined,
       artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable

@@ -67,6 +67,8 @@ interface AgentCardArtworkProps {
   imageHeight?: string;
   /** 首页按智能体类别注入的轻量色彩提示，不承担主题转换。 */
   tint?: string;
+  /** 画廊图文分区，无需覆盖图片的文字保护层。 */
+  layout?: 'overlay' | 'gallery';
 }
 
 /**
@@ -75,7 +77,7 @@ interface AgentCardArtworkProps {
  * 图片只负责表达智能体职责；名称、说明、状态与操作仍由真实 HTML 渲染，
  * 保持可访问性和跨端清晰度。下半部遮罩对应图片自带柔焦区，为文字保留安静背景。
  */
-export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint }: AgentCardArtworkProps) {
+export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint, layout = 'overlay' }: AgentCardArtworkProps) {
   const artworkToken = getAgentCardArtworkToken(agentKey);
   if (!artworkToken) return null;
 
@@ -84,6 +86,7 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint 
       aria-hidden
       className="agent-card-artwork absolute inset-0 pointer-events-none"
       data-compact={compact ? 'true' : 'false'}
+      data-layout={layout}
       style={imageHeight ? { clipPath: `inset(0 0 calc(100% - ${imageHeight}) 0)` } : undefined}
     >
       <div
@@ -96,12 +99,13 @@ export function AgentCardArtwork({ agentKey, compact = false, imageHeight, tint 
           style={{ '--agent-card-tint': tint } as CSSProperties}
         />
       )}
-      <div className="agent-card-artwork-wash absolute inset-0" />
-      <div className="agent-card-artwork-overlay absolute inset-0" />
-      <div
-        className="absolute inset-0"
-        style={{ boxShadow: 'var(--media-card-inset)' }}
-      />
+      {layout === 'overlay' && (
+        <>
+          <div className="agent-card-artwork-wash absolute inset-0" />
+          <div className="agent-card-artwork-overlay absolute inset-0" />
+          <div className="absolute inset-0" style={{ boxShadow: 'var(--media-card-inset)' }} />
+        </>
+      )}
     </div>
   );
 }
