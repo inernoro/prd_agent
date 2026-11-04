@@ -342,7 +342,8 @@ export function SiteCard({
 
         {/* ── 缩略图层：只放「这是什么」+ 压在底部的操作条 ── */}
         <div
-          className="relative cursor-pointer overflow-hidden"
+          data-site-card-thumbnail
+          className="relative shrink-0 cursor-pointer overflow-hidden"
           style={{ height: SPEC.thumb, background: 'var(--bg-well)', borderBottom: '1px solid var(--border-subtle)' }}
           onClick={onVisit}
         >
@@ -412,27 +413,28 @@ export function SiteCard({
             </div>
           )}
 
-          {/* 文件数量仅在多文件站出现；已分享独立放在右下角，未分享不制造状态噪音。 */}
-          {formBadge && (
-            <span
-              className={`pointer-events-none absolute bottom-2 left-9 z-20 inline-flex items-center backdrop-blur-md transition-opacity ${!isSmall ? '[@media(hover:hover)]:group-hover:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-0' : ''}`}
-              style={{
-                height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
+          {/* 缩略图底部共用一条信息带：文件数可截断，分享与编辑数不挤占正文高度。 */}
+          <div data-site-thumbnail-meta className="absolute bottom-2 left-9 right-2 z-20 flex min-w-0 items-center gap-1">
+            {formBadge && <span
+              className="min-w-0 truncate backdrop-blur-md"
+              title={formBadge}
+              style={{ height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)', lineHeight: '18px',
                 fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)',
                 background: 'var(--scrim-badge-bg)', color: 'var(--text-tertiary)',
-                border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
-              }}
-            >
+                border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)' }}>
               {formBadge}
-            </span>
-          )}
-          {shared && <span data-site-shared-badge
-            className={`pointer-events-none absolute bottom-2 right-2 z-20 inline-flex items-center gap-1 backdrop-blur-md ${!isSmall ? '[@media(hover:hover)]:group-hover:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-0' : ''}`}
-            title={linkCount > 0 ? `已分享 ${linkCount} 条有效链接` : '已分享'}
-            style={{ padding: '3px 6px', borderRadius: 6, fontSize: 10, fontWeight: 500,
-              color: 'var(--semantic-success-text)', background: 'var(--bg-elevated)', border: '1px solid var(--semantic-success-border)', boxShadow: 'var(--scrim-badge-shadow)' }}>
-            <Link2 size={10} aria-hidden />已分享
-          </span>}
+            </span>}
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {shared && <span data-site-shared-badge
+                className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap backdrop-blur-md"
+                title={linkCount > 0 ? `已分享 ${linkCount} 条有效链接` : '已分享'}
+                style={{ height: 20, padding: '0 6px', borderRadius: 6, fontSize: 10, fontWeight: 500,
+                  color: 'var(--semantic-success-text)', background: 'var(--bg-elevated)', border: '1px solid var(--semantic-success-border)', boxShadow: 'var(--scrim-badge-shadow)' }}>
+                <Link2 size={10} aria-hidden />已分享
+              </span>}
+              <SiteEditCount activity={activity} badge />
+            </div>
+          </div>
 
           {/* 左下：视觉勾选框保持 20×20，真实按钮热区为 44×44，触屏不用精准点中小方框。 */}
           <button
@@ -456,7 +458,7 @@ export function SiteCard({
           </button>
 
           {/*
-            操作条压在缩略图底部（设计稿屏 2）：底衬一层渐变让按钮在任何画面上都读得出来。
+            操作条压在缩略图内、常驻信息带上方：底衬一层渐变让按钮在任何画面上都读得出来。
             hover / focus 才浮起；触屏（hover:none）整条不渲染，等价项在 kebab 顶部——
             这条契约由 buildCardActionLayers 保证，改这里不会破它。
           */}
@@ -467,7 +469,7 @@ export function SiteCard({
                  曾经写的是 group-hover:pointer-events-auto —— 一旦 hover，这条横条就以整条宽度接管
                  了指针，把它左下角盖住的批量勾选框整个吞掉：勾选框看得见、点不动，
                  而程序化 .click() 又能过，所以单测和源码扫描都发现不了（只有真实指针序列会红）。 */
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden translate-y-[6px] items-center gap-[5px] opacity-0 transition-[opacity,transform] duration-[180ms] ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 [@media(hover:hover)]:flex"
+              className="pointer-events-none absolute inset-x-0 bottom-8 z-20 hidden translate-y-[6px] items-center gap-[5px] opacity-0 transition-[opacity,transform] duration-[180ms] ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 [@media(hover:hover)]:flex"
               style={{ padding: '7px 7px 7px 33px', background: 'var(--scrim-fade)' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -529,11 +531,10 @@ export function SiteCard({
             </p>
           )}
 
-          {/* 统计固定为两行：大小 / 浏览（大卡为时间），访客 / 编辑。
-              不根据数字长度换行，所有尺寸保留编辑行；完整计数放在标题与无障碍名称里。 */}
+          {/* 正文统计恒为单行；编辑次数已移至缩略图，不为零值或未知值预留空行。 */}
           <div
             data-site-card-stats
-            className="mt-auto grid min-w-0 grid-cols-2 items-center gap-x-2 gap-y-1"
+            className={`mt-auto grid min-w-0 grid-cols-2 items-center gap-x-2 ${!isSmall && !isLarge ? '@[240px]:grid-cols-3' : ''}`}
             style={{ fontFamily: 'var(--font-code)', fontSize: 10, lineHeight: '16px', letterSpacing: 'var(--tracking-meta)', color: 'var(--text-tertiary)' }}
           >
             <span className="min-w-0 truncate" title={fmtSize(site.totalSize)}>{fmtSize(site.totalSize)}</span>
@@ -546,12 +547,9 @@ export function SiteCard({
                 {formatCompactZh(site.viewCount)} 浏览
               </span>
             )}
-            {!isSmall && !isLarge && <span className="hidden min-w-0 truncate @[240px]:block" title={typeof visitorCount === 'number' ? `${visitorCount} 访客` : '访客统计暂不可用'}>
+            {!isSmall && !isLarge && <span className="hidden min-w-0 truncate text-right @[240px]:block" title={typeof visitorCount === 'number' ? `${visitorCount} 访客` : '访客统计暂不可用'}>
               {typeof visitorCount === 'number' ? `${formatCompactZh(visitorCount)} 访客` : '— 访客'}
             </span>}
-            <div data-site-card-edits className={`min-w-0 truncate text-right ${isSmall || isLarge ? 'col-span-2' : 'col-span-2 @[240px]:col-span-1'}`} style={{ minHeight: 16 }}>
-              <SiteEditCount activity={activity} compact />
-            </div>
           </div>
 
           {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行）。

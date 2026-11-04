@@ -1,7 +1,7 @@
 div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
   input .hidden [type=file]
   div .flex.flex-col.h-full.overflow-hidden.relative
-    div .overflow-hidden.relative {height:92px}
+    div .overflow-hidden.relative.shrink-0 {height:92px}
       img .absolute.h-full.inset-0.w-full
       span .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20 {height:20px;padding:0 6px}
         svg
@@ -9,15 +9,16 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       div .[@media(hover:none)]:opacity-100.absolute.group-focus-within:opacity-100.group-hover:opacity-100.opacity-0.right-[7px].top-[7px].z-20
         button .h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.max-sm:min-w-11.max-sm:w-11.min-h-7.min-w-[26px].pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
           svg
+      div .absolute.bottom-2.flex.gap-1.items-center.left-9.min-w-0.right-2.z-20
+        div .flex.gap-1.items-center.ml-auto.shrink-0
       button .absolute.bottom-[-5px].h-11.inline-flex.items-center.justify-center.left-[-5px].w-11.z-20 [data-no-drag=true aria-label=选择 type=button]
         span .group-hover:opacity-100.h-5.inline-flex.items-center.justify-center.w-5 {opacity:0.5}
     div .flex.flex-1.flex-col {gap:5px;padding:8px 9px 9px}
       div .flex.gap-1.5.items-center.min-w-0 {min-height:20px}
         h3 .min-w-0.truncate
           "多租户架构设计"
-      div .gap-x-2.gap-y-1.grid.grid-cols-2.items-center.min-w-0.mt-auto
+      div .gap-x-2.grid.grid-cols-2.items-center.min-w-0.mt-auto
         span .min-w-0.truncate
           "11.0 KB"
         span .min-w-0.text-right.truncate
           "9 浏览"
-        div .col-span-2.min-w-0.text-right.truncate {min-height:16px}

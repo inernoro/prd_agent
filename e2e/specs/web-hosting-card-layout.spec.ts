@@ -13,7 +13,7 @@ for (const width of [390, 1440]) {
         const cover = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="360" height="190"><rect width="360" height="190" fill="#e1e8ef"/></svg>');
         const sites = titles.map((title, i) => ({
           id: `layout-${i}`, title, sourceType: 'upload', cosPrefix: '', entryFile: 'index.html', siteUrl: '',
-          files: [{ path: 'index.html', cosKey: '', size: 1024, mimeType: 'text/html' }],
+          files: Array.from({ length: i === 2 ? 3 : 1 }, (_, n) => ({ path: n ? `page-${n}.html` : 'index.html', cosKey: '', size: 1024, mimeType: 'text/html' })),
           coverImageUrl: cover, totalSize: [349901, 242278, 591872, 45056][i], tags: [], folderCanonicalName: '',
           ownerUserId: 'qa-layout-user', viewCount: views[i], visibility: 'private',
           description: i === 2 ? '用于检查长描述的底部统计是否和短描述对齐。'.repeat(5) : '测试描述',
@@ -37,8 +37,8 @@ for (const width of [390, 1440]) {
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
-          else if (path === '/api/web-pages/shares') data = { items: [{ id: 'layout-share', token: 'layout-share', siteId: sites[0].id,
-            siteIds: [sites[0].id], shareType: 'single', createdAt: date, expiresAt: null, isRevoked: false, viewCount: 0 }] };
+          else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
+            siteIds: [sites[i].id], shareType: 'single', createdAt: date, expiresAt: null, isRevoked: false, viewCount: 0 })) };
           else if (path === '/api/changelog/current-week') data = { weekStart: date, weekEnd: date, fetchedAt: date,
             dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
           await route.fulfill({ json: { success: true, data, error: null } });
@@ -53,15 +53,21 @@ for (const width of [390, 1440]) {
           const bounds = card.getBoundingClientRect();
           const stats = card.querySelector<HTMLElement>('[data-site-card-stats]')!;
           const statsBounds = stats.getBoundingClientRect();
-          const editBounds = card.querySelector('[data-site-card-edits]')!.getBoundingClientRect();
+          const editBounds = card.querySelector('[data-site-edit-badge]')?.getBoundingClientRect();
+          const thumbBounds = card.querySelector('[data-site-card-thumbnail]')!.getBoundingClientRect();
+          const sharedBounds = card.querySelector('[data-site-shared-badge]')?.getBoundingClientRect();
           const titleBounds = card.querySelector('h3')!.getBoundingClientRect();
           const badge = card.querySelector('[aria-label="新创建，尚未打开"]');
           const badgeBounds = badge?.getBoundingClientRect();
           const slots = Array.from(stats.children).map(child => child.getBoundingClientRect()).filter(rect => rect.height > 0);
           return {
             title: card.querySelector('h3')!.textContent, cardHeight: bounds.height,
-            statsHeight: statsBounds.height, editOffset: editBounds.top - statsBounds.top,
-            editBottom: bounds.bottom - editBounds.bottom,
+            statsHeight: statsBounds.height,
+            editInThumbnail: !editBounds || (editBounds.top >= thumbBounds.top && editBounds.bottom <= thumbBounds.bottom && editBounds.right <= thumbBounds.right),
+            editBottom: editBounds ? thumbBounds.bottom - editBounds.bottom : null,
+            editRight: editBounds ? thumbBounds.right - editBounds.right : null,
+            shareGap: editBounds && sharedBounds ? editBounds.left - sharedBounds.right : null,
+            metaFits: card.querySelector('[data-site-thumbnail-meta]')!.scrollWidth <= card.querySelector('[data-site-thumbnail-meta]')!.clientWidth,
             overflow: slots.some(rect => rect.left < bounds.left || rect.right > bounds.right),
             wrapped: slots.some(rect => rect.height > 16.5),
             badgeGap: badgeBounds ? badgeBounds.left - titleBounds.right : null,
@@ -72,8 +78,12 @@ for (const width of [390, 1440]) {
         for (const metric of metrics) {
           expect(metric.overflow, JSON.stringify(metric)).toBe(false);
           expect(metric.wrapped, JSON.stringify(metric)).toBe(false);
-          expect(metric.statsHeight).toBeCloseTo(36, 0);
-          expect(metric.editOffset).toBeCloseTo(20, 0);
+          expect(metric.statsHeight).toBeCloseTo(16, 0);
+          expect(metric.editInThumbnail).toBe(true);
+          expect(metric.metaFits).toBe(true);
+          if (metric.editRight !== null) expect(metric.editRight).toBeCloseTo(8, 0);
+          if (metric.editBottom !== null) expect(metric.editBottom).toBeGreaterThanOrEqual(8);
+          if (metric.shareGap !== null) expect(metric.shareGap).toBeCloseTo(4, 0);
           expect(metric.badgeInCard).toBe(true);
           expect(metric.titleLineHeight).toBeCloseTo(20, 0);
           if (metric.badgeGap !== null) {
@@ -81,7 +91,8 @@ for (const width of [390, 1440]) {
             expect(metric.badgeGap).toBeLessThanOrEqual(7);
           }
         }
-        expect(Math.max(...metrics.map(m => m.editBottom)) - Math.min(...metrics.map(m => m.editBottom))).toBeLessThan(1);
+        await expect(cards.locator('[data-site-edit-badge]')).toHaveCount(2);
+        await expect(page.getByLabel('已编辑 0 次', { exact: true })).toHaveCount(0);
         expect(Math.max(...metrics.map(m => m.cardHeight)) - Math.min(...metrics.map(m => m.cardHeight))).toBeLessThan(1);
         const shortTitle = cards.filter({ hasText: '活动指南' });
         await shortTitle.scrollIntoViewIfNeeded();
@@ -89,6 +100,16 @@ for (const width of [390, 1440]) {
         expect(rightGap).toBeGreaterThan(20);
         await expect(cards.first().locator('[data-site-shared-badge]')).toBeVisible();
         await expect(cards.locator('[title="我创建的"]')).toHaveCount(0);
+        const editBadge = cards.first().locator('[data-site-edit-badge]');
+        await editBadge.hover();
+        await expect(editBadge).toBeVisible();
+        // 鼠标真实命中徽标，不能被浮出的操作条盖住，否则悬浮说明不可达。
+        await expect.poll(() => editBadge.evaluate(el => {
+          const r = el.getBoundingClientRect();
+          return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+        })).toBe(true);
+        await expect(editBadge).toHaveAttribute('title', /成功发布 3 次内容修改/);
+        await page.mouse.move(0, 0);
         const image = await cards.first().locator('..').screenshot();
         await testInfo.attach(`真实列表-${width}-${theme}-${size}`, { body: image, contentType: 'image/png' });
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });

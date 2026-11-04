@@ -66,7 +66,8 @@ describe('WebPagesPage SiteCard', () => {
     expect(unread).not.toContain('未分享');
     expect(unread).not.toContain('data-site-shared-badge');
     expect(unread).toContain('新创建，尚未打开');
-    expect(unread).toContain('已编辑 0 次');
+    expect(unread).not.toContain('已编辑 0 次');
+    expect(unread).not.toContain('data-site-edit-badge');
     const readShared = renderSiteCard(baseSite, ownerCaps, true, 'small', undefined, false, { editCount: 3, isNew: false });
     expect(readShared).toContain('data-site-shared-badge');
     expect(readShared).not.toContain('新创建，尚未打开');
