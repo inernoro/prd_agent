@@ -27,7 +27,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/design/Button';
 import { GlassCard } from '@/components/design/GlassCard';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
+import { getSidebarAutoAppendItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
+import { migrateLegacyNavId } from '@/lib/launcherCatalog';
 import {
   getUnifiedNavCatalog,
   getMenuGroupedDefaultOrder,
@@ -99,6 +100,7 @@ const parseId = (id: UniqueIdentifier): { kind: 'nav'; index: number } | { kind:
 export function collapseDividers(arr: string[]): string[] {
   const result: string[] = [];
   for (const token of arr) {
+    if (SIDEBAR_HIDDEN_APPKEYS.has(migrateLegacyNavId(token))) continue;
     if (token === NAV_DIVIDER_KEY) {
       if (result.length === 0) continue;
       if (result[result.length - 1] === NAV_DIVIDER_KEY) continue;
@@ -157,7 +159,7 @@ export function NavLayoutEditor({
 
   const currentOrder = useMemo<string[]>(() => {
     const base = (() => {
-      if (navOrder.length > 0) return navOrder;
+      if (navOrder.length > 0) return collapseDividers(navOrder);
       if (fallbackNavOrder.length > 0) return collapseDividers(fallbackNavOrder);
       // 默认布局：与 AppShell NAV_GROUPS 完全一致——按 menuCatalog 的 group
       // 字段（tools/personal/admin）分段。这样「我的导航」strip 显示的内容
