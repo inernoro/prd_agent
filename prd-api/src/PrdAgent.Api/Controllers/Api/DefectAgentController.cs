@@ -944,7 +944,7 @@ public class DefectAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限提交此缺陷"));
 
         if (defect.Status != DefectStatus.Draft && defect.Status != DefectStatus.Awaiting)
-            return defect.SubmittedAt != null
+            return defect.Status == DefectStatus.Submitted || defect.SubmittedAt != null
                 ? Ok(ApiResponse<object>.Ok(new { defect }))
                 : BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能提交草稿或待补充状态的缺陷"));
 
@@ -956,7 +956,7 @@ public class DefectAgentController : ControllerBase
         if (submitted == null)
         {
             var current = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
-            if (current != null && current.SubmittedAt != null
+            if (current != null && (current.Status == DefectStatus.Submitted || current.SubmittedAt != null)
                 && current.Status != DefectStatus.Draft && current.Status != DefectStatus.Awaiting)
                 return Ok(ApiResponse<object>.Ok(new { defect = current }));
             return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "草稿已改变，请保存最新内容后重试提交"));

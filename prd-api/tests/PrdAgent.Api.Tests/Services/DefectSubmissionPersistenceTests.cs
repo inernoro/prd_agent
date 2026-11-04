@@ -194,6 +194,11 @@ public sealed class DefectSubmissionPersistenceTests
         var final = await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync();
         final.Status.ShouldBe(DefectStatus.Processing);
         final.RawContent.ShouldBe("edited content");
+        // 历史Submitted即使没有SubmittedAt，也能安全重放；不会再次触发副作用。
+        await fixture.Collection.UpdateOneAsync(x => x.Id == draft.Id,
+            Builders<DefectReport>.Update.Set(x => x.Status, DefectStatus.Submitted).Unset(x => x.SubmittedAt));
+        (await controller.SubmitDefect(draft.Id, default)).ShouldBeOfType<OkObjectResult>();
+        (await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync()).SubmittedAt.ShouldBeNull();
     }
 
     [Fact]
