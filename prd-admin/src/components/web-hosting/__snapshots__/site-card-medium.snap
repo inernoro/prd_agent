@@ -17,6 +17,9 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
             svg
             span .@[220px]:inline.hidden
               "已分享"
+          span .gap-1.inline-flex.items-center.shrink-0.whitespace-nowrap {height:20px;padding:0 6px} [aria-label=编辑次数暂不可用]
+            svg
+            "—"
       button .absolute.bottom-[-5px].h-11.inline-flex.items-center.justify-center.left-[-5px].w-11.z-20 [data-no-drag=true aria-label=选择 type=button]
         span .group-hover:opacity-100.h-5.inline-flex.items-center.justify-center.w-5 {opacity:0.5}
       div .[@media(hover:hover)]:flex.absolute.bottom-8.gap-[5px].group-focus-within:opacity-100.group-focus-within:translate-y-0.group-hover:opacity-100.group-hover:translate-y-0.hidden.inset-x-0.items-center.opacity-0.pointer-events-none.translate-y-[6px].z-20 {padding:7px 7px 7px 33px} [data-hoverbar=true]
@@ -40,6 +43,8 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       div .flex.gap-1.5.items-center.min-w-0 {min-height:20px}
         h3 .min-w-0.truncate
           "多租户架构设计"
+        button .h-5.inline-flex.items-center.justify-center.ml-auto.shrink-0.w-5 [data-no-drag=true aria-label=查看网页详情 type=button]
+          svg
       div .@[240px]:grid-cols-3.gap-x-2.grid.grid-cols-2.items-center.min-w-0.mt-auto
         span .min-w-0.truncate
           "11.0 KB"
@@ -47,9 +52,6 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
           "9 浏览"
         span .@[240px]:block.hidden.min-w-0.text-right.truncate
           "— 访客"
-      div .flex.gap-1.items-center.min-w-0 {min-height:18px}
-        div .flex.flex-1.flex-wrap.gap-1.items-center.min-w-0
-          span {padding:2px 6px}
-            "架构"
-        span .shrink-0
-          "5 天前"
+      div .flex.flex-wrap.gap-1.items-center.min-w-0
+        span .max-w-full.truncate {padding:2px 6px}
+          "架构"

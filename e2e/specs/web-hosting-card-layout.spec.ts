@@ -13,8 +13,8 @@ for (const width of [390, 1440]) {
         const cover = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="360" height="190"><rect width="360" height="190" fill="#e1e8ef"/></svg>');
         const sites = titles.map((title, i) => ({
           id: `layout-${i}`, title, sourceType: 'upload', cosPrefix: '', entryFile: 'index.html', siteUrl: '',
-          files: Array.from({ length: i === 2 ? 3 : 1 }, (_, n) => ({ path: n ? `page-${n}.html` : 'index.html', cosKey: '', size: 1024, mimeType: 'text/html' })),
-          coverImageUrl: cover, totalSize: [349901, 242278, 591872, 45056][i], tags: [], folderCanonicalName: '',
+          files: Array.from({ length: i === 2 ? 103 : 1 }, (_, n) => ({ path: n ? `page-${n}.html` : 'index.html', cosKey: '', size: 1024, mimeType: 'text/html' })),
+          coverImageUrl: cover, totalSize: [349901, 242278, 591872, 45056][i], tags: ['产品', '验收', '网页', '第四个标签'], folderCanonicalName: '',
           ownerUserId: 'qa-layout-user', viewCount: views[i], visibility: 'private',
           description: i === 2 ? '用于检查长描述的底部统计是否和短描述对齐。'.repeat(5) : '测试描述',
           createdAt: date, updatedAt: date,
@@ -91,8 +91,8 @@ for (const width of [390, 1440]) {
             expect(metric.badgeGap).toBeLessThanOrEqual(7);
           }
         }
-        await expect(cards.locator('[data-site-edit-badge]')).toHaveCount(2);
-        await expect(page.getByLabel('已编辑 0 次', { exact: true })).toHaveCount(0);
+        await expect(cards.locator('[data-site-edit-badge]')).toHaveCount(4);
+        await expect(page.getByLabel('已编辑 0 次', { exact: true })).toHaveCount(2);
         expect(Math.max(...metrics.map(m => m.cardHeight)) - Math.min(...metrics.map(m => m.cardHeight))).toBeLessThan(1);
         const shortTitle = cards.filter({ hasText: '活动指南' });
         await shortTitle.scrollIntoViewIfNeeded();
@@ -113,6 +113,41 @@ for (const width of [390, 1440]) {
         const image = await cards.first().locator('..').screenshot();
         await testInfo.attach(`真实列表-${width}-${theme}-${size}`, { body: image, contentType: 'image/png' });
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
+        // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
+        const visited: string[] = [];
+        page.on('request', request => { if (request.url().includes('/record-view')) visited.push(request.url()); });
+        const trigger = cards.nth(2).getByRole('button', { name: '查看网页详情' });
+        await expect(cards.getByRole('button', { name: '查看网页详情' })).toHaveCount(4);
+        await trigger.click();
+        const dialog = page.getByRole('dialog', { name: '网页详情' });
+        await expect(dialog).toBeVisible();
+        await expect(dialog.getByRole('heading', { name: titles[2], exact: true })).toBeVisible();
+        await expect(dialog.getByText(sites[2].description, { exact: true })).toBeVisible();
+        await expect(dialog.getByText('第四个标签', { exact: true })).toBeVisible();
+        for (const [label, value] of [['已发布的内容修改', '987654321 次'], ['浏览次数', '987654321 次'], ['独立访客', '987654321 人'], ['来源', '手动上传']]) {
+          await expect(dialog.locator('dt').filter({ hasText: label }).locator('..').locator('dd')).toHaveText(value);
+        }
+        await expect(dialog.getByText('创建时间', { exact: true })).toHaveCount(1);
+        await expect(dialog.getByText('更新时间', { exact: true })).toHaveCount(1);
+        await expect(dialog.locator('details, [aria-expanded="false"]')).toHaveCount(0);
+        await expect(dialog.getByRole('region', { name: '完整文件列表' }).locator('li')).toHaveCount(103);
+        expect(await dialog.evaluate(el => {
+          const rect = el.getBoundingClientRect();
+          const body = el.querySelector('.prd-dialog-body')!;
+          return rect.top >= 0 && rect.bottom <= innerHeight && el.scrollWidth <= el.clientWidth && body.scrollWidth <= body.clientWidth && body.scrollHeight > body.clientHeight;
+        })).toBe(true);
+        await testInfo.attach(`完整详情-${width}-${theme}-${size}`, { body: await dialog.screenshot(), contentType: 'image/png' });
+        await dialog.getByText('page-102.html', { exact: true }).scrollIntoViewIfNeeded();
+        await expect(dialog.getByText('page-102.html', { exact: true })).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(dialog).toHaveCount(0);
+        await expect(trigger).toBeFocused();
+        await page.keyboard.press('Enter');
+        await expect(dialog).toBeVisible();
+        await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+        await expect(dialog).toHaveCount(0);
+        expect(visited).toEqual([]);
+
       });
     }
   }

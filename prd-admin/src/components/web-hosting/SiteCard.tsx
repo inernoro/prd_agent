@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   BookOpen,
   Check,
@@ -6,6 +6,7 @@ import {
   Eye,
   FolderInput,
   Globe,
+  Info,
   Link2,
   Lock,
   MessageCircleQuestion,
@@ -17,6 +18,7 @@ import {
   WandSparkles,
 } from 'lucide-react';
 import type { HostedSite, HostedSiteActivity, SiteOwnerCard } from '@/services/real/webPages';
+import { SiteDetailsDialog } from './SiteDetailsDialog';
 import { SiteEditCount, SiteNewBadge } from './SiteActivityMeta';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
@@ -202,6 +204,8 @@ export function SiteCard({
   const isSmall = size === 'small';
   const isLarge = size === 'large';
   const [fileDragOver, setFileDragOver] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsButton = useRef<HTMLButtonElement>(null);
   // 拖卡片到 ShareDock 投放槽（把站点投给别的功能用）；与「拖文件进卡片替换内容」是两个方向，互不干扰
   const { onPointerDown } = useDockDrag({ mime: WEB_PAGE_MIME, id: site.id, label: site.title, icon: 'WEB' });
 
@@ -280,6 +284,7 @@ export function SiteCard({
   );
 
   return (
+    <>
     <div
       data-tour-id="webpages-card"
       data-card
@@ -523,6 +528,13 @@ export function SiteCard({
               {site.title}
             </h3>
             <SiteNewBadge activity={activity} />
+            <button ref={detailsButton} type="button" data-site-details-button data-no-drag
+              aria-label="查看网页详情" aria-haspopup="dialog" aria-expanded={detailsOpen} title="查看完整信息"
+              className="ml-auto inline-flex h-5 w-5 shrink-0 items-center justify-center rounded hover-bg-soft focus-visible:outline focus-visible:outline-2"
+              style={{ color: 'var(--text-tertiary)' }}
+              onClick={(event) => { event.stopPropagation(); setDetailsOpen(true); }}>
+              <Info size={14} aria-hidden />
+            </button>
           </div>
 
           {isLarge && (
@@ -540,7 +552,7 @@ export function SiteCard({
             <span className="min-w-0 truncate" title={fmtSize(site.totalSize)}>{fmtSize(site.totalSize)}</span>
             {isLarge ? (
               <span className="min-w-0 truncate text-right" title={`更新于 ${relativeTime(site.updatedAt || site.createdAt)}`}>
-                {relativeTime(site.updatedAt || site.createdAt)}
+                更新于 {relativeTime(site.updatedAt || site.createdAt)}
               </span>
             ) : (
               <span className="min-w-0 truncate text-right" title={`${site.viewCount} 浏览`}>
@@ -552,32 +564,14 @@ export function SiteCard({
             </span>}
           </div>
 
-          {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行）。
-              统计区的 mt-auto 把剩余空间留在正文之后，末行始终贴着卡片底边，
-              否则短卡片会在中间空出一块，看着像没加载完。 */}
-          {/* 这一行**恒定渲染**（有没有标签都在）：它同时承载更新时间，条件渲染会让
-              没标签的卡片既少一行高度、又莫名其妙不显示时间。恒定之后同一档尺寸的卡片
-              内容高度是确定的，等高不再靠拉伸填空（就没有那截「胡子」了）。 */}
-          {!isSmall && (
-            <div className="flex min-w-0 items-center gap-1" style={{ minHeight: 18 }}>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                {site.tags.slice(0, 3).map((tag) => (
-                  <span
-                    key={tag}
-                    style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 'var(--radius-xs)', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
-                  >
-                    {tag}
-                  </span>
-                ))}
-                {site.tags.length > 3 && (
-                  <span style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>+{site.tags.length - 3}</span>
-                )}
-              </div>
-              {!isLarge && (
-                <span className="shrink-0" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-meta)', color: 'var(--text-tertiary)' }}>
-                  {relativeTime(site.createdAt)}
-                </span>
-              )}
+          {/* 标签摘要不预留空行；三种尺寸均可通过详情查看全部标签与明确的创建/更新时间。 */}
+          {!isSmall && site.tags.length > 0 && (
+            <div className="flex min-w-0 flex-wrap items-center gap-1">
+              {site.tags.slice(0, 3).map((tag) => <span key={tag} className="max-w-full truncate"
+                style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 'var(--radius-xs)', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
+                {tag}
+              </span>)}
+              {site.tags.length > 3 && <span style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>+{site.tags.length - 3}</span>}
             </div>
           )}
 
@@ -603,5 +597,11 @@ export function SiteCard({
         </div>
       </div>
     </div>
+      {detailsOpen && <SiteDetailsDialog site={site} activity={activity} visitorCount={visitorCount}
+        shareStats={shareStats} shared={shared} ownerCard={ownerCard} onClose={() => {
+          setDetailsOpen(false);
+          requestAnimationFrame(() => detailsButton.current?.focus());
+        }} />}
+    </>
   );
 }

@@ -66,13 +66,14 @@ describe('WebPagesPage SiteCard', () => {
     expect(unread).not.toContain('未分享');
     expect(unread).not.toContain('data-site-shared-badge');
     expect(unread).toContain('新创建，尚未打开');
-    expect(unread).not.toContain('已编辑 0 次');
-    expect(unread).not.toContain('data-site-edit-badge');
+    expect(unread).toContain('已编辑 0 次');
+    expect(unread).toContain('data-site-edit-badge');
     const readShared = renderSiteCard(baseSite, ownerCaps, true, 'small', undefined, false, { editCount: 3, isNew: false });
     expect(readShared).toContain('data-site-shared-badge');
     expect(readShared).not.toContain('新创建，尚未打开');
     expect(readShared).toContain('已编辑 3 次');
     expect(renderSiteCard()).not.toContain('已编辑 0 次');
+    expect(renderSiteCard()).toContain('编辑次数暂不可用');
   });
 
   it('MCP 创建的旧 api 来源在卡片和列表中显示一致，保留原数据契约', () => {
@@ -297,7 +298,7 @@ describe('WebPagesPage SiteCard', () => {
 
     // 半径必须处处一致：`.site-card-fresh::before` 的光环走 border-radius:inherit，
     // 根节点与内框不同半径时，那圈光环也会错开。
-    const radii = [...html.matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
+    const radii = [...html.split('data-site-card-thumbnail')[0].matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
     expect(radii.length).toBeGreaterThanOrEqual(2);
     expect(new Set(radii).size).toBe(1);
   });

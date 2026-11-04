@@ -17,7 +17,7 @@ describe('网页卡片交互设计演示', () => {
       expect(container.querySelectorAll('[data-site-shared-badge]')).toHaveLength(2);
       expect(container.textContent).not.toContain('未分享');
       const card = container.querySelector<HTMLElement>('[data-hosted-site-id="demo-1"]')!;
-      expect(card.querySelector('[data-site-edit-badge]')).toBeNull();
+      expect(card.querySelector('[data-site-edit-badge]')?.getAttribute('aria-label')).toBe('已编辑 0 次');
       act(() => card.querySelector<HTMLElement>('h3')!.click());
       expect(container.querySelectorAll('[aria-label="新创建，尚未打开"]')).toHaveLength(1);
       expect(container.querySelectorAll('[data-site-shared-badge]')).toHaveLength(2);
