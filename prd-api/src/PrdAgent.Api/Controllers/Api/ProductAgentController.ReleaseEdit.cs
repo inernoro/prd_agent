@@ -20,7 +20,14 @@ public partial class ProductAgentController
         var source = string.IsNullOrWhiteSpace(item.InitiationId) ? null
             : await _db.ProductInitiations.Find(x => x.Id == item.InitiationId).FirstOrDefaultAsync();
         var applicationId = source == null ? item.ProductId : ProductVersionApplicationLatest.Application(source);
-        await using var lease = await ProductVersionApplicationLease.AcquireAsync(_db, new[] { applicationId });
+        var newTitle = request.PlanName?.Trim();
+        var leaseKeys = new List<string> { applicationId };
+        if (item.IsTemporaryOptimization && !string.IsNullOrWhiteSpace(newTitle))
+        {
+            leaseKeys.Add(TemporaryOptimizationLeaseKey(item.PlanName));
+            leaseKeys.Add(TemporaryOptimizationLeaseKey(newTitle));
+        }
+        await using var lease = await ProductVersionApplicationLease.AcquireAsync(_db, leaseKeys);
         item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "正式版本已删除，请刷新列表。"));
         if (item.Status == "voided" || item.ClaimNotification?.Status == "sending")
@@ -29,6 +36,8 @@ public partial class ProductAgentController
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已更新，请刷新后重新编辑；本次未覆盖其他修改。"));
         if (request.PlanName != null && string.IsNullOrWhiteSpace(request.PlanName))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空。"));
+        if (item.IsTemporaryOptimization && newTitle != null && newTitle != item.PlanName && await TemporaryOptimizationExistsAsync(newTitle, id))
+            return Conflict(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "相同产品立项方案名称的临时优化需求已存在。"));
         if (request.PlannedTrainingMinutes < 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "预计培训时长须为非负整数分钟。"));
         if (request.ReleasedAt.HasValue && item.Status != "released")
@@ -68,7 +77,7 @@ public partial class ProductAgentController
             updates.Add(update.Set(x => x.NoTapdLinks, (bool?)noTapdLinks));
             updates.Add(update.Set(x => x.TapdLinks, tapdLinks));
         }
-        if (request.PlanName != null) updates.Add(update.Set(x => x.PlanName, request.PlanName.Trim()));
+        if (newTitle != null) updates.Add(update.Set(x => x.PlanName, newTitle));
         if (request.DemandSource != null) updates.Add(update.Set(x => x.DemandSource, request.DemandSource.Trim()));
         if (request.DepartmentName != null) updates.Add(update.Set(x => x.DepartmentName, request.DepartmentName.Trim()));
         if (request.PlanUrl != null) updates.Add(update.Set(x => x.PlanUrl, request.PlanUrl.Trim()));

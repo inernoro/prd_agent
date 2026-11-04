@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 
 export type VersionWorkflowImportKind = 'release' | 'initiation';
+export const TEMPORARY_OPTIMIZATION_LABEL = '临时优化需求';
 
 export type VersionWorkflowImportRow = {
   code?: string;
@@ -217,6 +218,8 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       ? normalizeInternalCode(codeIndex >= 0 ? values[codeIndex] : undefined) ?? internalCodeFromPlanName(planName)
       : codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
     if (!planName && !code) return;
+    const versionType = versionTypeIndex >= 0 ? values[versionTypeIndex]?.trim() : undefined;
+    const temporary = kind === 'release' && versionType === TEMPORARY_OPTIMIZATION_LABEL;
 
     const legacyData: Record<string, string> = {};
     const ownerName = ownerIndex >= 0 ? values[ownerIndex]?.trim() : undefined;
@@ -247,12 +250,12 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     }
 
     rows.push({
-      code,
-      tCode: tCodeIndex >= 0 ? normalizeCode(values[tCodeIndex]) : undefined,
-      planName: planName || code || '',
+      code: temporary ? undefined : code,
+      tCode: !temporary && tCodeIndex >= 0 ? normalizeCode(values[tCodeIndex]) : undefined,
+      planName: temporary ? planName : planName || code || '',
       systemName,
       appName,
-      versionType: versionTypeIndex >= 0 ? values[versionTypeIndex]?.trim() : undefined,
+      versionType,
       projectType: projectTypeIndex >= 0 ? mapProjectType(values[projectTypeIndex]) : undefined,
       customerSource: customerSourceIndex >= 0 ? values[customerSourceIndex]?.trim() : undefined,
       demandSource: requirementSourceIndex >= 0 ? values[requirementSourceIndex]?.trim() : undefined,

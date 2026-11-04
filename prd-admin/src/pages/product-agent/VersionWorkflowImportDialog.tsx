@@ -7,6 +7,7 @@ import type { VersionApplicationProduct } from '@/services/real/productAgent';
 import { resolveImportProductId } from './productImportRouting';
 import {
   parseVersionWorkflowImportFile,
+  TEMPORARY_OPTIMIZATION_LABEL,
   type VersionWorkflowImportKind,
   type VersionWorkflowImportRow,
 } from './versionWorkflowImportParse';
@@ -41,7 +42,7 @@ export function VersionWorkflowImportDialog({
   const importableRows = rows;
 
   const canImportRow = useCallback((row: VersionWorkflowImportRow) => {
-    if (kind === 'release' && !row.code) return false;
+    if (kind === 'release' && (!row.planName || (!row.code && row.versionType !== TEMPORARY_OPTIMIZATION_LABEL))) return false;
     const resolved = resolveImportProductId(products, {
       appName: row.appName,
       systemName: row.systemName,
@@ -60,14 +61,13 @@ export function VersionWorkflowImportDialog({
       return {
         row,
         appLabel: row.appName ?? row.legacyData?.['产品'] ?? row.systemName ?? '-',
-        productName: (kind !== 'release' || row.code) && resolved.matched && resolved.productId
-          && (!fixedProductId || resolved.productId === fixedProductId)
+        productName: canImportRow(row) && resolved.productId
           ? (productNameById.get(resolved.productId) ?? resolved.label ?? '-')
           : '跳过（无编号或产品不匹配）',
         matched: canImportRow(row),
       };
     }),
-    [importableRows, products, productNameById, kind, fixedProductId, canImportRow],
+    [importableRows, products, productNameById, canImportRow],
   );
 
   const matchedCount = useMemo(
@@ -87,14 +87,14 @@ export function VersionWorkflowImportDialog({
         return;
       }
       const missingCode = kind === 'release'
-        ? parsedRows.filter((row) => !row.code).length
+        ? parsedRows.filter((row) => !row.code && row.versionType !== TEMPORARY_OPTIMIZATION_LABEL).length
         : 0;
       const importable = kind === 'release'
-        ? parsedRows.filter((row) => row.code).length
+        ? parsedRows.length - missingCode
         : parsedRows.length;
       setMessage(
         missingCode > 0
-          ? `已读取 ${parsedRows.length} 条，可尝试导入 ${importable} 条（${missingCode} 条无 V 号将跳过）。仅「应用」能匹配系统产品的行会写入。`
+          ? `已读取 ${parsedRows.length} 条，可尝试导入 ${importable} 条（${missingCode} 条未填写 V 号且未标记为临时优化需求）。`
           : `已读取 ${parsedRows.length} 条；仅「应用」能匹配系统产品的行会写入，其余跳过。`,
       );
     } catch (err) {
@@ -155,7 +155,7 @@ export function VersionWorkflowImportDialog({
             <div className="text-sm text-token-secondary">选择 Excel 或 CSV 文件</div>
             <div className="mt-1 text-xs text-token-muted">
               {kind === 'release'
-                ? '需含「应用」「正式版本号 / V 号」与「产品立项方案名称」列'
+                ? '按应用和 V 号增量导入；版本类别填「临时优化需求」时按方案名称判重，T / V 号可留空。'
                 : '需含「应用」「T 立项号 / 立项号」或「产品立项方案名称」列'}
             </div>
           </button>

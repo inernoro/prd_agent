@@ -100,6 +100,20 @@ describe('versionWorkflowImportParse', () => {
     expect(rows[0].versionType).toBe('小版本');
   });
 
+  it('保留临时优化方案名称，忽略该类历史行的 T/V 号，并保留普通版本的编号', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '正式版本号', '内部版本号', '版本类别', '产品立项方案名称'],
+      ['互动营销', '-', '-', '临时优化需求', '门店扫码优化'],
+      ['互动营销', 'V1.2.3', 'T1.2.3', '临时优化需求', '已有临时优化'],
+      ['互动营销', 'V1.2.4', 'T1.2.3', '小版本', '正式上线方案'],
+    ], 'release');
+    expect(rows.map(({ code, tCode, versionType, planName }) => [code, tCode, versionType, planName])).toEqual([
+      [undefined, undefined, '临时优化需求', '门店扫码优化'],
+      [undefined, undefined, '临时优化需求', '已有临时优化'],
+      ['V1.2.4', 'T1.2.3', '小版本', '正式上线方案'],
+    ]);
+  });
+
   it('parses initiation rows with T code', () => {
     const csv = [
       'T立项号,产品立项方案名称,所属部门,开发状态',

@@ -38,7 +38,7 @@ export function releaseExportConfig(productId: string, productName: string, name
     headers: ['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长（分钟）', '是否全域开放', '当前开放品牌', '合同签订方', '备注', '关联需求', '关联需求ID', '上线公告地址', '状态'],
     mapRow: (item: ProductRelease) => safeRow([
       resolveVersionProductLabel(item, productNames?.get(item.productId) ?? productName), item.vCode, item.tCode ?? '',
-      item.projectType === 'custom' ? '定制项目' : '非定制项目', VERSION_SCALE_LABEL[item.versionType], item.planName,
+      item.projectType === 'custom' ? '定制项目' : '非定制项目', item.isTemporaryOptimization ? '临时优化需求' : VERSION_SCALE_LABEL[item.versionType], item.planName,
       item.demandSource ?? '', item.requirementDescription ?? '', item.departmentName ?? '',
       item.ownerName || names.get(item.ownerId ?? '') || item.legacyData?.['产品负责人'] || item.ownerId || '',
       item.projectMemberNames?.length ? item.projectMemberNames.join('、') : item.teamMemberIds.map((id) => names.get(id) ?? id).join('、'),

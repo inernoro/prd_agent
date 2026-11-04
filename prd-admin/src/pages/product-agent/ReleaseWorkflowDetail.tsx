@@ -578,13 +578,18 @@ export function ReleaseWorkflowDetail({
     }
     let autoCopied = false;
     try {
-      await navigator.clipboard.writeText(res.data.vCode);
-      autoCopied = true;
+      if (res.data.vCode) {
+        await navigator.clipboard.writeText(res.data.vCode);
+        autoCopied = true;
+      }
     } catch {
       // 详情页保留手动复制入口。
     }
     if (onCreated) onCreated(res.data, autoCopied);
-    else navigate(`/product-agent/p/${productId}/release/${res.data.id}`, { replace: true, state: { issuedCode: res.data.vCode, autoCopied } });
+    else navigate(`/product-agent/p/${productId}/release/${res.data.id}`, {
+      replace: true,
+      state: res.data.vCode ? { issuedCode: res.data.vCode, autoCopied } : undefined,
+    });
   };
 
   const saveManifest = async () => {
@@ -1339,12 +1344,14 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
   return <Dialog
     open
     onOpenChange={(open) => { if (!open) close(); }}
-    title={issued ? '正式版本申领结果' : temporary ? '临时优化需求上线' : '申领正式版本号'}
+    title={temporary ? '临时优化需求上线' : issued ? '正式版本申领结果' : '申领正式版本号'}
     maxWidth={960}
     contentStyle={{ height: 'min(780px, calc(100dvh - 64px))', maxHeight: 'calc(100dvh - 64px)' }}
     content={<div style={{ maxHeight: 'min(700px, calc(100dvh - 144px))', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}>
       {issued && <p role="status" className="mb-3 rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2 text-sm text-token-secondary">
-        {issued.release.vCode} 已生成{issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。
+        {issued.release.vCode
+          ? `${issued.release.vCode} 已生成${issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。`
+          : '临时优化需求已上线。'}
       </p>}
       <ReleaseWorkflowDetail
         key={issued?.release.id ?? 'new'}
