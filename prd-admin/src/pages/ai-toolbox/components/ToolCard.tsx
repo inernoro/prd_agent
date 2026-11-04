@@ -71,7 +71,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
-import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
+import { AgentCardArtwork, AgentCardFrame, AgentCardTask, getAgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 import type { ToolboxDisplayMode } from '../toolboxDisplayMode';
 
 interface ToolCardProps {
@@ -132,7 +132,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
   const navigate = useNavigate();
   const accent = getAccent(item.icon);
   const IconComponent = getIconComponent(item.icon);
-  const hasArtwork = hasAgentCardArtwork(item.agentKey);
+  const hasArtwork = hasAgentCardArtwork(item.agentKey) && displayMode !== 'compact';
   const isCompact = displayMode === 'compact';
   const visibleTagCount = isCompact ? 2 : displayMode === 'showcase' ? 4 : 3;
   const isPaAgent = item.agentKey === 'pa-agent';
@@ -312,6 +312,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
         role="button"
         data-display-mode={displayMode}
         data-has-artwork={hasArtwork}
+        data-has-footer-details={isOwnCustomCard || isMarketplaceCard || isPaAgent || item.usageCount > 0}
         tabIndex={0}
         onClick={handleClick}
         onKeyDown={(e) => {
@@ -326,11 +327,11 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
         className="toolbox-tool-card group relative w-full h-full overflow-hidden text-left cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col"
         style={{
           ...glassTileStyle(accent),
-          background: hasArtwork ? 'var(--media-card-base)' : glassTileStyle(accent).background,
-          border: hasArtwork ? 'none' : glassTileStyle(accent).border,
+          background: hasArtwork ? 'var(--media-card-base)' : isCompact ? 'var(--bg-card)' : glassTileStyle(accent).background,
+          border: hasArtwork ? 'none' : isCompact ? undefined : glassTileStyle(accent).border,
         }}
       >
-        <AgentCardArtwork agentKey={item.agentKey} tint={accent.color} compact={isCompact} />
+        {hasArtwork && <AgentCardArtwork agentKey={item.agentKey} tint={accent.color} />}
         {hasArtwork && (
           <div
             aria-hidden
@@ -352,7 +353,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
         )}
 
         {/* 头行：大图卡显示名称与直接任务；普通卡保留图标芯片。 */}
-        <div className="relative z-10 flex items-start justify-between gap-2">
+        <div className="toolbox-card-heading relative z-10 flex items-start justify-between gap-2">
           {hasArtwork ? (
             <div
               className="toolbox-tool-card-title max-w-[60%] font-semibold leading-[1.2] tracking-[-0.02em]"
@@ -366,6 +367,15 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
               style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
             >
               <IconComponent size={19} style={{ color: accent.color }} />
+            </div>
+          )}
+
+          {isCompact && (
+            <div className="toolbox-compact-copy">
+              <div className="toolbox-compact-name" title={item.name}>{item.name}</div>
+              <p className="toolbox-compact-description" title={item.description}>
+                {getAgentCardTask(item.agentKey) ?? item.description}
+              </p>
             </div>
           )}
 
@@ -399,7 +409,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
               <div
                 data-publish-hint={needsPublishHint}
                 className={`toolbox-card-actions flex items-center gap-0.5 transition-opacity duration-200 ${
-                  needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
                 }`}
               >
                 {isOwnCustomCard && (
@@ -474,7 +484,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
         </div>
 
         {/* 普通卡保留名称与描述；大图卡只显示更易扫描的标签。 */}
-        {!hasArtwork && (
+        {!hasArtwork && !isCompact && (
           <div className="relative z-10 min-w-0">
             <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
               {item.name}
@@ -490,7 +500,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
 
         {/* Tags — 可点击进行过滤 */}
         {item.tags.length > 0 && (
-          <div className={`relative z-10 flex flex-wrap gap-1 ${hasArtwork ? 'mt-auto' : ''}`}>
+          <div className={`toolbox-card-tags relative z-10 flex flex-wrap gap-1 ${hasArtwork ? 'mt-auto' : ''}`}>
             {item.tags.slice(0, visibleTagCount).map((tag) => {
               const isActive = !!activeTagFilter && activeTagFilter.toLowerCase() === tag.toLowerCase();
               return (
@@ -528,7 +538,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
          *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在头行渲染）
          */}
         <div
-          className={`relative z-10 flex items-center justify-between gap-1 pt-1.5 border-t ${hasArtwork ? 'mt-0' : 'mt-auto'}`}
+          className={`toolbox-card-footer relative z-10 flex items-center justify-between gap-1 pt-1.5 border-t ${hasArtwork ? 'mt-0' : 'mt-auto'}`}
           style={{ borderColor: hasArtwork ? 'var(--media-card-border)' : 'var(--border-faint)' }}
         >
           {isPaAgent ? (
@@ -645,6 +655,8 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
                       onClick={handleToggleFavorite}
                       className="flex items-center justify-center transition-all duration-300 hover:scale-125"
                       title={favorited ? '取消收藏' : '收藏'}
+                      aria-label={`${favorited ? '取消收藏' : '收藏'}${item.name}`}
+                      aria-pressed={favorited}
                     >
                       <Star
                         size={12}
@@ -674,6 +686,8 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
                 onClick={handleToggleFavorite}
                 className="flex items-center justify-center transition-all duration-300 hover:scale-125"
                 title={favorited ? '取消收藏' : '收藏'}
+                aria-label={`${favorited ? '取消收藏' : '收藏'}${item.name}`}
+                aria-pressed={favorited}
               >
                 <Star
                   size={12}

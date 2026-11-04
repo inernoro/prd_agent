@@ -1,0 +1,63 @@
+/* 复用应用主题与原卡片行为，调整百宝箱桌面信息层级。 */
+.toolbox-page .toolbox-filter-bar { min-height: 0; padding: 4px 0 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.toolbox-discovery-controls { display: flex; flex-direction: column; gap: 18px; width: 100%; min-width: 0; }
+.toolbox-discovery-search-row,
+.toolbox-discovery-toolbar,
+.toolbox-discovery-options,
+.toolbox-results-heading,
+.toolbox-results-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.toolbox-discovery-search-row { justify-content: space-between; }
+.toolbox-discovery-toolbar { justify-content: space-between; flex-wrap: wrap; }
+.toolbox-discovery-options { gap: 20px; flex-wrap: wrap; }
+.toolbox-discovery-search {
+  display: flex; align-items: center; gap: 12px;
+  width: min(100%, 680px); min-width: 0; height: 48px; padding: 0 15px;
+  border: 1px solid var(--border-default); border-radius: 12px;
+  background: var(--bg-card); color: var(--text-muted);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.toolbox-discovery-search:focus-within { border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--selection-icon-bg); }
+.toolbox-discovery-search > svg { flex-shrink: 0; }
+.toolbox-discovery-search input { flex: 1; min-width: 0; height: 100%; outline: none; background: transparent; color: var(--text-primary); font-size: 14px; }
+.toolbox-discovery-search input::placeholder { color: var(--text-muted); }
+.toolbox-discovery-search input::-webkit-search-cancel-button { display: none; }
+.toolbox-discovery-search button { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 6px; }
+.toolbox-discovery-search button:hover { background: var(--bg-card-hover); }
+.toolbox-discovery-total { flex-shrink: 0; color: var(--text-muted); font-size: 12px; }
+.toolbox-page .toolbox-content { overscroll-behavior: contain; }
+.toolbox-quick-access { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 0 0 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border-subtle); }
+.toolbox-quick-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.toolbox-quick-label { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.toolbox-quick-items { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.toolbox-quick-hint { font-size: 12px; color: var(--text-muted); line-height: 26px; }
+.toolbox-quick-more { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 12px; padding: 4px; border-radius: 4px; }
+.toolbox-quick-more:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+.toolbox-results-heading { justify-content: space-between; margin-bottom: 14px; min-height: 24px; }
+.toolbox-results-title h2 { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.toolbox-results-title > span { font-size: 12px; color: var(--text-muted); }
+.toolbox-discovery-empty { min-height: 270px; padding: 24px; }
+.toolbox-empty-icon { display: flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 14px; color: var(--text-muted); background: var(--bg-tertiary); }
+.toolbox-page .toolbox-card-grid[data-display-mode="compact"] { grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.toolbox-page .toolbox-tool-card[data-display-mode="compact"] { min-height: 112px; padding: 16px; gap: 10px; border: 1px solid var(--border-subtle); border-radius: 12px; }
+.toolbox-page .toolbox-tool-card[data-display-mode="compact"]:hover { border-color: var(--border-default); box-shadow: var(--shadow-card-sm); }
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-card-heading { align-items: center; gap: 10px; }
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-card-heading > div:first-child { width: 36px; height: 36px; }
+.toolbox-compact-copy { flex: 1; min-width: 0; }
+.toolbox-compact-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 14px; font-weight: 600; line-height: 20px; color: var(--text-primary); }
+.toolbox-compact-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; font-size: 12px; line-height: 18px; color: var(--text-muted); }
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-card-tags { margin-left: 46px; margin-top: auto; padding-right: 24px; }
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-card-footer { border-top: 0; padding-top: 0; }
+.toolbox-tool-card[data-display-mode="compact"][data-has-footer-details="false"] .toolbox-card-footer { position: absolute; bottom: 12px; right: 12px; margin: 0; }
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-card-footer button[aria-pressed] { width: 24px; height: 24px; border-radius: 6px; }
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-card-footer button[aria-pressed]:hover { background: var(--bg-card-hover); }
+.toolbox-tool-card[data-display-mode="compact"] .toolbox-card-footer button[aria-pressed] svg { width: 14px; height: 14px; }
+.toolbox-tool-card:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+@media (max-width: 1100px) {
+  .toolbox-discovery-total { display: none; }
+  .toolbox-discovery-search { width: 100%; }
+  .toolbox-discovery-options { justify-content: space-between; width: 100%; gap: 12px; }
+}
+@media (max-width: 760px) {
+  .toolbox-quick-access { grid-template-columns: 1fr; gap: 16px; }
+  .toolbox-discovery-search input { font-size: 13px; }
+}

@@ -18,6 +18,8 @@ import {
   Grid3X3,
   LayoutGrid,
   Image,
+  Clock3,
+  ArrowUpRight,
 } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
@@ -35,12 +37,14 @@ import {
   writeToolboxDisplayMode,
   type ToolboxDisplayMode,
 } from './toolboxDisplayMode';
+import { searchToolboxItems } from './toolboxSearch';
+import './toolbox-discovery.css';
 
 // 权属维度（原有）
 const CATEGORY_TABS: ToolboxSegmentedItem[] = [
-  { key: 'all', label: '全部', icon: <Boxes size={14} /> },
-  { key: 'mine', label: '我的', icon: <User size={14} /> },
-  { key: 'others', label: '别人的', icon: <Globe2 size={14} /> },
+  { key: 'all', label: '全部工具', icon: <Boxes size={14} /> },
+  { key: 'mine', label: '我的创建', icon: <User size={14} /> },
+  { key: 'others', label: '公开共享', icon: <Globe2 size={14} /> },
   { key: 'favorite', label: '收藏', icon: <Star size={14} /> },
 ];
 
@@ -57,7 +61,7 @@ const DISPLAY_MODES: Array<{
   description: string;
   icon: typeof Grid3X3;
 }> = [
-  { key: 'compact', label: '紧凑', description: '一行显示更多工具', icon: Grid3X3 },
+  { key: 'compact', label: '紧凑', description: '用图标和用途快速查找工具', icon: Grid3X3 },
   { key: 'standard', label: '标准', description: '平衡图片与信息密度', icon: LayoutGrid },
   { key: 'showcase', label: '大图', description: '突出智能体插画', icon: Image },
 ];
@@ -145,21 +149,11 @@ export default function AiToolboxPage() {
       );
     }
 
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(
-        (item) =>
-          item.name.toLowerCase().includes(query) ||
-          item.description.toLowerCase().includes(query) ||
-          item.tags.some((tag) => tag.toLowerCase().includes(query))
-      );
-    }
-
-    return result;
+    return searchToolboxItems(result, searchQuery);
   }, [items, category, searchQuery, favoriteIds, funcKindFilter, activeTagFilter]);
 
   const gridLoading = itemsLoading;
-  const isOthersCategory = category === 'others';
+  const favoriteItems = items.filter((item) => favoriteIds.has(item.id));
 
   // Render based on current view
   if (view === 'detail' && selectedItem) {
@@ -183,7 +177,22 @@ export default function AiToolboxPage() {
     return <BasicCapabilities />;
   }
 
-  const hasActiveFilters = funcKindFilter !== 'all' || !!activeTagFilter;
+  const hasActiveFilters = funcKindFilter !== 'all' || !!activeTagFilter || !!searchQuery.trim();
+  const resetFilters = () => {
+    setCategory('all');
+    setFuncKindFilter('all');
+    setActiveTagFilter(null);
+    setSearchQuery('');
+  };
+  const emptyStates = {
+    all: { title: '暂无工具', description: '可用工具会显示在这里。' },
+    mine: { title: '你还没有创建过智能体', description: '创建一个智能体，保存自己的提示词和配置。' },
+    others: { title: '还没有公开共享的智能体', description: '其他用户公开发布后，你可以在这里直接使用。' },
+    favorite: { title: '还没有收藏工具', description: '点击工具卡片上的星标，把常用工具留在这里。' },
+  };
+  const emptyState = hasActiveFilters
+    ? { title: '没有找到匹配的工具', description: '试试更短的关键词，或清除筛选后查看全部工具。' }
+    : emptyStates[category];
 
   const handleDisplayModeChange = (mode: ToolboxDisplayMode) => {
     setDisplayMode(mode);
@@ -211,135 +220,121 @@ export default function AiToolboxPage() {
         </Button>
       }
       controls={
-        <>
-          {/* 权属维度 */}
-          <ToolboxSegmentedControl
-            items={CATEGORY_TABS}
-            activeKey={category}
-            label="工具分类"
-            compact
-            onChange={(key) => setCategory(key as ToolboxCategory)}
-          />
-
-          {/* 功能类型维度 */}
-          <ToolboxSegmentedControl
-            items={KIND_TABS}
-            activeKey={funcKindFilter}
-            label="工具类型"
-            compact
-            onChange={(key) => setFuncKindFilter(key as 'all' | 'agent' | 'tool')}
-          />
-
-          <div className="toolbox-search-cluster">
-            {/* 活跃 Tag 过滤芯片 */}
-            {activeTagFilter && (
-              <button
-                className="toolbox-active-tag-chip"
-                onClick={() => setActiveTagFilter(null)}
-                title="清除标签过滤"
-              >
-                <span>{activeTagFilter}</span>
-                <X size={11} />
-              </button>
-            )}
-
-            <div className="toolbox-count-pill">
-              {filteredItems.length} 个{hasActiveFilters ? '匹配' : '工具'}
-            </div>
-
-            <div className="toolbox-display-switch" role="group" aria-label="展示方式">
-              {DISPLAY_MODES.map((mode) => {
-                const Icon = mode.icon;
-                const active = displayMode === mode.key;
-
-                return (
-                  <button
-                    key={mode.key}
-                    type="button"
-                    className="toolbox-display-option"
-                    data-active={active}
-                    aria-pressed={active}
-                    title={mode.description}
-                    onClick={() => handleDisplayModeChange(mode.key)}
-                  >
-                    <Icon size={13} aria-hidden />
-                    <span>{mode.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="relative">
-              <Search
-                size={14}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-token-muted"
-              />
+        <div className="toolbox-discovery-controls">
+          <div className="toolbox-discovery-search-row">
+            <div className="toolbox-discovery-search">
+              <Search size={19} aria-hidden />
               <input
-                type="text"
+                type="search"
+                aria-label="搜索工具"
                 data-tour-id="toolbox-search"
-                placeholder={isMobile ? '搜索...' : '搜索工具名称、描述或标签...'}
+                placeholder="搜索名称、用途或标签，例如 Markdown PPT"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`prd-field ${isMobile ? 'w-32' : 'w-56'} pl-8 pr-3 py-1.5 rounded-lg text-xs outline-none`}
               />
+              {searchQuery && (
+                <button type="button" onClick={() => setSearchQuery('')} aria-label="清空搜索">
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+            <span className="toolbox-discovery-total">{items.length} 个工具，随时开始</span>
+          </div>
+          <div className="toolbox-discovery-toolbar">
+            <ToolboxSegmentedControl
+              items={CATEGORY_TABS}
+              activeKey={category}
+              label="工具分类"
+              compact
+              onChange={(key) => setCategory(key as ToolboxCategory)}
+            />
+            <div className="toolbox-discovery-options">
+              <ToolboxSegmentedControl
+                items={KIND_TABS}
+                activeKey={funcKindFilter}
+                label="工具类型"
+                compact
+                onChange={(key) => setFuncKindFilter(key as 'all' | 'agent' | 'tool')}
+              />
+              <div className="toolbox-display-switch" role="group" aria-label="展示方式">
+                {DISPLAY_MODES.map((mode) => {
+                  const Icon = mode.icon;
+                  return (
+                    <button
+                      key={mode.key}
+                      type="button"
+                      className="toolbox-display-option"
+                      data-active={displayMode === mode.key}
+                      aria-pressed={displayMode === mode.key}
+                      title={mode.description}
+                      onClick={() => handleDisplayModeChange(mode.key)}
+                    >
+                      <Icon size={13} aria-hidden />
+                      <span>{mode.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </>
+        </div>
       }
     >
-      {/* 最近使用横条 */}
-      {!gridLoading && recentItems.length > 0 && (
-        <div className="toolbox-recent-strip">
-          <span className="toolbox-recent-label">最近使用</span>
-          <div className="toolbox-recent-items">
-            {recentItems.map((item) => (
-              <RecentChip key={item.id} item={item} />
-            ))}
+      {!gridLoading && category === 'all' && !hasActiveFilters && (
+        <div className="toolbox-quick-access">
+          <div className="toolbox-quick-group">
+            <span className="toolbox-quick-label"><Star size={13} />收藏</span>
+            {favoriteItems.length ? (
+              <div className="toolbox-quick-items">
+                {favoriteItems.slice(0, 3).map((item) => <RecentChip key={item.id} item={item} />)}
+                <button type="button" className="toolbox-quick-more" onClick={() => setCategory('favorite')}>
+                  查看全部 <ArrowUpRight size={12} />
+                </button>
+              </div>
+            ) : <span className="toolbox-quick-hint">点击卡片星标，收藏常用工具</span>}
+          </div>
+          <div className="toolbox-quick-group">
+            <span className="toolbox-quick-label"><Clock3 size={13} />最近使用</span>
+            {recentItems.length ? (
+              <div className="toolbox-quick-items">
+                {recentItems.slice(0, 4).map((item) => <RecentChip key={item.id} item={item} />)}
+              </div>
+            ) : <span className="toolbox-quick-hint">打开工具后，可以从这里快速返回</span>}
           </div>
         </div>
       )}
+
+      <div className="toolbox-results-heading">
+        <div className="toolbox-results-title">
+          <h2>{searchQuery.trim() ? '搜索结果' : CATEGORY_TABS.find((tab) => tab.key === category)?.label}</h2>
+          <span role="status" aria-live="polite">{filteredItems.length} 个工具</span>
+          {activeTagFilter && (
+            <button className="toolbox-active-tag-chip" onClick={() => setActiveTagFilter(null)} title="清除标签过滤">
+              {activeTagFilter}<X size={11} />
+            </button>
+          )}
+        </div>
+        {hasActiveFilters && <button type="button" className="toolbox-quick-more" onClick={resetFilters}>清除筛选</button>}
+      </div>
 
       {gridLoading ? (
         <div className="flex items-center justify-center h-48">
           <MapSectionLoader text="加载中..." />
         </div>
       ) : filteredItems.length === 0 ? (
-        <Surface variant="inset" className="flex flex-col items-center justify-center h-48 gap-3 rounded-xl">
-          <div className="surface-inset w-14 h-14 rounded-xl flex items-center justify-center">
-            <Package size={28} className="text-token-muted" />
+        <Surface variant="inset" className="toolbox-discovery-empty flex flex-col items-center justify-center gap-4 rounded-xl">
+          <div className="toolbox-empty-icon">
+            {category === 'favorite' && !hasActiveFilters ? <Star size={25} /> : <Package size={25} />}
           </div>
           <div className="text-center">
-            <div className="text-sm font-medium mb-0.5 text-token-secondary">
-              {activeTagFilter
-                ? `没有含「${activeTagFilter}」标签的工具`
-                : searchQuery
-                ? '没有找到匹配的工具'
-                : isOthersCategory
-                ? '还没有其他人公开发布智能体'
-                : category === 'mine'
-                ? '你还没有创建过智能体'
-                : '暂无工具'}
-            </div>
-            <div className="text-xs text-token-muted">
-              {activeTagFilter
-                ? '点击右侧 × 可清除标签过滤'
-                : searchQuery
-                ? '尝试其他关键词'
-                : isOthersCategory
-                ? '等待其他用户把工具发布到市场，公开后会带 NEW 徽章出现在这里'
-                : '点击右上角创建你的第一个智能体'}
-            </div>
+            <div className="text-sm font-medium mb-2 text-token-secondary">{emptyState.title}</div>
+            <div className="text-xs text-token-muted">{emptyState.description}</div>
           </div>
-          {activeTagFilter && (
-            <Button variant="ghost" size="sm" onClick={() => setActiveTagFilter(null)}>
-              <X size={13} />
-              清除标签过滤
-            </Button>
-          )}
-          {category === 'mine' && !searchQuery && !activeTagFilter && (
-            <Button variant="primary" size="sm" onClick={startCreate}>
-              <Plus size={13} />
-              创建智能体
+          {category === 'mine' && !hasActiveFilters ? (
+            <Button variant="primary" size="sm" onClick={startCreate}><Plus size={13} />创建智能体</Button>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={resetFilters}>
+              {hasActiveFilters ? '清除筛选' : '浏览全部工具'}
             </Button>
           )}
         </Surface>
