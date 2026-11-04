@@ -34,7 +34,7 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('return window.innerWidth<=640?88:12;');
     expect(script).toContain('var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};');
     expect(script).toContain('@media (max-width:640px)');
-    expect(script).toContain('#cds-widget .cds-branch,#cds-widget .cds-mode{display:none}');
+    expect(script).toContain('#cds-widget .cds-branch,#cds-widget .cds-mode,#cds-widget .cds-tag{display:none}');
     // 44px 和同步/失败可读性由真实 IIFE/CSS 夹具断言，不再把错误的通配隐藏规则锁成合同。
     expect(script).toContain('#cds-widget .cds-panel{width:calc(100vw - 24px)');
     expect(script).toContain('max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain');

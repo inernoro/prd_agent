@@ -35,12 +35,12 @@ const script = buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(
   .replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '');
 const scriptSha256 = createHash('sha256').update(script).digest('hex');
 
-async function fixture(hosted = false, width = 390) {
+async function fixture(hosted = false, width = 390, tags: string[] = []) {
   const page = await browser.newPage({ viewport: { width, height: 664 } });
   page.on('pageerror', error => { pageErrors.push(error.message); });
   await page.route('**/*', route => { externalRequests.push(route.request().url()); return route.abort(); });
   await page.setContent('<html><head><title>deterministic-fixture</title></head><body style="margin:0;min-height:1200px;background:#faf9f6"><h1 style="margin:16px;font:20px sans-serif">业务主任务</h1></body></html>');
-  await page.evaluate(() => {
+  await page.evaluate(tags => {
     const streams: EventTarget[] = [];
     window.EventSource = class extends EventTarget {
       constructor(public url: string) {
@@ -63,12 +63,12 @@ async function fixture(hosted = false, width = 390) {
       const url = String(input);
       window.widgetFixture.calls.push(url);
       let body;
-      if (url === '/_cds/api/branches') body = { tabTitleEnabled: false, branches: [{ id: 'fixture-branch', status: window.widgetFixture.status, runningCommitSha: 'a'.repeat(40) }] };
+      if (url === '/_cds/api/branches') body = { tabTitleEnabled: false, branches: [{ id: 'fixture-branch', status: window.widgetFixture.status, runningCommitSha: 'a'.repeat(40), tags }] };
       else if (url === '/_cds/api/build-profiles') body = { profiles: [] };
       else { window.widgetFixture.unknown.push(url); throw new Error(`未登记的夹具请求：${url}`); }
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
-  });
+  }, tags);
   await page.addScriptTag({ content: hosted ? buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(40), '', true).replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '') : script });
   await page.waitForFunction(() => window.widgetFixture.calls.length === 2 && !!document.querySelector('#cds-widget .cds-badge'), undefined, { timeout: 3000 });
   return page;
@@ -111,8 +111,8 @@ async function geometry(page: Page) {
   });
 }
 
-async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390) {
-  const page = await fixture(hosted, width);
+async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390, tags: string[] = []) {
+  const page = await fixture(hosted, width, tags);
   try {
     await run(page);
     assert.deepEqual(await page.evaluate(() => window.widgetFixture.unknown), []);
@@ -231,6 +231,22 @@ try {
     await page.locator('button[data-action="toggle"]').click(); await settle(page);
     assert.equal(await page.locator('.cds-hosted-panel-note').isVisible(), true, '托管限制说明仍可经真实按钮打开查看');
   }, true, width);
+  for (const hosted of [false, true]) for (const width of [360, 390]) await check(`tagged-${hosted ? 'hosted' : 'normal'}-sync-controls-${width}`, async page => {
+    for (const status of ['building', 'error', 'starting', 'running']) {
+      await page.evaluate(status => window.widgetFixture.emit(status), status); await settle(page);
+      assert.equal(await page.locator('.cds-tag').count(), 8, '沿用真实 branches.tags 渲染，不删标签数据');
+      const controls = await page.locator('.cds-badge-main').evaluate(row => [...row.querySelectorAll('button')].map(button => {
+        const r = button.getBoundingClientRect(), badge = row.parentElement!.getBoundingClientRect();
+        return { action: button.dataset.action, visible: r.width >= 44 && r.height >= 44 && r.left >= badge.left && r.right <= badge.right
+          && r.top >= badge.top && r.bottom <= badge.bottom && button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
+      }));
+      assert.deepEqual(controls.map(control => control.action), ['toggle', 'dismiss']);
+      assert.ok(controls.every(control => control.visible), `${status} 的带标签徽标仍须可展开、可关闭`);
+      assert.equal(await page.locator('.cds-sync-chip').isVisible(), true);
+    }
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    if (hosted) assert.equal(await page.locator('.cds-hosted-panel-note').isVisible(), true);
+  }, hosted, width, ['开发', '测试', '验收', '手机', '构建', '回归', '待合并', '功能修复']);
   await check('native-nonzero-safe-area', async page => {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, left: 20, right: 30, bottom: 34 } });
