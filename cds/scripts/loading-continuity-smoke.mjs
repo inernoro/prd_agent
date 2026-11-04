@@ -109,8 +109,9 @@ try {
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
       if (scene.kind === 'branch-detail') {
-        await page.getByRole('button',{name:/^生效配置/}).click();
+        await page.locator('summary').filter({hasText:'生效配置'}).click();
         await page.getByText('没有任何自定义环境变量层。',{exact:true}).waitFor();
+        await page.getByText('这条分支还没有服务配置，没有可实测的数据库。',{exact:true}).first().waitFor();
       }
       assert.deepEqual(errors, []);
     } catch (e) { await page.screenshot({path:path.join(out,`failure-${scene.kind}.jpg`)}); result.failure = String(e); result.requests = [...new Set(requests)]; await fs.writeFile(path.join(out, `failed-${scene.kind}.html`), await page.content()); }

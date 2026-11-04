@@ -18,6 +18,7 @@
 
 ## 文档列表
 
+- [CDS 骨架维护与验收](./guide.cds.loading.md) `guide.cds.loading`
 - [CDS 项目发布脚本 · 指南](./guide.cds.release-scripts.md) `guide.cds.release-scripts`
 
 ### 一、产品规格
