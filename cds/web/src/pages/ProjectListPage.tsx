@@ -1,6 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
 import {
   Activity,
   AlertTriangle,
@@ -17,6 +16,9 @@ import {
   ExternalLink,
   FileText,
   Gauge,
+  GitBranch,
+  MoreHorizontal,
+  Box,
   FolderGit2,
   Github,
   KeyRound,
@@ -67,12 +69,7 @@ import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { RepoSharingInline, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
 
-const PROJECT_DOCK_BASE_SIZE = 56;
-const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
-const PROJECT_DOCK_DISTANCE = 150;
-const PROJECT_DOCK_SPRING = { mass: 0.12, stiffness: 180, damping: 16 };
-
-interface ProjectSummary {
+export interface ProjectSummary {
   id: string;
   slug: string;
   name: string;
@@ -1596,76 +1593,65 @@ function NacosIcon(): JSX.Element {
 
 function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[number]): {
   label: string;
-  tileClassName: string;
   icon: JSX.Element;
 } {
   const raw = `${service.id} ${service.name || ''} ${service.dockerImage || ''}`.toLowerCase();
   if (raw.includes('mongo')) {
     return {
       label: 'MongoDB',
-      tileClassName: 'border-ok/45 bg-ok-soft text-ok dark:border-ok/35 dark:bg-ok-soft ',
       icon: <MongoIcon />,
     };
   }
   if (raw.includes('redis')) {
     return {
       label: 'Redis',
-      tileClassName: 'border-bad/45 bg-bad-soft text-bad dark:border-bad/35 dark:bg-bad-soft ',
       icon: <RedisIcon />,
     };
   }
   if (raw.includes('mysql')) {
     return {
       label: 'MySQL',
-      tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-400',
       icon: <MysqlIcon />,
     };
   }
   if (raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') || /\bpg[-_0-9]/.test(raw)) {
     return {
       label: 'PostgreSQL',
-      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <PostgresIcon />,
     };
   }
   if (raw.includes('milvus')) {
     return {
       label: 'Milvus',
-      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
       icon: <MilvusIcon />,
     };
   }
   if (raw.includes('qdrant') || raw.includes('weaviate') || raw.includes('chroma')) {
     return {
       label: raw.includes('qdrant') ? 'Qdrant' : raw.includes('weaviate') ? 'Weaviate' : 'Vector DB',
-      tileClassName: 'border-fuchsia-600/45 bg-fuchsia-500/15 text-fuchsia-700 dark:border-fuchsia-500/35 dark:bg-fuchsia-500/10 dark:text-fuchsia-300',
       icon: <VectorDbIcon />,
     };
   }
   if (raw.includes('rabbit')) {
     return {
       label: 'RabbitMQ',
-      tileClassName: 'border-warn/45 bg-warn-soft text-warn dark:border-warn/35 dark:bg-warn-soft ',
       icon: <RabbitIcon />,
     };
   }
   if (raw.includes('nacos')) {
     return {
       label: 'Nacos',
-      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <NacosIcon />,
     };
   }
   if (raw.includes('minio')) {
     return {
       label: 'MinIO',
-      tileClassName: 'border-zinc-500/45 bg-zinc-500/15 text-zinc-700 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-200',
       icon: <MinioIcon />,
     };
   }
   return {
     label: service.name || service.id,
-    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-600 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-300',
     icon: <Database className="cds-project-node-icon" />,
   };
 }
@@ -1673,10 +1659,10 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
 type ProjectBrand = {
   key: string;
   label: string;
-  tileClassName: string;
   icon: JSX.Element;
   score: number;
   source: string;
+  running?: boolean;
 };
 
 function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number]): ProjectBrand {
@@ -1692,7 +1678,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'dotnet',
       label: '.NET',
-      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
       icon: <DotnetIcon />,
       score: 900 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1702,7 +1687,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'node',
       label: 'Node.js',
-      tileClassName: 'border-ok/45 bg-ok-soft text-ok dark:border-ok/35 dark:bg-ok-soft ',
       icon: <NodeIcon />,
       score: 800 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1712,7 +1696,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'python',
       label: 'Python',
-      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <PythonIcon />,
       score: 700 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1722,7 +1705,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'java',
       label: 'Java',
-      tileClassName: 'border-warn/45 bg-warn-soft text-warn dark:border-warn/35 dark:bg-warn-soft ',
       icon: <JavaIcon />,
       score: 650 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1732,7 +1714,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'go',
       label: 'Go',
-      tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-300',
       icon: <GoIcon />,
       score: 640 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1742,7 +1723,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'rust',
       label: 'Rust',
-      tileClassName: 'border-warn/45 bg-warn-soft text-warn dark:border-warn/35 dark:bg-warn-soft ',
       icon: <RustIcon />,
       score: 630 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1752,7 +1732,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'php',
       label: 'PHP',
-      tileClassName: 'border-indigo-600/45 bg-indigo-500/15 text-indigo-700 dark:border-indigo-500/35 dark:bg-indigo-500/10 dark:text-indigo-300',
       icon: <PhpIcon />,
       score: 620 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1762,7 +1741,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'static',
       label: 'Static',
-      tileClassName: 'border-lime-600/45 bg-lime-500/15 text-lime-700 dark:border-lime-500/35 dark:bg-lime-500/10 dark:text-lime-300',
       icon: <Braces className="cds-project-node-icon" />,
       score: 500 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1772,7 +1750,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'api',
       label: 'API Service',
-      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <Code2 className="cds-project-node-icon" />,
       score: 100 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1781,7 +1758,6 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
   return {
     key: `app:${service.name || service.id}`,
     label: service.name || service.id,
-    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-700 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-200',
     icon: <Code2 className="cds-project-node-icon" />,
     score: 0 + (service.runningCount || 0),
     source: service.dockerImage || service.command || service.id,
@@ -1822,16 +1798,20 @@ function primaryInfraBrand(service: NonNullable<ProjectSummary['infraServices']>
 
 function uniqueProjectBrands(project: ProjectSummary): ProjectBrand[] {
   const appBrands = (project.appServices || [])
-    .map((service) => appIconFor(service))
+    .map((service) => ({ ...appIconFor(service), running: service.runningCount !== undefined ? service.runningCount > 0 : service.status ? service.status === 'running' : undefined }))
     .filter((brand) => brand.score > 0)
     .sort((left, right) => right.score - left.score);
   const infraBrands = (project.infraServices || [])
-    .map(primaryInfraBrand)
+    .map((service) => ({ ...primaryInfraBrand(service), running: service.status ? service.status === 'running' : undefined }))
     .sort((left, right) => right.score - left.score);
   const selected = new Map<string, ProjectBrand>();
   for (const brand of [...appBrands, ...infraBrands]) {
     const existing = selected.get(brand.key);
-    if (!existing || brand.score > existing.score) selected.set(brand.key, brand);
+    if (!existing) selected.set(brand.key, brand);
+    else selected.set(brand.key, {
+      ...(brand.score > existing.score ? brand : existing),
+      running: existing.running || brand.running,
+    });
   }
   const brands = Array.from(selected.values()).sort((left, right) => right.score - left.score);
   const hasSpecificBrand = brands.some((brand) => !brand.key.startsWith('app:') && !brand.key.startsWith('infra:') && brand.key !== 'api');
@@ -1840,80 +1820,49 @@ function uniqueProjectBrands(project: ProjectSummary): ProjectBrand[] {
     : brands;
 }
 
-function ProjectDockNode({
-  mouseX,
-  className,
-  title,
-  ariaLabel,
-  children,
-}: {
-  mouseX: MotionValue<number>;
-  className: string;
-  title: string;
-  ariaLabel: string;
-  children: React.ReactNode;
-}): JSX.Element {
-  const ref = useRef<HTMLSpanElement | null>(null);
-  const distance = useTransform(mouseX, (value) => {
-    const bounds = ref.current?.getBoundingClientRect();
-    if (!bounds) return Infinity;
-    return value - bounds.x - bounds.width / 2;
-  });
-  const scale = useSpring(
-    useTransform(
-      distance,
-      [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE],
-      [1, PROJECT_DOCK_MAGNIFIED_SIZE / PROJECT_DOCK_BASE_SIZE, 1],
-    ),
-    PROJECT_DOCK_SPRING,
-  );
-  const y = useSpring(
-    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [0, -8, 0]),
-    PROJECT_DOCK_SPRING,
-  );
-  const iconSize = useSpring(
-    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [28, 32, 28]),
-    PROJECT_DOCK_SPRING,
-  );
-  const iconSizePx = useTransform(iconSize, (value) => `${value}px`);
-
+/** A compact inventory, not a dependency graph: no inferred runtime edges. */
+function ProjectServiceModules({ project, brands }: { project: ProjectSummary; brands: ProjectBrand[] }): JSX.Element {
+  if (!brands.length) {
+    const repository = project.githubRepoFullName || project.gitRepoUrl;
+    return (
+      <div className="cds-project-services cds-project-services--repository">
+        <div className="cds-project-repository-mark" aria-hidden>{repository ? <Github /> : <FolderGit2 />}</div>
+        <div className="min-w-0">
+          <span className="cds-project-repository-label">{repository ? '代码仓库' : '项目配置'}</span>
+          <strong className="cds-project-repository-name" title={repository || project.slug}>
+            {project.githubRepoFullName || project.slug}
+          </strong>
+          <span className="cds-project-repository-provider">{repository ? '已关联仓库' : '尚未配置应用服务'}</span>
+        </div>
+      </div>
+    );
+  }
+  const [lead, ...others] = brands;
+  // Every registered stack remains reachable; long inventories scroll in this
+  // bounded column rather than silently dropping services after the sixth icon.
   return (
-    <motion.span
-      ref={ref}
-      className={className}
-      style={{
-        y,
-        scale,
-        '--project-node-icon-size': iconSizePx,
-      } as unknown as React.CSSProperties}
-      title={title}
-      aria-label={ariaLabel}
-    >
-      {children}
-    </motion.span>
+    <div className={`cds-project-services ${others.length ? '' : 'cds-project-services--single'}`}>
+      <div className="cds-project-service-focus" title={`${lead.label} · ${lead.source}`}>
+        <span className="cds-project-service-glyph" aria-hidden>{lead.icon}</span>
+        <strong>{lead.label}</strong>
+      </div>
+      {others.length ? (
+        <div className="cds-project-service-list" data-service-count={others.length}>
+          {others.map((brand) => (
+            <div className="cds-project-service-item" key={brand.key} title={`${brand.label} · ${brand.source}`}>
+              <span className="cds-project-service-glyph" aria-hidden>{brand.icon}</span>
+              <span className="truncate">{brand.label}</span>
+              <i className={`cds-project-service-dot ${!project.paused && brand.running ? 'bg-ok' : 'bg-muted-foreground/40'}`} aria-label={project.paused ? '已暂停' : brand.running === undefined ? '状态未采集' : brand.running ? '运行中' : '未运行'} />
+            </div>
+          ))}
+        </div>
+      ) : <span className="cds-project-service-caption">已配置服务</span>}
+    </div>
   );
 }
 
-/*
- * ProjectCard — Railway-style "workspace tile".
- *
- * Bigger by intent (~280px tall) with:
- *   - Title row at the top
- *   - A dot-grid canvas in the middle hosting tech-stack glyphs (so it
- *     never feels empty)
- *   - An in-canvas status row that mirrors Railway's project tiles so the
- *     page reads as a workspace, not a metrics list.
- * Whole tile is a navigation link; secondary actions live in a footer
- * action strip that does not compete with the link affordance.
- */
-function ProjectCard({
-  project,
-  canManageProjects,
-  onClone,
-  onAgentKeys,
-  onAgentSessions,
-  onDelete,
-  onTogglePause,
+export function ProjectCard({
+  project, canManageProjects, onClone, onAgentKeys, onAgentSessions, onDelete, onTogglePause,
 }: {
   project: ProjectSummary;
   canManageProjects: boolean;
@@ -1926,265 +1875,79 @@ function ProjectCard({
   const title = displayName(project);
   const paused = project.paused === true;
   const usage = project.resourceUsage;
-  const cpu = usage?.cpuPercent ?? 0;
-  const recentBuilds1h = usage?.recentBuilds1h ?? 0;
-  const cpuToneClass = cpu >= 100
-    ? 'text-bad'
-    : cpu >= 50
-      ? 'text-warn'
-      : 'text-muted-foreground';
+  const cpu = usage?.cpuPercent;
+  const cpuToneClass = cpu !== undefined && cpu >= 100 ? 'text-bad'
+    : cpu !== undefined && cpu >= 50 ? 'text-warn' : 'text-muted-foreground';
   const isReady = !project.cloneStatus || project.cloneStatus === 'ready';
-  const cloneLabel =
-    project.cloneStatus === 'pending'
-      ? '待克隆'
-      : project.cloneStatus === 'cloning'
-        ? '克隆中'
-        : project.cloneStatus === 'error'
-          ? '克隆失败'
-          : null;
+  const cloneLabel = project.cloneStatus === 'pending' ? '待克隆'
+    : project.cloneStatus === 'cloning' ? '克隆中'
+      : project.cloneStatus === 'error' ? '克隆失败' : null;
   const running = project.runningServiceCount || 0;
   const branches = project.branchCount || 0;
   const appTotal = project.appServiceCount || Math.max(branches, running);
-  const infra = project.infraServices || [];
-  const infraCount = project.infraServiceCount ?? infra.length;
-  const runningInfra = project.runningInfraServiceCount || 0;
-  const totalOnline = running + runningInfra;
-  const totalServices = appTotal + infraCount;
-  const stackBrands = uniqueProjectBrands(project);
-  const visibleStackBrands = stackBrands.slice(0, 6);
-  const hiddenStackBrandCount = Math.max(0, stackBrands.length - visibleStackBrands.length);
-  const dockMouseX = useMotionValue(Infinity);
-  const dotTone = paused
-    ? 'bg-muted-foreground/40'
-    : project.cloneStatus === 'error'
-      ? 'bg-destructive'
-      : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
-        ? 'bg-warn'
-        : running > 0
-          ? 'bg-ok'
-          : 'bg-muted-foreground/40';
+  const infraCount = project.infraServiceCount ?? project.infraServices?.length ?? 0;
+  const totalOnline = running + (project.runningInfraServiceCount || 0);
+  const totalServices = Math.max(appTotal + infraCount, totalOnline);
+  const stateLabel = paused ? '已暂停' : cloneLabel || (totalOnline > 0 ? '运行中' : '已就绪');
+  const stateTone = paused ? 'text-muted-foreground' : project.cloneStatus === 'error' ? 'text-bad'
+    : !isReady ? 'text-warn' : totalOnline > 0 ? 'text-ok' : 'text-muted-foreground';
+  const monogram = (project.slug || project.name || project.id).slice(0, 2).toLocaleUpperCase();
 
   return (
-    // cds-cv-auto：离屏项目卡跳过 layout/paint（卡片本就 overflow-hidden，无浮层裁剪风险）
-    <article className="cds-project-card cds-cv-auto group relative flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] transition-[border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg">
-      <a
-        href={isReady ? projectHref(project) : '#'}
-        onClick={(event) => {
-          if (!isReady) event.preventDefault();
-        }}
-        className={`flex flex-1 flex-col rounded-lg transition-[filter,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${paused ? 'opacity-60 grayscale' : ''}`}
-      >
-        {/*
-         * Header。右侧那排操作按钮是 absolute 浮在卡片右上角的，hover 才显形——
-         * 唯独 paused 时它常驻（opacity-100），会直接压在标题上（「Claude SDK
-         * Sidecar Pool」被「已暂停」徽章和六个图标盖掉半截）。所以 paused 时
-         * 给标题行留出让位的右内边距，其余状态维持原样不浪费横向空间。
-         */}
-        <header className={`flex items-start justify-between gap-3 px-5 pt-5 ${paused ? 'pr-[13.5rem]' : ''}`}>
-          <h2 className="min-w-0 truncate text-[1.0625rem] font-semibold tracking-tight">{title}</h2>
-          {!isReady && cloneLabel ? (
-            <span className="shrink-0 rounded border border-warn/30 bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
-              {cloneLabel}
-            </span>
-          ) : null}
+    <article className="cds-project-card cds-cv-auto" data-project-id={project.id} data-paused={paused || undefined}>
+      <a href={isReady ? projectHref(project) : '#'}
+        onClick={(event) => { if (!isReady) event.preventDefault(); }}
+        aria-label={`查看 ${title}`} className="cds-project-card-link">
+        <header className="cds-project-card-heading">
+          <span className="cds-project-monogram" aria-hidden>{monogram}</span>
+          <h2 title={project.description ? `${title} · ${project.description}` : title}>{title}</h2>
+          <span className={`cds-project-state ${stateTone}`}><i aria-hidden />{stateLabel}</span>
         </header>
-
-        {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
-            "workspace" weight, mirroring Railway's project tiles. */}
-        <div
-          className="relative mx-3 my-3 flex h-[13.75rem] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
-          style={{
-            backgroundImage:
-              'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-            backgroundSize: '0.875rem 0.875rem',
-            backgroundPosition: '0 0',
-          }}
-        >
-          <div className="flex w-full max-w-[26.875rem] flex-col items-center pb-8">
-            <motion.div
-              className="cds-project-node-row flex flex-nowrap items-center justify-center"
-              onMouseMove={(event) => dockMouseX.set(event.clientX)}
-              onMouseLeave={() => dockMouseX.set(Infinity)}
-            >
-              {visibleStackBrands.length > 0 ? (
-                visibleStackBrands.map((brand) => (
-                  <ProjectDockNode
-                    key={brand.key}
-                    mouseX={dockMouseX}
-                    className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${brand.tileClassName}`}
-                    title={`${brand.label}${brand.source ? ` · ${brand.source}` : ''}`}
-                    ariaLabel={`${brand.label} 项目类型`}
-                  >
-                    {brand.icon}
-                  </ProjectDockNode>
-                ))
-              ) : (
-                <ProjectDockNode
-                  mouseX={dockMouseX}
-                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
-                  title="应用服务"
-                  ariaLabel="应用服务"
-                >
-                  <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
-                </ProjectDockNode>
-              )}
-              {hiddenStackBrandCount > 0 ? (
-                <ProjectDockNode
-                  mouseX={dockMouseX}
-                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[0.75rem] font-semibold text-muted-foreground shadow-sm"
-                  title={`另有 ${hiddenStackBrandCount} 个技术栈`}
-                  ariaLabel={`另有 ${hiddenStackBrandCount} 个技术栈`}
-                >
-                  +{hiddenStackBrandCount}
-                </ProjectDockNode>
-              ) : null}
-            </motion.div>
-
-            <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[0.8125rem] text-muted-foreground">
-              {/* On phones the meta row is width-constrained — hide the static
-                  "production" prefix so live status / online count / CPU don't
-                  get clipped (mobile-layout-fallback.md). Desktop keeps it. */}
-              <span className="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-ok sm:block" aria-hidden />
-              <span className="hidden shrink-0 sm:inline">production</span>
-              <span className="hidden text-muted-foreground/60 sm:inline">·</span>
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} aria-hidden />
-              <span className="shrink-0 text-foreground">
-                {paused ? '已暂停' : isReady ? (running > 0 ? '运行中' : '已就绪') : cloneLabel || '未就绪'}
-              </span>
-              {!paused && totalServices > 0 ? (
-                <>
-                  <span className="text-muted-foreground/60">·</span>
-                  <span className="min-w-0 truncate tabular-nums">{totalOnline}/{Math.max(totalServices, totalOnline)} 容器在线</span>
-                </>
-              ) : null}
-              {!paused && cpu > 0 ? (
-                <>
-                  <span className="text-muted-foreground/60">·</span>
-                  <span className={`inline-flex shrink-0 items-center gap-1 tabular-nums ${cpuToneClass}`} title="该项目所有运行容器 CPU% 之和">
-                    <Gauge className="h-3 w-3" aria-hidden />
-                    {Math.round(cpu)}%
-                  </span>
-                </>
-              ) : null}
-              {!paused && recentBuilds1h > 0 ? (
-                <>
-                  <span className="hidden text-muted-foreground/60 sm:inline">·</span>
-                  <span className="hidden shrink-0 tabular-nums sm:inline" title="近 1 小时构建次数">{recentBuilds1h} 次构建/时</span>
-                </>
-              ) : null}
-            </div>
-          </div>
+        <ProjectServiceModules project={project} brands={uniqueProjectBrands(project)} />
+        <div className="cds-project-metrics" aria-label="项目运行指标">
+          <span className="cds-project-online" title="应用服务与基础设施容器在线数">
+            <Box aria-hidden />
+            <span>{totalOnline}<span className="text-muted-foreground">/{totalServices}</span> 在线</span>
+          </span>
+          <span className={`cds-project-cpu ${cpuToneClass}`} title={cpu === undefined ? 'CPU 使用率尚未采集' : '该项目所有运行容器 CPU% 之和'}>
+            <Gauge aria-hidden />{cpu === undefined ? '—' : `${Math.round(cpu)}%`}
+          </span>
+          <span className="cds-project-build-rate" title="近 1 小时构建次数">
+            {usage ? `${usage.recentBuilds1h} 次构建/时` : '构建频率 —'}
+          </span>
         </div>
-
+        <footer className="cds-project-card-footer">
+          <span className="cds-project-environment" title="当前环境">production</span>
+          <span className="cds-project-branch" title={project.gitDefaultBranch ? `默认分支 ${project.gitDefaultBranch} · ${branches} 个分支` : `${branches} 个分支`}>
+            <GitBranch aria-hidden /><span>{project.gitDefaultBranch || `${branches} 分支`}</span>
+          </span>
+          <time title={project.lastDeployedAt ? `最近部署：${formatDate(project.lastDeployedAt)}` : '尚未部署'}>{formatRelativeTime(project.lastDeployedAt)}</time>
+        </footer>
         {project.cloneStatus === 'error' && project.cloneError ? (
-          <div className="mx-5 mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-            {project.cloneError}
-          </div>
+          <div className="cds-project-clone-error">{project.cloneError}</div>
         ) : null}
-
       </a>
-
-      {/*
-       * 同仓关系放在整块链接**之外**：兄弟项目名本身要能点，而卡片整体已经是
-       * 一个 <a>，套嵌 <a> 是非法结构，点击行为也会打架。
-       */}
       {project.repoSharing ? (
-        <div className="border-t border-[hsl(var(--hairline))] px-5 py-2">
+        <div className="border-t border-[hsl(var(--hairline))] px-4 py-2">
           <RepoSharingInline sharing={project.repoSharing} selfId={project.id} />
         </div>
       ) : null}
-
-      {canManageProjects ? <div
-        className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 transition-opacity duration-150 ${
-          paused ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
-        }`}
-      >
-        {paused ? (
-          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[0.6875rem] font-semibold text-warn shadow-sm backdrop-blur">
-            <Pause className="h-3 w-3" aria-hidden />
-            已暂停
-          </span>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onTogglePause();
-          }}
-          aria-label={paused ? `恢复 ${title}` : `暂停 ${title}`}
-          title={paused ? '恢复项目（解冻自动部署/webhook）' : '暂停项目（停止容器并冻结构建/部署/webhook）'}
-        >
-          {paused ? <Play /> : <Pause />}
-        </Button>
-        {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-            onClick={(event) => {
-              event.stopPropagation();
-              onClone();
-            }}
-            aria-label={project.cloneStatus === 'error' ? `重新克隆 ${title}` : `开始克隆 ${title}`}
-            title={project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}
-          >
-            <FolderGit2 />
-          </Button>
-        ) : null}
-        <Button asChild variant="ghost" size="icon" className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur" title="项目设置">
-          <a href={settingsHref(project)} onClick={(event) => event.stopPropagation()} aria-label={`设置 ${title}`}>
-            <Settings />
-          </a>
-        </Button>
-        <Button asChild variant="ghost" size="icon" className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur" title="验收报告">
-          <a href={`/reports?project=${encodeURIComponent(project.id)}`} onClick={(event) => event.stopPropagation()} aria-label={`${title} 验收报告`}>
-            <ClipboardCheck />
-          </a>
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onAgentKeys();
-          }}
-          aria-label={`${title} Agent Key`}
-          title="Agent Key"
-        >
-          <KeyRound />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onAgentSessions();
-          }}
-          aria-label={`${title} Agent 请求观测台`}
-          title="Agent 请求观测台（实时请求/收发内容/筛选）"
-        >
-          <Activity />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete();
-          }}
-          disabled={project.legacyFlag}
-          aria-label={`删除 ${title}`}
-          title={project.legacyFlag ? 'legacy 项目需要先迁移' : '删除项目'}
-        >
-          <Trash2 />
-        </Button>
-      </div> : null}
+      {canManageProjects ? (
+        <div className="cds-project-actions">
+          <DropdownMenu width={200} trigger={<Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`${title} 项目操作`} title="项目操作"><MoreHorizontal /></Button>}>
+            <DropdownItem onSelect={onTogglePause}>{paused ? <Play /> : <Pause />}{paused ? '恢复项目' : '暂停项目'}</DropdownItem>
+            {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
+              <DropdownItem onSelect={onClone}><FolderGit2 />{project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}</DropdownItem>
+            ) : null}
+            <DropdownItem asChild href={settingsHref(project)}><Settings />项目设置</DropdownItem>
+            <DropdownItem asChild href={`/reports?project=${encodeURIComponent(project.id)}`}><ClipboardCheck />验收报告</DropdownItem>
+            <DropdownItem onSelect={onAgentKeys}><KeyRound />Agent Key</DropdownItem>
+            <DropdownItem onSelect={onAgentSessions}><Activity />Agent 请求观测台</DropdownItem>
+            <DropdownDivider />
+            <DropdownItem onSelect={onDelete} disabled={project.legacyFlag} destructive><Trash2 />{project.legacyFlag ? '请先迁移 legacy 项目' : '删除项目'}</DropdownItem>
+          </DropdownMenu>
+        </div>
+      ) : null}
     </article>
   );
 }
