@@ -32,6 +32,7 @@ public class TeamActivityController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<TeamActivityController> _logger;
+    private static readonly TimeSpan MainQueryTimeout = TimeSpan.FromMinutes(2);
 
     public TeamActivityController(MongoDbContext db, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, ILogger<TeamActivityController> logger)
     {
@@ -534,7 +535,7 @@ public class TeamActivityController : ControllerBase
         };
 
         var previousTask = ExperienceMapPrevWindowBadAsync(fromUtc, endUtc);
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true, MaxTime = TimeSpan.FromSeconds(15) });
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var buckets = await cursor.ToListAsync();
 
         // 环比突增：对「上一个等长窗口」做同样的轻量聚合，按 method+归一化路径 取坏请求(报错+慢)数 badPrev，
@@ -668,7 +669,7 @@ public class TeamActivityController : ControllerBase
         var logs = await _db.ApiRequestLogs.Find(rb.And(
                 rb.Gte(x => x.StartedAt, fromUtc),
                 rb.Lte(x => x.StartedAt, endUtc),
-                rb.Ne(x => x.Direction, "outbound")), new FindOptions { MaxTime = TimeSpan.FromSeconds(15) })
+                rb.Ne(x => x.Direction, "outbound")), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.StartedAt)
             .Limit(60000)
             .Project(x => new { x.Path, x.Method, x.StatusCode, x.DurationMs, x.IsEventStream, x.ErrorCode })
@@ -820,7 +821,7 @@ public class TeamActivityController : ControllerBase
                 } },
         }));
 
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true, MaxTime = TimeSpan.FromSeconds(15) });
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var docs = await cursor.ToListAsync();
         var result = new List<Insight>();
         if (docs.Count == 0) return result;
@@ -879,7 +880,7 @@ public class TeamActivityController : ControllerBase
                 rb.Lte(x => x.StartedAt, endUtc),
                 rb.Ne(x => x.Direction, "outbound"),
                 rb.Gte(x => x.StatusCode, 400),
-                rb.Ne(x => x.StatusCode, 401)), new FindOptions { MaxTime = TimeSpan.FromSeconds(15) })
+                rb.Ne(x => x.StatusCode, 401)), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.StartedAt)
             .Limit(20000)
             .Project(x => new { x.Path, x.Method, x.StatusCode, x.ErrorCode, x.UserId })
@@ -960,7 +961,7 @@ public class TeamActivityController : ControllerBase
         pipeline.Add(new BsonDocument("$sort", new BsonDocument("count", -1)));
         pipeline.Add(new BsonDocument("$limit", 1000));
 
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true, MaxTime = TimeSpan.FromSeconds(15) });
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var docs = await cursor.ToListAsync();
         var result = new List<Insight>();
         foreach (var b in docs)
@@ -999,7 +1000,7 @@ public class TeamActivityController : ControllerBase
                 rb.Lte(x => x.StartedAt, endUtc),
                 rb.Ne(x => x.Direction, "outbound"),
                 rb.Eq(x => x.IsEventStream, false),
-                rb.Gte(x => x.DurationMs, 3000)), new FindOptions { MaxTime = TimeSpan.FromSeconds(15) })
+                rb.Gte(x => x.DurationMs, 3000)), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.StartedAt)
             .Limit(20000)
             .Project(x => new { x.Path, x.Method, x.DurationMs, x.UserId })
@@ -1045,7 +1046,7 @@ public class TeamActivityController : ControllerBase
         var bb = Builders<BehaviorEvent>.Filter;
         var eventsTask = _db.BehaviorEvents.Find(bb.And(
                 bb.Gte(x => x.OccurredAt, fromUtc),
-                bb.Lte(x => x.OccurredAt, endUtc)), new FindOptions { MaxTime = TimeSpan.FromSeconds(15) })
+                bb.Lte(x => x.OccurredAt, endUtc)), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.OccurredAt)
             .Limit(50000)
             .Project(x => new { x.Type, x.Route, x.FromRoute, x.DwellMs, x.UserId, x.OccurredAt })
@@ -1171,7 +1172,7 @@ public class TeamActivityController : ControllerBase
         // 洞察生命周期：按指纹挂处理状态（确认/已修复/忽略），忽略的默认不再出现
         var fingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
         var states = (await _db.BehaviorInsightStates
-                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, fingerprints), new FindOptions { MaxTime = TimeSpan.FromSeconds(5) })
+                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, fingerprints), new FindOptions { MaxTime = TimeSpan.FromSeconds(10) })
                 .ToListAsync())
             .GroupBy(x => x.Fingerprint)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.UpdatedAt).First());
@@ -1622,7 +1623,7 @@ public class TeamActivityController : ControllerBase
             new BsonDocument("$limit", 1000),
         };
 
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true, MaxTime = TimeSpan.FromSeconds(15) });
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var docs = await cursor.ToListAsync();
         var buckets = new List<object>();
         foreach (var d in docs)

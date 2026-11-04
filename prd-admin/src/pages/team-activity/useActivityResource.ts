@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiResponse } from '@/types/api';
 import type { TeamActivityRequestOptions } from '@/services/contracts/teamActivity';
 
-/** Each VOC section owns its request; superseded windows are cancelled and never rendered. */
-export function useActivityResource<T>(load: (options: TeamActivityRequestOptions) => Promise<ApiResponse<T>>) {
+export const ACTIVITY_REQUEST_TIMEOUT_MS = 180_000;
+
+export type ActivityResource<T> = {
+  data: T | null;
+  error: string | null;
+  loading: boolean;
+  reload: () => void;
+};
+
+/** Requests belong to the panel, so chart remounts share data without caching across accounts. */
+export function useActivityResource<T>(load: (options: TeamActivityRequestOptions) => Promise<ApiResponse<T>>, enabled = true): ActivityResource<T> {
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{
     load: typeof load;
@@ -12,22 +21,27 @@ export function useActivityResource<T>(load: (options: TeamActivityRequestOption
     error: string | null;
     loading: boolean;
   } | null>(null);
+  const latest = useRef(state);
   const reload = useCallback(() => setRevision((value) => value + 1), []);
 
   useEffect(() => {
+    if (!enabled) return;
+    const previous = latest.current;
+    if (previous?.load === load && previous.revision === revision && !previous.loading && !previous.error) return;
     const controller = new AbortController();
-    setState({ load, revision, data: null, error: null, loading: true });
-    void load({ signal: controller.signal, timeoutMs: 45_000 }).then((response) => {
+    const publish = (next: NonNullable<typeof state>) => { latest.current = next; setState(next); };
+    publish({ load, revision, data: null, error: null, loading: true });
+    void load({ signal: controller.signal, timeoutMs: ACTIVITY_REQUEST_TIMEOUT_MS }).then((response) => {
       if (controller.signal.aborted) return;
-      setState({ load, revision, data: response.success ? response.data : null,
+      publish({ load, revision, data: response.success ? response.data : null,
         error: response.success ? null : response.error?.message ?? '加载失败，请重试', loading: false });
     }).catch(() => {
       if (!controller.signal.aborted) {
-        setState({ load, revision, data: null, error: '加载失败，请重试', loading: false });
+        publish({ load, revision, data: null, error: '加载失败，请重试', loading: false });
       }
     });
     return () => controller.abort();
-  }, [load, revision]);
+  }, [load, revision, enabled]);
 
   // Hide the previous window immediately, before the replacement effect runs.
   const current = state?.load === load && state.revision === revision;

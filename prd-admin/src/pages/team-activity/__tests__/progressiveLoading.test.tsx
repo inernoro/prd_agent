@@ -44,7 +44,10 @@ describe('VOC progressive resources', () => {
     const insight = deferred<ApiResponse<never>>();
     services.insights.mockReturnValue(insight.promise);
     services.map.mockResolvedValue(ok({ groups: [], totalRequests: 0 }));
-    services.trend.mockResolvedValue(ok({ buckets: [], bucketUnit: 'hour' }));
+    services.trend.mockResolvedValue(ok({ buckets: [
+      { bucketStart: '2026-11-04T00:00:00Z', total: 10, errors: 1, slow: 0 },
+      { bucketStart: '2026-11-04T01:00:00Z', total: 20, errors: 2, slow: 1 },
+    ], bucketUnit: 'hour' }));
     window.innerWidth = 1440;
     window.dispatchEvent(new Event('resize'));
     await act(async () => root.render(<InsightsPanel from="2026-11-04T00:00:00Z" />));
@@ -53,6 +56,14 @@ describe('VOC progressive resources', () => {
     expect(services.trend).toHaveBeenCalledTimes(1);
     expect(services.insights).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('行为洞察');
+    // The chart may move into a portal or between responsive layouts; its request stays in the panel.
+    await act(async () => (host.querySelector('button[title="全屏查看"]') as HTMLButtonElement).click());
+    expect(document.body.textContent).toContain('趋势爆点曲线');
+    await act(async () => (document.querySelector('button[title="退出全屏"]') as HTMLButtonElement).click());
+    await act(async () => { window.innerWidth = 390; window.dispatchEvent(new Event('resize')); });
+    const trendButton = [...host.querySelectorAll('button')].find((button) => button.textContent === '趋势爆点');
+    await act(async () => trendButton?.click());
+    expect(services.trend).toHaveBeenCalledTimes(1);
   });
 
   it('shows elapsed progress and changes timeout into a recoverable section error', async () => {
@@ -60,8 +71,8 @@ describe('VOC progressive resources', () => {
     try {
       const retry = vi.fn();
       await act(async () => root.render(<ActivitySectionState title="行为洞察" loading onRetry={retry} />));
-      await act(async () => vi.advanceTimersByTime(12000));
-      expect(host.textContent).toContain('已等待 12 秒');
+      await act(async () => vi.advanceTimersByTime(22000));
+      expect(host.textContent).toContain('已等待 22 秒');
       expect(host.textContent).toContain('其他模块可继续查看');
       await act(async () => root.render(<ActivitySectionState title="行为洞察" loading={false} error="查询超时" onRetry={retry} />));
       expect(host.textContent).toContain('查询超时');
@@ -107,7 +118,7 @@ describe('VOC progressive resources', () => {
     expect(services.trend).not.toHaveBeenCalled();
     await act(async () => (host.querySelector('[title="活动密度刷选条：拖动两个把手刷选任意窗口"]') as HTMLButtonElement).click());
     expect(services.trend).toHaveBeenCalledTimes(1);
-    expect(services.trend.mock.calls[0][1].timeoutMs).toBe(45000);
+    expect(services.trend.mock.calls[0][1].timeoutMs).toBe(180000);
     expect(document.body.textContent).toContain('活动密度预览暂不可用');
     const retry = [...document.querySelectorAll('button')].find((button) => button.textContent === '重试密度预览');
     await act(async () => retry?.click());

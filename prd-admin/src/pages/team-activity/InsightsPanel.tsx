@@ -18,6 +18,7 @@ import {
   addDocumentEntry,
   createDocumentStore,
   getTeamActivityExperienceMap,
+  getTeamActivityExperienceTrend,
   getTeamActivityInsights,
   insightToRequirement,
   listDocumentEntries,
@@ -268,6 +269,9 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
     getTeamActivityExperienceMap({ from, to }, options), [from, to]);
   const { data, loading, error, reload } = useActivityResource(loadInsights);
   const { data: mapData, loading: mapLoading, error: mapError, reload: reloadMap } = useActivityResource(loadMap);
+  const loadTrend = useCallback((options: TeamActivityRequestOptions) =>
+    getTeamActivityExperienceTrend({ from, to }, options), [from, to]);
+  const trendResource = useActivityResource(loadTrend, isDesktop || heroView === 'trend');
 
   // 点击热力图痛点块 / 痛点榜「AI 诊断」→ 打开右侧浮层下钻抽屉（查真实明细 + AI 根因诊断，未上榜也能下钻）
   // kind 可选：来自叶子健康（红=api-error / 琥珀=slow）或痛点榜行的 item.kind，用于转缺陷/转需求时回写正确指纹。
@@ -531,8 +535,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
   const renderTrendTile = (forDashboard: boolean) => (
     <FullscreenTile>
       <ExperienceTrend
-        from={from}
-        to={to}
+        resource={trendResource}
         onSwitchHeatmap={switchToHeatmap}
         onEmptyChange={forDashboard ? setTrendEmpty : undefined}
         hideWhenEmpty={forDashboard}
