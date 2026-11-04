@@ -68,6 +68,12 @@ for (const width of [769, 800, 960, 1556]) {
       await page.getByRole('tab', { name: '全部工具', exact: true }).click();
       await page.getByRole('button', { name: '列表视图', exact: true }).click();
       await expect(page.getByRole('button', { name: '列表视图', exact: true })).toHaveAttribute('aria-pressed', 'true');
+      // 在原断言预算内等既有有限过渡结束，再比较同一稳定态的卡片。
+      await expect.poll(async () => page.locator('.toolbox-tool-card').evaluateAll(cards =>
+        cards.reduce((count, card) => count + card.getAnimations().filter(animation =>
+          animation.playState === 'running'
+          && Number.isFinite(animation.effect?.getComputedTiming().iterations)).length, 0)),
+      { timeout: 5_000 }).toBe(0);
       const builtinHeight = (await page.locator('.toolbox-tool-card[data-has-artwork="true"]').first().boundingBox())!.height;
       for (const name of ['自建布局工具', '共享布局工具']) {
         const card = page.locator('.toolbox-tool-card').filter({ hasText: name });
