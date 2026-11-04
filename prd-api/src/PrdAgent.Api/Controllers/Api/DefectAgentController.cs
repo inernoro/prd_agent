@@ -5848,6 +5848,8 @@ public class DefectAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内容不能为空"));
 
+        var startedAt = System.Diagnostics.Stopwatch.StartNew();
+        var requestId = HttpContext.TraceIdentifier;
         try
         {
             // 获取模板信息（如果有）
@@ -5904,7 +5906,7 @@ public class DefectAgentController : ControllerBase
 
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-                RequestId: Guid.NewGuid().ToString("N"),
+                RequestId: requestId,
                 GroupId: null, SessionId: null,
                 UserId: GetUserId(),
                 ViewRole: null, DocumentChars: null, DocumentHash: null,
@@ -5947,20 +5949,32 @@ public class DefectAgentController : ControllerBase
                 }
                 else if (chunk.Type == "error")
                 {
-                    _logger.LogWarning("[{AppKey}] AI polish error: {Error}", AppKey, chunk.ErrorMessage);
-                    return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, chunk.ErrorMessage ?? "AI 处理失败"));
+                    throw GatewayRouteFailureException.FromChunk(chunk, "AI 润色失败");
                 }
             }
 
             var polishedContent = resultBuilder.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(polishedContent))
+                return StatusCode(502, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR,
+                    "AI 润色未生成内容，请保留原文继续提交，或稍后重试。",
+                    requestId: requestId, source: "defect-polish", elapsedMs: startedAt.ElapsedMilliseconds));
             _logger.LogInformation("[{AppKey}] Defect polished successfully", AppKey);
 
             return Ok(ApiResponse<object>.Ok(new { content = polishedContent }));
         }
+        catch (GatewayRouteFailureException ex)
+        {
+            _logger.LogWarning(ex, "[{AppKey}] AI polish route failed: Code={Code}, RequestId={RequestId}",
+                AppKey, ex.FailureCode, requestId);
+            return StatusCode(503, ApiResponse<object>.Fail(ex.FailureCode ?? ErrorCodes.LLM_ERROR,
+                GatewayRouteFailure.UserMessage(ex.FailureCode),
+                requestId: requestId, source: "defect-polish", elapsedMs: startedAt.ElapsedMilliseconds));
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{AppKey}] Failed to polish defect", AppKey);
-            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色失败，请稍后重试"));
+            _logger.LogError(ex, "[{AppKey}] Failed to polish defect: RequestId={RequestId}", AppKey, requestId);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色未完成，请保留原文继续提交，或稍后重试。",
+                requestId: requestId, source: "defect-polish", elapsedMs: startedAt.ElapsedMilliseconds));
         }
     }
 
@@ -5975,7 +5989,7 @@ public class DefectAgentController : ControllerBase
     public async Task PolishDefectStream([FromBody] PolishDefectRequest request)
     {
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
+            RequestId: HttpContext.TraceIdentifier,
             GroupId: null, SessionId: null,
             UserId: GetUserId(),
             ViewRole: null, DocumentChars: null, DocumentHash: null,

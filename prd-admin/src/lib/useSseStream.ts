@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 import { tryRefreshAdminToken } from '@/services/real/apiClient';
+import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 
 export type SsePhase = 'idle' | 'connecting' | 'streaming' | 'done' | 'error';
 
@@ -117,6 +118,7 @@ export function useSseStream<T = unknown>(
 
     const ac = new AbortController();
     abortRef.current = ac;
+    let terminal = false;
 
     const finalUrl = overrides?.url ?? url;
     const finalBody = overrides?.body ?? defaultBody;
@@ -139,10 +141,15 @@ export function useSseStream<T = unknown>(
         ...(isPost && finalBody !== undefined ? { body: JSON.stringify(finalBody) } : {}),
         signal: ac.signal,
       });
+      if (ac.signal.aborted) return;
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
-        const errMsg = errText || `请求失败 (${res.status})`;
+        const errMsg = toUserReadableErrorMessage(errText, {
+          fallbackMessage: '智能处理未完成',
+          recoveryMessage: '请稍后重试，或保留原文继续操作。',
+          code: res.status === 401 ? 'UNAUTHORIZED' : undefined,
+        });
         setPhase('error');
         setPhaseMessage(errMsg);
         onError?.(errMsg);
@@ -154,7 +161,7 @@ export function useSseStream<T = unknown>(
       await readSseStream(
         res,
         (evt: SseEvent) => {
-          if (!evt.data) return;
+          if (!evt.data || ac.signal.aborted || terminal) return;
           try {
             const data = JSON.parse(evt.data);
 
@@ -171,12 +178,20 @@ export function useSseStream<T = unknown>(
             } else if (evt.event === itemEvent || evt.event === 'score') {
               onItem?.(data as T);
             } else if (evt.event === 'done' || (evt.event === undefined && data.type === 'done')) {
+              terminal = true;
               setPhase('done');
               setPhaseMessage(data.message || '完成');
               onDone?.(data);
             } else if (evt.event === 'error' || (evt.event === undefined && data.type === 'error')) {
+              terminal = true;
               setPhase('error');
-              const msg = data.message || data.errorMessage || '出错';
+              const msg = toUserReadableErrorMessage({
+                code: data.code || data.errorCode,
+                message: data.message || data.errorMessage,
+              }, {
+                fallbackMessage: '智能处理未完成',
+                recoveryMessage: '请稍后重试，或保留原文继续操作。',
+              });
               setPhaseMessage(msg);
               onError?.(msg);
             }
@@ -197,14 +212,15 @@ export function useSseStream<T = unknown>(
       );
 
       // stream ended naturally
-      if (phase !== 'done' && phase !== 'error') {
+      if (!terminal && !ac.signal.aborted) {
         setPhase('done');
       }
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') {
+      if (!ac.signal.aborted && (err as Error).name !== 'AbortError') {
         setPhase('error');
-        setPhaseMessage('连接失败');
-        onError?.('连接失败');
+        const message = '连接中断，请检查网络后重试；原文已保留。';
+        setPhaseMessage(message);
+        onError?.(message);
       }
     }
   }, [url, defaultMethod, defaultBody, defaultHeaders, onEvent, onTyping, onItem, onPhase, onDone, onError, typingEvent, itemEvent, phaseEvent, abort]);

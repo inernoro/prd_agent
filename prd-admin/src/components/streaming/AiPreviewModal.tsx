@@ -92,19 +92,25 @@ export function AiPreviewModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center"
+      className="fixed inset-0 z-[110] flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
-      onClick={onCancel}
+      onClick={(event) => {
+        // 打开按钮的连续第二击可能落到新出现的遮罩，不能把它当作主动取消。
+        if (event.detail < 2) onCancel();
+      }}
     >
       <div
         className="flex flex-col rounded-xl border border-token-subtle"
         onClick={(e) => e.stopPropagation()}
-        style={{ height: '80vh', maxHeight: '80vh', width: 'min(720px, 92vw)', background: 'var(--bg-card, #1E1F20)', color: 'var(--text-primary, #fff)' }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        style={{ height: '80dvh', maxHeight: 'calc(100dvh - 24px)', width: 'min(720px, 92vw)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}
       >
         {/* Header */}
         <div className="shrink-0 flex items-start gap-3 px-5 py-4 border-b border-token-subtle" >
           <div className="flex-1 min-w-0">
-            <div className="text-[15px] font-semibold flex items-center gap-2">
+            <div className="text-[15px] font-semibold flex flex-wrap items-center gap-2">
               {title}
               {streaming && (
                 <span className="text-[11px] font-normal opacity-60 flex items-center gap-1">
@@ -199,7 +205,7 @@ export function AiPreviewModal({
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-token-subtle" >
+        <div className="shrink-0 flex flex-wrap items-center justify-end gap-2 px-3 sm:px-5 py-3 border-t border-token-subtle" >
           <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>
           <Button variant="ghost" size="sm" onClick={onRegenerate} disabled={streaming}>
             <RotateCw size={13} className="mr-1" />重新生成

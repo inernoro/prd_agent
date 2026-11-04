@@ -27,9 +27,13 @@ type ToastState = {
   patchToast: (id: string, patch: Partial<Omit<Toast, 'id'>>) => void;
 };
 
-export const useToastStore = create<ToastState>((set) => ({
+export const useToastStore = create<ToastState>((set, get) => ({
   toasts: [],
   addToast: (toast) => {
+    // 相同的失败反馈在可见期间只显示一次；保留带操作或进度提示的独立生命周期。
+    if ((toast.type === 'error' || toast.type === 'warning') && !toast.action && !toast.loading &&
+        get().toasts.some((item) => item.type === toast.type && item.title === toast.title &&
+          item.message === toast.message && !item.action && !item.loading)) return;
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const newToast = { ...toast, id };
     

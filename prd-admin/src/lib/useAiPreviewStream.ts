@@ -60,6 +60,7 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   const [model, setModel] = useState<AiPreviewModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const lastBodyRef = useRef<unknown>(undefined);
+  const openRef = useRef(false);
 
   const sse = useSseStream({
     url: opts.url,
@@ -82,6 +83,9 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   });
 
   const start = (override?: unknown) => {
+    // 同一轮渲染内的连续触发也只打开一个请求。
+    if (openRef.current) return;
+    openRef.current = true;
     setOpen(true);
     setThinking('');
     setModel(null);
@@ -94,6 +98,7 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   };
 
   const cancel = () => {
+    openRef.current = false;
     sse.abort();
     sse.reset();
     setThinking('');
@@ -103,6 +108,7 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   };
 
   const apply = () => {
+    if (sse.isStreaming || error || !sse.typing.trim()) return;
     const raw = sse.typing;
     const final = opts.transform ? opts.transform(raw) : raw;
     opts.onApply(final);
@@ -110,6 +116,7 @@ export function useAiPreviewStream(opts: UseAiPreviewStreamOptions): UseAiPrevie
   };
 
   const regenerate = (override?: unknown) => {
+    if (sse.isStreaming) return;
     sse.abort();
     sse.reset();
     setThinking('');

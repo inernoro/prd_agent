@@ -15,13 +15,15 @@ import {
   createDefect,
   submitDefect,
   addDefectAttachment,
-  polishDefect,
   analyzeDefectImage,
   listDefectTemplates,
   getDefectUsers,
   previewApiLogs,
 } from '@/services';
 import { toast } from '@/lib/toast';
+import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
+import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
 import type { DefectTemplate, DefectUser, ApiLogPreviewItem } from '@/services/contracts/defectAgent';
 import {
@@ -94,6 +96,7 @@ function fileToBase64(file: File): Promise<string> {
 
 export function GlobalDefectSubmitDialog() {
   const { showDialog, closeDialog, prefill, onCreated } = useGlobalDefectStore();
+  const isMobile = useIsMobile();
 
   // 数据状态
   const [templates, setTemplates] = useState<DefectTemplate[]>([]);
@@ -119,7 +122,6 @@ export function GlobalDefectSubmitDialog() {
   const [content, setContent] = useState('');
   const [severity, setSeverity] = useState<DefectSeverityValue>(DefectSeverity.Trivial);
   const [attachments, setAttachments] = useState<AnalyzedAttachment[]>([]);
-  const [polishing, setPolishing] = useState(false);
   const [focused, setFocused] = useState(false);
   // 当前悬浮预览的附件索引
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
@@ -130,6 +132,27 @@ export function GlobalDefectSubmitDialog() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentsRef = useRef<AnalyzedAttachment[]>([]);
+  const polishStream = useAiPreviewStream({
+    url: '/api/defect-agent/defects/polish/stream',
+    onApply: (final) => {
+      setContent(final);
+      toast.success('AI 润色已应用');
+    },
+  });
+  const { open: polishOpen, cancel: cancelPolish } = polishStream;
+
+  useEffect(() => {
+    if (!showDialog && polishOpen) cancelPolish();
+  }, [showDialog, polishOpen, cancelPolish]);
+
+  useEffect(() => {
+    if (!showDialog || polishStream.open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDialog();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showDialog, polishStream.open, closeDialog]);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -220,6 +243,7 @@ export function GlobalDefectSubmitDialog() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Command+B (Mac) 或 Control+B (Windows)
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        if (polishStream.open) return;
         // 检查是否在输入框中（排除某些场景）
         const active = document.activeElement;
         const isInInput = active instanceof HTMLInputElement ||
@@ -239,7 +263,7 @@ export function GlobalDefectSubmitDialog() {
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [showDialog]);
+  }, [showDialog, polishStream.open]);
 
   // 应用预填草稿（行为洞察「转为缺陷」复用本面板时携带）：打开瞬间把标题/正文/严重度/指派人灌进表单。
   // title 作为正文首行（本面板用首行提取标题），避免再开一个标题输入框，复用既有「首行即标题」交互。
@@ -390,35 +414,21 @@ export function GlobalDefectSubmitDialog() {
     setPreviewIndex(null);
   }, []);
 
-  // AI Polish - 收集已解析的图片描述一并传给润色 API
-  const handlePolish = async () => {
+  // 与缺陷页共用流式预览，只有确认应用才替换用户原文。
+  const handlePolish = () => {
+    if (polishStream.open) return;
     if (!content.trim()) {
       toast.warning('请先输入问题描述');
       return;
     }
-    setPolishing(true);
-    try {
-      // 收集已解析完成的图片描述
-      const imageDescriptions = attachments
-        .filter((a) => a.status === 'done' && a.description)
-        .map((a) => a.description!);
-
-      const res = await polishDefect({
-        content: content.trim(),
-        templateId: selectedTemplateId || undefined,
-        imageDescriptions: imageDescriptions.length > 0 ? imageDescriptions : undefined,
-      });
-      if (res.success && res.data?.content) {
-        setContent(res.data.content);
-        toast.success('AI 润色完成');
-      } else {
-        toast.error(res.error?.message || 'AI 润色失败');
-      }
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setPolishing(false);
-    }
+    const imageDescriptions = attachments
+      .filter((a) => a.status === 'done' && a.description)
+      .map((a) => a.description!);
+    polishStream.start({
+      content: content.trim(),
+      templateId: selectedTemplateId || undefined,
+      imageDescriptions: imageDescriptions.length > 0 ? imageDescriptions : undefined,
+    });
   };
 
   // Submit defect - 返回 boolean 供 SuccessConfettiButton 使用
@@ -500,34 +510,39 @@ export function GlobalDefectSubmitDialog() {
   if (!showDialog) return null;
 
   return createPortal((
+    <>
     <div
-      className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="global-defect-submit-title"
       onClick={closeDialog}
     >
       <GlassCard
         glow
         variant="default"
         className="w-full max-w-[760px] flex flex-col"
-        style={{ maxHeight: '90vh' }}
+        style={{ height: 'min(820px, calc(100dvh - 24px))', maxHeight: 'calc(100dvh - 24px)' }}
         overflow="hidden"
         padding="none"
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="surface-panel-header flex items-center justify-between px-5 py-4">
+        <div className="surface-panel-header shrink-0 flex items-center justify-between px-3 py-3 sm:px-5 sm:py-4">
           <div className="flex items-center gap-3">
             <div className="surface-action-accent w-8 h-8 rounded-lg flex items-center justify-center">
               <Bug size={16} />
             </div>
-            <span className="text-[15px] font-medium text-token-primary">
+            <span id="global-defect-submit-title" className="text-[15px] font-medium text-token-primary">
               提交缺陷
             </span>
-            <span className="surface-inset text-[11px] px-2 py-0.5 rounded-full text-token-muted">
+            <span className="surface-inset hidden sm:inline text-[11px] px-2 py-0.5 rounded-full text-token-muted">
               {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+B
             </span>
           </div>
           <button
             onClick={closeDialog}
+            aria-label="关闭提交缺陷"
             className="p-2 rounded-lg text-token-muted hover-bg-soft transition-colors"
           >
             <X size={18} />
@@ -535,14 +550,14 @@ export function GlobalDefectSubmitDialog() {
         </div>
 
         {/* Selectors */}
-        <div className="px-5 py-4 space-y-3">
-          <div className="flex items-center gap-4">
+        <div className="shrink-0 px-3 py-3 sm:px-5 sm:py-4 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             {/* Assignee —— 统一 UserSearchSelect；后端按已解决缺陷数倒序返回 */}
-            <div className="flex items-center gap-2 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
               <label className="text-[12px] flex-shrink-0 text-token-muted">
                 提交给
               </label>
-              <div className="flex-1 relative">
+              <div className="min-w-0 flex-1 relative">
                 <UserSearchSelect
                   value={assigneeUserId}
                   onChange={setAssigneeUserId}
@@ -566,14 +581,15 @@ export function GlobalDefectSubmitDialog() {
             </div>
 
             {/* Template */}
-            <div className="flex items-center gap-2 flex-1">
-              <label className="text-[12px] flex-shrink-0 text-token-muted">
+            <div className="flex min-w-0 items-center gap-2">
+              <label htmlFor="global-defect-template" className="text-[12px] flex-shrink-0 text-token-muted">
                 模板
               </label>
               <select
+                id="global-defect-template"
                 value={selectedTemplateId}
                 onChange={(e) => setSelectedTemplateId(e.target.value)}
-                className="prd-field flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
+                className="prd-field min-w-0 w-0 flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
               >
                 <option value="">
                   {defaultTemplate ? `${defaultTemplate.name} (默认)` : '无模板'}
@@ -628,14 +644,14 @@ export function GlobalDefectSubmitDialog() {
 
         {/* Content Area */}
         <div
-          className="flex-1 min-h-0 px-5 pb-4 flex flex-col"
+          className="flex-1 min-h-0 min-w-0 px-3 pb-3 sm:px-5 sm:pb-4 flex flex-col"
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
           <div
             className="surface-inset flex-1 flex flex-col rounded-xl overflow-hidden transition-all duration-200"
             style={{
-              minHeight: attachments.length > 0 ? '500px' : '380px',
+              minHeight: 0,
               borderColor: focused
                 ? 'var(--border-focus)'
                 : 'var(--border-subtle)',
@@ -644,6 +660,7 @@ export function GlobalDefectSubmitDialog() {
                 : 'none',
             }}
           >
+            <div className="flex-1 flex flex-col" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {/* Textarea - 无内部边框，直接使用外层容器的边框 */}
             <textarea
               ref={textareaRef}
@@ -653,9 +670,10 @@ export function GlobalDefectSubmitDialog() {
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
               placeholder={'描述您发现的问题...\n\n第一行将作为标题\n\n支持粘贴截图或拖拽文件\n\n提示：点击右下角 AI 按钮可自动润色内容'}
-              className="flex-1 p-4 text-[13px] resize-none outline-none no-focus-ring bg-transparent text-token-primary"
+              aria-label="问题描述"
+              className="flex-1 shrink-0 p-3 sm:p-4 text-[16px] sm:text-[13px] resize-none outline-none no-focus-ring bg-transparent text-token-primary"
               style={{
-                minHeight: '200px',
+                minHeight: isMobile ? '120px' : '200px',
               }}
             />
 
@@ -889,9 +907,10 @@ export function GlobalDefectSubmitDialog() {
               </div>
             </div>
 
+            </div>
             {/* Input Actions */}
             <div
-              className="px-4 py-2.5 border-t border-token-subtle flex items-center gap-2 flex-wrap"
+              className="shrink-0 px-2 sm:px-4 py-2.5 border-t border-token-subtle flex items-center gap-2 flex-wrap"
             >
               <input
                 ref={fileInputRef}
@@ -932,21 +951,21 @@ export function GlobalDefectSubmitDialog() {
                 </div>
               </div>
 
-              <div className="flex-1" />
+              <div className="flex-1 basis-full sm:basis-auto" />
 
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={handlePolish}
-                disabled={polishing || !content.trim()}
+                disabled={polishStream.open || !content.trim()}
                 title="AI 润色：优化描述内容，根据模板补充信息"
               >
-                {polishing ? (
+                {polishStream.open ? (
                   <MapSpinner size={14} />
                 ) : (
                   <Sparkles size={14} />
                 )}
-                {polishing ? 'AI 润色中...' : 'AI 润色'}
+                {polishStream.open ? 'AI 润色中...' : 'AI 润色'}
               </Button>
 
               <SuccessConfettiButton
@@ -964,6 +983,22 @@ export function GlobalDefectSubmitDialog() {
         </div>
       </GlassCard>
     </div>
+    <AiPreviewModal
+      open={polishStream.open}
+      text={polishStream.text}
+      thinking={polishStream.thinking}
+      streaming={polishStream.streaming}
+      phaseMessage={polishStream.phaseMessage}
+      error={polishStream.error}
+      model={polishStream.model}
+      title="AI 润色预览"
+      subtitle="确认后应用；失败或取消会保留原文，可继续提交缺陷。"
+      onApply={polishStream.apply}
+      onRegenerate={() => polishStream.regenerate()}
+      onCancel={polishStream.cancel}
+      applyLabel="应用为原文"
+    />
+    </>
   ), document.body);
 }
 

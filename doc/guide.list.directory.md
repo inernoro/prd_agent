@@ -281,6 +281,8 @@
 
 ### 五、计划
 
+- [缺陷提交与 AI 润色可靠性排查计划](./plan.defect-agent.submit-reliability.md) `plan.defect-agent.submit-reliability`
+
 - [MCP 接入与能力补齐 · 计划](./plan.platform.mcp-capability-completion.md) `plan.platform.mcp-capability-completion`
 
 - [文档说人话标准推广 · 计划](./plan.doc.readability.rollout.md) `plan.doc.readability.rollout`
@@ -330,6 +332,8 @@
 - [视觉创作 优化清单 · 计划](./plan.visual-agent.optimization-backlog.md) `plan.visual-agent.optimization-backlog`
 
 ### 六、技术债务台账
+
+- [缺陷提交可靠性 · 债务台账](./debt.defect-agent.submit-reliability.md) `debt.defect-agent.submit-reliability`
 
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
 - [每日验收的锚点契约 · 债务台账](./debt.acceptance.daily-anchors.md) `debt.acceptance.daily-anchors`
