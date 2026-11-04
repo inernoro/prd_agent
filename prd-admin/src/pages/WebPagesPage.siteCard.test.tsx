@@ -35,11 +35,13 @@ function renderSiteCard(
   size: SiteCardSize = 'medium',
   shareStats?: SiteShareStats,
   selected = false,
+  activity?: { editCount: number; isNew: boolean },
 ) {
   return renderToStaticMarkup(
     <SiteCard
       site={site}
       size={size}
+      activity={activity}
       selected={selected}
       shared={shared}
       shareStats={shareStats}
@@ -59,6 +61,23 @@ function renderSiteCard(
 }
 
 describe('WebPagesPage SiteCard', () => {
+  it('仅标记已分享，新建未打开和编辑次数独立表达', () => {
+    const unread = renderSiteCard(baseSite, ownerCaps, false, 'small', undefined, false, { editCount: 0, isNew: true });
+    expect(unread).not.toContain('未分享');
+    expect(unread).not.toContain('data-site-shared-badge');
+    expect(unread).toContain('新创建，尚未打开');
+    expect(unread).toContain('已编辑 0 次');
+    expect(unread).toContain('data-site-edit-badge');
+    const readShared = renderSiteCard(baseSite, ownerCaps, true, 'small', undefined, false, { editCount: 3, isNew: false });
+    expect(readShared).toContain('data-site-shared-badge');
+    expect(readShared).not.toContain('新创建，尚未打开');
+    expect(readShared).toContain('已编辑 3 次');
+    expect(renderSiteCard()).not.toContain('已编辑 0 次');
+    expect(renderSiteCard()).toContain('编辑次数暂不可用');
+    expect(renderSiteCard()).toContain('— 访问');
+    expect(renderSiteCard()).not.toContain('3 浏览');
+  });
+
   it('MCP 创建的旧 api 来源在卡片和列表中显示一致，保留原数据契约', () => {
     const site = { ...baseSite, sourceType: 'api' as const };
     const card = renderSiteCard(site);
@@ -209,8 +228,8 @@ describe('WebPagesPage SiteCard', () => {
   });
 
   it('形态角标只在有真实数据时出现', () => {
-    // 单页 HTML：有「单页」角标
-    expect(renderSiteCard()).toContain('单页');
+    // 单个 HTML 不再重复标记「单页」
+    expect(renderSiteCard()).not.toContain('单页');
 
     // 视频包装站：前端拿不到时长，不编一个空角标
     const video = renderSiteCard({ ...baseSite, wrappedAssetType: 'video', coverImageUrl: undefined });
@@ -238,7 +257,7 @@ describe('WebPagesPage SiteCard', () => {
     // 分享状态：小卡是「绿点 + 已分享」独占一行（设计稿屏 2 小卡形态），
     // 条数收进 title——不能因为卡片小就把这个状态整个丢掉
     expect(html).toContain('已分享');
-    expect(html).toContain('已分享 1 条链接');
+    expect(html).toContain('已分享 1 条有效链接');
     expect(html).not.toContain('帮我修改');
     expect(html).not.toContain('版本记录');
     expect(html).toContain('height:92px');
@@ -281,7 +300,7 @@ describe('WebPagesPage SiteCard', () => {
 
     // 半径必须处处一致：`.site-card-fresh::before` 的光环走 border-radius:inherit，
     // 根节点与内框不同半径时，那圈光环也会错开。
-    const radii = [...html.matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
+    const radii = [...html.split('data-site-card-thumbnail')[0].matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
     expect(radii.length).toBeGreaterThanOrEqual(2);
     expect(new Set(radii).size).toBe(1);
   });
