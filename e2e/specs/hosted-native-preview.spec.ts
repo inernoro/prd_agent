@@ -55,12 +55,16 @@ test.afterAll(async () => { if (directory) await rm(directory, { recursive: true
 test.use({ trace: 'off', video: 'off' });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; multiFileHistory?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
+  let releaseVersions!: () => void;
+  const metadataGate = new Promise<void>(resolve => { releaseVersions = resolve; });
   const hostedOrigin = options.sameOrigin ? new URL(String(test.info().project.use.baseURL)).origin : origin;
-  const siteEntry = options.sameOrigin ? entry.replace(origin, hostedOrigin) : entry;
+  const entryUrl = new URL(options.sameOrigin ? entry.replace(origin, hostedOrigin) : entry);
+  if (options.metadataLag) entryUrl.searchParams.set('v', '20000');
+  const siteEntry = entryUrl.href;
   const site = {
     id: 'qa-native', title: '临时预览测试', siteUrl: siteEntry, entryFile: 'index.html',
     contentShape: options.shape, wrappedAssetType: options.wrapper,
@@ -85,7 +89,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') });
       return;
     }
-    const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: 'self-contained-html' };
+    const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: options.metadataLag ? '10000' : '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: 'self-contained-html' };
     const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: options.multiFileHistory ? siteEntry : null, contentShape: options.multiFileHistory ? 'multi-file' : 'self-contained-html' };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
@@ -108,7 +112,8 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     } else if (path.endsWith('/comments')) {
       data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: [] };
     } else if (path.endsWith('/revisions')) {
-      data = options.inlineHistory ? [currentVersion, inlineVersion] : [];
+      if (options.metadataLag) await metadataGate;
+      data = options.inlineHistory ? [currentVersion, inlineVersion] : options.metadataLag ? [currentVersion] : [];
     } else if (path.endsWith('/revisions/inline-history/preview')) {
       data = { revision: inlineVersion, siteUrl: inlineVersion.siteUrl, html: options.multiFileHistory ? files['index.html'].replace('<script type="module" src="./module.js"></script>', '') : '<!doctype html><html><head><meta charset="utf-8"></head><body><h1 id="old-heading">仅保留 HTML 的旧版正文</h1><p>这是旧版，不能替换为当前版或后台页面。</p></body></html>' };
     }
@@ -129,7 +134,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     await card.hover();
     await card.getByRole('button', { name: '更多' }).filter({ visible: true }).first().click();
     // 固定父页时钟，让输入操作稳定发生在 1.5 秒等待窗内，不依赖 CI 机器速度。
-    if (!options.inlineHistory) {
+    if (!options.inlineHistory && !options.metadataLag) {
       await page.clock.install({ time: new Date('2026-11-03T12:00:00Z') });
       await page.clock.pauseAt(new Date('2026-11-03T12:00:01Z'));
     }
@@ -139,7 +144,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   }
   const preview = options.modal ? page.getByRole('dialog').locator('iframe') : page.locator('iframe[title="临时预览测试"]');
   await expect(preview).toBeVisible();
-  return { requests, contentRequests: () => contentRequests, listRequests: () => listRequests, frame: preview.contentFrame(), preview };
+  return { releaseVersions, requests, contentRequests: () => contentRequests, listRequests: () => listRequests, frame: preview.contentFrame(), preview };
 }
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -187,6 +192,21 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         await expect(frame.locator('body')).toHaveAttribute('data-storage', 'ok');
       });
     }
+
+    test('站内当前版保留输入，不因旧版本记录响应而跳到空白文档', async ({ page }) => {
+      const { frame, preview, releaseVersions } = await serve(page, { modal: true, shape: 'multi-file', metadataLag: true });
+      await expect(frame.locator('#result')).toHaveText('fetch-ok:entry');
+      await frame.getByLabel('保留输入').fill('等待版本记录时保留');
+      const original = await preview.elementHandle();
+      const listed = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/revisions'));
+      releaseVersions(); await listed;
+      await page.getByRole('button', { name: '网页版本：加载中', exact: true }).click();
+      await expect(page.getByRole('option', { name: /V2/ })).toBeDisabled();
+      await page.keyboard.press('Escape');
+      expect(await original!.evaluate(element => element.isConnected)).toBe(true);
+      await expect(frame.getByLabel('保留输入')).toHaveValue('等待版本记录时保留');
+      expect(await frame.locator('body').evaluate(() => location.href)).toContain('v=20000');
+    });
 
     test('讨论打开时进入全屏仍铺满视口，退出后恢复工具栏', async ({ page }) => {
       await serve(page, { shape: 'multi-file' });

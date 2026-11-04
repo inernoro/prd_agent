@@ -111,6 +111,8 @@ export default function SitePreviewModal({
     previewSource.usingNativePdfViewer ? null : { ...originalSite, ...review.liveSite },
     true,
   );
+  const historicalLoading = review.historical && review.loading;
+  const historicalRevisionId = review.historical ? review.selected?.id : null;
   const historyHtml = review.preview?.html;
   const srcDoc = review.historical
     ? (historyHtml && site.contentShape === 'self-contained-html' && shouldFetchPreviewHtml(site) && canUseSrcDocPreview(historyHtml) ? withPreviewBase(historyHtml, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
@@ -141,7 +143,7 @@ export default function SitePreviewModal({
     if (review.historical) return;
     const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [site.siteUrl, review.selected?.id, review.historical]);
+  }, [site.siteUrl, historicalRevisionId, review.historical]);
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
@@ -334,7 +336,7 @@ export default function SitePreviewModal({
           <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested" style={{ flex: isMobile && showComments ? '0 0 30%' : undefined }}>
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
-            {(review.loading || (loading && !slow)) && (
+            {(historicalLoading || (loading && !slow)) && (
               <div className="absolute inset-0 flex items-center justify-center bg-token-nested">
                 <MapSectionLoader text="正在加载站点…" />
               </div>
@@ -370,8 +372,8 @@ export default function SitePreviewModal({
               ref={iframeRef}
               // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
               key={`${review.historical ? review.selected?.id : 'live'}:${useSrcDoc ? 'srcdoc' : 'direct'}`}
-              src={review.loading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src}
-              srcDoc={!review.loading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined}
+              src={historicalLoading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src}
+              srcDoc={!historicalLoading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {

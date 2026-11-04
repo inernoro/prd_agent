@@ -62,10 +62,7 @@ public partial class WebPagesController
 
     private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, bool canViewHistory)
     {
-        // Legacy snapshot capture is best effort here; saved history remains readable if the live object is unavailable.
-        try { await EnsureReviewSnapshotAsync(site, site.OwnerUserId); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { HttpContext?.RequestServices?.GetService<ILogger<WebPagesController>>()?.LogWarning(ex, "网页版本快照补齐失败，继续读取已保存记录 SiteId={SiteId}", site.Id); }
+        // Reads never create or backfill snapshots; replacement paths capture the current publication.
         var published = Builders<HostedSiteRevision>.Filter.Eq(r => r.SiteId, site.Id)
             & Builders<HostedSiteRevision>.Filter.Eq(r => r.Status, HostedSiteRevisionStatuses.Published)
             & Builders<HostedSiteRevision>.Filter.Ne(r => r.PublishedContentVersion, null);
@@ -76,7 +73,16 @@ public partial class WebPagesController
             .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles).Exclude(r => r.PublishedAssetKeys))
             .SortByDescending(r => r.PublishedContentVersion).ThenByDescending(r => r.Id).Limit(100)
             .ToListAsync(CancellationToken.None);
-        return Ok(ApiResponse<object>.Ok(items.Select((item, index) => ReviewVersionDto(item, site, total - index) with { HistoryRestricted = !canViewHistory }).ToList()));
+        var result = items.Select((item, index) => ReviewVersionDto(item, site, total - index) with { HistoryRestricted = !canViewHistory }).ToList();
+        if (!items.Any(item => item.PublishedContentVersion == HostedSiteService.EffectiveContentVersion(site)))
+        {
+            // The live publication has no immutable revision ID until it is captured before replacement.
+            var version = HostedSiteService.EffectiveContentVersion(site);
+            result.Insert(0, new ReviewVersionSummary("", site.Id, "V" + (total + 1), HostedSiteCommentRules.VersionKey(version),
+                version, true, !string.IsNullOrWhiteSpace(site.SiteUrl), site.EntryFile,
+                HostedSiteContentShapeRules.Resolve(site), site.SiteUrl, !canViewHistory));
+        }
+        return Ok(ApiResponse<object>.Ok(result));
     }
 
     private async Task<IActionResult> PreviewReviewVersionCoreAsync(HostedSite site, string revisionId, bool canViewHistory)
@@ -104,7 +110,8 @@ public partial class WebPagesController
         var entryFile = item.PublishedEntryFile ?? "index.html";
         var key = item.PublishedEntryCosKey;
         var current = item.PublishedContentVersion == HostedSiteService.EffectiveContentVersion(site);
-        var siteUrl = !string.IsNullOrWhiteSpace(key) && _reviewStorage != null
+        var siteUrl = current && !string.IsNullOrWhiteSpace(site.SiteUrl) ? site.SiteUrl
+            : !string.IsNullOrWhiteSpace(key) && _reviewStorage != null
             ? HostedSiteService.AppendBridgeVersion(HostedSiteService.AppendVersion(_reviewStorage.BuildUrlForKey(key), item.PublishedContentVersion!.Value), site.SlideNavCompatVersion)
             : current ? site.SiteUrl : null;
         return new ReviewVersionSummary(item.Id, site.Id, "V" + number,

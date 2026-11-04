@@ -116,7 +116,7 @@ export default function CommentsSection(props: Props) {
     const operationIdentity = identity;
     const operationDraftScope = draftScopeRef.current;
     const options = replyTo ? { parentId: replyTo } : { anchor: annotations?.draftAnchor ?? undefined,
-      revisionId: review?.selected?.id, expectedContentVersion: versionKey };
+      revisionId: review?.historical ? review.selected?.id : undefined, expectedContentVersion: versionKey };
     setSubmitting(true); setError(null);
     try {
       const res = mode === 'share' ? await addShareComment(token!, draft.trim(), password, options)

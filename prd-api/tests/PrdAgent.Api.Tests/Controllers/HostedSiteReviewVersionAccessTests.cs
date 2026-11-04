@@ -141,6 +141,7 @@ public class HostedSiteReviewVersionAccessTests
             var current = ReviewRevision("current", site.ContentVersion);
             current.PublishedEntryCosKey = site.Files[0].CosKey;
             current.PublishedAssetKeys = new() { site.Files[0].CosKey };
+            if (relocateCurrent) current.PublishedEntryCosKey = null;
             await db.HostedSiteRevisions.InsertOneAsync(current);
             const string legacyHtml = "<link rel='stylesheet' href='style.css'><h1>旧版中文 private V1</h1>";
             var objects = new Dictionary<string, byte[]> {
@@ -185,6 +186,14 @@ public class HostedSiteReviewVersionAccessTests
             storage.Verify(x => x.UploadToKeyAsync(archived.PublishedEntryCosKey!, It.IsAny<byte[]>(), "text/html; charset=utf-8",
                 It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Once);
             Assert.Contains(archived.PublishedAssetKeys, key => key.EndsWith("/style.css") && objects.ContainsKey(key));
+            var immutableEntry = archived.PublishedEntryCosKey;
+            var stale = ReviewSite(); stale.ContentVersion = old.PublishedContentVersion!.Value;
+            stale.Files[0].CosKey = legacyEntry;
+            var revisions = new HostedSiteRevisionService(db, sites, storage.Object);
+            await revisions.EnsureCurrentSnapshotAsync("site", "owner", new HostedSiteEditableEntry(stale, legacyHtml, stale.ContentVersion));
+            var afterStale = await db.HostedSiteRevisions.Find(r => r.Id == "old").FirstAsync();
+            Assert.Equal(immutableEntry, afterStale.PublishedEntryCosKey);
+            Assert.DoesNotContain(legacyEntry, afterStale.PublishedAssetKeys);
             Assert.Equal(failDelete, objects.ContainsKey(legacyEntry));
             var live = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
             Assert.Contains("public V2", System.Text.Encoding.UTF8.GetString(objects[live.Files[0].CosKey]));
@@ -290,7 +299,7 @@ public class HostedSiteReviewVersionAccessTests
 
     [Fact]
     [Trait("Category", "Integration")]
-    public async Task SavedHistory_RemainsAvailableWhenCurrentEntryDownloadFails()
+    public async Task SavedHistory_RemainsAvailableWithoutDownloadingCurrentEntry()
     {
         await WithReviewDb(async db =>
         {
@@ -305,33 +314,53 @@ public class HostedSiteReviewVersionAccessTests
             var controller = ReviewController(sites.Object, db, Mock.Of<IHostedSiteRevisionService>(), storage.Object, "owner");
             var result = Assert.IsType<OkObjectResult>(await controller.ListReviewVersions(site.Id));
             Assert.Contains("old", JsonSerializer.Serialize(Assert.IsType<ApiResponse<object>>(result.Value).Data));
-            storage.Verify(x => x.TryDownloadBytesAsync("current.html", It.IsAny<CancellationToken>()), Times.Once);
+            storage.Verify(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        });
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData(null)]
+    [InlineData("outsider")]
+    [InlineData("owner")]
+    public async Task ShareVersionRead_ProjectsUnrecordedCurrentWithoutWritingSnapshots(string? viewer)
+    {
+        await WithReviewDb(async db =>
+        {
+            var site = ReviewSite();
+            var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+            sites.Setup(x => x.ResolveShareSiteAsync("share", null, null, viewer, It.IsAny<CancellationToken>())).ReturnsAsync(new ShareSiteResolveResult { Site = site });
+            if (viewer != null) sites.Setup(x => x.CanEditSiteAsync(site, viewer, It.IsAny<CancellationToken>())).ReturnsAsync(viewer == "owner");
+            var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+            var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+            var controller = ReviewController(sites.Object, db, revisions.Object, storage.Object, viewer);
+            var response = Assert.IsType<OkObjectResult>(await controller.ListSharedReviewVersions("share", null));
+            var json = JsonSerializer.Serialize(Assert.IsType<ApiResponse<object>>(response.Value).Data);
+            Assert.Contains("\"Id\":\"\"", json);
+            Assert.Contains("\"IsCurrent\":true", json);
+            Assert.Contains(site.SiteUrl, json);
+            Assert.Equal(0, await db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+            revisions.VerifyNoOtherCalls(); storage.VerifyNoOtherCalls();
         });
     }
 
     [Fact]
     [Trait("Category", "Integration")]
-    public async Task ShareBaselineCapture_IsAttributedToSiteOwnerRatherThanVisitor()
+    public async Task ConcurrentSnapshots_WithEquivalentMongoPrecision_CreateOneBaseline()
     {
         await WithReviewDb(async db =>
         {
             var site = ReviewSite();
-            var sites = new Mock<IHostedSiteService>();
-            sites.Setup(x => x.ResolveShareSiteAsync("share", null, null, "outsider", It.IsAny<CancellationToken>())).ReturnsAsync(new ShareSiteResolveResult { Site = site });
-            sites.Setup(x => x.CanEditSiteAsync(site, "outsider", It.IsAny<CancellationToken>())).ReturnsAsync(false);
-            var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
-            revisions.Setup(x => x.EnsureCurrentSnapshotAsync(site.Id, "owner", It.IsAny<HostedSiteEditableEntry>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(ReviewRevision("current", site.ContentVersion));
-            var storage = new Mock<IAssetStorage>();
-            storage.Setup(x => x.TryDownloadBytesAsync("current.html", It.IsAny<CancellationToken>())).ReturnsAsync(System.Text.Encoding.UTF8.GetBytes("<h1>safe</h1>"));
-            var controller = ReviewController(sites.Object, db, revisions.Object, storage.Object, "outsider");
-            Assert.IsType<OkObjectResult>(await controller.ListSharedReviewVersions("share", null));
-            revisions.VerifyAll();
+            var revisions = new HostedSiteRevisionService(db, Mock.Of<IHostedSiteService>());
+            var results = await Task.WhenAll(Enumerable.Range(1, 16).Select(offset => revisions.EnsureCurrentSnapshotAsync(site.Id, "owner",
+                new HostedSiteEditableEntry(site, "<h1>same publication</h1>", site.ContentVersion.AddTicks(offset)))));
+            Assert.Single(results.Select(r => r.Id).Distinct());
+            Assert.Equal(1, await db.HostedSiteRevisions.CountDocumentsAsync(r => r.SiteId == site.Id));
         });
     }
 
     private static HostedSite ReviewSite() => new() { Id = "site", OwnerUserId = "owner", CommentsEnabled = true,
-        ContentVersion = new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc), EntryFile = "index.html",
+        ContentVersion = new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc), EntryFile = "index.html", SiteUrl = "https://assets.example/current.html",
         Files = new() { new HostedSiteFile { Path = "index.html", CosKey = "current.html", Size = 20 } } };
     private static HostedSiteRevision ReviewRevision(string id, DateTime version) => new() { Id = id, SiteId = "site", CreatedByUserId = "owner",
         Status = HostedSiteRevisionStatuses.Published, PublishedContentVersion = version, PublishedEntryCosKey = id + ".html",

@@ -40,9 +40,15 @@ public class HostedSiteService : IHostedSiteService
             .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles)).ToListAsync(ct);
         foreach (var revision in versions)
         {
-            var keys = revision.PublishedAssetKeys.Append(revision.PublishedEntryCosKey ?? "")
+            var capturedEntry = revision.PublishedEntryCosKey;
+            if (capturedEntry == null && revision.PublishedContentVersion == EffectiveContentVersion(site))
+            {
+                var liveEntry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+                if (liveEntry != null && revision.PublishedAssetKeys.Contains(liveEntry)) capturedEntry = liveEntry;
+            }
+            var keys = revision.PublishedAssetKeys.Append(capturedEntry ?? "")
                 .Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
-            var canonicalEntry = revision.PublishedEntryCosKey == _storage.BuildSiteKey(siteId, revision.PublishedEntryFile ?? "index.html");
+            var canonicalEntry = capturedEntry == _storage.BuildSiteKey(siteId, revision.PublishedEntryFile ?? "index.html");
             if (!canonicalEntry && !keys.Any(Predictable)) continue;
             var root = ".versions/" + Guid.NewGuid().ToString("N");
             string? ArchivePath(string key) => canonicalEntry && key.StartsWith(prefix, StringComparison.Ordinal)
@@ -63,11 +69,12 @@ public class HostedSiteService : IHostedSiteService
                     await _storage.UploadToKeyAsync(newKey, bytes, mimeType, ct, SiteCacheControl);
                 }
                 var oldEntry = revision.PublishedEntryCosKey;
-                var newEntry = oldEntry != null && mapping.TryGetValue(oldEntry, out var mappedEntry) ? mappedEntry : oldEntry;
+                var newEntry = capturedEntry != null && mapping.TryGetValue(capturedEntry, out var mappedEntry) ? mappedEntry : capturedEntry;
                 var changed = await _db.HostedSiteRevisions.UpdateOneAsync(r => r.Id == revision.Id
                     && r.SiteId == siteId && r.PublishedEntryCosKey == oldEntry,
                     Builders<HostedSiteRevision>.Update.Set(r => r.PublishedAssetKeys, keys.Select(k => mapping.GetValueOrDefault(k, k)).ToList())
-                        .Set(r => r.PublishedEntryCosKey, newEntry), cancellationToken: ct);
+                        .Set(r => r.PublishedEntryCosKey, newEntry)
+                        .Set(r => r.PublishedEntryFile, revision.PublishedEntryFile ?? (revision.PublishedContentVersion == EffectiveContentVersion(site) ? site.EntryFile : null)), cancellationToken: ct);
                 retainedCopy = changed.ModifiedCount == 1;
             }
             finally
@@ -86,7 +93,7 @@ public class HostedSiteService : IHostedSiteService
                 && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
                 .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles))
                 .FirstOrDefaultAsync(ct);
-            if (snapshot != null)
+            if (snapshot == null) throw new InvalidOperationException("当前版本尚未完成归档，原网页未覆盖");
             {
                 var byPath = snapshot.PublishedAssetKeys.Where(k => LogicalPath(k) != null)
                     .GroupBy(k => LogicalPath(k)!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);

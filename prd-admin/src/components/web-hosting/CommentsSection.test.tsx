@@ -122,5 +122,18 @@ describe('annotation entry availability', () => {
     expect(container.textContent).toContain('新版位置');
     expect(button('发送批注').disabled).toBe(false);
   });
+  it('submits an unrecorded current publication through its expected version rather than an empty revision ID', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    add.mockResolvedValue({ success: true, data: { id: 'saved-current', contentVersion: '20000', content: 'current' } });
+    await mount({ review: { selected: { id: '', contentVersionKey: '20000', versionLabel: 'V1' }, historical: false, loading: false } as HostedReview });
+    await act(async () => {
+      const input = container.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'current');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button('发送批注').click());
+    expect(add).toHaveBeenCalledWith('share', 'current', undefined, expect.objectContaining({ revisionId: undefined, expectedContentVersion: '20000' }));
+  });
 
 });
