@@ -6,6 +6,14 @@ import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 
 export type SsePhase = 'idle' | 'connecting' | 'streaming' | 'done' | 'error';
 
+const SESSION_CHANGED_MESSAGE = '登录会话已切换，请重新发起操作；原文已保留。';
+class AuthSessionChangedError extends Error {
+  constructor() { super(SESSION_CHANGED_MESSAGE); }
+}
+function ensureAuthSession(epoch: number): void {
+  if (useAuthStore.getState().authSessionEpoch !== epoch) throw new AuthSessionChangedError();
+}
+
 export interface UseSseStreamOptions<T = unknown> {
   /** SSE 端点 URL（可被 start() 覆盖） */
   url: string;
@@ -119,6 +127,7 @@ export function useSseStream<T = unknown>(
     const ac = new AbortController();
     abortRef.current = ac;
     let terminal = false;
+    const authEpoch = useAuthStore.getState().authSessionEpoch;
 
     const finalUrl = overrides?.url ?? url;
     const finalBody = overrides?.body ?? defaultBody;
@@ -133,10 +142,12 @@ export function useSseStream<T = unknown>(
         signal: ac.signal,
       });
       if (ac.signal.aborted) return;
+      ensureAuthSession(authEpoch);
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
         if (ac.signal.aborted) return;
+        ensureAuthSession(authEpoch);
         const errMsg = toUserReadableErrorMessage(errText, {
           fallbackMessage: '智能处理未完成',
           recoveryMessage: '请稍后重试，或保留原文继续操作。',
@@ -154,6 +165,7 @@ export function useSseStream<T = unknown>(
         res,
         (evt: SseEvent) => {
           if (!evt.data || ac.signal.aborted || terminal) return;
+          ensureAuthSession(authEpoch);
           try {
             const data = JSON.parse(evt.data);
 
@@ -205,12 +217,13 @@ export function useSseStream<T = unknown>(
 
       // stream ended naturally
       if (!terminal && !ac.signal.aborted) {
+        ensureAuthSession(authEpoch);
         setPhase('done');
       }
     } catch (err) {
       if (!terminal && !ac.signal.aborted && (err as Error).name !== 'AbortError') {
         setPhase('error');
-        const message = '连接中断，请检查网络后重试；原文已保留。';
+        const message = err instanceof AuthSessionChangedError ? err.message : '连接中断，请检查网络后重试；原文已保留。';
         setPhaseMessage(message);
         onError?.(message);
       }
@@ -257,9 +270,11 @@ async function fetchSseWithRefresh(
   const isPost = method === 'POST' || body !== undefined;
   // 首次发送和重试使用同一传输快照，避免刷新等待时调用方修改正文。
   const requestBody = isPost && body !== undefined ? JSON.stringify(body) : undefined;
+  const authEpoch = useAuthStore.getState().authSessionEpoch;
 
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
+    if (!skipAuth) ensureAuthSession(authEpoch);
     const token = skipAuth ? null : useAuthStore.getState().token;
     const res = await fetch(url, {
       method: isPost ? 'POST' : method,
@@ -273,10 +288,12 @@ async function fetchSseWithRefresh(
       signal,
     });
     signal.throwIfAborted();
+    if (!skipAuth) ensureAuthSession(authEpoch);
     if (res.status !== 401 || skipAuth || attempt > 0) return res;
 
     const refreshed = await tryRefreshAdminToken();
     signal.throwIfAborted();
+    ensureAuthSession(authEpoch);
     if (!refreshed) return res;
   }
 }
@@ -289,6 +306,7 @@ async function fetchSseWithRefresh(
  */
 export async function connectSse(opts: ConnectSseOptions): Promise<{ success: boolean; errorCode?: string; errorMessage?: string }> {
   const { onEvent, signal, skipAuth } = opts;
+  const authEpoch = useAuthStore.getState().authSessionEpoch;
   if (!skipAuth && !useAuthStore.getState().token) {
     return { success: false, errorCode: 'UNAUTHORIZED', errorMessage: '未登录' };
   }
@@ -296,12 +314,14 @@ export async function connectSse(opts: ConnectSseOptions): Promise<{ success: bo
   let res: Response;
   try {
     res = await fetchSseWithRefresh(opts);
-  } catch {
+  } catch (error) {
     if (signal.aborted) return { success: true };
+    if (error instanceof AuthSessionChangedError) return { success: false, errorCode: 'AUTH_SESSION_CHANGED', errorMessage: error.message };
     return { success: false, errorCode: 'NETWORK_ERROR', errorMessage: '网络连接异常，请检查网络后重试。' };
   }
 
   if (res.status === 401) {
+    if (useAuthStore.getState().authSessionEpoch !== authEpoch) return { success: false, errorCode: 'AUTH_SESSION_CHANGED', errorMessage: SESSION_CHANGED_MESSAGE };
     const authStore = useAuthStore.getState();
     if (authStore.isAuthenticated) {
       authStore.logout();
@@ -324,9 +344,14 @@ export async function connectSse(opts: ConnectSseOptions): Promise<{ success: bo
   }
 
   try {
-    await readSseStream(res, onEvent, signal);
-  } catch {
+    await readSseStream(res, event => {
+      if (!skipAuth) ensureAuthSession(authEpoch);
+      onEvent(event);
+    }, signal);
+    if (!skipAuth) ensureAuthSession(authEpoch);
+  } catch (error) {
     if (signal.aborted) return { success: true };
+    if (error instanceof AuthSessionChangedError) return { success: false, errorCode: 'AUTH_SESSION_CHANGED', errorMessage: error.message };
     return { success: false, errorCode: 'NETWORK_ERROR', errorMessage: '连接中断，请检查网络后重试。' };
   }
 

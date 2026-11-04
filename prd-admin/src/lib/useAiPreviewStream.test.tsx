@@ -6,7 +6,7 @@ import { connectSse, useSseStream, type UseSseStreamReturn } from './useSseStrea
 import { useAiPreviewStream, type UseAiPreviewStreamReturn } from './useAiPreviewStream';
 
 const mocks = vi.hoisted(() => ({
-  authState: { token: 'test-token', isAuthenticated: true, logout: vi.fn() },
+  authState: { token: 'test-token', isAuthenticated: true, authSessionEpoch: 0, logout: vi.fn() },
   refresh: vi.fn(),
 }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: { getState: () => mocks.authState } }));
@@ -32,6 +32,7 @@ describe('润色流式失败与请求保护', () => {
 
   beforeEach(async () => {
     mocks.authState.token = 'test-token';
+    mocks.authState.authSessionEpoch = 0;
     mocks.refresh.mockReset();
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     container = document.createElement('div');
@@ -213,6 +214,83 @@ describe('润色流式失败与请求保护', () => {
     expect(stream.phaseMessage).toBe(originalError);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('刷新期间换号后不以新账号重放旧正文（刷新结果%s）', async refreshed => {
+    let finishRefresh!: (value: boolean) => void;
+    mocks.refresh.mockImplementation(() => new Promise<boolean>(resolve => { finishRefresh = resolve; }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => preview.start({ content: '账号A的私有原文' }));
+    mocks.authState.authSessionEpoch++;
+    mocks.authState.token = 'account-b-token';
+    await act(async () => finishRefresh(refreshed));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(preview.phase).toBe('error');
+    expect(preview.error).toContain('会话已切换');
+    await act(async () => preview.apply());
+    expect(onApply).not.toHaveBeenCalled();
+    expect(mocks.authState.token).toBe('account-b-token');
+    expect(mocks.authState.logout).not.toHaveBeenCalled();
+  });
+
+  it('旧服务连接401迟到不得刷新或登出新会话', async () => {
+    let finishRequest!: (response: Response) => void;
+    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>(resolve => { finishRequest = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = connectSse({ url: '/events', onEvent: vi.fn(), signal: new AbortController().signal });
+    mocks.authState.authSessionEpoch++;
+    mocks.authState.token = 'account-b-token';
+    finishRequest(new Response('', { status: 401 }));
+    expect(await pending).toMatchObject({ success: false, errorCode: 'AUTH_SESSION_CHANGED' });
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.authState.logout).not.toHaveBeenCalled();
+  });
+
+  it('服务连接刷新期间换号不重放也不登出新会话', async () => {
+    let finishRefresh!: (value: boolean) => void;
+    mocks.refresh.mockImplementation(() => new Promise<boolean>(resolve => { finishRefresh = resolve; }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = connectSse({ url: '/events', onEvent: vi.fn(), signal: new AbortController().signal });
+    await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
+    mocks.authState.authSessionEpoch++;
+    mocks.authState.token = 'account-b-token';
+    finishRefresh(false);
+    expect(await pending).toMatchObject({ success: false, errorCode: 'AUTH_SESSION_CHANGED' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.authState.logout).not.toHaveBeenCalled();
+  });
+
+  it('读取成功流期间换号不把旧账号结果应用到新会话', async () => {
+    let finish!: () => void;
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      finish = () => { controller.enqueue(new TextEncoder().encode('event: typing\ndata: {"text":"账号A私有结果"}\n\nevent: done\ndata: {}\n\n')); controller.close(); };
+    } });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body)));
+    await act(async () => preview.start({ content: '账号A私有原文' }));
+    mocks.authState.authSessionEpoch++;
+    mocks.authState.token = 'account-b-token';
+    await act(async () => finish());
+    expect(preview.text).toBe('');
+    expect(preview.phase).toBe('error');
+    expect(preview.error).toContain('会话已切换');
+    await act(async () => preview.apply());
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it.each(['apply', 'regenerate'] as const)('完成后换号，%s 不使用旧会话结果或正文', async action => {
+    const fetchMock = vi.fn().mockResolvedValue(completedStream('账号A结果'));
+    vi.stubGlobal('fetch', fetchMock);
+    await act(async () => preview.start({ content: '账号A原文' }));
+    expect(preview.phase).toBe('done');
+    mocks.authState.authSessionEpoch++;
+    mocks.authState.token = 'account-b-token';
+    await act(async () => preview[action]());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(preview.open).toBe(false);
+    expect(preview.text).toBe('');
   });
 
   it('服务连接刷新等待中取消，不重发、不退出登录', async () => {

@@ -28,6 +28,8 @@ type AuthState = {
   token: string | null;
   refreshToken: string | null;
   sessionKey: string | null;
+  /** 仅内存的会话代次；换号、登出及重新登录使旧异步结果失效。 */
+  authSessionEpoch: number;
   permissions: string[];
   permissionsLoaded: boolean;
   /** 是否为 root 用户（超级管理员） */
@@ -60,6 +62,7 @@ const INITIAL_STATE = {
   token: null,
   refreshToken: null,
   sessionKey: null,
+  authSessionEpoch: 0,
   permissions: [] as string[],
   permissionsLoaded: false,
   isRoot: false,
@@ -144,7 +147,7 @@ export const useAuthStore = create<AuthState>()(
         // 刷新令牌）不清，否则会把他自己没推上去的本地改动一并抹掉。
         const prev = useAuthStore.getState().user;
         if (prev && prev.userId !== user.userId) runUserScopedCleanup();
-        set({ isAuthenticated: true, user, token });
+        set((state) => ({ isAuthenticated: true, user, token, authSessionEpoch: state.authSessionEpoch + 1 }));
       },
       setTokens: (token, refreshToken, sessionKey) => set({ token, refreshToken, sessionKey }),
       setPermissions: (permissions) => set({ permissions: Array.isArray(permissions) ? permissions : [] }),
@@ -163,11 +166,16 @@ export const useAuthStore = create<AuthState>()(
         // 清什么、为什么清，都在 runUserScopedCleanup 里。登出与换号共用同一段，
         // 别在这里再补一份——那正是这件事被修了四次的原因。
         runUserScopedCleanup();
-        set({ ...INITIAL_STATE });
+        set((state) => ({ ...INITIAL_STATE, authSessionEpoch: state.authSessionEpoch + 1 }));
       },
     }),
     {
       name: AUTH_STORAGE_KEY,
+      partialize: (state) => {
+        const persisted: Partial<AuthState> = { ...state };
+        delete persisted.authSessionEpoch;
+        return persisted;
+      },
       storage: createJSONStorage(() => {
         migrateLegacyAuthToLocalStorage();
         return localStorage;
