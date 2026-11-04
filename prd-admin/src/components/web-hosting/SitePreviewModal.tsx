@@ -2,7 +2,7 @@ import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDow
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
+import { X, ExternalLink, FileWarning, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
@@ -10,7 +10,7 @@ import CommentsSection from './CommentsSection';
 import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationModeBar } from './AnnotationModeBar';
 import { useHostedReview } from './useHostedReview';
-import { ReviewVersionBar } from './ReviewVersionBar';
+import { ReviewToolbarControls } from './ReviewToolbarControls';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
@@ -261,16 +261,7 @@ export default function SitePreviewModal({
             </button>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
-            <button
-              type="button"
-              onClick={() => setShowComments((v) => !v)}
-              className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                showComments ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
-              }`}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              批注与讨论
-            </button>
+            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} />
             {askEnabled && !review.historical && (
               <button
                 type="button"
@@ -329,13 +320,10 @@ export default function SitePreviewModal({
           </div>
         </div>
 
-        {!originalSite.wrappedAssetType && <div className="shrink-0 border-b border-token-subtle px-3 py-2 sm:px-4">
-          <ReviewVersionBar review={review} canUpload={canToggleComments} />
-        </div>}
         {/* 主体：iframe + 可选评论面板 */}
         <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
-          <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested" style={{ flex: isMobile && showComments ? '0 0 45%' : undefined }}>
+          <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested" style={{ flex: isMobile && showComments ? '0 0 30%' : undefined }}>
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {(review.loading || (loading && !slow)) && (
@@ -402,36 +390,18 @@ export default function SitePreviewModal({
           {/* 评论面板 */}
           {(
             <aside
-              style={{ display: showComments ? 'flex' : 'none', background: 'var(--bg-elevated)', ...(isMobile ? { top: 'auto', height: '55%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
+              style={{ display: showComments ? 'flex' : 'none', background: 'var(--bg-elevated)', ...(isMobile ? { top: 'auto', height: '70%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
               className="absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:static sm:inset-auto sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-token-subtle"
             >
-              <div className="flex items-center justify-between border-b border-token-subtle px-4 py-3 shrink-0">
-                <span className="text-sm font-semibold text-token-primary">批注与讨论</span>
+              <div className="review-sidebar-heading">
+                <span className="text-token-primary">批注与讨论</span>
+                {canToggleComments && <button type="button" role="switch" aria-label="允许访客评论" aria-checked={commentsEnabled}
+                  onClick={handleToggleCommentsEnabled} disabled={togglingComments} className="review-permission-switch" title="允许访客评论与批注">
+                  <span>允许评论</span><i aria-hidden="true" /></button>}
                 <button type="button" onClick={() => setRightPanel('none')} aria-label="收起批注面板" className="p-1 text-token-muted hover:text-token-primary"><X size={16} /></button>
               </div>
-              {/* 允许评论开关：仅 owner/editor 显示（viewer 无权改，显示了点不动反而困惑） */}
-              {canToggleComments && (
-              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-token-subtle shrink-0">
-                <span className="text-xs text-token-secondary">允许访客评论</span>
-                <button
-                  onClick={handleToggleCommentsEnabled}
-                  disabled={togglingComments}
-                  role="switch"
-                  aria-checked={commentsEnabled}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                    commentsEnabled ? 'bg-blue-600' : 'bg-token-card'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      commentsEnabled ? 'translate-x-4' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
-              </div>
-              )}
               <div
-                className="flex-1 min-h-0 overflow-y-auto p-3"
+                className="flex-1 min-h-0 overflow-hidden"
                 style={{ overscrollBehavior: 'contain' }}
               >
                 {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态；

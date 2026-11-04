@@ -136,6 +136,8 @@
     frame = 0;
     if (!context) return;
     mount(); if (!shadow) return;
+    host.style.display = context.displayMode === 'hidden' && !context.enabled ? 'none' : 'block';
+    host.setAttribute('data-display-mode', context.displayMode || 'bubble');
     if (structureDirty) { reconcile(); geometryDirty = true; }
     // Read all geometry before writing. On ordinary document scroll the absolute layer
     // moves with the page natively; no DOM lookup, layout read or marker update is needed.
@@ -161,7 +163,7 @@
     var hoverRect = currentHover && context.enabled && currentHover.isConnected ? currentHover.getBoundingClientRect() : null;
     updates.forEach(function (update) {
       var record = update.record;
-      record.pin.hidden = !update.pin;
+      record.located = !!update.pin;
       if (update.pin) place(record.pin, update.pin, origin);
       while (record.boxes.length > update.rects.length) record.boxes.pop().remove();
       update.rects.forEach(function (rect, index) {
@@ -170,7 +172,10 @@
         box.className = record.found.range ? 'highlight' : 'outline'; place(box, rect, origin);
       });
     });
-    records.forEach(function (record) { record.pin.className = 'pin' + (record.thread.id === activeId ? ' active' : ''); });
+    records.forEach(function (record) {
+      record.pin.hidden = !record.located || context.displayMode === 'standard';
+      record.pin.className = 'pin' + (record.thread.id === activeId ? ' active' : '');
+    });
     if (geometryDirty) {
       if (pendingRect) {
         if (!pendingBox) { pendingBox = document.createElement('div'); pendingBox.className = 'outline'; shadow.appendChild(pendingBox); }

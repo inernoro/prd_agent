@@ -24,6 +24,18 @@ async function mount() {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('hosted annotation bridge', () => {
+  it('sends display preferences without replacing the page context and makes a new selection visible', async () => {
+    await mount();
+    const frame = container.querySelector('iframe')!.contentWindow!;
+    const send = vi.spyOn(frame, 'postMessage');
+    await act(async () => annotations.notifyFrame());
+    const original = send.mock.calls.at(-1)![0] as { nonce: string };
+    await act(async () => annotations.setDisplayMode('hidden'));
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({ nonce: original.nonce, displayMode: 'hidden' });
+    await act(async () => annotations.select());
+    expect(annotations.displayMode).toBe('bubble');
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({ nonce: original.nonce, displayMode: 'bubble', enabled: true });
+  });
   it('rejects another window and a stale nonce, accepting only the active frame context', async () => {
     await mount();
     const frame = container.querySelector('iframe')!.contentWindow!;

@@ -1,11 +1,11 @@
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { listShareComments, getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, FileDown, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
+import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, FileDown, Check, LogIn, X, Maximize, Minimize } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
@@ -15,7 +15,7 @@ import CommentsSection from '@/components/web-hosting/CommentsSection';
 import { withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotations';
 import { AnnotationModeBar } from '@/components/web-hosting/AnnotationModeBar';
 import { useHostedReview } from '@/components/web-hosting/useHostedReview';
-import { ReviewVersionBar } from '@/components/web-hosting/ReviewVersionBar';
+import { ReviewToolbarControls } from '@/components/web-hosting/ReviewToolbarControls';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
@@ -171,6 +171,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const params = useParams<{ token: string }>();
   const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isAuthenticated = useAuthStore(s => s.isAuthenticated);
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
@@ -202,7 +203,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const pdfDownload = useHostedPdfDownload(data?.sites.length === 1 ? data.sites[0] : null,
     token ? { token, password: password || undefined } : undefined);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
-  const [showComments, setShowComments] = useState(false);
+  const [showComments, setShowComments] = useState(() => searchParams.has('review'));
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
   const [askState, setAskState] = useState<AskDockState>('collapsed');
   // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
@@ -279,6 +280,24 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     token && data?.sites.length === 1 && !data.sites[0].wrappedAssetType ? { mode: 'share', token, password: password || undefined } : null,
     () => setShowComments(true), handleOwnerSitePublished);
   const annotations = review.annotations;
+  const requestedReview = searchParams.get('review');
+  const restoredReview = useRef<string | null>(null);
+  const versionsForLogin = review.versions;
+  const restoreSelectedVersion = review.selectVersion;
+  useEffect(() => {
+    if (!requestedReview || requestedReview === 'current' || !versionsForLogin.some(version => version.id === requestedReview)) return;
+    const identity = `${token}:${requestedReview}`;
+    if (restoredReview.current === identity) return;
+    restoredReview.current = identity;
+    void restoreSelectedVersion(requestedReview);
+  }, [requestedReview, token, versionsForLogin, restoreSelectedVersion]);
+  const loginToReview = () => {
+    const destination = new URL(window.location.href);
+    destination.searchParams.set('review', review.selected?.id ?? 'current');
+    const returnUrl = destination.pathname + destination.search;
+    if (isAuthenticated) useAuthStore.getState().logout();
+    navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+  };
   const reviewLiveUrl = review.liveSite?.siteUrl;
   const reviewEntryFile = review.liveSite?.entryFile;
   const reviewShape = review.liveSite?.contentShape;
@@ -848,6 +867,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           zIndex: pageFullscreen ? 2147483000 : undefined,
           display: 'grid',
           gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
+          gridTemplateColumns: !isFullscreen && showComments && !isMobile ? 'minmax(0, 1fr) 380px' : 'minmax(0, 1fr)',
           background: '#0a0a0a',
           overflow: 'hidden',
         }}
@@ -857,7 +877,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             surface-tone-dark 钉死深色，按钮一律走 token（admin-dual-theme）。原先四个按钮
             各写一套内联 style、各自一个亮蓝、都没有 hover——顶栏比它托着的内容还抢眼。
             现在只有「保存到我的托管」是实心主操作，其余一律安静。 */}
-        <div style={{ display: isFullscreen ? 'none' : 'block' }}>
+        <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
           <div className="share-topbar surface-tone-dark border-b border-b-token-subtle">
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
             <div className="share-topbar-title">
@@ -867,6 +887,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
                 这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
             <div className="share-topbar-actions">
+              {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
+                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType} />}
+              <span className="share-topbar-divider" />
               {!site.pdfAssetUrl && (
                 <button
                   className="share-topbar-btn"
@@ -887,7 +910,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   className={
                     saveStatus === 'saved' ? 'share-topbar-btn share-topbar-btn--success'
                       : saveStatus === 'already' ? 'share-topbar-btn share-topbar-btn--warning'
-                      : 'share-topbar-btn share-topbar-btn--primary'
+                      : 'share-topbar-btn'
                   }
                 >
                   {saving ? (
@@ -938,26 +961,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 <ExternalLink size={isMobile ? 15 : 13} />
                 {!isMobile && '新窗口打开'}
               </a>
-              {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
-                  浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
-              {token && (
-                <button
-                  className="share-topbar-btn"
-                  onClick={() => setShowComments(true)}
-                  title="评论"
-                  aria-label="评论"
-                >
-                  <MessageSquare size={isMobile ? 15 : 13} />
-                  {isMobile
-                    ? (commentCount != null && commentCount > 0 ? commentCount : '')
-                    : `批注${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
-                </button>
-              )}
+
             </div>
           </div>
-          {!liveSite.wrappedAssetType && <div className="surface-tone-dark border-b border-token-subtle px-3 py-2" style={{ background: 'var(--bg-elevated)' }}>
-            <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} />
-          </div>}
           {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
           {visibleNote && (
             <div
@@ -978,7 +984,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </div>
           )}
         </div>
-        <div style={{ position: 'relative', minHeight: 0, background: '#fff', marginRight: showComments && !isMobile ? 380 : 0, marginBottom: showComments && isMobile ? '55dvh' : 0 }}>
+        <div style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: '#fff', marginBottom: showComments && isMobile ? '55dvh' : 0 }}>
           <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button
@@ -1102,10 +1108,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           <>
             {/* 右侧抽屉 */}
             <aside
-              className="border-l border-l-token-subtle" style={{ position: 'fixed', top: isMobile ? 'auto' : 0, right: 0, bottom: 0, zIndex: 61, width: isMobile ? '100%' : 380, height: isMobile ? '55dvh' : '100dvh', display: showComments ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)', boxShadow: '-8px 0 30px rgba(0,0,0,0.15)' }}
+              className="review-sidebar border-l border-l-token-subtle" style={{ position: isMobile ? 'fixed' : 'relative', right: 0, bottom: 0, zIndex: 61, gridColumn: isMobile ? 1 : 2, gridRow: 2, minHeight: 0, width: isMobile ? '100%' : 380, height: isMobile ? '55dvh' : '100%', display: showComments && !isFullscreen ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)' }}
             >
-              <div className="border-b border-b-token-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', flexShrink: 0 }}>
-                <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 }}>批注与讨论</span>
+              <div className="review-sidebar-heading">
+                <span>批注与讨论{commentCount != null && <small>{commentCount}</small>}</span>
                 <button
                   onClick={() => setShowComments(false)}
                   title="关闭"
@@ -1118,8 +1124,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   <X size={16} />
                 </button>
               </div>
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 16 }}>
-                <CommentsSection key={`${token}:${password}`} mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} />
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <CommentsSection key={`${token}:${password}`} mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
               </div>
             </aside>
           </>

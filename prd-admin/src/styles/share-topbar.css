@@ -9,6 +9,7 @@
  */
 
 .share-topbar {
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -125,19 +126,29 @@
 /* 手机端：只留图标，靠 aria-label 与 title 表达语义，避免四个按钮互相挤压 */
 @media (max-width: 767px) {
   .share-topbar {
-    padding: 6px 10px;
+    padding: 8px;
     gap: 6px;
+    flex-wrap: wrap;
   }
 
   .share-topbar-actions {
     gap: 2px;
+    width: 100%;
+    justify-content: flex-end;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .share-topbar-btn {
-    padding: 7px 8px;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 7px;
   }
+  .share-topbar-divider { display: none; }
 
   .share-topbar-title {
+    flex-basis: 100%;
     font-size: 13px;
   }
 }

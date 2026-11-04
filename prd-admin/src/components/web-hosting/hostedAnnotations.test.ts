@@ -26,6 +26,23 @@ async function setup() {
 }
 
 describe('hosted page annotation runtime', () => {
+  it('switches between bubbles, standard highlights and hidden marks without losing threads or rebuilding pins', async () => {
+    const t = await setup();
+    const threads = [{ id: 'display', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }];
+    const show = (displayMode: string) => t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, threads, displayMode });
+    show('bubble'); await tick();
+    const pin = t.layer()!.querySelector<HTMLButtonElement>('button')!;
+    expect(pin.hidden).toBe(false);
+    show('standard'); await tick();
+    expect(pin.hidden).toBe(true);
+    expect(t.layer()!.querySelector('.outline[data-mark]')).toBeTruthy();
+    show('hidden'); await tick();
+    expect(t.win.document.querySelector<HTMLElement>('[data-map-annotation-layer]')!.style.display).toBe('none');
+    show('bubble'); await tick();
+    expect(t.layer()!.querySelector('button')).toBe(pin);
+    expect(pin.hidden).toBe(false);
+    expect(t.win.document.querySelector<HTMLElement>('[data-map-annotation-layer]')!.style.display).toBe('block');
+  });
   it('binds the clicked element without triggering its original action', async () => {
     const t = await setup(); t.init();
     let clicked = false;
