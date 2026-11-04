@@ -566,18 +566,19 @@ export default function WebPagesPage() {
   // ─── Load ───
 
   const loadGeneration = useRef(0);
+  const requestSites = useCallback(() => listSites({
+    keyword: keyword || undefined,
+    tag: activeTag || undefined,
+    sourceType: activeSource || undefined,
+    sort,
+    limit: 200,
+    scope: teamScope.scope,
+    teamId: teamScope.teamId,
+  }), [keyword, activeTag, activeSource, sort, teamScope]);
   const load = useCallback(async () => {
     const generation = ++loadGeneration.current;
     setLoading(true);
-    const res = await listSites({
-      keyword: keyword || undefined,
-      tag: activeTag || undefined,
-      sourceType: activeSource || undefined,
-      sort,
-      limit: 200,
-      scope: teamScope.scope,
-      teamId: teamScope.teamId,
-    });
+    const res = await requestSites();
     if (generation !== loadGeneration.current) return;
     if (res.success) {
       setSites(res.data.items);
@@ -588,13 +589,30 @@ export default function WebPagesPage() {
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
-  }, [keyword, activeTag, activeSource, sort, teamScope]);
+  }, [requestSites]);
 
   useEffect(() => {
-    const refresh = () => { void load(); };
-    window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
-  }, [load]);
+    let active = true;
+    let requestId = 0;
+    let wasHidden = document.visibilityState === 'hidden';
+    const refresh = () => {
+      const hidden = document.visibilityState === 'hidden';
+      if (wasHidden && !hidden) {
+        const id = ++requestId;
+        const generation = loadGeneration.current;
+        // 仅更新统计；不能切换 loading 或替换站点对象，否则会重建缩略图和预览 iframe。
+        void requestSites().then(result => {
+          if (active && id === requestId && generation === loadGeneration.current && result.success) {
+            setSiteActivity(result.data.activity ?? {});
+            setSiteVisitors(result.data.visitors ?? {});
+          }
+        }).catch(() => { /* 后台刷新失败保留已有统计。 */ });
+      }
+      wasHidden = hidden;
+    };
+    document.addEventListener('visibilitychange', refresh);
+    return () => { active = false; document.removeEventListener('visibilitychange', refresh); };
+  }, [requestSites]);
 
   // 团队作用域：按「我的网页托管角色 + 是否站点创建者」解析每个站点的操作能力。
   // 个人作用域：列表全是自己的站点，全权。后端是权威（viewer 写会 404/403），这里只控展示。
