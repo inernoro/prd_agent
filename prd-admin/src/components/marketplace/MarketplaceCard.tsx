@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import {
   Download,
@@ -99,6 +99,11 @@ function SkillFavorite({ item, onChange }: { item: MarketplaceSkill; onChange?: 
   const [favorited, setFavorited] = useState(item.isFavoritedByCurrentUser);
   const [count, setCount] = useState(item.favoriteCount);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    setFavorited(item.isFavoritedByCurrentUser);
+    setCount(item.favoriteCount);
+  }, [item.id, item.isFavoritedByCurrentUser, item.favoriteCount]);
 
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();

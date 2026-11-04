@@ -7,7 +7,7 @@
  *   /marketplace?source=visual-agent - 标识来源应用
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useLocation } from 'react-router-dom';
@@ -43,6 +43,21 @@ import './marketplace.css';
 type CardDemoSkill = MarketplaceSkillDto & MarketplaceItemBase & {
   shareCount?: number;
 };
+
+type FavoritePatch = Pick<MarketplaceSkillDto, 'id' | 'favoriteCount' | 'isFavoritedByCurrentUser'>;
+type MarketplaceSnapshot = {
+  scope: MarketplaceSkillScope | null;
+  viewerId: string | undefined;
+  byType: Record<string, MarketplaceItemBase[]>;
+};
+const EMPTY_MARKETPLACE_DATA: Record<string, MarketplaceItemBase[]> = {};
+
+function applyFavoritePatch(items: MarketplaceItemBase[], updated: FavoritePatch, scope: MarketplaceSkillScope | null) {
+  return items.flatMap<MarketplaceItemBase>(item =>
+    item.id !== updated.id ? [item] : scope === 'favorites' && !updated.isFavoritedByCurrentUser ? [] : [{
+      ...item, favoriteCount: updated.favoriteCount, isFavoritedByCurrentUser: updated.isFavoritedByCurrentUser,
+    }]);
+}
 
 const SEARCH_FIELD_CLASS = 'prd-field h-8 w-full rounded-lg pl-9 pr-3 text-xs focus:outline-none';
 const CARD_DEMO_COVER =
@@ -150,10 +165,13 @@ export const MarketplacePage: React.FC = () => {
   });
   const [searchKeyword, setSearchKeyword] = useState('');
   const [loading, setLoading] = useState(true);
-  const [loadedScope, setLoadedScope] = useState<MarketplaceSkillScope | null>(null);
   const [loadError, setLoadError] = useState('');
   const loadRequestRef = useRef(0);
-  const [dataByType, setDataByType] = useState<Record<string, MarketplaceItemBase[]>>({});
+  const latestLoadRef = useRef<{ viewerId: string | undefined; load: (background?: boolean) => Promise<void> } | null>(null);
+  const [snapshot, setSnapshot] = useState<MarketplaceSnapshot>({ scope: null, viewerId: currentUserId, byType: {} });
+  const snapshotMatches = snapshot.scope === scope && snapshot.viewerId === currentUserId;
+  // 网格、标签和角色共同读取匹配当前范围与账号的快照，切换时不暴露旧筛选数据。
+  const dataByType = snapshotMatches ? snapshot.byType : EMPTY_MARKETPLACE_DATA;
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string>('');
   const [skillTags, setSkillTags] = useState<Array<{ tag: string; count: number }>>([]);
@@ -234,13 +252,12 @@ export const MarketplacePage: React.FC = () => {
     setSearchParams(next, { replace: true });
   };
 
-  const loadAllData = useCallback(async () => {
+  const loadAllData = useCallback(async (background = false) => {
     const requestId = ++loadRequestRef.current;
-    setLoading(true);
+    if (!background) setLoading(true);
     setLoadError('');
     if (cardDemoEnabled) {
-      setDataByType({ skill: CARD_DEMO_SKILLS.filter(item => scope === 'all' || (scope === 'mine' ? item.ownerUserId === currentUserId : item.isFavoritedByCurrentUser)) });
-      setLoadedScope(scope);
+      setSnapshot({ scope, viewerId: currentUserId, byType: { skill: CARD_DEMO_SKILLS.filter(item => scope === 'all' || (scope === 'mine' ? item.ownerUserId === currentUserId : item.isFavoritedByCurrentUser)) } });
       setLoading(false);
       return;
     }
@@ -263,8 +280,7 @@ export const MarketplacePage: React.FC = () => {
         })
       );
       if (requestId === loadRequestRef.current) {
-        setDataByType(results);
-        setLoadedScope(scope);
+        setSnapshot({ scope, viewerId: currentUserId, byType: results });
         setLoadError(personalError);
       }
     } finally {
@@ -272,19 +288,25 @@ export const MarketplacePage: React.FC = () => {
     }
   }, [cardDemoEnabled, sortBy, scope, currentUserId]);
 
+  useLayoutEffect(() => {
+    latestLoadRef.current = { viewerId: currentUserId, load: loadAllData };
+  }, [currentUserId, loadAllData]);
   useEffect(() => { loadAllData(); }, [loadAllData]);
 
-  const favoriteListRequest = loadRequestRef.current;
-  const handleFavoriteChange = (updated: MarketplaceSkillDto) => {
-    // 收藏请求可能晚于范围切换或列表刷新返回，只回写发起组件所属的列表代次。
-    if (favoriteListRequest !== loadRequestRef.current) return;
-    setDataByType(previous => ({ ...previous, skill: (previous.skill || []).flatMap<MarketplaceItemBase>(item =>
-      item.id !== updated.id ? [item] : scope === 'favorites' && !updated.isFavoritedByCurrentUser ? [] : [{
-        ...item, favoriteCount: updated.favoriteCount, isFavoritedByCurrentUser: updated.isFavoritedByCurrentUser,
-      }]) }));
+  const refreshCurrentList = (background = false) => {
+    const latest = latestLoadRef.current;
+    if (latest && latest.viewerId === currentUserId) return latest.load(background);
   };
 
-  const viewLoading = loading || loadedScope !== scope;
+  const handleFavoriteChange = (updated: MarketplaceSkillDto) => {
+    // 依据当前快照的范围立即回写，再以确认后的当前查询淘汰所有更早的列表响应。
+    setSnapshot(previous => previous.viewerId !== currentUserId ? previous : {
+      ...previous, byType: { ...previous.byType, skill: applyFavoritePatch(previous.byType.skill || [], updated, previous.scope) },
+    });
+    void refreshCurrentList(true);
+  };
+
+  const viewLoading = loading || !snapshotMatches;
 
   const handleFork = async (typeKey: string, id: string, customName?: string) => {
     const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
@@ -294,7 +316,7 @@ export const MarketplacePage: React.FC = () => {
       const res = await typeDef.api.fork({ id, name: customName });
       if (res.success) {
         toast.success(typeKey === 'skill' ? '已开始下载技能包' : '已添加到我的配置');
-        await loadAllData();
+        await refreshCurrentList();
       } else {
         toast.error('下载失败', res.error?.message || '未知错误');
       }
@@ -464,7 +486,7 @@ export const MarketplacePage: React.FC = () => {
       {uploadOpen && (
         <SkillUploadDialog
           onClose={() => setUploadOpen(false)}
-          onUploaded={() => { void loadAllData(); void loadSkillTags(); }}
+          onUploaded={() => { void refreshCurrentList(); void loadSkillTags(); }}
         />
       )}
 
@@ -472,7 +494,7 @@ export const MarketplacePage: React.FC = () => {
         <SkillUploadDialog
           editingSkill={editingSkill}
           onClose={() => setEditingSkill(null)}
-          onUploaded={() => { void loadAllData(); void loadSkillTags(); }}
+          onUploaded={() => { void refreshCurrentList(); void loadSkillTags(); }}
         />
       )}
 

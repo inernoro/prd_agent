@@ -152,8 +152,122 @@ for (const scope of ['all', 'mine'] as const) {
       await page.waitForLoadState('networkidle');
       await expect(page.locator('.mkt-card')).toHaveCount(count);
       await expect(card).toBeVisible();
+      await expect(card.locator('.mkt-card-favorite')).toHaveAttribute('data-active', 'false');
     } finally {
       releaseResponse();
+    }
+  });
+}
+
+test('收藏确认晚于切换范围时，新收藏与计数进入当前个人列表', async ({ page }) => {
+  const items = await installMarketplaceFixture(page);
+  const item = items.find(item => item.id === 'fixture-skill-4')!;
+  let releaseFavorite!: () => void;
+  const gate = new Promise<void>(resolve => { releaseFavorite = resolve; });
+  await page.route(`**/api/marketplace/skills/${item.id}/favorite`, async route => {
+    await gate;
+    item.isFavoritedByCurrentUser = true;
+    item.favoriteCount = 1;
+    await route.fulfill({ json: { success: true, data: { item }, error: null } });
+  });
+  try {
+    await page.goto('/marketplace');
+    await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
+    const card = page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) });
+    const started = page.waitForRequest(request => request.url().endsWith(`/${item.id}/favorite`));
+    await card.getByTitle('收藏', { exact: true }).click();
+    await started;
+    await page.getByRole('button', { name: '我的收藏', exact: true }).click();
+    await expect(page.locator('.mkt-card')).toHaveCount(3);
+    releaseFavorite();
+    await expect(page.locator('.mkt-card')).toHaveCount(4);
+    await expect(card.locator('.mkt-card-favorite')).toHaveAttribute('data-active', 'true');
+    await expect(page.locator('[data-tour-id="marketplace-tag-filters"]').getByRole('button', { name: '工具 3', exact: true })).toBeVisible();
+  } finally {
+    releaseFavorite();
+  }
+});
+
+for (const responseOrder of ['list-first', 'favorite-first'] as const) {
+  test(`取消收藏与同范围排序并发：${responseOrder} 保留已确认结果`, async ({ page }) => {
+    const items = await installMarketplaceFixture(page);
+    const item = items.find(item => item.id === 'fixture-skill-20')!;
+    let releaseFavorite!: () => void;
+    let releaseList!: () => void;
+    let listCaptured!: () => void;
+    const favoriteGate = new Promise<void>(resolve => { releaseFavorite = resolve; });
+    const listGate = new Promise<void>(resolve => { releaseList = resolve; });
+    const captured = new Promise<void>(resolve => { listCaptured = resolve; });
+    await page.route(`**/api/marketplace/skills/${item.id}/unfavorite`, async route => {
+      await favoriteGate;
+      item.isFavoritedByCurrentUser = false;
+      item.favoriteCount = 0;
+      await route.fulfill({ json: { success: true, data: { item }, error: null } });
+    });
+    await page.route('**/api/marketplace/skills?*sort=new*', async route => {
+      const body = JSON.stringify({ success: true, data: { items: items.filter(item => item.isFavoritedByCurrentUser) }, error: null });
+      listCaptured();
+      await listGate;
+      await route.fulfill({ contentType: 'application/json', body });
+    });
+    try {
+      await page.goto('/marketplace?scope=favorites');
+      await expect(page.locator('.mkt-card')).toHaveCount(3, { timeout: 30_000 });
+      const card = page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) });
+      const favoriteStarted = page.waitForRequest(request => request.url().endsWith(`/${item.id}/unfavorite`));
+      await card.getByTitle('取消收藏', { exact: true }).click();
+      await favoriteStarted;
+      await page.getByRole('button', { name: /^显示/ }).click();
+      await page.getByRole('button', { name: '最新', exact: true }).click();
+      await captured;
+      const favoriteResponse = page.waitForResponse(response => response.url().endsWith(`/${item.id}/unfavorite`));
+      if (responseOrder === 'list-first') {
+        releaseList();
+        await expect(page.locator('.mkt-card')).toHaveCount(3);
+        releaseFavorite();
+        await (await favoriteResponse).finished();
+      } else {
+        releaseFavorite();
+        await (await favoriteResponse).finished();
+        await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        releaseList();
+      }
+      await page.waitForLoadState('networkidle');
+      await expect(page.locator('.mkt-card')).toHaveCount(2);
+      await expect(card).toHaveCount(0);
+    } finally {
+      releaseFavorite();
+      releaseList();
+    }
+  });
+}
+
+for (const scope of ['mine', 'favorites'] as const) {
+  test(`个人筛选在 ${scope} 请求完成前不展示上一范围的数据`, async ({ page }) => {
+    await installMarketplaceFixture(page);
+    let releaseList!: () => void;
+    const gate = new Promise<void>(resolve => { releaseList = resolve; });
+    await page.route(`**/api/marketplace/skills?*scope=${scope}*`, async route => {
+      await gate;
+      await route.fallback();
+    });
+    try {
+      await page.goto('/marketplace');
+      await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
+      await expect(page.locator('[data-tour-id="marketplace-tag-filters"]')).toBeVisible();
+      const started = page.waitForRequest(request => request.url().includes(`scope=${scope}`));
+      await page.getByRole('button', { name: scope === 'mine' ? '我的技能' : '我的收藏', exact: true }).click();
+      await started;
+      await expect(page.locator('.mkt-card')).toHaveCount(0);
+      await expect(page.locator('[data-tour-id="marketplace-tag-filters"]')).toHaveCount(0);
+      await expect(page.locator('[data-tour-id="marketplace-role-row"]')).toHaveCount(0);
+      releaseList();
+      await expect(page.locator('.mkt-card')).toHaveCount(scope === 'mine' ? 4 : 3);
+      await expect(page.locator('[data-tour-id="marketplace-tag-filters"]').getByRole('button', {
+        name: scope === 'mine' ? '工具 4' : '工具 2', exact: true,
+      })).toBeVisible();
+    } finally {
+      releaseList();
     }
   });
 }
