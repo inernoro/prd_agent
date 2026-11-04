@@ -149,6 +149,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     for (const modal of [false, true]) {
       test(`${modal ? '站内' : '分享'}的无直链历史正文保持内联预览并可绑定批注`, async ({ page }) => {
         const { frame, preview } = await serve(page, { modal, inlineHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
+        await expect(frame.getByRole('heading', { name: '当前版正文' })).toBeVisible();
         await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
         await page.getByRole('option', { name: /V1/ }).click();
         await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();

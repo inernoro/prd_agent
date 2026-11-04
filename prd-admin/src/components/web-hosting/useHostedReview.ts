@@ -5,7 +5,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { canUseSrcDocPreview } from './previewHtml';
 import { useHostedAnnotations } from './useHostedAnnotations';
 
-type ReviewSite = { id: string; title: string; siteUrl: string; entryFile: string; contentShape?: 'self-contained-html' | 'multi-file' };
+type ReviewSite = { id: string; title: string; siteUrl: string; entryFile: string; contentShape?: 'self-contained-html' | 'multi-file' }
+  & { wrappedAssetType?: string | null }
+  & Partial<Pick<HostedSite, 'pdfAssetUrl' | 'pdfFilePaths' | 'requiresPreviewBridge'>>;
 function urlVersionKey(url: string): string {
   try { const raw = new URL(url, window.location.href).searchParams.get('v'); return raw ? String(BigInt(raw) / 10000n * 10000n) : ''; }
   catch { return ''; }
@@ -56,7 +58,9 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   const selectedUrl = historical ? (preview?.revision.id === selectedId ? preview.siteUrl : selected.siteUrl) : liveSite?.siteUrl;
   const displaySite = liveSite ? { ...liveSite, siteUrl: selectedUrl || '',
     entryFile: historical ? selected.entryFile : liveSite.entryFile,
-    contentShape: historical ? selected.contentShape : liveSite.contentShape } : null;
+    contentShape: historical ? selected.contentShape : liveSite.contentShape,
+    // Live wrapper/download metadata cannot describe an immutable HTML revision.
+    ...(historical ? { wrappedAssetType: undefined, pdfAssetUrl: undefined, pdfFilePaths: undefined, requiresPreviewBridge: undefined } : {}) } : null;
   // A logical hosted address anchors inline snapshots; it is never used as their navigation fallback.
   const previewBaseUrl = historical ? selectedUrl || (liveSite ? inlineSnapshotBase(liveSite, selected.entryFile) : undefined) : liveSite?.siteUrl;
   const annotationSite = displaySite && previewBaseUrl ? { ...displaySite, siteUrl: previewBaseUrl } : null;

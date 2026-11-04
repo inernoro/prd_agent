@@ -3,6 +3,8 @@ import { act, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHostedReview, type HostedReview } from './useHostedReview';
+import { shouldFetchPreviewHtml } from './previewHtml';
+import { resolveSitePreviewSource } from './sitePreviewSource';
 
 const { list, preview, upload } = vi.hoisted(() => ({ list: vi.fn(), preview: vi.fn(), upload: vi.fn() }));
 vi.mock('@/services/real/webPages', () => ({ listHostedReviewVersions: list, previewHostedReviewVersion: preview,
@@ -19,9 +21,9 @@ function Harness({ live = site }: { live?: typeof site }) {
   review = useHostedReview(frame, live, { mode: 'site', siteId: site.id }, () => {});
   return <iframe ref={frame} />;
 }
-async function mount() {
+async function mount(live = site) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  await act(async () => root.render(<Harness />));
+  await act(async () => root.render(<Harness live={live} />));
 }
 beforeEach(() => { vi.clearAllMocks(); list.mockResolvedValue({ success: true, data: [current, previous] }); });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
@@ -96,6 +98,25 @@ describe('versioned webpage review', () => {
     expect(review.selected?.id).toBe('v2');
     expect(review.site?.siteUrl).toBe(current.siteUrl);
     expect(upload).not.toHaveBeenCalled();
+  });
+  it.each(['pdf', 'video'])('does not apply live %s wrapper policy to an HTML-only historical snapshot', async wrappedAssetType => {
+    const inline = { ...previous, siteUrl: null, contentShape: 'self-contained-html' };
+    list.mockResolvedValue({ success: true, data: [current, inline] });
+    preview.mockResolvedValue({ success: true, data: { revision: inline, siteUrl: null, html: '<h1>旧 HTML</h1>' } });
+    const live = { ...site, wrappedAssetType, pdfAssetUrl: 'https://assets.example/current.pdf',
+      pdfFilePaths: ['current.pdf'], requiresPreviewBridge: true };
+    await mount(live);
+    await act(async () => review.selectVersion('v1'));
+    expect(review.historical).toBe(true);
+    expect(review.site?.wrappedAssetType).toBeUndefined();
+    expect(review.site?.pdfAssetUrl).toBeUndefined();
+    expect(review.site?.pdfFilePaths).toBeUndefined();
+    expect(review.site?.requiresPreviewBridge).toBeUndefined();
+    const selectedSite = { ...live, ...review.site };
+    expect(shouldFetchPreviewHtml(selectedSite)).toBe(true);
+    expect(resolveSitePreviewSource(selectedSite, { nativePdfViewer: true })).toEqual({ src: '', usingNativePdfViewer: false });
+    await act(async () => review.selectVersion('v2'));
+    expect(review.site?.pdfAssetUrl).toBe(live.pdfAssetUrl);
   });
   it('uses the recorded migrated URL even when its business version is unchanged', async () => {
     const moved = { ...current, siteUrl: 'https://assets.example/.versions/random/index.html?v=20000' };
