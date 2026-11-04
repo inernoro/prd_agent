@@ -1443,6 +1443,26 @@ public class MdToPptController : ControllerBase
             }, HttpContext.RequestAborted);
             return;
         }
+        var template = await ResolveTemplateAsync(userId, req.TemplateId);
+        DesignArtifactRun? styleParent = null;
+        if (req.StyleOverride)
+        {
+            styleParent = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                    && item.Id == parentRun.Id && item.UserId == userId
+                    && item.ArtifactType == DesignArtifactTypes.HtmlPpt && item.Status == RunStatuses.Done)
+                .FirstOrDefaultAsync(HttpContext.RequestAborted);
+            try
+            {
+                HtmlPptOpenDesignRunService.ValidateStyleOverride(styleParent,
+                    template != null ? $"custom:{template.Name}" : req.Theme, template?.StyleSpec);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Response.StatusCode = StatusCodes.Status400BadRequest;
+                await Response.WriteAsJsonAsync(new { error = ex.Message, code = "ppt_style_override_invalid" }, HttpContext.RequestAborted);
+                return;
+            }
+        }
         if (req.ExpectedEditContext != null || !string.IsNullOrWhiteSpace(req.IdempotencyKey))
         {
             try
@@ -1490,7 +1510,6 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
-        var template = await ResolveTemplateAsync(userId, req.TemplateId);
         MdToPptRun? run = admission == null ? null : await _db.MdToPptRuns
             .Find(item => item.Id == admission.RunId && item.UserId == userId)
             .FirstOrDefaultAsync(CancellationToken.None);
@@ -1551,7 +1570,7 @@ public class MdToPptController : ControllerBase
         var pageHint = effectiveSlideIndex.HasValue
             ? $"（仅修改第 {effectiveSlideIndex.Value} 页）"
             : "（未指定具体页，按要求修改整份 PPT）";
-        var parentArtifact = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+        var parentArtifact = styleParent ?? await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
                 && item.Id == parentRun.Id
                 && item.UserId == userId
                 && item.ArtifactType == DesignArtifactTypes.HtmlPpt
@@ -1736,13 +1755,19 @@ public class MdToPptController : ControllerBase
             .Find(x => x.Id == id && x.UserId == userId)
             .FirstOrDefaultAsync();
         if (run == null) return NotFound(new { error = "运行记录不存在" });
+        // 历史完成稿仍可由本人只读查看；执行与恢复入口继续受当前部署范围约束。
         var designArtifact = await _db.DesignArtifactRuns.Find(item =>
-                item.DeploymentSlug == DeploymentScope.Current
-                && item.Id == id
+                item.Id == id
                 && item.UserId == userId
                 && item.ArtifactType == DesignArtifactTypes.HtmlPpt)
             .FirstOrDefaultAsync(HttpContext.RequestAborted);
         var runtimeSnapshot = designArtifact == null ? null : BuildOpenDesignRuntimeSnapshot(designArtifact);
+        var publicCancelled = designArtifact?.Status == RunStatuses.Cancelled;
+        var publicFailed = designArtifact?.Status == RunStatuses.Error;
+        var awaitingPublicCompletion = run.Status == "done"
+            && (run.Runtime == DesignArtifactRuntimes.OpenDesign || designArtifact?.Runtime == DesignArtifactRuntimes.OpenDesign)
+            && !WebPageDesignArtifactLifecycleAdapter.IsCompletedPresentation(designArtifact);
+
         if (run.Status == "done"
             && IsCompletePresentationDocument(run.Html)
             && !string.Equals(run.Runtime, DesignArtifactRuntimes.OpenDesign, StringComparison.Ordinal))
@@ -1782,7 +1807,7 @@ public class MdToPptController : ControllerBase
         return Ok(new
         {
             id = run.Id,
-            status = invalidSavedDeck ? "error" : run.Status,
+            status = invalidSavedDeck || publicCancelled || publicFailed ? "error" : awaitingPublicCompletion ? "running" : run.Status,
             engine = run.Engine,
             runtime = run.Runtime,
             provider = run.Provider,
@@ -1814,8 +1839,8 @@ public class MdToPptController : ControllerBase
             publishedHtmlHash = run.PublishedHtmlHash,
             error = invalidSavedDeck
                 ? "保存的演示稿不完整，已停止恢复。请重新生成或从上一版本继续"
-                : run.Error,
-            errorCode = run.ErrorCode,
+                : publicCancelled ? "演示稿任务已取消，原版本仍然保留" : run.Error ?? designArtifact?.Error,
+            errorCode = publicCancelled ? "design_artifact_cancelled" : run.ErrorCode ?? designArtifact?.LifecycleFailureCode,
             model = run.Model,
             platform = run.Platform,
             resolvedModels = run.ResolvedModels,
@@ -4140,12 +4165,13 @@ public class MdToPptController : ControllerBase
                     revision,
                 });
             }
-            if (compatibility.Status == "done")
+            if (compatibility.Status == "done" && WebPageDesignArtifactLifecycleAdapter.IsCompletedPresentation(artifact))
             {
                 var siteUrl = string.IsNullOrWhiteSpace(compatibility.PublishedSiteId)
                     ? null
                     : await _db.HostedSites.Find(site => site.Id == compatibility.PublishedSiteId
-                                                         && site.OwnerUserId == compatibility.UserId)
+                                                         && site.OwnerUserId == compatibility.UserId
+                                                         && site.PublishedRevisionId == artifact.ProducedArtifactRevisionId)
                         .Project(site => site.SiteUrl)
                         .FirstOrDefaultAsync(CancellationToken.None);
                 await WriteEventAsync("done", CompletedRunDoneEvent(compatibility, siteUrl: siteUrl));

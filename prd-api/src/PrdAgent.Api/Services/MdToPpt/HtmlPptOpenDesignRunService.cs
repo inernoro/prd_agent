@@ -173,6 +173,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
 
         void InheritParent(DesignArtifactRun parent)
         {
+            if (input.StyleOverride) ValidateStyleOverride(parent, input.Theme, input.StyleInstruction);
             var inherited = DesignArtifactBriefFactory.TryInheritFrozenContext(run, parent,
                 DesignArtifactContextSources.InheritedSiteSourceRun, input.ParentRunId, input.StyleOverride);
             if (input.StyleOverride && !inherited) throw new InvalidOperationException("换风格缺少受信来源上下文");
@@ -299,6 +300,14 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
 
     private static string Sha256(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    // 与控制器准入前共用同一有限输入判据；此处不创建任务、预算或模型请求。
+    internal static void ValidateStyleOverride(DesignArtifactRun? parent, string? theme, string? styleInstruction)
+    {
+        if (parent?.DesignBrief == null || parent.BrandPackage == null)
+            throw new InvalidOperationException("换风格缺少受信来源上下文，请恢复完整来源版本后重试");
+        _ = ResolvePresentationDesignSystem(theme, requireExplicit: string.IsNullOrWhiteSpace(styleInstruction));
+    }
 
     internal static string ResolvePresentationDesignSystem(string? theme, bool requireExplicit = false) => theme?.Trim().ToLowerInvariant() switch
     {

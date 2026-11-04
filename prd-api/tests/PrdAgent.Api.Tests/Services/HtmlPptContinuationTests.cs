@@ -26,6 +26,113 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class HtmlPptContinuationTests
 {
     [Fact]
+    public async Task HistoricalCompletedPresentation_ReadsTheOwnerLedgerWithoutLosingThePendingFence()
+    {
+        await using var store = await RunMongoFixture.CreateAsync("ppt_historical_status");
+        var f = Fixture();
+        f.Source.Runtime = DesignArtifactRuntimes.OpenDesign;
+        f.Artifact.DeploymentSlug = "retired-deployment";
+        await store.Db.MdToPptRuns.InsertOneAsync(f.Source);
+        await store.Db.DesignArtifactRuns.InsertOneAsync(f.Artifact);
+        var before = f.Source.ToJson();
+        var http = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "owner")], "test")) };
+        var controller = new MdToPptController(store.Db, null!, Mock.Of<ILlmGateway>(),
+            Mock.Of<ILLMRequestContextAccessor>(), Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+            Mock.Of<IHtmlPptDesignArtifactAdapter>(), Mock.Of<IHtmlPptOpenDesignRunService>(),
+            Mock.Of<IHostedSiteService>(), Mock.Of<IHtmlPptPublishCoordinator>(),
+            new ConfigurationBuilder().Build(), NullLogger<MdToPptController>.Instance)
+            { ControllerContext = new ControllerContext { HttpContext = http } };
+        string Status(IActionResult result) => System.Text.Json.JsonSerializer.SerializeToElement(
+            Assert.IsType<OkObjectResult>(result).Value).GetProperty("status").GetString()!;
+
+        Assert.Equal("done", Status(await controller.GetRun(f.Source.Id)));
+        await store.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == f.Artifact.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Committing));
+        Assert.Equal("running", Status(await controller.GetRun(f.Source.Id)));
+        http.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "another-owner")], "test"));
+        Assert.IsType<NotFoundObjectResult>(await controller.GetRun(f.Source.Id));
+        Assert.Equal(before, (await store.Db.MdToPptRuns.Find(item => item.Id == f.Source.Id).SingleAsync()).ToJson());
+    }
+
+    [Fact]
+    public async Task CommittingOpenDesignPresentation_CannotFallBackToHtmlOnlyPublication()
+    {
+        await using var store = await RunMongoFixture.CreateAsync("ppt_publish_pending");
+        var f = Fixture();
+        f.Source.Runtime = DesignArtifactRuntimes.OpenDesign;
+        f.Source.HtmlHash = MdToPptController.ComputeHtmlHash(f.Source.Html!);
+        f.Artifact.Status = RunStatuses.Committing;
+        f.Artifact.DeploymentSlug = DeploymentScope.Current;
+        await store.Db.MdToPptRuns.InsertOneAsync(f.Source);
+        await store.Db.DesignArtifactRuns.InsertOneAsync(f.Artifact);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(item => item.GetTeamsNotPublishableAsync("owner", It.IsAny<IReadOnlyCollection<string>>(),
+            It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var publisher = new HtmlPptPublishCoordinator(store.Db, sites.Object,
+            Mock.Of<IHostedSiteRevisionService>(MockBehavior.Strict),
+            Mock.Of<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict), NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        var error = await Assert.ThrowsAsync<HtmlPptPublishPendingException>(() =>
+            publisher.PublishAsync(f.Source, "冻结发布标题", "冻结描述", ["发布标签"], []));
+
+        Assert.Equal(HtmlPptPublishCoordinator.PendingCode, error.Code);
+        sites.Verify(item => item.CreateFromHtmlIdempotentAsync(It.IsAny<string>(), It.IsAny<byte[]>(),
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<List<string>?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StoredEditIdentityIgnoresFutureFieldsWithoutLosingVersionFences()
+    {
+        await using var store = await RunMongoFixture.CreateAsync("ppt_nested_identity");
+        var context = new HtmlPptEditContext { SourceRunId="source", BaseRevisionId="revision", BaseHtmlHash=new string('a',64) };
+        var run = new DesignArtifactRun { PptEditContext=context };
+        var document = run.ToBsonDocument();
+        var element = MongoDB.Bson.Serialization.BsonClassMap.LookupClassMap(typeof(DesignArtifactRun))
+            .GetMemberMap(nameof(DesignArtifactRun.PptEditContext)).ElementName;
+        document[element].AsBsonDocument["futureField"] = "future-value";
+        var restored = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<DesignArtifactRun>(document);
+        Assert.Equal(context.SourceRunId, restored.PptEditContext!.SourceRunId);
+        Assert.Equal(context.BaseRevisionId, restored.PptEditContext.BaseRevisionId);
+        Assert.Equal(context.BaseHtmlHash, restored.PptEditContext.BaseHtmlHash);
+    }
+
+    [Theory]
+    [InlineData("unknown-theme", true, true)]
+    [InlineData("editorial-ink", false, true)]
+    [InlineData("editorial-ink", true, false)]
+    public async Task InvalidStyleIsRejectedBeforeBudgetAdmission(string theme, bool hasBrief, bool hasBrand)
+    {
+        var f = Fixture();
+        f.Artifact.DesignBrief = hasBrief ? new DesignArtifactDesignBrief() : null;
+        f.Artifact.BrandPackage = hasBrand ? new DesignArtifactBrandPackage() : null;
+        await using var store = await RunMongoFixture.CreateAsync("ppt_style_pre_admission");
+        await store.Db.MdToPptRuns.InsertOneAsync(f.Source);
+        await store.Db.DesignArtifactRuns.InsertOneAsync(f.Artifact);
+        var before = (await store.Db.DesignArtifactRuns.Find(x=>x.Id==f.Artifact.Id).SingleAsync()).ToJson();
+        var continuation = new Mock<IHtmlPptContinuationService>(MockBehavior.Strict);
+        using var responseBody = new MemoryStream();
+        using var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices=services,
+            User=new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier,"owner")],"test")) };
+        http.Response.Body=responseBody;
+        var controller=new MdToPptController(store.Db,null!,Mock.Of<ILlmGateway>(),Mock.Of<ILLMRequestContextAccessor>(),
+            Mock.Of<IDesignKnowledgeSnapshotResolver>(),Mock.Of<IHtmlPptDesignArtifactAdapter>(),
+            Mock.Of<IHtmlPptOpenDesignRunService>(),Mock.Of<IHostedSiteService>(),Mock.Of<IHtmlPptPublishCoordinator>(),
+            new ConfigurationBuilder().Build(),NullLogger<MdToPptController>.Instance,continuation.Object)
+            { ControllerContext=new ControllerContext { HttpContext=http } };
+        await controller.Patch(new MdToPptPatchRequest { ParentRunId=f.Source.Id, CurrentHtml=f.Source.Html,
+            ExpectedEditContext=new HtmlPptEditContext(),IdempotencyKey="must-not-be-claimed",Theme=theme,StyleOverride=true });
+        Assert.Equal(400,http.Response.StatusCode);
+        Assert.Contains("ppt_style_override_invalid",Encoding.UTF8.GetString(responseBody.ToArray()));
+        continuation.VerifyNoOtherCalls();
+        Assert.Equal(1,await store.Db.MdToPptRuns.CountDocumentsAsync(FilterDefinition<MdToPptRun>.Empty));
+        Assert.Equal(before,(await store.Db.DesignArtifactRuns.Find(x=>x.Id==f.Artifact.Id).SingleAsync()).ToJson());
+    }
+
+    [Fact]
     public void RestoredCurrentVersionRetainsRealSourceAndFreezesCurrentBytes()
     {
         var f = Fixture();
@@ -518,9 +625,24 @@ public sealed class HtmlPptContinuationTests
         lifecycle.Setup(x=>x.BindPublishedAsync(manual.Id,f.Site.Id,"manual-draft",It.IsAny<CancellationToken>()))
             .Returns(async () => { await store.Db.DesignArtifactRuns.UpdateOneAsync(x=>x.Id==manual.Id,
                 Builders<DesignArtifactRun>.Update.Set(x=>x.ArtifactSiteId,f.Site.Id).Set(x=>x.ArtifactRevisionId,"manual-draft")); });
+        sites.Setup(x => x.UpdateAsync(f.Site.Id, "owner", It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<List<string>?>(), null, null, It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string _, string? title, string? description, List<string>? tags,
+                string? _, string? _, CancellationToken _) =>
+            {
+                f.Site.Title = title!;
+                f.Site.Description = description;
+                f.Site.Tags = tags!;
+                await store.Db.HostedSites.UpdateOneAsync(x => x.Id == f.Site.Id,
+                    Builders<HostedSite>.Update.Set(x => x.Title, title).Set(x => x.Description, description).Set(x => x.Tags, tags));
+                return f.Site;
+            });
         var publisher = new HtmlPptPublishCoordinator(store.Db,sites.Object,new HostedSiteRevisionService(store.Db,sites.Object),
             Mock.Of<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict),NullLogger<HtmlPptPublishCoordinator>.Instance,lifecycle.Object,service);
-        var published = await publisher.PublishAsync(manualRun,"现有演示稿",null,[],[]);
+        var published = await publisher.PublishAsync(manualRun,"冻结发布标题","冻结发布描述",["交付标签"],[]);
+        Assert.Equal("冻结发布标题", published.Site.Title);
+        Assert.Equal("冻结发布描述", published.Site.Description);
+        Assert.Equal(["交付标签"], published.Site.Tags);
         Assert.Equal("manual-draft",published.Revision.Id);
         Assert.Equal(HostedSiteRevisionStatuses.Published,published.Revision.Status);
         Assert.Equal(proposal,onlineHtml);
@@ -554,6 +676,9 @@ public sealed class HtmlPptContinuationTests
         var finished=await store.Db.MdToPptRuns.Find(x=>x.Id==manual.Id).SingleAsync();
         var replayed=await publisher.PublishAsync(finished,"无效重放标题",null,[],[]);
         Assert.Equal(published.Revision.Id,replayed.Revision.Id);
+        sites.Verify(x => x.UpdateAsync(f.Site.Id, "owner", "冻结发布标题", "冻结发布描述",
+            It.Is<List<string>?>(tags => tags != null && tags.SequenceEqual(new[] { "交付标签" })),
+            null, null, It.IsAny<CancellationToken>()), Times.Once);
         sites.Verify(x=>x.ReplaceWithVerifiedFilesAsync(f.Site.Id,"owner",It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(),
             It.IsAny<DateTime>(),"manual-draft",It.IsAny<CancellationToken>()),Times.Once);
         Assert.Equal("manual-draft",(await store.Db.HostedSites.Find(x=>x.Id==f.Site.Id).SingleAsync()).PublishedRevisionId);
@@ -573,7 +698,7 @@ public sealed class HtmlPptContinuationTests
         List<HostedSiteRevisionFile> Files() => [File("index.html", "text/html", html), File("assets/style.css", "text/css", "body{color:#111}")];
         var now = new DateTime(2026,10,24,14,14,51,DateTimeKind.Utc);
         var source = new MdToPptRun { Id="saved-run", UserId="owner", Status="done", Op="patch", Html=html };
-        var artifact = new DesignArtifactRun { Id=source.Id, UserId="owner", Status="Done", ArtifactType="html-ppt",Runtime=DesignArtifactRuntimes.OpenDesign,
+        var artifact = new DesignArtifactRun { Id=source.Id, UserId="owner", DeploymentSlug=DeploymentScope.Current, Status="Done", ArtifactType="html-ppt",Runtime=DesignArtifactRuntimes.OpenDesign,
             ArtifactSiteId="site", ProducedArtifactSiteId="site", ArtifactRevisionId="original", ProducedArtifactRevisionId="original",
             WorkspaceResultSha256=new string('d',64), PresentationInput=new() };
         var site = new HostedSite { Id="site", OwnerUserId="owner", SourceType="design-agent", PublishedRevisionId="restored", ContentVersion=now };
