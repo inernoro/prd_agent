@@ -62,10 +62,10 @@ function buildSteps(mapData: TeamActivityExperienceMapData | null, insights: Tea
 
   return [
     { name: '监测', sub: monitorSub, state: 'done' },
-    { name: '预警', sub: warnSub, state: hasBurst ? 'done' : '' },
+    { name: '预警', sub: !mapData ? '等待监测数据' : warnSub, state: hasBurst ? 'done' : '' },
     // AI 根因：当前焦点（待诊断的痛点数）
-    { name: 'AI 根因', sub: open > 0 ? `待诊断 ${open} 处` : '暂无待诊断', state: 'cur' },
-    { name: '转缺陷/需求', sub: routedSub, state: routedCount > 0 ? 'done' : '' },
+    { name: 'AI 根因', sub: !insights ? '等待洞察数据' : open > 0 ? `待诊断 ${open} 处` : '暂无待诊断', state: 'cur' },
+    { name: '转缺陷/需求', sub: !insights ? '等待洞察数据' : routedSub, state: routedCount > 0 ? 'done' : '' },
     { name: '修复追踪', sub: confirmed > 0 ? `修复中 ${confirmed} 处` : '—', state: confirmed > 0 ? 'done' : '' },
     { name: '复测回落', sub: reboundSub, state: resolved > 0 ? 'done' : '' },
   ];
