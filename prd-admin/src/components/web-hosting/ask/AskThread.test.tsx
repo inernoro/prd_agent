@@ -145,13 +145,38 @@ describe('评分、表格和公共流式状态', () => {
     expect(region.querySelector('[data-citation-badge]')).not.toBeNull();
   });
 
-  it('等待和输出期间都展示公共 SSE 阶段栏，停止可用', () => {
+  it('等待与输出复用品牌光标和文字动效，状态提示保持轻量且停止可用', () => {
     render({ isBusy: true, phaseMessage: '正在读取页面内容…', elapsedSeconds: 3 });
     expect(container.querySelector('[role="status"]')?.textContent).toContain('正在读取页面内容… · 已等待 3 秒');
     render({ isBusy: true, phaseMessage: '正在回答…', messages: [messages[0], { ...messages[1], content: '**要点', streaming: true }] });
     expect(container.querySelector('strong')?.textContent).toContain('要点');
+    expect(container.querySelector('strong .streaming-text--blur .streaming-u')).not.toBeNull();
+    expect(container.querySelectorAll('.streaming-text-caret--custom')).toHaveLength(1);
+    expect(container.querySelector('.streaming-text-caret--custom')?.textContent).toBe('M');
+    expect(container.textContent).not.toContain('▌');
     expect(container.querySelector('[role="status"]')?.textContent).toContain('正在回答…');
+    expect(container.querySelector('[role="status"] .rounded-lg')).toBeNull();
     act(() => button('停止回答').click());
     expect(props.onCancel).toHaveBeenCalled();
+  });
+
+  it('逐 chunk 更新保留旧文字节点，完成后移除动效并展示服务端校验引用', () => {
+    const streaming = (content: string) => render({ isBusy: true, messages: [messages[0], { ...messages[1], content, streaming: true }] });
+    streaming('**风险评分**分三维');
+    const firstWord = container.querySelector('strong .streaming-u');
+    for (const suffix of ['[', '[引', '[引用', '[引用:', '[引用:1', '[引用:1]']) {
+      streaming(`**风险评分**分三维${suffix}`);
+      expect(container.querySelector('strong .streaming-u')).toBe(firstWord);
+      expect(container.querySelector('.ask-md')?.textContent).toBe('风险评分分三维M');
+    }
+    streaming('**风险评分**分三维[引用:1]。后续说明');
+    expect(container.querySelector('strong .streaming-u')).toBe(firstWord);
+    expect(container.textContent).not.toContain('[引用:1]');
+    expect(container.querySelector('[data-citation-badge]')).toBeNull();
+    render();
+    expect(container.querySelector('.streaming-text-caret')).toBeNull();
+    expect(container.querySelector('.streaming-u')).toBeNull();
+    expect(container.querySelector('[data-citation-badge]')).not.toBeNull();
+    expect(footer()).not.toBeNull();
   });
 });

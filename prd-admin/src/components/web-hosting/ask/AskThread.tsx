@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { Square } from 'lucide-react';
-import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { askStreamingText } from './askStreamingText';
 import { AskMarkdown } from './AskMarkdown';
 import { AskAnswerFooter } from './AskAnswerFooter';
 import { AskRefusalCard, type AskRefusalKey } from './askRefusal';
@@ -135,12 +135,13 @@ export default function AskThread({
                 <span style={{ color: 'var(--accent-primary)' }}>{m.error}</span>
               ) : (
                 <StreamingText
-                  text={m.content}
+                  text={m.streaming ? askStreamingText(m.content) : m.content}
                   streaming={!!m.streaming}
                   markdown
+                  cursor={false}
                   // 没有 renderMarkdown 的话 StreamingText 不会切到 markdown 视图，
                   // 完成后的答案会把 **加粗**、列表、链接的原始语法裸露出来
-                  renderMarkdown={(c) => <AskMarkdown content={c} sourceTitle={title} />}
+                  renderMarkdown={(c) => <AskMarkdown content={c} sourceTitle={title} streaming={!!m.streaming} />}
                 />
               )}
             </div>
@@ -149,13 +150,13 @@ export default function AskThread({
       ))}
       </div>
 
-      {isBusy && <div style={{ marginTop: 12, flexShrink: 0 }} role="status" aria-live="polite">
-        <SsePhaseBar phase={messages.some((m) => m.streaming && m.content) ? 'streaming' : 'connecting'}
-          message={`${phaseMessage || '正在思考…'}${elapsedSeconds > 0 ? ` · 已等待 ${elapsedSeconds} 秒` : ''}`}
-          extra={<button type="button" onClick={onCancel} aria-label="停止回答"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28 }}>
-            <Square size={10} fill="currentColor" />停止
-          </button>} />
+      {isBusy && <div role="status" aria-live="polite"
+        style={{ marginTop: 10, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 11 }}>
+        <span>{phaseMessage || '正在思考…'}{elapsedSeconds > 0 ? ` · 已等待 ${elapsedSeconds} 秒` : ''}</span>
+        <button type="button" onClick={onCancel} aria-label="停止回答"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, marginLeft: 'auto' }}>
+          <Square size={10} fill="currentColor" />停止
+        </button>
       </div>}
       {completedAnswer && <AskAnswerFooter key={completedAnswer.id} answer={completedAnswer}
         messages={messages} openingQuestions={openingQuestions} blocked={!!refusal} onAsk={onPick} onRate={onRate} />}
