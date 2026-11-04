@@ -54,6 +54,7 @@ public class DefectAgentController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.DefectAgent.DefectPolishService _polishService;
     private readonly AdminPushDispatchSignal _adminPushDispatchSignal;
+    private readonly HistoricalAssetUrlResolver _historicalAssets;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -69,7 +70,8 @@ public class DefectAgentController : ControllerBase
         IConfiguration config,
         IHttpClientFactory httpClientFactory,
         PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService,
-        AdminPushDispatchSignal adminPushDispatchSignal)
+        AdminPushDispatchSignal adminPushDispatchSignal,
+        HistoricalAssetUrlResolver historicalAssets)
     {
         _db = db;
         _gateway = gateway;
@@ -84,6 +86,7 @@ public class DefectAgentController : ControllerBase
         _httpClientFactory = httpClientFactory;
         _polishService = polishService;
         _adminPushDispatchSignal = adminPushDispatchSignal;
+        _historicalAssets = historicalAssets;
     }
 
     private string GetUserId()
@@ -510,6 +513,7 @@ public class DefectAgentController : ControllerBase
             .Limit(effectivePageSize)
             .ToListAsync(ct);
 
+        await _historicalAssets.ResolveAttachmentsForReadAsync(items, ct);
         return Ok(ApiResponse<object>.Ok(new
         {
             items,
@@ -548,6 +552,7 @@ public class DefectAgentController : ControllerBase
             .SortBy(x => x.Seq)
             .ToListAsync(ct);
 
+        await _historicalAssets.ResolveAttachmentsForReadAsync(new[] { defect }, ct);
         return Ok(ApiResponse<object>.Ok(new { defect, messages }));
     }
 
@@ -1625,7 +1630,8 @@ public class DefectAgentController : ControllerBase
         {
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(15);
-            var stream = await client.GetStreamAsync(attachment.Url, ct);
+            var url = await _historicalAssets.ResolveAttachmentUrlAsync(attachment, ct);
+            var stream = await client.GetStreamAsync(url, ct);
             return File(stream, attachment.MimeType ?? "application/octet-stream", attachment.FileName);
         }
         catch (Exception ex)

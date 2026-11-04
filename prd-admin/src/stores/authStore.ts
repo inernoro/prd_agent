@@ -38,6 +38,7 @@ type AuthState = {
   menuCatalogLoaded: boolean;
   /** CDN 基础地址（从后端 /api/authz/me 获取） */
   cdnBaseUrl: string;
+  legacyCdnBaseUrl: string;
   /** 权限指纹（后端基于权限目录+角色定义计算的哈希，用于检测部署/角色变更后的缓存失效） */
   permFingerprint: string;
   login: (user: AuthUser, token: string) => void;
@@ -47,7 +48,7 @@ type AuthState = {
   setIsRoot: (isRoot: boolean) => void;
   setMenuCatalog: (items: AdminMenuItem[]) => void;
   setMenuCatalogLoaded: (loaded: boolean) => void;
-  setCdnBaseUrl: (url: string) => void;
+  setCdnBaseUrl: (url: string, legacyUrl?: string | null) => void;
   setPermFingerprint: (fp: string) => void;
   patchUser: (patch: Partial<AuthUser>) => void;
   logout: () => void;
@@ -65,6 +66,7 @@ const INITIAL_STATE = {
   menuCatalog: [] as AdminMenuItem[],
   menuCatalogLoaded: false,
   cdnBaseUrl: '',
+  legacyCdnBaseUrl: '',
   permFingerprint: '',
 };
 
@@ -150,7 +152,10 @@ export const useAuthStore = create<AuthState>()(
       setIsRoot: (isRoot) => set({ isRoot: !!isRoot }),
       setMenuCatalog: (items) => set({ menuCatalog: Array.isArray(items) ? items : [], menuCatalogLoaded: true }),
       setMenuCatalogLoaded: (loaded) => set({ menuCatalogLoaded: !!loaded }),
-      setCdnBaseUrl: (url) => set({ cdnBaseUrl: (url ?? '').trim().replace(/\/+$/, '') }),
+      setCdnBaseUrl: (url, legacyUrl) => set({
+        cdnBaseUrl: (url ?? '').trim().replace(/\/+$/, ''),
+        legacyCdnBaseUrl: (legacyUrl ?? '').trim().replace(/\/+$/, ''),
+      }),
       setPermFingerprint: (fp) => set({ permFingerprint: fp || '' }),
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
