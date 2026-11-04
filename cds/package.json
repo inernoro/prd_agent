@@ -21,7 +21,10 @@
     "audit:relation-visual": "node scripts/relation-visual-audit.mjs --no-shots",
     "install:web": "pnpm --dir web install --frozen-lockfile",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "audit:loading": "node scripts/loading-coverage-audit.mjs --check",
+    "inventory:loading": "node scripts/loading-inventory.mjs",
+    "smoke:loading": "node scripts/loading-continuity-smoke.mjs"
   },
   "dependencies": {
     "express": "^4.21.0",

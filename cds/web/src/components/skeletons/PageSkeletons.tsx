@@ -1,3 +1,6 @@
+import { AgentRequestsSkeleton, ReleaseCenterSkeleton, TopologyPageSkeleton } from './WorkspaceSkeletons';
+import { loadingSceneForPath } from './loadingScenes';
+import { ReleaseConsoleSkeleton } from './ReleaseConsoleSkeleton';
 import { ContentLoading } from './ContentLoading';
 import { SettingsPageSkeleton } from './SettingsSkeleton';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
@@ -132,16 +135,19 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
 export function pageSkeletonForPath(pathname: string): JSX.Element {
-  if (pathname === '/project-list' || pathname === '/project-list/') return <ProjectListSkeleton />;
-  if (pathname.startsWith('/branches/') || pathname === '/branch-list') return <BranchListSkeleton />;
-  if (pathname === '/overview' || pathname.startsWith('/branch-relations/')) return <ContentLoading label="读取关系视图" variant="panel" />;
-  if (pathname.startsWith('/agent-requests/')) return <ContentLoading label="加载 Agent 请求" variant="table" />;
-  if (pathname === '/status') return <MonitorCenterSkeleton />;
-  if (pathname === '/branch-panel' || pathname.startsWith('/branch-panel/')) return <BranchDetailLoadingSkeleton />;
-  if (pathname === '/cds-settings' || pathname === '/cds-settings/') return <SettingsPageSkeleton />;
-  if (pathname.startsWith('/settings/') ||
-      ['/reports', '/task-schedule', '/branch-topology', '/release-center'].includes(pathname)) {
-    return <LoadingBlock />;
+  switch (loadingSceneForPath(pathname)?.kind) {
+    case 'projects': return <ProjectListSkeleton />;
+    case 'branches': return <BranchListSkeleton />;
+    case 'relations': return <ContentLoading label="读取关系视图" variant="panel" />;
+    case 'agent-table': return <AgentRequestsSkeleton />;
+    case 'topology': return <TopologyPageSkeleton />;
+    case 'release-center': return <ReleaseCenterSkeleton />;
+    case 'monitor': return <MonitorCenterSkeleton />;
+    case 'branch-detail': return <BranchDetailLoadingSkeleton />;
+    case 'settings': return <SettingsPageSkeleton />;
+    case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;
+    case 'release-console': return <ReleaseConsoleSkeleton />;
+    case 'rows': return <LoadingBlock />;
+    default: return <ConsoleGenericSkeleton />;
   }
-  return <ConsoleGenericSkeleton />;
 }

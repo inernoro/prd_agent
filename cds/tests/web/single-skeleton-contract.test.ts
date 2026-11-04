@@ -167,7 +167,7 @@ describe('统一骨架：路由、数据和预览共用组件', () => {
     expect(markup(pageSkeletonForPath('/status'))).toBe(markup(createElement(MonitorCenterSkeleton)));
     expect(markup(pageSkeletonForPath('/branch-panel/fixture'))).toBe(markup(createElement(BranchDetailLoadingSkeleton)));
     expect(markup(pageSkeletonForPath('/cds-settings'))).toBe(markup(createElement(SettingsPageSkeleton)));
-    for (const route of ['/reports', '/task-schedule', '/branch-topology', '/release-center', '/settings/fixture']) {
+    for (const route of ['/reports', '/task-schedule']) {
       expect(markup(pageSkeletonForPath(route))).toBe(markup(createElement(LoadingBlock)));
     }
   });

@@ -33,8 +33,8 @@ export function SettingsContentSkeleton({ label = '加载设置内容' }: { labe
 }
 
 /** 路由代码与身份/能力加载共用同一个设置布局，窄屏导航收为横向占位。 */
-export function SettingsPageSkeleton(): JSX.Element {
-  return <div className="cds-settings-shell" role="status" aria-label="加载系统设置" aria-busy="true" data-settings-page-skeleton>
+export function SettingsPageSkeleton({ label = '加载系统设置' }: { label?: string }): JSX.Element {
+  return <div className="cds-settings-shell" role="status" aria-label={label} aria-busy="true" data-settings-page-skeleton>
     <div className="cds-settings-layout">
       <div aria-hidden="true" className="cds-settings-nav cds-settings-rail flex min-w-0 gap-3 overflow-hidden max-[56.25rem]:p-4">
         <div className="cds-settings-rail-head"><div className="cds-loading-skeleton-line h-4 w-28" /></div>

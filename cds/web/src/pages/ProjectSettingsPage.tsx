@@ -1,3 +1,4 @@
+import { SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -471,20 +472,36 @@ function useProject(projectId: string | undefined): {
   state: ProjectState;
   refresh: () => Promise<void>;
   setProject: (project: ProjectSummary) => void;
+  refreshing: boolean;
+  refreshError: string;
 } {
   const [state, setState] = useState<ProjectState>({ status: 'loading' });
+  const request = useRef<AbortController | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
 
   const refresh = useCallback(async () => {
     if (!projectId) {
       setState({ status: 'error', message: '缺少项目 ID' });
       return;
     }
-    setState({ status: 'loading' });
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setRefreshing(true);
+    setRefreshError('');
+    setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'loading' });
     try {
-      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
-      setState({ status: 'ok', project });
+      const project = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`, { signal: controller.signal });
+      if (!controller.signal.aborted) setState({ status: 'ok', project });
     } catch (err) {
-      setState({ status: 'error', message: messageFromError(err) });
+      if (!controller.signal.aborted) {
+        const message = messageFromError(err);
+        setRefreshError(message);
+        setState(prev => prev.status === 'ok' && prev.project.id === projectId ? prev : { status: 'error', message });
+      }
+    } finally {
+      if (!controller.signal.aborted) setRefreshing(false);
     }
   }, [projectId]);
 
@@ -512,11 +529,14 @@ function useProject(projectId: string | undefined): {
 
   useEffect(() => {
     void refresh();
+    return () => request.current?.abort();
   }, [refresh]);
 
   return {
-    state,
+    state: state.status === 'ok' && state.project.id !== projectId ? { status: 'loading' } : state,
     refresh,
+    refreshing,
+    refreshError,
     /*
      * 收在这一处，而不是让每个保存回调各自记得补 —— 保存路径有十来条，
      * 「同一份处理抄十遍、改一处忘九处」在这个 PR 里已经栽过好几次。
@@ -534,7 +554,7 @@ function useProject(projectId: string | undefined): {
 
 export function ProjectSettingsPage(): JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
-  const { state, refresh, setProject } = useProject(projectId);
+  const { state, refresh, setProject, refreshing, refreshError } = useProject(projectId);
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
   const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
@@ -630,7 +650,8 @@ export function ProjectSettingsPage(): JSX.Element {
                 variant="ghost"
                 size="icon"
                 onClick={() => void refresh()}
-                aria-label="刷新项目设置"
+                disabled={refreshing}
+                aria-label={refreshing ? '正在刷新项目设置' : '刷新项目设置'}
                 title="刷新"
               >
                 <RefreshCw />
@@ -642,10 +663,9 @@ export function ProjectSettingsPage(): JSX.Element {
       }
     >
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {refreshError && state.status === 'ok' ? <p role="alert" className="px-6 py-3 text-sm text-destructive">刷新失败：{refreshError}；当前显示上次读取的内容。</p> : null}
         {state.status === 'loading' ? (
-          <div className="p-6">
-            <LoadingBlock label="加载项目设置" />
-          </div>
+          <SettingsPageSkeleton label="加载项目设置" />
         ) : null}
         {state.status === 'error' ? (
           <div className="space-y-4 p-6">
@@ -1323,15 +1343,23 @@ export function GeneralTab({
     }
   }
 
+  const previousProject = useRef(project);
   useEffect(() => {
-    setName(project.name || '');
-    setAliasName(project.aliasName || '');
-    setSlug(project.slug);
-    setDescription(project.description || '');
-    setGitRepoUrl(project.gitRepoUrl || '');
-    setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
-    setAgentPrebuiltOnly(Boolean(project.agentPrebuiltOnly));
-    setResourceChipDisplay(normalizeResourceChipDisplay(project.resourceChipDisplay));
+    const previous = previousProject.current;
+    const changedProject = previous.id !== project.id;
+    // 刷新同步远端变化，同时保留用户尚未保存的字段；骨架和后台刷新都不能抹掉输入。
+    setName(value => changedProject || value === (previous.name || '') ? project.name || '' : value);
+    setAliasName(value => changedProject || value === (previous.aliasName || '') ? project.aliasName || '' : value);
+    setSlug(value => changedProject || value === previous.slug ? project.slug : value);
+    setDescription(value => changedProject || value === (previous.description || '') ? project.description || '' : value);
+    setGitRepoUrl(value => changedProject || value === (previous.gitRepoUrl || '') ? project.gitRepoUrl || '' : value);
+    setAutoSmokeEnabled(value => changedProject || value === Boolean(previous.autoSmokeEnabled) ? Boolean(project.autoSmokeEnabled) : value);
+    setAgentPrebuiltOnly(value => changedProject || value === Boolean(previous.agentPrebuiltOnly) ? Boolean(project.agentPrebuiltOnly) : value);
+    setResourceChipDisplay(value => {
+      const old = normalizeResourceChipDisplay(previous.resourceChipDisplay);
+      return changedProject || value.icon === old.icon && value.name === old.name && value.port === old.port ? normalizeResourceChipDisplay(project.resourceChipDisplay) : value;
+    });
+    previousProject.current = project;
   }, [project]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {

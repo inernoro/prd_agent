@@ -1,3 +1,4 @@
+import { TopologyPageSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
@@ -45,7 +46,7 @@ import {
   type BranchListAction,
   type BranchListSlice,
 } from '@/lib/branch-list-state';
-import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { CodePill, ErrorBlock } from '@/pages/cds-settings/components';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 interface ProjectSummary {
@@ -707,6 +708,7 @@ export function BranchTopologyPage(): JSX.Element {
       }
     >
       <Workspace fluid>
+        {state.status === 'loading' ? <TopologyPageSkeleton /> : <>
         <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
           <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
             <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
@@ -796,11 +798,6 @@ export function BranchTopologyPage(): JSX.Element {
           ) : null}
         </div>
 
-        {state.status === 'loading' ? (
-          <div className="w-full">
-            <LoadingBlock label="加载服务拓扑" />
-          </div>
-        ) : null}
         {state.status === 'error' ? (
           <div className="w-full">
             <ErrorBlock message={state.message} />
@@ -920,6 +917,7 @@ export function BranchTopologyPage(): JSX.Element {
             {toast}
           </div>
         ) : null}
+        </>}
       </Workspace>
     </AppShell>
   );

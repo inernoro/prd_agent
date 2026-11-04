@@ -1,3 +1,4 @@
+import { ReleaseCenterSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
 /**
  * 站点发布中心 v2 —— 环境是骨架，不是一堆等权重的配置方框。
  *
@@ -39,7 +40,7 @@ import {
   type EnvironmentSection,
 } from '@/lib/releaseEnvironments';
 import type { PreviewMode, PreviewUrlConfig } from '@/lib/previewUrl';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ErrorBlock } from '@/pages/cds-settings/components';
 import { ConfigTab } from '@/pages/release-center/ConfigTab';
 import {
   ArchiveTargetDialog,
@@ -656,6 +657,7 @@ export function ReleaseCenterPage(): JSX.Element {
     >
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
         <div ref={rootRef} className="flex h-full min-h-0 flex-col">
+          {state.status === 'loading' ? <ReleaseCenterSkeleton /> : <>
           {/* 分区导航。设计稿是 sticky；这一页在 CDS 里是固定外壳 + 内容区内滚，
               导航天然常驻，效果相同而且不会在滚动时抖。 */}
           <nav className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[hsl(var(--hairline))] px-6 py-2.5">
@@ -687,7 +689,6 @@ export function ReleaseCenterPage(): JSX.Element {
               </div>
             ) : null}
 
-            {state.status === 'loading' ? <LoadingBlock label="正在加载发布环境" /> : null}
             {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
 
             {state.status === 'ok' && rows.length === 0 ? (
@@ -882,6 +883,7 @@ export function ReleaseCenterPage(): JSX.Element {
               </div>
             ) : null}
           </div>
+          </>}
         </div>
       </Workspace>
 

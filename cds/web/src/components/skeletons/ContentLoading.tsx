@@ -43,7 +43,7 @@ export function ContentLoading({
           </div>
         ))}
       </div>
-      {slow ? <p className="text-xs text-muted-foreground" aria-live="polite">仍在读取…</p> : null}
+      <p className="h-4 text-xs text-muted-foreground" aria-live="polite">{slow ? '仍在读取…' : null}</p>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
@@ -240,7 +241,7 @@ export function ConsoleLayout(): JSX.Element {
  */
 function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
-  const settingsPage = pathname === '/cds-settings' || pathname === '/cds-settings/';
+  const scene = loadingSceneForPath(pathname);
   const projectList = pathname === '/project-list';
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
@@ -262,7 +263,7 @@ function ConsoleRouteFallback(): JSX.Element {
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className={cn('cds-workspace cds-workspace--fluid', settingsPage && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
+        <div className={cn('cds-workspace cds-workspace--fluid', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
           {pageSkeletonForPath(pathname)}
         </div>
       </main>

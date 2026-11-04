@@ -15,10 +15,12 @@ const progressOwners = new Map([
   ['BranchSearchDropdown', '已有远程结果旁的刷新状态'],
   ['PreviewActionSplitButton', '预览按钮的动作反馈'],
   ['ApiProbe', '诊断接口实测状态'],
+  ['ProjectCard', '真实仓库克隆状态徽标；项目内容并非页面请求占位'],
+  ['SelfUpdateStatusPanel', '真实 self-update 排空与进程切换阶段，保留后端阶段说明'],
 ]);
-const loadingCondition = text => {
-  const positive = text.replace(/(['"])(.*?)\1/g, (match, quote, value) => ['loading', 'checking'].includes(value) ? match : '""').replace(/!\s*\w*[Ll]oading\w*/g, 'false');
-  return /===\s*['"](?:loading|checking)['"]/.test(positive) || /\b(?:\w*[Ll]oading|\w*[Ff]etching|discovering)\b/.test(positive);
+export const loadingCondition = text => {
+  const positive = text.replace(/(['"])(.*?)\1/g, (match, quote, value) => ['loading', 'checking', 'pending'].includes(value) ? match : '""').replace(/!\s*\w*[Ll]oading\w*/g, 'false');
+  return /!\s*(?:[\w.]*[Rr]eady|[\w.]*[Ll]oaded)\b/.test(positive) || /(?:===|==)\s*['"](?:loading|checking|pending)['"]/.test(positive) || /\b(?:\w*[Ll]oading|\w*[Ff]etching|discovering)\b/.test(positive);
 };
 function ownerOf(node, sf) {
   for (let p = node.parent; p; p = p.parent) {
@@ -40,7 +42,7 @@ export function auditLoadingCoverage(root = sourceRoot) {
     const visit = n => {
       if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
         const name = n.tagName.getText(sf);
-        if (['ContentLoading', 'LoadingBlock'].includes(name)) {
+        if (['ContentLoading', 'LoadingBlock'].includes(name) || /Skeleton$/.test(name)) {
           const attr = n.attributes.properties.find(a => ts.isJsxAttribute(a) && a.name.getText(sf) === 'label');
           sharedSites.push({ ...position(n), component: name, label: attr?.initializer?.getText(sf) ?? '加载中' });
         }
@@ -56,7 +58,7 @@ export function auditLoadingCoverage(root = sourceRoot) {
           if (ts.isJsxAttribute(p) || ts.isJsxElement(p) && /^(?:Button|button|select|option)$/.test(p.openingElement.tagName.getText(sf))) control = true;
         }
         const markup = body.getText(sf);
-        if (control) { record.category = 'action'; record.reason = '按钮或原生控件的等待反馈'; }
+        if (control || /^\(?\s*<(?:Button|button)\b/.test(markup)) { record.category = 'action'; record.reason = '按钮或原生控件的等待反馈'; }
         else if (/<(?:ContentLoading|LoadingBlock|\w*Skeleton|ConsoleRouteFallback)\b|cds-loading-skeleton-/.test(markup)) { record.category = 'skeleton'; }
         else if (progressOwners.has(record.owner) && (
           record.owner === 'DbProbePanel' && record.condition === "state.status === 'loading'" ||
@@ -64,6 +66,8 @@ export function auditLoadingCoverage(root = sourceRoot) {
           record.owner === 'ServiceLogsPanel' && record.condition.includes('isCurrent') ||
           record.owner === 'WebEntryConfigDialog' && record.condition.includes('c.state') ||
           record.owner === 'BranchSearchDropdown' && record.condition === 'remoteLoading' ||
+          record.owner === 'ProjectCard' && record.condition === '!isReady && cloneLabel' ||
+          record.owner === 'SelfUpdateStatusPanel' && record.condition === "data.restartStatus === 'pending' && data.restartWait" ||
           record.owner === 'PreviewActionSplitButton' || record.owner === 'ApiProbe'
         )) { record.category = 'progress'; record.reason = progressOwners.get(record.owner); }
         else if (/^<Loader2\b/.test(markup) && record.owner === 'CommandPalette') { record.category = 'progress'; record.reason = '搜索输入框刷新指示，结果区域另有骨架'; }

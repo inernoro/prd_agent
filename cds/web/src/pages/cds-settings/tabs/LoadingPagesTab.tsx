@@ -1,4 +1,7 @@
+import { AgentRequestsSkeleton, ReleaseCenterSkeleton, TopologyPageSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { ReleaseConsoleSkeleton } from '@/components/skeletons/ReleaseConsoleSkeleton';
 import { SettingsLoadingContext } from '@/components/skeletons/SettingsSkeleton';
 import { useMemo, useState } from 'react';
 import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
@@ -66,6 +69,12 @@ const commonLoadingScenarios: LoadingScenario[] = [
   { id: 'relation-flow', label: '服务关系', status: 'loading' },
   { id: 'metrics', label: '指标曲线', status: 'loading' },
   { id: 'branch-list', label: '分支列表', status: 'loading', loadingLabel: '加载项目与本地分支列表' },
+  { id: 'release-center', label: '发布中心', status: 'loading' },
+  { id: 'topology-page', label: '服务拓扑', status: 'loading' },
+  { id: 'agent-requests', label: 'Agent 请求', status: 'loading' },
+  { id: 'system-settings', label: '系统设置', status: 'loading' },
+  { id: 'project-settings', label: '项目设置', status: 'loading' },
+  { id: 'release-console', label: '发布控制台', status: 'loading' },
   { id: 'project-list', label: '项目列表', status: 'loading', loadingLabel: '加载项目列表' },
   { id: 'branch-detail', label: '分支详情', status: 'loading', loadingLabel: '加载分支详情' },
   { id: 'container-logs', label: '容器日志', status: 'loading', loadingLabel: '加载容器日志' },
@@ -387,6 +396,12 @@ export function LoadingPagesTab(): JSX.Element {
 /** 预览直接复用生产组件，避免预览与真实等待各画一套。 */
 export function CommonLoadingSkeleton({ scenarioId, label = '加载中' }: { scenarioId: string; label?: string }): JSX.Element {
   switch (scenarioId) {
+    case 'release-center': return <ReleaseCenterSkeleton />;
+    case 'topology-page': return <TopologyPageSkeleton />;
+    case 'agent-requests': return <AgentRequestsSkeleton />;
+    case 'system-settings': return <SettingsPageSkeleton />;
+    case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;
+    case 'release-console': return <ReleaseConsoleSkeleton />;
     case 'content-rows': return <ContentLoading label="读取列表与配置" />;
     case 'content-table': return <ContentLoading label="读取表格与结果" variant="table" />;
     case 'content-log': return <ContentLoading label="读取日志" variant="log" />;

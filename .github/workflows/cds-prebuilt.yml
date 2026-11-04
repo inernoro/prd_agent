@@ -71,6 +71,20 @@ jobs:
       - name: Build web (vite → cds/web/dist)
         run: pnpm -C cds/web build
 
+      - name: Verify loading continuity in a real browser
+        timeout-minutes: 10
+        run: |
+          pnpm -C cds exec playwright install --with-deps chromium
+          pnpm -C cds/web exec vite preview --host 127.0.0.1 --port 8870 --strictPort > "$RUNNER_TEMP/cds-loading-preview.log" 2>&1 &
+          CDS_LOADING_PREVIEW_PID=$!
+          trap 'kill "$CDS_LOADING_PREVIEW_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8870/ > /dev/null; then break; fi
+            sleep 1
+          done
+          pnpm -C cds smoke:loading http://127.0.0.1:8870 --out "$RUNNER_TEMP/cds-loading-continuity"
+          CDS_LOADING_EVIDENCE="$RUNNER_TEMP/cds-loading-neighbors" node cds/scripts/loading-coverage-smoke.mjs http://127.0.0.1:8870
+
       - name: Write prebuilt manifest
         run: |
           cat > cds/cds-prebuilt-manifest.json <<JSON
