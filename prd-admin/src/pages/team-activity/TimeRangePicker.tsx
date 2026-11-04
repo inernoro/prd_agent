@@ -139,17 +139,25 @@ type AnchorRect = { left: number; top: number; bottom: number; width: number };
 export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChange: (next: TeamRange) => void }) {
   const isMobile = useIsMobile();
   const [days, setDays] = useState<DensityDay[]>([]);
+  const [densityRequested, setDensityRequested] = useState(false);
+  const [densityLoaded, setDensityLoaded] = useState(false);
+  const [densityError, setDensityError] = useState<string | null>(null);
   const fetchIdRef = useRef(0);
 
-  // 近 90 天密度序列（复用 experience-trend 天桶），用于预设微预览数字 + sparkline + 刷选条背景柱
+  // Only load the 90-day preview when the user opens a preview or custom range.
   useEffect(() => {
+    if (!densityRequested || densityLoaded) return;
     const id = ++fetchIdRef.current;
+    const controller = new AbortController();
     const from = new Date(Date.now() - DENSITY_DAYS * 86_400_000).toISOString();
-    void getTeamActivityExperienceTrend({ from }).then((res) => {
-      if (fetchIdRef.current !== id) return;
+    void getTeamActivityExperienceTrend({ from }, { signal: controller.signal, timeoutMs: 45_000 }).then((res) => {
+      if (controller.signal.aborted || fetchIdRef.current !== id) return;
+      setDensityLoaded(true);
       if (res.success) setDays(buildDensity(res.data.buckets));
+      else setDensityError(res.error?.message ?? '密度预览暂不可用');
     });
-  }, []);
+    return () => controller.abort();
+  }, [densityRequested, densityLoaded]);
 
   const todayMs = startOfDay(new Date()).getTime();
 
@@ -189,6 +197,7 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     const r = el.getBoundingClientRect();
     hoverTimer.current = setTimeout(() => {
+      setDensityRequested(true);
       setHoverKey(key);
       setHoverAnchor({ left: r.left, top: r.top, bottom: r.bottom, width: r.width });
     }, 160);
@@ -205,6 +214,7 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
   const customBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const openBrush = useCallback(() => {
+    setDensityRequested(true);
     closeHover();
     const el = customBtnRef.current;
     if (!el) return;
@@ -262,7 +272,8 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
               label={PRESET_OPTIONS.find((p) => p.key === hoverKey)?.label ?? ''}
               summary={presetSummary[hoverKey]}
               seg={presetSeg(hoverKey)}
-              loading={days.length === 0}
+              loading={!densityLoaded}
+              error={densityError}
             />,
             document.body
           )
@@ -296,12 +307,14 @@ function MicroPreview({
   summary,
   seg,
   loading,
+  error,
 }: {
   anchor: AnchorRect;
   label: string;
   summary: { signal: number; pain: number };
   seg: number[];
   loading: boolean;
+  error?: string | null;
 }) {
   const width = 188;
   // 默认锚定胶囊下方居中；越界时夹回视口
@@ -321,7 +334,7 @@ function MicroPreview({
       }}
     >
       <style>{`@keyframes voc-micro-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
-      <div className="text-[11px] text-token-muted mb-2">{label} · 真实聚合</div>
+      <div className="text-[11px] text-token-muted mb-2">{label} · {error ? '预览暂不可用' : loading ? '正在加载密度' : '真实聚合'}</div>
       <div className="flex gap-3.5 mb-2">
         <div>
           <div className="text-[17px] font-semibold tabular-nums" style={{ color: TEAL_SOFT }}>
