@@ -120,6 +120,7 @@ export class SchedulerService {
     if (!source) return true;
     if (this.activityRefresh) return this.activityRefresh;
     this.activityRefresh = (async () => {
+      const previousReason = this.activityReason;
       try {
         const value = await source.read();
         const historicalBoundarySettled = this.activityGraceDeadline !== undefined
@@ -131,10 +132,10 @@ export class SchedulerService {
       } catch { this.activityUnknown = true; this.activityReason = 'read-failed'; }
       const status = this.activityUnknown ? 'unknown' : 'ready';
       this.activityObservedAt = new Date(this.clock.now()).toISOString();
-      if (this.activityUnknown) this.activityLastUnknownAt = this.activityObservedAt;
+      if (this.activityUnknown && this.activityReason !== 'historical-marker') this.activityLastUnknownAt = this.activityObservedAt;
       const previousStatus = this.activityLastObservedStatus;
       this.activityLastObservedStatus = status;
-      if (status !== previousStatus && (previousStatus !== undefined || status === 'unknown')) {
+      if ((status !== previousStatus || this.activityReason !== previousReason) && (previousStatus !== undefined || status === 'unknown')) {
         try { this.activityTransition?.({ status, reason: this.activityReason, observedAt: this.activityObservedAt }); }
         catch { console.warn('[scheduler] 预览活动状态事件未写入，请检查诊断存储'); }
       }

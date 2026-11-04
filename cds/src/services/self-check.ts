@@ -133,9 +133,9 @@ export interface SelfCheckDeps {
 export function wireSchedulerPreviewActivitySelfCheck(scheduler: SchedulerService, events: ServerEventLogSink | null,
   isEventStoreReadable: () => boolean): NonNullable<SelfCheckDeps['previewActivity']> {
   scheduler.setPreviewActivityTransitionListener(event => events?.record({
-    ts: event.observedAt, category: 'system', severity: event.status === 'unknown' ? 'warn' : 'info',
-    source: 'scheduler-preview-activity', action: event.status === 'unknown' ? 'unknown' : 'recovered',
-    message: event.status === 'unknown' ? '预览活跃状态无法确认，请检查转发器连接' : '预览活跃状态观察已恢复',
+    ts: event.observedAt, category: 'system', severity: event.status === 'unknown' && event.reason !== 'historical-marker' ? 'warn' : 'info',
+    source: 'scheduler-preview-activity', action: event.reason === 'historical-marker' ? 'historical-marker' : event.status === 'unknown' ? 'unknown' : 'recovered',
+    message: event.reason === 'historical-marker' ? '重启后正在结算历史探针观察，恢复期间暂停自动停机' : event.status === 'unknown' ? '预览活跃状态无法确认，请检查转发器连接' : '预览活跃状态观察已恢复',
     details: { status: event.status, reason: event.reason, observedAt: event.observedAt },
   }));
   return async sinceMs => {
@@ -246,22 +246,26 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   if (activityRead) {
     const activity = await activityRead;
     const currentUnknown = activity?.current?.status === 'unknown';
+    const recovering = currentUnknown && activity?.current?.reason === 'historical-marker' && activity.current.recoveryGraceRemainingMs > 0 && activity.recentUnknownCount === 0;
     const lastUnknownAt = Date.parse(activity?.current?.lastUnknownAt ?? '');
     const recentInProcessUnknown = lastUnknownAt >= now - PREVIEW_ACTIVITY_WINDOW_MS && lastUnknownAt <= now;
     const historicalUnknown = recentInProcessUnknown || (typeof activity?.recentUnknownCount === 'number' && activity.recentUnknownCount > 0);
     const known = activity?.current?.status === 'ready' && typeof activity.recentUnknownCount === 'number' && activity.recentUnknownCount >= 0;
-    const observed = currentUnknown || historicalUnknown ? 1 : known ? 0 : null;
-    const publicMessage = currentUnknown
+    const observed = historicalUnknown ? 1 : recovering ? null : currentUnknown ? 1 : known ? 0 : null;
+    const publicMessage = recovering && !historicalUnknown ? '重启后正在结算历史探针观察，恢复期间暂停自动停机' : currentUnknown
       ? (activity?.schedulerEnabled ? '预览活跃状态无法确认，已暂停自动停机，请检查转发器连接'
         : '预览活跃状态无法确认，自动停机当前未启用，请检查转发器连接')
       : historicalUnknown ? '预览活跃状态曾无法确认，请检查转发器连接并确认恢复，异常记录保留六小时'
         : observed === null ? '预览活跃状态或异常历史无法确认，请检查转发器连接与诊断存储'
           : '预览活跃状态可确认，近六小时未发现异常记录';
-    checks.push(monitored({ componentId: 'scheduler.preview-activity', componentType: 'self',
-      observedValue: observed, observedUnit: 'flag', status: observed === 0 ? 'pass' : 'fail',
+    checks.push({ componentId: 'scheduler.preview-activity-samples', componentType: 'self', time,
+      observedValue: recovering && !historicalUnknown ? 0 : 1, observedUnit: 'count', status: recovering && !historicalUnknown ? 'warn' : 'pass' });
+    const check = monitored({ componentId: 'scheduler.preview-activity', componentType: 'self',
+      observedValue: observed, observedUnit: 'flag', status: recovering && !historicalUnknown ? 'warn' : observed === 0 ? 'pass' : 'fail',
       output: publicMessage, publicMessage,
     }, { name: 'CDS · 预览活跃状态', publicName: '预览自动停机保护', op: 'eq', value: 0,
-      intervalSeconds: 21600, failuresToAlarm: 1, severity: 'P1' }, time));
+      intervalSeconds: 21600, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'scheduler.preview-activity-samples' }, time);
+    checks.push(check);
   }
 
   // ── 部署 ───────────────────────────────────────────────────────────

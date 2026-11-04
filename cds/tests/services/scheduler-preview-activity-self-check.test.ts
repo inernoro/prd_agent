@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import http from 'node:http';
+import { probeHealthJsonBatch } from '../../src/services/uptime-custom-monitor.js';
+import { reconcileDiscoveredMonitors } from '../../src/services/monitor-reconcile.js';
 import os from 'node:os';
 import path from 'node:path';
 import * as selfCheck from '../../src/services/self-check.js';
@@ -7,7 +10,7 @@ import type { SelfCheckDeps } from '../../src/services/self-check.js';
 import { SchedulerService } from '../../src/services/scheduler.js';
 import { StateService } from '../../src/services/state.js';
 import { PreviewActivityCollector } from '../../src/forwarder/preview-activity.js';
-import { isTrustedProbeFingerprint } from '../../src/services/probe-marker.js';
+import { PROBE_MARKER_HEADER, isTrustedProbeFingerprint } from '../../src/services/probe-marker.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import { discoverMonitors } from '../../src/services/monitor-discovery.js';
 import { selfCheckUrl } from '../../src/services/self-monitoring-bootstrap.js';
@@ -60,7 +63,7 @@ async function fixture() {
     };
     return { scheduler, doc: () => selfCheck.buildSelfCheck(deps) };
   };
-  return { create, pending, persist, store, setReadable: (value: boolean) => { readable = value; },
+  return { create, pending, persist, store, mark: () => collector.record('history', { [PROBE_MARKER_HEADER]: 'b'.repeat(48) }), setReadable: (value: boolean) => { readable = value; },
     setAvailable: (value: boolean) => { available = value; }, advance: (ms: number) => { now += ms; } };
 }
 
@@ -104,6 +107,40 @@ describe('真实Scheduler事件到常设自检的有限闭环', () => {
     expect((await restarted.doc()).checks['scheduler.preview-activity']).toMatchObject({ status: 'fail', observedValue: 1 });
     f.advance(6 * 3600_000 + 1);
     expect((await restarted.doc()).checks['scheduler.preview-activity']).toMatchObject({ status: 'pass', observedValue: 0 });
+  });
+
+  it('旧代探针的真实恢复宽限只显示等待，不制造六小时连接告警', async () => {
+    const f = await fixture(); f.setAvailable(true); f.mark(); f.advance(5000); const current = f.create();
+    await current.scheduler.tick();
+    expect(current.scheduler.getSnapshot().previewActivity).toMatchObject({ status: 'unknown', reason: 'historical-marker' });
+    const waiting = (await current.doc()).checks['scheduler.preview-activity'];
+    expect(waiting).toMatchObject({ status: 'warn', observedValue: null });
+    expect(waiting['cds:monitor']).toMatchObject({ observeMode: 'passive', sampleComponentId: 'scheduler.preview-activity-samples' });
+    const doc = await current.doc();
+    const server = http.createServer((_req, res) => { res.writeHead(200, { 'Content-Type': 'application/health+json' }); res.end(JSON.stringify(doc)); });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/self-check`;
+      const spec = discoverMonitors(doc, url).monitors.filter(item => item.componentId === 'scheduler.preview-activity');
+      const monitors = reconcileDiscoveredMonitors({ endpointUrl: url, projectId: 'fixture', discovered: spec, existing: [], hash: () => 'a'.repeat(40), now: () => new Date().toISOString() }).upsert;
+      const actual = await probeHealthJsonBatch(monitors, 1000);
+      expect(actual.collection.up).toBe(true);
+      expect(actual.members).toMatchObject([{ up: false, noData: true, observation: { sampleCount: 0 } }]);
+    } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+    expect(f.pending.map(event => [event.action, event.severity])).toEqual([['historical-marker', 'info']]);
+    f.persist(); f.advance(60_001); await current.scheduler.tick();
+    expect((await current.doc()).checks['scheduler.preview-activity']).toMatchObject({ status: 'pass', observedValue: 0 });
+  });
+
+  it('历史宽限期间发生真实读失败仍留六小时告警，恢复不抹除证据', async () => {
+    const f = await fixture(); f.setAvailable(true); f.mark(); f.advance(5000); const current = f.create();
+    await current.scheduler.tick(); f.setAvailable(false); f.advance(1); await current.scheduler.tick();
+    expect(f.pending.map(event => event.action)).toEqual(['historical-marker', 'unknown']);
+    const failed = (await current.doc()).checks['scheduler.preview-activity'];
+    expect(failed).toMatchObject({ status: 'fail', observedValue: 1 });
+    expect(failed['cds:monitor']).toMatchObject({ severity: 'P1', intervalSeconds: 21600 });
+    f.persist(); f.setAvailable(true); f.advance(60_001); await current.scheduler.tick();
+    expect((await current.doc()).checks['scheduler.preview-activity']).toMatchObject({ status: 'fail', observedValue: 1 });
   });
 
   it('初次真实健康不写恢复事件，新声明由原解析器接收并固定6h/P1/一次失败', async () => {
