@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
@@ -4276,11 +4277,7 @@ function ResourceUsageDialog({
           className="max-h-[55vh] overflow-y-auto rounded-md border border-[hsl(var(--hairline))]"
           style={{ overscrollBehavior: 'contain' }}
         >
-          {loading && !data ? (
-            <div className="flex items-center justify-center gap-2 px-4 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> 采样中…
-            </div>
-          ) : rows.length === 0 ? (
+          {loading && !data ? <ContentLoading label="读取资源用量" variant="panel" /> : rows.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">
               {data?.sampledAt ? '当前无运行容器或构建活动。' : '采样器尚未产出首个快照，请稍候…'}
             </div>

@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 定时发布规则：到点由 CDS 自己发，不需要人在场。
  *
@@ -218,12 +219,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
         />
       ) : null}
 
-      {loading ? (
-        <div className="cds-surface-raised cds-hairline flex items-center gap-2 rounded-lg px-4 py-8 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在读取定时发布规则
-        </div>
-      ) : error ? (
+      {loading ? <ContentLoading label="读取定时发布规则" variant="rows" /> : error ? (
         <div className="cds-surface-raised cds-hairline rounded-lg px-4 py-8 text-sm text-muted-foreground">
           规则列表暂时读不到：{error}
         </div>
@@ -353,7 +349,7 @@ function JobRuns({ jobId }: { jobId: string }): JSX.Element {
         运行记录
       </summary>
       {runs === null ? (
-        <div className="mt-1.5 text-[0.7188rem] text-muted-foreground">正在读取…</div>
+        <ContentLoading label="读取规则运行记录" className="mt-1.5" />
       ) : runs.length === 0 ? (
         <div className="mt-1.5 text-[0.7188rem] text-muted-foreground">还没有运行记录。</div>
       ) : (

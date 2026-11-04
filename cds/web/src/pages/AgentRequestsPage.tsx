@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * Agent 请求观测台（2026-06-11 用户信任诉求）
  *
@@ -260,6 +261,7 @@ export function AgentRequestsPage(): JSX.Element {
 
       {/* 请求列表：一条 = 一次 agent 会话（title/label + 收发预览 + 状态/耗时） */}
       <div className="flex flex-col gap-2" data-testid="request-list">
+        {loading && items.length === 0 ? <ContentLoading label="加载 Agent 请求" variant="table" /> : null}
         {items.length === 0 && !loading && (
           <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
             还没有 Agent 请求。MAP 侧发起生成（如 PPT 创作工作台）后，请求会实时出现在这里。
@@ -333,7 +335,7 @@ export function AgentRequestsPage(): JSX.Element {
                     <div className="text-[0.625rem] font-semibold text-muted-foreground mb-1">
                       完整事件流（{item.live ? '内存实录' : '会话已结束——live 会话才有全量事件，历史仅保留收发摘要'}）
                     </div>
-                    {events === 'loading' && <div className="text-[0.6875rem] text-muted-foreground">事件流加载中...</div>}
+                    {events === 'loading' && <ContentLoading label="加载事件流" variant="rows" />}
                     {events === 'error' && (
                       <div className="text-[0.6875rem] text-warn">
                         事件流不可用（会话可能已随 CDS 重启清理，收发摘要见上）

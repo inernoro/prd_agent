@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReactNode } from 'react';
 import { databaseFailure, type DatabaseFailure } from '@/lib/databaseFailure';
 import { copyTextToClipboard } from '@/lib/clipboard';
@@ -7,7 +8,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
 import { createLatestWinsGate } from '@/lib/latest-wins';
@@ -3250,7 +3250,7 @@ function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
     }
   }, [runId]);
 
-  if (loading) return <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在读取结构化诊断</div>;
+  if (loading) return <ContentLoading label="读取结构化诊断" variant="rows" />;
   if (!diagnosis) return <></>;
   const failure = diagnosis.failure;
   return (
@@ -3409,7 +3409,7 @@ function systemLogTypeMeta(type: string): { label: string; cls: string } {
 }
 
 function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: string }): JSX.Element {
-  if (state.status === 'loading') return <div className={DETAIL_LOG_EMPTY_CLASS}>加载系统日志…</div>;
+  if (state.status === 'loading') return <ContentLoading label="加载系统日志" variant="log" />;
   if (state.status === 'error') {
     return <div className={`${DETAIL_LOG_EMPTY_CLASS} text-destructive`}>加载失败：{state.message}</div>;
   }
@@ -4456,7 +4456,7 @@ function ResourceConnection({
           <div className="min-w-0 flex-1">
             <div className="font-semibold">临时 TCP 直连</div>
             <div className="mt-1">填写白名单 IP 和有效期后，本地数据库工具可直接连接。到期会断开已有连接并关闭入口，数据库账号密码沿用当前配置。</div>
-            {infraLocalOnly ? <div className="mt-1">{tcpCapability?.enabled ? `直连主机：${tcpCapability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。` : tcpCapability?.reason || '正在读取实例直连配置…'}</div> : null}
+            {infraLocalOnly ? <div className="mt-1">{tcpCapability?.enabled ? `直连主机：${tcpCapability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。` : tcpCapability?.reason || <ContentLoading label="读取实例直连配置" variant="inline" />}</div> : null}
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
               <div className="mt-1 font-mono">
@@ -5184,7 +5184,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                   })}
                 </div>
               ) : (
-                <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : '没有数据库信息。'}</div>
+                <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? <ContentLoading label="读取数据库列表" /> : '没有数据库信息。'}</div>
               )}
             </div>
           </aside>
@@ -5387,12 +5387,7 @@ function MongoDocumentsView({
         </div>
       </div>
 
-      {state.status === 'loading' ? (
-        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          执行中
-        </div>
-      ) : activeMode === 'table' && hasDocuments ? (
+      {state.status === 'loading' ? <ContentLoading label="读取文档结果" variant="table" /> : activeMode === 'table' && hasDocuments ? (
         <MongoDocumentTable documents={state.documents} selectedIndex={selectedIndex} onSelectIndex={onSelectIndex} />
       ) : activeMode === 'json' ? (
         <pre className="min-h-0 overflow-auto p-3 font-mono text-xs leading-5">
@@ -5617,7 +5612,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
                 })}
               </div>
             ) : (
-              <div className="px-2 py-3 text-xs text-muted-foreground">{keysState.status === 'loading' ? '扫描中...' : '没有匹配的 key。'}</div>
+              <div className="px-2 py-3 text-xs text-muted-foreground">{keysState.status === 'loading' ? <ContentLoading label="读取键列表" /> : '没有匹配的 key。'}</div>
             )}
           </div>
           <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-3 py-2 text-xs text-muted-foreground">
@@ -5631,9 +5626,7 @@ function RedisResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
         <div className="grid min-w-0 gap-3">
           <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Key Detail</div>
-            {detailState.status === 'loading' ? (
-              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取 key</div>
-            ) : detailState.status === 'error' ? (
+            {detailState.status === 'loading' ? <ContentLoading label="读取数据详情" variant="rows" /> : detailState.status === 'error' ? (
               <div className="px-3 py-3 text-xs leading-5 text-destructive">{detailState.message}</div>
             ) : detailState.detail ? (
               <div className="grid gap-3 p-3">
@@ -5990,7 +5983,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   </div>
                 </div>
               ) : (
-                <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取表列表...' : '没有表。'}</div>
+                <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? <ContentLoading label="读取表列表" /> : '没有表。'}</div>
               )}
             </div>
           </aside>
@@ -6162,9 +6155,7 @@ function DbResultTable({
         </div>
       </div>
 
-      {state.status === 'loading' ? (
-        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />执行中</div>
-      ) : activeMode === 'table' && hasRows ? (
+      {state.status === 'loading' ? <ContentLoading label="读取查询结果" variant="table" /> : activeMode === 'table' && hasRows ? (
         <div className="min-h-0 overflow-auto">
           <table className="w-full min-w-[45rem] text-left text-xs">
             <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
@@ -6367,9 +6358,7 @@ function ResourceBackupsPanel({
             </Button>
           </div>
         </div>
-        {backupState.status === 'loading' ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取备份列表</div>
-        ) : backupState.status === 'error' ? (
+        {backupState.status === 'loading' ? <ContentLoading label="读取备份列表" variant="rows" /> : backupState.status === 'error' ? (
           <div className="text-xs leading-5 text-destructive">{backupState.message}</div>
         ) : backupState.supported === false ? (
           <div className="text-xs leading-5 text-muted-foreground">{backupState.message || '当前数据库类型的资源级备份恢复待接入。'}</div>
@@ -6460,12 +6449,7 @@ function ResourceMetricsPanel({ resource }: { resource: BranchResource }): JSX.E
   }, [loadMetrics]);
 
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取 {resource.displayName} 指标…
-      </div>
-    );
+    return <ContentLoading label="读取资源指标" variant="panel" />;
   }
 
   if (state.status === 'error') {
@@ -6560,12 +6544,7 @@ function ResourceLogsPanel({ resource }: { resource: BranchResource }): JSX.Elem
   }, [loadLogs]);
 
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取 {resource.displayName} 日志…
-      </div>
-    );
+    return <ContentLoading label="读取资源日志" variant="log" />;
   }
 
   if (state.status === 'error') {
@@ -6733,9 +6712,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
       </div>
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
         <div className="mb-2 text-xs font-semibold text-muted-foreground">最近审计</div>
-        {auditState.status === 'loading' ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />加载中</div>
-        ) : auditState.status === 'error' ? (
+        {auditState.status === 'loading' ? <ContentLoading label="读取设置审计" variant="rows" /> : auditState.status === 'error' ? (
           <div className="text-xs text-destructive">{auditState.message}</div>
         ) : auditState.logs.length > 0 ? (
           <div className="space-y-2">
@@ -6806,7 +6783,7 @@ function ServiceLogsPanel({
           ) : (
             <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground`}>
               {state.status === 'loading' && isCurrent
-                ? '正在读取 docker logs...'
+                ? <ContentLoading label="读取服务日志" variant="log" />
                 : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
             </pre>
           )}
@@ -6982,12 +6959,7 @@ export function VariablesPanel({
   onToast: (message: string) => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
-        正在读取该分支的生效环境变量…
-      </section>
-    );
+    return <ContentLoading label="读取生效环境变量" variant="table" />;
   }
   if (state.status === 'error') {
     return (
@@ -7304,9 +7276,7 @@ export function SettingsPanel({
             {runtime?.label || '源码'}
           </span>
         </div>
-        {profileState.status === 'loading' || profileState.status === 'idle' ? (
-          <div className="text-sm text-muted-foreground">正在加载容器模式…</div>
-        ) : null}
+        {profileState.status === 'loading' || profileState.status === 'idle' ? <ContentLoading label="读取容器模式" variant="rows" /> : null}
         {profileState.status === 'error' ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {profileState.message}

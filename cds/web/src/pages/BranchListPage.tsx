@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
 import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -4424,7 +4425,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       分组读取失败：{groupsLoadError}。刷新页面重试；在此之前可切回「按状态」查看全部分支。
                     </div>
                   ) : !branchGroups ? (
-                    <div className="px-2 text-sm text-muted-foreground">正在读取分组…</div>
+                    <ContentLoading label="读取分支分组" />
                   ) : groupList.length === 0 && groupsReadOnly ? (
                     <div className="px-2 text-sm text-muted-foreground">{canManageConsole ? '这是从父实例镜像来的项目，父实例上还没有建分组；分组要在父实例上建。' : '项目还没有分组，请联系系统所有者创建；你可以按状态查看分支。'}</div>
                   ) : groupList.length === 0 ? (
@@ -4810,7 +4811,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                       </div>
                     </div>
                     {slowHttpState.status === 'idle' || slowHttpState.status === 'loading' ? (
-                      <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取 HTTP 耗时样本</div>
+                      <ContentLoading label="读取 HTTP 耗时样本" variant="table" />
                     ) : slowHttpState.status === 'error' ? (
                       <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
                         {slowHttpState.message}
@@ -5213,12 +5214,7 @@ function BranchSearchDropdown({
           </>
         ) : null}
 
-        {remoteLoading && visibleRemote.length === 0 ? (
-          <div className="px-4 py-3 text-[0.6875rem] text-muted-foreground/80">
-            <Loader2 className="mr-1.5 inline h-3 w-3 animate-spin" />
-            远程分支加载中…
-          </div>
-        ) : null}
+        {remoteLoading && visibleRemote.length === 0 ? <ContentLoading label="读取远程分支" variant="rows" /> : null}
 
         {/* Bug A:取消自动 force-fetch 兜底后,空 remote 时给个手动触发入口。
             5 分钟内点了 force-fetch 后端会真跑 git fetch(可能 30s)。
@@ -6029,9 +6025,7 @@ function CoolPolicyEditorModal({ onClose }: { onClose: () => void }): JSX.Elemen
         <p className="mb-3 text-xs text-muted-foreground">
           CDS 系统设置 · 调度器空闲阈值（对全部分支生效）。保存即刻生效——调度器下一轮判定就按新值执行；被降温的分支访问预览或手动启动即回温。
         </p>
-        {phase === 'loading' ? (
-          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取当前配置…</div>
-        ) : (
+        {phase === 'loading' ? <ContentLoading label="读取降温配置" variant="rows" /> : (
           <>
             <div className="flex items-center gap-2">
               <label className="text-xs text-muted-foreground" htmlFor="cool-idle-minutes">空闲超过</label>
@@ -6658,9 +6652,7 @@ const BranchCard = memo(function BranchCard({
         <span>最近提交</span>
         <span className="truncate font-mono">{branch.branch}</span>
       </div>
-      {commitHistoryState.status === 'loading' ? (
-        <div className="px-2 py-3 text-xs text-muted-foreground">读取提交历史...</div>
-      ) : null}
+      {commitHistoryState.status === 'loading' ? <ContentLoading label="读取提交历史" variant="rows" /> : null}
       {commitHistoryState.status === 'error' ? (
         <div className="px-2 py-3 text-xs leading-5 text-destructive">{commitHistoryState.message || '读取失败'}</div>
       ) : null}

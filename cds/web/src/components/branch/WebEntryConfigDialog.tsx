@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
@@ -429,12 +430,7 @@ export function WebEntryConfigDialog({
             className="space-y-4 px-6 py-5"
             style={{ minHeight: 0, overflowY: "auto" }}
           >
-            {loading ? (
-              <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-                正在读取地址设置…
-              </div>
-            ) : config && draft ? (
+            {loading ? <ContentLoading label="读取地址设置" variant="rows" /> : config && draft ? (
               <>
                 {!config.canEdit && (
                   <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
@@ -751,12 +747,7 @@ export function WebEntryConfigDialog({
                         刷新
                       </button>
                     </div>
-                    {auditLoading && (
-                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <LoaderCircle className="h-3 w-3 animate-spin" />
-                        读取审计…
-                      </p>
-                    )}
+                    {auditLoading && <ContentLoading label="读取地址审计" variant="rows" />}
                     {auditError && (
                       <p className="text-xs text-destructive">{auditError}</p>
                     )}

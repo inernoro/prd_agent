@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useMemo, useState } from 'react';
 import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
 
@@ -56,6 +57,10 @@ const failedBranchScenarios: LoadingScenario[] = [
 ];
 
 const commonLoadingScenarios: LoadingScenario[] = [
+  { id: 'content-rows', label: '列表与配置', status: 'loading' },
+  { id: 'content-table', label: '表格与结果', status: 'loading' },
+  { id: 'content-log', label: '日志区域', status: 'loading' },
+  { id: 'content-panel', label: '资源与总览', status: 'loading' },
   { id: 'monitor-center', label: '监控中心', status: 'loading' },
   { id: 'relation-flow', label: '服务关系', status: 'loading' },
   { id: 'metrics', label: '指标曲线', status: 'loading' },
@@ -379,6 +384,10 @@ export function LoadingPagesTab(): JSX.Element {
 /** 预览直接复用生产组件，避免预览与真实等待各画一套。 */
 export function CommonLoadingSkeleton({ scenarioId, label = '加载中' }: { scenarioId: string; label?: string }): JSX.Element {
   switch (scenarioId) {
+    case 'content-rows': return <ContentLoading label="读取列表与配置" />;
+    case 'content-table': return <ContentLoading label="读取表格与结果" variant="table" />;
+    case 'content-log': return <ContentLoading label="读取日志" variant="log" />;
+    case 'content-panel': return <ContentLoading label="读取资源与总览" variant="panel" />;
     case 'project-list': return <ProjectListSkeleton />;
     case 'branch-list': return <BranchListSkeleton />;
     case 'branch-detail': return <BranchDetailLoadingSkeleton />;

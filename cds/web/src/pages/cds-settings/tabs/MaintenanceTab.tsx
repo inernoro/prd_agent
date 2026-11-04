@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
 
@@ -1483,11 +1484,7 @@ function SelfUpdateStatusPanel({
   restarting: boolean;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-        正在检查 GitHub 远端 + 自更新流水…
-      </div>
-    );
+    return <ContentLoading label="读取自更新状态" variant="rows" />;
   }
   if (state.status === 'error') {
     return (
@@ -1705,9 +1702,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
   const manualRefresh = onManualRefresh;
 
   if (historyState.status === 'loading') {
-    return (
-      <div className="py-8 text-center text-sm text-muted-foreground">加载中…</div>
-    );
+    return <ContentLoading label="读取自更新历史" variant="table" />;
   }
   if (historyState.status === 'error') {
     return (

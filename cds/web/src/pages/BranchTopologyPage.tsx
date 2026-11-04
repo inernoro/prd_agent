@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
@@ -1738,12 +1739,7 @@ function NodeDetails({
               actionHref={`/branches/${encodeURIComponent(projectId)}`}
               actionLabel="回到分支列表"
             />
-          ) : runtimeState.status === 'loading' ? (
-            <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              加载日志
-            </div>
-          ) : runtimeState.status === 'error' ? (
+          ) : runtimeState.status === 'loading' ? <ContentLoading label="加载服务日志" variant="log" /> : runtimeState.status === 'error' ? (
             <ErrorBlock message={runtimeState.message} />
           ) : runtimeState.status === 'ok' ? (
             <RuntimeLogs
@@ -1766,12 +1762,7 @@ function NodeDetails({
               actionHref={`/branches/${encodeURIComponent(projectId)}`}
               actionLabel="回到分支列表"
             />
-          ) : runtimeState.status === 'loading' ? (
-            <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              加载提交
-            </div>
-          ) : runtimeState.status === 'error' ? (
+          ) : runtimeState.status === 'loading' ? <ContentLoading label="加载提交历史" variant="rows" /> : runtimeState.status === 'error' ? (
             <ErrorBlock message={runtimeState.message} />
           ) : runtimeState.status === 'ok' ? (
             <RuntimeCommits
@@ -1894,12 +1885,7 @@ function InfraDetails({
             title="点击查看日志"
             description="不需要离开拓扑页即可确认数据库、缓存或对象存储是否启动成功。"
           />
-        ) : logsState.status === 'loading' ? (
-          <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            加载日志
-          </div>
-        ) : logsState.status === 'error' ? (
+        ) : logsState.status === 'loading' ? <ContentLoading label="加载基础设施日志" variant="log" /> : logsState.status === 'error' ? (
           <ErrorBlock message={logsState.message} />
         ) : (
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">

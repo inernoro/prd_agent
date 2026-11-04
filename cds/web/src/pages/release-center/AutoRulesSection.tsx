@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 分区三「自动发布规则」——设计稿 design_handoff_release_center §4。
  *
@@ -269,12 +270,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
           </div>
         ) : null}
 
-        {loading ? (
-          <div className="flex items-center gap-2 px-[1.125rem] py-6 text-xs text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            正在读取规则
-          </div>
-        ) : pushRules.length === 0 ? (
+        {loading ? <ContentLoading label="读取自动发布规则" variant="rows" /> : pushRules.length === 0 ? (
           <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">
             还没有自动发布规则。建一条之后，命中的分支被推送时 CDS 会自己发到目标环境，不需要人在场。
           </p>

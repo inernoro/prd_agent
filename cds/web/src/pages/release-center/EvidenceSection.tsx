@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 分区五「证据归档」——设计稿 design_handoff_release_center §6。
  *
@@ -248,12 +249,7 @@ export function EvidenceSection({
         <h2 className="text-sm font-bold">配置变更历史</h2>
         <span className="text-[0.7188rem] text-muted-foreground">谁在什么时候把哪个字段改成了什么</span>
       </div>
-      {changesLoading ? (
-        <div className="flex items-center gap-2 px-[1.125rem] py-6 text-xs text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          正在读取变更历史
-        </div>
-      ) : changesError ? (
+      {changesLoading ? <ContentLoading label="读取变更历史" variant="table" /> : changesError ? (
         <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">变更历史暂时读不到：{changesError}</p>
       ) : changes.length === 0 ? (
         <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">{row.target.name} 还没有配置变更记录。</p>

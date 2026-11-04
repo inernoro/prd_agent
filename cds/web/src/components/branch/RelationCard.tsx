@@ -140,7 +140,7 @@ export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems =
  */
 export type RelationCardVariant = 'card' | 'row';
 
-export function RelationCardSkeleton({ badge = '正在体检', note = '正在算服务关系与体检，通常 1 秒内完成', variant = 'card' }: { badge?: string; note?: string; variant?: RelationCardVariant }): JSX.Element {
+export function RelationCardSkeleton({ badge = '正在体检', note, variant = 'card' }: { badge?: string; note?: string; variant?: RelationCardVariant }): JSX.Element {
   if (variant === 'row') {
     return (
       <div className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-3.5" data-testid="relation-card" data-loading="true" data-variant="row">

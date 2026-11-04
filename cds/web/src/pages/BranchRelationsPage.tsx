@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * BranchRelationsPage — 全屏关系图（plan.cds.service-relations 第四批）。独立路由，可分享。
  * 与总览关系卡、展开视图、cdscli topology 读同一份 service-graph 数据。
@@ -41,7 +42,7 @@ export function BranchRelationsPage(): JSX.Element {
       )}
     >
       <Workspace fluid className="cds-workspace--fill">
-        {state.status === 'loading' ? <div className="p-6 text-xs text-muted-foreground">正在算服务关系与体检…</div> : null}
+        {state.status === 'loading' ? <ContentLoading label="读取服务关系" variant="panel" /> : null}
         {state.status === 'error' ? <div className="p-6 text-xs text-destructive">读取失败：{state.message}</div> : null}
         {data ? (
           <div className="flex h-full min-h-0 flex-col gap-3">

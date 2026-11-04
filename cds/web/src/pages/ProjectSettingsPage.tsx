@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -1665,7 +1666,7 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
 
   if (error) return null; // 旧 CDS 没这个端点,静默不显示
   if (!items) {
-    return <div className="text-xs text-muted-foreground">正在读取自动部署历史…</div>;
+    return <ContentLoading label="读取自动部署历史" />;
   }
   if (items.length === 0) {
     return (
