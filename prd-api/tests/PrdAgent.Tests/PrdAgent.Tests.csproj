@@ -61,4 +61,7 @@
     <Compile Include="..\..\src\PrdAgent.Api\Services\ProductAgent\VersionRegistrationMessageParser.cs" Link="Services\ProductAgent\VersionRegistrationMessageParser.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\src\PrdAgent.Api\Controllers\Api\WebPageAskRatingController.cs" Link="Controllers\WebPageAskRatingController.cs" />
+  </ItemGroup>
 </Project>
