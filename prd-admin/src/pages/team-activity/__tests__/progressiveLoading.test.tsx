@@ -97,8 +97,8 @@ describe('VOC progressive resources', () => {
     expect(loadOld).toHaveBeenCalledTimes(1);
   });
 
-  it('requests 90-day density only when the custom picker is opened', async () => {
-    services.trend.mockResolvedValue(ok({ buckets: [], bucketUnit: 'day' }));
+  it('requests density on demand and lets an unavailable preview be retried', async () => {
+    services.trend.mockResolvedValueOnce(fail('TIMEOUT', '查询超时')).mockResolvedValueOnce(ok({ buckets: [], bucketUnit: 'day' }));
     function Picker() {
       const onChange = useCallback(() => {}, []);
       return <TimeRangePicker value={{ kind: 'preset', preset: 'today' }} onChange={onChange} />;
@@ -108,5 +108,10 @@ describe('VOC progressive resources', () => {
     await act(async () => (host.querySelector('[title="活动密度刷选条：拖动两个把手刷选任意窗口"]') as HTMLButtonElement).click());
     expect(services.trend).toHaveBeenCalledTimes(1);
     expect(services.trend.mock.calls[0][1].timeoutMs).toBe(45000);
+    expect(document.body.textContent).toContain('活动密度预览暂不可用');
+    const retry = [...document.querySelectorAll('button')].find((button) => button.textContent === '重试密度预览');
+    await act(async () => retry?.click());
+    expect(services.trend).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).not.toContain('活动密度预览暂不可用');
   });
 });

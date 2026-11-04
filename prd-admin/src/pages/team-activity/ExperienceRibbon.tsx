@@ -15,7 +15,10 @@ function buildSteps(mapData: TeamActivityExperienceMapData | null, insights: Tea
   const behaviorCount = insights?.behaviorEventCount ?? 0;
   const totalRequests = mapData?.totalRequests ?? 0;
   const monitorTotal = behaviorCount + totalRequests;
-  const monitorSub = monitorTotal > 0
+  const monitorSub = !mapData && !insights ? '等待监测数据'
+    : !insights ? `接口 ${formatCount(totalRequests)} 条 · 路由待加载`
+    : !mapData ? `路由 ${formatCount(behaviorCount)} 条 · 接口待加载`
+    : monitorTotal > 0
     ? `已采 ${formatCount(monitorTotal)} 条信号（路由 ${formatCount(behaviorCount)} + 接口 ${formatCount(totalRequests)}）`
     : '等待信号采集';
 
