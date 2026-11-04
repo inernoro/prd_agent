@@ -11,6 +11,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -1955,6 +1956,13 @@ public class WebPagesController : ControllerBase
     // 评论
     // ─────────────────────────────────────────────
 
+    /// <summary>公开静态批注脚本，不携带站点数据或身份凭据。</summary>
+    [AllowAnonymous]
+    [HttpGet("annotation-runtime.js")]
+    [ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+    public IActionResult AnnotationRuntime() =>
+        Content(HostedSiteAnnotationRuntime.Script, "text/javascript; charset=utf-8");
+
     /// <summary>切换站点是否允许评论（仅 owner / editor 可调）</summary>
     [HttpPatch("{id}/comments-enabled")]
     public async Task<IActionResult> SetCommentsEnabled(string id, [FromBody] SetCommentsEnabledRequest req)
@@ -1980,7 +1988,7 @@ public class WebPagesController : ControllerBase
     public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
     {
         var result = await _siteService.AddCommentBySiteAsync(
-            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
+            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId);
         return MapAddCommentResult(result);
     }
 
@@ -2003,7 +2011,24 @@ public class WebPagesController : ControllerBase
         var userId = GetUserId();
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
-            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip);
+            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("{siteId}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetSiteCommentResolved(string siteId, string commentId, [FromBody] SetCommentResolvedRequest req)
+    {
+        var result = await _siteService.SetCommentResolvedBySiteAsync(siteId, commentId, GetUserId(), req.Resolved);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>分享访问门禁通过后，根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("shares/view/{token}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetShareCommentResolved(string token, string commentId, [FromQuery] string? password,
+        [FromBody] SetCommentResolvedRequest req)
+    {
+        var result = await _siteService.SetCommentResolvedByShareAsync(token, password, commentId, GetUserId(), req.Resolved);
         return MapAddCommentResult(result);
     }
 
@@ -2219,8 +2244,15 @@ public class SetCommentsEnabledRequest
     public bool Enabled { get; set; }
 }
 
+public class SetCommentResolvedRequest
+{
+    public bool Resolved { get; set; }
+}
+
 public class AddSiteCommentRequest
 {
+    public HostedSiteCommentAnchor? Anchor { get; set; }
+    public string? ParentId { get; set; }
     /// <summary>评论正文（1-2000 字）</summary>
     public string? Content { get; set; }
 }

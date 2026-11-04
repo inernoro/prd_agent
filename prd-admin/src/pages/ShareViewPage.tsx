@@ -12,6 +12,8 @@ import { BlurText } from '@/components/reactbits';
 import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
 import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
+import { useHostedAnnotations, withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotations';
+import { AnnotationModeBar } from '@/components/web-hosting/AnnotationModeBar';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
@@ -199,6 +201,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     token ? { token, password: password || undefined } : undefined);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
+  const annotations = useHostedAnnotations(pdfDownload.iframeRef, data?.sites.length === 1 ? data.sites[0] : null, () => setShowComments(true));
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
   const [askState, setAskState] = useState<AskDockState>('collapsed');
   // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
@@ -403,7 +406,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     if (!token || !data || data.sites.length !== 1) return;
     let alive = true;
     listShareComments(token, password || undefined)
-      .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.length); })
+      .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.filter(c => !c.parentId).length); })
       .catch(() => {});
     return () => { alive = false; };
   }, [token, password, data]);
@@ -929,7 +932,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   <MessageSquare size={isMobile ? 15 : 13} />
                   {isMobile
                     ? (commentCount != null && commentCount > 0 ? commentCount : '')
-                    : `评论${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
+                    : `批注${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
                 </button>
               )}
             </div>
@@ -954,7 +957,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </div>
           )}
         </div>
-        <div style={{ position: 'relative', minHeight: 0, background: '#fff' }}>
+        <div style={{ position: 'relative', minHeight: 0, background: '#fff', marginRight: showComments && !isMobile ? 380 : 0 }}>
+          <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button
               type="button"
@@ -989,11 +993,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           <HostedPdfDownloadStatus status={pdfDownload.status} />
           <iframe
             ref={pdfDownload.iframeRef}
-            onLoad={pdfDownload.notifyFrame}
+            onLoad={() => { pdfDownload.notifyFrame(); annotations.notifyFrame(); }}
             // siteUrl 为空时必须给 undefined 而不是 ''：空串在 HTML 里是「相对当前文档」，
             // iframe 会把分享页自己再加载一遍。下面那块空态提示正是为这种站点准备的。
             src={previewSource === 'direct' && site.siteUrl ? site.siteUrl : undefined}
-            srcDoc={previewSource === 'srcdoc' && iframeHtml ? pdfDownload.decorateHtml(iframeHtml) : undefined}
+            srcDoc={previewSource === 'srcdoc' && iframeHtml ? pdfDownload.decorateHtml(withAnnotationRuntime(iframeHtml)) : undefined}
             title={site.title}
             style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
             sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(site.siteUrl)}
@@ -1072,19 +1076,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         </div>
 
         {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}
-        {token && showComments && (
+        {token && (
           <>
-            {/* 遮罩：点击关闭 */}
-            <div
-              onClick={() => setShowComments(false)}
-              style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.4)' }}
-            />
             {/* 右侧抽屉 */}
             <aside
-              className="border-l border-l-token-subtle" style={{ position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 61, width: 'min(420px, 92vw)', display: 'flex', flexDirection: 'column', background: '#0f1014', boxShadow: '-12px 0 40px rgba(0,0,0,0.5)' }}
+              className="border-l border-l-token-subtle" style={{ position: 'fixed', top: isMobile ? 'auto' : 0, right: 0, bottom: 0, zIndex: 61, width: isMobile ? '100%' : 380, height: isMobile ? '55dvh' : '100dvh', display: showComments ? 'flex' : 'none', flexDirection: 'column', background: 'var(--bg-elevated)', boxShadow: '-8px 0 30px rgba(0,0,0,0.15)' }}
             >
               <div className="border-b border-b-token-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', flexShrink: 0 }}>
-                <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>评论</span>
+                <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 }}>批注与讨论</span>
                 <button
                   onClick={() => setShowComments(false)}
                   title="关闭"
@@ -1098,7 +1097,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 </button>
               </div>
               <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 16 }}>
-                <CommentsSection mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} />
+                <CommentsSection key={`${token}:${password}`} mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} onPickElement={() => setShowComments(false)} />
               </div>
             </aside>
           </>

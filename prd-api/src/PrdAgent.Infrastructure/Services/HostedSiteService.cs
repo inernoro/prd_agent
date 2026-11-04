@@ -4717,7 +4717,7 @@ public class HostedSiteService : IHostedSiteService
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
     // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
     // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
-    private const int SlideNavVersion = 7;
+    private const int SlideNavVersion = 8;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -4809,7 +4809,7 @@ public class HostedSiteService : IHostedSiteService
         // 即使浏览器不执行，也会破坏“产物不含可执行内容”的可审计合同。
         // 先剥离历史垫片再返回，保证曾被旧版本污染的页面下一次发布也能恢复干净。
         if (HasDeclarativeOnlyPolicy(html))
-            return System.Text.Encoding.UTF8.GetBytes(html);
+            return System.Text.Encoding.UTF8.GetBytes(HostedSiteAnnotationRuntime.Strip(html));
 
         // 2) 插入当前版本注入块（剥离后重新定位锚点）
         var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
@@ -4820,7 +4820,7 @@ public class HostedSiteService : IHostedSiteService
             : (htmlIdx >= 0 ? html[..htmlIdx] + compatScript + html[htmlIdx..]
                             : html + compatScript);
 
-        return System.Text.Encoding.UTF8.GetBytes(injected);
+        return System.Text.Encoding.UTF8.GetBytes(HostedSiteAnnotationRuntime.Inject(injected));
     }
 
     internal static bool HasDeclarativeOnlyPolicy(string html)
@@ -5274,19 +5274,19 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
-        string content, CancellationToken ct = default)
+        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null)
     {
         var site = await GetByIdAsync(siteId, authorUserId, ct);
         if (site == null)
             return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct);
+        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct, anchor, parentId);
     }
 
     public async Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
-        string content, string? ipAddress, CancellationToken ct = default)
+        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null)
     {
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
@@ -5297,7 +5297,46 @@ public class HostedSiteService : IHostedSiteService
         if (sites.Count == 0)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct);
+        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId);
+    }
+
+    public async Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
+        bool resolved, CancellationToken ct = default)
+    {
+        var site = await GetByIdAsync(siteId, userId, ct);
+        if (site == null)
+            return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
+        return await SetCommentResolvedAsync(site, commentId, userId, resolved, ct);
+    }
+
+    public async Task<AddCommentResult> SetCommentResolvedByShareAsync(string token, string? password,
+        string commentId, string userId, bool resolved, CancellationToken ct = default)
+    {
+        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, userId, ct);
+        if (err != null)
+            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus,
+                ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
+        if (sites.Count == 0)
+            return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
+        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true);
+    }
+
+    private async Task<AddCommentResult> SetCommentResolvedAsync(HostedSite site, string commentId, string userId,
+        bool resolved, CancellationToken ct, bool maskUserId = false)
+    {
+        if (!site.CommentsEnabled)
+            return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
+        var comment = await _db.HostedSiteComments
+            .Find(c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted).FirstOrDefaultAsync(ct);
+        if (comment == null || !HostedSiteCommentRules.CanResolve(comment, site, userId))
+            return new AddCommentResult { Error = "讨论不存在或无权修改", HttpStatus = 404, ErrorCode = "not_found" };
+        var update = Builders<HostedSiteComment>.Update.Set(c => c.IsResolved, resolved).Set(c => c.UpdatedAt, DateTime.UtcNow);
+        var changed = await _db.HostedSiteComments.UpdateOneAsync(
+            c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted, update, cancellationToken: CancellationToken.None);
+        if (changed.MatchedCount == 0)
+            return new AddCommentResult { Error = "讨论已删除", HttpStatus = 404, ErrorCode = "not_found" };
+        comment.IsResolved = resolved;
+        return new AddCommentResult { Comment = ToCommentDto(comment, site, userId, maskUserId) };
     }
 
     public async Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default)
@@ -5305,21 +5344,15 @@ public class HostedSiteService : IHostedSiteService
         var comment = await _db.HostedSiteComments.Find(c => c.Id == commentId && !c.IsDeleted).FirstOrDefaultAsync(ct);
         if (comment == null) return false;
 
-        // 作者本人，或被评论站点的 owner，可删除
-        bool canDelete = comment.AuthorUserId == userId;
-        if (!canDelete)
-        {
-            var site = await _db.HostedSites.Find(s => s.Id == comment.SiteId).FirstOrDefaultAsync(ct);
-            canDelete = site != null && site.OwnerUserId == userId;
-        }
-        if (!canDelete) return false;
-
+        var site = await _db.HostedSites.Find(s => s.Id == comment.SiteId).FirstOrDefaultAsync(ct);
+        if (site == null || (comment.AuthorUserId != userId && site.OwnerUserId != userId)) return false;
+        var deletion = Builders<HostedSiteComment>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow);
+        // 先关闭根讨论，再清理回复。回复落库后也会复查根讨论，覆盖两次写入之间的并发窗口。
         await _db.HostedSiteComments.UpdateOneAsync(
-            c => c.Id == commentId,
-            Builders<HostedSiteComment>.Update
-                .Set(c => c.IsDeleted, true)
-                .Set(c => c.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+            c => c.Id == commentId && c.SiteId == comment.SiteId, deletion, cancellationToken: CancellationToken.None);
+        if (string.IsNullOrEmpty(comment.ParentId))
+            await _db.HostedSiteComments.UpdateManyAsync(
+                c => c.ParentId == commentId && c.SiteId == comment.SiteId, deletion, cancellationToken: CancellationToken.None);
         return true;
     }
 
@@ -5327,7 +5360,7 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<AddCommentResult> InsertCommentAsync(
         HostedSite site, string authorUserId, string authorName, string? avatarFileName,
-        string content, string? shareToken, string? ipAddress, CancellationToken ct)
+        string content, string? shareToken, string? ipAddress, CancellationToken ct, HostedSiteCommentAnchor? anchor, string? parentId)
     {
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
@@ -5338,8 +5371,21 @@ public class HostedSiteService : IHostedSiteService
         if (trimmed.Length > 2000)
             return new AddCommentResult { Error = "评论内容不能超过 2000 字", HttpStatus = 400, ErrorCode = "invalid" };
 
+        if (!HostedSiteCommentRules.IsValidAnchor(anchor))
+            return new AddCommentResult { Error = "批注定位信息无效或过长", HttpStatus = 400, ErrorCode = "invalid" };
+        if (parentId != null)
+        {
+            if (string.IsNullOrWhiteSpace(parentId) || parentId.Length > 80 || anchor != null)
+                return new AddCommentResult { Error = "回复必须关联有效讨论且不能另设批注位置", HttpStatus = 400, ErrorCode = "invalid" };
+            var parent = await _db.HostedSiteComments.Find(c => c.Id == parentId && c.SiteId == site.Id).FirstOrDefaultAsync(ct);
+            if (!HostedSiteCommentRules.CanReplyTo(parent, site.Id))
+                return new AddCommentResult { Error = "原讨论不存在或已删除", HttpStatus = 404, ErrorCode = "not_found" };
+        }
+
         var comment = new HostedSiteComment
         {
+            Anchor = anchor,
+            ParentId = parentId,
             SiteId = site.Id,
             ShareToken = shareToken,
             AuthorUserId = authorUserId,
@@ -5348,7 +5394,18 @@ public class HostedSiteService : IHostedSiteService
             Content = trimmed,
             IpAddress = ipAddress,
         };
-        await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: ct);
+        await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: CancellationToken.None);
+        if (parentId != null)
+        {
+            var parentStillExists = await _db.HostedSiteComments.Find(c => c.Id == parentId
+                && c.SiteId == site.Id && !c.IsDeleted && c.ParentId == null).AnyAsync(CancellationToken.None);
+            if (!parentStillExists)
+            {
+                await _db.HostedSiteComments.UpdateOneAsync(c => c.Id == comment.Id,
+                    Builders<HostedSiteComment>.Update.Set(c => c.IsDeleted, true), cancellationToken: CancellationToken.None);
+                return new AddCommentResult { Error = "原讨论已删除，回复未发表", HttpStatus = 404, ErrorCode = "not_found" };
+            }
+        }
 
         // 通知站点 owner：有人评论了你的站点。自评不通知；Key 幂等保证每条评论只产生一条系统通知（用户要求「1 次」）。
         // best-effort + CancellationToken.None：通知失败不得影响评论本身，也不随客户端断开取消（server-authority）。
@@ -5378,19 +5435,27 @@ public class HostedSiteService : IHostedSiteService
 
         return new AddCommentResult
         {
-            Comment = new HostedSiteCommentDto
-            {
-                Id = comment.Id,
-                SiteId = comment.SiteId,
-                Content = comment.Content,
-                AuthorUserId = comment.AuthorUserId,
-                AuthorName = comment.AuthorName,
-                AuthorAvatarFileName = comment.AuthorAvatarFileName,
-                CreatedAt = comment.CreatedAt,
-                CanDelete = true,
-            },
+            Comment = ToCommentDto(comment, site, authorUserId, maskUserId: shareToken != null),
         };
     }
+
+    private static HostedSiteCommentDto ToCommentDto(HostedSiteComment comment, HostedSite site,
+        string? viewerUserId, bool maskUserId = false) => new()
+    {
+        Id = comment.Id,
+        SiteId = comment.SiteId,
+        Content = comment.Content,
+        Anchor = comment.Anchor,
+        ParentId = comment.ParentId,
+        IsResolved = comment.IsResolved,
+        CanResolve = site.CommentsEnabled && HostedSiteCommentRules.CanResolve(comment, site, viewerUserId),
+        AuthorUserId = maskUserId ? string.Empty : comment.AuthorUserId,
+        AuthorName = comment.AuthorName,
+        AuthorAvatarFileName = comment.AuthorAvatarFileName,
+        CreatedAt = comment.CreatedAt,
+        CanDelete = !string.IsNullOrWhiteSpace(viewerUserId)
+            && (site.OwnerUserId == viewerUserId || comment.AuthorUserId == viewerUserId),
+    };
 
     private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false)
     {
@@ -5400,19 +5465,19 @@ public class HostedSiteService : IHostedSiteService
             .Limit(500)
             .ToListAsync(ct);
 
-        bool viewerIsOwner = !string.IsNullOrWhiteSpace(viewerUserId) && site.OwnerUserId == viewerUserId;
-        return comments.Select(c => new HostedSiteCommentDto
+        // 最近 500 条里可能只有旧讨论的新回复，补齐其根讨论，避免用户看到无主回复。
+        var present = comments.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        var missingParents = comments.Where(c => !string.IsNullOrEmpty(c.ParentId) && !present.Contains(c.ParentId))
+            .Select(c => c.ParentId!).Distinct().ToList();
+        if (missingParents.Count > 0)
         {
-            Id = c.Id,
-            SiteId = c.SiteId,
-            Content = c.Content,
-            // 公开分享读取路径下抹掉内部 UserId，避免向匿名访客泄露账号标识（Codex P2）；CanDelete 已由服务端算好
-            AuthorUserId = maskUserId ? string.Empty : c.AuthorUserId,
-            AuthorName = c.AuthorName,
-            AuthorAvatarFileName = c.AuthorAvatarFileName,
-            CreatedAt = c.CreatedAt,
-            CanDelete = viewerIsOwner || (!string.IsNullOrWhiteSpace(viewerUserId) && c.AuthorUserId == viewerUserId),
-        }).ToList();
+            var roots = await _db.HostedSiteComments.Find(c => c.SiteId == site.Id && !c.IsDeleted
+                && missingParents.Contains(c.Id) && c.ParentId == null).ToListAsync(ct);
+            comments.AddRange(roots);
+        }
+        var rootIds = comments.Where(c => string.IsNullOrEmpty(c.ParentId)).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        return comments.Where(c => string.IsNullOrEmpty(c.ParentId) || rootIds.Contains(c.ParentId))
+            .Select(c => ToCommentDto(c, site, viewerUserId, maskUserId)).ToList();
     }
 
     /// <summary>

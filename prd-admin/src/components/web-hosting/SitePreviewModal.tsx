@@ -7,6 +7,9 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
+import { useHostedAnnotations, withAnnotationRuntime } from './useHostedAnnotations';
+import { AnnotationModeBar } from './AnnotationModeBar';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
@@ -50,6 +53,7 @@ export default function SitePreviewModal({
   canToggleComments = true,
   onEditInWorkbench,
 }: Props) {
+  const isMobile = useIsMobile();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -78,6 +82,7 @@ export default function SitePreviewModal({
   const pdfDownload = useHostedPdfDownload({ id: site.id, siteUrl: site.siteUrl, entryFile: site.entryFile,
     pdfFilePaths: site.pdfFilePaths });
   const iframeRef = pdfDownload.iframeRef;
+  const annotations = useHostedAnnotations(iframeRef, site, () => setRightPanel('comments'));
 
   useEffect(() => {
     if (site.askEnabled != null) return;
@@ -223,7 +228,7 @@ export default function SitePreviewModal({
         aria-labelledby="site-preview-dialog-title"
         tabIndex={-1}
         className="relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
-        style={{ width: '90vw', height: '90vh', maxWidth: '1400px' }}
+        style={{ width: '90vw', height: '90vh', maxWidth: '1400px', background: 'var(--bg-elevated)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
@@ -252,7 +257,7 @@ export default function SitePreviewModal({
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              评论
+              批注与讨论
             </button>
             {askEnabled && (
               <button
@@ -312,9 +317,9 @@ export default function SitePreviewModal({
         </div>
 
         {/* 主体：iframe + 可选评论面板 */}
-        <div className="relative flex-1 min-h-0 flex overflow-hidden">
+        <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
-          <div className="flex-1 min-w-0 relative bg-token-nested">
+          <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested" style={{ flex: isMobile && showComments ? '0 0 45%' : undefined }}>
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {loading && !slow && (
@@ -345,17 +350,19 @@ export default function SitePreviewModal({
                 </button>
               </div>
             )}
+            <AnnotationModeBar annotations={annotations} onCancel={() => setRightPanel('comments')} />
             <HostedPdfDownloadStatus status={pdfDownload.status} />
             <iframe
               ref={iframeRef}
               // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
               key={useSrcDoc ? 'srcdoc' : 'direct'}
               src={useSrcDoc ? undefined : previewSource.src}
-              srcDoc={useSrcDoc && srcDoc ? pdfDownload.decorateHtml(srcDoc) : undefined}
+              srcDoc={useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {
                 pdfDownload.notifyFrame();
+                annotations.notifyFrame();
                 // iframe 成功加载：清 loading 同时清 errored
                 // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
                 setLoading(false);
@@ -377,10 +384,15 @@ export default function SitePreviewModal({
           </div>
 
           {/* 评论面板 */}
-          {showComments && (
+          {(
             <aside
+              style={{ display: showComments ? 'flex' : 'none', background: 'var(--bg-elevated)', ...(isMobile ? { top: 'auto', height: '55%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
               className="absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:static sm:inset-auto sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-token-subtle"
             >
+              <div className="flex items-center justify-between border-b border-token-subtle px-4 py-3 shrink-0">
+                <span className="text-sm font-semibold text-token-primary">批注与讨论</span>
+                <button type="button" onClick={() => setRightPanel('none')} aria-label="收起批注面板" className="p-1 text-token-muted hover:text-token-primary"><X size={16} /></button>
+              </div>
               {/* 允许评论开关：仅 owner/editor 显示（viewer 无权改，显示了点不动反而困惑） */}
               {canToggleComments && (
               <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-token-subtle shrink-0">
@@ -409,9 +421,11 @@ export default function SitePreviewModal({
                 {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态；
                     onStateLoaded 用服务端权威值回填开关，消除"开关 ON 但面板显示已关闭"的 stale 偏差（Cursor medium） */}
                 <CommentsSection
-                  key={String(commentsEnabled)}
+                  key={`${site.id}:${commentsEnabled}`}
                   mode="site"
                   siteId={site.id}
+                  annotations={annotations}
+                  onPickElement={() => setRightPanel('none')}
                   onStateLoaded={(serverEnabled) => {
                     if (serverEnabled !== commentsEnabled) {
                       setCommentsEnabled(serverEnabled);

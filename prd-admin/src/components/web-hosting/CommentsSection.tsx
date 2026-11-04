@@ -1,255 +1,230 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MessageSquare, Send, Trash2, Lock } from 'lucide-react';
+import { MessageSquare, Send, Trash2, Lock, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '../ui/VideoLoader';
 import { getUserAvatarUrl } from '../../lib/avatar';
 import { useAuthStore } from '../../stores/authStore';
-import {
-  listShareComments, addShareComment,
-  listSiteComments, addSiteComment,
-  deleteSiteComment,
-  type HostedSiteCommentDto,
-} from '../../services/real/webPages';
+import { listShareComments, addShareComment, listSiteComments, addSiteComment, deleteSiteComment,
+  setSiteCommentResolved, type HostedSiteCommentDto } from '../../services/real/webPages';
+import type { HostedAnnotations } from './useHostedAnnotations';
 
-/**
- * 托管站点评论区 —— 在分享页 / 站点预览下展示评论列表 + 发表入口。
- *
- * 两种数据来源（discriminated by mode）：
- * - mode='share'：经分享 token 读写（公开访问路径，读不需登录、写需登录）
- * - mode='site' ：经 siteId 读写（owner / 团队成员视角，恒需登录）
- *
- * 走 prd-admin 暗色面板配色（与 ShareViewPage / SitePreviewModal 一致）。
- */
+const ELEMENT_LABELS: Record<string, string> = { button: '按钮', a: '链接', img: '图片', p: '段落',
+  h1: '标题', h2: '标题', h3: '标题', h4: '标题', section: '区块', div: '区块', li: '列表项', svg: '图标' };
+const elementLabel = (tag: string) => ELEMENT_LABELS[tag] ?? '页面元素';
+
 type Props = (
   | { mode: 'share'; token: string; password?: string; siteId?: never }
   | { mode: 'site'; siteId: string; token?: never; password?: never }
 ) & {
-  /** 服务端权威 commentsEnabled 拉到后回传，供父级（预览弹窗开关）与 stale site 快照对齐 */
   onStateLoaded?: (commentsEnabled: boolean) => void;
-  /** 评论数变化时回传（含首次加载、发表、删除），供父级在顶栏按钮等处展示「评论 N」 */
   onCountChange?: (count: number) => void;
+  annotations?: HostedAnnotations;
+  onPickElement?: () => void;
 };
 
 export default function CommentsSection(props: Props) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  // 鉴权 token：persist rehydration 后才有值；纳入 load 依赖，避免首帧匿名拉取后 canComment 卡 false
-  const authToken = useAuthStore((s) => s.token);
+  const isAuthenticated = useAuthStore(s => s.isAuthenticated);
+  const authToken = useAuthStore(s => s.token);
   const [loading, setLoading] = useState(true);
   const [comments, setComments] = useState<HostedSiteCommentDto[]>([]);
   const [commentsEnabled, setCommentsEnabled] = useState(true);
   const [canComment, setCanComment] = useState(false);
   const [draft, setDraft] = useState('');
+  const [replyTo, setReplyTo] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'open' | 'resolved' | 'all'>('open');
   const [error, setError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fetchId = useRef(0);
+  const mounted = useRef(true);
+  const callbacks = useRef(props); callbacks.current = props;
+  const { mode, token, password, siteId, annotations } = props;
+  const identity = `${mode}:${token ?? siteId}:${password ?? ''}`;
+  const identityRef = useRef(identity); identityRef.current = identity;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const roots = comments.filter(c => !c.parentId);
+  const openCount = roots.filter(c => !c.isResolved).length;
+  const resolvedCount = roots.length - openCount;
+  useEffect(() => { callbacks.current.onCountChange?.(roots.length); }, [roots.length]);
+  useEffect(() => { callbacks.current.annotations?.setThreads(comments); }, [comments]);
 
-  // 防竞态：token/password/siteId/登录态变化时旧请求回来不得覆盖新结果（Cursor learned rule）
-  const fetchIdRef = useRef(0);
-  // 组件卸载后所有在途请求都作废（避免卸载后 setState / onStateLoaded 拿 stale 值回写父组件，Cursor high）
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    // 卸载只翻 mountedRef：所有在途 handler（load/submit/delete）都已用 !mountedRef.current 兜底丢弃，
-    // 无需再动 fetchIdRef（动它会触发 react-hooks/exhaustive-deps 的 ref-in-cleanup 告警）。
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  const mode = props.mode;
-  const token = (props as { token?: string }).token;
-  const password = (props as { password?: string }).password;
-  const siteId = (props as { siteId?: string }).siteId;
-  // onStateLoaded 走 ref：父级每次 render 传新内联函数也不污染 load 的依赖，
-  // 避免 iframe onLoad 等无关 modal 重渲染触发评论列表重新拉取 + loading 闪烁（Cursor medium）
-  const onStateLoadedRef = useRef(props.onStateLoaded);
-  onStateLoadedRef.current = props.onStateLoaded;
-  // 走 ref 同理：父级内联函数每次 render 都换新引用，不该污染下面 effect 的依赖
-  const onCountChangeRef = useRef(props.onCountChange);
-  onCountChangeRef.current = props.onCountChange;
-  // 评论数变化（首次加载 / 乐观插入 / 删除 / 对账）回传父级，顶栏「评论 N」实时同步
-  useEffect(() => {
-    onCountChangeRef.current?.(comments.length);
-  }, [comments.length]);
-
-  // silent=true：后台对账刷新，不翻 loading（否则全屏 section loader 会盖掉刚乐观插入的评论，
-  // 让发表后的新评论"闪没"，慢/失败的刷新更像没发成功，Cursor medium）。
   const load = useCallback(async (silent = false) => {
-    const myId = ++fetchIdRef.current;
+    const request = ++fetchId.current;
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const res = mode === 'share'
-        ? await listShareComments(token!, password)
-        : await listSiteComments(siteId!);
-      if (myId !== fetchIdRef.current || !mountedRef.current) return; // 过期/已卸载，丢弃
+      const res = mode === 'share' ? await listShareComments(token!, password) : await listSiteComments(siteId!);
+      if (!mounted.current || request !== fetchId.current) return;
       if (res.success && res.data) {
-        setComments(res.data.comments);
-        setCommentsEnabled(res.data.commentsEnabled);
-        setCanComment(res.data.canComment);
-        onStateLoadedRef.current?.(res.data.commentsEnabled);
-      } else if (!silent) {
-        // 后台刷新失败保持静默：乐观插入的评论仍在屏上，不该用错误提示打断（发表已成功）
-        setError(res.error?.message || '加载评论失败');
-      }
-    } catch {
-      if (myId !== fetchIdRef.current || !mountedRef.current) return;
-      if (!silent) setError('网络错误，无法加载评论');
-    } finally {
-      if (myId === fetchIdRef.current && mountedRef.current && !silent) setLoading(false);
-    }
+        setComments(res.data.comments); setCommentsEnabled(res.data.commentsEnabled); setCanComment(res.data.canComment);
+        callbacks.current.onStateLoaded?.(res.data.commentsEnabled);
+      } else if (!silent) setError(res.error?.message || '加载讨论失败');
+    } catch { if (mounted.current && request === fetchId.current && !silent) setError('网络错误，无法加载讨论'); }
+    finally { if (mounted.current && request === fetchId.current && !silent) setLoading(false); }
   }, [mode, token, password, siteId]);
-
-  // isAuthenticated / authToken 纳入依赖：登录态就绪（含 persist rehydration）后重新拉取，
-  // 让已登录用户拿到 canComment=true 的发表 UI，不必手动刷新。
+  useEffect(() => { void load(); }, [load, isAuthenticated, authToken]);
   useEffect(() => {
-    void load();
-  }, [load, isAuthenticated, authToken]);
+    if (annotations?.draftAnchor) { setReplyTo(null); textareaRef.current?.focus(); }
+  }, [annotations?.draftAnchor]);
+  useEffect(() => {
+    const id = annotations?.activeId;
+    if (!id) return;
+    const selected = comments.find(c => c.id === id);
+    if (selected) setFilter(selected.isResolved ? 'resolved' : 'open');
+    const timer = window.setTimeout(() => document.getElementById(`hosted-thread-${id}`)?.scrollIntoView({ block: 'nearest' }), 50);
+    return () => window.clearTimeout(timer);
+  }, [annotations?.activeId, comments]);
 
-  const handleSubmit = async () => {
-    const content = draft.trim();
-    if (!content || submitting) return;
-    setSubmitting(true);
-    setError(null);
+  const submit = async () => {
+    if (!draft.trim() || submitting || !canComment) return;
+    const operationIdentity = identity;
+    const options = replyTo ? { parentId: replyTo } : { anchor: annotations?.draftAnchor ?? undefined };
+    setSubmitting(true); setError(null);
     try {
-      const res = mode === 'share'
-        ? await addShareComment(token!, content, password)
-        : await addSiteComment(siteId!, content);
-      if (!mountedRef.current) return;
+      const res = mode === 'share' ? await addShareComment(token!, draft.trim(), password, options)
+        : await addSiteComment(siteId!, draft.trim(), options);
+      if (!mounted.current || operationIdentity !== identityRef.current) return;
       if (res.success && res.data) {
         const created = res.data;
-        setDraft('');
-        // 1) 乐观插入（按 id 去重）：服务端已落库，立即上屏 —— 即使下面 load() 失败，评论也已可见，
-        //    用户不会以为没发出去而重复提交导致重复评论（Cursor medium: refresh fail → duplicate）。
-        setComments((prev) => (prev.some((c) => c.id === created.id) ? prev : [created, ...prev]));
-        // 2) 再静默 load() 对账拿服务端真相（含他人新评论 / 准确时间戳）。silent=不翻 loading，
-        //    乐观插入的评论全程留在屏上；best-effort：失败也无妨，乐观插入已兜底。
+        setComments(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
+        setDraft(''); setReplyTo(null); annotations?.clearDraft(); if (!replyTo) setFilter('open');
         await load(true);
-      } else {
-        setError(res.error?.message || '发表失败');
+      } else setError(res.error?.message || '发表失败，草稿已保留');
+    } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，发表失败，草稿已保留'); }
+    finally { if (mounted.current && operationIdentity === identityRef.current) setSubmitting(false); }
+  };
+  const remove = async (id: string) => {
+    if (confirmDelete !== id) { setConfirmDelete(id); return; }
+    const operationIdentity = identity;
+    setBusyId(id); setError(null);
+    try {
+      const res = await deleteSiteComment(id);
+      if (!mounted.current || operationIdentity !== identityRef.current) return;
+      if (res.success) { setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id)); if (replyTo === id) setReplyTo(null); }
+      else setError(res.error?.message || '删除失败');
+    } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，删除失败'); }
+    finally { if (mounted.current && operationIdentity === identityRef.current) { setBusyId(null); setConfirmDelete(null); } }
+  };
+  const resolve = async (comment: HostedSiteCommentDto) => {
+    const operationIdentity = identity;
+    setBusyId(comment.id); setError(null);
+    try {
+      const source = mode === 'share' ? { token: token!, password } : { siteId: siteId! };
+      const res = await setSiteCommentResolved(source, comment.id, !comment.isResolved);
+      if (!mounted.current || operationIdentity !== identityRef.current) return;
+      if (res.success && res.data) {
+        setComments(prev => prev.map(c => c.id === comment.id ? res.data! : c));
+        if (res.data.isResolved) annotations?.setActiveId(null);
       }
-    } catch {
-      if (mountedRef.current) setError('网络错误，发表失败');
-    } finally {
-      if (mountedRef.current) setSubmitting(false);
-    }
+      else setError(res.error?.message || '更新讨论状态失败');
+    } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，更新失败'); }
+    finally { if (mounted.current && operationIdentity === identityRef.current) setBusyId(null); }
   };
-
-  const handleDelete = async (commentId: string) => {
-    const res = await deleteSiteComment(commentId);
-    if (!mountedRef.current) return;
-    if (res.success) {
-      // 按 commentId 精确过滤：id 全局唯一，无论期间是否有并发 load 切了线程，
-      // "从当前列表移除这一条"永远是正确操作。不能用 fetchIdRef 守卫——那会在并发 load
-      // 撞号时把已成功的服务端删除丢掉、评论残留到下次刷新（Cursor medium）。
-      setComments((prev) => prev.filter((c) => c.id !== commentId));
-    } else {
-      setError(res.error?.message || '删除失败');
-    }
-  };
-
+  const visible = roots.filter(c => filter === 'all' || (filter === 'resolved' ? c.isResolved : !c.isResolved));
+  const startPicking = () => { setReplyTo(null); annotations?.select(); props.onPickElement?.(); };
+  const replyTarget = roots.find(c => c.id === replyTo);
   return (
-    <section className="rounded-xl border border-token-subtle bg-token-nested">
-      <header className="flex items-center gap-2 px-4 py-3 border-b border-token-subtle">
-        <MessageSquare className="w-4 h-4 text-token-secondary" />
-        <h2 className="text-sm font-semibold text-token-primary">评论</h2>
-        <span className="text-xs text-token-muted">{comments.length}</span>
-      </header>
-
-      <div className="p-4 space-y-4">
-        {/* 发表区 */}
-        {!commentsEnabled ? (
-          <div className="flex items-center gap-2 text-sm text-token-muted py-1">
-            <Lock className="w-4 h-4" />
-            该站点已关闭评论
-          </div>
-        ) : !isAuthenticated ? (
-          <div className="flex items-center gap-2 text-sm text-token-muted py-1">
-            <Lock className="w-4 h-4" />
-            登录后即可发表评论
-          </div>
-        ) : canComment ? (
-          <div className="flex flex-col gap-2">
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="写下你的评论…"
-              rows={3}
-              maxLength={2000}
-              className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary placeholder-token-muted resize-none focus:outline-none focus:border-blue-500/50"
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-token-muted">{draft.length}/2000</span>
-              <button
-                onClick={handleSubmit}
-                disabled={!draft.trim() || submitting}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {submitting ? <MapSpinner size={14} /> : <Send className="w-3.5 h-3.5" />}
-                发表
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {error && <p className="text-sm text-red-400">{error}</p>}
-
-        {/* 列表区 */}
-        {loading ? (
-          <MapSectionLoader text="正在加载评论…" />
-        ) : comments.length === 0 ? (
-          // 仅在"加载成功但确实没有评论"时显示空状态；加载失败已由上方 error 提示，
-          // 不能再叠一句"还没有评论"让用户误以为是成功的空列表（Cursor low）。
-          !error && (
-            <div className="text-center py-8 text-sm text-token-muted">
-              还没有评论，来发表第一条吧
-            </div>
-          )
-        ) : (
-          <ul className="space-y-3">
-            {comments.map((c) => (
-              <li key={c.id} className="flex gap-3">
-                <Avatar name={c.authorName} fileName={c.authorAvatarFileName} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-token-primary truncate">{c.authorName}</span>
-                    <span className="text-[11px] text-token-muted">{formatTime(c.createdAt)}</span>
-                    {c.canDelete && (
-                      <button
-                        onClick={() => handleDelete(c.id)}
-                        title="删除评论"
-                        className="ml-auto text-token-muted hover:text-red-400 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-sm text-token-secondary mt-0.5 whitespace-pre-wrap break-words">{c.content}</p>
+    <section aria-label="批注与讨论" className="space-y-4 text-sm text-token-primary">
+      {annotations && (
+        <div className="space-y-2">
+          <button type="button" onClick={startPicking} disabled={!canComment || !annotations.ready || submitting}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[var(--accent-fg-amber)] transition-colors hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed">
+            <MousePointer2 size={15} />绑定页面元素 / 选中文字
+          </button>
+          <p className="text-xs leading-relaxed text-token-muted">
+            {annotations.ready ? '先在网页上选择位置，意见就会留在那里。' : annotations.connectionChecked
+              ? '此页面暂未连接批注层，仍可发表整页评论。' : '正在连接页面批注层…'}
+          </p>
+        </div>
+      )}
+      {loading ? <MapSectionLoader text="正在加载讨论…" /> : (
+        <>
+          {!commentsEnabled ? <p className="flex gap-2 text-token-muted"><Lock size={15} />该站点已关闭评论与批注</p>
+            : !isAuthenticated ? <p className="flex gap-2 text-token-muted"><Lock size={15} />登录后即可批注和回复</p>
+              : canComment ? (
+                <div className="rounded-xl border border-token-subtle bg-token-nested p-3 space-y-3">
+                  {annotations?.draftAnchor ? (
+                    <div className="flex gap-2 rounded-md bg-amber-500/10 p-2 text-xs text-token-secondary">
+                      <Link2 size={14} className="shrink-0 text-amber-500" />
+                      <div className="min-w-0 flex-1"><div className="font-medium text-token-primary">已绑定{annotations.draftAnchor.kind === 'text' ? '选中文字' : elementLabel(annotations.draftAnchor.tagName)}</div>
+                        <p className="mt-1 line-clamp-3 break-words">{annotations.draftAnchor.text || '无文字元素'}</p></div>
+                      <button type="button" aria-label="取消位置绑定" disabled={submitting} onClick={annotations.clearDraft} className="self-start p-1"><X size={13} /></button>
+                    </div>
+                  ) : replyTarget ? (
+                    <div className="flex gap-2 text-xs text-token-secondary"><CornerDownRight size={14} />
+                      <span className="flex-1 truncate">回复 {replyTarget.authorName}：{replyTarget.content}</span>
+                      <button type="button" aria-label="取消回复" disabled={submitting} onClick={() => setReplyTo(null)}><X size={14} /></button>
+                    </div>
+                  ) : <p className="text-xs text-token-muted">整页评论</p>}
+                  <textarea ref={textareaRef} aria-label={replyTo ? '回复内容' : '批注内容'} value={draft} disabled={submitting}
+                    onChange={e => setDraft(e.target.value)} maxLength={2000} rows={3}
+                    onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void submit(); } }}
+                    placeholder={replyTo ? '补充你的想法…' : annotations?.draftAnchor ? '这个位置需要怎样修改？' : '写下对整个页面的意见…'}
+                    className="w-full resize-y bg-transparent text-sm leading-relaxed placeholder-token-muted outline-none focus-visible:ring-1 focus-visible:ring-amber-500/50 rounded" />
+                  <div className="flex items-center justify-between gap-2"><span className="text-[11px] text-token-muted">{draft.length}/2000</span>
+                    <button type="button" onClick={() => void submit()} disabled={!draft.trim() || submitting}
+                      className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed">
+                      {submitting ? <MapSpinner size={13} /> : <Send size={13} />}{replyTo ? '回复' : '发表'}
+                    </button></div>
                 </div>
-              </li>
+              ) : null}
+          <div role="tablist" aria-label="讨论状态" className="flex gap-1 border-b border-token-subtle pb-2">
+            {([{ value: 'open', label: '未解决', count: openCount }, { value: 'resolved', label: '已解决', count: resolvedCount },
+              { value: 'all', label: '全部', count: roots.length }] as const).map(tab => (
+              <button key={tab.value} type="button" role="tab" aria-selected={filter === tab.value} onClick={() => setFilter(tab.value)}
+                className={`rounded-md px-2.5 py-1.5 text-xs transition-colors ${filter === tab.value ? 'bg-token-nested font-semibold text-token-primary' : 'text-token-muted hover:text-token-primary'}`}>{tab.label} {tab.count}</button>
             ))}
-          </ul>
-        )}
-      </div>
+          </div>
+          {visible.length === 0 && !error && <div className="py-7 text-center text-token-muted">
+            <MessageSquare size={22} className="mx-auto mb-3 opacity-50" />
+            <p>{filter === 'resolved' ? '还没有已解决的讨论' : filter === 'open' && resolvedCount ? '当前讨论都已解决' : '从网页上的一个位置开始批注'}</p>
+          </div>}
+          <div className="space-y-3">{visible.map((comment) => {
+            const replies = comments.filter(c => c.parentId === comment.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+            const number = roots.filter(c => c.anchor).findIndex(c => c.id === comment.id) + 1;
+            const missing = annotations?.missingIds.includes(comment.id);
+            return <article key={comment.id} id={`hosted-thread-${comment.id}`} className={`rounded-xl border p-3 space-y-3 transition-colors ${annotations?.activeId === comment.id ? 'border-amber-500/60 bg-amber-500/5' : 'border-token-subtle'}`}>
+              {comment.anchor && <button type="button" onClick={() => annotations?.focus(comment.id)} disabled={!annotations?.ready}
+                className="flex w-full items-start gap-2 rounded-md bg-token-nested p-2 text-left text-xs hover:bg-amber-500/10 disabled:cursor-default">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[var(--accent-fg-amber)]">{number}</span>
+                <span className="min-w-0 flex-1"><span className="flex items-center gap-1 font-medium text-token-primary"><Link2 size={11} />{comment.anchor.kind === 'text' ? '文字批注' : elementLabel(comment.anchor.tagName)}</span>
+                  <span className="mt-1 block line-clamp-2 break-words text-token-secondary">{comment.anchor.text || '无文字元素'}</span>
+                  {missing && <span className="mt-1 block text-[var(--accent-fg-amber)]">原位置已变更，批注内容已保留</span>}</span>
+              </button>}
+              <CommentMessage comment={comment} busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)} />
+              {replies.length > 0 && <div className="ml-3 space-y-3 border-l border-token-subtle pl-3">{replies.map(reply =>
+                <CommentMessage key={reply.id} comment={reply} busy={busyId === reply.id} confirming={confirmDelete === reply.id} onDelete={() => void remove(reply.id)} />)}</div>}
+              <div className="flex items-center justify-between gap-2 text-xs text-token-muted">
+                {canComment ? <button type="button" disabled={submitting} onClick={() => { annotations?.clearDraft(); setReplyTo(comment.id); textareaRef.current?.focus(); textareaRef.current?.scrollIntoView({ block: 'nearest' }); }}
+                  className="flex items-center gap-1 hover:text-token-primary"><CornerDownRight size={13} />回复{replies.length ? ` ${replies.length}` : ''}</button> : <span />}
+                {comment.canResolve && commentsEnabled ? <button type="button" disabled={busyId !== null} onClick={() => void resolve(comment)} className="flex items-center gap-1 hover:text-token-primary disabled:opacity-40">
+                  {comment.isResolved ? <RotateCcw size={13} /> : <Check size={13} />}{comment.isResolved ? '重新打开' : '标记解决'}</button>
+                  : comment.isResolved ? <span className="flex items-center gap-1 text-emerald-600"><Check size={13} />已解决</span> : null}
+              </div>
+            </article>;
+          })}</div>
+        </>
+      )}
+      {error && <p role="alert" className="text-xs leading-relaxed text-red-500">{error}<button type="button" onClick={() => void load()} className="ml-2 underline">重新加载</button></p>}
     </section>
   );
 }
 
-function Avatar({ name, fileName }: { name: string; fileName?: string }) {
-  // getUserAvatarUrl 永远返回有效 URL（缺头像时回退内置 data-uri），无需额外兜底分支
-  const url = getUserAvatarUrl({ avatarFileName: fileName, displayName: name });
-  return (
-    <img
-      src={url}
-      alt={name}
-      className="w-8 h-8 rounded-full object-cover shrink-0 bg-token-nested"
-    />
-  );
+function CommentMessage({ comment, busy, confirming, onDelete }: { comment: HostedSiteCommentDto; busy: boolean; confirming: boolean; onDelete: () => void }) {
+  return <div className="flex items-start gap-2">
+    <img src={getUserAvatarUrl({ avatarFileName: comment.authorAvatarFileName, displayName: comment.authorName })} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover bg-token-nested" />
+    <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="text-xs font-medium text-token-primary">{comment.authorName}</span><time className="text-[10px] text-token-muted" dateTime={comment.createdAt}>{formatTime(comment.createdAt)}</time></div>
+      <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-token-secondary">{comment.content}</p></div>
+    {comment.canDelete && <button type="button" disabled={busy} onClick={onDelete} aria-label={confirming ? '确认删除讨论及回复' : '删除评论'} title={confirming ? '再次点击确认删除' : '删除评论'} className="shrink-0 p-1 text-token-muted hover:text-red-500 disabled:opacity-40">
+      {busy ? <MapSpinner size={13} /> : confirming ? <span className="text-xs text-red-500">确认删除</span> : <Trash2 size={13} />}</button>}
+  </div>;
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const now = Date.now();
-  const diff = Math.floor((now - d.getTime()) / 1000);
+  const diff = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
   if (diff < 60) return '刚刚';
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
-  if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} 天前`;
-  return d.toLocaleDateString('zh-CN');
+  return new Date(iso).toLocaleDateString('zh-CN');
 }
