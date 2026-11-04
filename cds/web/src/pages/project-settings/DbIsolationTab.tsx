@@ -594,6 +594,8 @@ export function DbIsolationTab({
           },
         },
       );
+      beginRead.cancel();
+      setLoading(false); setLoadError('');
       savedView.current = result.view;
       setView(result.view);
       setDraft(draftFromView(result.view));

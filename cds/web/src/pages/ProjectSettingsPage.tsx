@@ -544,6 +544,10 @@ function useProject(projectId: string | undefined): {
      * 先带着旧值落地（不闪），再静默取权威值（绑/解绑之后事实变了也能跟上）。
      */
     setProject: (project) => {
+      // 保存结果比保存前发出的 GET 更新；不允许旧快照覆盖刚接受的写入。
+      request.current?.abort();
+      setRefreshing(false);
+      setRefreshError('');
       setState((prev) => ({
         status: 'ok',
         project: preserveRepoSharing(prev.status === 'ok' ? prev.project : null, project),
@@ -1858,8 +1862,9 @@ function GithubProjectTab({
       setAppState({ status: 'ok', app });
     } catch (err) {
       if (signal.aborted) return;
+      const message = messageFromError(err);
+      setAppState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setAppState({ status: 'error', message: messageFromError(err) });
     }
   }, [beginRead]);
   useProjectSettingsRefresh(() => loadApp(true));
@@ -2429,8 +2434,9 @@ function CommentTemplateTab({
       }));
     } catch (err) {
       if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setState({ status: 'error', message: messageFromError(err) });
     }
   }, [projectId, beginRead]);
   useProjectSettingsRefresh(() => load(true));
@@ -2473,6 +2479,8 @@ function CommentTemplateTab({
           body: { body: state.body },
         },
       );
+      beginRead.cancel();
+      savedBody.current = result.body || '';
       setState({ ...state, body: result.body || '', updatedAt: result.updatedAt, isDefault: !result.body });
       onToast(result.body ? '评论模板已保存' : '评论模板已恢复默认');
     } catch (err) {
@@ -2594,8 +2602,9 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
       setState({ status: 'ok', data });
     } catch (err) {
       if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setState({ status: 'error', message: messageFromError(err) });
     }
   }, [beginRead]);
   useProjectSettingsRefresh(() => load(true));
@@ -2979,8 +2988,9 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
       setState({ status: 'ok', branches: data.branches || [] });
     } catch (err) {
       if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setState({ status: 'error', message: messageFromError(err) });
     }
   }, [projectId, beginRead]);
   useProjectSettingsRefresh(() => load(true));
@@ -3051,8 +3061,9 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
       setState({ status: 'ok', logs: data.logs || [] });
     } catch (err) {
       if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setState({ status: 'error', message: messageFromError(err) });
     }
   }, [projectId, beginRead]);
   useProjectSettingsRefresh(() => load(true));
@@ -3341,8 +3352,9 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
       setSpecText(current => preserve && current !== previous ? current : next);
     } catch (err) {
       if (signal.aborted) return;
+      const message = messageFromError(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setState({ status: 'error', message: messageFromError(err) });
     }
   }, [projectId, beginRead]);
   useProjectSettingsRefresh(() => load(true));

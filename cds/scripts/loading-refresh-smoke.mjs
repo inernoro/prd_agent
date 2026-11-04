@@ -90,6 +90,13 @@ export async function verifyLoadingRefresh(browser, base, out) {
     await page.locator('form').filter({has:name}).getByRole('button',{name:'保存修改',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('input[maxlength="60"]')?.value==='已保存的名称');
     assert.equal(await name.inputValue(),'已保存的名称');
+    holdProject(); await page.getByRole('button', { name: '刷新项目设置', exact: true }).click(); await projectRequested;
+    await name.fill('  保存期间的最新名称  ');
+    await page.locator('form').filter({has:name}).getByRole('button',{name:'保存修改',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('input[maxlength="60"]')?.value==='保存期间的最新名称');
+    releaseProject(); projectGate=null;
+    await page.getByRole('button', { name: '刷新项目设置', exact: true }).waitFor();
+    assert.equal(await name.inputValue(),'保存期间的最新名称','保存成功后迟到GET不得覆盖结果');
     await page.screenshot({ path: path.join(out, 'project-refresh-ready.jpg') });
     await page.goto(base + '/branch-relations/fixture-branch-alpha');
     await page.locator('[data-testid="relation-workspace"]').waitFor();
@@ -172,7 +179,7 @@ export async function verifyLoadingRefresh(browser, base, out) {
     releaseCenter();centerGate=null;activePoll=false;
     await page.waitForFunction(()=>!document.querySelector('button[title="刷新"][disabled]'));
     assert.deepEqual(errors, []);
-    return { hungSilentPollCanBeReplaced: true, projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
+    return { saveInvalidatesOlderRefresh: true, hungSilentPollCanBeReplaced: true, projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
   } catch(e) {
     await page.screenshot({path:path.join(out,'failure-refresh.jpg')});
     await fs.writeFile(path.join(out,'failure-refresh.html'),await page.content());

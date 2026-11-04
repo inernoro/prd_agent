@@ -154,8 +154,9 @@ export function EnvEditor({
       setState({ status: 'ok', data });
     } catch (err) {
       if (signal.aborted) return;
+      const message = err instanceof ApiError ? err.message : String(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [scope, beginRead]);
   useProjectSettingsRefresh(() => load(true));

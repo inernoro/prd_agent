@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 
 export type SettingsRead = () => Promise<unknown>;
 export const ProjectSettingsRefreshContext = createContext<((read: SettingsRead) => () => void) | null>(null);
@@ -12,14 +12,14 @@ export function useProjectSettingsRefresh(read: SettingsRead): void {
 }
 
 /** 同一读请求只接收最新结果；切页和卸载时取消等待。 */
-export function useSettingsReadRequest(): () => AbortSignal {
+export function useSettingsReadRequest(): (() => AbortSignal) & { cancel: () => void } {
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
-  return useCallback(() => {
+  return useMemo(() => Object.assign(() => {
     request.current?.abort();
     request.current = new AbortController();
     return request.current.signal;
-  }, []);
+  }, { cancel: () => request.current?.abort() }), []);
 }
 
 /** 逐字段更新未编辑的值，保留正在编辑的配置。 */

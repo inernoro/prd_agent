@@ -342,8 +342,9 @@ export function DbLedgerSection({ projectId, onToast, reloadToken = 0 }: { proje
       if (!signal.aborted) setState({ status: 'ok', view });
     } catch (err) {
       if (signal.aborted) return;
+      const message = err instanceof ApiError ? err.message : String(err);
+      setState(previous => preserve && previous.status === 'ok' ? previous : { status: 'error', message });
       if (preserve) throw err;
-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [base, beginRead]);
   useEffect(() => { void load(); }, [load, reloadToken]);

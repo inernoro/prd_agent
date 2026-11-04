@@ -7,7 +7,7 @@ import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures
 export async function verifySettingsRefresh(browser, base, out) {
   const context = await browser.newContext({viewport:{width:1440,height:940}});
   const counts = new Map(), errors = [], writes = [];
-  let release, gate, failed = '', version = 1;
+  let release, gate, failed = '', heldPath = '', version = 1;
   const project = '/api/projects/fixture-project';
   const fixtures = {
     [`${project}/identity-history`]: () => ({records:[],nextCursor:null,coverage:'complete'}),
@@ -29,7 +29,7 @@ export async function verifySettingsRefresh(browser, base, out) {
     if (isEventStream(p) || p === '/api/activity-stream') return route.fulfill({contentType:'text/event-stream',body:': fixture\n\n'});
     if (route.request().method() !== 'GET') writes.push(`${route.request().method()} ${p}`);
     counts.set(p,(counts.get(p)||0)+1);
-    if (gate && p !== '/api/auth/status') await gate;
+    if (gate && p !== '/api/auth/status' && (!heldPath || p === heldPath)) await gate;
     if (p === failed) return route.fulfill({status:500,json:{error:'合成子页读取失败'}});
     let payload = fixtures[p]?.() ?? resolveFixture(p) ?? {};
     if(p===project) payload={...payload,githubRepoFullName:'fixture/repo'};
@@ -73,6 +73,18 @@ export async function verifySettingsRefresh(browser, base, out) {
       if(draft){assert.equal(await draft.inputValue(),'unsaved fixture draft');assert(await draft.evaluate(e=>e===document.activeElement));}
       results.push({tab,reads,refreshes:true,draftPreserved:!!draft});
     }
+    // 首载尚未返回时点击刷新，替代请求失败不能把局部面板留在永久骨架。
+    for(const [tab,pendingPath] of [['env','/api/env'],['github','/api/github/app']]) {
+      heldPath=pendingPath; failed=pendingPath; gate=new Promise(r=>release=r);
+      const before=counts.get(pendingPath)||0;
+      await page.goto(`${base}/settings/fixture-project#${tab}`);
+      await countAtLeast(pendingPath,before+1); await refresh().waitFor();
+      await refresh().click(); await countAtLeast(pendingPath,before+2);
+      release();gate=null;await done();
+      await page.locator('[role="tabpanel"][data-state="active"]').getByText(/合成子页读取失败/).waitFor();
+      assert.equal(await page.locator('[role="tabpanel"][data-state="active"] .cds-loading-skeleton-line').count(),0,tab);
+      failed='';heldPath='';await refresh().click();await done();
+    }
     // Same-data refresh failure keeps a loaded panel and the next refresh recovers.
     await page.goto(`${base}/settings/fixture-project#storage`);
     await page.getByText('合成存储 1 B',{exact:true}).waitFor();
@@ -86,7 +98,7 @@ export async function verifySettingsRefresh(browser, base, out) {
     failed='';await page.getByRole('button',{name:'重试',exact:true}).click();await page.locator('textarea').first().waitFor();
     await page.screenshot({path:path.join(out,'project-settings-refresh-ready.jpg')});
     assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);
-    return {tabs:results,backgroundFailureKeepsData:true,retry:true,firstFailureExitsSkeleton:true,errors,writes};
+    return {tabs:results,firstLoadReplacementFailureExitsSkeleton:true,backgroundFailureKeepsData:true,retry:true,firstFailureExitsSkeleton:true,errors,writes};
   }catch(e){await page.screenshot({path:path.join(out,'project-settings-refresh-failure.jpg')});await fs.writeFile(path.join(out,'project-settings-refresh-failure.html'),await page.content());throw e;}
   finally{release?.();await context.close();}
 }
