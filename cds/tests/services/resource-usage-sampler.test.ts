@@ -22,6 +22,14 @@ const MB = 1024 * 1024;
 afterEach(() => __setLatestResourceUsageForTests(null));
 
 describe('computeResourceSnapshot', () => {
+  it('盘点中容器的台账暂时消失且读取失败时仍保留物理容量', async () => {
+    const branches = [branch('p1', [{ status: 'error', containerName: 'resident' }])];
+    const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['resident'])), getServiceStats: vi.fn().mockResolvedValue(new Map()) };
+    const sampler = new ResourceUsageSampler({ getAllBranches: () => branches } as StateService, provider);
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(1);
+    branches.length = 0; provider.getRunningContainerNames.mockRejectedValueOnce(new Error('observation unavailable'));
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(1);
+  });
   it('sampler queries the actual running inventory for error services, and a failed read retains their reservation', async () => {
     const branches = [branch('p1', [{ status: 'error', containerName: 'alive-error' }, { status: 'stopped', containerName: 'stopped' }])];
     const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['alive-error'])),

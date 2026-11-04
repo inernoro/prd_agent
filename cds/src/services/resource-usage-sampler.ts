@@ -72,9 +72,16 @@ const DEFAULT_INTERVAL_MS = Math.max(
 let latest: ResourceUsageSnapshot | null = null;
 let observedRunningNames: ReadonlySet<string> | null = null;
 
+export function getObservedRunningContainerNames(): ReadonlySet<string> | null { return observedRunningNames; }
+
+/** 只由真实停止确认调用；未知或失败停止必须保留盘点。 */
+export function forgetConfirmedStoppedContainers(names: readonly string[]): void {
+  if (observedRunningNames) observedRunningNames = new Set([...observedRunningNames].filter(name => !names.includes(name)));
+}
+
 /** 被动容量读取复用最后一次真实盘点；读取失败不能把既知活容器释放为零。 */
 export function countReservedContainers(branches: ReadonlyArray<BranchEntry>): number {
-  const names = new Set<string>();
+  const names = new Set<string>(observedRunningNames || []);
   for (const branch of branches) {
     for (const [id, svc] of Object.entries(branch.services || {})) {
       if (['running', 'building', 'starting', 'restarting'].includes(svc.status)

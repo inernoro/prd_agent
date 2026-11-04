@@ -9,7 +9,7 @@
  *   3. 只停不删：已停止的孤儿记 already-stopped，不再发 docker 命令；
  *   4. 事件留痕：停止动作写 server-event。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, processTeardownTombstones, computeCdsInstanceId } from '../../src/services/orphan-container-reaper.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
@@ -66,6 +66,7 @@ describe('isOrphanReaperEnabled', () => {
 describe('sweepOrphanCdsContainers', () => {
   it('stops running orphan infra + app containers, spares known owners', async () => {
     const shell = new MockShellExecutor();
+    const exec = vi.spyOn(shell, 'exec');
     mockPs(
       shell,
       [
@@ -98,6 +99,10 @@ describe('sweepOrphanCdsContainers', () => {
     expect(stopCmds.join('\n')).not.toContain('known-mysql');
     expect(stopCmds.join('\n')).not.toContain('cds-live-api');
     expect(events).toHaveLength(2);
+    for (const [command, options] of exec.mock.calls) {
+      if (command.startsWith('docker ps ')) expect(options).toMatchObject({ executionLane: 'observation', timeout: 5000 });
+      if (command.startsWith('docker stop ')) expect(options).toMatchObject({ executionLane: 'operation', executionPurpose: 'temporary-cleanup', timeout: 60000 });
+    }
   });
 
   it('records already-stopped orphans without issuing docker commands', async () => {
