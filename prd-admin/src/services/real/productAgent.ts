@@ -352,6 +352,30 @@ export function importOverviewVersionWorkflow(body: {
   return apiRequest<ImportRoutedResult>('/api/product/overview/version-workflow/import', { method: 'POST', body });
 }
 
+export type ProductReleaseBackupFile = {
+  format: string;
+  recordCount: number;
+  exportedAt: string;
+  payload: string;
+};
+
+export type ProductReleaseRestoreResult = {
+  total: number;
+  toRestore: number;
+  existing: number;
+  conflicts: number;
+  restored: number;
+};
+
+export function exportReleaseBackup() {
+  return apiRequest<ProductReleaseBackupFile>('/api/product/overview/version-workflow/release-backup');
+}
+
+export function restoreReleaseBackup(file: ProductReleaseBackupFile, preview: boolean) {
+  return apiRequest<ProductReleaseRestoreResult>(`/api/product/overview/version-workflow/release-backup/restore?preview=${preview}`,
+    { method: 'POST', body: file });
+}
+
 export interface ImportRoutedResult {
   created: number;
   snapshotId?: string;

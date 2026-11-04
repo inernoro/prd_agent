@@ -30,6 +30,7 @@ import { InitiationDeleteAction, ReleaseDeleteAction } from '@/components/produc
 import { ReleaseEditAction } from '@/components/product-agent/ReleaseEditAction';
 import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 import { VersionDebugClearButton } from '@/components/product-agent/VersionDebugClearButton';
+import { ReleaseBackupActions } from '@/components/product-agent/ReleaseBackupActions';
 import { useProductListScope } from '@/lib/productListScope';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -224,6 +225,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {isAdmin && tab === 'release' && <VersionAnnouncementUpdate onUpdated={reload} />}
+        {isAdmin && tab === 'release' && <ReleaseBackupActions onRestored={reload} />}
         {isAdmin && <VersionDebugClearButton key={tab} kind={tab === 'initiation' ? 'internal' : 'formal'} onChanged={reload} />}
         {isAdmin && <Secondary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => setImportKind(tab)}><Upload size={14} />导入历史{tab === 'release' ? '正式' : '内部'}版本</Secondary>}
         <Secondary disabled={listLoading || Boolean(catalogError) || Boolean(loadError) || (tab === 'release' ? visibleReleases : visibleInitiations).length === 0}

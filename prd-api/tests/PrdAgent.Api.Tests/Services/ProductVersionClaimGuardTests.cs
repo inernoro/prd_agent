@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,6 +21,78 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class ProductVersionClaimGuardTests
 {
+    [Fact]
+    public async Task FullReleaseBackupRestoresOriginalRecordIdsAndDetailsAfterDebugClear()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var time = new DateTime(2026, 11, 4, 1, 2, 3, DateTimeKind.Utc);
+        var record = new ProductRelease
+        {
+            Id = "original-v", ProductId = "product", VCode = "V1.2.3", TCode = "T1.2.3", InitiationId = "source-t",
+            PreviousReleaseId = "previous-v", PlanName = "版本备份往返", OwnerId = "owner", OwnerName = "原负责人",
+            TeamMemberIds = new() { "owner", "member" }, RequirementIds = new() { "req" }, NoTapdLinks = false,
+            TapdLinks = new() { new() { Title = "需求", Url = "https://www.tapd.cn/1" } },
+            FeatureManifest = new() { new() { FeatureId = "feat", ChangeType = FeatureChangeType.Modified, ChangeNote = "本版改动" } },
+            AnnouncementUrl = "https://example.test/announcement", ReleasedAt = time, CreatedAt = time, UpdatedAt = time,
+            Status = "released", CreatedBy = "original-user",
+            ClaimNotification = new() { Status = "sent", Snapshot = "原通知快照", NextAttemptAt = time },
+        };
+        await fixture.Db.ProductReleases.InsertManyAsync(new[]
+        {
+            record, new ProductRelease { Id = "previous-v", ProductId = "product", VCode = "V1.2.2",
+                ClaimNotification = new() { Status = "pending", Snapshot = "待发送快照", NextAttemptAt = time } },
+        });
+        await fixture.Db.Features.InsertOneAsync(new Feature { Id = "feat", ProductId = "product", OfficialReleaseId = record.Id });
+        await fixture.Db.Requirements.InsertOneAsync(new Requirement { Id = "req", ProductId = "product", VersionIds = new() { record.Id } });
+        var protection = new EphemeralDataProtectionProvider();
+        var controller = fixture.Controller(admin: true);
+        var configuration = new ConfigurationBuilder().Build();
+        var file = Assert.IsType<ApiResponse<ProductReleaseBackupFile>>(Assert.IsType<OkObjectResult>(
+            await controller.ExportReleaseBackup(protection, CancellationToken.None)).Value).Data!;
+        Assert.Equal(2, file.RecordCount);
+        var before = await ProductVersionDebugClear.PreviewAsync(fixture.Db, "formal");
+        Assert.Equal(2, (await ProductVersionDebugClear.ClearAsync(fixture.Db, "formal", before.Token, "me"))!.ClearedCount);
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+        var preview = Assert.IsType<ApiResponse<ProductReleaseRestoreResult>>(Assert.IsType<OkObjectResult>(
+            await controller.RestoreReleaseBackup(file, null, protection, configuration, CancellationToken.None)).Value).Data!;
+        Assert.Equal(2, preview.ToRestore);
+        Assert.Equal(0, preview.Restored);
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+        var service = new ProductReleaseBackup(fixture.Db, protection);
+        Assert.Equal(2, (await service.RestoreAsync(file, false, CancellationToken.None)).Restored);
+        Assert.Equal(record.ToBsonDocument(), (await fixture.Db.ProductReleases.Find(row => row.Id == record.Id).SingleAsync()).ToBsonDocument());
+        var pending = await fixture.Db.ProductReleases.Find(row => row.Id == "previous-v").SingleAsync();
+        Assert.Equal("unknown", pending.ClaimNotification!.Status);
+        Assert.Equal("待发送快照", pending.ClaimNotification.Snapshot);
+        Assert.Equal(time, pending.ClaimNotification.NextAttemptAt);
+        Assert.Equal(record.Id, (await fixture.Db.Features.Find(row => row.Id == "feat").SingleAsync()).OfficialReleaseId);
+        Assert.Contains(record.Id, (await fixture.Db.Requirements.Find(row => row.Id == "req").SingleAsync()).VersionIds);
+        Assert.Equal(2, (await service.RestoreAsync(file, false, CancellationToken.None)).Existing);
+    }
+
+    [Fact]
+    public async Task FullReleaseBackupRejectsTamperingAndLeavesAllRecordsUntouchedOnVersionConflict()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var service = new ProductReleaseBackup(fixture.Db, new EphemeralDataProtectionProvider());
+        await fixture.Db.ProductReleases.InsertManyAsync(new[]
+        {
+            new ProductRelease { Id = "old", ProductId = "product", VCode = "V1.2.3" },
+            new ProductRelease { Id = "unrelated", ProductId = "product", VCode = "V1.2.4" },
+        });
+        var file = await service.ExportAsync(CancellationToken.None);
+        await fixture.Db.ProductReleases.DeleteManyAsync(_ => true);
+        var bytes = Convert.FromBase64String(file.Payload);
+        bytes[bytes.Length / 2] ^= 1;
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.RestoreAsync(
+            file with { Payload = Convert.ToBase64String(bytes) }, false, CancellationToken.None));
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "current", ProductId = "product", VCode = "V1.2.3" });
+        var result = await service.RestoreAsync(file, false, CancellationToken.None);
+        Assert.Equal(1, result.Conflicts);
+        Assert.Equal(0, result.Restored);
+        Assert.Equal("current", (await fixture.Db.ProductReleases.Find(_ => true).SingleAsync()).Id);
+    }
+
     [Fact]
     public async Task VersionExportResolvesUniqueHistoryNamesAndKeepsAmbiguousIdsBlank()
     {
