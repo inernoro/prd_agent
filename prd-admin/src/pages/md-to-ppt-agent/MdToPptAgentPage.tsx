@@ -1945,12 +1945,14 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
     // 恢复对账：把聊天里残留的「正在生成/修改」气泡按 run 真实状态翻转——
     // 此前只恢复 deck 不对账消息，刷新后气泡永远停在"正在生成 PPT..."（2026-06-11 实测）
-    const reconcileMessages = (status: 'done' | 'error', error?: string | null, doneContent?: string) => {
+    const reconcileMessages = (status: 'done' | 'error' | 'cancelled', error?: string | null, doneContent?: string) => {
       setMessages((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && (m.phase === 'generating' || m.phase === 'patching')
             ? status === 'done'
               ? { ...m, phase: 'done', content: doneContent ?? 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。' }
+              : status === 'cancelled'
+                ? { ...m, phase: 'text', content: doneContent ?? '本次修改已取消，原版本仍然保留，可从历史记录载入。' }
               : { ...m, phase: 'error', content: '生成失败：' + (error ?? '未知错误') }
             : m
         )
@@ -1975,7 +1977,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         const parent = await recoverPatchParentRun(run);
         if (cancelled) return;
         releaseRecovery();
-        if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
+        const wasCancelled = run.errorCode === 'design_artifact_cancelled';
+        if (wasCancelled) {
+          resetStreamPreview();
+          hasRuntimePreviewRef.current = false;
+        }
+        if (!wasCancelled && run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
           hasRuntimePreviewRef.current = true;
           setGeneratedHtml(run.latestPreviewHtml);
           setArtifactSiteUrl('');
@@ -1992,7 +1999,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setArtifactPhase('idle');
           setRepairableRunId('');
         }
-        reconcileMessages('error', run.error);
+        reconcileMessages(wasCancelled ? 'cancelled' : 'error', run.error,
+          wasCancelled && parent ? '本次修改已取消，已恢复原版本，可以继续编辑或发布。' : undefined);
       } else if (run.status === 'running') {
         canCancel = run.runtime === 'open-design' && ['convert', 'patch', 'manual-edit'].includes(run.op);
         if (canCancel && cancelRequested) void sendCancellation();
@@ -3017,7 +3025,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           )
         );
       };
-      const finishFailure = (err: string) => {
+      const finishFailure = (err: string, errorCode?: string | null) => {
         if (!mountedRef.current || !patchSubmissionRef.current || activePatchRef.current !== operation) return;
         activePatchRef.current = null;
         cleanupRef.current?.();
@@ -3025,19 +3033,28 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
         if (manualIntent?.settled && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
         patchSubmissionRef.current = false;
+        const wasCancelled = errorCode === 'design_artifact_cancelled';
         setMessages((prev) =>
           prev.map((m) =>
             m.id === patchMsg.id
-              ? { ...m, content: '修改失败：' + err, phase: 'error', error: err }
+              ? { ...m, content: wasCancelled
+                  ? manualEditHtml ? '本次保存已取消，编辑草稿和原版本都已保留。' : '本次修改已取消，已恢复原版本，可以继续编辑或发布。'
+                  : '修改失败：' + err, phase: wasCancelled ? 'text' : 'error', error: wasCancelled ? undefined : err }
               : m
           )
         );
         setIsProcessing(false);
-        setArtifactPhase(hasRuntimePreviewRef.current && !manualEditHtml ? 'error' : 'done');
+        if (wasCancelled) {
+          resetStreamPreview();
+          hasRuntimePreviewRef.current = false;
+          setGeneratedHtml(base);
+          setRepairableRunId('');
+        }
+        setArtifactPhase(!wasCancelled && hasRuntimePreviewRef.current && !manualEditHtml ? 'error' : 'done');
         setPatchingSlide(null);
         setActiveRunId(sourceRunId);
         setArtifactSiteUrl(sourceSiteUrl);
-        if (manualEditHtml) {
+        if (manualEditHtml && !wasCancelled) {
           toast.error('保存编辑失败', '当前草稿和原版本都已保留，可检查后再次保存。');
         }
         patchParentRef.current = null;
@@ -3051,7 +3068,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           if (run.status === 'done' && run.html) { finishSuccess({ html: run.html, siteUrl: run.siteUrl ?? undefined }); return; }
           if (run.status === 'error') {
             if (manualIntent) manualIntent.settled = true;
-            finishFailure(run.error ?? '本次修改未完成，原稿仍然保留');
+            finishFailure(run.error ?? '本次修改未完成，原稿仍然保留', run.errorCode);
             return;
           }
           setArtifactProgress(Math.max(0, run.progress ?? 0));
