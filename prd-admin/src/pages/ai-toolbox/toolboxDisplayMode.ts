@@ -1,13 +1,12 @@
-export type ToolboxDisplayMode = 'compact' | 'standard' | 'showcase';
+export type ToolboxDisplayMode = 'compact' | 'list';
 
 export const DEFAULT_TOOLBOX_DISPLAY_MODE: ToolboxDisplayMode = 'compact';
 
 const TOOLBOX_DISPLAY_MODE_STORAGE_KEY = 'ai-toolbox.pref.displayMode';
 
 export function normalizeToolboxDisplayMode(value: string | null): ToolboxDisplayMode {
-  return value === 'compact' || value === 'standard' || value === 'showcase'
-    ? value
-    : DEFAULT_TOOLBOX_DISPLAY_MODE;
+  // 旧 standard/showcase 都迁移为画廊，避免旧 CSS 模式影响新卡片。
+  return value === 'list' ? 'list' : DEFAULT_TOOLBOX_DISPLAY_MODE;
 }
 
 export function readToolboxDisplayMode(storage?: Pick<Storage, 'getItem'>): ToolboxDisplayMode {
