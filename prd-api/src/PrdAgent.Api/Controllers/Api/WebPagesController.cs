@@ -729,13 +729,13 @@ public class WebPagesController : ControllerBase
     /// 站点没有任何访问记录时不出现在返回里，前端据此显示 0 而不是编一个数。
     /// </summary>
     /// <summary>
-    /// 每个站点的独立访客数。
+    /// 每个站点的访问次数、独立访客与最近访问。
     ///
     /// 必须并两个来源：站内访问记在 SiteViewEvents（登录用户直接打开或团队内访问），
     /// 而公开分享链接的访问记在 ShareViewLogs、按分享而不是按站点存。只数前者的话，
     /// 一个只通过分享链接传播的站点在卡片上永远是「0 访客」——那不是「没人看」，
     /// 是我们没去数。两边的身份口径一样（登录用 ViewerUserId，匿名退回 IP），
-    /// 所以可以先各自取出「站点 → 访客键集合」再求并，避免同一个人被数两次。
+    /// 所以按同一访客和固定半小时时段合并，避免一次打开在两端被重复计数。
     /// </summary>
     private async Task<Dictionary<string, HostedSiteTraffic>> BuildTrafficAsync(
         IReadOnlyCollection<HostedSite> sites, string viewerUserId, ISet<string> openedSites)
@@ -776,7 +776,7 @@ public class WebPagesController : ControllerBase
             new BsonDocument("$match", new BsonDocument("SiteId", new BsonDocument("$in", new BsonArray(ids)))),
             Group("SiteId"),
         };
-        using (var cursor = await _db.SiteViewEvents.Aggregate<BsonDocument>(sitePipeline).ToCursorAsync())
+        using (var cursor = await _db.SiteViewEvents.AggregateAsync<BsonDocument>(sitePipeline))
             while (await cursor.MoveNextAsync())
                 foreach (var row in cursor.Current) Add(row["_id"].AsBsonDocument["target"].AsString, row, true);
 
@@ -800,7 +800,7 @@ public class WebPagesController : ControllerBase
                 new BsonDocument("$match", new BsonDocument("ShareId", new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
                 Group("ShareId"),
             };
-            using var cursor = await _db.ShareViewLogs.Aggregate<BsonDocument>(sharePipeline).ToCursorAsync();
+            using var cursor = await _db.ShareViewLogs.AggregateAsync<BsonDocument>(sharePipeline);
             while (await cursor.MoveNextAsync())
                 foreach (var row in cursor.Current)
                 {
