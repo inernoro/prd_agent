@@ -2535,8 +2535,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       details: { ...context, waitedMs: outcome.waitedMs, remaining: outcome.remaining },
     });
     if (!outcome.drained) {
-      endSelfUpdateDrain();
-      setRestartWait(null);
       const error = new SelfUpdateRestartBlockedError(outcome.remaining, outcome.waitedMs);
       context.onProgress?.('warning', error.message);
       throw error;
@@ -2553,6 +2551,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     toSha?: string;
     actor?: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
+    timeoutMs?: number;
     onSafeToRestart: () => void;
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
   }, maintenanceOwner: SelfMaintenanceOwner): Promise<BoundedFlushResult> {
@@ -2561,7 +2560,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     selfMaintenance.setPhase(maintenanceOwner, 'drain');
     await drainDeploysBeforeSelfUpdateRestart({
       trigger: context.trigger, branch: context.branch, toSha: context.toSha,
-      source: context.source, onProgress: context.onProgress,
+      source: context.source, timeoutMs: context.timeoutMs, onProgress: context.onProgress,
     });
     context.onSafeToRestart();
     selfMaintenance.setPhase(maintenanceOwner, 'flush');
@@ -24782,6 +24781,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         fromSha: fullSha.slice(0, 8),
         toSha: fullSha.slice(0, 8),
         actor,
+        timeoutMs: resolveSelfUpdateDrainTimeoutMs(req.body),
         source: 'api.self-restart',
         onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
         onSafeToRestart: () => {
@@ -25612,6 +25612,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         fromSha,
         toSha: newHead || fromSha,
         actor,
+        timeoutMs: restartDrainTimeoutMs,
         source: 'api.self-update',
         onProgress: (status, title) => send('drain-deploys', status, title),
         onSafeToRestart: () => {
@@ -26592,6 +26593,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         fromSha,
         toSha: newHead || fromSha,
         actor,
+        timeoutMs: restartDrainTimeoutMs,
         source: 'api.self-force-sync',
         onProgress: (status, title) => send('drain-deploys', status, title),
         onSafeToRestart: () => {

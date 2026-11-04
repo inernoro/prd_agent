@@ -15,7 +15,8 @@ import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import * as prebuiltRuntime from '../../src/services/cds-prebuilt-runtime.js';
-import { endSelfUpdateDrain } from '../../src/services/deploy-drain.js';
+import { endSelfUpdateDrain, isSelfUpdateDraining } from '../../src/services/deploy-drain.js';
+import * as drainRuntime from '../../src/services/deploy-drain.js';
 import { setRestartWait } from '../../src/services/self-restart-wait.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
 
@@ -78,7 +79,7 @@ afterEach(async () => {
 });
 
 describe('CDS 可撤销重启交接', () => {
-  it.each(['self-update', 'self-force-sync'])('真实active-store写失败、首SHA等待及success清标记都不放入兄弟写入：%s', async endpoint => {
+  async function exerciseHandoff(endpoint: string, failureMode: 'physical-flush' | 'drain-timeout' = 'physical-flush'): Promise<void> {
     const root = ownedRoot(), stateFile = path.join(root, 'state.json'), sha = 'a'.repeat(40);
     const config = { repoRoot: root, worktreeBase: path.join(root, 'worktrees'), masterPort: 9900,
       workerPort: 5500, dockerNetwork: 'test', portStart: 10001, rootDomains: ['example.test'],
@@ -130,9 +131,20 @@ describe('CDS 可撤销重启交接', () => {
     vi.spyOn(prebuiltRuntime, 'fetchCdsPrebuilt').mockResolvedValue({ ok: true,
       distDir: path.join(root, 'stage/dist'), webDistDir: path.join(root, 'stage/web') });
     const state = new StateService(stateFile, root); state.load();
+    let restartDrainTimeout: number | undefined;
+    if (failureMode === 'drain-timeout') {
+      const actualDrain = drainRuntime.drainInFlightDeploys; let drains = 0;
+      vi.spyOn(drainRuntime, 'drainInFlightDeploys').mockImplementation(async options => {
+        if (++drains === 2) {
+          restartDrainTimeout = options.timeoutMs;
+          return { drained: false, skipped: false, waitedMs: 0, remaining: ['fixture-inflight'] };
+        }
+        return actualDrain(options);
+      });
+    }
     const originalFlush = state.flush.bind(state), originalRename = fs.promises.rename.bind(fs.promises);
     vi.spyOn(state, 'flush').mockImplementation(() => {
-      if (++flushes === 2) { blockWrite = true; state.save(); }
+      if (++flushes === 2 && failureMode === 'physical-flush') { blockWrite = true; state.save(); }
       return originalFlush();
     });
     vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
@@ -162,12 +174,18 @@ describe('CDS 可撤销重启交接', () => {
       expect(shell.commands).toHaveLength(beforeShortSha);
       finishShortSha();
       await rollbackEntered;
-      expect(state.getActiveSelfUpdate()).toBeFalsy(); expect(state.getSelfUpdateHistory(1)[0].status).toBe('success');
+      expect(state.getActiveSelfUpdate()).toBeFalsy();
+      expect(state.getSelfUpdateHistory(1)[0].status).toBe(failureMode === 'physical-flush' ? 'success' : 'aborted');
+      expect(isSelfUpdateDraining(Date.now()), '物理回滚未完成时部署排空闸必须保持关闭').toBe(true);
+      if (failureMode === 'drain-timeout') expect(restartDrainTimeout).toBe(0);
       const commands = shell.commands.length;
       for (const endpoint of ['self-force-sync', 'self-restart']) expect(await post(endpoint)).toMatch(/concurrency|self_update_busy/);
       expect(shell.commands).toHaveLength(commands); expect(exit).not.toHaveBeenCalled();
       finishRollback(); const failure = await first;
-      expect(failure).toContain('CDS 重启未获可靠交接许可'); expect(failure).not.toContain('event: done');
+      expect(failure).toContain(failureMode === 'physical-flush' ? 'CDS 重启未获可靠交接许可' : 'self_update_restart_cancelled');
+      expect(failure).not.toContain('event: done');
+      await vi.waitFor(() => expect(runtime.observe()).toBeNull());
+      expect(isSelfUpdateDraining(Date.now())).toBe(false);
       expect(fs.readFileSync(path.join(root, 'cds/dist/index.js'), 'utf8')).toBe('old backend');
       expect(fs.readFileSync(path.join(root, 'cds/web/dist/index.html'), 'utf8')).toBe('old web');
       expect(fs.existsSync(path.join(root, 'cds/invoked.txt'))).toBe(false);
@@ -178,6 +196,14 @@ describe('CDS 可撤销重启交接', () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
       endSelfUpdateDrain(); setRestartWait(null); selfStatusCache._resetForTests();
     }
+  }
+
+  it.each(['self-update', 'self-force-sync'])('真实active-store写失败、首SHA等待及success清标记都不放入兄弟写入：%s', async endpoint => {
+    await exerciseHandoff(endpoint);
+  });
+
+  it.each(['self-update', 'self-force-sync'])('切换后再次排空超时保持关闭部署闸直到原票回滚完成，并沿用请求期限：%s', async endpoint => {
+    await exerciseHandoff(endpoint, 'drain-timeout');
   });
 
   it.each(['cancel', 'release', 'early-close'])('额外pipe在保存许可前不执行daemon：%s', async mode => {

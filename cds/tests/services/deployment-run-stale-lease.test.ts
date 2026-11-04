@@ -8,6 +8,7 @@ import { DeploymentRunService, DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../../sr
 import { DeploymentPhaseBudget, deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import { ContainerService } from '../../src/services/container.js';
 import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
+import { SelfMaintenanceRuntime } from '../../src/services/self-maintenance-runtime.js';
 import type { CdsConfig, ExecAssignment, ExecOptions, ExecResult, OperationLogEvent } from '../../src/types.js';
 import { StateService } from '../../src/services/state.js';
 import { drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
@@ -639,14 +640,28 @@ describe('部署心跳过期后的精确租约回收', () => {
       state, coordinator, setWait, undefined, drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain,
       collectDrainableRuns, DRAIN_GATE_MAX_HOLD_MS, resolveSelfUpdateDrainTimeoutMs, SelfUpdateRestartBlockedError);
     const active = coordinator.begin({ ...request, kind: 'pull' });
+    const maintenance = new SelfMaintenanceRuntime({ exec: async () => { throw new Error('本例不应启动写者'); } }, directory, () => {});
+    const owner = maintenance.acquire({ source: 'self-update', actor: 'fixture' }, false)!;
+    const finishStart = routes.indexOf('  function finishSelfMaintenance(');
+    const finishEnd = routes.indexOf('  function selfMaintenanceShell(', finishStart);
+    expect(finishStart).toBeGreaterThan(0); expect(finishEnd).toBeGreaterThan(finishStart);
+    const finishCode = ts.transpileModule(routes.slice(finishStart, finishEnd), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } });
+    const finish = new Function('selfMaintenance', 'endSelfUpdateDrain', 'setRestartWait',
+      `${finishCode.outputText}\nreturn finishSelfMaintenance;`)(maintenance, endSelfUpdateDrain, setWait);
     try {
       expect(active.status).toBe('started'); expect(runs.list()).toEqual([]);
       await expect(actualDrain({ trigger: 'manual', source: 'api.self-update', timeoutMs: 0 }))
         .rejects.toMatchObject({ code: 'self_update_restart_cancelled', remaining: [`operation:${active.operationId}`], waitedMs: 0 });
       expect(coordinator.getActiveOperations().map(operation => operation.operationId)).toEqual([active.operationId]);
+      expect(setWait).not.toHaveBeenCalledWith(null);
+      expect(selfUpdateDrainBlockReason(clock.getTime())).not.toBeNull();
+      finish({ ...owner, id: 'foreign-owner' });
+      expect(selfUpdateDrainBlockReason(clock.getTime())).not.toBeNull();
+      finish(owner);
       expect(setWait).toHaveBeenLastCalledWith(null);
       expect(selfUpdateDrainBlockReason(clock.getTime())).toBeNull();
-    } finally { endSelfUpdateDrain(); now.mockRestore(); }
+    } finally { await maintenance.close(); endSelfUpdateDrain(); now.mockRestore(); }
   });
 
 });
