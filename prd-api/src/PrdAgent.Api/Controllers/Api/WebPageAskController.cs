@@ -241,6 +241,11 @@ public class WebPageAskController : ControllerBase
         if (reason != null)
             return BadRequest(ApiResponse<object>.Fail("ASK_UNSUPPORTED", reason));
 
+        // 生成只能依据已保存的有效开关；未开启时在清除手写保护和版本戳之前拒绝。
+        // 前端的开关可能还只是草稿，不能把一次点击理解为隐式保存或开启提问。
+        if (!await IsAskOnAsync(site))
+            return BadRequest(ApiResponse<object>.Fail("ASK_DISABLED", "请先开启并保存提问，再生成开场问题。"));
+
         // 先记下原样。下面那两笔清除是「重新生成」的前提，但这一发**可能一个字都不写**
         // （模型不通 / 已经有一次在跑 / 算完发现被顶掉）。那时如果不把标记还回去，
         // owner 手写的那份题还躺在库里、却已经没了保护：NeedsGeneration 随即判 true，
@@ -327,7 +332,7 @@ public class WebPageAskController : ControllerBase
             AskOpenerOutcome.ModelUnavailable => "模型这会儿调不通（网关没有可用模型池或暂时不可达）。这是暂时的，过一会儿再点一次。",
             AskOpenerOutcome.Busy => "这个站点已经有一次生成在跑了，等它写完就会出现，不用重复点。",
             AskOpenerOutcome.Superseded => "生成期间这个站点的内容被换过（或题库被改成手写），这一批题按旧内容算的，没有保存。可以再点一次按最新内容生成。",
-            _ => "这个站点现在不需要生成（提问没开，或题库已经是你自己写的）。",
+            _ => "提问配置或题库状态已变化，本次未生成。请重新打开设置确认后重试。",
         };
 
         return Ok(ApiResponse<object>.Ok(new

@@ -86,6 +86,10 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
   }, [siteId]);
 
   const atLibraryCap = questions.length >= maxQuestions;
+  // 开关是待保存的表单值，生成接口只读取已保存配置；不能拿草稿当作已生效。
+  const generationBlockedReason = unsupportedReason
+    ?? (enabledDirty ? '请先保存提问设置，再生成开场问题。'
+      : !enabled ? '请先开启并保存提问，再生成开场问题。' : null);
 
   const addQuestion = useCallback(() => {
     const q = draft.trim();
@@ -102,6 +106,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
   }, [draft, maxLength, maxQuestions]);
 
   const regenerate = useCallback(async () => {
+    if (saving || regenerating || !configReady || generationBlockedReason) return;
     setRegenerating(true);
     setRegenNote(null);
     try {
@@ -110,20 +115,23 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
         setRegenNote(res.error?.message ?? '重新生成失败');
         return;
       }
-      setQuestions(res.data?.suggestedQuestions ?? []);
-      // 用后端回的那个值，别一律写死 'auto'。这一次未必真写进去了——别人在这几秒里
-      // 把题库改成手写，后端会回 Superseded 加上库里最新的 questionsSource='manual'，
-      // 而这里如果硬标成 auto，面板就会把别人手写的那份说成「系统读正文生成」。
-      setQuestionsSource(res.data?.questionsSource === 'manual' ? 'manual' : 'auto');
-      // 这份是从库里读回来的，不是他在这个抽屉里动的手：保存时不要再送回去把站点钉成 manual。
-      setQuestionsDirty(false);
+      // 未生成时不能用数据库旧值覆盖这个窗口里尚未保存的手写题。
+      if (res.data?.generated || !questionsDirty) {
+        setQuestions(res.data?.suggestedQuestions ?? []);
+        // 用后端回的那个值，别一律写死 'auto'。这一次未必真写进去了——别人在这几秒里
+        // 把题库改成手写，后端会回 Superseded 加上库里最新的 questionsSource='manual'，
+        // 而这里如果硬标成 auto，面板就会把别人手写的那份说成「系统读正文生成」。
+        setQuestionsSource(res.data?.questionsSource === 'manual' ? 'manual' : 'auto');
+        // 这份是从库里读回来的，不是他在这个抽屉里动的手：保存时不要再送回去把站点钉成 manual。
+        setQuestionsDirty(false);
+      }
       // 没生成出来就把后端的原话摆出来（这一页读不出正文 / 模型没给出可用问题），
       // 不假装成功，也不自己换一套说法（no-rootless-tree）
       if (!res.data?.generated) setRegenNote(res.data?.message ?? '这一页没能读出可提问的正文。');
     } catch (reason) {
       setRegenNote(reason instanceof Error ? reason.message : '重新生成失败，请重试');
     } finally { setRegenerating(false); }
-  }, [siteId]);
+  }, [configReady, generationBlockedReason, questionsDirty, regenerating, saving, siteId]);
 
   const save = useCallback(async () => {
     if (saving || regenerating || !configReady) return;
@@ -140,7 +148,9 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
       });
       if (!res.success) { setError(res.error?.message ?? '保存失败'); return; }
       await onSaved?.(res.data);
+      setEnabled(res.data.enabled);
       setEnabledDirty(false);
+      setRegenNote(null);
       setQuestionsDirty(false);
       if (embedded) setSaved(true);
       else onClose();
@@ -183,7 +193,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
               <div className="site-settings-group">
                 <SiteSettingsToggleRow icon={<MessageCircle size={12} />} label="开放提问" hint="未单独设置时沿用个人默认。">
                   <Toggle ariaLabel="开放提问" checked={enabled}
-                    onChange={(next) => { setEnabled(next); setEnabledDirty(true); }}
+                    onChange={(next) => { setEnabled(next); setEnabledDirty(true); setRegenNote(null); }}
                     disabled={!!unsupportedReason && !enabled} />
                 </SiteSettingsToggleRow>
                 <SiteSettingsToggleRow icon={<Users size={12} />} label="允许未登录访客提问" hint="关闭后，访客需要先登录才能提问。">
@@ -214,14 +224,14 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
                     </span>
                     <button
                       onClick={() => void regenerate()}
-                      disabled={regenerating || !!unsupportedReason}
-                      title="重新读一遍这一页的正文，写一批新的开场问题；会覆盖现在这几条"
+                      disabled={regenerating || !!generationBlockedReason}
+                      title={generationBlockedReason ?? "重新读一遍这一页的正文，写一批新的开场问题；会覆盖现在这几条"}
                       style={{
                         marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
                         height: 26, padding: '0 9px', borderRadius: 7,
                         border: '1px solid var(--border-subtle)', background: 'transparent',
                         color: 'var(--text-muted)', fontSize: 11.5,
-                        cursor: regenerating || unsupportedReason ? 'default' : 'pointer',
+                        cursor: regenerating || generationBlockedReason ? 'default' : 'pointer',
                       }}
                     >
                       {regenerating ? <MapSpinner size={12} /> : <RotateCw size={12} />}
@@ -231,7 +241,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.6 }}>
                     供访客一键提问。手动编辑后，不再被自动生成覆盖。
                   </div>
-                  {regenNote && (
+                  {generationBlockedReason && <div role="status" className="mb-2 text-xs text-token-muted">{generationBlockedReason}</div>}
+                  {regenNote && !generationBlockedReason && (
                     <div style={{ fontSize: 12, color: 'var(--accent-primary)', marginBottom: 8, lineHeight: 1.6 }}>
                       {regenNote}
                     </div>
