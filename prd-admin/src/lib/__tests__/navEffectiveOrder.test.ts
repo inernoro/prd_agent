@@ -7,12 +7,12 @@ import { buildEffectiveNavOrder, mergeEffectiveHidden } from '@/lib/navEffective
  * 总览只画了默认顺序里的九项——因为没复演 AppShell 的「目录里有、顺序里没有 → 自动补到末尾」。
  */
 describe('buildEffectiveNavOrder', () => {
-  const sidebar = ['ai-toolbox', 'workflow-agent', 'marketplace', 'web-pages', 'document-store', 'users', 'settings'];
+  const sidebar = ['ai-toolbox', 'executive', 'marketplace', 'web-pages', 'document-store', 'users', 'settings'];
 
   it('顺序里没有但侧栏可见的目录项被追加到末尾，并标记 auto', () => {
     const out = buildEffectiveNavOrder({ order: ['ai-toolbox', '---', 'users', 'settings'], hidden: [], sidebarIds: sidebar });
-    expect(out.map((e) => e.token)).toEqual(['ai-toolbox', '---', 'users', 'settings', 'workflow-agent', 'marketplace', 'web-pages', 'document-store']);
-    expect(out.filter((e) => e.auto).map((e) => e.id)).toEqual(['workflow-agent', 'marketplace', 'web-pages', 'document-store']);
+    expect(out.map((e) => e.token)).toEqual(['ai-toolbox', '---', 'users', 'settings', 'executive', 'marketplace', 'web-pages', 'document-store']);
+    expect(out.filter((e) => e.auto).map((e) => e.id)).toEqual(['executive', 'marketplace', 'web-pages', 'document-store']);
   });
 
   it('被隐藏的项既不出现在顺序里也不会被自动补回', () => {
@@ -37,6 +37,17 @@ describe('buildEffectiveNavOrder', () => {
   it('目录里已不存在的 token 原样保留在原位（总览要把它标成红框）', () => {
     const out = buildEffectiveNavOrder({ order: ['ai-toolbox', 'mds', 'users'], hidden: [], sidebarIds: ['ai-toolbox', 'users'] });
     expect(out.map((e) => e.token)).toEqual(['ai-toolbox', 'mds', 'users']);
+  });
+});
+
+describe('永久下架导航', () => {
+  it('旧布局和自动补全均不能恢复海报或工作流', () => {
+    const out = buildEffectiveNavOrder({
+      order: ['weekly-poster', '---', 'ai-toolbox', '---', 'infra:workflow-agent', '---', 'settings', '__weekly-poster__'],
+      hidden: [],
+      sidebarIds: ['weekly-poster', 'workflow-agent', 'ai-toolbox', 'settings', 'users'],
+    });
+    expect(out.map((e) => e.token)).toEqual(['ai-toolbox', '---', 'settings', 'users']);
   });
 });
 

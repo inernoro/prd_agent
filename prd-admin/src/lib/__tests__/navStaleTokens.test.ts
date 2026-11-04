@@ -26,4 +26,14 @@ describe('collectStaleNavTokens', () => {
     expect(collectStaleNavTokens([['---', '---']], known)).toEqual([]);
     expect(isStaleNavToken('---', known)).toBe(false);
   });
+
+  it('仅退出侧栏的海报和工作流不进入默认布局或个人布局的批量清理', () => {
+    const defaultOrder = ['ai-toolbox', 'weekly-poster', 'infra:workflow-agent'];
+    const personalOrder = ['__weekly-poster__', 'workflow-agent', 'settings', 'mds'];
+    const hidden = ['weekly-poster', 'infra:workflow-agent'];
+    expect(collectStaleNavTokens([defaultOrder, personalOrder, hidden], known)).toEqual(['mds']);
+    for (const token of ['weekly-poster', '__weekly-poster__', 'workflow-agent', 'infra:workflow-agent']) {
+      expect(isStaleNavToken(token, known)).toBe(false);
+    }
+  });
 });
