@@ -115,7 +115,8 @@ describe('capability probe cancellation reconciliation', () => {
       const closing = expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined();
       f.reveal();
       const deadline = await Promise.race([interrupted.promise, closing.then(() => { throw new Error('未收到预期的删除中断'); })]);
-      if (code === 'deadline') await vi.advanceTimersByTimeAsync(deadline - Date.now() - 1);
+      // 中断证据已经发生在原期限内；到原截止才交回，避免原生轮询先于虚拟时钟越界。
+      if (code === 'deadline') await vi.advanceTimersByTimeAsync(deadline - Date.now());
       release.resolve();
       await vi.advanceTimersByTimeAsync(5);
       await closing; await probe;

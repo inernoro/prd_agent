@@ -193,7 +193,8 @@ describe('ReleaseService 采样口径', () => {
       if (!isDeployCommand(req.command)) return 'cds-release-connect-ok';
       return deployHandler(req);
     };
-    const service = new ReleaseService(stateService, { sshExecutor });
+    let etaNowMs = Date.now();
+    const service = new ReleaseService(stateService, { sshExecutor, now: () => new Date(etaNowMs++) });
     services.push(service);
     return service;
   }
