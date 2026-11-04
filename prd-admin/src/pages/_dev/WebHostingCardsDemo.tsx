@@ -61,7 +61,7 @@ export default function WebHostingCardsDemo() {
       </nav>
       {tab === 'cards' ? <>
         <div className="my-6 flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}><Clock3 size={15} />今天 · 4</div>
-        <div className="grid items-start gap-5" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${width}px), ${width}px))` }}>
+        <div className="grid items-stretch gap-5" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${width}px), ${width}px))` }}>
           {sites.map(site => <SiteCard key={site.id} site={site} size={size} selected={false} shared={shared.includes(site.id)}
             shareStats={{ activeLinks: shared.includes(site.id) ? 1 : 0 }} activity={activity[site.id]} visitorCount={site.viewCount}
             caps={{ canEdit: false, canDelete: false, canShare: true, canSetVisibility: false }}

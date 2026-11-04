@@ -12,13 +12,12 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       button .absolute.bottom-[-5px].h-11.inline-flex.items-center.justify-center.left-[-5px].w-11.z-20 [data-no-drag=true aria-label=选择 type=button]
         span .group-hover:opacity-100.h-5.inline-flex.items-center.justify-center.w-5 {opacity:0.5}
     div .flex.flex-1.flex-col {gap:5px;padding:8px 9px 9px}
-      div .flex.gap-1.5.items-center.min-w-0
+      div .flex.gap-1.5.items-center.min-w-0 {min-height:20px}
         h3 .min-w-0.truncate
           "多租户架构设计"
-      div .flex.flex-wrap.gap-x-1.5.items-center
-        span
+      div .gap-x-2.gap-y-1.grid.grid-cols-2.items-center.min-w-0.mt-auto
+        span .min-w-0.truncate
           "11.0 KB"
-        span .opacity-40
-          "·"
-        span
+        span .min-w-0.text-right.truncate
           "9 浏览"
+        div .col-span-2.min-w-0.text-right.truncate {min-height:16px}

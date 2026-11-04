@@ -26,6 +26,7 @@ import { useDockDrag } from '@/components/share-dock';
 import { CardIconAction, CardMoreButton, type CardMoreAction } from './SiteCardActions';
 import { resolveSiteForm, siteFormBadge, siteSourceLabel, SITE_FORM_REGISTRY } from './siteFormRegistry';
 import { fmtSize, relativeTime } from './siteFormat';
+import { formatCompactZh } from '@/lib/formatStats';
 import { WEB_HOSTING_UPLOAD_ACCEPT } from '@/lib/webHostingUploadLimits';
 
 /** 网页托管卡片拖进 ShareDock 投放槽时用的 MIME（页面与卡片共用同一个常量，不各写一份）。 */
@@ -286,7 +287,7 @@ export function SiteCard({
       /* h-full + flex 链：grid item 本来就被拉伸到行高，但内部盒子是内容高，
          于是同一行的卡片下边缘参差（标题一行/两行、有无标签都会差几十像素）。
          设计稿的 grid 是默认 stretch，卡片在行内等高——这条链把高度真正传下去。 */
-      className={['group relative flex h-full w-full flex-col touch-none', canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default', fresh ? 'site-card-fresh' : ''].join(' ')}
+      className={['group @container relative flex h-full w-full flex-col touch-none', canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default', fresh ? 'site-card-fresh' : ''].join(' ')}
       data-dock-draggable={canDrag ? 'true' : 'false'}
       /* 半径必须跟内框同一个值：`.site-card-fresh::before` 的光环是 border-radius:inherit，
          这里写死 20 而内框是 SPEC.radius(10/11/12)，光环就会比卡片圆一大圈、错开成两条边。
@@ -510,7 +511,7 @@ export function SiteCard({
 
           {/* 标题恒定单行：多一行标题就把整行卡片撑高，短卡下面留出一截空白（用户原话「胡子太长」）。
               截断了也不丢信息——title 属性给全文，右栏「站点上下文」也显示完整标题。 */}
-          <div className="flex min-w-0 items-center gap-1.5">
+          <div data-site-card-title className="flex min-w-0 items-center gap-1.5" style={{ minHeight: 20 }}>
             <h3
               className="min-w-0 truncate cursor-pointer hover:underline"
               style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: 'var(--tracking-title)', color: 'var(--text-primary)' }}
@@ -523,46 +524,44 @@ export function SiteCard({
           </div>
 
           {isLarge && (
-            <p className="line-clamp-2" style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
+            <p className="line-clamp-2" style={{ minHeight: 38, fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
               {site.description || formConfig.hint}
             </p>
           )}
 
-          {/* 元信息：中卡是「体积 · N 浏览 · N 访客」，大卡是「体积 · 形态量 · 更新于 X」 */}
+          {/* 统计固定为两行：大小 / 浏览（大卡为时间），访客 / 编辑。
+              不根据数字长度换行，所有尺寸保留编辑行；完整计数放在标题与无障碍名称里。 */}
           <div
-            className="flex flex-wrap items-center gap-x-1.5"
-            style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-meta)', color: 'var(--text-tertiary)' }}
+            data-site-card-stats
+            className="mt-auto grid min-w-0 grid-cols-2 items-center gap-x-2 gap-y-1"
+            style={{ fontFamily: 'var(--font-code)', fontSize: 10, lineHeight: '16px', letterSpacing: 'var(--tracking-meta)', color: 'var(--text-tertiary)' }}
           >
-            <span>{fmtSize(site.totalSize)}</span>
+            <span className="min-w-0 truncate" title={fmtSize(site.totalSize)}>{fmtSize(site.totalSize)}</span>
             {isLarge ? (
-              <>
-                {formBadge && (<><span className="opacity-40" aria-hidden>·</span><span>{formBadge}</span></>)}
-                <span className="opacity-40" aria-hidden>·</span>
-                <span>更新于 {relativeTime(site.updatedAt || site.createdAt)}</span>
-              </>
+              <span className="min-w-0 truncate text-right" title={`更新于 ${relativeTime(site.updatedAt || site.createdAt)}`}>
+                {relativeTime(site.updatedAt || site.createdAt)}
+              </span>
             ) : (
-              <>
-                <span className="opacity-40" aria-hidden>·</span>
-                <span>{site.viewCount} 浏览</span>
-                {!isSmall && (
-                  <>
-                    <span className="opacity-40" aria-hidden>·</span>
-                    <span>{typeof visitorCount === 'number' ? `${visitorCount} 访客` : '— 访客'}</span>
-                  </>
-                )}
-              </>
+              <span className="min-w-0 truncate text-right" title={`${site.viewCount} 浏览`}>
+                {formatCompactZh(site.viewCount)} 浏览
+              </span>
             )}
-            {activity && <span className="ml-auto pl-1"><SiteEditCount activity={activity} /></span>}
+            {!isSmall && !isLarge && <span className="hidden min-w-0 truncate @[240px]:block" title={typeof visitorCount === 'number' ? `${visitorCount} 访客` : '访客统计暂不可用'}>
+              {typeof visitorCount === 'number' ? `${formatCompactZh(visitorCount)} 访客` : '— 访客'}
+            </span>}
+            <div data-site-card-edits className={`min-w-0 truncate text-right ${isSmall || isLarge ? 'col-span-2' : 'col-span-2 @[240px]:col-span-1'}`} style={{ minHeight: 16 }}>
+              <SiteEditCount activity={activity} compact />
+            </div>
           </div>
 
           {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行）。
-              mt-auto：等高之后多出来的空间沉到这一行**之上**，末行始终贴着卡片底边，
+              统计区的 mt-auto 把剩余空间留在正文之后，末行始终贴着卡片底边，
               否则短卡片会在中间空出一块，看着像没加载完。 */}
           {/* 这一行**恒定渲染**（有没有标签都在）：它同时承载更新时间，条件渲染会让
               没标签的卡片既少一行高度、又莫名其妙不显示时间。恒定之后同一档尺寸的卡片
               内容高度是确定的，等高不再靠拉伸填空（就没有那截「胡子」了）。 */}
           {!isSmall && (
-            <div className="mt-auto flex min-w-0 items-center gap-1" style={{ minHeight: 18 }}>
+            <div className="flex min-w-0 items-center gap-1" style={{ minHeight: 18 }}>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                 {site.tags.slice(0, 3).map((tag) => (
                   <span
@@ -586,15 +585,15 @@ export function SiteCard({
 
           {/* 大卡成果数据四格（设计稿：浏览 / 访客 / 有效链接 / 最近访问，统一 22px） */}
           {isLarge && (
-            <div className="flex items-end" style={{ gap: 18, borderTop: '1px solid var(--border-subtle)', paddingTop: 8, marginTop: 2 }}>
+            <div className="grid min-w-0 grid-cols-2 items-end gap-2 @[300px]:grid-cols-4" style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 8, marginTop: 2 }}>
               {[
-                { v: String(site.viewCount), label: '浏览' },
-                { v: typeof visitorCount === 'number' ? String(visitorCount) : '—', label: '访客' },
-                { v: shareStats ? String(linkCount) : '—', label: '有效链接' },
+                { v: formatCompactZh(site.viewCount), full: String(site.viewCount), label: '浏览' },
+                { v: typeof visitorCount === 'number' ? formatCompactZh(visitorCount) : '—', full: String(visitorCount ?? '—'), label: '访客' },
+                { v: shareStats ? formatCompactZh(linkCount) : '—', full: String(shareStats ? linkCount : '—'), label: '有效链接' },
                 { v: shareStats?.lastViewedAt ? relativeTime(shareStats.lastViewedAt) : '—', label: '最近访问' },
               ].map((k) => (
-                <div key={k.label}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, lineHeight: 1, letterSpacing: 'var(--tracking-number)', color: 'var(--text-primary)' }}>
+                <div key={k.label} className="min-w-0" title={`${k.full ?? k.v} ${k.label}`}>
+                  <div className="truncate" style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, lineHeight: 1, letterSpacing: 'var(--tracking-number)', color: 'var(--text-primary)' }}>
                     {k.v}
                   </div>
                   <div style={{ marginTop: 4, fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)', color: 'var(--text-tertiary)' }}>{k.label}</div>
