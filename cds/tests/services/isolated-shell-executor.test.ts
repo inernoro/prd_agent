@@ -486,6 +486,20 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect((await e.exec('echo next', observation)).stdout.trim()).toBe('next');
   });
 
+  it('流式消费后合并确认字节，保持原帧与窗口上限而减少跨进程回执', async () => {
+    const e = executor({ concurrency: 1 }); await e.start();
+    const channel = (e as unknown as { factory: childProcess.ChildProcess }).factory;
+    const sent = vi.spyOn(channel, 'send'); let frames = 0, bytes = 0;
+    const result = await e.exec(`${quote(process.execPath)} -e ${quote("process.stdout.write('x'.repeat(1024*1024))")}`, {
+      ...observation, captureOutput: false, onData: chunk => { frames++; bytes += Buffer.byteLength(chunk); },
+    });
+    const acks = sent.mock.calls.map(call => call[0] as any).filter(message => message.type === 'ack');
+    expect(bytes).toBe(1024 * 1024); expect(result.stdout).toBe(''); expect(result.exitCode).toBe(0);
+    expect(frames).toBeGreaterThanOrEqual(128);
+    expect(acks.length).toBeLessThanOrEqual(Math.ceil(frames / 2));
+    expect(acks.every(message => message.bytes >= 32 * 1024)).toBe(true);
+  });
+
   it('工厂进程异常退出会回收所属查询，不重新执行或回退主线程', async () => {
     let factory: childProcess.ChildProcess;
     const e = executor({ processFactory: owner => {
