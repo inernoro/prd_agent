@@ -9,17 +9,14 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSmartBack } from '@/hooks/useSmartBack';
-import { createPortal } from 'react-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, Clock, Hash, PanelTop, Rows3, Search, Store, TrendingUp, UploadCloud, UserRound, Zap } from 'lucide-react';
+import { ArrowLeft, Grid2X2, Search, Store, UploadCloud, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
-import type { MixedMarketplaceItem } from '@/lib/marketplaceTypes';
 import { QuickConnectPanel } from './QuickConnectPanel';
 import { Button } from '@/components/design/Button';
 import {
   CONFIG_TYPE_REGISTRY,
-  getCategoryFilterOptions,
   mergeMarketplaceData,
   sortMarketplaceItems,
   filterMarketplaceItems,
@@ -35,9 +32,14 @@ import { useAuthStore } from '@/stores/authStore';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
+import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
+import { MarketplaceFilters } from './MarketplaceFilters';
+import { MarketplaceDisplayOptions } from './MarketplaceDisplayOptions';
+import { MARKETPLACE_CARD_SIZES, type MarketplaceCardSize } from './marketplaceLayout';
+import './marketplace.css';
 
 type SortMode = 'hot' | 'new';
-type CardDensity = 'classic' | 'short' | 'micro';
 type CardDemoSkill = MarketplaceSkillDto & MarketplaceItemBase & {
   shareCount?: number;
 };
@@ -154,23 +156,12 @@ export const MarketplacePage: React.FC = () => {
   const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
   const [openApiOpen, setOpenApiOpen] = useState(searchParams.get('dialog') === 'open-api');
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
-  const [quickConnectPos, setQuickConnectPos] = useState({ top: 0, right: 0 });
-  const [cardDensity, setCardDensity] = useState<CardDensity>('short');
+  const [cardSize, setCardSize] = useState<MarketplaceCardSize>('medium');
+  const [toolbarPanel, setToolbarPanel] = useState<'display' | 'filters' | null>(null);
   const connectBtnRef = useRef<HTMLButtonElement>(null);
   // 手机端密度（.claude/rules/mobile-first-density.md）：
-  // 搜索独占一行、密度切换隐藏、接入AI/上传收成紧凑图标、兼容 banner 隐藏
+  // 搜索独占一行，筛选收进弹层，接入 AI / 上传保留紧凑入口。
   const isMobile = useIsMobile();
-
-  useEffect(() => {
-    if (!quickConnectOpen) return;
-    const close = () => setQuickConnectOpen(false);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [quickConnectOpen]);
 
   useEffect(() => {
     if (searchParams.get('dialog') === 'open-api') setOpenApiOpen(true);
@@ -206,9 +197,10 @@ export const MarketplacePage: React.FC = () => {
   useEffect(() => { void loadSkillTags(); }, [loadSkillTags]);
 
   useEffect(() => {
-    if (cardDemoEnabled) return;
-    void fetchOfficialSkillRoleLabels().then(setRoleLabels);
-  }, [cardDemoEnabled]);
+    let active = true;
+    void fetchOfficialSkillRoleLabels().then(labels => { if (active) setRoleLabels(labels); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (typeFromUrl !== categoryFilter) setCategoryFilter(typeFromUrl);
@@ -293,10 +285,15 @@ export const MarketplacePage: React.FC = () => {
     return list;
   }, [searchFiltered, tagFilter, roleFilter]);
 
-  const showSkillControls = categoryFilter === 'skill';
   const roleEntries = useMemo(() => Object.entries(roleLabels), [roleLabels]);
-  // 去掉"全部"，技能排第一
-  const filterOptions = getCategoryFilterOptions().filter((o) => o.key !== 'all');
+  const categoryLabel = CONFIG_TYPE_REGISTRY[categoryFilter]?.label ?? '配置';
+  const hasFilters = Boolean(searchKeyword || (categoryFilter === 'skill' && (tagFilter || roleFilter)));
+  const filterCount = (categoryFilter === 'skill' ? Number(Boolean(tagFilter)) + Number(Boolean(roleFilter)) : 1);
+  const filters = (
+    <MarketplaceFilters category={categoryFilter} onCategoryChange={updateTypeFilter}
+      roles={roleEntries} role={roleFilter} onRoleChange={setRoleFilter}
+      tags={skillTags} tag={tagFilter} onTagChange={setTagFilter} />
+  );
 
   // 搜索框（桌面在工具条内、手机独占一行），只渲染其中一处，tour 锚点不重复
   const searchField = (
@@ -304,7 +301,7 @@ export const MarketplacePage: React.FC = () => {
       <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
       <input
         type="text"
-        placeholder="搜索配置名称..."
+        placeholder="搜索名称、描述"
         value={searchKeyword}
         onChange={(e) => setSearchKeyword(e.target.value)}
         className={SEARCH_FIELD_CLASS}
@@ -313,326 +310,90 @@ export const MarketplacePage: React.FC = () => {
   );
 
   return (
-    <div
-      className="marketplace-page relative min-h-full overflow-auto"
-      style={{
-        // 2026-07-08 去页面私有整幅背景：深色遮罩 + 运营封面图画在外壳内边距
-        // 之内，形成一个与相邻页面错位的"图片盒子"（用户反馈"还有一个背景、
-        // 不整齐靠边"）。运营上传的 marketplaceBgUrl 资产保留在素材库，
-        // 如需氛围背景应升级为外壳级全出血能力再启用。min-h-screen 同步改
-        // min-h-full（页面已在外壳滚动容器内，100vh 会永远多出一截滚动）。
-        background: 'transparent',
-      }}
-    >
-      <div className="relative z-10">
-        {/* ── Toolbar ── */}
-        <div className="surface-nav-bar marketplace-toolbar" style={{ marginBottom: 8 }}>
-          <div className="surface-nav-content marketplace-toolbar-content">
-            <div className="marketplace-title-group">
-              <button
-                type="button"
-                onClick={goBack}
-                className="marketplace-icon-button"
-                title="返回"
-              >
-                <ArrowLeft size={17} />
-              </button>
-              <div className="marketplace-title-mark">
-                <Store size={18} className="text-token-primary" />
-                <h1 data-tour-id="marketplace-page-title" className="marketplace-page-title">海鲜市场</h1>
-              </div>
-              {sourceApp && (
-                <span className="marketplace-source-badge">来自 {sourceApp}</span>
-              )}
-            </div>
-
-            <div className="marketplace-toolbar-actions">
-              <TipsEntryButton compact />
-              {!isMobile && (
-                <div data-tour-id="marketplace-search" className="marketplace-search">
-                  {searchField}
-                </div>
-              )}
-
-              <div data-tour-id="marketplace-sort" className="marketplace-sort-group">
-                <button
-                  type="button"
-                  onClick={() => setSortBy('hot')}
-                  data-active={sortBy === 'hot'}
-                  className="marketplace-nav-pill"
-                >
-                  <TrendingUp size={14} />
-                  热门
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSortBy('new')}
-                  data-active={sortBy === 'new'}
-                  className="marketplace-nav-pill"
-                >
-                  <Clock size={14} />
-                  最新
-                </button>
-              </div>
-
-              {/* 密度切换手机端隐藏：单列布局下三档无差异，纯噪音 */}
-              {!isMobile && (
-                <div className="marketplace-density-group" aria-label="卡片密度">
-                  <button
-                    type="button"
-                    onClick={() => setCardDensity('classic')}
-                    data-active={cardDensity === 'classic'}
-                    className="marketplace-density-pill"
-                    title="现版高度"
-                  >
-                    <PanelTop size={13} />
-                    现版
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCardDensity('short')}
-                    data-active={cardDensity === 'short'}
-                    className="marketplace-density-pill"
-                    title="半高横向卡"
-                  >
-                    <Rows3 size={13} />
-                    半高
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCardDensity('micro')}
-                    data-active={cardDensity === 'micro'}
-                    className="marketplace-density-pill"
-                    title="更矮横向卡"
-                  >
-                    <Rows3 size={13} />
-                    迷你
-                  </button>
-                </div>
-              )}
-
-              {/* 接入AI — 技能 tab 下才显示 */}
+    <div className="marketplace-page marketplace-workspace h-full min-h-0 flex flex-col" data-card-size={cardSize}>
+      <header className="marketplace-module-header">
+        <div className="marketplace-title-group">
+          <button type="button" onClick={goBack} className="marketplace-icon-button" aria-label="返回" title="返回">
+            <ArrowLeft size={17} />
+          </button>
+          <div className="marketplace-title-mark">
+            <Store size={18} />
+            <h1 data-tour-id="marketplace-page-title" className="marketplace-page-title">海鲜市场</h1>
+          </div>
+          {sourceApp && <span className="marketplace-source-badge">来自 {sourceApp}</span>}
+        </div>
+        <TipsEntryButton compact />
+      </header>
+      <div className="marketplace-workspace-body">
+        {!isMobile && <aside className="marketplace-filter-rail" aria-label="筛选技能与配置">{filters}</aside>}
+        <section className="marketplace-results" aria-label="市场内容">
+          <div className="marketplace-workspace-toolbar">
+            <div data-tour-id="marketplace-search" className="marketplace-workspace-search">{searchField}</div>
+            {!isMobile && <span className="marketplace-view-label"><Grid2X2 size={14} />平铺</span>}
+            <ToolbarPopover label="显示" summary={`${sortBy === 'hot' ? '热门' : '最新'} · ${MARKETPLACE_CARD_SIZES[cardSize].label}`}
+              open={toolbarPanel === 'display'} onOpenChange={open => { setToolbarPanel(open ? 'display' : null); setQuickConnectOpen(false); }}
+              tourId="marketplace-sort">
+              <MarketplaceDisplayOptions sort={sortBy} onSortChange={setSortBy} size={cardSize} onSizeChange={setCardSize} />
+            </ToolbarPopover>
+            {isMobile && (
+              <ToolbarPopover label="筛选" count={filterCount} open={toolbarPanel === 'filters'}
+                onOpenChange={open => { setToolbarPanel(open ? 'filters' : null); setQuickConnectOpen(false); }}
+                tourId="marketplace-mobile-filters">
+                {filters}
+              </ToolbarPopover>
+            )}
+            <div className="marketplace-primary-actions">
               {categoryFilter === 'skill' && (
-                <button
-                  ref={connectBtnRef}
-                  type="button"
-                  onClick={() => {
-                    if (!quickConnectOpen && connectBtnRef.current) {
-                      const r = connectBtnRef.current.getBoundingClientRect();
-                      setQuickConnectPos({ top: r.bottom + 8, right: window.innerWidth - r.right });
-                    }
-                    setQuickConnectOpen((v) => !v);
-                  }}
-                  className="marketplace-nav-pill"
-                  data-active={quickConnectOpen ? 'true' : 'false'}
-                  title="一键生成 API Key，让 Claude Code / Codex 等 AI 接入海鲜市场"
-                  aria-label="接入 AI"
-                >
-                  <Zap size={13} />
-                  {/* 手机端收成紧凑图标，入口仍可触达 */}
-                  {!isMobile && '接入 AI'}
+                <button ref={connectBtnRef} type="button" className="marketplace-nav-pill marketplace-connect-button"
+                  data-active={quickConnectOpen} aria-expanded={quickConnectOpen} aria-label="接入 AI"
+                  onClick={() => { setQuickConnectOpen(open => !open); setToolbarPanel(null); }}>
+                  <Zap size={14} />{!isMobile && '接入 AI'}
                 </button>
               )}
-
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setUploadOpen(true)}
-                data-tour-id="marketplace-upload-skill-btn"
-                title="上传技能"
-                aria-label="上传技能"
-              >
-                <UploadCloud size={13} />
-                {!isMobile && '上传技能'}
+              <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}
+                data-tour-id="marketplace-upload-skill-btn" aria-label="上传技能" title="上传技能">
+                <UploadCloud size={14} />{!isMobile && '上传技能'}
               </Button>
             </div>
           </div>
-
-          {/* 手机端：搜索框独占一行（仍在同一块工具条内，不新增控制条） */}
-          {isMobile && (
-            <div data-tour-id="marketplace-search" className="marketplace-search-mobile">
-              {searchField}
-            </div>
-          )}
-        </div>
-
-        {/* ── Filter bar — 紧贴 toolbar ── */}
-        <div className="surface-nav-bar marketplace-filter-bar">
-          <div className="surface-nav-content marketplace-filter-content">
-            <div data-tour-id="marketplace-category-tabs" className="marketplace-category-tabs">
-              {filterOptions.map(({ key, label, icon: Icon }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => updateTypeFilter(key)}
-                  data-active={categoryFilter === key}
-                  className="marketplace-nav-pill marketplace-filter-button"
-                >
-                  {Icon && <Icon size={14} />}
-                  {label}
+          <div className="marketplace-results-scroll" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            <div className="marketplace-results-heading">
+              <h2>{hasFilters ? `筛选${categoryLabel}` : `全部${categoryLabel}`}</h2>
+              <span role="status">{loading ? '正在加载…' : `${filtered.length} 项`}</span>
+              {hasFilters && (
+                <button type="button" className="marketplace-clear-filters" onClick={() => { setSearchKeyword(''); setTagFilter(''); setRoleFilter(''); }}>
+                  清空筛选
                 </button>
-              ))}
+              )}
             </div>
-
-            {showSkillControls && roleEntries.length > 0 && (
-              <div className="marketplace-tags-row" data-tour-id="marketplace-role-row">
-                <span className="marketplace-tags-label">
-                  <UserRound size={11} />
-                  我是
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setRoleFilter('')}
-                  data-active={!roleFilter}
-                  className="marketplace-tag-pill"
-                >
-                  不限
-                </button>
-                {roleEntries.map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setRoleFilter((prev) => (prev === key ? '' : key))}
-                    data-active={roleFilter === key}
-                    className="marketplace-tag-pill"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {showSkillControls && skillTags.length > 0 && (
-              <div className="marketplace-tags-row">
-                <span className="marketplace-tags-label">
-                  <Hash size={11} />
-                  技能标签
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setTagFilter('')}
-                  data-active={!tagFilter}
-                  className="marketplace-tag-pill"
-                >
-                  不限
-                </button>
-                {skillTags.slice(0, 20).map(({ tag, count }) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => setTagFilter((prev) => (prev === tag ? '' : tag))}
-                    data-active={tagFilter === tag}
-                    className="marketplace-tag-pill"
-                  >
-                    #{tag}
-                    <span className="ml-1 opacity-60">{count}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── 兼容 Agent 提示（findmapskills 协议适用于所有支持工具调用的 Agent） ── */}
-      {/* 手机端隐藏：纯说明性文字条，「接入 AI」入口本身仍可触达 */}
-      {categoryFilter === 'skill' && !isMobile && (
-        <div className="marketplace-compat-banner">
-          <span className="marketplace-compat-label">通过「接入 AI」一键安装到：</span>
-          <span className="marketplace-compat-agent">Claude Code</span>
-          <span className="marketplace-compat-dot">·</span>
-          <span className="marketplace-compat-agent">Codex</span>
-          <span className="marketplace-compat-dot">·</span>
-          <span className="marketplace-compat-agent">Gemini CLI</span>
-          <span className="marketplace-compat-dot">·</span>
-          <span className="marketplace-compat-agent">Codex</span>
-          <span className="marketplace-compat-dot">·</span>
-          <span className="marketplace-compat-agent-muted">任何支持 MCP / API Key 的 Agent</span>
-        </div>
-      )}
-
-      {/* ── 卡片内容区 ── */}
-      {/* 水平不再叠 px-4：外壳已供 16px 内边距，双重内边距会让列表与工具条错位 */}
-      <div data-tour-id="marketplace-list" className="relative pt-4 pb-6">
-        {loading ? (
-          <MapSectionLoader />
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <Store size={48} className="text-token-muted opacity-50" />
-            <div className="text-sm text-token-muted">
-              {searchKeyword
-                ? '没有找到匹配的配置'
-                : roleFilter
-                  ? `还没有面向「${roleLabels[roleFilter] ?? roleFilter}」的技能`
-                  : tagFilter
-                    ? `没有带 #${tagFilter} 的配置`
-                    : categoryFilter === 'skill'
-                      ? '还没有人上传技能，第一个就是你'
-                      : '暂无公开配置'}
-            </div>
-            {categoryFilter === 'skill' && (
-              <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
-                <UploadCloud size={13} />
-                上传第一个技能包
-              </Button>
-            )}
-          </div>
-        ) : (
-          (() => {
-            const renderCard = (item: MixedMarketplaceItem) => (
-              <MarketplaceCard
-                key={`${item.type}-${item.data.id}`}
-                item={item}
-                onFork={handleFork}
-                onEdit={(selected) => {
-                  if (selected.type !== 'skill') return;
-                  setEditingSkill(selected.data as MarketplaceSkillDto);
-                }}
-                currentUserId={currentUserId}
-                forking={forkingId === item.data.id}
-                density={cardDensity}
-              />
-            );
-            // 官方与社区同列同序：按当前排序（热门/最新）混排，不再把官方置顶成独立「官方推荐」区。
-            // 官方卡自身带「官方」徽章（MarketplaceCard.mkt-card-official）标识身份，无需单独成区。
-            const gridStyle = {
-              gridTemplateColumns:
-                cardDensity === 'classic'
-                  ? 'repeat(auto-fill, minmax(300px, 1fr))'
-                  : 'repeat(auto-fill, minmax(280px, 1fr))',
-              maxWidth: '1400px',
-              margin: '0 auto',
-            } as const;
-            return (
-              <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-                <div className="grid gap-4" style={gridStyle}>
-                  {filtered.map(renderCard)}
+            <div data-tour-id="marketplace-list">
+              {loading ? <MapSectionLoader /> : filtered.length === 0 ? (
+                <div className="marketplace-empty">
+                  <Store size={40} strokeWidth={1.5} />
+                  <p>{searchKeyword ? '没有找到匹配的配置' : categoryFilter === 'skill' && roleFilter ? `还没有面向「${roleLabels[roleFilter] ?? roleFilter}」的技能`
+                    : categoryFilter === 'skill' && tagFilter ? `没有带 #${tagFilter} 的配置` : categoryFilter === 'skill' ? '还没有人上传技能，第一个就是你' : '暂无公开配置'}</p>
+                  {categoryFilter === 'skill' && <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
+                    <UploadCloud size={14} />上传第一个技能包
+                  </Button>}
                 </div>
-              </div>
-            );
-          })()
-        )}
-      </div>
-
-      {quickConnectOpen && createPortal(
-        <>
-          {/* 点击遮罩关闭 */}
-          <div
-            style={{ position: 'fixed', inset: 0, zIndex: 1000 }}
-            onClick={() => setQuickConnectOpen(false)}
-          />
-          <div
-            className="mkt-lb-qc-popover"
-            style={{ position: 'fixed', top: quickConnectPos.top, right: quickConnectPos.right, left: 'auto', zIndex: 1001 }}
-          >
-            <QuickConnectPanel
-              onClose={() => setQuickConnectOpen(false)}
-              onOpenFullDialog={() => { setQuickConnectOpen(false); setOpenApiOpen(true); }}
-            />
+              ) : (
+                <div className="marketplace-tile-grid" style={{ ['--marketplace-card-min' as string]: `${MARKETPLACE_CARD_SIZES[cardSize].minWidth}px` }}>
+                  {filtered.map(item => (
+                    <MarketplaceCard key={`${item.type}-${item.data.id}`} item={item} onFork={handleFork}
+                      onEdit={selected => { if (selected.type === 'skill') setEditingSkill(selected.data as MarketplaceSkillDto); }}
+                      currentUserId={currentUserId} forking={forkingId === item.data.id} density="tile" />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </>,
-        document.body
-      )}
+        </section>
+      </div>
+      <AnchoredMenu open={quickConnectOpen} onClose={() => setQuickConnectOpen(false)} anchorRef={connectBtnRef}
+        minWidth={340} className="marketplace-quick-connect" style={{ padding: 0 }}>
+        <QuickConnectPanel onClose={() => setQuickConnectOpen(false)}
+          onOpenFullDialog={() => { setQuickConnectOpen(false); setOpenApiOpen(true); }} />
+      </AnchoredMenu>
 
       {uploadOpen && (
         <SkillUploadDialog

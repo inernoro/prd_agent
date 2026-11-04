@@ -32,8 +32,15 @@ export interface MarketplaceCardProps {
   onEdit?: (item: MixedMarketplaceItem) => void;
   currentUserId?: string;
   forking?: boolean;
-  density?: 'classic' | 'short' | 'micro';
+  density?: 'classic' | 'short' | 'micro' | 'tile';
 }
+
+const CARD_DENSITIES = {
+  classic: { className: 'mkt-card-density-classic', heightClass: '!h-[210px]' },
+  short: { className: 'mkt-card-density-short', heightClass: '!h-[112px]' },
+  micro: { className: 'mkt-card-density-micro', heightClass: '!h-[96px]' },
+  tile: { className: 'mkt-card-density-tile', heightClass: '!h-full' },
+} as const;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -181,25 +188,14 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   const shareCount = getShareCount(item);
   const downloadCount = getDownloadCount(item);
   const isOfficial = item.data.ownerUserId === 'official';
-  const densityClass =
-    density === 'short'
-      ? 'mkt-card-density-short'
-      : density === 'micro'
-        ? 'mkt-card-density-micro'
-        : 'mkt-card-density-classic';
-  const spotlightHeightClass =
-    density === 'short'
-      ? '!h-[112px]'
-      : density === 'micro'
-        ? '!h-[96px]'
-        : '!h-[210px]';
+  const { className: densityClass, heightClass: spotlightHeightClass } = CARD_DENSITIES[density];
   const canEdit =
     item.type === 'skill' &&
     !!onEdit &&
     !!currentUserId &&
     item.data.ownerUserId === currentUserId;
 
-  const cardGradient = coverUrl
+  const cardGradient = coverUrl || item.type === 'skill' || density === 'tile'
     ? undefined
     : `linear-gradient(145deg, ${ra(color.bg, 0.55)} 0%, ${ra(color.bg, 0.30)} 45%, ${ra(color.bg, 0.12)} 100%)`;
 
@@ -251,8 +247,8 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
         <div
           className="mkt-card-icon-zone"
           style={{
-            color: color.iconColor,
-            filter: `drop-shadow(0 0 16px ${ra(color.bg, 0.55)}) drop-shadow(0 0 5px ${ra(color.bg, 0.35)})`,
+            color: density === 'tile' ? 'var(--skill-glyph-ink)' : color.iconColor,
+            filter: density === 'tile' ? undefined : `drop-shadow(0 0 16px ${ra(color.bg, 0.55)}) drop-shadow(0 0 5px ${ra(color.bg, 0.35)})`,
           }}
         >
           <TypeIcon size={54} />
@@ -432,7 +428,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     >
       <div
         ref={cardRef}
-        className={`mkt-card ${densityClass}${coverUrl ? ' has-cover' : ''}`}
+        className={`mkt-card ${densityClass}${coverUrl ? ' has-cover' : item.type === 'skill' ? ' mkt-card-skill-glyph' : ''}`}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleCardClick}
