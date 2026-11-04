@@ -234,6 +234,129 @@ public sealed class DefectSubmissionPersistenceTests
         current.Attachments.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData("read")]
+    [InlineData("comment")]
+    [InlineData("severity")]
+    [InlineData("folder")]
+    public async Task StaleMetadataWrite_PreservesConcurrentAttachmentEditedContentAndSubmission(string writer)
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var draft = new DefectReport { ReporterId = "owner", RawContent = "original", CreationFingerprint = "creation" };
+        await fixture.Collection.InsertOneAsync(draft);
+        // 确定性地把其他写入放在元数据读旧快照和真正保存之间，不依赖随机线程时序。
+        var stale = await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync();
+        await DefectSubmissionPersistence.AppendAttachmentAsync(fixture.Collection, draft.Id,
+            new DefectAttachment { Id = "new-attachment" }, default);
+        var edited = await DefectSubmissionPersistence.UpdateDraftAsync(fixture.Collection, draft,
+            Builders<DefectReport>.Update.Set(x => x.RawContent, "edited")
+                .Push(x => x.Versions, new DefectVersion { Version = 1, RawContent = "original" })
+                .Inc(x => x.Version, 1).Inc(x => x.EditRevision, 1), default);
+        var submitted = await DefectSubmissionPersistence.TrySubmitAsync(fixture.Collection, edited, default);
+        submitted.EditRevision.ShouldBe(2);
+        var update = writer switch
+        {
+            "read" => Builders<DefectReport>.Update.Set(x => x.ReporterUnread, false),
+            "comment" => Builders<DefectReport>.Update.Set(x => x.ReporterUnread, false)
+                .Set(x => x.AssigneeUnread, true).Set(x => x.LastCommentBy, DefectUnreadBy.Reporter),
+            "severity" => Builders<DefectReport>.Update.Set(x => x.Severity, DefectSeverity.Critical).Inc(x => x.EditRevision, 1),
+            _ => Builders<DefectReport>.Update.Set(x => x.FolderId, "target-folder")
+        };
+        var saved = await DefectSubmissionPersistence.UpdateFieldsAsync(fixture.Collection, stale.Id, update, default);
+        saved.Attachments.Single().Id.ShouldBe("new-attachment");
+        saved.RawContent.ShouldBe("edited");
+        saved.Status.ShouldBe(DefectStatus.Submitted);
+        saved.SubmittedAt.ShouldNotBeNull();
+        saved.EditRevision.ShouldBe(writer == "severity" ? 3 : 2);
+        saved.Version.ShouldBe(2);
+        saved.Versions.Single().RawContent.ShouldBe("original");
+        saved.CreationFingerprint.ShouldBe("creation");
+        if (writer == "folder") saved.FolderId.ShouldBe("target-folder");
+        if (writer == "severity") saved.Severity.ShouldBe(DefectSeverity.Critical);
+    }
+
+    [Fact]
+    public async Task StateWrite_PreservesNewAttachmentAndIndependentMetadata_AndConsumesSnapshot()
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var defect = new DefectReport { ReporterId = "owner", Status = DefectStatus.Assigned };
+        await fixture.Collection.InsertOneAsync(defect);
+        // 历史没有revision字段也应被状态动作正常接管并推进到1。
+        await fixture.Collection.UpdateOneAsync(x => x.Id == defect.Id, Builders<DefectReport>.Update.Unset(x => x.EditRevision).Unset(x => x.ReporterId));
+        // 状态操作也用于管理员处理旧数据；Reporter字段缺失不应额外变成状态CAS条件。
+        var snapshot = DefectSubmissionPersistence.StateSnapshot(defect);
+        await DefectSubmissionPersistence.AppendAttachmentAsync(fixture.Collection, defect.Id,
+            new DefectAttachment { Id = "parallel-file" }, default);
+        await DefectSubmissionPersistence.UpdateFieldsAsync(fixture.Collection, defect.Id,
+            Builders<DefectReport>.Update.Set(x => x.FolderId, "parallel-folder"), default);
+        var updated = await DefectSubmissionPersistence.UpdateStateAsync(fixture.Collection, snapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, DefectStatus.Processing), default);
+        updated.Status.ShouldBe(DefectStatus.Processing);
+        updated.EditRevision.ShouldBe(1);
+        updated.Attachments.Single().Id.ShouldBe("parallel-file");
+        updated.FolderId.ShouldBe("parallel-folder");
+        (await DefectSubmissionPersistence.UpdateStateAsync(fixture.Collection, snapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, DefectStatus.Rejected), default)).ShouldBeNull();
+        (await fixture.Collection.Find(x => x.Id == defect.Id).SingleAsync()).Status.ShouldBe(DefectStatus.Processing);
+    }
+
+    [Fact]
+    public async Task AwaitingRoundTrip_ActualBlockEndpointRejectsOldSubmitAndEdit_ThenAllowsFreshEdit()
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var draft = new DefectReport { ReporterId = "owner", AssigneeId = "owner", Status = DefectStatus.Awaiting, RawContent = "before" };
+        await fixture.Collection.InsertOneAsync(draft);
+        var requestA = await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync();
+        var requestB = await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync();
+        var submitted = await DefectSubmissionPersistence.TrySubmitAsync(fixture.Collection, requestB, default);
+        var run = new DefectAutomationRun { CreatedBy = "owner", CurrentDefectId = draft.Id };
+        await fixture.Db.DefectAutomationRuns.InsertOneAsync(run);
+        var controller = OwnerController(fixture);
+        (await controller.BlockAutomationWorkflow(new BlockDefectAutomationWorkflowRequest
+        { RunId = run.Id, DefectId = draft.Id, FailureReason = "补充复现步骤", StopRun = false }, default))
+            .ShouldBeOfType<OkObjectResult>();
+        var awaiting = await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync();
+        awaiting.Status.ShouldBe(DefectStatus.Awaiting);
+        (await DefectSubmissionPersistence.TrySubmitAsync(fixture.Collection, requestA, default)).ShouldBeNull();
+        submitted.EditRevision.ShouldBe(1);
+        awaiting.EditRevision.ShouldBe(2);
+        (await DefectSubmissionPersistence.UpdateDraftAsync(fixture.Collection, requestA,
+            Builders<DefectReport>.Update.Set(x => x.RawContent, "stale").Inc(x => x.EditRevision, 1), default)).ShouldBeNull();
+        var edited = await DefectSubmissionPersistence.UpdateDraftAsync(fixture.Collection, awaiting,
+            Builders<DefectReport>.Update.Set(x => x.RawContent, "new details").Inc(x => x.EditRevision, 1), default);
+        (await DefectSubmissionPersistence.TrySubmitAsync(fixture.Collection, edited, default)).ShouldNotBeNull();
+        var final = await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync();
+        final.RawContent.ShouldBe("new details");
+        final.EditRevision.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task StateWrite_RejectsSnapshotOlderThanSavedDraft()
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var draft = new DefectReport { ReporterId = "owner", RawContent = "original" };
+        await fixture.Collection.InsertOneAsync(draft);
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(draft);
+        await DefectSubmissionPersistence.UpdateDraftAsync(fixture.Collection, draft,
+            Builders<DefectReport>.Update.Set(x => x.RawContent, "newer").Inc(x => x.EditRevision, 1), default);
+        (await DefectSubmissionPersistence.UpdateStateAsync(fixture.Collection, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, DefectStatus.Verifying), default)).ShouldBeNull();
+        var saved = await fixture.Collection.Find(x => x.Id == draft.Id).SingleAsync();
+        saved.RawContent.ShouldBe("newer");
+        saved.Status.ShouldBe(DefectStatus.Draft);
+    }
+
+    private static DefectAgentController OwnerController(MongoFixture fixture)
+        => new(fixture.Db, null!, NullLogger<DefectAgentController>.Instance,
+            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                { new Claim("sub", "owner"), new Claim("name", "测试用户") }, "test")) }
+            }
+        };
+
     private sealed class MongoFixture : IAsyncDisposable
     {
         private readonly MongoClient _client;

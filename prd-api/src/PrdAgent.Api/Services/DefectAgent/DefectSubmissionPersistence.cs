@@ -34,17 +34,31 @@ internal static class DefectSubmissionPersistence
         }
     }
 
-    private static FilterDefinition<DefectReport> EditableSnapshot(DefectReport draft)
+    internal static FilterDefinition<DefectReport> StateSnapshot(DefectReport draft)
         => Builders<DefectReport>.Filter.And(
             Builders<DefectReport>.Filter.Eq(x => x.Id, draft.Id),
-            Builders<DefectReport>.Filter.Eq(x => x.ReporterId, draft.ReporterId),
             Builders<DefectReport>.Filter.Eq(x => x.Status, draft.Status),
-            Builders<DefectReport>.Filter.In(x => x.Status, new[] { DefectStatus.Draft, DefectStatus.Awaiting }),
             // 历史文档未写版本字段时等价于版本零。
             draft.EditRevision == 0
                 ? Builders<DefectReport>.Filter.Or(Builders<DefectReport>.Filter.Eq(x => x.EditRevision, 0),
                     Builders<DefectReport>.Filter.Exists(x => x.EditRevision, false))
                 : Builders<DefectReport>.Filter.Eq(x => x.EditRevision, draft.EditRevision));
+
+    private static FilterDefinition<DefectReport> EditableSnapshot(DefectReport draft)
+        => StateSnapshot(draft) & Builders<DefectReport>.Filter.Eq(x => x.ReporterId, draft.ReporterId)
+            & Builders<DefectReport>.Filter.In(x => x.Status,
+            new[] { DefectStatus.Draft, DefectStatus.Awaiting });
+
+    /// <summary>只更新调用方拥有的字段；不把旧快照中的附件、内容或版本整文档写回。</summary>
+    internal static Task<DefectReport> UpdateFieldsAsync(IMongoCollection<DefectReport> collection,
+        string id, UpdateDefinition<DefectReport> update, CancellationToken ct)
+        => collection.FindOneAndUpdateAsync(Builders<DefectReport>.Filter.Eq(x => x.Id, id), update,
+            new FindOneAndUpdateOptions<DefectReport> { ReturnDocument = ReturnDocument.After }, ct);
+
+    internal static Task<DefectReport> UpdateStateAsync(IMongoCollection<DefectReport> collection,
+        FilterDefinition<DefectReport> snapshot, UpdateDefinition<DefectReport> update, CancellationToken ct)
+        => collection.FindOneAndUpdateAsync(snapshot, update.Inc(x => x.EditRevision, 1),
+            new FindOneAndUpdateOptions<DefectReport> { ReturnDocument = ReturnDocument.After }, ct);
 
     internal static Task<DefectReport> UpdateDraftAsync(IMongoCollection<DefectReport> collection,
         DefectReport draft, UpdateDefinition<DefectReport> update, CancellationToken ct)
@@ -55,7 +69,7 @@ internal static class DefectSubmissionPersistence
         DefectReport draft, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var update = Builders<DefectReport>.Update.Set(x => x.Status, DefectStatus.Submitted)
+        var update = Builders<DefectReport>.Update.Inc(x => x.EditRevision, 1).Set(x => x.Status, DefectStatus.Submitted)
             .Set(x => x.SubmittedAt, now).Set(x => x.UpdatedAt, now)
             .Set(x => x.ReporterUnread, false).Set(x => x.AssigneeUnread, !string.IsNullOrEmpty(draft.AssigneeId));
         return collection.FindOneAndUpdateAsync(EditableSnapshot(draft), update,

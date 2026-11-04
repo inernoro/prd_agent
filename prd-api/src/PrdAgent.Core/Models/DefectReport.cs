@@ -15,7 +15,7 @@ public class DefectReport
     [System.Text.Json.Serialization.JsonIgnore]
     public string? CreationFingerprint { get; set; }
 
-    /// <summary>草稿编辑的原子比较版本，不含附件追加。</summary>
+    /// <summary>内容与状态修改的原子比较版本，不含附件、已读和文件夹等独立元数据。</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public long EditRevision { get; set; }
 
