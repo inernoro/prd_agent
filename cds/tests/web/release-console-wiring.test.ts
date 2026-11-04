@@ -1,3 +1,4 @@
+import { RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS } from '../../web/src/components/skeletons/ReleaseConsoleSkeleton';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -36,7 +37,9 @@ function bodyAfter(source: string, marker: string): string {
   throw new Error(`${marker} 的函数体没有闭合`);
 }
 
-const PAGE = read('pages/ReleaseConsolePage.tsx');
+const layoutClasses: Record<string, string> = { RELEASE_CONSOLE_LAYOUT_CLASS, RELEASE_CONSOLE_LEFT_CLASS, RELEASE_CONSOLE_CENTER_CLASS, RELEASE_CONSOLE_RIGHT_CLASS };
+// 展开真实导出的 class 常量后沿用布局守卫；删掉页面的常量接线仍会失败。
+const PAGE = read('pages/ReleaseConsolePage.tsx').replace(/className=\{(RELEASE_CONSOLE_\w+_CLASS)\}/g, (_, key) => `className="${layoutClasses[key]}"`);
 const APP = read('App.tsx');
 const SHELL = read('components/layout/AppShell.tsx');
 const CENTER = read('pages/ReleaseCenterPage.tsx');

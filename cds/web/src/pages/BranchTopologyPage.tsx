@@ -1,3 +1,5 @@
+import { TopologyPageSkeleton } from '@/components/skeletons/WorkspaceSkeletons';
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import {
@@ -44,7 +46,7 @@ import {
   type BranchListAction,
   type BranchListSlice,
 } from '@/lib/branch-list-state';
-import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { CodePill, ErrorBlock } from '@/pages/cds-settings/components';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 interface ProjectSummary {
@@ -706,6 +708,7 @@ export function BranchTopologyPage(): JSX.Element {
       }
     >
       <Workspace fluid>
+        {state.status === 'loading' ? <TopologyPageSkeleton /> : <>
         <div className="cds-surface-raised cds-hairline mb-4 overflow-hidden">
           <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
             <TopologyMetric label="应用服务" value={totalProfiles} detail={`${runningServices} 个运行实例`} icon={<Cloud className="h-4 w-4" />} />
@@ -795,11 +798,6 @@ export function BranchTopologyPage(): JSX.Element {
           ) : null}
         </div>
 
-        {state.status === 'loading' ? (
-          <div className="w-full">
-            <LoadingBlock label="加载服务拓扑" />
-          </div>
-        ) : null}
         {state.status === 'error' ? (
           <div className="w-full">
             <ErrorBlock message={state.message} />
@@ -919,6 +917,7 @@ export function BranchTopologyPage(): JSX.Element {
             {toast}
           </div>
         ) : null}
+        </>}
       </Workspace>
     </AppShell>
   );
@@ -1742,12 +1741,7 @@ function NodeDetails({
               actionHref={`/branches/${encodeURIComponent(projectId)}`}
               actionLabel="回到分支列表"
             />
-          ) : runtimeState.status === 'loading' ? (
-            <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              加载日志
-            </div>
-          ) : runtimeState.status === 'error' ? (
+          ) : runtimeState.status === 'loading' ? <ContentLoading label="加载服务日志" variant="log" /> : runtimeState.status === 'error' ? (
             <ErrorBlock message={runtimeState.message} />
           ) : runtimeState.status === 'ok' ? (
             <RuntimeLogs
@@ -1770,12 +1764,7 @@ function NodeDetails({
               actionHref={`/branches/${encodeURIComponent(projectId)}`}
               actionLabel="回到分支列表"
             />
-          ) : runtimeState.status === 'loading' ? (
-            <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              加载提交
-            </div>
-          ) : runtimeState.status === 'error' ? (
+          ) : runtimeState.status === 'loading' ? <ContentLoading label="加载提交历史" variant="rows" /> : runtimeState.status === 'error' ? (
             <ErrorBlock message={runtimeState.message} />
           ) : runtimeState.status === 'ok' ? (
             <RuntimeCommits
@@ -1898,12 +1887,7 @@ function InfraDetails({
             title="点击查看日志"
             description="不需要离开拓扑页即可确认数据库、缓存或对象存储是否启动成功。"
           />
-        ) : logsState.status === 'loading' ? (
-          <div className="flex min-h-32 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            加载日志
-          </div>
-        ) : logsState.status === 'error' ? (
+        ) : logsState.status === 'loading' ? <ContentLoading label="加载基础设施日志" variant="log" /> : logsState.status === 'error' ? (
           <ErrorBlock message={logsState.message} />
         ) : (
           <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words cds-surface-sunken cds-hairline p-3 font-mono text-xs leading-6">

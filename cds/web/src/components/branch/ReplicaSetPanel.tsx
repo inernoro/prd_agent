@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * ReplicaSetPanel — 复制集双画布（草稿预期管理版，2026-07-25 用户拍板）。
  *
@@ -319,11 +320,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
   }, '变更计划已保存，开始按序执行'), [branchId, draft, onFailure, tab, call]);
 
   if (state.status === 'loading') {
-    return (
-      <section className="cds-surface-raised cds-hairline flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />正在加载复制集配置…
-      </section>
-    );
+    return <ContentLoading label="加载复制集配置" variant="rows" />;
   }
   if (state.status === 'error') {
     return (

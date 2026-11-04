@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useProjectSettingsRefresh, useSettingsReadRequest, mergeCleanSettings } from '@/components/project/ProjectSettingsRefresh';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Loader2, RefreshCw, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -549,20 +550,29 @@ export function DbIsolationTab({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
-  const load = useCallback(async () => {
+  const savedView = useRef<DbIsolationView | null>(null);
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
     setLoading(true);
     setLoadError('');
     try {
-      const next = await apiRequest<DbIsolationView>(`/api/projects/${encodeURIComponent(projectId)}/db-isolation`);
+      const next = await apiRequest<DbIsolationView>(`/api/projects/${encodeURIComponent(projectId)}/db-isolation`, { signal });
+      if (signal.aborted) return;
+      const previous = savedView.current;
+      savedView.current = next;
       setView(next);
-      setDraft(draftFromView(next));
-      setInitDraft(initDraftFromView(next));
+      setDraft(current => preserve && previous ? mergeCleanSettings(current, draftFromView(previous), draftFromView(next)) : draftFromView(next));
+      setInitDraft(current => preserve && previous ? mergeCleanSettings(current, initDraftFromView(previous), initDraftFromView(next)) : initDraftFromView(next));
     } catch (err) {
+      if (signal.aborted) return;
       setLoadError(messageFromError(err));
+      if (preserve) throw err;
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
@@ -586,6 +596,9 @@ export function DbIsolationTab({
           },
         },
       );
+      beginRead.cancel();
+      setLoading(false); setLoadError('');
+      savedView.current = result.view;
       setView(result.view);
       setDraft(draftFromView(result.view));
       setInitDraft(initDraftFromView(result.view));
@@ -609,7 +622,7 @@ export function DbIsolationTab({
         draft={draft}
         initDraft={initDraft}
         saving={saving}
-        error={saveError}
+        error={saveError || loadError}
         onDraftChange={setDraft}
         onInitDraftChange={setInitDraft}
         onSave={save}
