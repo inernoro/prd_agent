@@ -25,6 +25,7 @@ import {
   targetShaOf,
   normalizeBuildScope,
   proveFallbackImage,
+  normalizeFallbackImages,
   type ReuseCandidate,
 } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
@@ -33,7 +34,7 @@ import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkP
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
-import { inspectDeploymentArtifacts } from './artifact-admission.js';
+import { admittedArtifactProfile, inspectDeploymentArtifacts, type ArtifactInspectionOptions } from './artifact-admission.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
 import { DOCKER_LOG_LIMIT_FLAGS, hasBoundedDockerLogs } from './docker-log-policy.js';
@@ -96,6 +97,7 @@ export interface ProjectNetworkResolver {
 
 export interface ContainerRemoveContext {
   assertCurrent?: (step: string) => void;
+  onProgress?: (step: 'admitted' | 'diagnostics-returned' | 'stop' | 'stop-returned' | 'rm' | 'rm-returned') => void;
   kind?: ContainerLifecycleIntentKind;
   reason?: string;
   projectId?: string | null;
@@ -104,6 +106,7 @@ export interface ContainerRemoveContext {
   serviceId?: string | null;
   requestId?: string | null;
   operationId?: string | null;
+  operationGeneration?: number;
   actor?: string | null;
   trigger?: string | null;
   operation?: string | null;
@@ -483,10 +486,7 @@ export function resolveEffectiveProfile(
 }
 
 /** 把 BuildProfile.fallbackImage(string | string[] | undefined) 规整为有序候选数组。 */
-export function normalizeFallbackImages(fallback: string | string[] | undefined): string[] {
-  if (!fallback) return [];
-  return (Array.isArray(fallback) ? fallback : [fallback]).map((s) => (s || '').trim()).filter(Boolean);
-}
+export { normalizeFallbackImages } from './prebuilt-reuse.js';
 
 /**
  * 2026-06-24 发布探活分阶段（R4）。发布(部署)首启可能很慢（构建/迁移/JVM 暖机），
@@ -830,7 +830,7 @@ export class ContainerService {
     private readonly bindMountInspector: BindMountInspector = nativeBindMountInspector,
   ) {}
 
-  inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void, options: { inspectLocalArtifacts?: boolean } = {}) {
+  inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void, options: ArtifactInspectionOptions = {}) {
     return inspectDeploymentArtifacts(this.qualifiedShell(assertCurrent), profiles, targetCommitSha, assertCurrent, options);
   }
 
@@ -1480,6 +1480,7 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
+      operationGeneration?: number;
       assertCurrent?: (step: string) => void;
       preserveContainerNames?: readonly string[];
       onRuntimeCreated?: (service: ServiceState) => Promise<void>;
@@ -1522,7 +1523,7 @@ export class ContainerService {
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
     let shell = this.qualifiedShell(context.assertCurrent);
-    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
+    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId, operationGeneration: context.operationGeneration };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
@@ -1580,11 +1581,14 @@ export class ContainerService {
       const target = context.artifactCommitSha || sourceCheckout?.commitSha || entry.pinnedCommit || entry.ciTargetSha || entry.githubCommitSha;
       if (!target || !/^[0-9a-f]{40}$/i.test(target)) throw new Error('本地产物目标尚未确认，请选择完整部署版本后重试');
       const admitted = await this.inspectDeploymentArtifacts([profile], target,
-        () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true });
+        () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true,
+          isComponentUnchangedSince: context.isComponentUnchangedSince });
       if (admitted.state !== 'ready') throw new Error('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本');
       // 已有仓库内容摘要保留其可跨执行器取回的引用；可变本地标签才收敛为本机固定ID。
-      profile = { ...profile, dockerImage: admitted.artifacts[0].image };
-      localArtifactCommitSha = admitted.targetCommitSha;
+      const originalImage = profile.dockerImage;
+      profile = admittedArtifactProfile({ ...profile, localArtifact: false }, admitted);
+      if (originalImage === admitted.artifacts[0].image) profile.dockerImage = originalImage;
+      localArtifactCommitSha = admitted.artifacts[0].revision;
     }
     const profileAliases = computeProfileAliases(
       profile.id,
@@ -1626,7 +1630,7 @@ export class ContainerService {
     // 而非空白等待。
     // 方案甲：用上了「刚 pull 到的提交」的镜像时，容器里注入的提交号元数据（GIT_COMMIT /
     // CDS_COMMIT_SHA / VITE_BUILD_ID）也要跟着写这个提交，否则应用自报的版本还是旧提交。
-    let runCommitSha: string | undefined = context.artifactCommitSha || managedCommitSha || localArtifactCommitSha;
+    let runCommitSha: string | undefined = localArtifactCommitSha || managedCommitSha || context.artifactCommitSha;
     if (profile.prebuiltImage === true && !managedArtifactReady) {
       // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
       // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:
@@ -2956,17 +2960,19 @@ export class ContainerService {
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
     const terminal = ['branch-delete', 'executor-delete-branch', 'build-profile-delete', 'cleanup-stopped'].includes(context.operation || '');
     return deploymentPhaseBudget.run(terminal ? 'terminal' : 'cleanup', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
-      profileId: context.profileId || undefined, operationId: context.operationId },
+      profileId: context.profileId || undefined, operationId: context.operationId, operationGeneration: context.operationGeneration },
       () => this.removeUnbudgeted(containerName, context), { check: () => context.assertCurrent?.('cleanup phase admission') });
   }
 
   private async removeUnbudgeted(containerName: string, context: ContainerRemoveContext): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
+    context.onProgress?.('admitted');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
     const kind = context.kind || 'cds-remove';
     const before = await this.captureContainerDiagnostics(containerName, 300);
     context.assertCurrent?.('after-remove-diagnostics');
+    context.onProgress?.('diagnostics-returned');
     this.recordContainerEvent({
       severity: 'warn',
       source: 'cds-container-service',
@@ -2992,8 +2998,16 @@ export class ContainerService {
       },
     });
     this.noteLifecycleIntent(containerName, kind, reason, context);
-    const stopResult = await shell.exec(`docker stop ${containerName}`);
-    const rmResult = await shell.exec(`docker rm ${containerName}`);
+    const dispatch = (step: 'stop' | 'rm') => shell.exec(`docker ${step} ${containerName}`, {
+      executionLane: 'operation', executionPurpose: 'temporary-cleanup', beforeStart: () => {
+        context.assertCurrent?.(`cleanup ${step} dispatch`);
+        context.onProgress?.(step);
+      },
+    });
+    const stopResult = await dispatch('stop');
+    context.assertCurrent?.('after cleanup stop return');
+    context.onProgress?.('stop-returned');
+    const rmResult = await dispatch('rm');
     const completion = classifyRemoveCompletion(rmResult);
     if (completion.severity !== 'error') deploymentPhaseBudget.releaseMemory(containerName);
     this.recordContainerEvent({
@@ -3025,6 +3039,8 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    context.assertCurrent?.('after cleanup rm return');
+    context.onProgress?.('rm-returned');
   }
 
   async isRunning(containerName: string): Promise<boolean> {
@@ -3956,7 +3972,8 @@ export class ContainerService {
       const refs = Object.values(entry.services).flatMap(service => serviceRuntimeRefs(service).map(runtime => ({ service, runtime })));
       if (refs.some(({ runtime }) => runtime.networkName === network)) continue;
       const shell = this.qualifiedShell(context.assertCurrent);
-      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id }, async () => {
+      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id,
+        operationId: context.operationId, operationGeneration: context.operationGeneration }, async () => {
         const networkView = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(network)}`,
           { timeout: 5000, executionLane: 'observation' });
         context.assertCurrent?.('after unused replacement network ownership');
