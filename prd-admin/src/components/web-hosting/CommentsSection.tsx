@@ -54,7 +54,7 @@ export default function CommentsSection(props: Props) {
   const roots = otherVersions ? outsideRoots : versionRoots;
   const openCount = roots.filter(c => !c.isResolved).length;
   const resolvedCount = roots.length - openCount;
-  useEffect(() => { callbacks.current.onCountChange?.(versionRoots.length); }, [versionRoots.length]);
+  useEffect(() => { callbacks.current.onCountChange?.(allRoots.length); }, [allRoots.length]);
   useEffect(() => {
     const activeRoots = comments.filter(c => !c.parentId && (!callbacks.current.review || (!!versionKey && c.contentVersion === versionKey)));
     callbacks.current.annotations?.setThreads(activeRoots);
