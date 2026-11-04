@@ -9,13 +9,23 @@ if (!/^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(base)) throw Error('Only a
 const out = process.env.CDS_LOADING_EVIDENCE || '/tmp/cds-loading-coverage';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const errors = []; let failOverview = false;
+const errors = []; let failOverview = false; let failHealth = true;
 try {
   const context = await browser.newContext({ viewport: { width: 1360, height: 900 } });
   await context.route('**/api/**', async route => {
     const pathname = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
     if (isEventStream(pathname)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
     if (pathname === '/api/projects' || pathname === '/api/releases/center') await new Promise(r => setTimeout(r, 1200));
+    if (pathname === '/api/cds-system/alarm-channels') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ channels: [], status: [] }) });
+    if (pathname === '/api/cds-system/alarm-notify') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ configured: false, source: null }) });
+    if (pathname === '/api/cds-system/alarm-identity' || pathname === '/api/cds-system/alarm-relay') {
+      await new Promise(r => setTimeout(r, pathname.endsWith('identity') ? 1200 : 2600));
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(pathname.endsWith('identity') ? { identity: null } : { enabled: false, receiverHealthy: false, pending: 0 }) });
+    }
+    if (pathname === '/api/uptime/summary') {
+      await new Promise(r => setTimeout(r, 1200));
+      return route.fulfill({ status: failHealth ? 500 : 200, contentType: 'application/json', body: JSON.stringify(failHealth ? { error: 'fixture: 健康数据读取失败' } : { enabled: true, intervalSeconds: 45, timeoutMs: 5000, failureThreshold: 3, targets: [] }) });
+    }
     if (pathname === '/api/overview/topology') {
       await new Promise(r => setTimeout(r, 1200));
       return route.fulfill({ status: failOverview ? 500 : 200, contentType: 'application/json', body: JSON.stringify(failOverview ? { error: 'fixture: 读取失败，请刷新重试' } : { generatedAt: new Date().toISOString(), summary: { errors: 0, warnings: 0, infos: 0 }, projects: [] }) });
@@ -65,7 +75,23 @@ try {
   await page.getByRole('status', { name: '读取发布环境列表', exact: true }).waitFor();
   assert.equal(await page.getByText('这个项目还没有发布目标，去发布中心添加环境。', { exact: true }).count(), 0);
   await page.getByRole('status', { name: '读取发布环境列表', exact: true }).waitFor({ state: 'hidden' });
+  await page.goto(base + '/cds-settings#alarm-notify');
+  await page.getByRole('status', { name: '读取通知身份', exact: true }).waitFor();
+  const notification = page.locator('section').filter({ has: page.getByRole('heading', { name: '通知来源与头像', exact: true }) });
+  assert.equal(await notification.locator('input').count(), 0);
+  assert.equal(await notification.getByText('暂未取得发送方式，请刷新后查看。', { exact: true }).count(), 0);
+  await page.getByRole('status', { name: '读取通知发送方式', exact: true }).waitFor();
+  await page.getByText('手机通知由当前实例发送。', { exact: true }).waitFor();
+  await page.goto(base + '/release-center');
+  await page.getByRole('button', { name: /健康监测/ }).click();
+  await page.getByRole('status', { name: '读取发布健康数据', exact: true }).waitFor();
+  assert.equal(await page.getByText('未配置健康检查地址，趋势不可绘制。', { exact: true }).count(), 0);
+  await page.getByRole('alert').filter({ hasText: '健康数据读取失败' }).waitFor();
+  failHealth = false;
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await page.getByRole('status', { name: '读取发布健康数据', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '探测配置', exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, agentFirstLoadNoBlank: true, releaseConsoleNoPrematureEmpty: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
+  await fs.writeFile(out + '/result.json', JSON.stringify({ sharedStyles: style, slowWaitClearsOnSceneChange: true, dark390: true, reducedMotion: true, dataErrorRetry: true, agentFirstLoadNoBlank: true, releaseConsoleNoPrematureEmpty: true, notificationNoPrematureFailure: true, healthErrorRetry: true, pageErrors: errors, artificialLatency: 'local synthetic API fixtures only', paidModelRequests: 0 }, null, 2));
   console.log('PASS shared content skeleton; 6s status; scene cleanup; dark390; reduced motion; data/error/retry; Agent first load; release-console pending/empty separation; no page errors');
-} finally { await browser.close(); }
+} catch (error) { const pages=browser.contexts().flatMap(c=>c.pages()); if(pages[0]) { await fs.writeFile(out+'/failure.html',await pages[0].content()); await pages[0].screenshot({path:out+'/failure.png',fullPage:true}); } throw error; } finally { await browser.close(); }

@@ -7245,9 +7245,7 @@ export function SettingsPanel({
   const [dbChoices, setDbChoices] = useState<BranchDbChoice[]>([]);
   if (!branch) {
     return (
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        正在加载分支信息…
-      </section>
+      <ContentLoading label="读取分支设置" variant="rows" />
     );
   }
   const isRunning = branch.status === 'running';

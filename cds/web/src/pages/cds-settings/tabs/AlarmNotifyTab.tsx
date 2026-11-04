@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { AlarmIdentityPanel } from '../AlarmIdentityPanel';
 /*
  * 通知通道（CDS 系统设置 → 接入）。
@@ -106,6 +107,7 @@ export function AlarmNotifyTab(): JSX.Element {
 
       {/* 存量的单一 MAP 通道。先于多通道存在，且可能已经在工作——删掉它等于让已经
           接好的铃在升级那天哑掉，所以留着，只是降到第二位并说清它和上面的关系。 */}
+      {!view && !err ? <ContentLoading label="读取旧版通知通道" variant="rows" /> : <>
       <div className="flex flex-col gap-4 border-t border-[hsl(var(--hairline))] pt-5">
       <div className="text-xs text-muted-foreground">
         下面这条是早先的单一 MAP 通道（走 .cds.env 或这一页的凭据）。它仍然工作；
@@ -181,6 +183,7 @@ export function AlarmNotifyTab(): JSX.Element {
         </div>
       </div>
       </div>
+      </>}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * 通知通道（多协议）。
  *
@@ -133,6 +134,7 @@ function bodyOf(d: DraftState): Record<string, unknown> {
 }
 
 export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray<{ id: string; name: string }> }): JSX.Element {
+  const [initialLoading, setInitialLoading] = useState(true);
   const [channels, setChannels] = useState<ChannelView[]>([]);
   const [status, setStatus] = useState<StatusView[]>([]);
   const [draft, setDraft] = useState<DraftState | null>(null);
@@ -146,7 +148,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
       setChannels(res.channels); setStatus(res.status); setErr(null);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : String(e));
-    }
+    } finally { setInitialLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
 
@@ -212,6 +214,8 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
   const toggleProject = (id: string): void => setDraft((d) => (d
     ? { ...d, projects: d.projects.includes(id) ? d.projects.filter((p) => p !== id) : [...d.projects, id] }
     : d));
+
+  if (initialLoading) return <ContentLoading label="读取通知通道" variant="rows" />;
 
   return (
     <div className="flex flex-col gap-3">

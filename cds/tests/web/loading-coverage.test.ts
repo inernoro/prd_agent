@@ -10,6 +10,10 @@ import { BranchDrawerSkeleton } from '../../web/src/components/branch/BranchDraw
 import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCard.js';
 import { RelationFlowSkeleton } from '../../web/src/components/branch/RelationFlowStrip.js';
 
+import { AlarmChannelsPanel } from '../../web/src/pages/cds-settings/AlarmChannelsPanel.js';
+import { HealthSection } from '../../web/src/pages/release-center/HealthSection.js';
+import { AlarmIdentityPanel } from '../../web/src/pages/cds-settings/AlarmIdentityPanel.js';
+
 const render = (component: Parameters<typeof createElement>[0], props?: object) => renderToStaticMarkup(createElement(component, props));
 
 describe('内容加载覆盖守卫', () => {
@@ -18,7 +22,7 @@ describe('内容加载覆盖守卫', () => {
     expect(result.uncovered).toEqual([]);
     expect(result.counts.shared).toBeGreaterThanOrEqual(118);
     for (const file of [
-      'pages/ReleaseConsolePage.tsx', 'pages/OverviewPage.tsx', 'pages/BranchRelationsPage.tsx', 'components/BranchDetailDrawer.tsx',
+      'pages/release-center/HealthSection.tsx', 'pages/cds-settings/AlarmIdentityPanel.tsx', 'pages/ReleaseConsolePage.tsx', 'pages/OverviewPage.tsx', 'pages/BranchRelationsPage.tsx', 'components/BranchDetailDrawer.tsx',
       'components/branch/DatabaseDirectoryDialog.tsx', 'components/env/EnvSetupDialog.tsx',
       'pages/AgentRequestsPage.tsx', 'pages/status/FunctionalEvidence.tsx',
       'pages/release-center/EvidenceSection.tsx', 'components/CommandPalette.tsx',
@@ -61,5 +65,25 @@ describe('共享内容骨架', () => {
       expect(html).toContain('relation-strip-skeleton');
     }
     expect(render(RelationFlowSkeleton, { tone: 'bad', note: '读取失败，请重试' })).toContain('读取失败，请重试');
+  });
+});
+
+describe('非 loading 命名的首载状态', () => {
+  it('通知通道请求返回前不误报未配置', () => {
+    const html = render(AlarmChannelsPanel);
+    expect(html).toContain('aria-label="读取通知通道"');
+    expect(html).not.toContain('出问题时不会有任何人被通知');
+  });
+  it('健康汇总未返回时不提前宣称没有配置检查地址', () => {
+    const html = render(HealthSection, { envs: [], selected: undefined });
+    expect(html).toContain('aria-label="读取发布健康数据"');
+    expect(html).not.toContain('未配置健康检查地址');
+    expect(html).not.toContain('读取中');
+  });
+  it('通知身份首载不暴露尚未填入的可编辑表单或假失败', () => {
+    const html = render(AlarmIdentityPanel);
+    expect(html).toContain('aria-label="读取通知身份"');
+    expect(html).not.toContain('<input');
+    expect(html).not.toContain('暂未取得发送方式');
   });
 });
