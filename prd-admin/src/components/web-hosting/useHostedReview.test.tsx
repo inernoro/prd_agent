@@ -71,6 +71,17 @@ describe('versioned webpage review', () => {
     expect(review.previewBaseUrl).toBe('https://assets.example/index.html');
     expect(review.site?.siteUrl).toBe('');
   });
+  it.each(['中文目录/内层', '中文 空格/分%组'])('keeps the site root for inline history with a non-ASCII live entry: %s', async directory => {
+    const inline = { ...previous, entryFile: '旧稿/首页.html', siteUrl: null, contentShape: 'self-contained-html' };
+    const generated = { ...current, siteUrl: new URL(`${directory.split('/').map(encodeURIComponent).join('/')}/首页.vnew.html?v=20000`, 'https://assets.example/.versions/live/').href,
+      entryFile: `${directory}/首页.html` };
+    list.mockResolvedValue({ success: true, data: [generated, inline] });
+    preview.mockResolvedValue({ success: true, data: { revision: inline, html: '<h1>旧版</h1>', siteUrl: null } });
+    await mount({ ...site, siteUrl: generated.siteUrl, entryFile: generated.entryFile });
+    await act(async () => review.selectVersion('v1'));
+    expect(review.previewBaseUrl).toBe(new URL('旧稿/首页.html', 'https://assets.example/.versions/live/').href);
+    expect(review.site?.siteUrl).toBe('');
+  });
   it('rejects an HTML-only multi-file snapshot whose old resources cannot be recovered', async () => {
     const incomplete = { ...previous, siteUrl: null, contentShape: 'multi-file' };
     list.mockResolvedValue({ success: true, data: [current, incomplete] });

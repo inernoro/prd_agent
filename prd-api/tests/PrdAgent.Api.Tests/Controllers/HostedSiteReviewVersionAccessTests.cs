@@ -18,6 +18,40 @@ namespace PrdAgent.Api.Tests.Controllers;
 public class HostedSiteReviewVersionAccessTests
 {
     [Theory]
+    [InlineData("create-zip")]
+    [InlineData("replace-zip")]
+    [InlineData("replace-html")]
+    public async Task CommittedUpload_ReturnsPublishedSiteWithoutPostCommitSnapshotWork(string operation)
+    {
+        var published = ReviewSite();
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        if (operation == "create-zip")
+            sites.Setup(x => x.CreateFromZipAsync("owner", It.IsAny<Stream>(), null, null, null,
+                It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>(), "upload", null)).ReturnsAsync(published);
+        else if (operation == "replace-zip")
+            sites.Setup(x => x.ReuploadAsync("site", "owner", It.IsAny<Stream>(), "page.zip", null,
+                It.IsAny<CancellationToken>(), "upload", null)).ReturnsAsync(published);
+        else
+            sites.Setup(x => x.ReuploadAsync("site", "owner", It.IsAny<byte[]>(), "page.html", null,
+                It.IsAny<CancellationToken>(), "upload", null)).ReturnsAsync(published);
+        var progress = new Mock<IUploadProgressService>(MockBehavior.Strict);
+        progress.Setup(x => x.CompleteAsync("upload", It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        var controller = new WebPagesController(sites.Object, null!, progress.Object,
+            new MongoDbContext("mongodb://127.0.0.1:27018", "unused_upload_test"), null!, null!, assetStorage: storage.Object)
+        { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext {
+            User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "owner") }, "test")) } } };
+        using var bytes = new MemoryStream(new byte[] { 1 });
+        var file = new FormFile(bytes, 0, 1, "file", operation == "replace-html" ? "page.html" : "page.zip");
+        var result = operation == "create-zip"
+            ? await controller.Upload(file, null, null, null, null, "upload")
+            : await controller.Reupload("site", file, "upload");
+        Assert.Same(published, Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data);
+        sites.VerifyAll(); sites.VerifyNoOtherCalls(); storage.VerifyNoOtherCalls();
+        progress.Verify(x => x.CompleteAsync("upload", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
     [Trait("Category", "Integration")]
     [InlineData("entry")]
     [InlineData("package")]
@@ -111,7 +145,7 @@ public class HostedSiteReviewVersionAccessTests
                 Assert.False(css.CosKey.StartsWith(oldDirectory, StringComparison.Ordinal));
             }
             Assert.True(await db.WebPageShareLinks.Find(s => s.Token == "existing" && !s.IsRevoked).AnyAsync());
-            var controller = ReviewController(sites, db, revisions, storage.Object, null);
+            var controller = ReviewController(sites, db, storage.Object, null);
             Assert.IsType<NotFoundObjectResult>(await controller.PreviewSharedReviewVersion("existing", "baseline", null));
         });
     }
@@ -169,7 +203,7 @@ public class HostedSiteReviewVersionAccessTests
                 await Assert.ThrowsAsync<InvalidOperationException>(() => sites.CreateShareWithReuseInfoAsync(
                     "owner", "Owner", "site", null, "single", null, null, null, 7, visibility: "public", forceNew: true));
                 Assert.Equal(0, await db.WebPageShareLinks.CountDocumentsAsync(_ => true));
-                var controller = ReviewController(sites, db, Mock.Of<IHostedSiteRevisionService>(), storage.Object, "owner");
+                var controller = ReviewController(sites, db, storage.Object, "owner");
                 var refused = Assert.IsType<ConflictObjectResult>(await controller.CreateShare(new CreateWebPageShareRequest { SiteId = "site", ShareType = "single", Visibility = "public" }));
                 Assert.Contains("清理", Assert.IsType<ApiResponse<object>>(refused.Value).Error!.Message);
                 Assert.IsType<ConflictObjectResult>(await controller.SetVisibility("site", new SetVisibilityRequest { Visibility = "public" }));
@@ -229,7 +263,7 @@ public class HostedSiteReviewVersionAccessTests
             var storage = new Mock<IAssetStorage>();
             storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example/" + key);
             var sites = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
-            var controller = ReviewController(sites, db, Mock.Of<IHostedSiteRevisionService>(), storage.Object, "member");
+            var controller = ReviewController(sites, db, storage.Object, "member");
             var list = Assert.IsType<OkObjectResult>(await controller.ListReviewVersions(site.Id));
             var json = JsonSerializer.Serialize(Assert.IsType<ApiResponse<object>>(list.Value).Data);
             Assert.Contains("current", json);
@@ -272,8 +306,7 @@ public class HostedSiteReviewVersionAccessTests
             var sites = new HostedSiteService(db, null!, null!, null!, null!, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
             var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
             storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example/" + key);
-            var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
-            var controller = ReviewController(sites, db, revisions.Object, storage.Object, viewer);
+            var controller = ReviewController(sites, db, storage.Object, viewer);
             var list = Assert.IsType<OkObjectResult>(await controller.ListSharedReviewVersions("share", null));
             var json = JsonSerializer.Serialize(Assert.IsType<ApiResponse<object>>(list.Value).Data);
             Assert.Contains("current", json);
@@ -292,7 +325,6 @@ public class HostedSiteReviewVersionAccessTests
                 var resolve = await sites.SetCommentResolvedByShareAsync("share", null, "old-comment", viewer, true);
                 Assert.Equal(404, resolve.HttpStatus);
             }
-            revisions.VerifyNoOtherCalls();
             storage.Verify(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         });
     }
@@ -311,7 +343,7 @@ public class HostedSiteReviewVersionAccessTests
             var storage = new Mock<IAssetStorage>();
             storage.Setup(x => x.TryDownloadBytesAsync("current.html", It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("offline"));
             storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>())).Returns("https://assets.example/old.html");
-            var controller = ReviewController(sites.Object, db, Mock.Of<IHostedSiteRevisionService>(), storage.Object, "owner");
+            var controller = ReviewController(sites.Object, db, storage.Object, "owner");
             var result = Assert.IsType<OkObjectResult>(await controller.ListReviewVersions(site.Id));
             Assert.Contains("old", JsonSerializer.Serialize(Assert.IsType<ApiResponse<object>>(result.Value).Data));
             storage.Verify(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -331,16 +363,15 @@ public class HostedSiteReviewVersionAccessTests
             var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
             sites.Setup(x => x.ResolveShareSiteAsync("share", null, null, viewer, It.IsAny<CancellationToken>())).ReturnsAsync(new ShareSiteResolveResult { Site = site });
             if (viewer != null) sites.Setup(x => x.CanEditSiteAsync(site, viewer, It.IsAny<CancellationToken>())).ReturnsAsync(viewer == "owner");
-            var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
             var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
-            var controller = ReviewController(sites.Object, db, revisions.Object, storage.Object, viewer);
+            var controller = ReviewController(sites.Object, db, storage.Object, viewer);
             var response = Assert.IsType<OkObjectResult>(await controller.ListSharedReviewVersions("share", null));
             var json = JsonSerializer.Serialize(Assert.IsType<ApiResponse<object>>(response.Value).Data);
             Assert.Contains("\"Id\":\"\"", json);
             Assert.Contains("\"IsCurrent\":true", json);
             Assert.Contains(site.SiteUrl, json);
             Assert.Equal(0, await db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
-            revisions.VerifyNoOtherCalls(); storage.VerifyNoOtherCalls();
+            storage.VerifyNoOtherCalls();
         });
     }
 
@@ -365,7 +396,7 @@ public class HostedSiteReviewVersionAccessTests
     private static HostedSiteRevision ReviewRevision(string id, DateTime version) => new() { Id = id, SiteId = "site", CreatedByUserId = "owner",
         Status = HostedSiteRevisionStatuses.Published, PublishedContentVersion = version, PublishedEntryCosKey = id + ".html",
         PublishedEntryFile = "index.html", CapturedContentShape = HostedSiteContentShapes.SelfContainedHtml, Html = "<h1>" + id + "</h1>" };
-    private static WebPagesController ReviewController(IHostedSiteService sites, MongoDbContext db, IHostedSiteRevisionService revisions, IAssetStorage storage, string? viewer) => new(sites, null!, null!, db, null!, null!, revisions: revisions, assetStorage: storage)
+    private static WebPagesController ReviewController(IHostedSiteService sites, MongoDbContext db, IAssetStorage storage, string? viewer) => new(sites, null!, null!, db, null!, null!, assetStorage: storage)
     { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext {
         User = viewer == null ? new ClaimsPrincipal() : new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", viewer) }, "test")) } } };
     private static async Task WithReviewDb(Func<MongoDbContext, Task> run)

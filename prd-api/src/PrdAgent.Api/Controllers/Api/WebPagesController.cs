@@ -75,7 +75,6 @@ public partial class WebPagesController : ControllerBase
         ITeamService teams,
         IHttpClientFactory httpClientFactory,
         PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
-        IHostedSiteRevisionService? revisions = null,
         PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null)
     {
         _siteService = siteService;
@@ -86,7 +85,6 @@ public partial class WebPagesController : ControllerBase
         _httpClientFactory = httpClientFactory;
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
-        _reviewRevisions = revisions;
         _reviewStorage = assetStorage;
     }
 
@@ -341,7 +339,6 @@ public partial class WebPagesController : ControllerBase
                     : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
                 var zipSite = await _siteService.CreateFromZipAsync(
                     userId, zipStream, title, description, folder, zipTags, uploadId: uploadId);
-                await EnsureReviewSnapshotAsync(zipSite, GetUserId());
                 return Ok(ApiResponse<object>.Ok(zipSite));
             }
             catch (InvalidOperationException ex)
@@ -1371,7 +1368,6 @@ public partial class WebPagesController : ControllerBase
                 using var zipStream = file.OpenReadStream();
                 var zipSite = await _siteService.ReuploadAsync(
                     id, GetUserId(), zipStream, file.FileName, uploadId: uploadId);
-                await EnsureReviewSnapshotAsync(zipSite, GetUserId());
                 return Ok(ApiResponse<object>.Ok(zipSite));
             }
             catch (KeyNotFoundException)
@@ -1411,7 +1407,6 @@ public partial class WebPagesController : ControllerBase
             // 断的只是控制器这一跳（线只建了一半）。
             var updated = await _siteService.ReuploadAsync(
                 id, GetUserId(), fileBytes, uploadName, wrappedAssetType, uploadId: uploadId);
-            await EnsureReviewSnapshotAsync(updated, GetUserId());
             await _uploadProgress.CompleteAsync(uploadId);
             return Ok(ApiResponse<object>.Ok(updated));
         }

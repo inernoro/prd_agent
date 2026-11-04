@@ -10,7 +10,6 @@ namespace PrdAgent.Api.Controllers.Api;
 
 public partial class WebPagesController
 {
-    private readonly IHostedSiteRevisionService? _reviewRevisions;
     private readonly IAssetStorage? _reviewStorage;
 
     [HttpGet("{siteId}/revisions")]
@@ -51,13 +50,6 @@ public partial class WebPagesController
             return MapCommentError(access.Error, access.HttpStatus, access.ErrorCode, access.RetryAfterSeconds);
         return access.Site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享内无站点"))
             : await PreviewReviewVersionCoreAsync(access.Site, revisionId, !string.IsNullOrEmpty(viewer) && await _siteService.CanEditSiteAsync(access.Site, viewer, CancellationToken.None));
-    }
-
-    private async Task EnsureReviewSnapshotAsync(HostedSite site, string actorUserId)
-    {
-        if (_reviewRevisions == null || _reviewStorage == null) return;
-        await HostedSiteRevisionService.CaptureReviewSnapshotAsync(_db, _reviewStorage, _reviewRevisions,
-            site, actorUserId, CancellationToken.None);
     }
 
     private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, bool canViewHistory)
