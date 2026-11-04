@@ -40,8 +40,9 @@ export function SiteDetailsDialog({ site, activity, visitorCount, shareStats, sh
       <div aria-label="全部标签" className="flex flex-wrap gap-1.5">
         {site.tags.length ? site.tags.map((tag) => <span key={tag} className="rounded px-2 py-1" style={{ background: 'var(--bg-secondary)' }}>{tag}</span>) : <span>暂无标签</span>}
       </div>
-      <dl className="divide-y divide-token-default rounded-lg border border-token-default px-3">
-        {rows.map(([label, value]) => <div key={label} className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 py-2">
+      <dl className="rounded-lg border border-token-default px-3">
+        {rows.map(([label, value]) => <div key={label} className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 border-b py-2 last:border-b-0"
+          style={{ borderColor: 'var(--border-subtle)' }}>
           <dt className="text-token-muted">{label}</dt><dd className="whitespace-pre-wrap text-token-primary">{value}</dd>
         </div>)}
       </dl>
