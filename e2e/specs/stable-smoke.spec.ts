@@ -6002,6 +6002,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let entryId = '';
     let runId = '';
     let restyleRunId = '';
+    const pendingResponses: Promise<Response>[] = [];
     try {
       persistResourceCreationIntent('store', journalScope);
       const storeResponse = await page.request.post('/api/document-store/stores', {
@@ -6042,6 +6043,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         if (entryId) await saveCreated('recording-entry-created', { inspectionRunId: journalScope.inspectionRunId, storeId, entryId });
         return response;
       });
+      pendingResponses.push(uploadResponsePromise);
       void uploadResponsePromise.catch(() => {});
       const fileName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${speechReference.fileName}`;
       const setFile = page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
@@ -6073,6 +6075,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         if (runId) await saveCreated('recording-run-created', { inspectionRunId: journalScope.inspectionRunId, runId }, 'transcribe');
         return response;
       });
+      pendingResponses.push(transcribeResponsePromise);
       void transcribeResponsePromise.catch(() => {});
       persistResourceCreationIntent('transcribe', journalScope);
       releaseUpload?.();
@@ -6235,6 +6238,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '刷新后同一音频条目和真实转录原文仍可回读，持久化状态未丢失。',
       });
     } finally {
+      await Promise.allSettled(pendingResponses);
       if (storeId) {
         await cleanupTrackedFixture(page, token, [
           { kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` },
@@ -6496,6 +6500,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await mobileContext.grantPermissions(['microphone']);
     const page = await mobileContext.newPage();
     const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+    const journalScope = { inspectionRunId, environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry };
     let token = '', storeId = '', sessionId = '', sessionStartRequests = 0, chunkBytes = 0;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let deadlineExceeded = false;
@@ -6519,6 +6524,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         if (path !== `/api/document-store/stores/${storeId}/recording-uploads` || sessionStartRequests !== 1) {
           forbiddenRequests.push(path); await route.abort('blockedbyclient'); return;
         }
+        persistResourceCreationIntent('session', journalScope);
         armRecordingDeadline();
       }
       await route.continue();
@@ -6551,11 +6557,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         && new URL(response.url()).pathname === '/api/document-store/stores').then(async response => {
         const body = await response.json() as ApiEnvelope<{ id: string; name: string; isPublic: boolean }>;
         storeId = body.data?.id || '';
+        if (storeId) persistCreatedResourceEvidence('recording-store-created', { inspectionRunId, storeId }, journalScope, undefined, 'store');
         if (storeId) await testInfo.attach('recording-store-created', { body: JSON.stringify({ inspectionRunId, storeId }), contentType: 'application/json' });
         expect(response.ok() && body.success).toBe(true);
         expect(body.data.name).toBe(title);
         expect(body.data.isPublic).toBe(false);
       });
+      persistResourceCreationIntent('store', journalScope);
       await page.getByRole('button', { name: '创建', exact: true }).click();
       await pendingStore;
       // 正式空库没有库内新增录音入口；真实返回列表，再从外层录音动作选择本轮库。
@@ -6572,6 +6580,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         && new URL(response.url()).pathname === `/api/document-store/stores/${storeId}/recording-uploads`).then(async response => {
         const body = await response.json() as ApiEnvelope<{ sessionId: string }>;
         sessionId = body.data?.sessionId || '';
+        if (sessionId) persistCreatedResourceEvidence('recording-idempotency-session-created', { inspectionRunId, storeId, sessionId }, journalScope, undefined, 'session');
         if (sessionId) await testInfo.attach('recording-idempotency-session-created', { body: JSON.stringify({ inspectionRunId, storeId, sessionId }), contentType: 'application/json' });
         expect(response.ok() && body.success).toBe(true);
         expect(sessionId).not.toBe('');
@@ -7026,15 +7035,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
     const page = await mobileContext.newPage();
     const token = await loginAndReadToken(page, request, '/document-store');
+    const journalScope = { inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry };
+    const saveCreated = async (name: string, body: Record<string, string>, operationId?: string) => {
+      persistCreatedResourceEvidence(name, body, journalScope, undefined, operationId);
+      await testInfo.attach(name, { body: JSON.stringify(body), contentType: 'application/json' });
+    };
+    const pendingResponses: Promise<Response>[] = [];
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-mobile-transcribe`;
     let storeId = '';
     let entryId = '';
     let runId = '';
     try {
-      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+      persistResourceCreationIntent('store', journalScope);
+      const createdStore = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: { name: title, description: '稳定冒烟移动端真实转录，执行后自动清理', isPublic: false },
-      }))).id;
+      });
+      const createdStoreBody = await createdStore.json() as ApiEnvelope<{ id: string }>;
+      storeId = createdStoreBody.data?.id || '';
+      if (storeId) await saveCreated('recording-store-created', { inspectionRunId: journalScope.inspectionRunId, storeId }, 'store');
+      expect(createdStore.ok(), '移动端创建录音库失败').toBe(true);
+      expect(createdStoreBody.success).toBe(true);
+      expect(storeId).not.toBe('');
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
       await dismissCdsPreviewWidget(page);
       await expect(page.getByText(title, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
@@ -7042,11 +7064,26 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.url().includes(`/api/document-store/stores/${storeId}/upload`)
         && response.request().method() === 'POST'
-      ));
+      ), { timeout: 30_000 }).then(async response => {
+        const body = await response.json() as ApiEnvelope<{ entry: { id: string } }>;
+        entryId = body.data?.entry?.id || '';
+        if (entryId) await saveCreated('recording-entry-created', { inspectionRunId: journalScope.inspectionRunId, storeId, entryId });
+        return response;
+      });
+      pendingResponses.push(uploadResponsePromise);
+      void uploadResponsePromise.catch(() => {});
       const transcribeResponsePromise = page.waitForResponse((response) => (
         /\/api\/document-store\/entries\/[^/]+\/transcribe(?:\?|$)/.test(response.url())
         && response.request().method() === 'POST'
-      ));
+      ), { timeout: 30_000 }).then(async response => {
+        const body = await response.json() as ApiEnvelope<{ runId: string }>;
+        runId = body.data?.runId || '';
+        if (runId) await saveCreated('recording-run-created', { inspectionRunId: journalScope.inspectionRunId, runId }, 'transcribe');
+        return response;
+      });
+      pendingResponses.push(transcribeResponsePromise);
+      void transcribeResponsePromise.catch(() => {});
+      persistResourceCreationIntent('transcribe', journalScope);
       await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
         name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-mobile-speech.m4a`,
         mimeType: 'audio/mp4',
@@ -7081,18 +7118,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
       expect(run.outputEntryId).toBe(entryId);
     } finally {
-      if (storeId) {
-        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
-        expect([200, 204]).toContain(deleted.status());
-        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        if (entryId) {
-          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
-        if (runId) {
-          expect((await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
-      }
-      await mobileContext.close();
+      try {
+        // UI首败不能让已经发出的创建响应脱管；有界等待既有监听，不重发任何请求。
+        await Promise.allSettled(pendingResponses);
+        if (storeId) await cleanupTrackedFixture(page, token, [
+          { kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` },
+          ...(entryId ? [{ kind: 'entry', id: entryId, path: `/api/document-store/entries/${entryId}` }] : []),
+          ...(runId ? [{ kind: 'run', id: runId, path: `/api/document-store/agent-runs/${runId}` }] : []),
+        ], async () => {
+          const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+          expect([200, 204]).toContain(deleted.status());
+        }, testInfo);
+      } finally { await mobileContext.close(); }
     }
   });
 

@@ -90,13 +90,14 @@ test('REG-stsmk-account-scope-001 REC001实际费用护栏只放本轮一个会�
   assert.ok(body, '原REC001消费者缺失');
   const routeBody = body.split("await page.route('**/api/document-store/**', async route => {")[1]?.split('\n    });')[0];
   assert.ok(routeBody, '真实原case没有收费范围护栏');
-  const factory = new Function('armRecordingDeadline', `
+  const factory = new Function('armRecordingDeadline', 'persistResourceCreationIntent', 'journalScope', `
     let storeId = 'own-store', sessionStartRequests = 0;
     const forbiddenRequests = [];
     return { handler: async route => { ${routeBody} }, snapshot: () => ({ sessionStartRequests, forbiddenRequests }) };
   `);
   let armed = 0;
-  const guard = factory(() => { armed += 1; });
+  const intents = [];
+  const guard = factory(() => { armed += 1; }, operation => intents.push(operation), {});
   const request = async (path, method = 'POST') => {
     const calls = [];
     await guard.handler({
@@ -114,6 +115,7 @@ test('REG-stsmk-account-scope-001 REC001实际费用护栏只放本轮一个会�
   assert.deepEqual(await request('/api/document-store/recording-uploads/own-session/chunks/0'), ['continue']);
   assert.deepEqual(await request('/api/document-store/recording-uploads/own-session', 'DELETE'), ['continue']);
   assert.equal(guard.snapshot().forbiddenRequests.length, 4);
+  assert.deepEqual(intents, ['session'], '仅本轮唯一会话在放行网络前登记意图，越界请求不新增意图');
 });
 
 test('REG-stsmk-account-scope-001 REC001手机先触控FAB再新建，返回列表后仍走本轮选库录音', async () => {

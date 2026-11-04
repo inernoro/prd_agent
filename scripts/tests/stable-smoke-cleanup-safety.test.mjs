@@ -343,3 +343,36 @@ test('REG-stsmk-cleanup-circuit-001 例行父项必须实际消费本子判据�
   assert.ok(calls.some(call => call.name === 'node' && call.args.includes('REG-stsmk-cleanup-circuit-001') && call.args.includes('scripts/tests/stable-smoke-cleanup-safety.test.mjs')));
   assert.equal(result.rows[0].status, 'fail');
 });
+
+test('REG-stsmk-cleanup-circuit-001 原手机响应回调在UI首败后仍即时登记晚到run且原attempt404才核销', async t => {
+  const options = fixture(t);
+  const scope = { inspectionRunId: 'stsmk-mobile-late', environment: 'cds', testId: 'mobile-REC-003', retry: 0 };
+  const mobile = spec.split("test('[REC-003][REC-012] 真实移动端")[1].split("test('[REC-008]")[0];
+  const declaration = mobile.slice(mobile.indexOf('const transcribeResponsePromise ='), mobile.indexOf('      pendingResponses.push(transcribeResponsePromise);'))
+    .replace(' as ApiEnvelope<{ runId: string }>', '');
+  const execute = new Function('page', 'saveCreated', 'journalScope', `let runId=''; ${declaration}; return { pending:transcribeResponsePromise, snapshot:()=>runId };`);
+  let deliver;
+  const response = new Promise(resolve => { deliver = resolve; });
+  safety.persistResourceCreationIntent('transcribe', scope, options.sharedPath);
+  const observed = execute({ waitForResponse: () => response }, async (name, body, operation) => {
+    safety.persistCreatedResourceEvidence(name, body, scope, options.sharedPath, operation);
+  }, scope);
+  assert.equal(observed.snapshot(), '');
+  assert.ok(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: options.sharedPath }));
+  const id = 'e'.repeat(32);
+  deliver({ json: async () => ({ success: true, data: { runId: id } }) });
+  // 原UI执行体已经停止等待，独立响应回调仍负责保存身份。
+  await Promise.allSettled([observed.pending]);
+  assert.equal(observed.snapshot(), id);
+  assert.deepEqual(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: options.sharedPath }).resourceIds, [id]);
+  const receipt = { schemaVersion: 1, ...scope, errors: [], resources: [{ kind: 'run', id, path: `/api/document-store/agent-runs/${id}`, readbackStatus: 404 }] };
+  safety.persistCleanupResourceEvidence({ ...receipt, retry: 1 }, options.sharedPath);
+  assert.ok(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: options.sharedPath }));
+  safety.persistCleanupResourceEvidence(receipt, options.sharedPath);
+  assert.equal(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: options.sharedPath }), undefined);
+  for (const source of [mobile, spec.split("test(recordingJourneyPlan.title")[1].split("test('[REC-004]")[0]]) {
+    const cleanup = source.slice(source.lastIndexOf('    } finally {'));
+    assert.ok(source.includes('await Promise.allSettled(pendingResponses);'));
+    assert.ok(source.indexOf('await Promise.allSettled(pendingResponses);') < source.lastIndexOf('cleanupTrackedFixture('));
+  }
+});
