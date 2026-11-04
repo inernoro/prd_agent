@@ -1762,6 +1762,12 @@ public class MdToPptController : ControllerBase
                 && item.ArtifactType == DesignArtifactTypes.HtmlPpt)
             .FirstOrDefaultAsync(HttpContext.RequestAborted);
         var runtimeSnapshot = designArtifact == null ? null : BuildOpenDesignRuntimeSnapshot(designArtifact);
+        var publicCancelled = designArtifact?.Status == RunStatuses.Cancelled;
+        var publicFailed = designArtifact?.Status == RunStatuses.Error;
+        var awaitingPublicCompletion = run.Status == "done"
+            && (run.Runtime == DesignArtifactRuntimes.OpenDesign || designArtifact?.Runtime == DesignArtifactRuntimes.OpenDesign)
+            && !WebPageDesignArtifactLifecycleAdapter.IsCompletedPresentation(designArtifact);
+
         if (run.Status == "done"
             && IsCompletePresentationDocument(run.Html)
             && !string.Equals(run.Runtime, DesignArtifactRuntimes.OpenDesign, StringComparison.Ordinal))
@@ -1801,7 +1807,7 @@ public class MdToPptController : ControllerBase
         return Ok(new
         {
             id = run.Id,
-            status = invalidSavedDeck ? "error" : run.Status,
+            status = invalidSavedDeck || publicCancelled || publicFailed ? "error" : awaitingPublicCompletion ? "running" : run.Status,
             engine = run.Engine,
             runtime = run.Runtime,
             provider = run.Provider,
@@ -1833,8 +1839,8 @@ public class MdToPptController : ControllerBase
             publishedHtmlHash = run.PublishedHtmlHash,
             error = invalidSavedDeck
                 ? "保存的演示稿不完整，已停止恢复。请重新生成或从上一版本继续"
-                : run.Error,
-            errorCode = run.ErrorCode,
+                : publicCancelled ? "演示稿任务已取消，原版本仍然保留" : run.Error ?? designArtifact?.Error,
+            errorCode = publicCancelled ? "design_artifact_cancelled" : run.ErrorCode ?? designArtifact?.LifecycleFailureCode,
             model = run.Model,
             platform = run.Platform,
             resolvedModels = run.ResolvedModels,
@@ -4159,12 +4165,13 @@ public class MdToPptController : ControllerBase
                     revision,
                 });
             }
-            if (compatibility.Status == "done")
+            if (compatibility.Status == "done" && WebPageDesignArtifactLifecycleAdapter.IsCompletedPresentation(artifact))
             {
                 var siteUrl = string.IsNullOrWhiteSpace(compatibility.PublishedSiteId)
                     ? null
                     : await _db.HostedSites.Find(site => site.Id == compatibility.PublishedSiteId
-                                                         && site.OwnerUserId == compatibility.UserId)
+                                                         && site.OwnerUserId == compatibility.UserId
+                                                         && site.PublishedRevisionId == artifact.ProducedArtifactRevisionId)
                         .Project(site => site.SiteUrl)
                         .FirstOrDefaultAsync(CancellationToken.None);
                 await WriteEventAsync("done", CompletedRunDoneEvent(compatibility, siteUrl: siteUrl));

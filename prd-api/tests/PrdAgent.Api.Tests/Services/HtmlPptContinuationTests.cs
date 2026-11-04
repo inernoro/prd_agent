@@ -26,6 +26,33 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class HtmlPptContinuationTests
 {
     [Fact]
+    public async Task CommittingOpenDesignPresentation_CannotFallBackToHtmlOnlyPublication()
+    {
+        await using var store = await RunMongoFixture.CreateAsync("ppt_publish_pending");
+        var f = Fixture();
+        f.Source.Runtime = DesignArtifactRuntimes.OpenDesign;
+        f.Source.HtmlHash = MdToPptController.ComputeHtmlHash(f.Source.Html!);
+        f.Artifact.Status = RunStatuses.Committing;
+        f.Artifact.DeploymentSlug = DeploymentScope.Current;
+        await store.Db.MdToPptRuns.InsertOneAsync(f.Source);
+        await store.Db.DesignArtifactRuns.InsertOneAsync(f.Artifact);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(item => item.GetTeamsNotPublishableAsync("owner", It.IsAny<IReadOnlyCollection<string>>(),
+            It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var publisher = new HtmlPptPublishCoordinator(store.Db, sites.Object,
+            Mock.Of<IHostedSiteRevisionService>(MockBehavior.Strict),
+            Mock.Of<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict), NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        var error = await Assert.ThrowsAsync<HtmlPptPublishPendingException>(() =>
+            publisher.PublishAsync(f.Source, "冻结发布标题", "冻结描述", ["发布标签"], []));
+
+        Assert.Equal(HtmlPptPublishCoordinator.PendingCode, error.Code);
+        sites.Verify(item => item.CreateFromHtmlIdempotentAsync(It.IsAny<string>(), It.IsAny<byte[]>(),
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<List<string>?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task StoredEditIdentityIgnoresFutureFieldsWithoutLosingVersionFences()
     {
         await using var store = await RunMongoFixture.CreateAsync("ppt_nested_identity");
@@ -567,9 +594,24 @@ public sealed class HtmlPptContinuationTests
         lifecycle.Setup(x=>x.BindPublishedAsync(manual.Id,f.Site.Id,"manual-draft",It.IsAny<CancellationToken>()))
             .Returns(async () => { await store.Db.DesignArtifactRuns.UpdateOneAsync(x=>x.Id==manual.Id,
                 Builders<DesignArtifactRun>.Update.Set(x=>x.ArtifactSiteId,f.Site.Id).Set(x=>x.ArtifactRevisionId,"manual-draft")); });
+        sites.Setup(x => x.UpdateAsync(f.Site.Id, "owner", It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<List<string>?>(), null, null, It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string _, string? title, string? description, List<string>? tags,
+                string? _, string? _, CancellationToken _) =>
+            {
+                f.Site.Title = title!;
+                f.Site.Description = description;
+                f.Site.Tags = tags!;
+                await store.Db.HostedSites.UpdateOneAsync(x => x.Id == f.Site.Id,
+                    Builders<HostedSite>.Update.Set(x => x.Title, title).Set(x => x.Description, description).Set(x => x.Tags, tags));
+                return f.Site;
+            });
         var publisher = new HtmlPptPublishCoordinator(store.Db,sites.Object,new HostedSiteRevisionService(store.Db,sites.Object),
             Mock.Of<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict),NullLogger<HtmlPptPublishCoordinator>.Instance,lifecycle.Object,service);
-        var published = await publisher.PublishAsync(manualRun,"现有演示稿",null,[],[]);
+        var published = await publisher.PublishAsync(manualRun,"冻结发布标题","冻结发布描述",["交付标签"],[]);
+        Assert.Equal("冻结发布标题", published.Site.Title);
+        Assert.Equal("冻结发布描述", published.Site.Description);
+        Assert.Equal(["交付标签"], published.Site.Tags);
         Assert.Equal("manual-draft",published.Revision.Id);
         Assert.Equal(HostedSiteRevisionStatuses.Published,published.Revision.Status);
         Assert.Equal(proposal,onlineHtml);
@@ -603,6 +645,9 @@ public sealed class HtmlPptContinuationTests
         var finished=await store.Db.MdToPptRuns.Find(x=>x.Id==manual.Id).SingleAsync();
         var replayed=await publisher.PublishAsync(finished,"无效重放标题",null,[],[]);
         Assert.Equal(published.Revision.Id,replayed.Revision.Id);
+        sites.Verify(x => x.UpdateAsync(f.Site.Id, "owner", "冻结发布标题", "冻结发布描述",
+            It.Is<List<string>?>(tags => tags != null && tags.SequenceEqual(new[] { "交付标签" })),
+            null, null, It.IsAny<CancellationToken>()), Times.Once);
         sites.Verify(x=>x.ReplaceWithVerifiedFilesAsync(f.Site.Id,"owner",It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(),
             It.IsAny<DateTime>(),"manual-draft",It.IsAny<CancellationToken>()),Times.Once);
         Assert.Equal("manual-draft",(await store.Db.HostedSites.Find(x=>x.Id==f.Site.Id).SingleAsync()).PublishedRevisionId);
