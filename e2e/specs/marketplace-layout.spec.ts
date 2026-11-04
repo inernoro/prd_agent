@@ -116,3 +116,54 @@ test('个人列表请求失败可重试，取消收藏失败保留列表与状�
   await expect(favorite).toHaveAttribute('data-active', 'true');
   await expect(page.locator('.mkt-card')).toHaveCount(3);
 });
+
+test('网页创作与市场共用显示控件，样式一致且偏好各自保留', async ({ page }) => {
+  test.setTimeout(180_000);
+  await installMarketplaceFixture(page);
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  const styles: unknown[] = [];
+  for (const route of ['/marketplace', '/web-pages']) {
+    await page.goto(route);
+    const trigger = page.getByRole('button', { name: /^显示/ });
+    await trigger.waitFor({ timeout: 30_000 });
+    await trigger.click();
+    const panel = page.locator('[data-list-display-options]');
+    await expect(panel).toBeVisible();
+    await panel.evaluate(async element => {
+      await Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {})));
+    });
+    const sizes = panel.getByRole('group', { name: '卡片尺寸', exact: true });
+    const medium = sizes.getByRole('button', { name: '中', exact: true });
+    await expect(medium).toHaveAttribute('aria-pressed', 'true');
+    styles.push(await medium.evaluate(button => {
+      const style = getComputedStyle(button);
+      const group = getComputedStyle(button.parentElement!);
+      const label = getComputedStyle(button.closest('[data-list-display-options]')!.querySelector('.text-token-muted')!);
+      return { height: style.height, fontSize: style.fontSize, radius: style.borderRadius,
+        weight: style.fontWeight, background: style.backgroundColor, color: style.color, shadow: style.boxShadow,
+        groupBorder: group.border, groupRadius: group.borderRadius, padding: group.padding,
+        labelSize: label.fontSize, labelColor: label.color };
+    }));
+    await panel.getByRole('group', { name: '排序', exact: true }).getByRole('button', {
+      name: route === '/marketplace' ? '最新' : '最早', exact: true,
+    }).click();
+    await sizes.getByRole('button', { name: route === '/marketplace' ? '小' : '大', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await page.getByRole('button', { name: /^显示/ }).waitFor({ timeout: 30_000 });
+    await page.getByRole('button', { name: /^显示/ }).click();
+    await expect(page.getByRole('group', { name: '卡片尺寸', exact: true }).getByRole('button', {
+      name: route === '/marketplace' ? '小' : '大', exact: true,
+    })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('group', { name: '排序', exact: true }).getByRole('button', {
+      name: route === '/marketplace' ? '最新' : '最早', exact: true,
+    })).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('Escape');
+  }
+  expect(styles[0]).toEqual(styles[1]);
+  await page.goto('/marketplace');
+  await page.getByRole('button', { name: /^显示/ }).waitFor({ timeout: 30_000 });
+  await page.getByRole('button', { name: /^显示/ }).click();
+  await expect(page.getByRole('group', { name: '卡片尺寸', exact: true }).getByRole('button', { name: '小', exact: true }))
+    .toHaveAttribute('aria-pressed', 'true');
+});

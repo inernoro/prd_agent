@@ -33,13 +33,13 @@ import type { MarketplaceSkillDto, MarketplaceSkillScope } from '@/services/cont
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
-import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
+import { ToolbarPopover } from '@/components/design/ToolbarPopover';
+import { ListDisplayOptions } from '@/components/design/ListDisplayOptions';
+import { useListDisplayPreferences } from '@/hooks/useListDisplayPreferences';
 import { MarketplaceFilters } from './MarketplaceFilters';
-import { MarketplaceDisplayOptions } from './MarketplaceDisplayOptions';
-import { MARKETPLACE_CARD_SIZES, MARKETPLACE_VIEWS, type MarketplaceCardSize } from './marketplaceLayout';
+import { MARKETPLACE_CARD_SIZES, MARKETPLACE_VIEWS, MARKETPLACE_SORT_OPTIONS, MARKETPLACE_CARD_SIZE_OPTIONS } from './marketplaceLayout';
 import './marketplace.css';
 
-type SortMode = 'hot' | 'new';
 type CardDemoSkill = MarketplaceSkillDto & MarketplaceItemBase & {
   shareCount?: number;
 };
@@ -143,7 +143,11 @@ export const MarketplacePage: React.FC = () => {
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
   const [categoryFilter, setCategoryFilter] = useState(typeFromUrl);
-  const [sortBy, setSortBy] = useState<SortMode>('hot');
+  const { sort: sortBy, setSort: setSortBy, cardSize, setCardSize } = useListDisplayPreferences({
+    sortKey: 'marketplace.pref.sort', cardSizeKey: 'marketplace.pref.cardSize',
+    sortOptions: MARKETPLACE_SORT_OPTIONS, cardSizeOptions: MARKETPLACE_CARD_SIZE_OPTIONS,
+    defaultSort: 'hot', defaultCardSize: 'medium',
+  });
   const [searchKeyword, setSearchKeyword] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadedScope, setLoadedScope] = useState<MarketplaceSkillScope | null>(null);
@@ -161,7 +165,6 @@ export const MarketplacePage: React.FC = () => {
   const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
   const [openApiOpen, setOpenApiOpen] = useState(searchParams.get('dialog') === 'open-api');
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
-  const [cardSize, setCardSize] = useState<MarketplaceCardSize>('medium');
   const [toolbarPanel, setToolbarPanel] = useState<'display' | 'filters' | null>(null);
   const connectBtnRef = useRef<HTMLButtonElement>(null);
   // 手机端密度（.claude/rules/mobile-first-density.md）：
@@ -386,7 +389,9 @@ export const MarketplacePage: React.FC = () => {
             <ToolbarPopover label="显示" summary={`${sortBy === 'hot' ? '热门' : '最新'} · ${MARKETPLACE_CARD_SIZES[cardSize].label}`}
               open={toolbarPanel === 'display'} onOpenChange={open => { setToolbarPanel(open ? 'display' : null); setQuickConnectOpen(false); }}
               tourId="marketplace-sort">
-              <MarketplaceDisplayOptions sort={sortBy} onSortChange={setSortBy} size={cardSize} onSizeChange={setCardSize} />
+              <ListDisplayOptions sortOptions={MARKETPLACE_SORT_OPTIONS} sort={sortBy} onSortChange={setSortBy}
+                cardSizeOptions={MARKETPLACE_CARD_SIZE_OPTIONS} cardSize={cardSize} onCardSizeChange={setCardSize}
+                rememberPreferences />
             </ToolbarPopover>
             {isMobile && (
               <ToolbarPopover label="筛选" count={filterCount} open={toolbarPanel === 'filters'}

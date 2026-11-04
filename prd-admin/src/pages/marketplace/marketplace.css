@@ -32,11 +32,9 @@
   background: var(--bg-rail);
   border-right: 1px solid var(--border-subtle);
 }
-.marketplace-filters fieldset,
-.marketplace-display-options fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.marketplace-filters fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .marketplace-filters fieldset + fieldset { margin-top: 24px; }
-.marketplace-filters legend,
-.marketplace-display-options legend { margin-bottom: 8px; padding: 0 8px; color: var(--text-primary); font-size: 12px; font-weight: 500; }
+.marketplace-filters legend { margin-bottom: 8px; padding: 0 8px; color: var(--text-primary); font-size: 12px; font-weight: 500; }
 .marketplace-filter-row {
   display: flex;
   align-items: center;
@@ -105,11 +103,6 @@
 }
 .marketplace-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 240px; padding: 24px; color: var(--text-muted); font-size: 13px; }
 .marketplace-empty p { margin: 0; text-align: center; }
-.marketplace-display-options { display: flex; flex-direction: column; gap: 16px; }
-.marketplace-display-options legend { padding: 0; }
-.marketplace-display-segments { display: flex; gap: 4px; }
-.marketplace-display-segments button { flex: 1; min-height: 30px; padding: 4px 12px; border: 1px solid transparent; border-radius: 6px; background: var(--bg-input); color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-.marketplace-display-segments button[data-active="true"] { border-color: var(--selection-border); background: var(--selection-bg); color: var(--selection-text); }
 .marketplace-quick-connect .mkt-qc-panel { border: 0; }
 
 /* 平铺继续使用 MarketplaceCard 的详情、收藏、分享、下载和编辑行为。 */

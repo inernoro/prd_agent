@@ -19,6 +19,8 @@ pnpm test         # vitest
 | `ModelTypeFilterBar` | `components/model/ModelTypePicker.tsx` | 同上 |
 | `UserSearchSelect` | `components/UserSearchSelect.tsx` | `getUsers()` API（自动获取）或外部传入 `users` |
 | `useSseStream` | `lib/useSseStream.ts` | 通用 SSE 流式 hook（连接管理、认证、状态追踪） |
+| `ListDisplayOptions` / `SegmentPills` / `ToolbarPopover` | `components/design/` | 网页创作与海鲜市场共用显示面板、分段选项和锚定入口；页面传入业务选项，附加筛选通过 children 扩展，避免各页另写样式 |
+| `useListDisplayPreferences` | `hooks/useListDisplayPreferences.ts` | 排序和卡片尺寸等设备本地 UI 偏好；页面使用独立 key，已有页面保留原 key，失效选项回退默认值 |
 | `SsePhaseBar` | `components/sse/SsePhaseBar.tsx` | 阶段状态栏（连接中/分析中/完成/失败） |
 | `SseTypingBlock` | `components/sse/SseTypingBlock.tsx` | LLM 打字效果区块（原始流式输出展示） |
 | `SseStreamPanel` | `components/sse/SseStreamPanel.tsx` | 组合面板（PhaseBar + TypingBlock + 业务内容） |

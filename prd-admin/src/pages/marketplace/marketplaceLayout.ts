@@ -12,3 +12,11 @@ export const MARKETPLACE_CARD_SIZES = {
 } as const;
 
 export type MarketplaceCardSize = keyof typeof MARKETPLACE_CARD_SIZES;
+
+export const MARKETPLACE_SORT_OPTIONS = [
+  { value: 'hot', label: '热门' },
+  { value: 'new', label: '最新' },
+] as const;
+
+export const MARKETPLACE_CARD_SIZE_OPTIONS = (Object.keys(MARKETPLACE_CARD_SIZES) as MarketplaceCardSize[])
+  .map(value => ({ value, label: MARKETPLACE_CARD_SIZES[value].label }));
