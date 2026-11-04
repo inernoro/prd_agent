@@ -3504,7 +3504,7 @@ public class HostedSiteService : IHostedSiteService
                 // 垫片升级只更新独立缓存键，不改变业务版本、发布时间与发布版本指针。
                 var update = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
                 // 即使另一实例已先写入相同脚本，旧桥接缓存键仍须升级。
-                var entryKey = entryHtml?.CosKey ?? site.Files.FirstOrDefault(f =>
+                var entryKey = entryHtml?.CosKey ?? site.Files?.FirstOrDefault(f =>
                     string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
                 if (!string.IsNullOrEmpty(entryKey))
                     update = update.Set(x => x.SiteUrl, AppendBridgeVersion(
@@ -4721,7 +4721,7 @@ public class HostedSiteService : IHostedSiteService
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
     // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
     // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
-    private const int SlideNavVersion = 11;
+    private const int SlideNavVersion = 12;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -5265,7 +5265,8 @@ public class HostedSiteService : IHostedSiteService
             return new SiteCommentsResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
         var site = sites[0];
-        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true);
+        var canViewHistory = !string.IsNullOrEmpty(viewerUserId) && await CanEditSiteAsync(site, viewerUserId, ct);
+        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true, currentOnly: !canViewHistory);
         return new SiteCommentsResult
         {
             SiteId = site.Id,
@@ -5324,17 +5325,19 @@ public class HostedSiteService : IHostedSiteService
                 ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
         if (sites.Count == 0)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
-        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true);
+        var canViewHistory = await CanEditSiteAsync(sites[0], userId, ct);
+        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true, currentOnly: !canViewHistory);
     }
 
     private async Task<AddCommentResult> SetCommentResolvedAsync(HostedSite site, string commentId, string userId,
-        bool resolved, CancellationToken ct, bool maskUserId = false)
+        bool resolved, CancellationToken ct, bool maskUserId = false, bool currentOnly = false)
     {
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
         var comment = await _db.HostedSiteComments
             .Find(c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted).FirstOrDefaultAsync(ct);
-        if (comment == null || !HostedSiteCommentRules.CanResolve(comment, site, userId))
+        if (comment == null || !HostedSiteCommentRules.CanResolve(comment, site, userId)
+            || !HostedSiteCommentRules.CanViewSharedVersion(HostedSiteCommentRules.StoredVersion(comment), EffectiveContentVersion(site), !currentOnly))
             return new AddCommentResult { Error = "讨论不存在或无权修改", HttpStatus = 404, ErrorCode = "not_found" };
         var update = Builders<HostedSiteComment>.Update.Set(c => c.IsResolved, resolved).Set(c => c.UpdatedAt, DateTime.UtcNow);
         var changed = await _db.HostedSiteComments.UpdateOneAsync(
@@ -5417,6 +5420,10 @@ public class HostedSiteService : IHostedSiteService
                 return new AddCommentResult { Error = "正在查看的版本已变化，请刷新或重新选择版本后发表", HttpStatus = 409, ErrorCode = "CONTENT_VERSION_CHANGED" };
         }
 
+        if (shareToken != null && !HostedSiteCommentRules.CanViewSharedVersion(contentVersion, EffectiveContentVersion(site),
+            await CanEditSiteAsync(site, authorUserId, ct)))
+            return new AddCommentResult { Error = "此分享不提供历史讨论", HttpStatus = 404, ErrorCode = "not_found" };
+
         var comment = new HostedSiteComment
         {
             Anchor = anchor,
@@ -5496,7 +5503,7 @@ public class HostedSiteService : IHostedSiteService
             && (site.OwnerUserId == viewerUserId || comment.AuthorUserId == viewerUserId),
     };
 
-    private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false)
+    private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false, bool currentOnly = false)
     {
         var comments = await _db.HostedSiteComments
             .Find(c => c.SiteId == site.Id && !c.IsDeleted)
@@ -5514,6 +5521,8 @@ public class HostedSiteService : IHostedSiteService
                 && missingParents.Contains(c.Id) && c.ParentId == null).ToListAsync(ct);
             comments.AddRange(roots);
         }
+        if (currentOnly) comments = comments.Where(c => HostedSiteCommentRules.CanViewSharedVersion(
+            HostedSiteCommentRules.StoredVersion(c), EffectiveContentVersion(site), false)).ToList();
         var rootIds = comments.Where(c => string.IsNullOrEmpty(c.ParentId)).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
         return comments.Where(c => string.IsNullOrEmpty(c.ParentId) || rootIds.Contains(c.ParentId))
             .Select(c => ToCommentDto(c, site, viewerUserId, maskUserId)).ToList();

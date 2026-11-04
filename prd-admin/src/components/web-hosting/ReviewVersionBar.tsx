@@ -21,7 +21,7 @@ export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; 
       <ChevronDown size={12} className={open ? 'review-chevron-open' : ''} />
     </button>
     <AnchoredMenu open={open} onClose={() => setOpen(false)} anchorRef={trigger} minWidth={280} className={`review-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 292, maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100dvh - 88px)', overflowY: 'auto', zIndex: 2147483647 }}>
-      <div className="review-popover-heading"><strong>网页版本</strong><p>切换版本，查看对应的内容与批注</p></div>
+      <div className="review-popover-heading"><strong>网页版本</strong><p>{review.versions.some(version => version.historyRestricted) ? '分享仅开放当前版本，历史版本需站点编辑权限' : '切换版本，查看对应的内容与批注'}</p></div>
       <div ref={list} role="listbox" aria-label="网页版本" className="review-version-list" onKeyDown={event => {
         if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); return; }
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;

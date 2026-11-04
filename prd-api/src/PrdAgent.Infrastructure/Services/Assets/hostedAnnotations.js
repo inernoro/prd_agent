@@ -170,6 +170,14 @@
     previewLast = key;
     post('map-annotation-preview', { id: record.thread.id, rect: rect, obstacles: obstacles });
   }
+  function viewportPositioned(el) {
+    for (var node = el; node && node !== document.documentElement; node = node.parentElement) {
+      var position = getComputedStyle(node).position;
+      if (position === 'fixed' || position === 'sticky') return true;
+    }
+    return false;
+  }
+  var pendingViewportPositioned = false;
   function paint() {
     frame = 0;
     if (!context) return;
@@ -183,17 +191,24 @@
     if (geometryDirty) {
       records.forEach(function (record) {
         var found = record.found;
+        record.viewportPositioned = !!found && viewportPositioned(found.el);
         if (!found || !found.el.isConnected) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
         var rect = found.range ? found.range.getBoundingClientRect() : found.el.getBoundingClientRect();
         if (!rect.width || !rect.height) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
         var count = pinCounts.get(found.el) || 0; pinCounts.set(found.el, count + 1);
         updates.push({ record: record, rects: found.range ? Array.from(found.range.getClientRects()) : [rect],
           pin: { left: Math.max(-scrollX, Math.min(rect.right - 12 - count * 28, document.documentElement.scrollWidth - scrollX - 27)),
-            top: Math.max(-scrollY + 2, rect.top - 12), width: 25, height: 25 } });
+            top: Math.max(record.viewportPositioned ? 2 : -scrollY + 2, rect.top - 12), width: 25, height: 25 } });
       });
     }
     var pendingRect = null;
-    if (pending && geometryDirty) { var selected = resolve(pending); if (selected) pendingRect = selected.el.getBoundingClientRect(); }
+    if (geometryDirty) {
+      pendingViewportPositioned = false;
+      if (pending) {
+        var selected = resolve(pending);
+        if (selected) { pendingRect = selected.el.getBoundingClientRect(); pendingViewportPositioned = viewportPositioned(selected.el); }
+      }
+    }
     if (hoverDirty && context.enabled && pointer) {
       var target = document.elementFromPoint ? document.elementFromPoint(pointer.x, pointer.y) : currentHover;
       currentHover = selectable(target) ? target : null;
@@ -279,6 +294,9 @@
         previewMuted = true; hidePreview(); clearTimeout(previewTimer);
         previewTimer = setTimeout(function () { previewMuted = false; schedule(false); }, 120);
       }
+      // Absolute markers follow ordinary content natively. Fixed/sticky targets (including
+      // descendants) move relative to the document and need fresh viewport geometry.
+      if (pendingViewportPositioned || Array.from(records.values()).some(function (record) { return record.viewportPositioned; })) schedule();
       if (context.enabled) { hoverDirty = true; schedule(false); }
       return;
     }

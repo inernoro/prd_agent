@@ -82,6 +82,10 @@ public static class HostedSiteCommentRules
             ? VersionKey(new DateTime(ticks, DateTimeKind.Utc)) : null;
     }
 
+    // A live share authorizes only the current content. History requires the site's editing permission.
+    public static bool CanViewSharedVersion(string? version, DateTime current, bool canViewHistory) =>
+        canViewHistory || string.Equals(version, VersionKey(current), StringComparison.Ordinal);
+
     public static bool IsPublishedVersion(HostedSiteRevision? revision, string siteId) =>
         revision != null && revision.SiteId == siteId && revision.Status == HostedSiteRevisionStatuses.Published
         && revision.PublishedContentVersion.HasValue;

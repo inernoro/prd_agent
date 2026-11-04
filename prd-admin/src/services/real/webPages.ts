@@ -1428,6 +1428,7 @@ export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise
 
 /** 发布版本的评审元数据；版本编号和内容标识由服务端维护。 */
 export interface HostedReviewVersion {
+  historyRestricted?: boolean;
   id: string;
   siteId: string;
   versionLabel: string;

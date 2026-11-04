@@ -18,7 +18,7 @@ public partial class WebPagesController
     {
         var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None);
         return site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"))
-            : await ListReviewVersionsCoreAsync(site, GetUserId());
+            : await ListReviewVersionsCoreAsync(site);
     }
 
     [HttpGet("{siteId}/revisions/{revisionId}/preview")]
@@ -38,7 +38,7 @@ public partial class WebPagesController
         if (access.Error != null)
             return MapCommentError(access.Error, access.HttpStatus, access.ErrorCode, access.RetryAfterSeconds);
         return access.Site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享内无站点"))
-            : await ListReviewVersionsCoreAsync(access.Site, viewer ?? access.Site.OwnerUserId);
+            : await ListReviewVersionsCoreAsync(access.Site, !string.IsNullOrEmpty(viewer) && await _siteService.CanEditSiteAsync(access.Site, viewer, CancellationToken.None));
     }
 
     [AllowAnonymous]
@@ -50,7 +50,7 @@ public partial class WebPagesController
         if (access.Error != null)
             return MapCommentError(access.Error, access.HttpStatus, access.ErrorCode, access.RetryAfterSeconds);
         return access.Site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享内无站点"))
-            : await PreviewReviewVersionCoreAsync(access.Site, revisionId);
+            : await PreviewReviewVersionCoreAsync(access.Site, revisionId, !string.IsNullOrEmpty(viewer) && await _siteService.CanEditSiteAsync(access.Site, viewer, CancellationToken.None));
     }
 
     private async Task SnapshotBeforeReuploadAsync(string siteId)
@@ -65,6 +65,11 @@ public partial class WebPagesController
     private async Task EnsureReviewSnapshotAsync(HostedSite site, string actorUserId)
     {
         if (_reviewRevisions == null || _reviewStorage == null) return;
+        var version = HostedSiteService.EffectiveContentVersion(site);
+        var saved = await _db.HostedSiteRevisions.Find(r => r.SiteId == site.Id
+            && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
+            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Include(r => r.PublishedEntryCosKey)).FirstOrDefaultAsync(CancellationToken.None);
+        if (!string.IsNullOrWhiteSpace(saved?.PublishedEntryCosKey)) return;
         var entry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
         if (entry == null || string.IsNullOrWhiteSpace(entry.CosKey))
             throw new InvalidOperationException("网页入口缺失，无法保留当前版本");
@@ -77,36 +82,34 @@ public partial class WebPagesController
             if (bytes.Length <= HostedSiteRevisionRules.MaxHtmlBytes)
                 html = System.Text.Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
         }
-        var version = HostedSiteService.EffectiveContentVersion(site);
         await _reviewRevisions.EnsureCurrentSnapshotAsync(site.Id, actorUserId,
             new HostedSiteEditableEntry(site, html, version), CancellationToken.None);
     }
 
-    private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, string actorUserId)
+    private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, bool canViewHistory = true)
     {
-        try
-        {
-            await EnsureReviewSnapshotAsync(site, actorUserId);
-            var filter = Builders<HostedSiteRevision>.Filter.Eq(r => r.SiteId, site.Id)
-                & Builders<HostedSiteRevision>.Filter.Eq(r => r.Status, HostedSiteRevisionStatuses.Published)
-                & Builders<HostedSiteRevision>.Filter.Ne(r => r.PublishedContentVersion, null);
-            var total = await _db.HostedSiteRevisions.CountDocumentsAsync(filter, cancellationToken: CancellationToken.None);
-            var items = await _db.HostedSiteRevisions.Find(filter)
-                .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles).Exclude(r => r.PublishedAssetKeys))
-                .SortByDescending(r => r.PublishedContentVersion).ThenByDescending(r => r.Id).Limit(100)
-                .ToListAsync(CancellationToken.None);
-            return Ok(ApiResponse<object>.Ok(items.Select((item, index) => ReviewVersionDto(item, site, total - index)).ToList()));
-        }
-        catch (InvalidOperationException)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, "版本记录暂时不可用，请检查网页入口后重试"));
-        }
+        // Legacy snapshot capture is best effort here; saved history remains readable if the live object is unavailable.
+        try { await EnsureReviewSnapshotAsync(site, site.OwnerUserId); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { HttpContext?.RequestServices?.GetService<ILogger<WebPagesController>>()?.LogWarning(ex, "网页版本快照补齐失败，继续读取已保存记录 SiteId={SiteId}", site.Id); }
+        var published = Builders<HostedSiteRevision>.Filter.Eq(r => r.SiteId, site.Id)
+            & Builders<HostedSiteRevision>.Filter.Eq(r => r.Status, HostedSiteRevisionStatuses.Published)
+            & Builders<HostedSiteRevision>.Filter.Ne(r => r.PublishedContentVersion, null);
+        var filter = canViewHistory ? published : published & Builders<HostedSiteRevision>.Filter.Eq(
+            r => r.PublishedContentVersion, HostedSiteService.EffectiveContentVersion(site));
+        var total = await _db.HostedSiteRevisions.CountDocumentsAsync(published, cancellationToken: CancellationToken.None);
+        var items = await _db.HostedSiteRevisions.Find(filter)
+            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles).Exclude(r => r.PublishedAssetKeys))
+            .SortByDescending(r => r.PublishedContentVersion).ThenByDescending(r => r.Id).Limit(100)
+            .ToListAsync(CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(items.Select((item, index) => ReviewVersionDto(item, site, total - index) with { HistoryRestricted = !canViewHistory }).ToList()));
     }
 
-    private async Task<IActionResult> PreviewReviewVersionCoreAsync(HostedSite site, string revisionId)
+    private async Task<IActionResult> PreviewReviewVersionCoreAsync(HostedSite site, string revisionId, bool canViewHistory = true)
     {
         var item = await _db.HostedSiteRevisions.Find(r => r.Id == revisionId && r.SiteId == site.Id
-            && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion != null)
+            && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion != null
+            && (canViewHistory || r.PublishedContentVersion == HostedSiteService.EffectiveContentVersion(site)))
             .FirstOrDefaultAsync(CancellationToken.None);
         if (item == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在或尚未发布"));
@@ -137,5 +140,5 @@ public partial class WebPagesController
     }
 
     private sealed record ReviewVersionSummary(string Id, string SiteId, string VersionLabel, string ContentVersionKey,
-        DateTime? PublishedAt, bool IsCurrent, bool CanPreview, string EntryFile, string ContentShape, string? SiteUrl);
+        DateTime? PublishedAt, bool IsCurrent, bool CanPreview, string EntryFile, string ContentShape, string? SiteUrl, bool HistoryRestricted = false);
 }

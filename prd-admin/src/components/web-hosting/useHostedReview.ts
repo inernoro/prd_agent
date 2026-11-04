@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { listHostedReviewVersions, previewHostedReviewVersion, reuploadSite,
   type HostedReviewSource, type HostedReviewVersion, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
+import { canUseSrcDocPreview } from './previewHtml';
 import { useHostedAnnotations } from './useHostedAnnotations';
 
 type ReviewSite = { id: string; title: string; siteUrl: string; entryFile: string; contentShape?: 'self-contained-html' | 'multi-file' };
@@ -36,7 +37,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     siteUrl: published?.siteUrl && urlVersionKey(currentSite.siteUrl) !== published.contentVersionKey ? published.siteUrl : currentSite.siteUrl,
     entryFile: published?.entryFile ?? currentSite.entryFile, contentShape: published?.contentShape ?? currentSite.contentShape } : null;
   const historical = !!selectedId && !!selected && !selected.isCurrent;
-  const selectedUrl = historical ? ((preview?.revision.id === selectedId ? preview.siteUrl : selected.siteUrl) || liveSite?.siteUrl) : liveSite?.siteUrl;
+  const selectedUrl = historical ? (preview?.revision.id === selectedId ? preview.siteUrl : selected.siteUrl) : liveSite?.siteUrl;
   const displaySite = liveSite ? { ...liveSite, siteUrl: selectedUrl || '',
     entryFile: historical ? selected.entryFile : liveSite.entryFile,
     contentShape: historical ? selected.contentShape : liveSite.contentShape } : null;
@@ -72,7 +73,11 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     try {
       const result = await previewHostedReviewVersion(sourceRef.current, id);
       if (!mounted.current || request !== selectionSequence.current) return;
-      if (result.success) setPreview(result.data);
+      if (result.success) {
+        if (!result.data.siteUrl && (!result.data.html || !canUseSrcDocPreview(result.data.html))) {
+          setError('这份历史版本未保留可用的预览，已返回当前版本'); setSelectedId(null); setPendingFocus(null);
+        } else setPreview(result.data);
+      }
       else { setError(result.error?.message || '无法打开历史版本'); setSelectedId(null); setPendingFocus(null); }
     } catch {
       if (mounted.current && request === selectionSequence.current) { setError('无法打开历史版本，请重试'); setSelectedId(null); setPendingFocus(null); }

@@ -47,6 +47,27 @@ describe('versioned webpage review', () => {
     expect(review.preview).toBeNull();
     expect(upload).not.toHaveBeenCalled();
   });
+  it('never substitutes the live URL when a historical snapshot has no direct URL', async () => {
+    const inline = { ...previous, siteUrl: null };
+    list.mockResolvedValue({ success: true, data: [current, inline] });
+    preview.mockResolvedValue({ success: true, data: { revision: inline, html: '<h1>只有旧版正文</h1>', siteUrl: null } });
+    await mount();
+    await act(async () => review.selectVersion('v1'));
+    expect(review.historical).toBe(true);
+    expect(review.site?.siteUrl).toBe('');
+    expect(review.preview?.html).toContain('只有旧版正文');
+  });
+  it('reports an unavailable module snapshot instead of presenting the live page as history', async () => {
+    const inline = { ...previous, siteUrl: null };
+    list.mockResolvedValue({ success: true, data: [current, inline] });
+    preview.mockResolvedValue({ success: true, data: { revision: inline, html: '<script type="module" src="./app.js"></script>', siteUrl: null } });
+    await mount();
+    await act(async () => review.selectVersion('v1'));
+    expect(review.historical).toBe(false);
+    expect(review.error).toContain('历史版本未保留可用的预览');
+    expect(review.site?.siteUrl).toBe(site.siteUrl);
+    expect(review.preview).toBeNull();
+  });
   it('uses the recorded current version when the library still holds an older site URL', async () => {
     await mount();
     await act(async () => root.render(<Harness live={{ ...site, siteUrl: 'https://assets.example/v1/index.html?v=10000' }} />));

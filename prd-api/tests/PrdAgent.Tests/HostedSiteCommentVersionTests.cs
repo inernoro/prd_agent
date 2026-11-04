@@ -6,6 +6,18 @@ namespace PrdAgent.Tests;
 
 public class HostedSiteCommentVersionTests
 {
+    [Theory]
+    [InlineData(null, false, false)]
+    [InlineData("previous", false, false)]
+    [InlineData("previous", true, true)]
+    [InlineData(null, true, true)]
+    public void ExternalShare_DoesNotGrantHistoricalCommentAccess(string? version, bool editor, bool allowed)
+    {
+        var current = new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(allowed, HostedSiteCommentRules.CanViewSharedVersion(version, current, editor));
+        Assert.True(HostedSiteCommentRules.CanViewSharedVersion(HostedSiteCommentRules.VersionKey(current), current, false));
+    }
+
     [Fact]
     public void BoundLegacyComment_NormalizesUrlTicksToMongoPrecision()
     {

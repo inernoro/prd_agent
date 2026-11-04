@@ -150,6 +150,10 @@
   .share-topbar-actions > .share-topbar-btn { width: 44px; min-height: 44px; }
   .share-topbar-divider { display: none; }
 
+  .share-topbar-actions {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
   .share-topbar-title {
     flex-basis: 100%;
     font-size: 13px;

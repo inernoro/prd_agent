@@ -13,8 +13,8 @@ async function setup() {
   const win = dom.window.document.querySelector('iframe')!.contentWindow! as Window & typeof globalThis;
   win.document.body.innerHTML = '<main><p id="intro">交付周期：预计三天交付，请提前确认。</p><button id="submit">提交申请</button><div><img src="photo.jpg" alt="产品照片"></div><p>重复文字</p><p>重复文字</p></main>';
   Object.defineProperty(win, 'CSS', { value: { escape: (value: string) => value } });
-  Object.defineProperty(win.HTMLElement.prototype, 'getBoundingClientRect', { value: () => ({ left: 10, top: 20, right: 210, bottom: 60, width: 200, height: 40 }) });
-  Object.defineProperty(win.Range.prototype, 'getBoundingClientRect', { value: () => ({ left: 10, top: 20, right: 210, bottom: 60, width: 200, height: 40 }) });
+  Object.defineProperty(win.HTMLElement.prototype, 'getBoundingClientRect', { configurable: true, value: () => ({ left: 10, top: 20, right: 210, bottom: 60, width: 200, height: 40 }) });
+  Object.defineProperty(win.Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => ({ left: 10, top: 20, right: 210, bottom: 60, width: 200, height: 40 }) });
   Object.defineProperty(win.Range.prototype, 'getClientRects', { value: () => [{ left: 10, top: 20, right: 210, bottom: 60, width: 200, height: 40 }] });
   const messages: Record<string, unknown>[] = [];
   dom.window.addEventListener('message', event => messages.push(event.data));
@@ -31,7 +31,7 @@ describe('hosted page annotation runtime', () => {
     const threads = [{ id: 'chat', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }];
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, threads, displayMode: 'bubble' });
     await tick();
-    expect(t.messages.find(message => message.type === 'map-annotation-preview')).toMatchObject({ id: 'chat', rect: { left: 10, top: 20, width: 200, height: 40 } });
+    await expect.poll(() => t.messages.find(message => message.type === 'map-annotation-preview')).toMatchObject({ id: 'chat', rect: { left: 10, top: 20, width: 200, height: 40 } });
     expect(t.messages.find(message => message.type === 'map-annotation-preview')).not.toHaveProperty('content');
     t.send({ type: 'map-annotation-preview-dismiss' });
     await tick();
@@ -88,6 +88,28 @@ describe('hosted page annotation runtime', () => {
     expect(lookup).not.toHaveBeenCalled();
     lookup.mockRestore();
   });
+  it.each(['fixed', 'sticky'])('tracks a descendant of a %s ancestor during document scrolling', async (position) => {
+    const t = await setup();
+    const ancestor = t.win.document.querySelector<HTMLElement>('main')!;
+    ancestor.style.position = position;
+    let scroll = 0;
+    const rect = vi.spyOn(t.win.HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const top = this.hasAttribute('data-map-annotation-layer') ? -scroll : 20;
+      return { left: 10, top, right: 210, bottom: top + 40, width: 200, height: 40, x: 10, y: top, toJSON: () => ({}) };
+    });
+    t.init([{ id: 'viewport', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }], false);
+    await tick();
+    const pin = t.layer()!.querySelector<HTMLElement>('.pin')!;
+    const initial = pin.style.transform;
+    const lookup = vi.spyOn(t.win.document, 'querySelector');
+    scroll = 120;
+    t.win.dispatchEvent(new t.win.Event('scroll'));
+    await tick();
+    expect(initial).toMatch(/,8px\)$/);
+    expect(pin.style.transform).toMatch(/,128px\)$/);
+    expect(lookup).not.toHaveBeenCalled();
+    lookup.mockRestore(); rect.mockRestore();
+  });
   it('keeps a pin attached to a stable ID after copy changes and reports removal', async () => {
     const t = await setup(); t.init(); t.win.document.querySelector<HTMLElement>('#submit')!.click(); await tick();
     const anchor = t.messages.find(m => m.type === 'map-annotation-selected')!.anchor;
@@ -123,7 +145,7 @@ describe('hosted page annotation runtime', () => {
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/web-hosting/sites/site1/.versions/revision-2/index.html?v=2', enabled: false,
       threads: [{ id: 'published', anchor: { pagePath: '/web-hosting/sites/site1/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }] });
     await expect.poll(() => t.layer()?.querySelector('.pin')?.textContent).toBe('1');
-    expect(t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual([]);
+    await expect.poll(() => t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual([]);
   });
   it('requires a unique semantic match for positional anchors after a content version change', async () => {
     const t = await setup();

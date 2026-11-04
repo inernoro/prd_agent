@@ -21,7 +21,7 @@ import { AnnotationBubble } from '@/components/web-hosting/AnnotationBubble';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareAssistantLauncher from '@/components/web-hosting/ShareAssistantLauncher';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
-import { SharePageTitle, SharePageActions } from '@/components/web-hosting/SharePageControls';
+import { SharePageTitle, SharePageActions, ShareMoreMenu } from '@/components/web-hosting/SharePageControls';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -301,7 +301,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   }, [requestedReview, token, versionsForLogin, restoreSelectedVersion]);
   const loginToReview = () => {
     const destination = new URL(window.location.href);
-    destination.searchParams.set('review', review.selected?.id ?? 'current');
+    destination.searchParams.set('review', !isAuthenticated && requestedReview && requestedReview !== 'current'
+      ? requestedReview : review.selected?.id ?? 'current');
     const returnUrl = destination.pathname + destination.search;
     if (isAuthenticated) useAuthStore.getState().logout();
     navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`);
@@ -911,31 +912,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   {isFullscreen ? <Minimize size={isMobile ? 15 : 13} /> : <Maximize size={isMobile ? 15 : 13} />}
                 </button>
               )}
-              {!isOwner && (
-                <button
-                  onClick={handleSave}
-                  disabled={saving || saveStatus !== 'idle'}
-                  title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
-                  aria-label="保存到我的托管"
-                  className={
-                    saveStatus === 'saved' ? 'share-topbar-btn share-topbar-btn--success'
-                      : saveStatus === 'already' ? 'share-topbar-btn share-topbar-btn--warning'
-                      : 'share-topbar-btn'
-                  }
-                >
-                  {saving ? (
-                    <><MapSpinner size={isMobile ? 15 : 13} /></>
-                  ) : saveStatus === 'saved' ? (
-                    <><Check size={isMobile ? 15 : 13} /></>
-                  ) : saveStatus === 'already' ? (
-                    <><Check size={isMobile ? 15 : 13} /></>
-                  ) : !isAuthenticated ? (
-                    <><LogIn size={isMobile ? 15 : 13} /></>
-                  ) : (
-                    <><Download size={isMobile ? 15 : 13} /></>
-                  )}
-                </button>
-              )}
               <SharePageActions site={site} compact={true} onSettingsSaved={async () => {
                 if (!token) return;
                 const result = await viewSiteShare(token, password || undefined);
@@ -965,16 +941,48 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 </button>
               )}
               <span className="share-topbar-divider" />
-              <a
-                className="share-topbar-btn"
-                href={site.pdfAssetUrl || site.siteUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="新窗口打开"
-                aria-label="新窗口打开"
-              >
-                <ExternalLink size={isMobile ? 15 : 13} />
-              </a>
+              <ShareMoreMenu>
+                {!isOwner && (
+                  <button
+                    role="menuitem"
+                    data-menu-keep-open
+                    onClick={handleSave}
+                    disabled={saving || saveStatus !== 'idle'}
+                    title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                    aria-label="保存到我的托管"
+                    className={
+                      saveStatus === 'saved' ? 'share-topbar-btn share-topbar-btn--success'
+                        : saveStatus === 'already' ? 'share-topbar-btn share-topbar-btn--warning'
+                        : 'share-topbar-btn'
+                    }
+                  >
+                    {saving ? (
+                      <><MapSpinner size={isMobile ? 15 : 13} /></>
+                    ) : saveStatus === 'saved' ? (
+                      <><Check size={isMobile ? 15 : 13} /></>
+                    ) : saveStatus === 'already' ? (
+                      <><Check size={isMobile ? 15 : 13} /></>
+                    ) : !isAuthenticated ? (
+                      <><LogIn size={isMobile ? 15 : 13} /></>
+                    ) : (
+                      <><Download size={isMobile ? 15 : 13} /></>
+                    )}
+                    {saving ? '保存中…' : saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                  </button>
+                )}
+                <a
+                  role="menuitem"
+                  className="share-topbar-btn"
+                  href={site.pdfAssetUrl || site.siteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="新窗口打开"
+                  aria-label="新窗口打开"
+                >
+                  <ExternalLink size={isMobile ? 15 : 13} />
+                  新窗口打开
+                </a>
+              </ShareMoreMenu>
 
             </div>
           </div>
