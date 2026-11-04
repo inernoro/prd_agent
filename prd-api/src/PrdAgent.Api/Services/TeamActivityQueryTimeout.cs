@@ -13,4 +13,16 @@ public static class TeamActivityQueryTimeout
 
     public static Task SendSseErrorAsync(Func<string, object?, Task> send) =>
         send("error", new { code = Code, message = Message });
+
+    public static async Task<DateTime> ReadTrackingStartAsync(
+        TeamActivityQueryCache<DateTime> cache, Func<Task<DateTime>> read, Action<MongoException> logTimeout)
+    {
+        try { return await cache.GetAsync("tracking-start", read); }
+        catch (MongoException ex) when (IsTimeout(ex))
+        {
+            // Degrade outside the cache so a timeout is evicted and the next request can recover.
+            logTimeout(ex);
+            return default;
+        }
+    }
 }

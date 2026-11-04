@@ -417,8 +417,7 @@ public class TeamActivityController : ControllerBase
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
         try
         {
-            var key = $"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}";
-            var (insights, behaviorEventCount) = await _insightsCache.GetAsync(key, () => ComputeInsightsAsync(fromUtc, endUtc));
+            var (insights, behaviorEventCount) = await GetInsightsAsync(fromUtc, endUtc);
             var response = await BuildInsightsResponseAsync(insights, behaviorEventCount, fromUtc, endUtc, includeIgnored);
             Response.Headers["Server-Timing"] = FormattableString.Invariant($"voc;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}");
             return response;
@@ -1033,6 +1032,9 @@ public class TeamActivityController : ControllerBase
         return result;
     }
 
+    private Task<(List<Insight> Insights, int BehaviorEventCount)> GetInsightsAsync(DateTime fromUtc, DateTime endUtc) =>
+        _insightsCache.GetAsync($"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}", () => ComputeInsightsAsync(fromUtc, endUtc));
+
     /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
     private async Task<(List<Insight> Insights, int BehaviorEventCount)> ComputeInsightsAsync(DateTime fromUtc, DateTime endUtc)
     {
@@ -1154,20 +1156,11 @@ public class TeamActivityController : ControllerBase
     {
         // 采集起点：让前端能诚实告知「路由级信号从何时开始有数据」
         // Collection-start metadata must not hold the dashboard behind a history-wide sort.
-        var earliest = await _trackingStartCache.GetAsync("tracking-start", async () =>
-        {
-            try
-            {
-                return await _db.BehaviorEvents.Find(FilterDefinition<BehaviorEvent>.Empty,
-                        new FindOptions { MaxTime = TimeSpan.FromSeconds(2) })
-                    .SortBy(x => x.CreatedAt).Limit(1).Project(x => x.CreatedAt).FirstOrDefaultAsync();
-            }
-            catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
-            {
-                _logger.LogWarning(ex, "VOC tracking-start metadata timed out; metrics remain available");
-                return default;
-            }
-        });
+        var earliest = await TeamActivityQueryTimeout.ReadTrackingStartAsync(_trackingStartCache,
+            () => _db.BehaviorEvents.Find(FilterDefinition<BehaviorEvent>.Empty,
+                    new FindOptions { MaxTime = TimeSpan.FromSeconds(2) })
+                .SortBy(x => x.CreatedAt).Limit(1).Project(x => x.CreatedAt).FirstOrDefaultAsync(),
+            ex => _logger.LogWarning(ex, "VOC tracking-start metadata timed out; metrics remain available"));
 
         // 洞察生命周期：按指纹挂处理状态（确认/已修复/忽略），忽略的默认不再出现
         var fingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
@@ -1256,7 +1249,7 @@ public class TeamActivityController : ControllerBase
         HashSet<string> ignored;
         try
         {
-            (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
+            (insights, behaviorEventCount) = await GetInsightsAsync(fromUtc, endUtc);
             // 尊重洞察生命周期：被管理者忽略的洞察不进简报（与 insights 查询口径一致）
             var allFingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
             ignored = (await _db.BehaviorInsightStates

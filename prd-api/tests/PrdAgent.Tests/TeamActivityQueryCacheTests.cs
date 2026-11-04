@@ -21,6 +21,28 @@ public class TeamActivityQueryCacheTests
     }
 
     [Fact]
+    public async Task DifferentCallersReuseBothPendingAndRecentlyCompletedInsights()
+    {
+        var cache = new TeamActivityQueryCache<List<string>>(TimeSpan.FromSeconds(30));
+        var completion = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var briefComputations = 0;
+        Task<List<string>> ReadBrief() => cache.GetAsync("same-window", () =>
+        {
+            briefComputations++;
+            return Task.FromResult(new List<string> { "duplicate computation" });
+        });
+
+        var dashboard = cache.GetAsync("same-window", () => completion.Task);
+        var brief = ReadBrief();
+        Assert.Equal(0, briefComputations);
+        var insights = new List<string> { "shared insight" };
+        completion.SetResult(insights);
+        Assert.Same(await dashboard, await brief);
+        Assert.Same(insights, await ReadBrief());
+        Assert.Equal(0, briefComputations);
+    }
+
+    [Fact]
     public async Task FailureDoesNotPoisonRetry()
     {
         var cache = new TeamActivityQueryCache<int>(TimeSpan.FromSeconds(30));

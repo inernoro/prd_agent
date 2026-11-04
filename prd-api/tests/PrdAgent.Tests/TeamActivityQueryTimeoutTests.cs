@@ -53,6 +53,24 @@ public class TeamActivityQueryTimeoutTests
     }
 
     [Fact]
+    public async Task TrackingStartRecoversBeforeItsFiveMinuteCacheWouldExpire()
+    {
+        var cache = new TeamActivityQueryCache<DateTime>(TimeSpan.FromMinutes(5));
+        var known = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc);
+        var reads = 0;
+        var warnings = new List<MongoException>();
+        Task<DateTime> Read() => ++reads == 1
+            ? Task.FromException<DateTime>(CommandFailure(50))
+            : Task.FromResult(known);
+
+        Assert.Equal(default, await TeamActivityQueryTimeout.ReadTrackingStartAsync(cache, Read, warnings.Add));
+        Assert.Single(warnings);
+        Assert.Equal(known, await TeamActivityQueryTimeout.ReadTrackingStartAsync(cache, Read, warnings.Add));
+        Assert.Equal(known, await TeamActivityQueryTimeout.ReadTrackingStartAsync(cache, Read, warnings.Add));
+        Assert.Equal(2, reads);
+    }
+
+    [Fact]
     public async Task MaxTimeFailureDoesNotPoisonTheNextCachedQuery()
     {
         var cache = new TeamActivityQueryCache<int>(TimeSpan.FromSeconds(30));
