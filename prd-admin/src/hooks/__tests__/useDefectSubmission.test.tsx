@@ -6,9 +6,9 @@ import { ok, fail } from '@/types/api';
 import type { DefectAttachment, DefectReport } from '@/services/contracts/defectAgent';
 import { useDefectSubmission } from '../useDefectSubmission';
 
-const calls = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), upload: vi.fn(), remove: vi.fn(), submit: vi.fn(), success: vi.fn(), error: vi.fn() }));
+const calls = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), upload: vi.fn(), remove: vi.fn(), submit: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn() }));
 vi.mock('@/services', () => ({ createDefect: calls.create, updateDefect: calls.update, addDefectAttachment: calls.upload, deleteDefectAttachment: calls.remove, submitDefect: calls.submit }));
-vi.mock('@/lib/toast', () => ({ toast: { success: calls.success, error: calls.error } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: calls.success, error: calls.error, dismiss: calls.dismiss } }));
 
 describe('缺陷提交的失败恢复与传输幂等身份', () => {
   let root: Root;
@@ -26,6 +26,7 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    calls.error.mockReturnValue('own-failure-toast');
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     draft = { id: 'draft-1', defectNo: '101', status: 'draft', rawContent: input.content, attachments: [] } as unknown as DefectReport;
     calls.create.mockImplementation(async () => ok({ defect: draft }));
@@ -61,6 +62,7 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     expect(onCreated).toHaveBeenCalledTimes(1);
     expect(calls.submit).toHaveBeenCalledTimes(1);
     expect(onSubmitted).toHaveBeenCalledTimes(1);
+    expect(calls.dismiss).toHaveBeenCalledWith('own-failure-toast');
   });
 
   it('创建结果丢失时重放首次内容与身份，再保存当前编辑内容', async () => {
@@ -128,6 +130,7 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     const originalIdentity = calls.create.mock.calls[0][0].clientRequestId;
     expect(current.error).not.toMatch(/HTTP|secret|upstream/);
     await act(async () => current.reset());
+    expect(calls.dismiss).toHaveBeenCalledWith('own-failure-toast');
     await act(async () => { expect(await current.submit(input, [])).toBe(true); });
     expect(calls.create.mock.calls[1][0].clientRequestId).not.toBe(originalIdentity);
   });

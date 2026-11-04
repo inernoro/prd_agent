@@ -26,4 +26,14 @@ describe('失败通知去重', () => {
     toast.action('润色未完成', { type: 'error', action: { label: '查看', onClick: vi.fn() } });
     expect(useToastStore.getState().toasts).toHaveLength(3);
   });
+
+  it('去重返回同一通知身份，恢复时只撤销本次失败反馈', () => {
+    toast.info('其他任务仍在处理');
+    const first = toast.error('提交结果待确认');
+    const replay = toast.error('提交结果待确认');
+    expect(first).toEqual(expect.any(String));
+    expect(replay).toBe(first);
+    toast.dismiss(first);
+    expect(useToastStore.getState().toasts.map((item) => item.title)).toEqual(['其他任务仍在处理']);
+  });
 });

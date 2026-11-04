@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createDefect, updateDefect, addDefectAttachment, deleteDefectAttachment, submitDefect } from '@/services';
 import type { CreateDefectContract, DefectReport } from '@/services/contracts/defectAgent';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
@@ -24,24 +24,33 @@ export function useDefectSubmission(options: Options) {
   const attemptRef = useRef<Attempt | null>(null);
   const busyRef = useRef(false);
   const confirmationRef = useRef(false);
+  const failureToastRef = useRef<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [progress, setProgress] = useState('');
   const [savedDefect, setSavedDefect] = useState<DefectReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmationPending, setConfirmationPending] = useState(false);
 
+  const dismissFailure = useCallback(() => {
+    if (failureToastRef.current) toast.dismiss(failureToastRef.current);
+    failureToastRef.current = undefined;
+  }, []);
+  useEffect(() => () => dismissFailure(), [dismissFailure]);
+
   const reset = useCallback(() => {
     if (busyRef.current) return;
+    dismissFailure();
     attemptRef.current = null;
     setSavedDefect(null);
     setError(null);
     setProgress('');
     setConfirmationPending(false);
     confirmationRef.current = false;
-  }, []);
+  }, [dismissFailure]);
 
   const submit = useCallback(async (input: DraftInput, attachments: SubmissionAttachment[]): Promise<boolean> => {
     if (busyRef.current) return false;
+    dismissFailure();
     busyRef.current = true;
     setSubmitting(true);
     setError(null);
@@ -125,14 +134,14 @@ export function useDefectSubmission(options: Options) {
         recoveryMessage: confirmingSubmission ? '请重试确认，系统会继续本次提交。' : '请重试；已保存的草稿会继续使用。',
       });
       setError(message);
-      toast.error(confirmingSubmission ? '提交结果待确认' : '缺陷尚未提交', message);
+      failureToastRef.current = toast.error(confirmingSubmission ? '提交结果待确认' : '缺陷尚未提交', message);
       return false;
     } finally {
       busyRef.current = false;
       setSubmitting(false);
       setProgress('');
     }
-  }, []);
+  }, [dismissFailure]);
 
   return { submit, submitting, progress, savedDefect, error, confirmationPending, reset };
 }
