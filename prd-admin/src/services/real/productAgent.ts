@@ -1209,10 +1209,14 @@ export function getOverviewReleases(params?: { keyword?: string }) {
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewReleaseRow>>(`/api/product/overview/releases${qs ? `?${qs}` : ''}`);
 }
-export type WorkflowVersionRecord<T> = T & { legacyRegistration?: VersionRegistration | null };
+export type WorkflowVersionExportFields = { systemName?: string | null; ownerId?: string | null; teamMemberIds: string[] };
+export type WorkflowVersionRecord<T> = T & {
+  legacyRegistration?: VersionRegistration | null;
+  exportFields?: WorkflowVersionExportFields | null;
+};
 type WorkflowVersionList<T> = {
   applicationAliases?: Record<string, string>;
-  items: Array<{ record: T; legacyRegistration?: VersionRegistration | null }>;
+  items: Array<{ record: T } & Pick<WorkflowVersionRecord<T>, 'legacyRegistration' | 'exportFields'>>;
   requirementNames: Record<string, string>;
 };
 export function getWorkflowInitiations() {

@@ -125,13 +125,13 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
         const result = await getWorkflowInitiations();
         if (!isCurrent()) return;
         if (!result.success) { setLoadError(result.error?.message ?? '内部版本读取失败，请重试。'); return; }
-        setInitiations(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+        setInitiations(result.data.items.map(({ record, legacyRegistration, exportFields }) => ({ ...record, legacyRegistration, exportFields })));
         setApplicationAliases(result.data.applicationAliases ?? {});
       } else {
         const result = await getWorkflowReleases();
         if (!isCurrent()) return;
         if (!result.success) { setLoadError(result.error?.message ?? '正式版本读取失败，请重试。'); return; }
-        setReleases(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+        setReleases(result.data.items.map(({ record, legacyRegistration, exportFields }) => ({ ...record, legacyRegistration, exportFields })));
         setApplicationAliases(result.data.applicationAliases ?? {});
         setRequirementNames(new Map(Object.entries(result.data.requirementNames)));
       }
