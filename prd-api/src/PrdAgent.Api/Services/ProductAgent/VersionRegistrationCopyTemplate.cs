@@ -51,6 +51,7 @@ internal static class VersionRegistrationCopyTemplate
         "major" => "大版本",
         "medium" => "中版本",
         "minor" => "小版本",
+        "temporary" => "临时优化需求",
         _ => string.Empty,
     };
 

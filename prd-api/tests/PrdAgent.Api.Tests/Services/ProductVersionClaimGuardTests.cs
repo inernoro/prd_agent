@@ -543,6 +543,7 @@ public class ProductVersionClaimGuardTests
         var request = NumberingReleaseRequest();
         request.IsTemporaryOptimization = true;
         request.InitiationId = null;
+        request.PlanName = "临时优化方案";
         request.FeatureManifest = null;
         Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
         request.IsTemporaryOptimization = false;
@@ -550,6 +551,97 @@ public class ProductVersionClaimGuardTests
         request.FeatureManifest = new() { new() { FeatureId = "missing", ChangeType = FeatureChangeType.Added } };
         Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
         Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(x => x.CreatedBy == "me"));
+    }
+
+    [Fact]
+    public async Task TemporaryOptimizationCreatesWithoutNumberAndRejectsDuplicateTitle()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var request = NumberingReleaseRequest();
+        request.IsTemporaryOptimization = true;
+        request.InitiationId = null;
+        request.PlanName = "门店扫码临时优化";
+        var controller = fixture.Controller();
+        Assert.IsType<OkObjectResult>(await controller.CreateRelease("product", request));
+        Assert.IsType<ConflictObjectResult>(await controller.CreateRelease("product", request));
+        var saved = await fixture.Db.ProductReleases.Find(x => x.IsTemporaryOptimization).SingleAsync();
+        Assert.Empty(saved.VCode);
+        Assert.Null(saved.TCode);
+        Assert.Equal("released", saved.Status);
+        Assert.Contains("版本类别：临时优化需求", ProductVersionCopyTemplate.Build(saved));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task HistoryImportOnlyAddsMissingReleaseCodesAndTemporaryTitles()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductReleases.UpdateOneAsync(x => x.Id == "numbering-v-base",
+            Builders<ProductRelease>.Update.Set(x => x.TCode, "T6.19.5").Set(x => x.PlanName, "原上线记录"));
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease
+        {
+            Id = "old-temporary", ProductId = "product", VCode = "V6.19.4", PlanName = "已上线临时优化",
+            IsTemporaryOptimization = true, Remark = "原备注", Status = "released",
+        });
+        var request = new ImportVersionWorkflowRequest
+        {
+            Kind = "release",
+            Rows = new()
+            {
+                new() { AppName = "测试应用", Code = "V6.19.5", PlanName = "不覆盖旧方案" },
+                new() { AppName = "测试应用", Code = "V6.19.6", TCode = "T6.19.5", PlanName = "补齐历史版本" },
+                new() { AppName = "测试应用", VersionType = "临时优化需求", PlanName = "已上线临时优化", Remark = "不覆盖原备注" },
+                new() { AppName = "测试应用", VersionType = "临时优化需求", PlanName = "新临时优化", Code = "V8.8.8", TCode = "T8.8.8" },
+                new() { AppName = "测试应用", PlanName = "未标记且无V号" },
+            },
+        };
+        Assert.IsType<OkObjectResult>(await fixture.Controller(admin: true).OverviewImportVersionWorkflow(request));
+        Assert.IsType<OkObjectResult>(await fixture.Controller(admin: true).OverviewImportVersionWorkflow(request));
+        var saved = await fixture.Db.ProductReleases.Find(_ => true).ToListAsync();
+        Assert.Equal(5, saved.Count);
+        Assert.Equal("原上线记录", saved.Single(x => x.Id == "numbering-v-base").PlanName);
+        Assert.Equal("T6.19.5", saved.Single(x => x.VCode == "V6.19.6").TCode);
+        Assert.Equal("原备注", saved.Single(x => x.Id == "old-temporary").Remark);
+        Assert.Contains(saved, x => x.Id == "numbering-other-v");
+        var temporary = saved.Single(x => x.PlanName == "新临时优化");
+        Assert.True(temporary.IsTemporaryOptimization);
+        Assert.Empty(temporary.VCode);
+        Assert.Null(temporary.TCode);
+    }
+
+    [Fact]
+    public async Task InternalHistoryImportOnlyAddsMissingApplicationAndTCodePairs()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-t-base",
+            Builders<ProductInitiation>.Update.Set(x => x.PlanName, "原立项方案"));
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration
+        {
+            Kind = VersionRegistrationKind.Internal, ApplicationName = "测试应用", Code = "T6.19.6",
+        });
+        var request = new ImportVersionWorkflowRequest
+        {
+            Kind = "initiation",
+            Rows = new()
+            {
+                new() { AppName = "测试应用", Code = "T6.19.5", PlanName = "不覆盖已有方案" },
+                new() { AppName = "测试应用", Code = "T6.19.6", PlanName = "不重复导入旧登记" },
+                new() { AppName = "测试应用", Code = "T99.0.0", PlanName = "不同应用可使用相同编号" },
+                new() { AppName = "测试应用", Code = "T99.0.0", PlanName = "不覆盖同批第一条" },
+            },
+        };
+        var results = await Task.WhenAll(fixture.Controller(admin: true).OverviewImportVersionWorkflow(request),
+            fixture.Controller(admin: true).OverviewImportVersionWorkflow(request));
+        Assert.All(results, result => Assert.IsType<OkObjectResult>(result));
+        var saved = await fixture.Db.ProductInitiations.Find(_ => true).ToListAsync();
+        Assert.Equal(4, saved.Count);
+        Assert.Equal("原立项方案", saved.Single(x => x.Id == "numbering-t-base").PlanName);
+        Assert.Contains(saved, x => x.Id == "numbering-source");
+        Assert.Equal("不同应用可使用相同编号", saved.Single(x => x.ProductId == "product" && x.TCode == "T99.0.0").PlanName);
+        Assert.DoesNotContain(saved, x => x.TCode == "T6.19.6");
     }
 
     [Theory]

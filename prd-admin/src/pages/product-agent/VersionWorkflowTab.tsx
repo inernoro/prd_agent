@@ -912,11 +912,11 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
-      <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
+      <Td mono>{item.vCode ? <button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button> : '-'}</Td>
       <Td mono>{item.initiationId && item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
-        : (item.tCode ?? '临时优化需求')}</Td>
-      <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td>
+        : (item.tCode || '-')}</Td>
+      <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{item.isTemporaryOptimization ? '临时优化需求' : SCALE_LABEL[item.versionType]}</Td>
       <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.departmentName || '-'}</Td><Td>{item.ownerName || names.get(item.ownerId ?? '') || item.legacyData?.['产品负责人'] || item.ownerId || '-'}</Td>
