@@ -282,8 +282,8 @@
 
 ### 五、计划
 
-- [缺陷可靠性后续闭环计划](./plan.defect-agent.reliability-closure.md) `plan.defect-agent.reliability-closure`
-- [缺陷提交与 AI 润色可靠性排查计划](./plan.defect-agent.submit-reliability.md) `plan.defect-agent.submit-reliability`
+- [缺陷可靠性后续闭环 · 计划](./plan.defect-agent.reliability-closure.md) `plan.defect-agent.reliability-closure`
+- [缺陷提交与 AI 润色可靠性排查 · 计划](./plan.defect-agent.submit-reliability.md) `plan.defect-agent.submit-reliability`
 
 - [MCP 接入与能力补齐 · 计划](./plan.platform.mcp-capability-completion.md) `plan.platform.mcp-capability-completion`
 
