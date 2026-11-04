@@ -278,6 +278,7 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.defect-agent.reliability-closure: "缺陷可靠性后续闭环计划"
   plan.defect-agent.submit-reliability: "缺陷提交与 AI 润色可靠性排查计划"
   plan.doc.readability.rollout: "文档说人话标准推广 · 计划"
   plan.ai-toolbox.text-assist: "AI 百宝箱文本辅助 · 计划"
