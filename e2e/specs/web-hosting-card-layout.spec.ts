@@ -7,6 +7,8 @@ for (const width of [390, 1440]) {
       test(`托管真实列表 ${width}px ${theme} ${size} 统计对齐且不溢出`, async ({ page }, testInfo) => {
         await page.setViewportSize({ width, height: 1000 });
         const date = new Date().toISOString();
+        const tagNames = ['知识生成', 'opendesign-e4', 'HTML PPT', 'qa-webask-20261103', '验收', 'CDS', '每日验收-2026-09-06-网页托管-复测', '知识事实', 'LongUnbrokenTagNameForOverflowVerification', '归档', '设计', '研发', '周报'];
+        const tagCounts = [64, 20, 6, 5, 4, 3, 3, 2, 123456, 2, 1, 1, 1];
         const titles = ['米多项目缺陷复发根因审查报告', '活动指南', '超长中文标题与LongUnbrokenEnglishTitle用于验证省略和新标记', '图书角'];
         const counts = [3, 0, 987654321, 0];
         const views = [8, 0, 987654321, 1];
@@ -41,6 +43,7 @@ for (const width of [390, 1440]) {
           let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
+          else if (path === '/api/web-pages/tags') data = { tags: tagNames.map((tag, index) => ({ tag, count: tagCounts[index] })) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
           else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
             siteIds: [sites[i].id], shareType: 'single', createdAt: date, expiresAt: null, isRevoked: false, viewCount: 0 })) };
@@ -163,6 +166,56 @@ for (const width of [390, 1440]) {
         await dialog.getByRole('button', { name: '关闭', exact: true }).click();
         await expect(dialog).toHaveCount(0);
         expect(visited).toEqual([]);
+
+        if (width === 1440 && size === 'small') {
+          const rail = page.locator('[data-tour-id="webpages-library-rail"]');
+          const tags = rail.getByRole('region', { name: '标签筛选' });
+          await expect(tags.locator('.web-library-tags__item')).toHaveCount(8);
+          await expect(tags.getByRole('button', { name: '更多标签 · 5' })).toBeVisible();
+          const longName = tags.getByRole('button', { name: /每日验收-2026-09-06-网页托管-复测/ });
+          await expect(longName).toHaveAttribute('title', '每日验收-2026-09-06-网页托管-复测 · 3 个网页');
+          const checkRows = async () => {
+            const rows = await tags.locator('.web-library-tags__item').evaluateAll(items => items.map(item => {
+              const rect = item.getBoundingClientRect();
+              const name = item.querySelector('.web-library-tags__name')!;
+              const count = item.querySelector('.web-library-tags__count')!.getBoundingClientRect();
+              return { height: rect.height, overflow: item.scrollWidth > item.clientWidth,
+                countRight: count.right, nameRight: name.getBoundingClientRect().right, countLeft: count.left,
+                nowrap: getComputedStyle(name).whiteSpace };
+            }));
+            for (const row of rows) {
+              expect(row.height).toBe(28);
+              expect(row.overflow).toBe(false);
+              expect(row.nowrap).toBe('nowrap');
+              expect(row.nameRight).toBeLessThanOrEqual(row.countLeft - 7);
+              expect(row.countRight).toBeCloseTo(rows[0].countRight, 0);
+            }
+          };
+          await checkRows();
+          await testInfo.attach(`标签侧栏-${theme}`, { body: await rail.screenshot(), contentType: 'image/png' });
+          await tags.getByRole('button', { name: '更多标签 · 5' }).click();
+          await expect(tags.locator('.web-library-tags__item')).toHaveCount(13);
+          await checkRows();
+          const chosen = tags.getByRole('button', { name: /LongUnbrokenTagNameForOverflowVerification/ });
+          const request = page.waitForRequest(request => new URL(request.url()).pathname === '/api/web-pages'
+            && new URL(request.url()).searchParams.get('tag') === tagNames[8]);
+          await chosen.click();
+          await request;
+          await expect(chosen).toHaveAttribute('aria-pressed', 'true');
+          await tags.getByRole('button', { name: '收起标签' }).click();
+          await expect(tags.locator('.web-library-tags__item')).toHaveCount(9);
+          await expect(chosen).toBeVisible();
+          await expect(tags.getByRole('button', { name: '更多标签 · 4' })).toHaveAttribute('aria-expanded', 'false');
+          await testInfo.attach(`标签已选-${theme}`, { body: await rail.screenshot(), contentType: 'image/png' });
+          await tags.getByRole('button', { name: '清除标签筛选' }).click();
+          await expect(tags.locator('.web-library-tags__item')).toHaveCount(8);
+          await expect(tags.locator('[aria-pressed="true"]')).toHaveCount(0);
+          await longName.focus();
+          await page.keyboard.press('Enter');
+          await expect(longName).toHaveAttribute('aria-pressed', 'true');
+          await page.keyboard.press('Enter');
+          await expect(longName).toHaveAttribute('aria-pressed', 'false');
+        }
 
       });
     }
