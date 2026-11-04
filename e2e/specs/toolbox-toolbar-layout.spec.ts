@@ -55,7 +55,17 @@ for (const width of [769, 800, 960, 1556]) {
       await expect(page.getByRole('combobox', { name: '工具类型' })).toHaveValue('tool');
       await page.getByRole('tab', { name: '收藏', exact: true }).click();
       await expect(page.getByRole('tab', { name: '收藏', exact: true })).toHaveAttribute('aria-selected', 'true');
-      await page.getByRole('button', { name: '浏览全部工具', exact: true }).or(page.getByRole('button', { name: '清除筛选', exact: true }).first()).click();
+      await page.getByRole('button', { name: '清除筛选', exact: true }).first().click();
+      await expect(page.getByRole('tab', { name: '收藏', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByText('还没有收藏工具', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '浏览全部工具', exact: true }).click();
+      await expect(page.getByRole('tab', { name: '全部工具', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await page.getByRole('tab', { name: '我的创建', exact: true }).click();
+      await page.getByRole('searchbox', { name: '搜索工具' }).fill('没有这个工具');
+      await page.getByRole('button', { name: '清除筛选', exact: true }).first().click();
+      await expect(page.getByRole('tab', { name: '我的创建', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.locator('.toolbox-gallery-name')).toHaveText('自建布局工具');
+      await page.getByRole('tab', { name: '全部工具', exact: true }).click();
       await page.getByRole('button', { name: '列表视图', exact: true }).click();
       await expect(page.getByRole('button', { name: '列表视图', exact: true })).toHaveAttribute('aria-pressed', 'true');
       const builtinHeight = (await page.locator('.toolbox-tool-card[data-has-artwork="true"]').first().boundingBox())!.height;
@@ -71,6 +81,10 @@ for (const width of [769, 800, 960, 1556]) {
         expect(row.sideBySide).toBe(true);
         expect(row.sameRow).toBe(true);
       }
+      const copyCard = page.locator('.toolbox-tool-card').filter({ hasText: '代码审查员' });
+      await copyCard.hover();
+      await copyCard.getByRole('button', { name: '复制并编辑', exact: true }).click();
+      await expect(page.getByPlaceholder('给你的智能体起个名字')).toHaveValue('代码审查员（我的副本）');
     });
   }
 }

@@ -162,10 +162,13 @@ export default function AiToolboxPage() {
 
   const hasActiveFilters = funcKindFilter !== 'all' || !!activeTagFilter || !!searchQuery.trim();
   const resetFilters = () => {
-    setCategory('all');
     setFuncKindFilter('all');
     setActiveTagFilter(null);
     setSearchQuery('');
+  };
+  const browseAllTools = () => {
+    resetFilters();
+    setCategory('all');
   };
   const emptyStates = {
     all: { title: '暂无工具', description: '可用工具会显示在这里。' },
@@ -174,7 +177,7 @@ export default function AiToolboxPage() {
     favorite: { title: '还没有收藏工具', description: '点击工具卡片上的星标，把常用工具留在这里。' },
   };
   const emptyState = hasActiveFilters
-    ? { title: '没有找到匹配的工具', description: '试试更短的关键词，或清除筛选后查看全部工具。' }
+    ? { title: '没有找到匹配的工具', description: '试试更短的关键词，或清除筛选后查看当前分类的工具。' }
     : emptyStates[category];
 
   const handleDisplayModeChange = (mode: ToolboxDisplayMode) => {
@@ -294,7 +297,7 @@ export default function AiToolboxPage() {
           {category === 'mine' && !hasActiveFilters ? (
             <Button variant="primary" size="sm" onClick={startCreate}><Plus size={13} />创建智能体</Button>
           ) : (
-            <Button variant="secondary" size="sm" onClick={resetFilters}>
+            <Button variant="secondary" size="sm" onClick={hasActiveFilters ? resetFilters : browseAllTools}>
               {hasActiveFilters ? '清除筛选' : '浏览全部工具'}
             </Button>
           )}
