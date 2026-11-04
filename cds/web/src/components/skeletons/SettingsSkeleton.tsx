@@ -1,6 +1,17 @@
+import { createContext, useEffect, useState } from 'react';
+
+/** 设置页签统一等待轮廓；预览区和独立弹窗显式退出此作用域。 */
+export const SettingsLoadingContext = createContext(false);
+
 /** 设置内容轮廓；不渲染可交互控件或尚未确认的设置名称。 */
-export function SettingsContentSkeleton(): JSX.Element {
-  return <div role="status" aria-label="加载设置内容" aria-busy="true" className="space-y-6" data-settings-content-skeleton>
+export function SettingsContentSkeleton({ label = '加载设置内容' }: { label?: string }): JSX.Element {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    const timer = window.setTimeout(() => setSlow(true), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [label]);
+  return <div role="status" aria-label={label} aria-busy="true" className="space-y-6" data-settings-content-skeleton>
     <div aria-hidden="true" className="space-y-3">
       <div className="cds-loading-skeleton-line h-6 w-40" />
       <div className="cds-loading-skeleton-line h-3 w-72 max-w-full" />
@@ -17,6 +28,7 @@ export function SettingsContentSkeleton(): JSX.Element {
       </div>
       <div className="cds-loading-skeleton-panel h-8 w-20 rounded-md" />
     </div>)}
+    <p className="h-4 text-xs text-muted-foreground" aria-live="polite">{slow ? '仍在读取…' : null}</p>
   </div>;
 }
 

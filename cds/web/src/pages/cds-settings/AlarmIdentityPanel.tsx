@@ -1,4 +1,5 @@
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { useEffect, useState } from 'react';
 import { apiRequest } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -31,7 +32,7 @@ export function AlarmIdentityPanel(): JSX.Element {
   return <section className="rounded-lg border p-4 space-y-4">
     <h2 className="text-base font-semibold">通知来源与头像</h2>
     <p className="text-sm text-muted-foreground">配置只保存在当前实例。技术名称用于排查详情，不填写 IP、登录账号或密钥。</p>
-    {initialLoading ? <ContentLoading label="读取通知身份" variant="rows" /> : <>
+    {initialLoading ? <SettingsContentSkeleton label="读取通知身份" /> : <>
     {relayLoading ? <ContentLoading label="读取通知发送方式" variant="inline" /> : relay ? <p className="text-sm" role="status">{relay.enabled ? `手机通知由独立监控统一发送，主服务不重复发送。${relay.receiverHealthy ? '接收端已连接' : '接收端暂未同步，事件继续保留'}，待处理 ${relay.pending} 条。` : '手机通知由当前实例发送。'}</p> : <p className="text-sm text-muted-foreground">暂未取得发送方式，请刷新后查看。</p>}
     <div className="grid gap-4 sm:grid-cols-3">{(['name','environment','location'] as const).map((key,i) => <label key={key} className="space-y-2 text-sm">
       <span>{['实例名称（必填）','环境（必填）','位置说明（选填）'][i]}</span>

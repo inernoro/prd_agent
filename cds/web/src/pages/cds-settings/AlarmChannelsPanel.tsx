@@ -1,4 +1,4 @@
-import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 /*
  * 通知通道（多协议）。
  *
@@ -215,7 +215,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
     ? { ...d, projects: d.projects.includes(id) ? d.projects.filter((p) => p !== id) : [...d.projects, id] }
     : d));
 
-  if (initialLoading) return <ContentLoading label="读取通知通道" variant="rows" />;
+  if (initialLoading) return <SettingsContentSkeleton label="读取通知通道" />;
 
   return (
     <div className="flex flex-col gap-3">

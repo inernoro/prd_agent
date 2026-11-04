@@ -1,4 +1,5 @@
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { SettingsLoadingContext } from '@/components/skeletons/SettingsSkeleton';
 import { useMemo, useState } from 'react';
 import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
 
@@ -246,6 +247,7 @@ export function LoadingPagesTab(): JSX.Element {
   }, [page.endpoint, page.id, page.kind, reloadKey, scenario?.status]);
 
   return (
+    <SettingsLoadingContext.Provider value={false}>
     <Section
       title="加载页预览"
       description="集中查看用户会实际遇到的 CDS 状态页。全屏状态页固定按真实暗色画布预览；局部加载块跟随当前主题。"
@@ -378,6 +380,7 @@ export function LoadingPagesTab(): JSX.Element {
         </div>
       </div>
     </Section>
+    </SettingsLoadingContext.Provider>
   );
 }
 

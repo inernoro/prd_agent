@@ -1,5 +1,5 @@
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
-import { SettingsContentSkeleton, SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
+import { SettingsContentSkeleton, SettingsLoadingContext, SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
 import { AppShell, ConsoleAuthContext, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
@@ -399,6 +399,7 @@ export function CdsSettingsPage(): JSX.Element {
 
             <div className="cds-settings-content min-w-0">
               <div className="cds-settings-section-body">
+              <SettingsLoadingContext.Provider value={true}>
               <Suspense fallback={<SettingsTabFallback />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
@@ -499,6 +500,7 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'danger' ? <DangerOperationsTab onToast={setToast} /> : null}
                 </TabsContent>
               </Suspense>
+              </SettingsLoadingContext.Provider>
               </div>
             </div>
           </div>

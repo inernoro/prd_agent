@@ -1,4 +1,4 @@
-import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
 
@@ -1484,7 +1484,7 @@ function SelfUpdateStatusPanel({
   restarting: boolean;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return <ContentLoading label="读取自更新状态" variant="rows" />;
+    return <SettingsContentSkeleton label="读取自更新状态" />;
   }
   if (state.status === 'error') {
     return (
@@ -1702,7 +1702,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
   const manualRefresh = onManualRefresh;
 
   if (historyState.status === 'loading') {
-    return <ContentLoading label="读取自更新历史" variant="table" />;
+    return <SettingsContentSkeleton label="读取自更新历史" />;
   }
   if (historyState.status === 'error') {
     return (
