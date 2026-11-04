@@ -15,7 +15,7 @@ import { renderVisualPlan, routineVisualSequences } from './stable-smoke-visual-
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
 import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
 import { freezeRecordingCasePlanEnvironment } from '../e2e/utils/stableSmokeRecording.mjs';
-import { persistRunExperience, readPools, updatePools, renderExperienceSummary } from './stable-smoke-memory.mjs';
+import { persistRunExperience, readPools, updatePools, renderExperienceSummary, memoryPersistenceOptions } from './stable-smoke-memory.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -1803,7 +1803,7 @@ export async function deliverUnhandledFailure(argv, error) {
   writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
   process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: 'fail', notification: summaryDocument.notification })}\n`);
   if (!argv.includes('--dry-run')) {
-    summaryDocument.experience = persistRunExperience({ runId, rows: productionBaseline?.rows || [], archive: summaryDocument.archive, notification: summaryDocument.notification }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
+    summaryDocument.experience = persistRunExperience({ runId, rows: productionBaseline?.rows || [], archive: summaryDocument.archive, notification: summaryDocument.notification }, memoryPersistenceOptions(outputRoot, defaultOutputRoot));
     writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
   }
   process.stderr.write(`稳定冒烟异常终止，失败摘要已保存：${reason}\n`);
@@ -2358,7 +2358,7 @@ async function main() {
               archive: { status: 'pending-production-visual', reportUrl: '' },
               notification: { status: 'skipped', reason: '等待正式环境视觉取证，不属于测试失败' },
             };
-            stagedSummary.experience = persistRunExperience({ runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows: [...(productionBaseline?.rows || []), ...cdsRows], requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment, archive: stagedSummary.archive }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
+            stagedSummary.experience = persistRunExperience({ runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows: [...(productionBaseline?.rows || []), ...cdsRows], requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment, archive: stagedSummary.archive }, memoryPersistenceOptions(outputRoot, defaultOutputRoot));
             writeFileSync(resolve(runDir, 'summary.json'), `${JSON.stringify(stagedSummary, null, 2)}\n`, 'utf8');
             process.stdout.write(`${JSON.stringify({
               runId,
@@ -2725,7 +2725,7 @@ async function main() {
     summaryDocument.businessVerdict = summaryDocument.verdict;
     if (summaryDocument.deliveryFailure) summaryDocument.verdict = 'fail';
     // 基线的 commit 是工具提交，不冒充正式部署版本；实际版本见原 CORE-001 证据。
-    summaryDocument.experience = persistRunExperience({ runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows, requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment, archive: summaryDocument.archive, notification: summaryDocument.notification, deployments: { cds: readJson(resolve(runDir, 'cds-readiness.json')), production: { source: 'CORE-001 原始版本回读证据', actualCommit: null } } }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
+    summaryDocument.experience = persistRunExperience({ runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows, requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment, archive: summaryDocument.archive, notification: summaryDocument.notification, deployments: { cds: readJson(resolve(runDir, 'cds-readiness.json')), production: { source: 'CORE-001 原始版本回读证据', actualCommit: null } } }, memoryPersistenceOptions(outputRoot, defaultOutputRoot));
     writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
 
     process.stdout.write(`${JSON.stringify({

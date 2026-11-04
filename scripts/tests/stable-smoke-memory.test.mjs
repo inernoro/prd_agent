@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -146,4 +147,30 @@ test('例行视觉合同按环境保留核心状态，缺图仍失败，偷减�
   const production = buildVisualPlan(catalog, ['production'], { scope: 'routine' });
   assert.ok(production.slots.length > plan.slots.length);
   assert.equal(production.modules.length, 10);
+});
+
+
+test('REG-stsmk-report-risk-001 云端完整池显式绑定读取与回填同一文件，不被自定义输出目录重置', t => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'stsmk-cloud-memory-'));t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = resolve(dir, 'complete-working-pools.json');
+  const original = { revision: 45, allDone: false, marker: 'full-private-baseline', hotspots: [], methods: [],
+    events: [{ key: 'original-event', time: '2026-10-28T02:57:00Z', status: 'not-run' }],
+    runs: [{ runId: 'stsmk-original-round', completedAt: '2026-10-28T02:57:00Z' }],
+    defects: Array.from({ length: 4 }, (_, index) => ({ defectId: `DEF-VERIFIED-${index}`, status: 'verified', evidence: `original-${index}` })) };
+  writeFileSync(path, JSON.stringify(original));
+  const moduleUrl = new URL('../stable-smoke-memory.mjs', import.meta.url).href;
+  const script = `import {defaultMemoryPath,readPools,persistRunExperience,memoryPersistenceOptions} from ${JSON.stringify(moduleUrl)};
+    const before=readPools();
+    if(defaultMemoryPath!==${JSON.stringify(path)} || before.marker!=='full-private-baseline') throw Error('wrong source');
+    const options=memoryPersistenceOptions(${JSON.stringify(resolve(dir,'different-output'))},'/tmp/default-output');
+    if(Object.keys(options).length)throw Error('explicit memory overridden by output root');
+    persistRunExperience({runId:'stsmk-cloud-offline',rows:[],completedAt:'2026-11-04T08:00:00Z'},{...options,expectedRevision:45});
+    const after=readPools();
+    console.log(JSON.stringify({revision:after.revision,verified:after.defects.filter(d=>d.status==='verified').length,marker:after.marker,event:after.events[0],originalRun:after.runs.find(r=>r.runId==='stsmk-original-round')}));`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding:'utf8',env:{...process.env,STABLE_SMOKE_MEMORY_PATH:path} });
+  assert.equal(child.status,0,child.stderr);const actual=JSON.parse(child.stdout.trim());
+  assert.equal(actual.revision,46);assert.equal(actual.verified,4);assert.equal(actual.marker,original.marker);
+  assert.deepEqual(actual.event,original.events[0]);assert.deepEqual(actual.originalRun,original.runs[0]);
+  const runner=readFileSync(new URL('../stable-smoke-run.mjs',import.meta.url),'utf8');
+  assert.equal((runner.match(/memoryPersistenceOptions\(outputRoot, defaultOutputRoot\)/g)||[]).length,3,'三个真实回填阶段都必须消费同一绑定');
 });

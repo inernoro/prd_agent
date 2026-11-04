@@ -4,7 +4,13 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const defaultMemoryPath = resolve(process.env.CODEX_HOME || resolve(homedir(), '.codex'), 'automations/stable-smoke-48h/pools.json');
+const explicitMemoryPath = process.env.STABLE_SMOKE_MEMORY_PATH;
+export const defaultMemoryPath = explicitMemoryPath ? resolve(explicitMemoryPath)
+  : resolve(process.env.CODEX_HOME || resolve(homedir(), '.codex'), 'automations/stable-smoke-48h/pools.json');
+export function memoryPersistenceOptions(outputRoot, defaultOutputRoot) {
+  return explicitMemoryPath || resolve(outputRoot) === resolve(defaultOutputRoot)
+    ? {} : { path: resolve(outputRoot, 'pools.json') };
+}
 export const cdsCoreFeatureIds = ['F01', 'F05', 'F08', 'F17', 'F18'];
 
 // 阅读表和执行表共用现有 F 编号与原 caseId，不再维护一份手写映射。
