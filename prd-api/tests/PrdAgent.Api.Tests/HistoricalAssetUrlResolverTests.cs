@@ -33,6 +33,7 @@ public class HistoricalAssetUrlResolverTests
     [Theory]
     [InlineData("https://current.example/" + Key)]
     [InlineData("https://legacy.example/" + Key)]
+    [InlineData("https://native-assets-1250000000.cos.ap-test.myqcloud.com/" + Key)]
     [InlineData("https://outside.example/other/file.png")]
     [InlineData("https://outside.example/" + Key + "?signature=opaque")]
     [InlineData("https://outside.example/data/defect-agent/img/../../secret.png")]
@@ -89,6 +90,56 @@ public class HistoricalAssetUrlResolverTests
         transport.MaxActive.ShouldBeInRange(1, 4);
         transport.Active.ShouldBe(0);
         attachments.Select(x => x.Url).ShouldBe(originals);
+    }
+
+    [Fact]
+    public async Task 冷列表先核验旧图且正常原生COS与排前日志不会饿死图片()
+    {
+        var transport = new DelayedProbe();
+        using var resolver = new HistoricalAssetUrlResolver(Config(), transport);
+        var native = Enumerable.Range(0, 26).Select(i => new DefectAttachment
+        {
+            Url = $"https://native-assets-1250000000.cos.ap-test.myqcloud.com/data/defect-agent/{(i < 11 ? "img" : "log")}/{i:D26}.{(i < 11 ? "png" : "txt")}",
+            MimeType = i < 11 ? "image/png" : "text/plain", FileSize = 42
+        }).ToList();
+        var logs = Enumerable.Range(0, 29).Select(i => new DefectAttachment
+        {
+            Url = $"https://expired.example/data/defect-agent/log/{i:D26}.txt", MimeType = "text/plain", FileSize = 42
+        }).ToList();
+        var images = Enumerable.Range(0, 20).Select(i => new DefectAttachment
+        {
+            Url = $"https://expired.example/data/defect-agent/img/{i:D26}.png", MimeType = "image/png", FileSize = 42
+        }).ToList();
+        var nativeOriginals = native.Select(x => x.Url).ToList();
+        await resolver.ResolveAttachmentsForReadAsync(new[] { new DefectReport { Attachments = [.. native, .. logs, .. images] } }, default);
+        native.Select(x => x.Url).ShouldBe(nativeOriginals);
+        images.ShouldAllBe(x => x.Url.StartsWith("https://legacy.example/data/defect-agent/img/"));
+        transport.Urls.Count(x => x.Contains("/img/")).ShouldBe(20);
+        transport.Urls.Count(x => x.Contains("/log/")).ShouldBeLessThanOrEqualTo(4);
+        transport.MaxActive.ShouldBeInRange(1, 4);
+        transport.Active.ShouldBe(0);
+    }
+
+    private sealed class DelayedProbe : HttpMessageHandler, IHttpClientFactory
+    {
+        private readonly object _gate = new();
+        public int Active { get; private set; }
+        public int MaxActive { get; private set; }
+        public System.Collections.Concurrent.ConcurrentQueue<string> Urls { get; } = new();
+        public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Urls.Enqueue(request.RequestUri!.AbsoluteUri);
+            lock (_gate) { Active++; MaxActive = Math.Max(MaxActive, Active); }
+            try
+            {
+                await Task.Delay(request.RequestUri.AbsolutePath.Contains("/img/") ? 625 : Timeout.Infinite, ct);
+                var response = new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = new ByteArrayContent([]) };
+                response.Content.Headers.ContentLength = 42;
+                return response;
+            }
+            finally { lock (_gate) { Active--; } }
+        }
     }
 
     private sealed class SlowProbe : HttpMessageHandler, IHttpClientFactory

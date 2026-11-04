@@ -27,7 +27,10 @@ public sealed class HistoricalAssetUrlResolver(
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromSeconds(4));
-        await Task.WhenAll(defects.SelectMany(x => x.Attachments).Select(async attachment =>
+        // 列表会立即渲染图片，日志按需下载；不能让日志占满整页预算而饿死可见图片。
+        var attachments = defects.SelectMany(x => x.Attachments)
+            .OrderByDescending(x => (x.MimeType ?? string.Empty).StartsWith("image/", StringComparison.OrdinalIgnoreCase));
+        await Task.WhenAll(attachments.Select(async attachment =>
         {
             try
             {
@@ -59,11 +62,13 @@ public sealed class HistoricalAssetUrlResolver(
         var legacyBase = ResolveLegacyPublicBaseUrl(configuration);
         var currentBase = AssetStorageProviderResolver.ResolveCloudPublicBaseUrl(configuration);
         if (string.IsNullOrWhiteSpace(legacyBase)
+            || attachment.FileSize <= 0
             || !Uri.TryCreate(original, UriKind.Absolute, out var source)
             || source.Scheme is not ("https" or "http")
             || !string.IsNullOrEmpty(source.UserInfo) || !string.IsNullOrEmpty(source.Query)
             || !string.IsNullOrEmpty(source.Fragment)
-            || IsUnderBase(source, legacyBase) || IsUnderBase(source, currentBase))
+            || IsUnderBase(source, legacyBase) || IsUnderBase(source, currentBase)
+            || IsNativeCosAddress(source))
             return original;
 
         // 附件只能来自上传接口生成的业务命名空间；不重写外部链接、头像、路径穿越或签名 URL。
@@ -117,4 +122,10 @@ public sealed class HistoricalAssetUrlResolver(
     private static bool IsUnderBase(Uri source, string? baseUrl)
         => Uri.TryCreate(baseUrl?.TrimEnd('/') + "/", UriKind.Absolute, out var basis)
            && basis.IsBaseOf(source);
+
+    private static bool IsNativeCosAddress(Uri source)
+        // COS 固有的桶/地域源站地址保留原样；不把已完整的存储地址重新解释为过期 CDN，亦不新增读取权限。
+        => source.Scheme == Uri.UriSchemeHttps && System.Text.RegularExpressions.Regex.IsMatch(source.DnsSafeHost,
+            @"\A[a-z0-9][a-z0-9-]*-[0-9]+\.cos\.[a-z0-9-]+\.myqcloud\.com\z",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 }
