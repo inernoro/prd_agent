@@ -165,8 +165,11 @@ export type InsightToRequirementContract = (
 ) => Promise<ApiResponse<InsightToRequirementResult>>;
 
 export type GetTeamActivityInsightsContract = (
-  params?: GetTeamActivityInsightsParams
+  params?: GetTeamActivityInsightsParams,
+  options?: TeamActivityRequestOptions
 ) => Promise<ApiResponse<TeamActivityInsightsData>>;
+
+export type TeamActivityRequestOptions = { signal?: AbortSignal; timeoutMs?: number };
 
 /** 体验全景热力图：一个端点叶子（面积=访问量，颜色=健康） */
 export type ExperienceMapLeaf = {
@@ -207,7 +210,8 @@ export type GetTeamActivityExperienceMapParams = {
 };
 
 export type GetTeamActivityExperienceMapContract = (
-  params?: GetTeamActivityExperienceMapParams
+  params?: GetTeamActivityExperienceMapParams,
+  options?: TeamActivityRequestOptions
 ) => Promise<ApiResponse<TeamActivityExperienceMapData>>;
 
 /** 端点下钻：错误码分布的一项 */
@@ -280,5 +284,6 @@ export type GetTeamActivityExperienceTrendParams = {
 };
 
 export type GetTeamActivityExperienceTrendContract = (
-  params?: GetTeamActivityExperienceTrendParams
+  params?: GetTeamActivityExperienceTrendParams,
+  options?: TeamActivityRequestOptions
 ) => Promise<ApiResponse<TeamActivityExperienceTrendData>>;
