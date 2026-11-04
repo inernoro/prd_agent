@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { SiteCard } from './WebPagesPage';
+import { SiteCard, SiteListItem } from './WebPagesPage';
 import type { HostedSite } from '@/services/real/webPages';
 import { buildCardActionLayers, canDragSiteCard } from '@/components/web-hosting/SiteCard';
 import type { SiteCaps, SiteCardSize, SiteShareStats } from '@/components/web-hosting/SiteCard';
@@ -59,6 +59,21 @@ function renderSiteCard(
 }
 
 describe('WebPagesPage SiteCard', () => {
+  it('MCP 创建的旧 api 来源在卡片和列表中显示一致，保留原数据契约', () => {
+    const site = { ...baseSite, sourceType: 'api' as const };
+    const card = renderSiteCard(site);
+    const row = renderToStaticMarkup(<SiteListItem
+      site={site} selected={false} shared={false} caps={ownerCaps}
+      onSelect={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onShare={vi.fn()}
+      onQrCode={vi.fn()} onTogglePublic={vi.fn()}
+    />);
+    for (const html of [card, row]) {
+      expect(html).toContain('MCP 生成');
+      expect(html).not.toContain('API');
+      expect(html).toContain('aria-label="更多设置"');
+    }
+  });
+
   it('把高频操作放在常驻层，低频操作留在更多菜单', () => {
     const html = renderSiteCard();
 

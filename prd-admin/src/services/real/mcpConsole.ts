@@ -30,3 +30,5 @@ export const getMcpVisibleToolsReal: GetMcpVisibleToolsContract = async (keyId) 
 export const getMapAgentSkillManifestReal: GetMapAgentSkillManifestContract = async () => {
   return await apiRequest('/api/official-skills/map-agent/manifest', { method: 'GET', auth: false });
 };
+
+export const authorizeMcpCall = (id: string) => apiRequest<{ keyId: string; grantedScope: string }>(`/api/mcp-console/calls/${encodeURIComponent(id)}/authorize`, { method: 'POST' });

@@ -315,7 +315,7 @@ public static class McpBuiltinTools
         {
             Name = "map_debt_sync",
             Description = "把仓库里 doc/debt.*.md 的债务台账推到任务台，按 key 幂等（重复推同一条只更新不新建）。key 形如 platform.active-tasks#15 —— 台账文件名去掉 debt. 前缀和 .md，加表格里的编号。**只覆盖正文**（标题/现状/补的条件）；谁认领了、转成了哪条任务一律不动，所以反复跑不会抹掉认领记录。改完 debt 文档顺手跑一次即可。",
-            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
             Method = "POST",
             PathTemplate = "/api/open/tasks/debts/sync",
             Params = new List<McpToolParam>
@@ -588,7 +588,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_create_share",
-            Description = "给托管站点建分享链接，默认 owner-only、7 天。用户明确要求公开时传 visibility=public、confirmedExposure=true；expiresInDays=0 表示永久。返回实际可见范围和到期时间；有私有资料引用时先向用户说明并取得指纹确认。",
+            Description = "给托管站点建分享链接，默认 owner-only、7 天。对外分享须由主人在 MAP 客户端设置中独立开启发布授权，确认参数不能替代授权。用户明确要求公开时传 visibility=public、confirmedExposure=true；expiresInDays=0 表示永久。返回实际可见范围和到期时间；有私有资料引用时先向用户说明并取得指纹确认。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "POST",
             PathTemplate = "/api/open/web-pages/pages/{siteId}/share",
@@ -668,7 +668,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_set_visibility",
-            Description = "修改站点可见性 private/public，仅站点创建者可改。公开前必须明确用户意图并传 confirmedExposure=true；不等于修改分享链接的可见性或有效期。",
+            Description = "修改站点可见性 private/public，仅站点创建者可改。公开须先由主人在 MAP 客户端设置中独立开启发布授权，再确认本次用户意图并传 confirmedExposure=true；不等于修改分享链接的可见性或有效期。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "PATCH", PathTemplate = "/api/open/web-pages/pages/{siteId}/visibility",
             Params = new List<McpToolParam>
@@ -704,7 +704,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_update_share",
-            Description = "就地修改自己创建的分享链接可见范围和有效期；expiresInDays=0 为永久，其他天数从现在重算；已撤销链接不能复活。对外范围必须用户明确要求并传 confirmedExposure=true。",
+            Description = "就地修改自己创建的分享链接可见范围和有效期；expiresInDays=0 为永久，其他天数从现在重算；已撤销链接不能复活。对外范围须先由主人在 MAP 客户端设置中独立开启发布授权，再明确本次意图并传 confirmedExposure=true。收回为 owner-only 无需发布授权。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "PATCH", PathTemplate = "/api/open/web-pages/shares/{shareId}",
             Params = new List<McpToolParam>
@@ -719,7 +719,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_web_renew_share",
-            Description = "延长自己创建的分享链接有效期；在现有到期日或当前时间的较晚者上加天数。设永久请用 map_web_update_share expiresInDays=0。",
+            Description = "延长自己创建的分享链接有效期；在现有到期日或当前时间的较晚者上加天数。对外链接须先由主人在 MAP 客户端设置中独立开启发布授权。设永久请用 map_web_update_share expiresInDays=0。",
             RequiredScope = McpCapabilityCatalog.ScopeWebPagesWrite,
             Method = "POST", PathTemplate = "/api/open/web-pages/shares/{shareId}/renew",
             Params = new List<McpToolParam>

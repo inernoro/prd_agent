@@ -231,7 +231,7 @@ public sealed class McpWebHostingCompletionTests
         IHostedSitePrivateSourceGate? gate = null, MongoDbContext? db = null)
     {
         var context = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(
-            [new("boundUserId", "u"), new("agentApiKeyId", "k")], "ApiKey")) };
+            [new("boundUserId", "u"), new("agentApiKeyId", "k"), new("scope", McpCapabilityCatalog.ScopeWebPagesPublish)], "ApiKey")) };
         context.Request.Scheme = "https"; context.Request.Host = new HostString("map.example");
         return new WebPagesOpenApiController(sites, db!, gate) { ControllerContext = new ControllerContext { HttpContext = context } };
     }

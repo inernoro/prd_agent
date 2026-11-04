@@ -415,7 +415,7 @@ export function SiteCard({
           {/* 右下：形态量（单页 / N 文件 / N 页 / 时长） */}
           {formBadge && (
             <span
-              className="absolute bottom-2 right-2 z-20 inline-flex items-center backdrop-blur-md"
+              className={`pointer-events-none absolute bottom-2 right-2 z-20 inline-flex items-center backdrop-blur-md transition-opacity ${!isSmall ? '[@media(hover:hover)]:group-hover:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-0' : ''}`}
               style={{
                 height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
                 fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)',
@@ -470,12 +470,16 @@ export function SiteCard({
                   label={shared ? `管理分享${linkCount > 0 ? ` · ${linkCount}` : ''}` : '分享'}
                   icon={shared ? <Link2 size={12} /> : <Share2 size={12} />}
                   onClick={onShare}
+                  compact={size === 'medium'}
                 />
               )}
-              <div className="ml-auto flex items-center gap-[5px]">
-                {hoverActions.map((a) => (
-                  <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact onScrim />
-                ))}
+              <div className="ml-auto flex shrink-0 items-center gap-[5px]">
+                {/* 窄屏按钮放大至 44px，次要操作由更多菜单承接，避免挤掉菜单入口。 */}
+                <div className="hidden items-center gap-[5px] sm:flex">
+                  {hoverActions.map((a) => (
+                    <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact onScrim />
+                  ))}
+                </div>
                 <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
               </div>
             </div>

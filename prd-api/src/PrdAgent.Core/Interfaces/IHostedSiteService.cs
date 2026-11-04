@@ -742,6 +742,9 @@ public class SharedSiteInfo
     public string? Description { get; set; }
     public string SiteUrl { get; set; } = string.Empty;
     public string EntryFile { get; set; } = string.Empty;
+    /// <summary>与站内预览相同的文件结构判据；多文件网站需要真实文档 URL。</summary>
+    public string ContentShape { get; set; } = string.Empty;
+    public bool RequiresPreviewBridge { get; set; }
     public long TotalSize { get; set; }
 
     /// <summary>

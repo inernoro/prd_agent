@@ -44,6 +44,7 @@ export interface HostedSite {
   files: HostedSiteFile[];
   /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
   contentShape?: 'self-contained-html' | 'multi-file';
+  requiresPreviewBridge?: boolean;
   totalSize: number;
   tags: string[];
   folder?: string;
@@ -1290,6 +1291,9 @@ export interface SharedSiteInfo {
   description?: string;
   siteUrl: string;
   entryFile: string;
+  /** 与站内预览共用服务端文件结构分类；旧服务端缺字段时沿用原策略。 */
+  contentShape?: HostedSite['contentShape'];
+  requiresPreviewBridge?: boolean;
   totalSize: number;
   /** 入口文件自己的字节数（不是 totalSize 那个所有文件之和）。后端取不到时为 0 */
   entrySize: number;

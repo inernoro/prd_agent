@@ -62,7 +62,7 @@ import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/componen
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
 import { DIRECT_PREVIEW_SANDBOX } from '@/components/web-hosting/previewHtml';
-import { resolveSiteForm, SITE_FORM_REGISTRY } from '@/components/web-hosting/siteFormRegistry';
+import { resolveSiteForm, siteSourceLabel, SITE_FORM_REGISTRY } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { QuickSharePopover } from '@/components/web-hosting/QuickSharePopover';
@@ -231,13 +231,6 @@ function buildSharedSiteIds(items: ShareLinkItem[]): Set<string> {
   return set;
 }
 
-const sourceTypeLabels: Record<string, string> = {
-  upload: '手动上传',
-  workflow: '工作流',
-  api: 'API',
-  'saved-share': '从分享保存',
-};
-
 /**
  * 「访问」专用地址解析 —— 与「分享」彻底分开：
  * - 访问：地址一律走 ≥12 字母 token 形式 /s/wp/{token}
@@ -399,7 +392,7 @@ export default function WebPagesPage() {
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  // 来源筛选（手动上传 / 工作流生成 / API 生成 / 保存自分享）；null = 不限
+  // 来源筛选（手动上传 / 工作流生成 / MCP 生成 / 保存自分享）；null = 不限
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
@@ -3042,7 +3035,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -3077,7 +3070,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   };
   return (
     <div
-      className={`group flex items-center gap-4 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      className={`group @container flex items-center gap-3 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
       data-hosted-site-id={site.id}
       data-dock-draggable={canDrag ? 'true' : 'false'}
       style={{
@@ -3094,20 +3087,21 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
       />
 
       {site.coverImageUrl ? (
-        <img src={site.coverImageUrl} alt="" className="shrink-0 w-10 h-10 rounded object-cover" />
+        <img src={site.coverImageUrl} alt="" className="shrink-0 w-8 h-8 rounded object-cover" />
       ) : isPdfSite(site) ? (
-        <PdfThumbnail className="shrink-0 w-10 h-10 rounded overflow-hidden" compact />
+        <PdfThumbnail className="shrink-0 w-8 h-8 rounded overflow-hidden" compact />
       ) : (
-        <div className="shrink-0 w-10 h-10 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
+        <div className="shrink-0 w-8 h-8 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
           <SitePreview site={site} url={site.siteUrl} className="w-full h-full" />
         </div>
       )}
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+      {/* 徽标与文件字段分档展开，避免在临界宽度同时抢占标题空间。 */}
+      <div className="flex flex-1 min-w-0 items-center gap-3">
+        <div className="flex flex-1 min-w-0 items-center gap-2">
           {shared && (
             <span
-              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium"
+              className="hidden shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium @[900px]:inline-flex"
               style={{ color: 'var(--semantic-warning-text)' }}
               title="已分享"
             >
@@ -3116,19 +3110,20 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           )}
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
+            title={site.title}
             style={{ color: shared ? 'var(--semantic-warning-text)' : 'var(--text-primary)' }}
             onClick={handleVisit}
           >
             {site.title}
           </span>
           {site.sourceType !== 'upload' && (
-            <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
-              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+            <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
+              {siteSourceLabel(site.sourceType)}
             </Badge>
           )}
           {isPublic && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+              className="hidden shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium @[1100px]:inline-flex"
               style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }}
               title="已公开"
             >
@@ -3136,17 +3131,17 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 mt-0.5 text-xs text-token-muted">
-          <span>{site.files.length} 个文件</span>
-          <span>{fmtSize(site.totalSize)}</span>
-          <span>{site.entryFile}</span>
+        <div className="hidden shrink-0 items-center gap-3 whitespace-nowrap text-xs text-token-muted @[640px]:flex">
+          <span className="hidden @[900px]:inline">{site.files.length} 个文件</span>
+          <span className="w-16 text-right">{fmtSize(site.totalSize)}</span>
+          <span className="hidden w-28 truncate @[1280px]:inline" title={site.entryFile}>{site.entryFile}</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-xs shrink-0 text-token-muted">
-        {site.folder && <span className="flex items-center gap-1"><FolderOpen size={12} /> {site.folder}</span>}
-        <span className="flex items-center gap-1"><Eye size={12} /> {site.viewCount}</span>
-        <span>{relativeTime(site.createdAt)}</span>
+      <div className="hidden items-center gap-3 whitespace-nowrap text-xs shrink-0 text-token-muted @[480px]:flex">
+        {site.folder && <span className="hidden w-28 items-center gap-1 @[1100px]:flex" title={site.folder}><FolderOpen size={12} className="shrink-0" /> <span className="truncate">{site.folder}</span></span>}
+        <span className="hidden w-12 items-center justify-end gap-1 @[640px]:flex"><Eye size={12} /> {site.viewCount}</span>
+        <span className="w-20 text-right">{relativeTime(site.createdAt)}</span>
       </div>
 
       <div className="flex items-center gap-1 shrink-0">

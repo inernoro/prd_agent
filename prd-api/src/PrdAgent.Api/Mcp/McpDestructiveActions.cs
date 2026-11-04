@@ -99,6 +99,15 @@ public static class McpDestructiveActions
         if (cut >= 0) normalized = normalized[..cut];
         normalized = normalized.TrimEnd('/');
 
+        // 网页后台写接口没有独立的对外发布闸。Agent 只能走已收口的 /api/open/web-pages，
+        // 防止改用普通后台的 visibility、share 或重传接口绕过独立授权。
+        if ((normalized.Equals("/api/web-pages", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith("/api/web-pages/", StringComparison.OrdinalIgnoreCase))
+            && !string.Equals(httpMethod, "GET", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(httpMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(httpMethod, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         var slash = normalized.LastIndexOf('/');
         var last = slash >= 0 ? normalized[(slash + 1)..] : normalized;
 
