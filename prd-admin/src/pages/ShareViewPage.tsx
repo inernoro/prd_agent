@@ -1,3 +1,4 @@
+import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -13,7 +14,9 @@ import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-ho
 import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import ShareAssistantLauncher from '@/components/web-hosting/ShareAssistantLauncher';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
+import { SharePageTitle, SharePageActions, ShareMoreMenu } from '@/components/web-hosting/SharePageControls';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -171,6 +174,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
+  const openedSiteId = data?.sites.length === 1 ? data.sites[0].id : undefined;
+  useEffect(() => {
+    if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
+  }, [isAuthenticated, currentUserId, openedSiteId]);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
@@ -841,47 +848,18 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
             <div className="share-topbar-title">
               <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
-              <span>{data.title || site.title}</span>
+              <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
+                ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
+              } : current)} />
             </div>
-            {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
-                这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
+            {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
-              {!site.pdfAssetUrl && (
-                <button
-                  className="share-topbar-btn"
-                  onClick={togglePresentFullscreen}
-                  title="全屏演示（Esc 退出）"
-                  aria-label="全屏演示"
-                >
-                  {isFullscreen ? <Minimize size={isMobile ? 15 : 13} /> : <Maximize size={isMobile ? 15 : 13} />}
-                  {!isMobile && '全屏演示'}
-                </button>
-              )}
-              {!isOwner && (
-                <button
-                  onClick={handleSave}
-                  disabled={saving || saveStatus !== 'idle'}
-                  title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
-                  aria-label="保存到我的托管"
-                  className={
-                    saveStatus === 'saved' ? 'share-topbar-btn share-topbar-btn--success'
-                      : saveStatus === 'already' ? 'share-topbar-btn share-topbar-btn--warning'
-                      : 'share-topbar-btn share-topbar-btn--primary'
-                  }
-                >
-                  {saving ? (
-                    <><MapSpinner size={isMobile ? 15 : 13} /> {!isMobile && '保存中...'}</>
-                  ) : saveStatus === 'saved' ? (
-                    <><Check size={isMobile ? 15 : 13} /> {!isMobile && '已保存'}</>
-                  ) : saveStatus === 'already' ? (
-                    <><Check size={isMobile ? 15 : 13} /> {!isMobile && '你已经保存过了'}</>
-                  ) : !isAuthenticated ? (
-                    <><LogIn size={isMobile ? 15 : 13} /> {!isMobile && '登录并保存'}</>
-                  ) : (
-                    <><Download size={isMobile ? 15 : 13} /> {!isMobile && '保存到我的托管'}</>
-                  )}
-                </button>
-              )}
+              <SharePageActions site={site} compact={isMobile} onSettingsSaved={async () => {
+                if (!token) return;
+                const result = await viewSiteShare(token, password || undefined);
+                if (!result.success) throw new Error('refresh failed');
+                setData(result.data);
+              }} />
               {/* 下载源文件：登录用户可见。
                   为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、
                   存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
@@ -891,7 +869,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   原因由上面那条常驻说明在交互前就给出，不需要一个点了才肯说话的假控件。 */}
               {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
                 <button
-                  className="share-topbar-btn"
+                  className="share-topbar-btn share-topbar-icon"
                   onClick={handleDownloadSource}
                   disabled={downloading}
                   title={downloadHint}
@@ -902,36 +880,74 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                     : downloadPlan.kind === 'open'
                       ? <ExternalLink size={isMobile ? 15 : 13} />
                       : <FileDown size={isMobile ? 15 : 13} />}
-                  {!isMobile && (downloading ? offlineExportLabel : downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件')}
                 </button>
               )}
-              <span className="share-topbar-divider" />
-              <a
-                className="share-topbar-btn"
-                href={site.pdfAssetUrl || site.siteUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="新窗口打开"
-                aria-label="新窗口打开"
-              >
-                <ExternalLink size={isMobile ? 15 : 13} />
-                {!isMobile && '新窗口打开'}
-              </a>
               {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
                   浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
               {token && (
                 <button
-                  className="share-topbar-btn"
+                  className="share-topbar-btn share-topbar-icon"
                   onClick={() => setShowComments(true)}
                   title="评论"
                   aria-label="评论"
                 >
                   <MessageSquare size={isMobile ? 15 : 13} />
-                  {isMobile
-                    ? (commentCount != null && commentCount > 0 ? commentCount : '')
-                    : `评论${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
+                  {commentCount != null && commentCount > 0 && <span className="share-topbar-count">{commentCount > 99 ? '99+' : commentCount}</span>}
                 </button>
               )}
+              <ShareMoreMenu>
+                {!site.pdfAssetUrl && (
+                  <button
+                    role="menuitem"
+                    className="share-topbar-btn"
+                    onClick={togglePresentFullscreen}
+                    title="全屏演示（Esc 退出）"
+                    aria-label="全屏演示"
+                  >
+                    {isFullscreen ? <Minimize size={isMobile ? 15 : 13} /> : <Maximize size={isMobile ? 15 : 13} />}
+                    全屏演示
+                  </button>
+                )}
+                {!isOwner && (
+                  <button
+                    role="menuitem"
+                    data-menu-keep-open
+                    onClick={handleSave}
+                    disabled={saving || saveStatus !== 'idle'}
+                    title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                    aria-label="保存到我的托管"
+                    className={
+                      saveStatus === 'saved' ? 'share-topbar-btn share-topbar-btn--success'
+                        : saveStatus === 'already' ? 'share-topbar-btn share-topbar-btn--warning'
+                        : 'share-topbar-btn share-topbar-btn--primary'
+                    }
+                  >
+                    {saving ? (
+                      <><MapSpinner size={isMobile ? 15 : 13} /> 保存中...</>
+                    ) : saveStatus === 'saved' ? (
+                      <><Check size={isMobile ? 15 : 13} /> 已保存</>
+                    ) : saveStatus === 'already' ? (
+                      <><Check size={isMobile ? 15 : 13} /> 你已经保存过了</>
+                    ) : !isAuthenticated ? (
+                      <><LogIn size={isMobile ? 15 : 13} /> 登录并保存</>
+                    ) : (
+                      <><Download size={isMobile ? 15 : 13} /> 保存到我的托管</>
+                    )}
+                  </button>
+                )}
+                <a
+                  role="menuitem"
+                  className="share-topbar-btn"
+                  href={site.pdfAssetUrl || site.siteUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="新窗口打开"
+                  aria-label="新窗口打开"
+                >
+                  <ExternalLink size={isMobile ? 15 : 13} />
+                  新窗口打开
+                </a>
+              </ShareMoreMenu>
             </div>
           </div>
           {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
@@ -1104,6 +1120,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           </>
         )}
 
+        <ShareAssistantLauncher hidden={isFullscreen || showComments} isMobile={isMobile}>
         {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
             开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
         {token && data.ask?.enabled && (
@@ -1127,7 +1144,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             <ShareSiteEditDock
               siteId={site.id}
               isMobile={isMobile}
-              adjacentToAsk={Boolean(token && data.ask?.enabled)}
               hidden={isFullscreen || showComments || askState !== 'collapsed'}
               onPublished={handleOwnerSitePublished}
             />
@@ -1135,6 +1151,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             <PrivateSourceConfirmHost />
           </>
         )}
+        </ShareAssistantLauncher>
       </div>
     );
   }
