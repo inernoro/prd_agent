@@ -208,8 +208,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
    * 不做成一闪而过的 toast——它是结论，用户得来得及读完。
    */
   const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
-  const pdfDownload = useHostedPdfDownload(data?.sites.length === 1 ? data.sites[0] : null,
-    token ? { token, password: password || undefined } : undefined);
+  const reviewFrameRef = useRef<HTMLIFrameElement>(null);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(() => searchParams.has('review'));
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
@@ -284,9 +283,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     } : current);
   }, []);
 
-  const review = useHostedReview(pdfDownload.iframeRef, data?.sites.length === 1 ? data.sites[0] : null,
+  const review = useHostedReview(reviewFrameRef, data?.sites.length === 1 ? data.sites[0] : null,
     token && data?.sites.length === 1 && !data.sites[0].wrappedAssetType ? { mode: 'share', token, password: password || undefined } : null,
     () => setShowComments(true), handleOwnerSitePublished);
+  const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
+    token ? { token, password: password || undefined } : undefined, reviewFrameRef);
   const annotations = review.annotations;
   const requestedReview = searchParams.get('review');
   const restoredReview = useRef<string | null>(null);
@@ -973,10 +974,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 <a
                   role="menuitem"
                   className="share-topbar-btn"
-                  href={site.pdfAssetUrl || site.siteUrl}
+                  href={site.pdfAssetUrl || site.siteUrl || undefined}
+                  aria-disabled={!site.pdfAssetUrl && !site.siteUrl}
+                  tabIndex={!site.pdfAssetUrl && !site.siteUrl ? -1 : undefined}
+                  onClick={event => { if (!site.pdfAssetUrl && !site.siteUrl) event.preventDefault(); }}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title="新窗口打开"
+                  title={site.pdfAssetUrl || site.siteUrl ? '新窗口打开' : '该历史快照仅支持页内预览'}
                   aria-label="新窗口打开"
                 >
                   <ExternalLink size={isMobile ? 15 : 13} />

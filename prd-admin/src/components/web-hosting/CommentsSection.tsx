@@ -64,6 +64,12 @@ export default function CommentsSection(props: Props) {
   })();
   const identity = `${mode}:${token ?? siteId}:${password ?? ''}`;
   const identityRef = useRef(identity); identityRef.current = identity;
+  const draftScope = `${identity}:${review?.selected?.id ?? ''}:${versionKey ?? ''}`;
+  const draftScopeRef = useRef({ key: draftScope, draft, replyTo, anchor: annotations?.draftAnchor });
+  const previousDraftScope = draftScopeRef.current;
+  if (previousDraftScope.key !== draftScope || previousDraftScope.draft !== draft
+    || previousDraftScope.replyTo !== replyTo || previousDraftScope.anchor !== annotations?.draftAnchor)
+    draftScopeRef.current = { key: draftScope, draft, replyTo, anchor: annotations?.draftAnchor };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const allRoots = comments.filter(c => !c.parentId);
   const versionRoots = review ? allRoots.filter(c => c.contentVersion === versionKey && !!versionKey) : allRoots;
@@ -108,6 +114,7 @@ export default function CommentsSection(props: Props) {
   const submit = async () => {
     if (!draft.trim() || submitting || !canWrite) return;
     const operationIdentity = identity;
+    const operationDraftScope = draftScopeRef.current;
     const options = replyTo ? { parentId: replyTo } : { anchor: annotations?.draftAnchor ?? undefined,
       revisionId: review?.selected?.id, expectedContentVersion: versionKey };
     setSubmitting(true); setError(null);
@@ -118,10 +125,12 @@ export default function CommentsSection(props: Props) {
       if (res.success && res.data) {
         const created = res.data;
         setComments(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
-        setDraft(''); setReplyTo(null); annotations?.clearDraft(); if (!replyTo) setFilter('open');
+        if (operationDraftScope === draftScopeRef.current) {
+          setDraft(''); setReplyTo(null); annotations?.clearDraft(); if (!replyTo) setFilter('open');
+        }
         await load(true);
-      } else setError(res.error?.message || '发表失败，草稿已保留');
-    } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，发表失败，草稿已保留'); }
+      } else if (operationDraftScope === draftScopeRef.current) setError(res.error?.message || '发表失败，草稿已保留');
+    } catch { if (mounted.current && operationIdentity === identityRef.current && operationDraftScope === draftScopeRef.current) setError('网络错误，发表失败，草稿已保留'); }
     finally { if (mounted.current && operationIdentity === identityRef.current) setSubmitting(false); }
   };
   const remove = async (id: string) => {

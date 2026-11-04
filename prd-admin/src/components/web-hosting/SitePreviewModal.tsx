@@ -59,11 +59,11 @@ export default function SitePreviewModal({
   onSiteVersionChanged,
 }: Props) {
   const isMobile = useIsMobile();
-  const pdfDownload = useHostedPdfDownload(originalSite);
-  const iframeRef = pdfDownload.iframeRef;
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const review = useHostedReview(iframeRef, originalSite,
     originalSite.wrappedAssetType ? null : { mode: 'site', siteId: originalSite.id },
     () => setRightPanel('comments'), onSiteVersionChanged);
+  const pdfDownload = useHostedPdfDownload(review.historical ? null : { ...originalSite, ...review.liveSite }, undefined, iframeRef);
   const site = { ...originalSite, ...review.site };
   const annotations = review.annotations;
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -218,7 +218,7 @@ export default function SitePreviewModal({
 
   const handleOpenExternal = () => {
     // 与 iframe 同源同 URL：PDF 站在新窗口里也直接给原始 PDF，和 ShareViewPage 顶栏一致
-    window.open(previewSource.src, '_blank');
+    if (previewSource.src) window.open(previewSource.src, '_blank');
   };
 
   const handleToggleCommentsEnabled = async () => {
@@ -309,6 +309,8 @@ export default function SitePreviewModal({
             <button
               type="button"
               onClick={handleOpenExternal}
+              disabled={!previewSource.src}
+              title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
               className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <ExternalLink className="w-3.5 h-3.5" />
@@ -344,6 +346,8 @@ export default function SitePreviewModal({
                 <p className="text-sm text-token-secondary">站点加载失败</p>
                 <button
                   onClick={handleOpenExternal}
+                  disabled={!previewSource.src}
+                  title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
                   className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm"
                 >
                   在新窗口打开
@@ -355,7 +359,7 @@ export default function SitePreviewModal({
               <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg border border-token-subtle bg-token-card px-3 py-1.5 text-[12px] text-token-secondary shadow-lg backdrop-blur-sm">
                 <MapSpinner size={14} />
                 <span>加载较慢，内容可能仍在陆续显示</span>
-                <button onClick={handleOpenExternal} className="text-blue-400 hover:text-blue-300">
+                <button onClick={handleOpenExternal} disabled={!previewSource.src} title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'} className="text-blue-400 hover:text-blue-300">
                   新窗口打开
                 </button>
               </div>

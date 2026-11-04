@@ -163,6 +163,15 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         await expect(page.getByText('已选中标题', { exact: true })).toBeVisible();
         await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
         await expect(preview).toHaveAttribute('srcdoc', /仅保留 HTML 的旧版正文/);
+        await expect(frame.locator('script[data-map-pdf-download-bridge], script[data-map-package-download-bridge]')).toHaveCount(0);
+        if (modal) await expect(page.getByRole('button', { name: '新窗口打开', exact: true })).toBeDisabled();
+        else {
+          await page.getByRole('button', { name: '更多', exact: true }).click();
+          const external = page.getByRole('menuitem', { name: '新窗口打开', exact: true });
+          await expect(external).toHaveAttribute('aria-disabled', 'true');
+          await expect(external).not.toHaveAttribute('href');
+        }
+
       });
     }
 

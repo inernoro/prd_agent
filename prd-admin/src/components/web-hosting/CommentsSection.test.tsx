@@ -6,12 +6,12 @@ import CommentsSection from './CommentsSection';
 import type { HostedAnnotations } from './useHostedAnnotations';
 import type { HostedReview } from './useHostedReview';
 
-const { auth, list, login, select } = vi.hoisted(() => ({
-  auth: { isAuthenticated: false, token: '' }, list: vi.fn(), login: vi.fn(), select: vi.fn(),
+const { auth, list, login, select, add } = vi.hoisted(() => ({
+  auth: { isAuthenticated: false, token: '' }, list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(),
 }));
 vi.mock('../../stores/authStore', () => ({ useAuthStore: (selector: (state: typeof auth) => unknown) => selector(auth) }));
 vi.mock('../../services/real/webPages', () => ({ listShareComments: list, listSiteComments: list,
-  addShareComment: vi.fn(), addSiteComment: vi.fn(), deleteSiteComment: vi.fn(), setSiteCommentResolved: vi.fn() }));
+  addShareComment: add, addSiteComment: add, deleteSiteComment: vi.fn(), setSiteCommentResolved: vi.fn() }));
 vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: () => <p>正在加载讨论…</p> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
@@ -92,5 +92,35 @@ describe('annotation entry availability', () => {
     list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
     await mount({ review: { selected: undefined, loading: false } as HostedReview });
     expect(button('绑定页面元素 / 选中文字').title).toContain('无法确认网页版本');
+  });  it.each(['same', 'other', 'return'])('preserves a newer draft after an earlier submit completes, move=%s', async move => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    let finish!: (value: unknown) => void;
+    add.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const firstReview = { selected: { id: 'v1', versionLabel: 'V1', contentVersionKey: '10000' }, loading: false } as HostedReview;
+    const secondReview = { selected: { id: 'v2', versionLabel: 'V2', contentVersionKey: '20000' }, loading: false } as HostedReview;
+    const firstAnnotations = annotations();
+    const nextAnnotations = { ...annotations(), draftAnchor: { kind: 'element' as const, pagePath: '/', selector: '#new', tagName: 'P',
+      text: '新版位置', elementText: '新版位置', prefix: '', suffix: '', contentVersion: move === 'other' ? '20000' : '10000' } };
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview, anchor: HostedAnnotations) => root.render(<CommentsSection mode="share" token="share" review={review} annotations={anchor} />);
+    await act(async () => render(firstReview, firstAnnotations));
+    const write = async (text: string) => { await act(async () => {
+      const input = container.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }); };
+    await write('旧版提交');
+    await act(async () => button('发送批注').click());
+    expect(add).toHaveBeenCalledOnce();
+    await act(async () => render(move === 'same' ? firstReview : secondReview, nextAnnotations));
+    if (move === 'return') await act(async () => render(firstReview, nextAnnotations));
+    await write('新的未发送草稿');
+    await act(async () => finish({ success: true, data: { id: 'saved-old', content: '旧版提交', contentVersion: '10000', authorName: '作者' } }));
+    expect(container.querySelector('textarea')?.value).toBe('新的未发送草稿');
+    expect(nextAnnotations.clearDraft).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('新版位置');
+    expect(button('发送批注').disabled).toBe(false);
   });
+
 });
