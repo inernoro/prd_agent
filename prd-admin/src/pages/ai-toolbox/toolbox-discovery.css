@@ -86,4 +86,7 @@
   .toolbox-gallery-options { gap: 10px; }
   .toolbox-gallery .toolbox-segmented { gap: 4px; }
 }
+@media (max-width: 860px) {
+  .toolbox-gallery-options .toolbox-kind-select { min-width: 116px; }
+}
 @media (prefers-reduced-motion: reduce) { .toolbox-gallery .toolbox-card-tags { transition: none; } }
