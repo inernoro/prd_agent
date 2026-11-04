@@ -27,6 +27,13 @@ beforeEach(() => { vi.clearAllMocks(); list.mockResolvedValue({ success: true, d
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('versioned webpage review', () => {
+  it('keeps the live preview available when the version response has an invalid shape', async () => {
+    list.mockResolvedValue({ success: true, data: { items: [] } });
+    await mount();
+    expect(review.versions).toEqual([]);
+    expect(review.error).toBe('无法加载版本');
+    expect(review.site?.siteUrl).toBe(site.siteUrl);
+  });
   it('switches the viewed HTML and version scope without publishing or replacing the live site', async () => {
     preview.mockResolvedValue({ success: true, data: { revision: previous, html: '<h1>旧版</h1>', siteUrl: previous.siteUrl } });
     await mount();

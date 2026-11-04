@@ -99,6 +99,8 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       data = { html: options.html ?? files['index.html'] };
     } else if (path.endsWith('/comments')) {
       data = { comments: [] };
+    } else if (path.endsWith('/revisions')) {
+      data = [];
     }
     await route.fulfill({ json: { success: true, data, error: null } });
   });

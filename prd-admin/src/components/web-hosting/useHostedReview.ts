@@ -51,7 +51,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     try {
       const result = await listHostedReviewVersions(sourceRef.current);
       if (!mounted.current || request !== sequence.current) return;
-      if (result.success) setVersions(result.data);
+      if (result.success && Array.isArray(result.data)) setVersions(result.data);
       else setError(result.error?.message || '无法加载版本');
     } catch { if (mounted.current && request === sequence.current) setError('无法加载版本，请重试'); }
   }, []);
