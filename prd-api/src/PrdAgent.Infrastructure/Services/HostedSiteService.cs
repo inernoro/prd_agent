@@ -3169,6 +3169,7 @@ public class HostedSiteService : IHostedSiteService
                 WrappedAssetType = s.WrappedAssetType,
                 // 编辑权只有服务端算得出来，走编辑端点那同一道角色门；匿名访问恒为 false。
                 ViewerCanEdit = viewerUserId != null && await CanEditSiteAsync(s, viewerUserId, ct),
+                ViewerIsOwner = viewerUserId != null && s.OwnerUserId == viewerUserId,
             });
         }
 

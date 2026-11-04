@@ -88,6 +88,11 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         @"^/api/weekly-posters/[^/]+/mark-seen/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // 回答评分由控制器校验专属回执，仅放行准确的 PUT 路由，不能豁免邻近管理接口。
+    private static readonly Regex SiteAskRatingRoute = new(
+        @"^/api/web-pages/ask/messages/[^/]+/rating/?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)
     {
         _logger = logger;
@@ -191,7 +196,7 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
     public string? GetRequiredPermission(string path, string method)
     {
         // 公开路由（无需额外权限）
-        if (IsPublicRoute(path))
+        if (IsPublicRoute(path) || (HttpMethods.IsPut(method) && SiteAskRatingRoute.IsMatch(path)))
         {
             return null;
         }

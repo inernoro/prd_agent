@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Send, Sparkles, X } from 'lucide-react';
 import { ASK_REFUSAL_REGISTRY, resolveAskRefusal } from './askRefusal';
 import AskThread from './AskThread';
+import { AskResizeHandle, useAskWidth } from './AskResizeHandle';
+import { clampAskWidth } from './askDockGeometry';
+import { useImeSubmit } from '@/hooks/useImeSubmit';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
@@ -43,8 +46,16 @@ export default function AskPanel({
   source, title, welcome, openingQuestions, allowAnonymous, onClose, isMobile, embedded, hidden,
 }: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const { messages, status, phaseMessage, elapsedSeconds, model, gateError, isBusy, ask, cancel } = useAskStream(source);
+  const { messages, status, phaseMessage, elapsedSeconds, model, gateError, isBusy, ask, cancel, rate } = useAskStream(source);
+  const [chatWidth, setChatWidth] = useAskWidth();
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const resize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
   const [draft, setDraft] = useState('');
+  const submitKeys = useImeSubmit(() => submit(draft));
 
   // 几种「问不了」各有各的下一步，判定收在 resolveAskRefusal 里（有守卫）
   const refusal = resolveAskRefusal({ isAuthenticated, allowAnonymous, gateErrorCode: gateError?.code });
@@ -92,7 +103,7 @@ export default function AskPanel({
                     top: 0,
                     right: 0,
                     bottom: 0,
-                    width: 400,
+                    width: clampAskWidth(chatWidth, viewportWidth),
                     borderLeft: '1px solid var(--border-subtle)',
                     boxShadow: 'var(--shadow-glass-drawer)',
                   }),
@@ -102,6 +113,7 @@ export default function AskPanel({
       role="dialog"
       aria-label="向我提问"
     >
+      {!embedded && !isMobile && <AskResizeHandle width={clampAskWidth(chatWidth, viewportWidth)} viewportWidth={viewportWidth} onWidth={setChatWidth} />}
       {/* 顶栏：模型名必须可见（ai-model-visibility 规则第 1 条） */}
       <div
         style={{
@@ -162,6 +174,7 @@ export default function AskPanel({
           overflow 没机会触发，输入区会被顶出面板（frontend-modal.md 第 3 条硬约束）。 */}
       <AskThread
         messages={messages}
+        onRate={rate}
         welcome={welcome}
         title={title}
         openingQuestions={openingQuestions}
@@ -210,12 +223,7 @@ export default function AskPanel({
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                submit(draft);
-              }
-            }}
+            {...submitKeys}
             // 「问点什么…」没说清能问什么，用户会拿它当通用聊天框问页面外的事然后吃一句
             // 「页面里没有提到」。把范围写进 placeholder，问之前就知道边界。
             placeholder={refusal ? ASK_REFUSAL_REGISTRY[refusal].placeholder : '就这一页提个问题'}

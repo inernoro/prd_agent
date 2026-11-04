@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReactNode } from 'react';
 import { CheckCircle2, Circle, Loader2, Maximize2, XCircle } from 'lucide-react';
 import type { PhaseKey, PhaseState } from '@/lib/deploymentPhases';
@@ -98,12 +99,7 @@ function PhaseLogPreview({
   tail: number | null | undefined;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return (
-      <div className="mt-2 flex items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        正在加载容器日志…
-      </div>
-    );
+    return <ContentLoading label="加载阶段日志" variant="log" />;
   }
   if (state.status === 'error') {
     return (

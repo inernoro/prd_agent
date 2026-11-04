@@ -9,6 +9,24 @@ import type { SseEvent } from '@/lib/sse';
 
 // ─── Types ───
 
+export interface HostedSiteTrafficScope {
+  visits: number;
+  visitors: number;
+  lastViewedAt?: string | null;
+}
+export interface HostedSiteTraffic {
+  all: HostedSiteTrafficScope;
+  external: HostedSiteTrafficScope;
+  activeShareLinks: number;
+}
+
+export interface HostedSiteActivity {
+  /** 服务端按已成功发布的内容修改与回退版本统计，不含基线、草稿或元信息修改。 */
+  editCount: number;
+  /** 服务端判断：近七天创建且当前用户未打开。 */
+  isNew: boolean;
+}
+
 export interface HostedSiteFile {
   path: string;
   cosKey: string;
@@ -944,8 +962,10 @@ export async function listSites(params?: {
     total: number;
     owners?: Record<string, SiteOwnerCard>;
     /** 每个站点的独立访客数（siteId → 人数，后端按 userId / IP 去重）。
-     *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。没有访问记录的站点不出现在表里。 */
+     *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。新站无记录时为零；旧累计有值但记录缺失时不返回该项。 */
     visitors?: Record<string, number>;
+    activity?: Record<string, HostedSiteActivity>;
+    traffic?: Record<string, HostedSiteTraffic>;
     /** 团队作用域下，我在该团队的网页托管有效角色（owner/editor/viewer）；个人作用域不返回 */
     myWebHostingRole?: WebHostingRole;
   }>
@@ -1314,6 +1334,8 @@ export interface SharedSiteInfo {
    * 反而看得见。匿名访问恒为 false。
    */
   viewerCanEdit?: boolean;
+  /** 服务端确认的网页作者身份，不是分享链接创建者。 */
+  viewerIsOwner?: boolean;
 }
 
 export interface ShareViewData {

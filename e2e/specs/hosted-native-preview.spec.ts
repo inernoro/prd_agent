@@ -58,6 +58,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
+  let listRequests = 0;
   const hostedOrigin = options.sameOrigin ? new URL(String(test.info().project.use.baseURL)).origin : origin;
   const siteEntry = options.sameOrigin ? entry.replace(origin, hostedOrigin) : entry;
   const site = {
@@ -86,7 +87,8 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     } else if (path === '/api/authz/me') {
       data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
     } else if (path === '/api/web-pages') {
-      data = { items: [site], total: 1 };
+      listRequests++;
+      data = { items: [site], total: 1, activity: { [site.id]: { editCount: listRequests, isNew: false } } };
     } else if (path === '/api/changelog/current-week') {
       data = { weekStart: '2026-11-02', weekEnd: '2026-11-08', fetchedAt: site.createdAt,
         dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0,
@@ -125,7 +127,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   }
   const preview = options.modal ? page.getByRole('dialog').locator('iframe') : page.locator('iframe[title="临时预览测试"]');
   await expect(preview).toBeVisible();
-  return { requests, contentRequests: () => contentRequests, frame: preview.contentFrame() };
+  return { requests, contentRequests: () => contentRequests, listRequests: () => listRequests, frame: preview.contentFrame() };
 }
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -146,7 +148,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     });
 
     test('站内弹窗越过等待窗口后不重载，保留输入和地址状态', async ({ page }, testInfo) => {
-      const { requests, contentRequests } = await serve(page, { shape: 'multi-file', modal: true });
+      const { requests, contentRequests, listRequests } = await serve(page, { shape: 'multi-file', modal: true });
       const iframe = page.getByRole('dialog').locator('iframe');
       const original = await iframe.elementHandle();
       const frame = iframe.contentFrame();
@@ -155,6 +157,17 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await frame.locator('#state').click();
       const loads = requests.filter(path => path.endsWith('/index.html')).length;
       await page.clock.runFor(1600);
+      // 回到标签页会更新活动统计，但不能重新加载任何预览或丢掉输入。
+      const refreshCount = listRequests() + 1;
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+        Reflect.deleteProperty(document, 'visibilityState');
+      });
+      await expect(page.getByLabel(`已编辑 ${refreshCount} 次`, { exact: true })).toBeAttached();
+
       expect(await original!.evaluate(element => element.isConnected)).toBe(true);
       await expect(frame.getByLabel('保留输入')).toHaveValue('等待结束后仍保留');
       expect(await frame.locator('body').evaluate(() => location.href)).toContain('?case=changed#step');

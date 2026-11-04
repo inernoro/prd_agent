@@ -54,14 +54,13 @@ export function resolveSiteForm(site: SiteFormInput): SiteFormKey {
 /**
  * 缩略图右下角的形态角标文案；拿不到真实数值就返回 null（不渲染空角标）。
  *
- * 刻意只覆盖前端真的有数据的两种：单页 HTML 与 ZIP 站的文件数。
+ * 只展示多文件站的实际文件数量。HTML 标签已说明内容形态，不再重复标「单页」。
  * PDF 页数、视频时长后端都没下发，写「-- 页」比不写更糟。
  */
 export function siteFormBadge(site: SiteFormInput): string | null {
   const form = resolveSiteForm(site);
   const count = site.files?.length ?? 0;
   if (form === 'zip') return `${count.toLocaleString()} 文件`;
-  if (form === 'html') return count === 1 ? '单页' : null;
   // 设计稿的幻灯片角标是「1 / 24」页码、PDF 是「24 页」、视频是「02:14」——
   // 这三个数后端目前都没有（页数要解析 PDF、时长要探媒体），写「-- 页」比不写更糟。
   // 缺口记在 doc/debt.web-hosting.md，不在这里编。

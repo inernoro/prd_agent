@@ -1,3 +1,14 @@
+import { AuthPageSkeleton } from './AuthPageSkeleton';
+import { PublicStatusSkeleton } from './PublicStatusSkeleton';
+import { AgentRequestsSkeleton, ReleaseCenterSkeleton, TopologyPageSkeleton } from './WorkspaceSkeletons';
+import { loadingSceneForPath } from './loadingScenes';
+import { ReleaseConsoleSkeleton } from './ReleaseConsoleSkeleton';
+import { ContentLoading } from './ContentLoading';
+import { SettingsPageSkeleton } from './SettingsSkeleton';
+import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
+import { MonitorCenterSkeleton } from '@/pages/status/primitives';
+import { BranchListOverview } from '@/components/branch/BranchListOverview';
+
 /**
  * 页面级加载骨架的 SSOT（2026-09-17）。
  *
@@ -13,15 +24,22 @@
  * 页面落到 ConsoleGenericSkeleton。守卫：tests/web/single-skeleton-contract.test.ts。
  */
 /** 分支列表加载骨架:逐张镜像真实 BranchCard(固定 15.25rem + 头/身/尾三段,2026-09-29 等高改版),
- *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部一行品牌 loader
- *  说明"在加载什么"。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
+ *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部保留统计和筛选槽位。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
 const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] as const;
+
+/** 项目列表非管理者/身份未确认时，顶栏计数区域共用同一占位。 */
+export function ProjectListSummarySkeleton(): JSX.Element {
+  return <div className="cds-loading-skeleton-line h-4 w-44 max-w-full" aria-hidden />;
+}
 
 export function BranchListSkeleton(): JSX.Element {
   return (
-    <div aria-busy="true" aria-live="polite" aria-label="加载项目与本地分支列表">
-      {/* 不再在骨架顶上放一行「加载…」文案：它把骨架撑得比正文高，切换那一帧整片网格往上跳（2026-09-17 用户圈出）；
-          加载什么由 aria-label 给读屏，肉眼看骨架本身就知道在加载。 */}
+    <div className="mt-6" aria-busy="true" aria-live="polite" aria-label="加载项目与本地分支列表">
+      <BranchListOverview loading summary={<div className="cds-loading-skeleton-line h-6 w-72 max-w-full" />}>
+        <div className="cds-loading-skeleton-line h-7 w-52 shrink-0" />
+        <div className="cds-loading-skeleton-line h-8 w-56 shrink-0" />
+        <div className="cds-loading-skeleton-line h-8 w-24 shrink-0" />
+      </BranchListOverview>
       <div className="cds-branch-card-grid">
         {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
           <article
@@ -29,10 +47,13 @@ export function BranchListSkeleton(): JSX.Element {
             className="flex h-[15.25rem] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
             {/* 头部:分支名 + 状态徽标 */}
-            <div className="flex items-center justify-between gap-3 px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-4" style={{ width }} />
-              <div className="cds-loading-skeleton-line h-5 w-14 shrink-0 rounded-full" />
-            </div>
+            <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
+              <div className="flex h-8 min-w-0 flex-1 items-center gap-3">
+                <div className="cds-loading-skeleton-line h-4 w-4 shrink-0 rounded-full" />
+                <div className="cds-loading-skeleton-line h-4" style={{ width }} />
+              </div>
+              <div className="cds-loading-skeleton-line h-8 w-8 shrink-0 rounded-md" />
+            </header>
             {/* 身体:几行元信息 */}
             <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-5 py-4">
               <div className="cds-loading-skeleton-line h-3 w-1/2" style={{ animationDelay: '0.1s' }} />
@@ -40,10 +61,10 @@ export function BranchListSkeleton(): JSX.Element {
               <div className="cds-loading-skeleton-line h-3 w-2/5" style={{ animationDelay: '0.26s' }} />
             </div>
             {/* 尾部:操作条 */}
-            <div className="mt-auto flex h-[3.5rem] shrink-0 items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5">
+            <footer className="mt-auto flex h-[3.5rem] shrink-0 items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5">
               <div className="cds-loading-skeleton-line h-3 w-24" />
               <div className="cds-loading-skeleton-line h-7 w-20 rounded-md" />
-            </div>
+            </footer>
           </article>
         ))}
       </div>
@@ -54,8 +75,8 @@ export function BranchListSkeleton(): JSX.Element {
 /**
  * 项目列表骨架屏 —— 用「即将出现的内容形状」占位,而不是一个孤零零的居中 logo。
  * 骨架卡逐张镜像真实 ProjectCard(标题条 + 220px 点阵画布 + 底部状态行),
- * 加载完成时视觉无缝切换到真数据。节点分片错相位 shimmer,整片"活着"不发呆。
- * 顶部保留一行带品牌 loader 的说明,让用户明确"在加载什么"(预期管理)。
+ * 加载完成时视觉无缝切换到真数据。节点使用共享轻呼吸,整片"活着"不发呆。
+ * 与就绪页面保留同一张卡片的标题、画布和状态槽。
  */
 const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const;
 
@@ -68,8 +89,10 @@ export function ProjectListSkeleton(): JSX.Element {
             key={index}
             className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
-            <header className="px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-[1.125rem]" style={{ width }} />
+            <header className="flex items-start justify-between gap-3 px-5 pt-5">
+              <div className="flex h-[1.59375rem] w-full items-center">
+                <div className="cds-loading-skeleton-line h-[1.125rem]" style={{ width }} />
+              </div>
             </header>
             <div
               className="relative mx-3 my-3 h-[13.75rem] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
@@ -119,7 +142,21 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
 export function pageSkeletonForPath(pathname: string): JSX.Element {
-  if (pathname === '/project-list' || pathname === '/project-list/') return <ProjectListSkeleton />;
-  if (pathname.startsWith('/branches/') || pathname === '/branch-list') return <BranchListSkeleton />;
-  return <ConsoleGenericSkeleton />;
+  switch (loadingSceneForPath(pathname)?.kind) {
+    case 'auth': return <AuthPageSkeleton />;
+    case 'public-status': return <PublicStatusSkeleton />;
+    case 'projects': return <ProjectListSkeleton />;
+    case 'branches': return <BranchListSkeleton />;
+    case 'relations': return <ContentLoading label="读取关系视图" variant="panel" />;
+    case 'agent-table': return <AgentRequestsSkeleton />;
+    case 'topology': return <TopologyPageSkeleton />;
+    case 'release-center': return <ReleaseCenterSkeleton />;
+    case 'monitor': return <MonitorCenterSkeleton />;
+    case 'branch-detail': return <BranchDetailLoadingSkeleton />;
+    case 'settings': return <SettingsPageSkeleton />;
+    case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;
+    case 'release-console': return <ReleaseConsoleSkeleton />;
+    case 'rows': return <LoadingBlock />;
+    default: return <ConsoleGenericSkeleton />;
+  }
 }

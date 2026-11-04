@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
@@ -44,8 +45,8 @@ import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
 import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
 import { useCdsEvents } from '@/hooks/useCdsEvents';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
-import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
+import { ProjectListSkeleton, ProjectListSummarySkeleton } from '@/components/skeletons/PageSkeletons';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
@@ -454,6 +455,7 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
+  const consoleOwner = useCanManageConsole();
   const events = useCdsEvents();
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -506,7 +508,7 @@ export function ProjectListPage(): JSX.Element {
   }, []);
 
   const refresh = useCallback(async (showLoading = false) => {
-    if (showLoading) setState({ status: 'loading' });
+    if (showLoading) setState((previous) => previous.status === 'ok' ? previous : { status: 'loading' });
     try {
       const projectsRes = await apiRequest<ProjectsResponse>('/api/projects');
       const nextProjects = projectsRes.projects || [];
@@ -621,6 +623,7 @@ export function ProjectListPage(): JSX.Element {
 
   const projects = state.status === 'ok' ? state.projects : [];
   const canManageProjects = state.status === 'ok' && state.canManageProjects;
+  const showProjectCreator = state.status === 'ok' ? state.canManageProjects : consoleOwner;
   const legacy = state.status === 'ok' ? state.legacy : null;
   const activeCount = useMemo(
     () => projects.reduce((sum, project) => sum + (project.runningServiceCount || 0), 0),
@@ -630,6 +633,7 @@ export function ProjectListPage(): JSX.Element {
 
   async function createProjectFromRepoUrl(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (!canManageProjects) return;
     const gitRepoUrl = quickRepoUrl.trim();
     if (!gitRepoUrl) {
       setToast('先粘贴 Git 仓库 URL');
@@ -687,7 +691,7 @@ export function ProjectListPage(): JSX.Element {
           left={
             <>
               <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />
-              {state.status === 'ok' && projects.length > 0 ? (
+              {canManageProjects && projects.length > 0 ? (
                 <div className="hidden items-center gap-3 border-l border-[hsl(var(--hairline))] pl-3 lg:flex">
                   <span className="cds-stat">
                     <span className="cds-stat-value">{projects.length}</span>
@@ -701,7 +705,7 @@ export function ProjectListPage(): JSX.Element {
               ) : null}
             </>
           }
-          center={canManageProjects ? (
+          center={showProjectCreator ? (
             <form
               className="flex min-w-0 items-center gap-1.5"
               onSubmit={(event) => void createProjectFromRepoUrl(event)}
@@ -713,6 +717,7 @@ export function ProjectListPage(): JSX.Element {
                 <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <input
                   id="topbar-git-repo-url"
+                  disabled={!canManageProjects}
                   className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
                   value={quickRepoUrl}
                   onChange={(event) => setQuickRepoUrl(event.target.value)}
@@ -721,12 +726,19 @@ export function ProjectListPage(): JSX.Element {
                   spellCheck={false}
                 />
               </div>
-              <Button type="submit" size="sm" disabled={quickCreating || !quickRepoUrl.trim()}>
+              <Button type="submit" size="sm" disabled={!canManageProjects || quickCreating || !quickRepoUrl.trim()}>
                 {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
                 创建
               </Button>
             </form>
-          ) : null}
+          ) : (
+            <div className="flex h-9 min-w-0 items-center gap-3 text-sm text-muted-foreground">
+              {state.status === 'ok' ? <>
+                <span>{projects.length} 个项目</span>
+                <span>{activeCount} 个运行中</span>
+              </> : <ProjectListSummarySkeleton />}
+            </div>
+          )}
           right={
             <>
               <PaletteHint />
@@ -838,6 +850,7 @@ export function ProjectListPage(): JSX.Element {
 
         {/* Project tile grid — only content in the workspace, like Railway. */}
         <section>
+          <div>
           {state.status === 'loading' ? <ProjectListSkeleton /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
@@ -859,6 +872,7 @@ export function ProjectListPage(): JSX.Element {
               ))}
             </div>
           ) : null}
+          </div>
         </section>
 
         {canManageProjects ? <CreateProjectDialog
@@ -4263,11 +4277,7 @@ function ResourceUsageDialog({
           className="max-h-[55vh] overflow-y-auto rounded-md border border-[hsl(var(--hairline))]"
           style={{ overscrollBehavior: 'contain' }}
         >
-          {loading && !data ? (
-            <div className="flex items-center justify-center gap-2 px-4 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> 采样中…
-            </div>
-          ) : rows.length === 0 ? (
+          {loading && !data ? <ContentLoading label="读取资源用量" variant="panel" /> : rows.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-muted-foreground">
               {data?.sampledAt ? '当前无运行容器或构建活动。' : '采样器尚未产出首个快照，请稍候…'}
             </div>

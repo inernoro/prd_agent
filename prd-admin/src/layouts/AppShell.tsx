@@ -99,7 +99,7 @@ import { NotificationSubscriptionsPanel } from '@/components/notifications/Notif
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
-import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
+import { getSidebarMenuItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 import { canOpenLlmGateway } from '@/lib/llmGatewayAccess';
 import { resolveAdminIdentityLabel } from '@/lib/adminIdentityLabel';
@@ -530,7 +530,9 @@ export default function AppShell() {
       // 从 launcher catalog 回退解析：支持用户从候选池拖进来的 toolbox/agent/utility 项
       // 这些 token 形如 "agent:xxx" / "toolbox:xxx" / "utility:xxx"
       const launcherById = new Map(
-        getLauncherCatalog({ permissions, isRoot }).map((li) => [li.id, li])
+        getLauncherCatalog({ permissions, isRoot })
+          .filter((li) => !SIDEBAR_HIDDEN_APPKEYS.has(li.id))
+          .map((li) => [li.id, li])
       );
       // launcher 分支也要受 navHidden 约束，避免 "既在 navOrder 又在 navHidden" 的 launcher 条目穿透
       const hiddenSet = new Set(effectiveNavHidden);

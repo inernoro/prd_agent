@@ -1,3 +1,4 @@
+import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
@@ -18,7 +19,9 @@ import { useHostedReview } from '@/components/web-hosting/useHostedReview';
 import { ReviewToolbarControls } from '@/components/web-hosting/ReviewToolbarControls';
 import { AnnotationBubble } from '@/components/web-hosting/AnnotationBubble';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import ShareAssistantLauncher from '@/components/web-hosting/ShareAssistantLauncher';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
+import { SharePageTitle, SharePageActions } from '@/components/web-hosting/SharePageControls';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -177,6 +180,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
+  const openedSiteId = data?.sites.length === 1 ? data.sites[0].id : undefined;
+  useEffect(() => {
+    if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
+  }, [isAuthenticated, currentUserId, openedSiteId]);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
@@ -884,10 +891,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
             <div className="share-topbar-title">
               <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
-              <span>{data.title || site.title}</span>
+              <SharePageTitle site={site} onRenamed={(title) => setData((current) => current ? {
+                ...current, sites: current.sites.map((item) => item.id === site.id ? { ...item, title } : item),
+              } : current)} />
             </div>
-            {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
-                这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
+            {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
                 onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
@@ -928,6 +936,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   )}
                 </button>
               )}
+              <SharePageActions site={site} compact={true} onSettingsSaved={async () => {
+                if (!token) return;
+                const result = await viewSiteShare(token, password || undefined);
+                if (!result.success) throw new Error('refresh failed');
+                setData(result.data);
+              }} />
               {/* 下载源文件：登录用户可见。
                   为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、
                   存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
@@ -937,7 +951,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   原因由上面那条常驻说明在交互前就给出，不需要一个点了才肯说话的假控件。 */}
               {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
                 <button
-                  className="share-topbar-btn"
+                  className="share-topbar-btn share-topbar-icon"
                   onClick={handleDownloadSource}
                   disabled={downloading || review.historical}
                   title={review.historical ? '正在查看历史版本，请在新窗口中打开该版源文件' : downloadHint}
@@ -1132,6 +1146,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           </>
         )}
 
+        <ShareAssistantLauncher hidden={isFullscreen || showComments || review.historical || review.loading} isMobile={isMobile}>
         {/* 右下角「向我提问」。全屏演示态隐藏——PPT 放映时右下角是翻页控件的地盘。
             开场问题由后端算好（分享自选优先于站点题库），这里直接渲染。 */}
         {token && data.ask?.enabled && (
@@ -1155,7 +1170,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             <ShareSiteEditDock
               siteId={site.id}
               isMobile={isMobile}
-              adjacentToAsk={Boolean(token && data.ask?.enabled)}
               hidden={isFullscreen || showComments || review.historical || review.loading || askState !== 'collapsed'}
               onPublished={handleOwnerSitePublished}
             />
@@ -1163,6 +1177,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             <PrivateSourceConfirmHost />
           </>
         )}
+        </ShareAssistantLauncher>
       </div>
     );
   }

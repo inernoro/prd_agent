@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -14,6 +14,7 @@ using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -30,12 +31,15 @@ public class TeamActivityController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly ILogger<TeamActivityController> _logger;
+    private static readonly TimeSpan MainQueryTimeout = TimeSpan.FromMinutes(2);
 
-    public TeamActivityController(MongoDbContext db, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext)
+    public TeamActivityController(MongoDbContext db, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, ILogger<TeamActivityController> logger)
     {
         _db = db;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+        _logger = logger;
     }
 
     /// <summary>是否具备指定权限（super 全通过）。对照 ProductAgentController.HasPermission。</summary>
@@ -349,8 +353,9 @@ public class TeamActivityController : ControllerBase
     private sealed record LeafOut(string Target, string Label, string Method, int Value, double ErrRate, double SlowRate, string Status, string Metric, int? BurstPct = null);
 
     // 体验全景热力图短 TTL 缓存：来回切时间档不重复聚合（key 取整到分钟）
-    private static readonly ConcurrentDictionary<string, (DateTime At, object Payload)> _expMapCache = new();
-    private const int ExpMapCacheSeconds = 30;
+    private static readonly TeamActivityQueryCache<object> _expMapCache = new(TimeSpan.FromSeconds(30));
+    private static readonly TeamActivityQueryCache<(List<Insight> Insights, int BehaviorEventCount)> _insightsCache = new(TimeSpan.FromSeconds(30));
+    private static readonly TeamActivityQueryCache<DateTime> _trackingStartCache = new(TimeSpan.FromMinutes(5));
 
     /// <summary>把 module → 叶子列表 组装成 treemap 响应（分区 Take 24、每区叶子 Take 30）</summary>
     private static object BuildExperienceMapPayload(Dictionary<string, List<LeafOut>> byModule, long totalRequests, DateTime fromUtc, DateTime endUtc)
@@ -406,11 +411,22 @@ public class TeamActivityController : ControllerBase
         [FromQuery] DateTime? to = null,
         [FromQuery] bool includeIgnored = false)
     {
+        var started = Stopwatch.GetTimestamp();
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         // 未指定范围时取近 30 天：洞察是「最近哪里不好用」，扫全史既慢又稀释信号
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
-        var (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
-        return await BuildInsightsResponseAsync(insights, behaviorEventCount, fromUtc, endUtc, includeIgnored);
+        try
+        {
+            var (insights, behaviorEventCount) = await GetInsightsAsync(fromUtc, endUtc);
+            var response = await BuildInsightsResponseAsync(insights, behaviorEventCount, fromUtc, endUtc, includeIgnored);
+            Response.Headers["Server-Timing"] = FormattableString.Invariant($"voc;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}");
+            return response;
+        }
+        catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
+        {
+            _logger.LogWarning(ex, "VOC insights query exceeded its time budget");
+            return StatusCode(503, ApiResponse<object>.Fail(TeamActivityQueryTimeout.Code, TeamActivityQueryTimeout.Message));
+        }
     }
 
     /// <summary>
@@ -422,39 +438,31 @@ public class TeamActivityController : ControllerBase
     [HttpGet("experience-map")]
     public async Task<IActionResult> ExperienceMap([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
     {
+        var started = Stopwatch.GetTimestamp();
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
 
         // 短 TTL 缓存：同一时间窗反复点击（尤其来回切档）直接命中，不重复聚合
         var cacheKey = $"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}";
-        if (_expMapCache.TryGetValue(cacheKey, out var hit) && (DateTime.UtcNow - hit.At).TotalSeconds < ExpMapCacheSeconds)
-        {
-            return Ok(ApiResponse<object>.Ok(hit.Payload));
-        }
-
-        object payload;
         try
         {
-            // 主路径：分组下推到 MongoDB 聚合，只回传分组桶，避免拉取数万条文档到内存
-            payload = await ExperienceMapAggregateAsync(fromUtc, endUtc);
-        }
-        catch
-        {
-            // 兜底：聚合不可用时回退到「拉取 + C# 分组」旧路径，保证功能不挂
-            payload = await ExperienceMapLegacyAsync(fromUtc, endUtc);
-        }
-
-        _expMapCache[cacheKey] = (DateTime.UtcNow, payload);
-        if (_expMapCache.Count > 64)
-        {
-            foreach (var k in _expMapCache
-                         .Where(e => (DateTime.UtcNow - e.Value.At).TotalSeconds > ExpMapCacheSeconds)
-                         .Select(e => e.Key).ToList())
+            var payload = await _expMapCache.GetAsync(cacheKey, async () =>
             {
-                _expMapCache.TryRemove(k, out _);
-            }
+                try { return await ExperienceMapAggregateAsync(fromUtc, endUtc); }
+                catch (MongoCommandException ex) when (ex.Code != 50)
+                {
+                    _logger.LogWarning(ex, "VOC map aggregation unavailable; using bounded legacy query");
+                    return await ExperienceMapLegacyAsync(fromUtc, endUtc);
+                }
+            });
+            Response.Headers["Server-Timing"] = FormattableString.Invariant($"voc;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}");
+            return Ok(ApiResponse<object>.Ok(payload));
         }
-        return Ok(ApiResponse<object>.Ok(payload));
+        catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
+        {
+            _logger.LogWarning(ex, "VOC map query exceeded its time budget");
+            return StatusCode(503, ApiResponse<object>.Fail(TeamActivityQueryTimeout.Code, TeamActivityQueryTimeout.Message));
+        }
     }
 
     /// <summary>主路径：MongoDB 服务端聚合（归一化路径折叠 :id → 按 method+路径分组统计），只回传分组桶</summary>
@@ -472,6 +480,10 @@ public class TeamActivityController : ControllerBase
                 { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(fromUtc) }, { "$lte", new BsonDateTime(endUtc) } } },
                 { "Direction", new BsonDocument("$ne", "outbound") },
                 { "Path", new BsonDocument("$regex", "^/api") },
+                { "$nor", new BsonArray {
+                    new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                    new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                } },
             }),
             new BsonDocument("$set", new BsonDocument("_segs", new BsonDocument("$split", new BsonArray { "$Path", "/" }))),
             new BsonDocument("$set", new BsonDocument("_norm", new BsonDocument("$map", new BsonDocument
@@ -521,12 +533,13 @@ public class TeamActivityController : ControllerBase
             new BsonDocument("$limit", 4000),
         };
 
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true });
+        var previousTask = ExperienceMapPrevWindowBadAsync(fromUtc, endUtc);
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var buckets = await cursor.ToListAsync();
 
         // 环比突增：对「上一个等长窗口」做同样的轻量聚合，按 method+归一化路径 取坏请求(报错+慢)数 badPrev，
         // 用于给本窗口痛点叶子算 burstPct。失败不致命（突增字段降级为 null）。
-        var prevBad = await ExperienceMapPrevWindowBadAsync(fromUtc, endUtc);
+        var prevBad = await previousTask;
 
         long totalRequests = 0;
         var byModule = new Dictionary<string, List<LeafOut>>();
@@ -603,6 +616,10 @@ public class TeamActivityController : ControllerBase
                     { "StartedAt", new BsonDocument { { "$gte", new BsonDateTime(prevFrom) }, { "$lt", new BsonDateTime(prevTo) } } },
                     { "Direction", new BsonDocument("$ne", "outbound") },
                     { "Path", new BsonDocument("$regex", "^/api") },
+                { "$nor", new BsonArray {
+                    new BsonDocument("Path", new BsonDocument("$regex", "^/api/behavior")),
+                    new BsonDocument("Path", new BsonDocument("$regex", "^/api/team-activity")),
+                } },
                 }),
             };
             pipeline.AddRange(PathNormalizeStages());
@@ -624,7 +641,7 @@ public class TeamActivityController : ControllerBase
             pipeline.Add(new BsonDocument("$match", new BsonDocument("badcount", new BsonDocument("$gte", 1))));
             pipeline.Add(new BsonDocument("$limit", 4000));
 
-            var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+            var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true, MaxTime = TimeSpan.FromSeconds(2) });
             var buckets = await cursor.ToListAsync();
             foreach (var b in buckets)
             {
@@ -636,8 +653,9 @@ public class TeamActivityController : ControllerBase
                 result[$"{method}|{path}"] = bad;
             }
         }
-        catch
+        catch (MongoException ex)
         {
+            _logger.LogWarning(ex, "VOC comparison window unavailable; primary map remains available");
             // 突增是增强项，前窗聚合失败时降级为「无基线」（burstPct 全部 null），不影响主热力图
         }
         return result;
@@ -650,7 +668,7 @@ public class TeamActivityController : ControllerBase
         var logs = await _db.ApiRequestLogs.Find(rb.And(
                 rb.Gte(x => x.StartedAt, fromUtc),
                 rb.Lte(x => x.StartedAt, endUtc),
-                rb.Ne(x => x.Direction, "outbound")))
+                rb.Ne(x => x.Direction, "outbound")), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.StartedAt)
             .Limit(60000)
             .Project(x => new { x.Path, x.Method, x.StatusCode, x.DurationMs, x.IsEventStream, x.ErrorCode })
@@ -749,7 +767,11 @@ public class TeamActivityController : ControllerBase
     private async Task<List<Insight>> ErrorInsightsAsync(DateTime fromUtc, DateTime endUtc)
     {
         try { return await ErrorInsightsAggregateAsync(fromUtc, endUtc); }
-        catch { return await ErrorInsightsLegacyAsync(fromUtc, endUtc); }
+        catch (MongoCommandException ex) when (ex.Code != 50)
+        {
+            _logger.LogWarning(ex, "VOC error aggregation unavailable; using bounded legacy query");
+            return await ErrorInsightsLegacyAsync(fromUtc, endUtc);
+        }
     }
 
     /// <summary>报错热点聚合（服务端归一化 + $facet：ep 算分组与去重人数、codes 算错误码计数）</summary>
@@ -798,7 +820,7 @@ public class TeamActivityController : ControllerBase
                 } },
         }));
 
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var docs = await cursor.ToListAsync();
         var result = new List<Insight>();
         if (docs.Count == 0) return result;
@@ -857,7 +879,7 @@ public class TeamActivityController : ControllerBase
                 rb.Lte(x => x.StartedAt, endUtc),
                 rb.Ne(x => x.Direction, "outbound"),
                 rb.Gte(x => x.StatusCode, 400),
-                rb.Ne(x => x.StatusCode, 401)))
+                rb.Ne(x => x.StatusCode, 401)), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.StartedAt)
             .Limit(20000)
             .Project(x => new { x.Path, x.Method, x.StatusCode, x.ErrorCode, x.UserId })
@@ -896,7 +918,11 @@ public class TeamActivityController : ControllerBase
     private async Task<List<Insight>> SlowInsightsAsync(DateTime fromUtc, DateTime endUtc)
     {
         try { return await SlowInsightsAggregateAsync(fromUtc, endUtc); }
-        catch { return await SlowInsightsLegacyAsync(fromUtc, endUtc); }
+        catch (MongoCommandException ex) when (ex.Code != 50)
+        {
+            _logger.LogWarning(ex, "VOC slow aggregation unavailable; using bounded legacy query");
+            return await SlowInsightsLegacyAsync(fromUtc, endUtc);
+        }
     }
 
     /// <summary>等待过久聚合（服务端归一化 + 按 path,method 分组，userCount/durSum 服务端算好只回传小桶）</summary>
@@ -934,7 +960,7 @@ public class TeamActivityController : ControllerBase
         pipeline.Add(new BsonDocument("$sort", new BsonDocument("count", -1)));
         pipeline.Add(new BsonDocument("$limit", 1000));
 
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true });
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline.ToArray(), new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var docs = await cursor.ToListAsync();
         var result = new List<Insight>();
         foreach (var b in docs)
@@ -973,7 +999,7 @@ public class TeamActivityController : ControllerBase
                 rb.Lte(x => x.StartedAt, endUtc),
                 rb.Ne(x => x.Direction, "outbound"),
                 rb.Eq(x => x.IsEventStream, false),
-                rb.Gte(x => x.DurationMs, 3000)))
+                rb.Gte(x => x.DurationMs, 3000)), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.StartedAt)
             .Limit(20000)
             .Project(x => new { x.Path, x.Method, x.DurationMs, x.UserId })
@@ -1006,24 +1032,32 @@ public class TeamActivityController : ControllerBase
         return result;
     }
 
+    private Task<(List<Insight> Insights, int BehaviorEventCount)> GetInsightsAsync(DateTime fromUtc, DateTime endUtc) =>
+        _insightsCache.GetAsync($"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}", () => ComputeInsightsAsync(fromUtc, endUtc));
+
     /// <summary>规则式信号聚类（供 insights 查询与 AI 简报共用）</summary>
     private async Task<(List<Insight> Insights, int BehaviorEventCount)> ComputeInsightsAsync(DateTime fromUtc, DateTime endUtc)
     {
         var insights = new List<Insight>();
 
         // ── 信号 A/B：报错热点 + 等待过久（apirequestlogs）。分组下推到 MongoDB 聚合，失败回退 C# 扫描 ──
-        insights.AddRange(await ErrorInsightsAsync(fromUtc, endUtc));
-        insights.AddRange(await SlowInsightsAsync(fromUtc, endUtc));
+        var errorsTask = ErrorInsightsAsync(fromUtc, endUtc);
+        var slowTask = SlowInsightsAsync(fromUtc, endUtc);
 
         // ── 行为事件（采集自上线起）──
         var bb = Builders<BehaviorEvent>.Filter;
-        var events = await _db.BehaviorEvents.Find(bb.And(
+        var eventsTask = _db.BehaviorEvents.Find(bb.And(
                 bb.Gte(x => x.OccurredAt, fromUtc),
-                bb.Lte(x => x.OccurredAt, endUtc)))
+                bb.Lte(x => x.OccurredAt, endUtc)), new FindOptions { MaxTime = MainQueryTimeout })
             .SortByDescending(x => x.OccurredAt)
             .Limit(50000)
             .Project(x => new { x.Type, x.Route, x.FromRoute, x.DwellMs, x.UserId, x.OccurredAt })
             .ToListAsync();
+
+        await Task.WhenAll(errorsTask, slowTask, eventsTask);
+        insights.AddRange(await errorsTask);
+        insights.AddRange(await slowTask);
+        var events = await eventsTask;
 
         // ── 信号 C/D：停留过久 + 秒退（route-dwell）──
         var dwells = events.Where(e => e.Type == "route-dwell" && e.DwellMs.HasValue).ToList();
@@ -1121,16 +1155,17 @@ public class TeamActivityController : ControllerBase
         List<Insight> insights, int behaviorEventCount, DateTime fromUtc, DateTime endUtc, bool includeIgnored)
     {
         // 采集起点：让前端能诚实告知「路由级信号从何时开始有数据」
-        var earliest = await _db.BehaviorEvents.Find(FilterDefinition<BehaviorEvent>.Empty)
-            .SortBy(x => x.CreatedAt)
-            .Limit(1)
-            .Project(x => x.CreatedAt)
-            .FirstOrDefaultAsync();
+        // Collection-start metadata must not hold the dashboard behind a history-wide sort.
+        var earliest = await TeamActivityQueryTimeout.ReadTrackingStartAsync(_trackingStartCache,
+            () => _db.BehaviorEvents.Find(FilterDefinition<BehaviorEvent>.Empty,
+                    new FindOptions { MaxTime = TimeSpan.FromSeconds(2) })
+                .SortBy(x => x.CreatedAt).Limit(1).Project(x => x.CreatedAt).FirstOrDefaultAsync(),
+            ex => _logger.LogWarning(ex, "VOC tracking-start metadata timed out; metrics remain available"));
 
         // 洞察生命周期：按指纹挂处理状态（确认/已修复/忽略），忽略的默认不再出现
         var fingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
         var states = (await _db.BehaviorInsightStates
-                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, fingerprints))
+                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, fingerprints), new FindOptions { MaxTime = TimeSpan.FromSeconds(10) })
                 .ToListAsync())
             .GroupBy(x => x.Fingerprint)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.UpdatedAt).First());
@@ -1209,15 +1244,28 @@ public class TeamActivityController : ControllerBase
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
 
         await WriteSseAsync("phase", new { message = "正在聚合行为信号…" });
-        var (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
-        // 尊重洞察生命周期：被管理者忽略的洞察不进简报（与 insights 查询口径一致）
-        var allFingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
-        var ignored = (await _db.BehaviorInsightStates
-                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, allFingerprints))
-                .ToListAsync())
-            .Where(x => x.Status == "ignored")
-            .Select(x => x.Fingerprint)
-            .ToHashSet();
+        List<Insight> insights;
+        int behaviorEventCount;
+        HashSet<string> ignored;
+        try
+        {
+            (insights, behaviorEventCount) = await GetInsightsAsync(fromUtc, endUtc);
+            // 尊重洞察生命周期：被管理者忽略的洞察不进简报（与 insights 查询口径一致）
+            var allFingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
+            ignored = (await _db.BehaviorInsightStates
+                    .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, allFingerprints),
+                        new FindOptions { MaxTime = TimeSpan.FromSeconds(10) })
+                    .ToListAsync())
+                .Where(x => x.Status == "ignored")
+                .Select(x => x.Fingerprint)
+                .ToHashSet();
+        }
+        catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
+        {
+            _logger.LogWarning(ex, "VOC brief query exceeded its time budget");
+            await TeamActivityQueryTimeout.SendSseErrorAsync(WriteSseAsync);
+            return;
+        }
         var top = insights
             .Where(i => !ignored.Contains($"{i.Kind}|{i.Target}"))
             .OrderByDescending(i => i.Severity)
@@ -1503,8 +1551,7 @@ public class TeamActivityController : ControllerBase
     // ────────────────────────── 趋势爆点曲线 ──────────────────────────
 
     // 趋势曲线短 TTL 缓存：与体验全景热力图同源、同档反复切换不重复聚合（key 取整到分钟 + 桶粒度）
-    private static readonly ConcurrentDictionary<string, (DateTime At, object Payload)> _trendCache = new();
-    private const int TrendCacheSeconds = 30;
+    private static readonly TeamActivityQueryCache<object> _trendCache = new(TimeSpan.FromSeconds(30));
 
     /// <summary>
     /// 趋势爆点曲线：按时间桶聚合 apirequestlogs 的总量/报错/慢请求，回答「什么时候开始变差」。
@@ -1516,39 +1563,24 @@ public class TeamActivityController : ControllerBase
     [HttpGet("experience-trend")]
     public async Task<IActionResult> ExperienceTrend([FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
     {
+        var started = Stopwatch.GetTimestamp();
         var endUtc = to?.ToUniversalTime() ?? DateTime.UtcNow;
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
         // 窗口 ≤ 约 2 天用小时桶（看清一天内的波动），更长用天桶（避免桶过多）
         var unit = (endUtc - fromUtc) <= TimeSpan.FromHours(50) ? "hour" : "day";
 
         var cacheKey = $"{fromUtc:yyyyMMddHHmm}|{endUtc:yyyyMMddHHmm}|{unit}";
-        if (_trendCache.TryGetValue(cacheKey, out var hit) && (DateTime.UtcNow - hit.At).TotalSeconds < TrendCacheSeconds)
-        {
-            return Ok(ApiResponse<object>.Ok(hit.Payload));
-        }
-
-        object payload;
         try
         {
-            payload = await ExperienceTrendAggregateAsync(fromUtc, endUtc, unit);
+            var payload = await _trendCache.GetAsync(cacheKey, () => ExperienceTrendAggregateAsync(fromUtc, endUtc, unit));
+            Response.Headers["Server-Timing"] = FormattableString.Invariant($"voc;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}");
+            return Ok(ApiResponse<object>.Ok(payload));
         }
-        catch
+        catch (MongoException ex)
         {
-            // 趋势是增强视图，聚合失败时返回空桶（前端走空数据引导态），不影响其他视图
-            payload = new { buckets = Array.Empty<object>(), windowFrom = fromUtc, windowTo = endUtc, bucketUnit = unit };
+            _logger.LogWarning(ex, "VOC trend aggregation failed");
+            return StatusCode(503, ApiResponse<object>.Fail("VOC_QUERY_FAILED", "趋势查询暂不可用，请缩短时间范围后重试"));
         }
-
-        _trendCache[cacheKey] = (DateTime.UtcNow, payload);
-        if (_trendCache.Count > 64)
-        {
-            foreach (var k in _trendCache
-                         .Where(e => (DateTime.UtcNow - e.Value.At).TotalSeconds > TrendCacheSeconds)
-                         .Select(e => e.Key).ToList())
-            {
-                _trendCache.TryRemove(k, out _);
-            }
-        }
-        return Ok(ApiResponse<object>.Ok(payload));
     }
 
     /// <summary>按时间桶下推聚合（$dateTrunc 按 hour/day 分组），回传按桶起点升序的 total/errors/slow。</summary>
@@ -1597,7 +1629,7 @@ public class TeamActivityController : ControllerBase
             new BsonDocument("$limit", 1000),
         };
 
-        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true });
+        var cursor = await _db.ApiRequestLogs.AggregateAsync<BsonDocument>(pipeline, new AggregateOptions { AllowDiskUse = true, MaxTime = MainQueryTimeout });
         var docs = await cursor.ToListAsync();
         var buckets = new List<object>();
         foreach (var d in docs)

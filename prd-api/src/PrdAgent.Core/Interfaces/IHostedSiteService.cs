@@ -805,4 +805,7 @@ public class SharedSiteInfo
     /// 只建过链接的人反而看得见。匿名访问恒为 false。
     /// </summary>
     public bool ViewerCanEdit { get; set; }
+
+    /// <summary>当前访问者是否为网页作者；与分享链接创建者无关，匿名访问恒为 false。</summary>
+    public bool ViewerIsOwner { get; set; }
 }
