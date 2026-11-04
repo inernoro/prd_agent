@@ -124,6 +124,15 @@ public sealed class WebPageDesignArtifactLifecycleAdapterTests
         await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == setup.Run.Id,
             Builders<DesignArtifactRun>.Update.Set(item => item.ProducedArtifactSiteId, artifact.SiteId)
                 .Set(item => item.ProducedArtifactRevisionId, artifact.RevisionId));
+        // 两边各有超过批次上限的不合格记录：不能先截任一集合再做另一侧判定。
+        await fixture.Db.MdToPptRuns.InsertManyAsync(Enumerable.Range(0, 100).Select(index => new MdToPptRun
+        { Id = $"unmanaged-{index}", UserId = setup.Run.UserId, Runtime = DesignArtifactRuntimes.OpenDesign, Status = "running" }));
+        await fixture.Db.DesignArtifactRuns.InsertManyAsync(Enumerable.Range(0, 100).Select(index => new DesignArtifactRun
+        { Id = $"settled-{index}", UserId = setup.Run.UserId, DeploymentSlug = DeploymentScope.Current,
+            Runtime = DesignArtifactRuntimes.OpenDesign, ArtifactType = DesignArtifactTypes.HtmlPpt, Status = RunStatuses.Done,
+            UpdatedAt = DateTime.UtcNow.AddDays(-1) }));
+        await fixture.Db.MdToPptRuns.InsertManyAsync(Enumerable.Range(0, 100).Select(index => new MdToPptRun
+        { Id = $"settled-{index}", UserId = setup.Run.UserId, Runtime = DesignArtifactRuntimes.OpenDesign, Status = "done" }));
         await fixture.Db.MdToPptRuns.InsertOneAsync(new MdToPptRun
         { Id = setup.Run.Id, UserId = setup.Run.UserId, Runtime = DesignArtifactRuntimes.OpenDesign, Status = "running", Op = "convert" });
         await fixture.Db.HostedSites.InsertOneAsync(new HostedSite

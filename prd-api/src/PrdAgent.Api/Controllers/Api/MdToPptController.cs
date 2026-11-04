@@ -1755,9 +1755,9 @@ public class MdToPptController : ControllerBase
             .Find(x => x.Id == id && x.UserId == userId)
             .FirstOrDefaultAsync();
         if (run == null) return NotFound(new { error = "运行记录不存在" });
+        // 历史完成稿仍可由本人只读查看；执行与恢复入口继续受当前部署范围约束。
         var designArtifact = await _db.DesignArtifactRuns.Find(item =>
-                item.DeploymentSlug == DeploymentScope.Current
-                && item.Id == id
+                item.Id == id
                 && item.UserId == userId
                 && item.ArtifactType == DesignArtifactTypes.HtmlPpt)
             .FirstOrDefaultAsync(HttpContext.RequestAborted);

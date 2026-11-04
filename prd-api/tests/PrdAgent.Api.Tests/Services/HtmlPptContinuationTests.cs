@@ -26,6 +26,37 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class HtmlPptContinuationTests
 {
     [Fact]
+    public async Task HistoricalCompletedPresentation_ReadsTheOwnerLedgerWithoutLosingThePendingFence()
+    {
+        await using var store = await RunMongoFixture.CreateAsync("ppt_historical_status");
+        var f = Fixture();
+        f.Source.Runtime = DesignArtifactRuntimes.OpenDesign;
+        f.Artifact.DeploymentSlug = "retired-deployment";
+        await store.Db.MdToPptRuns.InsertOneAsync(f.Source);
+        await store.Db.DesignArtifactRuns.InsertOneAsync(f.Artifact);
+        var before = f.Source.ToJson();
+        var http = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "owner")], "test")) };
+        var controller = new MdToPptController(store.Db, null!, Mock.Of<ILlmGateway>(),
+            Mock.Of<ILLMRequestContextAccessor>(), Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+            Mock.Of<IHtmlPptDesignArtifactAdapter>(), Mock.Of<IHtmlPptOpenDesignRunService>(),
+            Mock.Of<IHostedSiteService>(), Mock.Of<IHtmlPptPublishCoordinator>(),
+            new ConfigurationBuilder().Build(), NullLogger<MdToPptController>.Instance)
+            { ControllerContext = new ControllerContext { HttpContext = http } };
+        string Status(IActionResult result) => System.Text.Json.JsonSerializer.SerializeToElement(
+            Assert.IsType<OkObjectResult>(result).Value).GetProperty("status").GetString()!;
+
+        Assert.Equal("done", Status(await controller.GetRun(f.Source.Id)));
+        await store.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == f.Artifact.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Committing));
+        Assert.Equal("running", Status(await controller.GetRun(f.Source.Id)));
+        http.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.NameIdentifier, "another-owner")], "test"));
+        Assert.IsType<NotFoundObjectResult>(await controller.GetRun(f.Source.Id));
+        Assert.Equal(before, (await store.Db.MdToPptRuns.Find(item => item.Id == f.Source.Id).SingleAsync()).ToJson());
+    }
+
+    [Fact]
     public async Task CommittingOpenDesignPresentation_CannotFallBackToHtmlOnlyPublication()
     {
         await using var store = await RunMongoFixture.CreateAsync("ppt_publish_pending");

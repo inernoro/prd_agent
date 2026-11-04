@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -444,13 +445,15 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         }
 
         // 公共 Complete 已成功但绑定/兼容投影未成功的 PPT 仍按原完整版本收口。
-        var pendingPptIds = await _db.MdToPptRuns.Find(run => run.Runtime == DesignArtifactRuntimes.OpenDesign
-                && run.Status == "running")
-            .Limit(Math.Clamp(limit, 1, 500)).Project(run => run.Id).ToListAsync(CancellationToken.None);
-        var pendingPresentations = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current
-                && pendingPptIds.Contains(run.Id) && run.ArtifactType == DesignArtifactTypes.HtmlPpt
-                && run.Runtime == DesignArtifactRuntimes.OpenDesign && run.Status == RunStatuses.Done)
-            .ToListAsync(CancellationToken.None);
+        var pendingPresentations = await (from run in _db.DesignArtifactRuns.AsQueryable()
+            join compatibility in _db.MdToPptRuns.AsQueryable() on run.Id equals compatibility.Id
+            where run.DeploymentSlug == DeploymentScope.Current
+                && run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                && run.Runtime == DesignArtifactRuntimes.OpenDesign && run.Status == RunStatuses.Done
+                && compatibility.UserId == run.UserId
+                && compatibility.Runtime == DesignArtifactRuntimes.OpenDesign && compatibility.Status == "running"
+            orderby run.UpdatedAt
+            select run).Take(Math.Clamp(limit, 1, 500)).ToListAsync(CancellationToken.None);
         foreach (var run in pendingPresentations)
         {
             try { if (await RecoverPresentationAsync(run)) recovered++; }
