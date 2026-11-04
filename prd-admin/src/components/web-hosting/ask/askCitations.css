@@ -1,7 +1,4 @@
-/* 脚注是辅助信息：正文用小号上标，回答末尾默认仅显示引用数量。 */
-.ask-md .ask-citation-sup { font-size: 10px; line-height: 0; vertical-align: super; }
-.ask-md .ask-citation-ref { padding: 0 2px; white-space: nowrap; text-decoration: none; font-weight: 500; }
-.ask-md .ask-citation-ref:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 2px; border-radius: 3px; }
+/* 脚注是辅助信息：正文用紧凑来源小标，回答末尾默认仅显示引用数量。 */
 .ask-md .ask-citations { margin-top: 4px; border-top: 1px solid var(--border-subtle); font-size: 11.5px; line-height: 1.55; color: var(--text-muted); }
 .ask-md .ask-citations > summary {
   display: flex;
@@ -25,3 +22,41 @@
 .ask-md .ask-citation-actions button, .ask-md .ask-citation-actions a { display: inline-flex; align-items: center; gap: 2px; color: var(--text-muted); cursor: pointer; }
 .ask-md .ask-citation-actions button:hover, .ask-md .ask-citation-actions a:hover { color: var(--text-primary); }
 .ask-md .ask-citation-actions :focus-visible, .ask-md .ask-citations > summary:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 2px; border-radius: 3px; }
+
+.ask-md .ask-citation-inline { display: inline; vertical-align: baseline; }
+.ask-md .ask-citation-badge {
+  display: inline-flex;
+  vertical-align: baseline;
+  align-items: center;
+  gap: 4px;
+  max-width: 150px;
+  margin: 0 3px 0 5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 17px;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ask-md .ask-citation-badge:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+.ask-md .ask-citation-badge svg, .ask-md .ask-citation-badge-count { flex-shrink: 0; }
+.ask-md .ask-citation-badge-label { overflow: hidden; text-overflow: ellipsis; }
+.ask-md .ask-citation-badge:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 2px; }
+.ask-citation-popover { color: var(--text-secondary); font-size: 11.5px; line-height: 1.55; }
+.ask-citation-popover-header { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+.ask-citation-popover-header > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
+.ask-citation-popover-header > svg { flex-shrink: 0; }
+.ask-citation-popover-header button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 5px; cursor: pointer; }
+.ask-citation-popover-list { padding: 0 12px; overscroll-behavior: contain; scrollbar-width: thin; }
+.ask-citation-card { padding: 10px 0; }
+.ask-citation-card + .ask-citation-card { border-top: 1px solid var(--border-subtle); }
+.ask-citation-card-label { margin-bottom: 4px; color: var(--text-muted); font-size: 10px; }
+.ask-citation-card p { margin: 0; overflow-wrap: anywhere; }
+.ask-citation-card-full { white-space: pre-wrap; }
+.ask-citation-card > button { margin-top: 6px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.ask-citation-popover button:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+.ask-citation-popover button:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 2px; }

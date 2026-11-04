@@ -1,5 +1,7 @@
 import { memo, useId, useRef } from 'react';
 import { BookOpen, ChevronRight } from 'lucide-react';
+import { AskCitationBadge } from './AskCitationBadge';
+import { citationReferences, rehypeAskCitations } from './citationNodes';
 import { AskCitationNote } from './AskCitationNote';
 import './askCitations.css';
 import ReactMarkdown from 'react-markdown';
@@ -25,25 +27,30 @@ const citationSchema = { ...defaultSchema, clobberPrefix: '' };
  * 安全上不放行原始 HTML（不挂 rehypeRaw）：这段文本来自模型，而模型的输入里有
  * 用户上传的网页正文——等于间接可控。渲染成 HTML 会把提示词注入变成 XSS。
  */
-export const AskMarkdown = memo(function AskMarkdown({ content }: { content: string }) {
+export const AskMarkdown = memo(function AskMarkdown({ content, sourceTitle = '本页原文' }: { content: string; sourceTitle?: string }) {
   const instanceId = useId();
   const prefix = `ask-${instanceId.replace(/[^a-zA-Z0-9-]/g, '')}-`;
   const rootRef = useRef<HTMLDivElement>(null);
+  const notes = new Map<string, string>();
   const navigateCitation = (href: string) => {
     // 脚注只在当前回答内定位，不改写 HashRouter；先展开再定位，避免焦点落入隐藏内容。
-    const target = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[id]') ?? [])
+    let target = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[id]') ?? [])
       .find((element) => `#${element.id}` === href);
+    target = target?.closest('[data-citation-badge]')?.querySelector<HTMLAnchorElement>('a') ?? target;
     const citations = target?.closest<HTMLDetailsElement>('details.ask-citations');
     if (citations) citations.open = true;
     target?.scrollIntoView({ block: 'nearest' });
-    if (target) { target.setAttribute('tabindex', '-1'); target.focus({ preventScroll: true }); }
+    if (target) {
+      if (target.tagName !== 'A') target.setAttribute('tabindex', '-1');
+      target.focus({ preventScroll: true });
+    }
   };
   return (
     <div ref={rootRef} className="ask-md" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         remarkRehypeOptions={{ clobberPrefix: prefix, footnoteLabel: '引用原文', footnoteBackLabel: '返回正文' }}
-        rehypePlugins={[[rehypeSanitize, citationSchema]]}
+        rehypePlugins={[[rehypeSanitize, citationSchema], [rehypeAskCitations, { notes }]]}
         components={{
           p: ({ children }) => <p style={{ margin: 0 }}>{children}</p>,
           ul: ({ children }) => <ul style={{ margin: 0, paddingLeft: 18, listStyle: 'disc' }}>{children}</ul>,
@@ -60,24 +67,24 @@ export const AskMarkdown = memo(function AskMarkdown({ content }: { content: str
               <div className="ask-citations-list" style={{ maxHeight: 'min(220px, 32dvh)', minHeight: 0, overflowY: 'auto' }}>{children}</div>
             </details>;
           },
-          sup: ({ children }) => <sup className="ask-citation-sup">{children}</sup>,
+          sup: ({ children, node }) => {
+            const references = node ? citationReferences(node) : [];
+            return references.length ? <AskCitationBadge references={references} notes={notes} sourceTitle={sourceTitle} /> : <sup>{children}</sup>;
+          },
           strong: ({ children }) => <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{children}</strong>,
           a: ({ href, id, children, node }) => node?.properties.dataFootnoteBackref !== undefined ? null : (
             <a
               id={id}
-              className={node?.properties.dataFootnoteRef !== undefined ? 'ask-citation-ref' : undefined}
-              aria-label={node?.properties.dataFootnoteRef !== undefined ? `查看引用 ${String(children)}` : undefined}
               href={href}
               target={href?.startsWith('#') ? undefined : '_blank'}
               rel={href?.startsWith('#') ? undefined : 'noopener noreferrer'}
-              aria-describedby={node?.properties.dataFootnoteRef !== undefined ? `${prefix}footnote-label` : undefined}
               onClick={href?.startsWith('#') ? (event) => {
                 event.preventDefault();
                 navigateCitation(href);
               } : undefined}
               style={{ color: 'var(--accent-primary)' }}
             >
-              {node?.properties.dataFootnoteRef !== undefined ? <>[{children}]</> : children}
+              {children}
             </a>
           ),
           code: ({ children }) => (
@@ -123,7 +130,7 @@ export const AskMarkdown = memo(function AskMarkdown({ content }: { content: str
           h2: ({ id, children }) => id === 'footnote-label'
             ? <h2 id={`${prefix}footnote-label`} className="sr-only">{children}</h2> : (
             <h2
-              id={id === 'footnote-label' ? `${prefix}footnote-label` : id}
+              id={id}
               style={{ margin: 0, fontSize: '1em', color: 'var(--text-primary)', fontWeight: 600 }}
             >{children}</h2>
           ),

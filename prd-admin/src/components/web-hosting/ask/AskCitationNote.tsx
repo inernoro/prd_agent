@@ -1,26 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { CornerUpLeft } from 'lucide-react';
 
-interface CitationNode {
-  type: string;
-  value?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: CitationNode[];
-}
-
-function excerptText(node: CitationNode): string {
-  if (node.properties?.dataFootnoteBackref !== undefined) return '';
-  if (node.type === 'text') return node.value ?? '';
-  if (node.tagName === 'br') return '\n';
-  const text = node.children?.map(excerptText).join('') ?? '';
-  return text + (['p', 'li', 'blockquote'].includes(node.tagName ?? '') ? '\n' : '');
-}
-
-function backReferences(node: CitationNode): string[] {
-  if (node.properties?.dataFootnoteBackref !== undefined && typeof node.properties.href === 'string') return [node.properties.href];
-  return node.children?.flatMap(backReferences) ?? [];
-}
+import { excerptText, compactExcerpt, backReferences, type CitationNode } from './citationNodes';
 
 /** 摘录只压缩展示，不改写或丢弃保存的原文；完整片段按需查看。 */
 export function AskCitationNote({ id, node, children, prefix, onNavigate }: {
@@ -31,9 +12,7 @@ export function AskCitationNote({ id, node, children, prefix, onNavigate }: {
   onNavigate: (href: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const excerpt = excerptText(node).replace(/\s+/g, ' ').trim();
-  const characters = Array.from(excerpt);
-  const preview = characters.length > 160 ? `${characters.slice(0, 160).join('')}…` : excerpt;
+  const preview = compactExcerpt(excerptText(node));
   const backlinks = backReferences(node).filter((href) => href.startsWith(`#${prefix}fnref-`));
   return <li id={id} tabIndex={-1} className="ask-citation-note">
     <div className="ask-citation-preview" hidden={expanded}>{preview}</div>

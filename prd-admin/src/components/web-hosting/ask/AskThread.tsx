@@ -128,7 +128,7 @@ export default function AskThread({
                   markdown
                   // 没有 renderMarkdown 的话 StreamingText 不会切到 markdown 视图，
                   // 完成后的答案会把 **加粗**、列表、链接的原始语法裸露出来
-                  renderMarkdown={(c) => <AskMarkdown content={c} />}
+                  renderMarkdown={(c) => <AskMarkdown content={c} sourceTitle={title} />}
                 />
               )}
             </div>
