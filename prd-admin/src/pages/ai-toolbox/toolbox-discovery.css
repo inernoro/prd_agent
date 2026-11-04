@@ -22,8 +22,8 @@
 .toolbox-gallery .toolbox-filter-bar { min-height: 46px; border-radius: 12px; }
 .toolbox-gallery-toolbar,
 .toolbox-gallery-options { display: flex; align-items: center; gap: 18px; }
-.toolbox-gallery-toolbar { width: 100%; min-width: 0; justify-content: space-between; }
-.toolbox-gallery-options { flex-shrink: 0; gap: 14px; }
+.toolbox-gallery-toolbar { width: 100%; min-width: 0; justify-content: space-between; flex-wrap: wrap; row-gap: 8px; }
+.toolbox-gallery-options { flex-shrink: 0; gap: 14px; margin-left: auto; }
 .toolbox-gallery .toolbox-segmented { align-self: stretch; gap: 12px; overflow: visible; }
 .toolbox-gallery .toolbox-segmented-button { position: relative; height: 46px; padding: 0 10px; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 13px; font-weight: 500; }
 .toolbox-gallery .toolbox-segmented-button[data-active="true"] { background: transparent; box-shadow: none; font-weight: 600; }
@@ -72,14 +72,15 @@
 .toolbox-empty-icon { display: flex; align-items: center; justify-content: center; width: 52px; height: 52px; border-radius: 14px; color: var(--text-muted); background: var(--bg-tertiary); }
 /* 列表复用同一张卡和相同操作，只改变图文排布。 */
 .toolbox-gallery .toolbox-card-grid[data-display-mode="list"] { grid-template-columns: 1fr; gap: 10px; }
-.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card { display: grid; grid-template-columns: 148px minmax(0, 1fr); min-height: 90px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card { display: grid; grid-template-columns: 148px minmax(0, 1fr) auto; min-height: 90px; }
 .toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-card-visual { height: 90px; aspect-ratio: auto; }
 .toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-gallery-caption { grid-column: 2; grid-row: 1; align-self: stretch; display: flex; flex-direction: column; justify-content: center; border-top: 0; padding: 12px 140px 12px 20px; }
 .toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-card-footer { bottom: 32px; right: 20px; }
 .toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-card-tags { top: 10px; bottom: auto; left: auto; max-width: 280px; right: 70px; }
 .toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-artwork="false"] { padding: 0; }
 .toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-artwork="false"] .toolbox-card-heading { align-self: center; justify-self: center; grid-column: 1; grid-row: 1; }
-.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-footer-details="true"] .toolbox-card-footer { grid-column: 2; padding: 0 20px 12px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-footer-details="true"] .toolbox-gallery-caption { padding-right: 16px; }
+.toolbox-gallery .toolbox-card-grid[data-display-mode="list"] .toolbox-tool-card[data-has-footer-details="true"] .toolbox-card-footer { grid-column: 3; grid-row: 1; align-self: center; position: static; max-width: 260px; min-width: 0; padding: 12px 20px 12px 0; }
 @media (max-width: 1100px) {
   .toolbox-discovery-search { width: 250px; }
   .toolbox-header-actions { gap: 10px; }

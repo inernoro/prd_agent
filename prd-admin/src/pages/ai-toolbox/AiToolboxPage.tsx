@@ -242,7 +242,7 @@ export default function AiToolboxPage() {
             <div className="toolbox-display-switch" role="group" aria-label="展示方式">
               {DISPLAY_MODES.map((mode) => {
                 const Icon = mode.icon;
-                const active = mode.key === 'list' ? displayMode === 'list' : displayMode !== 'list';
+                const active = mode.key === displayMode;
                 return (
                   <button
                     key={mode.key}

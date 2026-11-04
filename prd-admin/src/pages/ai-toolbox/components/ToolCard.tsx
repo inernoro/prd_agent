@@ -105,7 +105,7 @@ function getIconComponent(iconName: string): LucideIcon {
 }
 
 /** 图文分区画廊卡：复用工具路由、管理、标签筛选、复制与收藏行为。 */
-export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: ToolCardProps) {
+export function ToolCard({ item, source = 'mine', displayMode = 'compact' }: ToolCardProps) {
   const {
     selectItem,
     toggleFavorite,
@@ -126,7 +126,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
   const IconComponent = getIconComponent(item.icon);
   const hasArtwork = hasAgentCardArtwork(item.agentKey);
   const isCompact = displayMode === 'compact';
-  const visibleTagCount = isCompact ? 2 : displayMode === 'showcase' ? 4 : 3;
+  const visibleTagCount = isCompact ? 2 : 3;
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);

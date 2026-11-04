@@ -1,4 +1,7 @@
+import { getAgentCardTask } from '@/components/agent-shell/AgentCardArtwork';
+
 interface SearchableToolboxItem {
+  agentKey?: string;
   name: string;
   description: string;
   tags: string[];
@@ -26,7 +29,8 @@ export function searchToolboxItems<T extends SearchableToolboxItem>(items: T[], 
       const name = normalize(item.name);
       const tags = item.tags.map(normalize).join(' ');
       const description = normalize(item.description);
-      const text = `${name} ${tags} ${description}`;
+      const purpose = normalize(getAgentCardTask(item.agentKey) ?? item.description);
+      const text = `${name} ${tags} ${description} ${purpose}`;
       const exact = text.includes(normalized);
       if (!exact && !terms.every((term) => text.includes(term))) return { item, score: 0 };
       const score = (name.includes(normalized) ? 100 : 0)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { searchToolboxItems } from '../toolboxSearch';
+import { getAgentCardTask } from '@/components/agent-shell/AgentCardArtwork';
 
 const tools = [
   { name: '演讲智能体', description: '组织表达，支持 PPT', tags: ['演讲', '导图'] },
@@ -13,6 +14,10 @@ describe('toolbox search', () => {
   });
   it('matches task keywords across fields without requiring an exact sentence', () => {
     expect(searchToolboxItems(tools, '把 Markdown 做成 PPT')).toEqual([tools[1]]);
+  });
+  it('finds a tool by the exact purpose shown on its card', () => {
+    const visual = { agentKey: 'visual-agent', name: '视觉创作智能体', description: '根据提示词生成图片', tags: ['图片生成', '设计'] };
+    expect(searchToolboxItems([visual], getAgentCardTask(visual.agentKey)!)).toEqual([visual]);
   });
   it('normalizes full-width text, casing and surrounding whitespace', () => {
     expect(searchToolboxItems(tools, '  ＭＡＲＫＤＯＷＮ  ppt  ')).toEqual([tools[1]]);
