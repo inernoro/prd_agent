@@ -43,6 +43,17 @@ describe('内容加载覆盖守卫', () => {
       expect(covered.waits.some((row: { category: string }) => row.category === 'action')).toBe(true);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
+
+  it('待克隆项目的菜单动作不误计为内容加载，菜单外的裸等待仍报错', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-loading-menu-audit-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'CloneMenu.tsx'), `function CloneMenu(){return <div>{project.cloneStatus === 'pending' ? <DropdownItem onSelect={clone}>开始克隆</DropdownItem> : null}{loading ? <div>读取项目</div> : null}</div>;}`);
+      const result = auditLoadingCoverage(dir);
+      expect(result.waits.filter((row: { category: string }) => row.category === 'action')).toHaveLength(1);
+      expect(result.uncovered).toHaveLength(1);
+      expect(result.uncovered[0].condition).toBe('loading');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
 });
 
 describe('共享内容骨架', () => {

@@ -55,10 +55,10 @@ export function auditLoadingCoverage(root = sourceRoot) {
         const record = { ...position(n), condition: condition.getText(sf), category: 'uncovered', reason: '' };
         let control = false;
         for (let p = n.parent; p; p = p.parent) {
-          if (ts.isJsxAttribute(p) || ts.isJsxElement(p) && /^(?:Button|button|select|option)$/.test(p.openingElement.tagName.getText(sf))) control = true;
+          if (ts.isJsxAttribute(p) || ts.isJsxElement(p) && /^(?:Button|button|DropdownItem|select|option)$/.test(p.openingElement.tagName.getText(sf))) control = true;
         }
         const markup = body.getText(sf);
-        if (control || /^\(?\s*<(?:Button|button)\b/.test(markup)) { record.category = 'action'; record.reason = '按钮或原生控件的等待反馈'; }
+        if (control || /^\(?\s*<(?:Button|button|DropdownItem)\b/.test(markup)) { record.category = 'action'; record.reason = '按钮、菜单项或原生控件的等待反馈'; }
         else if (/<(?:ContentLoading|LoadingBlock|\w*Skeleton|ConsoleRouteFallback)\b|cds-loading-skeleton-/.test(markup)) { record.category = 'skeleton'; }
         else if (progressOwners.has(record.owner) && (
           record.owner === 'DbProbePanel' && record.condition === "state.status === 'loading'" ||
