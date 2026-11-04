@@ -225,6 +225,37 @@ describe('已受理部署的持久输入与重启恢复', () => {
     expect(new DeploymentRunService(afterClaim).restoreQueued(new BranchOperationCoordinator())).toEqual([]);
   });
 
+  it.each(['delayed', 'failed'])('同实例恢复已有真实保存回执时，额外保存%s不撤销原正常关闭资格', async mode => {
+    const { run, service, coordinator, blocker } = await accepted();
+    settleAdmissionBlocker(coordinator, blocker);
+    expect(service.canPreserveQueuedRun(run.id, coordinator)).toBe(true);
+    coordinator.interruptAll('first normal restart', 'api.self-update', { normalShutdown: true });
+    await state.flush();
+    const originalIntent = structuredClone(state.getState().deploymentIntents![run.id]);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = fs.promises.rename.bind(fs.promises);
+    const rename = vi.spyOn(fs.promises, 'rename').mockImplementation(async (...args) => {
+      if (mode === 'failed') throw new Error('synthetic unnecessary recovery write failed');
+      await gate; await original(...args);
+    });
+    try {
+      state.allocatePort(10000);
+      state.save([{ kind: 'global' }]);
+      expect(service.restoreQueued(coordinator).map(item => item.id)).toEqual([run.id]);
+      if (mode === 'failed') await service.waitForAcceptance(run.id).catch(() => {});
+      expect(service.canPreserveQueuedRun(run.id, coordinator)).toBe(true);
+      expect(rename).not.toHaveBeenCalled();
+      coordinator.interruptAll('retry normal restart', 'api.self-update', { normalShutdown: true });
+      expect(service.get(run.id)?.status).toBe('queued');
+      expect(state.getState().deploymentIntents![run.id]).toEqual(originalIntent);
+    } finally { release(); await service.waitForAcceptance(run.id).catch(() => {}); rename.mockRestore(); }
+    await state.flush();
+    const durable = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(durable.deploymentRuns[run.id].status).toBe('queued');
+    expect(durable.deploymentIntents[run.id]).toEqual(originalIntent);
+  });
+
   it.each(['unconfirmed', 'failed'])('恢复后的真实JSON保存%s仍拒绝保留，不能把恢复数组当回执', async mode => {
     const { run } = await accepted();
     const reopened = new StateService(file); reopened.load();

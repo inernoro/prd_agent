@@ -219,8 +219,10 @@ export class DeploymentRunService {
         if (newer) { this.cancel(run.id, '已有较新的覆盖范围部署，旧待办不再恢复', 'superseded'); continue; }
         coordinator.restorePendingDeployment({ operationId: intent.operationId, generation: intent.generation, branchId: run.branchId,
           request: intent.request, mergedCount: 1, updatedAt: run.startedAt }, input);
-        // 同步恢复结果不是保存回执；只有原保存实际成功后才可跨下一次正常关闭。
-        void this.confirmAcceptance(run, intent).catch(() => {});
+        // 同实例已确认的原sealed意图不重复保存或撤销回执；冷启动仍须等待实际保存。
+        if (!this.acceptanceWrites.has(run.id) && this.acceptedQueuedIntents.get(run.id) !== this.intentFingerprint(intent)) {
+          void this.confirmAcceptance(run, intent).catch(() => {});
+        }
         restored.push(run);
       } catch {
         this.fail(run.id, { code: 'cds.intent.unrecoverable', owner: 'cds', retryable: true,
