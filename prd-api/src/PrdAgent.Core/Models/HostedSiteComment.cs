@@ -42,6 +42,9 @@ public class HostedSiteComment
 
     public bool IsResolved { get; set; }
 
+    public string? ContentVersion { get; set; }
+    public string? RevisionId { get; set; }
+
     /// <summary>软删除标记（删除不抹除记录，便于审计）</summary>
     public bool IsDeleted { get; set; }
 
@@ -69,6 +72,23 @@ public class HostedSiteCommentAnchor
 
 public static class HostedSiteCommentRules
 {
+    public static string VersionKey(DateTime version) =>
+        (version.Ticks - version.Ticks % TimeSpan.TicksPerMillisecond).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    public static string? StoredVersion(HostedSiteComment comment)
+    {
+        if (!string.IsNullOrWhiteSpace(comment.ContentVersion)) return comment.ContentVersion;
+        return long.TryParse(comment.Anchor?.ContentVersion, out var ticks) && ticks > 0 && ticks <= DateTime.MaxValue.Ticks
+            ? VersionKey(new DateTime(ticks, DateTimeKind.Utc)) : null;
+    }
+
+    public static bool IsPublishedVersion(HostedSiteRevision? revision, string siteId) =>
+        revision != null && revision.SiteId == siteId && revision.Status == HostedSiteRevisionStatuses.Published
+        && revision.PublishedContentVersion.HasValue;
+
+    public static bool MatchesExpectedVersion(string? expected, string? actual) =>
+        expected == null || string.Equals(expected, actual, StringComparison.Ordinal);
+
     public static bool IsValidAnchor(HostedSiteCommentAnchor? anchor) => anchor == null ||
         ((anchor.Kind == "element" || anchor.Kind == "text")
          && !string.IsNullOrWhiteSpace(anchor.PagePath) && anchor.PagePath.StartsWith('/') && anchor.PagePath.Length <= 2000

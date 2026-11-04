@@ -22,7 +22,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/web-pages")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
-public class WebPagesController : ControllerBase
+public partial class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
     private readonly IHostedSiteOptimizationService _optimizationService;
@@ -74,7 +74,9 @@ public class WebPagesController : ControllerBase
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory,
-        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null)
+        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
+        IHostedSiteRevisionService? revisions = null,
+        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -84,6 +86,8 @@ public class WebPagesController : ControllerBase
         _httpClientFactory = httpClientFactory;
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
+        _reviewRevisions = revisions;
+        _reviewStorage = assetStorage;
     }
 
     /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
@@ -337,6 +341,7 @@ public class WebPagesController : ControllerBase
                     : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
                 var zipSite = await _siteService.CreateFromZipAsync(
                     userId, zipStream, title, description, folder, zipTags, uploadId: uploadId);
+                await EnsureReviewSnapshotAsync(zipSite, GetUserId());
                 return Ok(ApiResponse<object>.Ok(zipSite));
             }
             catch (InvalidOperationException ex)
@@ -1347,9 +1352,11 @@ public class WebPagesController : ControllerBase
         {
             try
             {
+                await SnapshotBeforeReuploadAsync(id);
                 using var zipStream = file.OpenReadStream();
                 var zipSite = await _siteService.ReuploadAsync(
                     id, GetUserId(), zipStream, file.FileName, uploadId: uploadId);
+                await EnsureReviewSnapshotAsync(zipSite, GetUserId());
                 return Ok(ApiResponse<object>.Ok(zipSite));
             }
             catch (KeyNotFoundException)
@@ -1387,8 +1394,10 @@ public class WebPagesController : ControllerBase
             // uploadId 要一路传到解包那层，否则前端轮询的那个键下面永远没有进度：
             // 换 ZIP 时解包面板会一直停在「等待中」，而服务层其实早就支持这个参数了，
             // 断的只是控制器这一跳（线只建了一半）。
+            await SnapshotBeforeReuploadAsync(id);
             var updated = await _siteService.ReuploadAsync(
                 id, GetUserId(), fileBytes, uploadName, wrappedAssetType, uploadId: uploadId);
+            await EnsureReviewSnapshotAsync(updated, GetUserId());
             await _uploadProgress.CompleteAsync(uploadId);
             return Ok(ApiResponse<object>.Ok(updated));
         }
@@ -1988,7 +1997,8 @@ public class WebPagesController : ControllerBase
     public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
     {
         var result = await _siteService.AddCommentBySiteAsync(
-            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId);
+            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
         return MapAddCommentResult(result);
     }
 
@@ -2011,7 +2021,8 @@ public class WebPagesController : ControllerBase
         var userId = GetUserId();
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
-            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId);
+            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
         return MapAddCommentResult(result);
     }
 
@@ -2070,6 +2081,7 @@ public class WebPagesController : ControllerBase
             401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, error)),
             403 => StatusCode(403, ApiResponse<object>.Fail(errorCode ?? "FORBIDDEN", error)),
             400 => BadRequest(ApiResponse<object>.Fail(errorCode ?? ErrorCodes.INVALID_FORMAT, error)),
+            409 => Conflict(ApiResponse<object>.Fail(errorCode ?? "CONTENT_VERSION_CHANGED", error)),
             _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, error)),
         };
     }
@@ -2251,6 +2263,8 @@ public class SetCommentResolvedRequest
 
 public class AddSiteCommentRequest
 {
+    public string? RevisionId { get; set; }
+    public string? ExpectedContentVersion { get; set; }
     public HostedSiteCommentAnchor? Anchor { get; set; }
     public string? ParentId { get; set; }
     /// <summary>评论正文（1-2000 字）</summary>

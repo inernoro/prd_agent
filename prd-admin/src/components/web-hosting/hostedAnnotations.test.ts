@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -39,6 +39,24 @@ describe('hosted page annotation runtime', () => {
     expect(t.messages.some(m => m.type === 'map-annotation-ready')).toBe(true);
 
   });
+  it('reuses marker nodes and cached elements through document and nested scrolling', async () => {
+    const t = await setup();
+    t.init([{ id: 'smooth', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }], false);
+    await expect.poll(() => t.layer()?.querySelector('button:not([hidden])')).toBeTruthy();
+    const layer = t.layer()!;
+    const pin = layer.querySelector('button'), box = layer.querySelector('.outline[data-mark]');
+    const lookup = vi.spyOn(t.win.document, 'querySelector');
+    for (let i = 0; i < 20; i++) t.win.dispatchEvent(new t.win.Event('scroll'));
+    await tick();
+    expect(layer.querySelector('button')).toBe(pin);
+    expect(layer.querySelector('.outline[data-mark]')).toBe(box);
+    expect(lookup).not.toHaveBeenCalled();
+    t.win.document.querySelector('main')!.dispatchEvent(new t.win.Event('scroll', { bubbles: false }));
+    lookup.mockClear(); await tick();
+    expect(layer.querySelector('button')).toBe(pin);
+    expect(lookup).not.toHaveBeenCalled();
+    lookup.mockRestore();
+  });
   it('keeps a pin attached to a stable ID after copy changes and reports removal', async () => {
     const t = await setup(); t.init(); t.win.document.querySelector<HTMLElement>('#submit')!.click(); await tick();
     const anchor = t.messages.find(m => m.type === 'map-annotation-selected')!.anchor;
@@ -66,7 +84,7 @@ describe('hosted page annotation runtime', () => {
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html', enabled: true }, t.win);
     expect(t.layer()).toBeUndefined();
     t.init([{ id: 'foreign', anchor: { pagePath: '/other.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }], false); await tick();
-    expect(t.layer()?.querySelector('button')).toBeNull();
+    expect(t.layer()?.querySelector('button:not([hidden])')).toBeNull();
 
   });
   it('restores the same logical page across immutable publishing directories', async () => {
@@ -81,13 +99,13 @@ describe('hosted page annotation runtime', () => {
     t.init([{ id: 'changed', anchor: { pagePath: '/site/index.html', selector: 'p:nth-of-type(2)', tagName: 'p',
       kind: 'element', elementText: '重复文字', contentVersion: 'previous-version' } }], false);
     await expect.poll(() => t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual(['changed']);
-    expect(t.layer()?.querySelector('button')).toBeNull();
+    expect(t.layer()?.querySelector('button:not([hidden])')).toBeNull();
   });
   it('does not guess between duplicate replacements when a positional target disappears', async () => {
     const t = await setup();
     t.init([{ id: 'duplicate', anchor: { pagePath: '/site/index.html', selector: '#missing', tagName: 'p', kind: 'element', elementText: '重复文字' } }], false);
     await tick();
-    expect(t.layer()?.querySelector('button')).toBeNull();
+    expect(t.layer()?.querySelector('button:not([hidden])')).toBeNull();
     await expect.poll(() => t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual(['duplicate']);
 
   });

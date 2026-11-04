@@ -107,6 +107,9 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 .Distinct(StringComparer.Ordinal)
                 .ToList(),
             Html = entry.Html,
+            PublishedAssetKeys = entry.Site.Files.Select(f => f.CosKey).Where(k => !string.IsNullOrWhiteSpace(k)).Distinct(StringComparer.Ordinal).ToList(),
+            PublishedEntryCosKey = entry.Site.Files.FirstOrDefault(f => string.Equals(f.Path, entry.Site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey,
+            PublishedEntryFile = entry.Site.EntryFile,
             VerifiedFiles = verifiedFiles.Select(file => new HostedSiteRevisionFile
             {
                 Path = file.Path,
@@ -155,6 +158,20 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         IReadOnlyCollection<string>? knowledgeEntryIds,
         CancellationToken ct)
     {
+        // 当前快照登记实际公开的全部资源引用；后续整包重传的清理器必须保留它们。
+        var entryKey = entry.Site.Files.FirstOrDefault(f => string.Equals(f.Path, entry.Site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+        var keys = entry.Site.Files.Select(f => f.CosKey).Where(k => !string.IsNullOrWhiteSpace(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (keys.Count > 0 && (existing.PublishedEntryCosKey != entryKey || keys.Except(existing.PublishedAssetKeys).Any()))
+        {
+            await _db.HostedSiteRevisions.UpdateOneAsync(r => r.Id == existing.Id && r.SiteId == entry.Site.Id
+                    && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == entry.ContentVersion,
+                Builders<HostedSiteRevision>.Update.AddToSetEach(r => r.PublishedAssetKeys, keys)
+                    .Set(r => r.PublishedEntryCosKey, entryKey).Set(r => r.PublishedEntryFile, entry.Site.EntryFile),
+                cancellationToken: CancellationToken.None);
+            existing.PublishedAssetKeys = existing.PublishedAssetKeys.Concat(keys).Distinct(StringComparer.Ordinal).ToList();
+            existing.PublishedEntryCosKey = entryKey;
+            existing.PublishedEntryFile = entry.Site.EntryFile;
+        }
         if (string.IsNullOrWhiteSpace(sourceRunId)) return existing;
 
         var expectedRunId = sourceRunId.Trim();

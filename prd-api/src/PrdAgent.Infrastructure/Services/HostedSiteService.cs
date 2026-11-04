@@ -44,11 +44,21 @@ public class HostedSiteService : IHostedSiteService
     // 给入口 URL 追加版本指纹。version 取站点的 ContentVersion：只在创建 / 重新上传
     // （内容真正变化）时改变；改标题、改可见性等元数据操作不动它。因此"没更新"的站点
     // URL 恒定可缓存，符合用户要求"没更新还要缓存"。
-    internal static string AppendVersion(string url, DateTime version)
+    public static string AppendVersion(string url, DateTime version)
     {
         if (string.IsNullOrWhiteSpace(url)) return url;
         var sep = url.Contains('?') ? '&' : '?';
         return $"{url}{sep}v={version.Ticks}";
+    }
+
+    public static string AppendBridgeVersion(string url, int bridgeVersion)
+    {
+        if (bridgeVersion <= 0 || string.IsNullOrWhiteSpace(url)) return url;
+        var hashIndex = url.IndexOf('#');
+        var hash = hashIndex >= 0 ? url[hashIndex..] : string.Empty;
+        var head = hashIndex >= 0 ? url[..hashIndex] : url;
+        head = Regex.Replace(head, @"([?&])_map_bridge=[^&#]*&?", "$1").TrimEnd('?', '&');
+        return head + (head.Contains('?') ? "&" : "?") + "_map_bridge=" + bridgeVersion + hash;
     }
 
     private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -3244,11 +3254,14 @@ public class HostedSiteService : IHostedSiteService
         site.PdfFilePaths = HostedSitePdfFiles.Paths(site);
         site.ContentShape = HostedSiteContentShapeRules.Resolve(site);
         var version = EffectiveContentVersion(site);
+        var entryFile = (site.Files ?? []).FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        if (entryFile != null && !string.IsNullOrWhiteSpace(entryFile.CosKey))
+            site.SiteUrl = AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(entryFile.CosKey), version), site.SlideNavCompatVersion);
         foreach (var file in site.Files ?? new List<HostedSiteFile>())
         {
             file.Url = string.IsNullOrWhiteSpace(file.CosKey)
                 ? null
-                : AppendVersion(_storage.BuildUrlForKey(file.CosKey), version);
+                : AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(file.CosKey), version), site.SlideNavCompatVersion);
         }
         return site;
     }
@@ -3267,7 +3280,7 @@ public class HostedSiteService : IHostedSiteService
     // 计算缓存指纹用的内容版本：老文档无 ContentVersion（default）时回退到 CreatedAt
     // （创建后恒定不变）→ 保证 ?v 稳定、缓存命中。禁止回退到 UpdatedAt，那会被
     // 改标题 / 改可见性等元数据操作顶变，导致没改内容却击穿缓存。
-    internal static DateTime EffectiveContentVersion(HostedSite site)
+    public static DateTime EffectiveContentVersion(HostedSite site)
         => site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
 
     internal static bool IsVisitShare(WebPageShareLink share)
@@ -3451,15 +3464,13 @@ public class HostedSiteService : IHostedSiteService
                     var reinjected = InjectSlideNavCompat(sharedBytes);
                     if (reinjected.Length != sharedBytes.Length || !reinjected.SequenceEqual(sharedBytes))
                         continue; // 共享对象尚未被原站升级到当前版 → defer，等原站先升级，下次再刷副本
-                    // 已确认共享对象含当前版 shim → 安全刷 ?v= 击穿缓存 + 标版本。URL 取入口真实 CosKey（指向原站对象），
+                    // 已确认共享对象含当前版 shim → 安全刷独立垫片缓存键。URL 取入口真实 CosKey（指向原站对象），
                     // 不动 UpdatedAt 以免被动回填重排用户收藏列表。
-                    var savedNow = DateTime.UtcNow;
-                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
+                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id && x.ContentVersion == site.ContentVersion
+                            && x.PublishedRevisionId == site.PublishedRevisionId,
                         Builders<HostedSite>.Update
                             .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
-                            .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
-                            .Set(x => x.ContentVersion, savedNow)
-                            .Set(x => x.PublishedRevisionId, null),
+                            .Set(x => x.SiteUrl, AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(savedEntryKey), EffectiveContentVersion(site)), SlideNavVersion)),
                         cancellationToken: ct);
                     continue;
                 }
@@ -3489,25 +3500,17 @@ public class HostedSiteService : IHostedSiteService
                 // 下载存在失败：保持旧版本号，下次启动重试，避免把「未真正处理」的站点永久排除在回填之外
                 if (deferred) continue;
 
-                // 升级版本号；内容有变则同时 bump ContentVersion + SiteUrl（?v 击穿 CDN/浏览器缓存）
-                var now = DateTime.UtcNow;
+                // 垫片升级只更新独立缓存键，不改变业务版本、发布时间与发布版本指针。
                 var update = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
-                if (anyChanged)
-                {
-                    // URL 一律取入口 HTML 的真实 CosKey 构造，绝不依据 site.Id 推断 key（saved-share 上面已 return）
-                    var entryKey = entryHtml?.CosKey
-                        ?? (string.IsNullOrEmpty(site.EntryFile) ? null : _storage.BuildSiteKey(site.Id, site.EntryFile));
-                    if (!string.IsNullOrEmpty(entryKey))
-                    {
-                        var newUrl = AppendVersion(_storage.BuildUrlForKey(entryKey), now);
-                        update = update.Set(x => x.SiteUrl, newUrl)
-                                       .Set(x => x.ContentVersion, now)
-                                       .Set(x => x.PublishedRevisionId, null)
-                                       .Set(x => x.UpdatedAt, now);
-                    }
-                    injectedSites++;
-                }
-                await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id, update, cancellationToken: ct);
+                // 即使另一实例已先写入相同脚本，旧桥接缓存键仍须升级。
+                var entryKey = entryHtml?.CosKey ?? site.Files.FirstOrDefault(f =>
+                    string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+                if (!string.IsNullOrEmpty(entryKey))
+                    update = update.Set(x => x.SiteUrl, AppendBridgeVersion(
+                        AppendVersion(_storage.BuildUrlForKey(entryKey), EffectiveContentVersion(site)), SlideNavVersion));
+                if (anyChanged) injectedSites++;
+                await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id && x.ContentVersion == site.ContentVersion
+                    && x.PublishedRevisionId == site.PublishedRevisionId, update, cancellationToken: ct);
             }
             catch (Exception ex)
             {
@@ -4717,7 +4720,7 @@ public class HostedSiteService : IHostedSiteService
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
     // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
     // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
-    private const int SlideNavVersion = 8;
+    private const int SlideNavVersion = 9;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -4823,7 +4826,7 @@ public class HostedSiteService : IHostedSiteService
         return System.Text.Encoding.UTF8.GetBytes(HostedSiteAnnotationRuntime.Inject(injected));
     }
 
-    internal static bool HasDeclarativeOnlyPolicy(string html)
+    public static bool HasDeclarativeOnlyPolicy(string html)
     {
         if (Regex.IsMatch(
                 html,
@@ -5274,19 +5277,21 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
-        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null)
+        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null)
     {
         var site = await GetByIdAsync(siteId, authorUserId, ct);
         if (site == null)
             return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct, anchor, parentId);
+        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct, anchor, parentId, revisionId, expectedContentVersion);
     }
 
     public async Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
-        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null)
+        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null)
     {
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
@@ -5297,7 +5302,7 @@ public class HostedSiteService : IHostedSiteService
         if (sites.Count == 0)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId);
+        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion);
     }
 
     public async Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
@@ -5360,7 +5365,7 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<AddCommentResult> InsertCommentAsync(
         HostedSite site, string authorUserId, string authorName, string? avatarFileName,
-        string content, string? shareToken, string? ipAddress, CancellationToken ct, HostedSiteCommentAnchor? anchor, string? parentId)
+        string content, string? shareToken, string? ipAddress, CancellationToken ct, HostedSiteCommentAnchor? anchor, string? parentId, string? revisionId, string? expectedContentVersion)
     {
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
@@ -5373,6 +5378,8 @@ public class HostedSiteService : IHostedSiteService
 
         if (!HostedSiteCommentRules.IsValidAnchor(anchor))
             return new AddCommentResult { Error = "批注定位信息无效或过长", HttpStatus = 400, ErrorCode = "invalid" };
+        string? contentVersion = HostedSiteCommentRules.VersionKey(EffectiveContentVersion(site));
+        string? commentRevisionId = site.PublishedRevisionId;
         if (parentId != null)
         {
             if (string.IsNullOrWhiteSpace(parentId) || parentId.Length > 80 || anchor != null)
@@ -5380,12 +5387,41 @@ public class HostedSiteService : IHostedSiteService
             var parent = await _db.HostedSiteComments.Find(c => c.Id == parentId && c.SiteId == site.Id).FirstOrDefaultAsync(ct);
             if (!HostedSiteCommentRules.CanReplyTo(parent, site.Id))
                 return new AddCommentResult { Error = "原讨论不存在或已删除", HttpStatus = 404, ErrorCode = "not_found" };
+            contentVersion = HostedSiteCommentRules.StoredVersion(parent!);
+            commentRevisionId = parent!.RevisionId;
+        }
+        else
+        {
+            HostedSiteRevision? revision;
+            if (revisionId != null)
+            {
+                if (string.IsNullOrWhiteSpace(revisionId) || revisionId.Length > 200)
+                    return new AddCommentResult { Error = "版本不存在", HttpStatus = 404, ErrorCode = "not_found" };
+                revision = await _db.HostedSiteRevisions.Find(r => r.Id == revisionId && r.SiteId == site.Id)
+                    .FirstOrDefaultAsync(ct);
+                if (!HostedSiteCommentRules.IsPublishedVersion(revision, site.Id))
+                    return new AddCommentResult { Error = "版本不存在或尚未发布", HttpStatus = 404, ErrorCode = "not_found" };
+                contentVersion = HostedSiteCommentRules.VersionKey(revision!.PublishedContentVersion!.Value);
+                commentRevisionId = revision.Id;
+            }
+            else
+            {
+                var activeVersion = EffectiveContentVersion(site);
+                revision = await _db.HostedSiteRevisions.Find(r => r.SiteId == site.Id
+                    && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == activeVersion)
+                    .FirstOrDefaultAsync(ct);
+                commentRevisionId = revision?.Id;
+            }
+            if (!HostedSiteCommentRules.MatchesExpectedVersion(expectedContentVersion, contentVersion))
+                return new AddCommentResult { Error = "正在查看的版本已变化，请刷新或重新选择版本后发表", HttpStatus = 409, ErrorCode = "CONTENT_VERSION_CHANGED" };
         }
 
         var comment = new HostedSiteComment
         {
             Anchor = anchor,
             ParentId = parentId,
+            ContentVersion = contentVersion,
+            RevisionId = commentRevisionId,
             SiteId = site.Id,
             ShareToken = shareToken,
             AuthorUserId = authorUserId,
@@ -5447,6 +5483,8 @@ public class HostedSiteService : IHostedSiteService
         Content = comment.Content,
         Anchor = comment.Anchor,
         ParentId = comment.ParentId,
+        ContentVersion = HostedSiteCommentRules.StoredVersion(comment),
+        RevisionId = comment.RevisionId,
         IsResolved = comment.IsResolved,
         CanResolve = site.CommentsEnabled && HostedSiteCommentRules.CanResolve(comment, site, viewerUserId),
         AuthorUserId = maskUserId ? string.Empty : comment.AuthorUserId,

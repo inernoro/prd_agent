@@ -5,6 +5,8 @@
   window.__mapAnnotationsV1 = true;
   var context = null, host = null, shadow = null, hover = null, frame = 0;
   var currentHover = null, pending = null, lastLocations = '', activeId = null;
+  var records = new Map(), structureDirty = true, geometryDirty = true, hoverDirty = true, threadsKey = '';
+  var pendingBox = null, pointer = null;
   var excluded = 'script,style,noscript,input,textarea,select,option,[contenteditable="true"]';
   function post(type, extra) {
     if (!context) return;
@@ -16,7 +18,7 @@
   }
   function path() {
     var url = new URL(location.protocol === 'about:' ? context.siteUrl : location.href);
-    url.searchParams.delete('v');
+    url.searchParams.delete('v'); url.searchParams.delete('_map_bridge');
     return logicalPath(url.pathname) + url.search + (/^#\//.test(url.hash) ? url.hash : '');
   }
   function text(el) {
@@ -91,72 +93,119 @@
     return candidates.length === 1 ? candidates[0] : null;
   }
   function mount() {
-    if (host || !document.body) return;
+    if (!document.body) return;
+    if (host) { if (!host.isConnected) document.body.appendChild(host); return; }
     host = document.createElement('div'); host.setAttribute('data-map-annotation-layer', '');
-    host.style.cssText = 'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483646;';
+    host.style.cssText = 'all:initial;position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483646;';
     shadow = host.attachShadow({ mode: 'open' });
     var style = document.createElement('style');
-    style.textContent = ':host{all:initial}*{box-sizing:border-box}.outline{position:fixed;pointer-events:none;border:2px solid #f59e0b;border-radius:4px;background:rgba(245,158,11,.09)}.highlight{position:fixed;pointer-events:none;background:rgba(245,158,11,.23);border-bottom:2px solid #f59e0b;border-radius:2px}.pin{position:fixed;pointer-events:auto;width:25px;height:25px;border-radius:50%;border:2px solid #fff;background:#d97706;color:#fff;font:600 12px/1 system-ui;box-shadow:0 2px 7px #0003;cursor:pointer}.pin.active{background:#2563eb;outline:3px solid #2563eb40}.pin:focus-visible{outline:3px solid #2563eb}.hover{border-style:dashed;background:rgba(245,158,11,.06)}';
+    style.textContent = ':host{all:initial}*{box-sizing:border-box}.outline{position:absolute;pointer-events:none;border:2px solid #f59e0b;border-radius:4px;background:rgba(245,158,11,.09)}.highlight{position:absolute;pointer-events:none;background:rgba(245,158,11,.23);border-bottom:2px solid #f59e0b;border-radius:2px}.pin{position:absolute;pointer-events:auto;width:25px;height:25px;border-radius:50%;border:2px solid #fff;background:#d97706;color:#fff;font:600 12px/1 system-ui;box-shadow:0 2px 7px #0003;cursor:pointer}.pin.active{background:#2563eb;outline:3px solid #2563eb40}.pin:focus-visible{outline:3px solid #2563eb}.hover{border-style:dashed;background:rgba(245,158,11,.06)}';
     shadow.appendChild(style); document.body.appendChild(host);
     hover = document.createElement('div'); hover.className = 'outline hover'; hover.hidden = true; shadow.appendChild(hover);
   }
-  function place(box, rect) {
-    box.style.left = rect.left + 'px'; box.style.top = rect.top + 'px';
+  function place(box, rect, origin) {
+    box.style.transform = 'translate(' + (rect.left - origin.left) + 'px,' + (rect.top - origin.top) + 'px)';
+    box.style.left = '0'; box.style.top = '0';
     box.style.width = rect.width + 'px'; box.style.height = rect.height + 'px';
+  }
+  function reconcile() {
+    var keep = new Set();
+    (context.threads || []).forEach(function (thread, index) {
+      if (!thread.anchor || (thread.isResolved && thread.id !== activeId) || logicalPath(thread.anchor.pagePath) !== path()) return;
+      keep.add(thread.id);
+      var record = records.get(thread.id);
+      if (!record) {
+        var pin = document.createElement('button'); pin.setAttribute('data-mark', '');
+        pin.onclick = function (event) {
+          event.stopPropagation(); activeId = thread.id;
+          post('map-annotation-activate', { id: thread.id }); schedule(false);
+        };
+        shadow.appendChild(pin);
+        record = { boxes: [], pin: pin }; records.set(thread.id, record);
+      }
+      record.thread = thread; record.index = index; record.found = resolve(thread.anchor);
+      record.pin.textContent = String(index + 1);
+      record.pin.setAttribute('aria-label', '打开批注 ' + (index + 1));
+    });
+    records.forEach(function (record, id) {
+      if (!keep.has(id)) { record.pin.remove(); record.boxes.forEach(function (box) { box.remove(); }); records.delete(id); }
+    });
+    structureDirty = false;
   }
   function paint() {
     frame = 0;
-    if (!context || !shadow) return;
-    shadow.querySelectorAll('[data-mark]').forEach(function (el) { el.remove(); });
-    var missing = [], pinCounts = new Map();
-    (context.threads || []).forEach(function (thread, index) {
-      if (!thread.anchor || (thread.isResolved && thread.id !== activeId)) return;
-      if (logicalPath(thread.anchor.pagePath) !== path()) return;
-      var found = resolve(thread.anchor);
-      if (!found) { missing.push(thread.id); return; }
-      var rect = found.range ? found.range.getBoundingClientRect() : found.el.getBoundingClientRect();
-      if (!rect.width || !rect.height) { missing.push(thread.id); return; }
-      if (rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth) return;
-      var rects = found.range ? Array.from(found.range.getClientRects()) : [rect];
-      rects.forEach(function (r) {
-        var box = document.createElement('div'); box.className = found.range ? 'highlight' : 'outline';
-        box.setAttribute('data-mark', ''); place(box, r); shadow.appendChild(box);
+    if (!context) return;
+    mount(); if (!shadow) return;
+    if (structureDirty) { reconcile(); geometryDirty = true; }
+    // Read all geometry before writing. On ordinary document scroll the absolute layer
+    // moves with the page natively; no DOM lookup, layout read or marker update is needed.
+    var origin = host.getBoundingClientRect(), updates = [], missing = [], pinCounts = new Map();
+    if (geometryDirty) {
+      records.forEach(function (record) {
+        var found = record.found;
+        if (!found || !found.el.isConnected) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
+        var rect = found.range ? found.range.getBoundingClientRect() : found.el.getBoundingClientRect();
+        if (!rect.width || !rect.height) { missing.push(record.thread.id); updates.push({ record: record, rects: [] }); return; }
+        var count = pinCounts.get(found.el) || 0; pinCounts.set(found.el, count + 1);
+        updates.push({ record: record, rects: found.range ? Array.from(found.range.getClientRects()) : [rect],
+          pin: { left: Math.max(-scrollX, Math.min(rect.right - 12 - count * 28, document.documentElement.scrollWidth - scrollX - 27)),
+            top: Math.max(-scrollY + 2, rect.top - 12), width: 25, height: 25 } });
       });
-      var count = pinCounts.get(found.el) || 0; pinCounts.set(found.el, count + 1);
-      var pin = document.createElement('button'); pin.className = 'pin' + (thread.id === activeId ? ' active' : '');
-      pin.setAttribute('data-mark', ''); pin.setAttribute('aria-label', '打开批注 ' + (index + 1));
-      pin.textContent = String(index + 1); pin.style.left = Math.min(innerWidth - 29, Math.max(2, rect.right - 12 - count * 28)) + 'px';
-      pin.style.top = Math.min(innerHeight - 29, Math.max(2, rect.top - 12)) + 'px';
-      pin.onclick = function (event) { event.stopPropagation(); activeId = thread.id; post('map-annotation-activate', { id: thread.id }); schedule(); };
-      shadow.appendChild(pin);
+    }
+    var pendingRect = null;
+    if (pending && geometryDirty) { var selected = resolve(pending); if (selected) pendingRect = selected.el.getBoundingClientRect(); }
+    if (hoverDirty && context.enabled && pointer) {
+      var target = document.elementFromPoint ? document.elementFromPoint(pointer.x, pointer.y) : currentHover;
+      currentHover = selectable(target) ? target : null;
+    }
+    var hoverRect = currentHover && context.enabled && currentHover.isConnected ? currentHover.getBoundingClientRect() : null;
+    updates.forEach(function (update) {
+      var record = update.record;
+      record.pin.hidden = !update.pin;
+      if (update.pin) place(record.pin, update.pin, origin);
+      while (record.boxes.length > update.rects.length) record.boxes.pop().remove();
+      update.rects.forEach(function (rect, index) {
+        var box = record.boxes[index];
+        if (!box) { box = document.createElement('div'); box.setAttribute('data-mark', ''); record.boxes.push(box); shadow.appendChild(box); }
+        box.className = record.found.range ? 'highlight' : 'outline'; place(box, rect, origin);
+      });
     });
-    if (pending) { var chosen = resolve(pending); if (chosen) { var box = document.createElement('div'); box.className = 'outline'; box.setAttribute('data-mark', ''); place(box, chosen.el.getBoundingClientRect()); shadow.appendChild(box); } }
-    var serialized = JSON.stringify(missing.sort());
-    if (serialized !== lastLocations) { lastLocations = serialized; post('map-annotation-locations', { missingIds: missing }); }
-    if (currentHover && context.enabled && currentHover.isConnected) { hover.hidden = false; place(hover, currentHover.getBoundingClientRect()); }
-    else hover.hidden = true;
+    records.forEach(function (record) { record.pin.className = 'pin' + (record.thread.id === activeId ? ' active' : ''); });
+    if (geometryDirty) {
+      if (pendingRect) {
+        if (!pendingBox) { pendingBox = document.createElement('div'); pendingBox.className = 'outline'; shadow.appendChild(pendingBox); }
+        pendingBox.hidden = false; place(pendingBox, pendingRect, origin);
+      } else if (pendingBox) pendingBox.hidden = true;
+      var serialized = JSON.stringify(missing.sort());
+      if (serialized !== lastLocations) { lastLocations = serialized; post('map-annotation-locations', { missingIds: missing }); }
+    }
+    hover.hidden = !hoverRect; if (hoverRect) place(hover, hoverRect, origin);
+    geometryDirty = false; hoverDirty = false;
   }
-  function schedule() { if (!frame) frame = requestAnimationFrame(paint); }
+  function schedule(geometry) { if (geometry !== false) geometryDirty = true; if (!frame) frame = requestAnimationFrame(paint); }
+  function invalidate() { structureDirty = true; schedule(); }
   window.addEventListener('message', function (event) {
     var data = event.data;
     if (event.source !== window.parent || !data || typeof data !== 'object') return;
     if (data.type === 'map-annotation-init') {
       if (typeof data.nonce !== 'string' || data.nonce.length > 100 || !data.nonce || typeof data.siteId !== 'string' || !data.siteId) return;
       try { new URL(data.siteUrl); } catch (_) { return; }
-      context = data; activeId = data.activeId || null; if (!data.pending) pending = null;
-      mount(); post('map-annotation-ready'); schedule(); return;
+      var nextKey = JSON.stringify(data.threads || []);
+      if (!context || context.siteUrl !== data.siteUrl || context.contentVersion !== data.contentVersion || activeId !== (data.activeId || null) || nextKey !== threadsKey) structureDirty = true;
+      threadsKey = nextKey; context = data; activeId = data.activeId || null; if (!data.pending) pending = null;
+      mount(); observe(); post('map-annotation-ready'); schedule(); return;
     }
     if (!context || data.siteId !== context.siteId || data.nonce !== context.nonce) return;
     if (data.type === 'map-annotation-focus') {
       var thread = (context.threads || []).find(function (item) { return item.id === data.id; });
       var found = thread && resolve(thread.anchor);
-      if (found) { activeId = thread.id; found.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); schedule(); }
+      if (found) { activeId = thread.id; structureDirty = true; found.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); schedule(); }
       else post('map-annotation-locations', { missingIds: [data.id] });
     }
   });
   document.addEventListener('pointermove', function (event) {
     if (!context || !context.enabled) return;
-    currentHover = selectable(event.target) ? event.target : null; schedule();
+    pointer = { x: event.clientX, y: event.clientY }; currentHover = selectable(event.target) ? event.target : null; hoverDirty = true; schedule(false);
   }, true);
   document.addEventListener('click', function (event) {
     if (!context || !context.enabled || !selectable(event.target) || event.composedPath().indexOf(host) >= 0) return;
@@ -177,11 +226,30 @@
   document.addEventListener('keydown', function (event) {
     if (context && context.enabled && event.key === 'Escape') { context.enabled = false; currentHover = null; post('map-annotation-cancel'); schedule(); }
   }, true);
-  window.addEventListener('scroll', schedule, true); window.addEventListener('resize', schedule);
-  window.addEventListener('hashchange', schedule);
-  var observer = new MutationObserver(function (records) {
-    if (context && records.some(function (record) { return record.target !== host && !host?.contains(record.target); })) schedule();
+  window.addEventListener('scroll', function (event) {
+    if (!context) return;
+    if (event.target === document || event.target === window) {
+      if (context.enabled) { hoverDirty = true; schedule(false); }
+      return;
+    }
+    schedule();
+  }, { capture: true, passive: true });
+  window.addEventListener('resize', function () { schedule(); }, { passive: true });
+  document.addEventListener('load', function () { schedule(); }, true);
+  window.addEventListener('hashchange', invalidate);
+  var observer = new MutationObserver(function (changes) {
+    var relevant = changes.filter(function (record) {
+      if (record.target === host || host?.contains(record.target)) return false;
+      return record.type !== 'childList' || Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).some(function (node) { return node !== host; });
+    });
+    if (!context || !relevant.length) return;
+    if (relevant.some(function (record) { return record.type !== 'attributes' || record.attributeName === 'id'; })) structureDirty = true;
+    schedule();
   });
-  observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'] });
+  function observe() {
+    observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'id'] });
+  }
+  observe();
   window.addEventListener('pagehide', function () { observer.disconnect(); if (frame) cancelAnimationFrame(frame); frame = 0; context = null; });
 })();

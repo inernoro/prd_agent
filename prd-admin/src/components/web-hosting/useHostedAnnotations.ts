@@ -4,10 +4,10 @@ import type { HostedSiteCommentAnchor, HostedSiteCommentDto } from '@/services/r
 
 /** srcDoc remains an opaque origin. Only the public runtime enters the frame, never authentication. */
 export function withAnnotationRuntime(html: string): string {
-  if (!html || /data-map-annotations\s*=/.test(html)
-    || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
+  if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js'), window.location.href);
+  html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=2'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -25,7 +25,7 @@ export function isAnnotationAnchor(value: unknown): value is HostedSiteCommentAn
 }
 
 export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, site: { id: string; siteUrl: string } | null,
-  onOpen: () => void) {
+  onOpen: () => void, contentVersionKey?: string) {
   const siteId = site?.id ?? '', siteUrl = site?.siteUrl ?? '';
   const [enabled, setEnabled] = useState(false);
   const [ready, setReady] = useState(false);
@@ -34,14 +34,14 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   const [activeId, setActiveId] = useState<string | null>(null);
   const [missingIds, setMissingIds] = useState<string[]>([]);
   const [connectionChecked, setConnectionChecked] = useState(false);
-  const nonce = useMemo(() => siteId && siteUrl ? crypto.randomUUID() : '', [siteId, siteUrl]);
+  const nonce = useMemo(() => siteId && siteUrl ? `${crypto.randomUUID()}:${contentVersionKey ?? 'live'}` : '', [siteId, siteUrl, contentVersionKey]);
   const connected = useRef(false);
   const openRef = useRef(onOpen); openRef.current = onOpen;
   const initRef = useRef<() => void>(() => {});
   initRef.current = () => {
     if (!siteId || !siteUrl) return;
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-init', nonce, siteId, siteUrl: new URL(siteUrl, window.location.href).href,
-      contentVersion: new URL(siteUrl, window.location.href).searchParams.get('v') ?? '', enabled,
+      contentVersion: contentVersionKey ?? new URL(siteUrl, window.location.href).searchParams.get('v') ?? '', enabled,
       threads: threads.filter(t => !t.parentId && t.anchor).map(t => ({ id: t.id, anchor: t.anchor, isResolved: t.isResolved })),
       activeId, pending: !!draftAnchor,
     }, '*');
@@ -50,7 +50,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     connected.current = false;
     setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null);
     setMissingIds([]); setConnectionChecked(false);
-  }, [siteId, siteUrl]);
+  }, [siteId, siteUrl, contentVersionKey]);
   useEffect(() => { setThreads([]); }, [siteId]);
   useEffect(() => {
     const receive = (event: MessageEvent) => {
@@ -75,7 +75,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     const timeout = window.setTimeout(() => setConnectionChecked(true), 5000);
     return () => { window.removeEventListener('message', receive); window.clearInterval(retry); window.clearTimeout(timeout); };
   }, [frameRef, nonce, siteId]);
-  useEffect(() => { initRef.current(); }, [enabled, threads, activeId, draftAnchor]);
+  useEffect(() => { initRef.current(); }, [enabled, threads, activeId, draftAnchor, contentVersionKey]);
   const notifyFrame = useCallback(() => { connected.current = false; setReady(false); initRef.current(); }, []);
   const select = useCallback(() => { setDraftAnchor(null); setEnabled(true); }, []);
   const clearDraft = useCallback(() => setDraftAnchor(null), []);

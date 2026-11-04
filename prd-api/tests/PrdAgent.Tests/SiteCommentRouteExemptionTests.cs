@@ -39,6 +39,9 @@ public class SiteCommentRouteExemptionTests
     [InlineData("/api/web-pages/148d0c6d730444c1800ccdbb4a918a5f/comments/thread123/resolved", true)]
     [InlineData("/api/web-pages/148d0c6d730444c1800ccdbb4a918a5f/comments/thread123/resolved/", true)]
     [InlineData("/api/web-pages/148d0c6d730444c1800ccdbb4a918a5f/comments/thread123/delete", false)]
+    [InlineData("/api/web-pages/site/revisions", true)]
+    [InlineData("/api/web-pages/site/revisions/old/preview", true)]
+    [InlineData("/api/web-pages/site/revisions/old/publish", false)]
     [InlineData("/api/web-pages/annotation-runtime.js", true)]
     [InlineData("/api/web-pages/annotation-runtime.js/anything", false)]
     // 反向边界：站点本体写操作不豁免

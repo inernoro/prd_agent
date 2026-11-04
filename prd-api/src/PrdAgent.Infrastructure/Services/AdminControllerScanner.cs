@@ -223,7 +223,8 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
             }
         }
         // 站点维度评论列表/发表（siteId 在路径中段，前缀匹配命中不了）
-        if (SiteCommentRoute.IsMatch(path))
+        if (SiteCommentRoute.IsMatch(path)
+            || Regex.IsMatch(path, @"^/api/web-pages/[^/]+/revisions(?:/[^/]+/preview)?/?$", RegexOptions.IgnoreCase))
         {
             return true;
         }

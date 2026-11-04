@@ -112,7 +112,7 @@ describe('分享页预览接线', () => {
     // （「谁能编辑这个站点」）。后端明确允许团队编辑者建分享，旧判据会同时出两种错。
     expect(source).toContain('site.viewerCanEdit && !site.wrappedAssetType');
     expect(source).toContain('adjacentToAsk={Boolean(token && data.ask?.enabled)}');
-    expect(source).toContain("hidden={isFullscreen || showComments || askState !== 'collapsed'}");
+    expect(source).toContain("hidden={isFullscreen || showComments || review.historical || review.loading || askState !== 'collapsed'}");
     expect(source).toContain('onPublished={handleOwnerSitePublished}');
   });
 });

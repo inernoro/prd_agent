@@ -418,13 +418,15 @@ public interface IHostedSiteService
     /// <summary>直连 siteId 发表评论（需 viewer 对站点有访问权）。站点不存在 / 无权 / 评论关闭时 Error 非空。</summary>
     Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
-        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null);
+        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null);
 
     /// <summary>经分享链接发表评论（公开路径，需登录）。校验分享访问门 + 评论开关；通过后插入。</summary>
     Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
-        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null);
+        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null);
 
     Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
         bool resolved, CancellationToken ct = default);
@@ -490,6 +492,8 @@ public class ShareSiteResolveResult
 
 public class HostedSiteCommentDto
 {
+    public string? ContentVersion { get; set; }
+    public string? RevisionId { get; set; }
     public HostedSiteCommentAnchor? Anchor { get; set; }
     public string? ParentId { get; set; }
     public bool IsResolved { get; set; }

@@ -1404,6 +1404,45 @@ export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise
 
 // ─── 评论 ───
 
+/** 发布版本的评审元数据；版本编号和内容标识由服务端维护。 */
+export interface HostedReviewVersion {
+  id: string;
+  siteId: string;
+  versionLabel: string;
+  contentVersionKey: string;
+  publishedAt?: string | null;
+  isCurrent: boolean;
+  canPreview: boolean;
+  entryFile: string;
+  contentShape?: 'self-contained-html' | 'multi-file';
+  siteUrl: string | null;
+}
+
+export type HostedReviewSource = { mode: 'site'; siteId: string }
+  | { mode: 'share'; token: string; password?: string };
+
+async function readHostedReview<T>(source: HostedReviewSource, suffix: string): Promise<ApiResponse<T>> {
+  if (source.mode === 'site') return apiRequest(`/api/web-pages/${encodeURIComponent(source.siteId)}/revisions${suffix}`);
+  const query = source.password ? `?password=${encodeURIComponent(source.password)}` : '';
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const token = useAuthStore.getState().token;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const response = await fetch(buildApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(source.token)}/revisions${suffix}${query}`), { headers });
+    return await response.json() as ApiResponse<T>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '无法加载版本，请重试' } };
+  }
+}
+
+export function listHostedReviewVersions(source: HostedReviewSource): Promise<ApiResponse<HostedReviewVersion[]>> {
+  return readHostedReview(source, '');
+}
+
+export function previewHostedReviewVersion(source: HostedReviewSource, id: string): Promise<ApiResponse<{ revision: HostedReviewVersion; html: string; siteUrl: string | null }>> {
+  return readHostedReview(source, `/${encodeURIComponent(id)}/preview`);
+}
+
 export interface HostedSiteCommentAnchor {
   kind: 'element' | 'text';
   pagePath: string;
@@ -1417,6 +1456,8 @@ export interface HostedSiteCommentAnchor {
 }
 
 export interface HostedSiteCommentOptions {
+  revisionId?: string;
+  expectedContentVersion?: string;
   anchor?: HostedSiteCommentAnchor;
   parentId?: string;
 }
@@ -1424,6 +1465,8 @@ export interface HostedSiteCommentOptions {
 export interface HostedSiteCommentDto {
   id: string;
   siteId: string;
+  contentVersion?: string | null;
+  revisionId?: string | null;
   content: string;
   authorUserId: string;
   authorName: string;

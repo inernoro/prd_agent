@@ -54,6 +54,11 @@ public class HostedSiteRevision
     [JsonIgnore]
     public List<string> PublishedAssetKeys { get; set; } = new();
 
+    /// <summary>快照登记的真实入口对象，随历史资源键保留，不由客户端指定。</summary>
+    [JsonIgnore]
+    public string? PublishedEntryCosKey { get; set; }
+    public string? PublishedEntryFile { get; set; }
+
     /// <summary>
     /// 建这条版本时线上站点的内容形态（取值见 <see cref="HostedSiteContentShapes"/>）。
     ///

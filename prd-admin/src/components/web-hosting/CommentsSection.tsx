@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MessageSquare, Send, Trash2, Lock, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight } from 'lucide-react';
+import { MessageSquare, Send, Trash2, Lock, MousePointer2, Link2, X, Check, RotateCcw, CornerDownRight, History } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '../ui/VideoLoader';
 import { getUserAvatarUrl } from '../../lib/avatar';
 import { useAuthStore } from '../../stores/authStore';
 import { listShareComments, addShareComment, listSiteComments, addSiteComment, deleteSiteComment,
   setSiteCommentResolved, type HostedSiteCommentDto } from '../../services/real/webPages';
 import type { HostedAnnotations } from './useHostedAnnotations';
+import type { HostedReview } from './useHostedReview';
 
 const ELEMENT_LABELS: Record<string, string> = { button: '按钮', a: '链接', img: '图片', p: '段落',
   h1: '标题', h2: '标题', h3: '标题', h4: '标题', section: '区块', div: '区块', li: '列表项', svg: '图标' };
@@ -18,6 +19,7 @@ type Props = (
   onStateLoaded?: (commentsEnabled: boolean) => void;
   onCountChange?: (count: number) => void;
   annotations?: HostedAnnotations;
+  review?: HostedReview;
   onPickElement?: () => void;
 };
 
@@ -33,21 +35,31 @@ export default function CommentsSection(props: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [otherVersions, setOtherVersions] = useState(false);
   const [filter, setFilter] = useState<'open' | 'resolved' | 'all'>('open');
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fetchId = useRef(0);
   const mounted = useRef(true);
   const callbacks = useRef(props); callbacks.current = props;
-  const { mode, token, password, siteId, annotations } = props;
+  const { mode, token, password, siteId, annotations, review } = props;
+  const versionKey = review?.selected?.contentVersionKey;
+  const canWrite = canComment && (!review || (!!review.selected && !review.loading));
   const identity = `${mode}:${token ?? siteId}:${password ?? ''}`;
   const identityRef = useRef(identity); identityRef.current = identity;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const roots = comments.filter(c => !c.parentId);
+  const allRoots = comments.filter(c => !c.parentId);
+  const versionRoots = review ? allRoots.filter(c => c.contentVersion === versionKey && !!versionKey) : allRoots;
+  const outsideRoots = review ? allRoots.filter(c => c.contentVersion !== versionKey || !versionKey) : [];
+  const roots = otherVersions ? outsideRoots : versionRoots;
   const openCount = roots.filter(c => !c.isResolved).length;
   const resolvedCount = roots.length - openCount;
-  useEffect(() => { callbacks.current.onCountChange?.(roots.length); }, [roots.length]);
-  useEffect(() => { callbacks.current.annotations?.setThreads(comments); }, [comments]);
+  useEffect(() => { callbacks.current.onCountChange?.(versionRoots.length); }, [versionRoots.length]);
+  useEffect(() => {
+    const activeRoots = comments.filter(c => !c.parentId && (!callbacks.current.review || (!!versionKey && c.contentVersion === versionKey)));
+    callbacks.current.annotations?.setThreads(activeRoots);
+  }, [comments, versionKey]);
+  useEffect(() => { setOtherVersions(false); setReplyTo(null); setDraft(''); setFilter('open'); }, [versionKey]);
 
   const load = useCallback(async (silent = false) => {
     const request = ++fetchId.current;
@@ -77,9 +89,10 @@ export default function CommentsSection(props: Props) {
   }, [annotations?.activeId, comments]);
 
   const submit = async () => {
-    if (!draft.trim() || submitting || !canComment) return;
+    if (!draft.trim() || submitting || !canWrite) return;
     const operationIdentity = identity;
-    const options = replyTo ? { parentId: replyTo } : { anchor: annotations?.draftAnchor ?? undefined };
+    const options = replyTo ? { parentId: replyTo } : { anchor: annotations?.draftAnchor ?? undefined,
+      revisionId: review?.selected?.id, expectedContentVersion: versionKey };
     setSubmitting(true); setError(null);
     try {
       const res = mode === 'share' ? await addShareComment(token!, draft.trim(), password, options)
@@ -128,7 +141,7 @@ export default function CommentsSection(props: Props) {
     <section aria-label="批注与讨论" className="space-y-4 text-sm text-token-primary">
       {annotations && (
         <div className="space-y-2">
-          <button type="button" onClick={startPicking} disabled={!canComment || !annotations.ready || submitting}
+          <button type="button" onClick={startPicking} disabled={!canWrite || !annotations.ready || submitting || review?.uploading}
             className="flex w-full items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[var(--accent-fg-amber)] transition-colors hover:bg-amber-500/15 disabled:opacity-40 disabled:cursor-not-allowed">
             <MousePointer2 size={15} />绑定页面元素 / 选中文字
           </button>
@@ -140,9 +153,20 @@ export default function CommentsSection(props: Props) {
       )}
       {loading ? <MapSectionLoader text="正在加载讨论…" /> : (
         <>
+          {review && <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2 text-xs text-token-muted">
+              <span>{review.selected ? `${review.selected.versionLabel} 的批注` : '正在读取版本归属…'}</span>
+              <span>批注随版本保留</span>
+            </div>
+            <div className="flex gap-1 rounded-lg bg-token-nested p-1" role="tablist" aria-label="批注版本范围">
+              <button type="button" role="tab" aria-selected={!otherVersions} onClick={() => setOtherVersions(false)} className={`flex-1 rounded-md px-2 py-1.5 text-xs ${!otherVersions ? 'bg-token-card font-medium text-token-primary' : 'text-token-muted'}`}>本版 {versionRoots.length}</button>
+              <button type="button" role="tab" aria-selected={otherVersions} onClick={() => setOtherVersions(true)} className={`flex-1 rounded-md px-2 py-1.5 text-xs ${otherVersions ? 'bg-token-card font-medium text-token-primary' : 'text-token-muted'}`}>其他版本 {outsideRoots.length}</button>
+            </div>
+            {otherVersions && <p className="text-xs leading-relaxed text-token-muted">旧版意见不会叠到本版页面。选择所属版本，回到原内容查看。</p>}
+          </div>}
           {!commentsEnabled ? <p className="flex gap-2 text-token-muted"><Lock size={15} />该站点已关闭评论与批注</p>
             : !isAuthenticated ? <p className="flex gap-2 text-token-muted"><Lock size={15} />登录后即可批注和回复</p>
-              : canComment ? (
+              : canWrite && !otherVersions ? (
                 <div className="rounded-xl border border-token-subtle bg-token-nested p-3 space-y-3">
                   {annotations?.draftAnchor ? (
                     <div className="flex gap-2 rounded-md bg-amber-500/10 p-2 text-xs text-token-secondary">
@@ -182,21 +206,31 @@ export default function CommentsSection(props: Props) {
           </div>}
           <div className="space-y-3">{visible.map((comment) => {
             const replies = comments.filter(c => c.parentId === comment.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-            const number = roots.filter(c => c.anchor).findIndex(c => c.id === comment.id) + 1;
-            const missing = annotations?.missingIds.includes(comment.id);
+            const number = versionRoots.filter(c => c.anchor).findIndex(c => c.id === comment.id) + 1;
+            const missing = !otherVersions && annotations?.missingIds.includes(comment.id);
+            const originVersion = review?.versions.find(v => v.id === comment.revisionId || v.contentVersionKey === comment.contentVersion);
+            const canOpenOrigin = !!originVersion?.canPreview;
+            const locate = () => {
+              if (otherVersions && originVersion) void review?.selectVersion(originVersion.id, comment.id);
+              else annotations?.focus(comment.id);
+            };
             return <article key={comment.id} id={`hosted-thread-${comment.id}`} className={`rounded-xl border p-3 space-y-3 transition-colors ${annotations?.activeId === comment.id ? 'border-amber-500/60 bg-amber-500/5' : 'border-token-subtle'}`}>
-              {comment.anchor && <button type="button" onClick={() => annotations?.focus(comment.id)} disabled={!annotations?.ready}
+              {comment.anchor && <button type="button" onClick={locate} disabled={otherVersions ? !canOpenOrigin : !annotations?.ready}
                 className="flex w-full items-start gap-2 rounded-md bg-token-nested p-2 text-left text-xs hover:bg-amber-500/10 disabled:cursor-default">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[var(--accent-fg-amber)]">{number}</span>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-[var(--accent-fg-amber)]">{otherVersions ? <History size={12} /> : number}</span>
                 <span className="min-w-0 flex-1"><span className="flex items-center gap-1 font-medium text-token-primary"><Link2 size={11} />{comment.anchor.kind === 'text' ? '文字批注' : elementLabel(comment.anchor.tagName)}</span>
                   <span className="mt-1 block line-clamp-2 break-words text-token-secondary">{comment.anchor.text || '无文字元素'}</span>
                   {missing && <span className="mt-1 block text-[var(--accent-fg-amber)]">原位置已变更，批注内容已保留</span>}</span>
               </button>}
+              {otherVersions && <div className="flex items-center justify-between gap-2 text-xs text-token-muted">
+                <span>来自 {originVersion?.versionLabel ?? (comment.contentVersion ? '未收录的旧版本' : '未标版本的历史评论')}</span>
+                {canOpenOrigin && <button type="button" onClick={locate} className="text-token-primary underline">切换到 {originVersion!.versionLabel}</button>}
+              </div>}
               <CommentMessage comment={comment} busy={busyId === comment.id} confirming={confirmDelete === comment.id} onDelete={() => void remove(comment.id)} />
               {replies.length > 0 && <div className="ml-3 space-y-3 border-l border-token-subtle pl-3">{replies.map(reply =>
                 <CommentMessage key={reply.id} comment={reply} busy={busyId === reply.id} confirming={confirmDelete === reply.id} onDelete={() => void remove(reply.id)} />)}</div>}
               <div className="flex items-center justify-between gap-2 text-xs text-token-muted">
-                {canComment ? <button type="button" disabled={submitting} onClick={() => { annotations?.clearDraft(); setReplyTo(comment.id); textareaRef.current?.focus(); textareaRef.current?.scrollIntoView({ block: 'nearest' }); }}
+                {canWrite && !otherVersions ? <button type="button" disabled={submitting} onClick={() => { annotations?.clearDraft(); setReplyTo(comment.id); textareaRef.current?.focus(); textareaRef.current?.scrollIntoView({ block: 'nearest' }); }}
                   className="flex items-center gap-1 hover:text-token-primary"><CornerDownRight size={13} />回复{replies.length ? ` ${replies.length}` : ''}</button> : <span />}
                 {comment.canResolve && commentsEnabled ? <button type="button" disabled={busyId !== null} onClick={() => void resolve(comment)} className="flex items-center gap-1 hover:text-token-primary disabled:opacity-40">
                   {comment.isResolved ? <RotateCcw size={13} /> : <Check size={13} />}{comment.isResolved ? '重新打开' : '标记解决'}</button>

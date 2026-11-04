@@ -12,8 +12,10 @@ import { BlurText } from '@/components/reactbits';
 import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
 import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
-import { useHostedAnnotations, withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotations';
+import { withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotations';
 import { AnnotationModeBar } from '@/components/web-hosting/AnnotationModeBar';
+import { useHostedReview } from '@/components/web-hosting/useHostedReview';
+import { ReviewVersionBar } from '@/components/web-hosting/ReviewVersionBar';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
@@ -201,7 +203,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     token ? { token, password: password || undefined } : undefined);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
-  const annotations = useHostedAnnotations(pdfDownload.iframeRef, data?.sites.length === 1 ? data.sites[0] : null, () => setShowComments(true));
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
   const [askState, setAskState] = useState<AskDockState>('collapsed');
   // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
@@ -273,6 +274,21 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       } : item),
     } : current);
   }, []);
+
+  const review = useHostedReview(pdfDownload.iframeRef, data?.sites.length === 1 ? data.sites[0] : null,
+    token && data?.sites.length === 1 && !data.sites[0].wrappedAssetType ? { mode: 'share', token, password: password || undefined } : null,
+    () => setShowComments(true), handleOwnerSitePublished);
+  const annotations = review.annotations;
+  const reviewLiveUrl = review.liveSite?.siteUrl;
+  const reviewEntryFile = review.liveSite?.entryFile;
+  const reviewShape = review.liveSite?.contentShape;
+  useEffect(() => {
+    if (!reviewLiveUrl || !reviewEntryFile) return;
+    setData(current => {
+      if (!current || current.sites.length !== 1 || current.sites[0].siteUrl === reviewLiveUrl) return current;
+      return { ...current, sites: [{ ...current.sites[0], siteUrl: reviewLiveUrl, entryFile: reviewEntryFile, contentShape: reviewShape }] };
+    });
+  }, [reviewLiveUrl, reviewEntryFile, reviewShape]);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -768,17 +784,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
 
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
-    const site = data.sites[0];
+    const liveSite = data.sites[0];
+    const site = { ...liveSite, ...review.site };
     // 打包型 SPA（入口是外链 module 脚本）必须留在直链 iframe：srcDoc 的不透明源会让
     // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
-    const fetchedHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
+    const fetchedHtml = review.historical ? (review.preview ? withPreviewBase(review.preview.html, new URL(site.siteUrl, window.location.href).href) : null)
+      : embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
     const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
     /**
      * 这一刻 iframe 该拿什么当内容源。pending 时**什么都不给**——不知道走哪条路之前
      * 不向托管域名发文档请求，那一次请求正是 2026-09-18 弹窗事故的来源。
      * 判据本体在 previewHtml.ts 的 resolvePreviewSource（那里有完整缘由）。
      */
-    const previewSource = resolvePreviewSource({
+    const previewSource = review.historical ? (review.loading ? 'pending' : iframeHtml ? 'srcdoc' : 'direct') : resolvePreviewSource({
       fetchable: shouldFetchPreviewHtml(site),
       inlineHtml: iframeHtml,
       // 对不上 siteUrl 就当这一趟还没开始，绝不拿上一趟的结论去判 direct
@@ -896,8 +914,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 <button
                   className="share-topbar-btn"
                   onClick={handleDownloadSource}
-                  disabled={downloading}
-                  title={downloadHint}
+                  disabled={downloading || review.historical}
+                  title={review.historical ? '正在查看历史版本，请在新窗口中打开该版源文件' : downloadHint}
                   aria-label={downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件'}
                 >
                   {downloading
@@ -937,6 +955,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               )}
             </div>
           </div>
+          {!liveSite.wrappedAssetType && <div className="surface-tone-dark border-b border-token-subtle px-3 py-2" style={{ background: 'var(--bg-elevated)' }}>
+            <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} />
+          </div>}
           {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
           {visibleNote && (
             <div
@@ -957,7 +978,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </div>
           )}
         </div>
-        <div style={{ position: 'relative', minHeight: 0, background: '#fff', marginRight: showComments && !isMobile ? 380 : 0 }}>
+        <div style={{ position: 'relative', minHeight: 0, background: '#fff', marginRight: showComments && !isMobile ? 380 : 0, marginBottom: showComments && isMobile ? '55dvh' : 0 }}>
           <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button
@@ -993,6 +1014,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           <HostedPdfDownloadStatus status={pdfDownload.status} />
           <iframe
             ref={pdfDownload.iframeRef}
+            key={`${review.historical ? review.selected?.id : 'live'}:${previewSource === 'srcdoc' ? 'srcdoc' : 'direct'}`}
             onLoad={() => { pdfDownload.notifyFrame(); annotations.notifyFrame(); }}
             // siteUrl 为空时必须给 undefined 而不是 ''：空串在 HTML 里是「相对当前文档」，
             // iframe 会把分享页自己再加载一遍。下面那块空态提示正是为这种站点准备的。
@@ -1058,7 +1080,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               直链那一帧到底画出东西没有，我们跨源读不到；访客攒了多少状态，同样看不到。
               两个判据都不可知，就不该替他猜——把手里这份能救场的原文摆出来，他自己点。
               没有这个出口时，「直链白屏 + 原文迟到」就是一片永远的白。 */}
-          {lateHtml && !iframeHtml && (
+          {lateHtml && !iframeHtml && !review.historical && (
             <button
               className="border border-token-subtle"
               onClick={() => { setEmbeddedHtml(lateHtml); setLateHtml(null); }}
@@ -1068,7 +1090,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </button>
           )}
 
-          {embeddedHtmlError && !iframeHtml && previewSource !== 'pending' && (
+          {embeddedHtmlError && !iframeHtml && !review.historical && previewSource !== 'pending' && (
             <div style={{ ...OVERLAY_CHIP, left: 12, bottom: 12, maxWidth: 'min(420px, calc(100% - 24px))' }}>
               {embeddedHtmlError}
             </div>
@@ -1097,7 +1119,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 </button>
               </div>
               <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 16 }}>
-                <CommentsSection key={`${token}:${password}`} mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} onPickElement={() => setShowComments(false)} />
+                <CommentsSection key={`${token}:${password}`} mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} />
               </div>
             </aside>
           </>
@@ -1112,7 +1134,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             welcome={data.ask.welcome}
             openingQuestions={data.ask.openingQuestions ?? []}
             allowAnonymous={data.ask.allowAnonymous}
-            hidden={isFullscreen || showComments}
+            hidden={isFullscreen || showComments || review.historical}
             onStateChange={setAskState}
           />
         )}
@@ -1127,7 +1149,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               siteId={site.id}
               isMobile={isMobile}
               adjacentToAsk={Boolean(token && data.ask?.enabled)}
-              hidden={isFullscreen || showComments || askState !== 'collapsed'}
+              hidden={isFullscreen || showComments || review.historical || review.loading || askState !== 'collapsed'}
               onPublished={handleOwnerSitePublished}
             />
             {/* 分享阅读页不在 AppShell 里，编辑坞发布草稿时的私有资料确认层要自己挂一个宿主 */}
