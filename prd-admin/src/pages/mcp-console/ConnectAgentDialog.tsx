@@ -419,7 +419,7 @@ export function ConnectAgentDialog({
 
           <p className="text-center text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {step === 'form'
-              ? '有效期 90 天；明文只显示一次。续期在「海鲜市场 → 开放接口 → 密钥」那一屏（接入台这一页暂时只能调上限和断开）。'
+              ? '有效期 90 天，凭证仅显示一次。接入后可在“管理”中调整权限与额度；续期请前往“海鲜市场 → 开放接口 → 密钥”。'
               : '把完整提示词交给对应客户端，按指引连接并安装技能；实际调用成功后才算接入完成。'}
           </p>
         </div>

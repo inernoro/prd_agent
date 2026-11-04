@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QuotaEditorDialog } from '../QuotaEditorDialog';
 import { updateAgentApiKey } from '@/services';
 import { toast } from '@/lib/toast';
-import type { McpClientDto } from '@/services/contracts/mcpConsole';
+import type { McpCapabilityDto, McpClientDto } from '@/services/contracts/mcpConsole';
 
 vi.mock('@/components/ui/Dialog', () => ({
   Dialog: ({ open, content }: { open: boolean; content: ReactNode }) => open ? <div>{content}</div> : null,
@@ -28,18 +28,18 @@ let container: HTMLDivElement;
 let root: Root;
 const onOpenChange = vi.fn();
 const onSaved = vi.fn();
-async function render(value: McpClientDto = client, open = true) {
+async function render(value: McpClientDto = client, open = true, capabilities: McpCapabilityDto[] = []) {
   await act(async () => root.render(<QuotaEditorDialog
-    client={value} open={open} onOpenChange={onOpenChange} onSaved={onSaved}
+    client={value} open={open} onOpenChange={onOpenChange} onSaved={onSaved} capabilities={capabilities} onRevoke={() => {}}
   />));
 }
 function checkbox() {
-  const input = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  const input = container.querySelector<HTMLInputElement>('input[aria-describedby="mcp-web-public-exposure-hint"]');
   expect(input).not.toBeNull();
   return input!;
 }
 async function save() {
-  const button = [...container.querySelectorAll('button')].find((item) => item.textContent === '保存');
+  const button = [...container.querySelectorAll('button')].find((item) => item.textContent === '保存设置');
   expect(button).toBeDefined();
   await act(async () => button!.click());
 }
@@ -171,5 +171,100 @@ describe('客户端独立公开发布授权', () => {
     expect(checkbox().checked).toBe(true);
     expect(toast.error).toHaveBeenCalledWith('保存失败', '请使用用户登录态修改公开授权');
     expect(onSaved).not.toHaveBeenCalled(); expect(onOpenChange).not.toHaveBeenCalled();
+  });
+});
+
+const tasks: McpCapabilityDto = { key: 'tasks', title: '任务台', summary: '',
+  readScope: 'active-tasks:use', writeScope: 'active-tasks:manage', writeNeedsApproval: false,
+  availableToMe: true, writeAvailableToMe: true, granted: false, todayCalls: 0, tools: [] };
+
+describe('授权编辑边界', () => {
+  it.each(['disabled', 'expired'] as const)('%s凭证的有效权限为空时禁止覆盖存储授权', async (unusableReason) => {
+    await render({ ...client, isActive: false, unusableReason, scopeMode: 'manual', scopes: [] }, true, [tasks]);
+    const mode = container.querySelector<HTMLInputElement>('.mcp-scope-mode input')!;
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="任务台访问权限"]')!;
+    expect(mode.disabled).toBe(true);
+    expect(access.disabled).toBe(true);
+    await act(async () => mode.click());
+    await save();
+    const request = vi.mocked(updateAgentApiKey).mock.calls[0][0];
+    expect(request).not.toHaveProperty('scopes');
+    expect(request).not.toHaveProperty('scopeMode');
+    expect(container.textContent).toContain('不会覆盖原有授权');
+  });
+  it('任务台基础权限明确包含写入动作，不能承诺只读', async () => {
+    await render({ ...client, scopeMode: 'manual', scopes: ['active-tasks:use'] }, true, [tasks]);
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="任务台访问权限"]')!;
+    expect(access.selectedOptions[0].textContent).toBe('使用任务台');
+    expect([...access.options].map(option => option.text)).toContain('管理任务台');
+    expect([...access.options].map(option => option.text)).not.toContain('只读');
+    expect(container.textContent).toContain('新增自己的任务及提交建议');
+  });
+});
+
+
+describe('派生发布权限不进入普通授权清单', () => {
+  it.each(['auto', 'manual'] as const)('%s模式编辑授权时保留独立接口并排除派生scope', async (scopeMode) => {
+    await render({ ...client, scopeMode, webPublicExposureAllowed: true,
+      scopes: ['web-pages:write', 'web-pages:publish', 'agent.example:invoke'] }, true, [tasks]);
+    if (scopeMode === 'auto') {
+      await act(async () => container.querySelector<HTMLInputElement>('.mcp-scope-mode input')!.click());
+    } else {
+      const access = container.querySelector<HTMLSelectElement>('[aria-label="任务台访问权限"]')!;
+      await act(async () => { access.value = 'read'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    }
+    await save();
+    const request = vi.mocked(updateAgentApiKey).mock.calls[0][0];
+    expect(request.scopeMode).toBe('manual');
+    expect(request).not.toHaveProperty('scopes');
+    expect(request.mcpCapabilityAccess).toEqual(scopeMode === 'auto' ? {} : { tasks: 'read' });
+    expect(request).not.toHaveProperty('webPublicExposureAllowed');
+  });
+});
+
+
+const web: McpCapabilityDto = { ...tasks, key: 'web', title: '网页托管', readScope: 'web-pages:read', writeScope: 'web-pages:write' };
+describe('发布授权跟随当前编辑权限', () => {
+  it('同次保存新增网页写权限和独立发布授权', async () => {
+    await render({ ...client, scopeMode: 'manual', scopes: ['web-pages:read'] }, true, [web]);
+    expect(checkbox().disabled).toBe(true);
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="网页托管访问权限"]')!;
+    await act(async () => { access.value = 'write'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(checkbox().disabled).toBe(false);
+    await act(async () => checkbox().click());
+    await save();
+    expect(updateAgentApiKey).toHaveBeenCalledWith(expect.objectContaining({
+      mcpCapabilityAccess: { web: 'write' }, webPublicExposureAllowed: true,
+    }));
+  });
+  it('删除编辑中的网页写权限时取消尚未保存的发布授权', async () => {
+    await render({ ...client, scopeMode: 'manual', scopes: ['web-pages:read', 'web-pages:write'] }, true, [web]);
+    await act(async () => checkbox().click());
+    expect(checkbox().checked).toBe(true);
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="网页托管访问权限"]')!;
+    await act(async () => { access.value = 'read'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(checkbox().checked).toBe(false);
+    expect(checkbox().disabled).toBe(true);
+    await save();
+    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0].mcpCapabilityAccess).toEqual({ web: 'read' });
+    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('scopes');
+    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('webPublicExposureAllowed');
+  });
+});
+
+
+describe('有效权限不覆盖存储配置', () => {
+  it('账号权限被收回时只提交实际编辑的能力', async () => {
+    const unavailable = { ...tasks, key: 'visual', title: '视觉创作', readScope: null,
+      writeScope: 'visual-agent:use', availableToMe: false, writeAvailableToMe: false };
+    await render({ ...client, scopeMode: 'manual', scopes: ['active-tasks:use'] }, true, [unavailable, tasks]);
+    const visual = container.querySelector<HTMLSelectElement>('[aria-label="视觉创作访问权限"]')!;
+    expect(visual.disabled).toBe(true);
+    const access = container.querySelector<HTMLSelectElement>('[aria-label="任务台访问权限"]')!;
+    await act(async () => { access.value = 'none'; access.dispatchEvent(new Event('change', { bubbles: true })); });
+    await save();
+    const request = vi.mocked(updateAgentApiKey).mock.calls[0][0];
+    expect(request).not.toHaveProperty('scopes');
+    expect(request.mcpCapabilityAccess).toEqual({ tasks: 'none' });
   });
 });

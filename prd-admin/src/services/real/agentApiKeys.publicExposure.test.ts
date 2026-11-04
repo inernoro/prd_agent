@@ -17,3 +17,10 @@ it('普通设置 PATCH 不包含公开授权字段', async () => {
   const options = vi.mocked(apiRequest).mock.calls[0][1];
   expect(options?.body).not.toHaveProperty('webPublicExposureAllowed');
 });
+
+it('逐能力 PATCH 原样传输变更，不构造完整 scopes 清单', async () => {
+  await updateAgentApiKeyReal({ id: 'key', scopeMode: 'manual', mcpCapabilityAccess: { knowledge: 'read' } });
+  const options = vi.mocked(apiRequest).mock.calls[0][1];
+  expect(options?.body).toMatchObject({ mcpCapabilityAccess: { knowledge: 'read' }, scopeMode: 'manual' });
+  expect(options?.body).toMatchObject({ scopes: undefined });
+});

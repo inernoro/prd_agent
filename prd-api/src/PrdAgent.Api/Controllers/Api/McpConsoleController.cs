@@ -82,6 +82,7 @@ public class McpConsoleController : ControllerBase
         var recentLogs = await RecentLogsAsync(userId, since, 5, ct);
         // 「今天没调用」不等于「从来没接过」，而上面这几个数全是今天的
         var hasHistory = await HasAnyHistoryAsync(userId, ct);
+        var callTrend = await CallTrendAsync(userId, nowUtc, ct);
 
         var capabilities = McpCapabilityCatalog.All.Select(cap =>
         {
@@ -185,6 +186,7 @@ public class McpConsoleController : ControllerBase
                 failed = tally.ByStatus.TryGetValue("error", out var failed) ? failed : 0,
             },
             hasHistory,
+            callTrend,
             recentCalls = recentLogs.Select(ToLogDto),
         }));
     }
@@ -218,13 +220,43 @@ public class McpConsoleController : ControllerBase
             .Limit(resolvedLimit)
             .ToListAsync(ct);
 
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var permissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+        var keys = (await _keyService.ListByOwnerAsync(userId, ct)).ToDictionary(key => key.Id);
         return Ok(ApiResponse<object>.Ok(new
         {
             total,
             skip = resolvedSkip,
             limit = resolvedLimit,
-            items = items.Select(ToLogDto),
+            items = items.Select(log => ToLogDto(log, McpCallAuthorization.RequiredScope(log, keys.GetValueOrDefault(log.KeyId), permissions, DateTime.UtcNow))),
         }));
+    }
+
+    [HttpPost("calls/{id}/authorize")]
+    public async Task<IActionResult> AuthorizeCall(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var log = await _db.McpCallLogs.Find(log => log.Id == id && log.OwnerUserId == userId
+            && log.DeploymentSlug == DeploymentScope.CurrentDurable).FirstOrDefaultAsync(ct);
+        if (log == null) return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "调用记录不存在或无权访问。"));
+        var key = await _keyService.GetByIdAsync(log.KeyId, ct);
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var permissions = await _permissions.GetEffectivePermissionsAsync(userId, isRoot, ct);
+        var scope = McpCallAuthorization.RequiredScope(log, key, permissions, DateTime.UtcNow);
+        if (scope == null || key == null)
+            return Conflict(ApiResponse<object>.Fail("AUTHORIZATION_UNAVAILABLE", "当前无法直接授权，请刷新后检查凭证状态及已有权限。"));
+        // 原子追加单个 scope，保留其他授权，且不改变自动模式或恢复已撤销的凭证。
+        var keyFilter = Builders<AgentApiKey>.Filter;
+        // 存量密钥可能没有 ScopeMode 字段，模型约定缺省为 Manual。
+        var manual = keyFilter.Or(keyFilter.Eq(item => item.ScopeMode, AgentApiKeyScopeMode.Manual),
+            keyFilter.Exists(item => item.ScopeMode, false));
+        var changed = await _db.AgentApiKeys.UpdateOneAsync(
+            keyFilter.Where(item => item.Id == key.Id && item.OwnerUserId == userId && item.RevokedAt == null
+                && item.IsActive && item.ExpiresAt == key.ExpiresAt) & manual,
+            Builders<AgentApiKey>.Update.AddToSet(item => item.Scopes, scope), cancellationToken: ct);
+        if (changed.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("KEY_CHANGED", "凭证状态已改变，请刷新后重试。"));
+        return Ok(ApiResponse<object>.Ok(new { keyId = key.Id, grantedScope = scope }));
     }
 
     /// <summary>
@@ -450,15 +482,37 @@ public class McpConsoleController : ControllerBase
         }
     }
 
+    private async Task<McpCallTrend.Window> CallTrendAsync(string userId, DateTime nowUtc, CancellationToken ct)
+    {
+        var filter = TodayFilter(userId, McpCallTrend.Start(nowUtc))
+                     & Builders<McpCallLog>.Filter.Lte(x => x.CreatedAt, nowUtc);
+        // 对全部匹配日志聚合，不从分页列表或最近五条估算频率。
+        var buckets = await _db.McpCallLogs.Aggregate().Match(filter)
+            .Group(new BsonDocument
+            {
+                { "_id", new BsonDocument("$dateToString", new BsonDocument
+                    { { "format", "%Y-%m-%dT%H:00:00Z" }, { "date", "$CreatedAt" }, { "timezone", "UTC" } }) },
+                { "calls", new BsonDocument("$sum", 1) },
+            }).ToListAsync(ct);
+        var counts = buckets.ToDictionary(
+            bucket => DateTime.Parse(bucket["_id"].AsString, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal),
+            bucket => bucket["calls"].ToInt64());
+        return McpCallTrend.Build(nowUtc, counts);
+    }
+
     private async Task<List<McpCallLog>> RecentLogsAsync(string userId, DateTime since, int limit, CancellationToken ct)
         => await _db.McpCallLogs.Find(TodayFilter(userId, since))
             .SortByDescending(x => x.CreatedAt)
             .Limit(limit)
             .ToListAsync(ct);
 
-    private static object ToLogDto(McpCallLog l) => new
+    private static object ToLogDto(McpCallLog l) => ToLogDto(l, null);
+
+    private static object ToLogDto(McpCallLog l, string? authorizationScope) => new
     {
         id = l.Id,
+        authorizationScope,
         keyId = l.KeyId,
         keyName = l.KeyName,
         toolName = l.ToolName,

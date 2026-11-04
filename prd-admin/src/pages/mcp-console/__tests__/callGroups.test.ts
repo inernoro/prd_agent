@@ -354,3 +354,12 @@ describe('事件行显示的时刻必须与排序键一致', () => {
     expect(times).toEqual([...times].sort((a, b) => b - a));
   });
 });
+
+it('输入顺序变化时仍按实际时间归并，并按最后一步倒序展示', () => {
+  const { enqueue, poll1, poll2 } = run();
+  const other = call({ id: 'other', createdAt: '2026-09-05T10:00:20.000Z' });
+  const groups = groupCalls([poll1, other, enqueue, poll2]);
+  expect(groups.map(eventTime)).toEqual([poll2.createdAt, other.createdAt]);
+  expect(groups[0].first.id).toBe(enqueue.id);
+  expect(groups[0].steps.map(step => step.id)).toEqual([poll2.id, poll1.id, enqueue.id]);
+});
