@@ -16,6 +16,65 @@ afterEach(() => {
 });
 
 describe('问答原文脚注', () => {
+  it('长引文默认折叠，点击上标只显示短摘录，完整片段由读者主动展开', () => {
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const quote = '原文开头。' + '用于核对的原文内容。'.repeat(70) + '仅适用于已审核订单。';
+    act(() => root?.render(<AskMarkdown content={`结论[^1]。\n\n[^1]: ${quote}`} />));
+    const citations = container.querySelector<HTMLDetailsElement>('.ask-citations')!;
+    expect(citations.open).toBe(false);
+    expect(citations.querySelector('summary')?.textContent).toBe('引用 · 1');
+    const ref = container.querySelector<HTMLAnchorElement>('sup a')!;
+    expect(ref.textContent).toBe('[1]');
+    const note = citations.querySelector<HTMLElement>('.ask-citation-note')!;
+    const preview = note.querySelector<HTMLElement>('.ask-citation-preview')!;
+    const full = note.querySelector<HTMLElement>('.ask-citation-full')!;
+    expect(Array.from(preview.textContent ?? '').length).toBeLessThanOrEqual(161);
+    expect(preview.textContent).toMatch(/…$/);
+    expect(full.hidden).toBe(true);
+    act(() => ref.click());
+    expect(citations.open).toBe(true);
+    expect(document.activeElement).toBe(note);
+    expect(full.hidden).toBe(true);
+    act(() => note.querySelector('button')!.click());
+    expect(full.hidden).toBe(false);
+    expect(preview.hidden).toBe(true);
+    expect(full.textContent?.trim()).toBe(quote);
+    act(() => note.querySelector('button')!.click());
+    expect(full.hidden).toBe(true);
+    expect(preview.hidden).toBe(false);
+  });
+
+  it('多来源定位到指定条目，重复引用可分别返回各个位置', () => {
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    act(() => root?.render(<AskMarkdown content={'第一条[^1]。第二条[^2]。再次引用[^2]。\n\n[^1]: 第一处原文。\n\n[^2]: 第二处原文。'} />));
+    const refs = container.querySelectorAll<HTMLAnchorElement>('sup a');
+    const citations = container.querySelector<HTMLDetailsElement>('.ask-citations')!;
+    expect(citations.querySelector('summary')?.textContent).toBe('引用 · 2');
+    act(() => refs[2].click());
+    const notes = citations.querySelectorAll<HTMLElement>('.ask-citation-note');
+    expect(document.activeElement).toBe(notes[1]);
+    const back = notes[1].querySelectorAll<HTMLAnchorElement>('.ask-citation-actions a');
+    expect(back.length).toBe(2);
+    act(() => back[1].click());
+    expect(document.activeElement).toBe(refs[2]);
+    act(() => citations.querySelector('summary')!.click());
+    expect(citations.open).toBe(false);
+    act(() => refs[0].click());
+    expect(citations.open).toBe(true);
+    expect(document.activeElement).toBe(notes[0]);
+  });
+
+  it('普通答案和未引用的定义不出现空引用栏，正文列表保持展开', () => {
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    act(() => root?.render(<AskMarkdown content={'1. 风险分\n2. 置信度\n3. 业务价值\n\n[^unused]: 未使用的原文。'} />));
+    expect(container.querySelector('.ask-citations')).toBeNull();
+    expect(container.querySelectorAll('ol li')).toHaveLength(3);
+    expect(container.textContent).toContain('业务价值');
+    expect(container.textContent).not.toContain('未使用的原文');
+  });
+
   it('多条回答的同号脚注各自跳转和返回，不改变应用路由', () => {
     container = document.createElement('div');
     document.body.appendChild(container);

@@ -1,4 +1,7 @@
 import { memo, useId, useRef } from 'react';
+import { BookOpen, ChevronRight } from 'lucide-react';
+import { AskCitationNote } from './AskCitationNote';
+import './askCitations.css';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -26,6 +29,15 @@ export const AskMarkdown = memo(function AskMarkdown({ content }: { content: str
   const instanceId = useId();
   const prefix = `ask-${instanceId.replace(/[^a-zA-Z0-9-]/g, '')}-`;
   const rootRef = useRef<HTMLDivElement>(null);
+  const navigateCitation = (href: string) => {
+    // 脚注只在当前回答内定位，不改写 HashRouter；先展开再定位，避免焦点落入隐藏内容。
+    const target = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[id]') ?? [])
+      .find((element) => `#${element.id}` === href);
+    const citations = target?.closest<HTMLDetailsElement>('details.ask-citations');
+    if (citations) citations.open = true;
+    target?.scrollIntoView({ block: 'nearest' });
+    if (target) { target.setAttribute('tabindex', '-1'); target.focus({ preventScroll: true }); }
+  };
   return (
     <div ref={rootRef} className="ask-md" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <ReactMarkdown
@@ -36,30 +48,36 @@ export const AskMarkdown = memo(function AskMarkdown({ content }: { content: str
           p: ({ children }) => <p style={{ margin: 0 }}>{children}</p>,
           ul: ({ children }) => <ul style={{ margin: 0, paddingLeft: 18, listStyle: 'disc' }}>{children}</ul>,
           ol: ({ children }) => <ol style={{ margin: 0, paddingLeft: 18, listStyle: 'decimal' }}>{children}</ol>,
-          li: ({ id, children }) => <li id={id} style={{ margin: '2px 0' }}>{children}</li>,
+          li: ({ id, children, node }) => id?.startsWith(`${prefix}fn-`) && node
+            ? <AskCitationNote id={id} node={node} prefix={prefix} onNavigate={navigateCitation}>{children}</AskCitationNote>
+            : <li id={id} style={{ margin: '2px 0' }}>{children}</li>,
+          section: ({ children, node }) => {
+            if (node?.properties.dataFootnotes === undefined) return <section>{children}</section>;
+            const list = node.children.find((child) => child.type === 'element' && child.tagName === 'ol');
+            const count = list?.type === 'element' ? list.children.filter((child) => child.type === 'element' && child.tagName === 'li').length : 0;
+            return <details className="ask-citations">
+              <summary><BookOpen size={12} aria-hidden="true" /><span>引用 · {count}</span><ChevronRight size={12} className="ask-citations-chevron" aria-hidden="true" /></summary>
+              <div className="ask-citations-list" style={{ maxHeight: 'min(220px, 32dvh)', minHeight: 0, overflowY: 'auto' }}>{children}</div>
+            </details>;
+          },
+          sup: ({ children }) => <sup className="ask-citation-sup">{children}</sup>,
           strong: ({ children }) => <strong style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{children}</strong>,
-          a: ({ href, id, children, node }) => (
+          a: ({ href, id, children, node }) => node?.properties.dataFootnoteBackref !== undefined ? null : (
             <a
               id={id}
+              className={node?.properties.dataFootnoteRef !== undefined ? 'ask-citation-ref' : undefined}
+              aria-label={node?.properties.dataFootnoteRef !== undefined ? `查看引用 ${String(children)}` : undefined}
               href={href}
               target={href?.startsWith('#') ? undefined : '_blank'}
               rel={href?.startsWith('#') ? undefined : 'noopener noreferrer'}
-              aria-describedby={node?.properties.dataFootnoteRef ? `${prefix}footnote-label` : undefined}
-              aria-label={node?.properties.dataFootnoteBackref ? '返回正文' : undefined}
+              aria-describedby={node?.properties.dataFootnoteRef !== undefined ? `${prefix}footnote-label` : undefined}
               onClick={href?.startsWith('#') ? (event) => {
-                // HashRouter 的 hash 不能被脚注改写；只在当前回答中找对应锚点。
                 event.preventDefault();
-                const target = Array.from(rootRef.current?.querySelectorAll<HTMLElement>('[id]') ?? [])
-                  .find((element) => `#${element.id}` === href);
-                target?.scrollIntoView({ block: 'nearest' });
-                if (target) {
-                  target.setAttribute('tabindex', '-1');
-                  target.focus({ preventScroll: true });
-                }
+                navigateCitation(href);
               } : undefined}
               style={{ color: 'var(--accent-primary)' }}
             >
-              {children}
+              {node?.properties.dataFootnoteRef !== undefined ? <>[{children}]</> : children}
             </a>
           ),
           code: ({ children }) => (
@@ -102,7 +120,8 @@ export const AskMarkdown = memo(function AskMarkdown({ content }: { content: str
             </blockquote>
           ),
           h1: ({ children }) => <strong style={{ color: 'var(--text-primary)' }}>{children}</strong>,
-          h2: ({ id, children }) => (
+          h2: ({ id, children }) => id === 'footnote-label'
+            ? <h2 id={`${prefix}footnote-label`} className="sr-only">{children}</h2> : (
             <h2
               id={id === 'footnote-label' ? `${prefix}footnote-label` : id}
               style={{ margin: 0, fontSize: '1em', color: 'var(--text-primary)', fontWeight: 600 }}
