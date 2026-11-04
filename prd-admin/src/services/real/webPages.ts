@@ -1426,15 +1426,80 @@ export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise
 
 // ─── 评论 ───
 
+/** 发布版本的评审元数据；版本编号和内容标识由服务端维护。 */
+export interface HostedReviewVersion {
+  historyRestricted?: boolean;
+  id: string;
+  siteId: string;
+  versionLabel: string;
+  contentVersionKey: string;
+  publishedAt?: string | null;
+  isCurrent: boolean;
+  canPreview: boolean;
+  entryFile: string;
+  contentShape?: 'self-contained-html' | 'multi-file';
+  siteUrl: string | null;
+}
+
+export type HostedReviewSource = { mode: 'site'; siteId: string }
+  | { mode: 'share'; token: string; password?: string };
+
+async function readHostedReview<T>(source: HostedReviewSource, suffix: string): Promise<ApiResponse<T>> {
+  if (source.mode === 'site') return apiRequest(`/api/web-pages/${encodeURIComponent(source.siteId)}/revisions${suffix}`);
+  const query = source.password ? `?password=${encodeURIComponent(source.password)}` : '';
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const token = useAuthStore.getState().token;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const response = await fetch(buildApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(source.token)}/revisions${suffix}${query}`), { headers });
+    return await response.json() as ApiResponse<T>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '无法加载版本，请重试' } };
+  }
+}
+
+export function listHostedReviewVersions(source: HostedReviewSource): Promise<ApiResponse<HostedReviewVersion[]>> {
+  return readHostedReview(source, '');
+}
+
+export function previewHostedReviewVersion(source: HostedReviewSource, id: string): Promise<ApiResponse<{ revision: HostedReviewVersion; html: string; siteUrl: string | null }>> {
+  return readHostedReview(source, `/${encodeURIComponent(id)}/preview`);
+}
+
+export interface HostedSiteCommentAnchor {
+  kind: 'element' | 'text';
+  pagePath: string;
+  selector: string;
+  tagName: string;
+  text: string;
+  elementText: string;
+  prefix: string;
+  suffix: string;
+  contentVersion: string;
+}
+
+export interface HostedSiteCommentOptions {
+  revisionId?: string;
+  expectedContentVersion?: string;
+  anchor?: HostedSiteCommentAnchor;
+  parentId?: string;
+}
+
 export interface HostedSiteCommentDto {
   id: string;
   siteId: string;
+  contentVersion?: string | null;
+  revisionId?: string | null;
   content: string;
   authorUserId: string;
   authorName: string;
   authorAvatarFileName?: string;
   createdAt: string;
   canDelete: boolean;
+  anchor?: HostedSiteCommentAnchor | null;
+  parentId?: string | null;
+  isResolved?: boolean;
+  canResolve?: boolean;
 }
 
 export interface SiteCommentsResult {
@@ -1460,10 +1525,10 @@ export async function listSiteComments(siteId: string): Promise<ApiResponse<Site
 }
 
 /** 在某站点发表评论（owner / 团队成员视角，需登录） */
-export async function addSiteComment(siteId: string, content: string): Promise<ApiResponse<HostedSiteCommentDto>> {
+export async function addSiteComment(siteId: string, content: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
   return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, {
     method: 'POST',
-    body: { content },
+    body: { content, ...options },
   });
 }
 
@@ -1548,11 +1613,23 @@ export function downloadHostedPdf(siteId: string, filePath: string,
 }
 
 /** 经分享链接发表评论（需登录） */
-export async function addShareComment(token: string, content: string, password?: string): Promise<ApiResponse<HostedSiteCommentDto>> {
+export async function addShareComment(token: string, content: string, password?: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
   return apiRequest(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, {
     method: 'POST',
-    body: { content },
+    body: { content, ...options },
+  });
+}
+
+/** 解决/重新打开根讨论；分享路径仍需验证当前分享链接和密码。 */
+export function setSiteCommentResolved(source: { siteId: string } | { token: string; password?: string },
+  commentId: string, resolved: boolean): Promise<ApiResponse<HostedSiteCommentDto>> {
+  const prefix = 'token' in source
+    ? `/api/web-pages/shares/view/${encodeURIComponent(source.token)}`
+    : `/api/web-pages/${encodeURIComponent(source.siteId)}`;
+  const query = 'token' in source && source.password ? `?password=${encodeURIComponent(source.password)}` : '';
+  return apiRequest(`${prefix}/comments/${encodeURIComponent(commentId)}/resolved${query}`, {
+    method: 'PATCH', body: { resolved },
   });
 }
 
