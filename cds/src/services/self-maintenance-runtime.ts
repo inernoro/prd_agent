@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { ExecAssignment, ExecOptions, ExecResult, IShellExecutor } from '../types.js';
 import { OperationExecutionError } from './isolated-shell-executor.js';
@@ -76,6 +76,7 @@ interface Checkpoint {
   discarded: boolean;
   busy: boolean;
   retirementUnconfirmed: boolean;
+  recoveryProgram?: { path: string; dev: number; ino: number; sha256: string };
 }
 
 /** 四种维护业务共享一棵树；无等待队列，无TTL解锁，只信真实owned执行终态。 */
@@ -226,6 +227,11 @@ export class SelfMaintenanceRuntime {
     }
   }
 
+  requiresSourceRecoveryProgram(): boolean {
+    return import.meta.url.endsWith('.ts') && fileURLToPath(import.meta.url) === path.join(fs.realpathSync(this.repoRoot),
+      'cds', 'src', 'services', 'self-maintenance-runtime.ts');
+  }
+
   /** 先建立本票唯一恢复点身份；只做小目录操作，递归I/O全部交给worker。 */
   prepareCheckpoint(ticket: SelfMaintenanceOwner, source?: { sha: string; branch: string }): SelfMaintenanceCheckpoint {
     this.qualify(ticket, false);
@@ -251,41 +257,49 @@ export class SelfMaintenanceRuntime {
       || checkpoint.retirementUnconfirmed) {
       throw new Error('CDS 恢复点状态未确认，已停止维护文件操作。');
     }
-    const recovery = action !== 'snapshot';
+    const capture = action === 'snapshot' || action === 'program';
+    const recovery = !capture;
     const owner = this.qualify(ticket, recovery);
-    if (action === 'snapshot' && checkpoint.snapshotStarted || action === 'restore' && !checkpoint.existed) {
+    if (action === 'snapshot' && checkpoint.snapshotStarted || action === 'restore' && !checkpoint.existed
+      || action === 'program' && checkpoint.recoveryProgram) {
       throw new Error('CDS 恢复点尚未完整保存，已停止重复文件操作。');
     }
     if (action === 'restore' && checkpoint.artifactsRestored) {
       return { action, ownerId: ticket.id, existed: [...checkpoint.existed!], artifactsRestored: true };
     }
-    const input = { ...checkpoint.input, action, existed: checkpoint.existed ?? [false, false, false, false, false] };
-    verifyMaintenanceFilesInput(input);
-    this.setPhase(ticket, action === 'snapshot' ? 'checkpoint' : action === 'restore' ? 'rollback' : 'cleanup');
-    checkpoint.busy = true;
-    if (action === 'snapshot') checkpoint.snapshotStarted = true;
     const source = import.meta.url.endsWith('.ts');
     const originalWorker = fileURLToPath(new URL(source ? './self-maintenance-files-process.ts' : './self-maintenance-files-process.js', import.meta.url));
+    const managedSource = source && path.resolve(originalWorker) === path.join(checkpoint.input.root.path,
+      'cds', 'src', 'services', 'self-maintenance-files-process.ts');
+    const input = { ...checkpoint.input, action, existed: checkpoint.existed ?? [false, false, false, false, false],
+      ...(managedSource && action === 'snapshot' && !checkpoint.recoveryProgram ? { preserveSourceProgram: true as const } : {}),
+      ...(checkpoint.recoveryProgram && action === 'snapshot' ? { recoveryProgramReady: true as const } : {}) } satisfies MaintenanceFilesInput;
+    verifyMaintenanceFilesInput(input);
+    this.setPhase(ticket, capture ? 'checkpoint' : action === 'restore' ? 'rollback' : 'cleanup');
+    checkpoint.busy = true;
+    if (action === 'snapshot') checkpoint.snapshotStarted = true;
     // native模块路径与本票已realpath的root固定匹配，不探测新live文件或选择新代代码。
     const managedNative = !source && path.resolve(originalWorker) === path.join(input.root.path,
       'cds', 'dist', 'services', 'self-maintenance-files-process.js');
     // snapshot已确认的旧dist含原worker及相邻atomic；恢复会将backup/0移回原位置。
-    const worker = managedNative && (action === 'restore' || action === 'discard')
+    const recoveryProgram = checkpoint.recoveryProgram;
+    const worker = recoveryProgram?.path ?? (managedNative && (action === 'restore' || action === 'discard')
       && checkpoint.existed?.[0] === true && !checkpoint.artifactsRestored
-      ? path.join(input.backup.path, '0', 'services', 'self-maintenance-files-process.js') : originalWorker;
+      ? path.join(input.backup.path, '0', 'services', 'self-maintenance-files-process.js') : originalWorker);
     try {
-      if (action !== 'snapshot') markRetentionDisposition(input.root, ticket.id, action === 'restore' ? 'restoring' : 'discarding', input.existed);
-      const timeout = action === 'snapshot' && owner.filesDeadline !== undefined
+      if (recovery) markRetentionDisposition(input.root, ticket.id, action === 'restore' ? 'restoring' : 'discarding', input.existed);
+      const timeout = capture && owner.filesDeadline !== undefined
         ? this.remainingFilesBudget(owner) : MAINTENANCE_FILES_TIMEOUT_MS;
-      if (action === 'snapshot') owner.filesDeadline ??= performance.now() + timeout;
+      if (capture) owner.filesDeadline ??= performance.now() + timeout;
       let assignment: ExecAssignment | undefined;
       // 显式保持原operation默认有限上界；五目录是一份job，不逐目录重新发预算。
-      const result = await this.exec(ticket, `${shellQuote(process.execPath)} ${source ? '--import tsx ' : ''}${shellQuote(worker)}`, {
+      const result = await this.exec(ticket, `${shellQuote(process.execPath)} ${source && !recoveryProgram ? '--import tsx ' : ''}${shellQuote(worker)}`, {
         cwd: fileURLToPath(new URL('../../', import.meta.url)), stdin: JSON.stringify(input), timeout,
         onAssigned: value => { assignment = { ...value }; },
         beforeStart: () => {
           if (fs.realpathSync(this.repoRoot) !== input.root.path) throw new Error('CDS 维护源码目录已变化，已停止文件操作。');
           verifyMaintenanceFilesInput(input);
+          if (recoveryProgram) this.verifyRecoveryProgram(recoveryProgram);
         },
       }, recovery);
       if (result.exitCode !== 0) throw new Error('CDS 维护文件操作未完成，已保留恢复点，请检查维护状态。');
@@ -296,6 +310,12 @@ export class SelfMaintenanceRuntime {
         || action !== 'snapshot' && receipt.existed.some((value, i) => value !== input.existed[i])) {
         throw new Error('CDS 维护文件回执未确认，已保留恢复点，请检查维护状态。');
       }
+      if (action === 'program' || action === 'snapshot' && managedSource && !checkpoint.recoveryProgram) {
+        const program = path.join(input.backup.path, 'maintenance-recovery.mjs'), stat = fs.lstatSync(program);
+        if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('CDS 独立恢复程序未确认，已停止维护。');
+        checkpoint.recoveryProgram = { path: program, dev: stat.dev, ino: stat.ino,
+          sha256: createHash('sha256').update(fs.readFileSync(program)).digest('hex') };
+      }
       if (action === 'snapshot') {
         checkpoint.existed = [...receipt.existed];
         completeRetention(input.root, ticket.id, receipt.existed, assignment);
@@ -303,7 +323,7 @@ export class SelfMaintenanceRuntime {
         const retirement = retirementFor(input.root);
         if (retirement) {
           // 从可能开始删除A前就保护B；失败后原capture catch不能把最后保护点当临时副本丢弃。
-          await this.retireCheckpoint(ticket, input.root, retirement);
+          await this.retireCheckpoint(ticket, input.root, retirement, checkpoint.recoveryProgram);
         }
         checkpoint.retirementUnconfirmed = false;
       }
@@ -351,16 +371,27 @@ export class SelfMaintenanceRuntime {
     return remaining;
   }
 
-  private async retireCheckpoint(ticket: SelfMaintenanceOwner, root: MaintenanceDirectoryIdentity, retirement: MaintenanceRetirement): Promise<void> {
+  private verifyRecoveryProgram(program: NonNullable<Checkpoint['recoveryProgram']>): void {
+    const actual = fs.lstatSync(program.path);
+    if (!actual.isFile() || actual.isSymbolicLink() || actual.dev !== program.dev || actual.ino !== program.ino
+      || createHash('sha256').update(fs.readFileSync(program.path)).digest('hex') !== program.sha256) {
+      throw new Error('CDS 独立恢复程序身份已变化，已保留恢复点并停止操作。');
+    }
+  }
+
+  private async retireCheckpoint(ticket: SelfMaintenanceOwner, root: MaintenanceDirectoryIdentity, retirement: MaintenanceRetirement,
+    program?: Checkpoint['recoveryProgram']): Promise<void> {
     const owner = this.qualify(ticket, false);
     const source = import.meta.url.endsWith('.ts');
-    const worker = fileURLToPath(new URL(source ? './self-maintenance-files-process.ts' : './self-maintenance-files-process.js', import.meta.url));
+    const worker = program?.path ?? fileURLToPath(new URL(source ? './self-maintenance-files-process.ts' : './self-maintenance-files-process.js', import.meta.url));
     const input: MaintenanceFilesInput = { action: 'retire', ownerId: ticket.id, root,
       backup: retirement.backup, existed: retirement.existed, retirement };
     try {
-      const result = await this.exec(ticket, `${shellQuote(process.execPath)} ${source ? '--import tsx ' : ''}${shellQuote(worker)}`, {
+      const result = await this.exec(ticket, `${shellQuote(process.execPath)} ${source && !program ? '--import tsx ' : ''}${shellQuote(worker)}`, {
         cwd: fileURLToPath(new URL('../../', import.meta.url)), stdin: JSON.stringify(input),
-        timeout: this.remainingFilesBudget(owner), beforeStart: () => verifyMaintenanceFilesInput(input),
+        timeout: this.remainingFilesBudget(owner), beforeStart: () => {
+          verifyMaintenanceFilesInput(input); if (program) this.verifyRecoveryProgram(program);
+        },
       });
       const receipt = result.exitCode === 0 ? JSON.parse(result.stdout) as MaintenanceFilesReceipt : undefined;
       if (!receipt || receipt.action !== 'retire' || receipt.ownerId !== ticket.id || receipt.artifactsRestored !== false

@@ -41,7 +41,7 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
   const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : '';
   const cdsDir = path.join(repoRoot, 'cds');
   let checkpoint: SelfMaintenanceCheckpoint | undefined;
-  let finished = false, artifactsSaved = false, artifactsRestored = false, discarded = false;
+  let finished = false, artifactsSaved = false, artifactsRestored = false, discarded = false, programPrimed = false;
   const discard = async () => {
     if (!checkpoint || discarded) return;
     try { await runtime.files(owner, 'discard', checkpoint); discarded = true; }
@@ -58,9 +58,12 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
   const captureArtifacts = async () => {
     if (finished) throw new Error('CDS 版本恢复保护已经结束，已停止保存产物。');
     if (artifactsSaved) return;
-    if (checkpoint) throw new Error('CDS 产物恢复点未完整保存，已停止重复保存。');
-    await runtime.recoverCheckpointRetention(owner);
-    checkpoint = runtime.prepareCheckpoint(owner, { sha, branch });
+    if (checkpoint && !programPrimed) throw new Error('CDS 产物恢复点未完整保存，已停止重复保存。');
+    if (!checkpoint) {
+      await runtime.recoverCheckpointRetention(owner);
+      checkpoint = runtime.prepareCheckpoint(owner, { sha, branch });
+    }
+    programPrimed = false;
     try {
       await runtime.files(owner, 'snapshot', checkpoint); artifactsSaved = true;
     } catch (error) {
@@ -69,6 +72,13 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
       await discard(); throw error;
     }
   };
+  // 源码入口的首次checkout也会移走worker；延迟保存五目录时先保护同一恢复点内的程序。
+  if (runtime.requiresSourceRecoveryProgram()) {
+    await runtime.recoverCheckpointRetention(owner);
+    checkpoint = runtime.prepareCheckpoint(owner, { sha, branch });
+    try { await runtime.files(owner, 'program', checkpoint); programPrimed = true; }
+    catch (error) { runtime.requestStop(owner); await discard(); throw error; }
+  }
   if (!captureOptions.deferArtifacts) await captureArtifacts();
   return {
     commit, captureArtifacts,

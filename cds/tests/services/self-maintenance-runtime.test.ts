@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SelfMaintenanceRuntime, selfMaintenanceHealthy } from '../../src/services/self-maintenance-runtime.js';
 import { maintenanceDirectoryIdentity, type MaintenanceFilesInput } from '../../src/services/self-maintenance-files-process.js';
@@ -345,6 +346,149 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     expect((await run('discard')).action).toBe('discard');
     expect(fs.existsSync(checkpoint.backupPath)).toBe(false);
     expect(instance.finish(ticket)).toBe(true);
+  });
+
+  it.each([false, true])('source serve切到没有维护程序的旧版后，真实检查点仍恢复文件与Git（defer=%s）', async deferArtifacts => {
+    seedFiles();
+    const managedSource = path.join(root, 'cds/src'), source = fileURLToPath(new URL('../../src/', import.meta.url));
+    fs.mkdirSync(managedSource, { recursive: true });
+    fs.writeFileSync(path.join(root, 'cds/package.json'), '{"type":"module"}');
+    fs.writeFileSync(path.join(managedSource, 'legacy.ts'), 'export const generation = "old";\n');
+    fs.writeFileSync(path.join(root, 'cds/exec_cds.sh'), '#!/bin/sh\n[ "$1" = nginx-render ] || exit 9\nprintf restored > .cds/rendered-fixture\n', { mode: 0o700 });
+    // 仅引导独立源模块的真实tsx/esbuild/ssh2，不在原五目录，不替代项目安装或公网验收。
+    fs.symlinkSync(fs.realpathSync(new URL('../../node_modules/', import.meta.url)), path.join(root, 'node_modules'), 'dir');
+    const gitEnv = { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C', TZ: 'UTC', GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: '/usr/bin/false' };
+    const git = (...args: string[]) => execFileSync('/usr/bin/git', args, { cwd: root, env: gitEnv, encoding: 'utf8', timeout: 30_000 }).trim();
+    const commit = (message: string) => git('-c', 'user.name=维护源模式夹具', '-c', 'user.email=owned-fixture@example.test',
+      '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', message);
+    git('init', '--quiet', '--initial-branch=main'); git('add', 'cds/src', 'cds/exec_cds.sh'); commit('测试旧版无维护程序');
+    const oldHead = git('rev-parse', 'HEAD');
+    const entries = ['services/self-maintenance-runtime.ts', 'services/self-maintenance-files-process.ts',
+      'services/self-maintenance-retention.ts', 'services/self-update-handoff.ts', 'services/atomic-directory-replacement.ts',
+      'services/isolated-shell-executor.ts', 'services/observation-process-launcher.ts', 'services/observation-process-group.ts',
+      'services/sidecar/sidecar-deployer.ts', 'services/sidecar/remote-host-service.ts', 'services/docker-log-policy.ts',
+      'services/ssh-exec-failure.ts', 'infra/secret-seal.ts', 'services/shell-executor.ts', 'services/observation-process.ts',
+      'services/observation-executor-process.ts', 'services/observation-supervisor-process.ts'];
+    await build({ entryPoints: entries.map(file => path.join(source, file)), outdir: managedSource, outbase: source,
+      outExtension: { '.js': '.ts' }, format: 'esm', platform: 'node', target: 'node20', bundle: false, sourcemap: false, logLevel: 'silent' });
+    git('add', 'cds/src'); commit('测试当前源模式维护版本');
+    const originalHead = git('rev-parse', 'HEAD'), runner = path.join(root, 'source-recovery-case.mjs');
+    const moduleUrl = (file: string) => pathToFileURL(path.join(managedSource, file)).href;
+    let previousBackupPath: string | null = null;
+    if (deferArtifacts) {
+      const dist = path.join(root, 'cds/dist'), producer = path.join(root, 'previous-native-producer.mjs');
+      await build({ entryPoints: entries.map(file => path.join(source, file)), outdir: dist, outbase: source,
+        format: 'esm', platform: 'node', target: 'node20', bundle: false, sourcemap: false, logLevel: 'silent' });
+      const nativeUrl = (file: string) => pathToFileURL(path.join(dist, file)).href;
+      fs.writeFileSync(producer, `
+import { SelfMaintenanceRuntime } from ${JSON.stringify(nativeUrl('services/self-maintenance-runtime.js'))};
+import { confirmMaintenanceBoot } from ${JSON.stringify(nativeUrl('services/self-maintenance-retention.js'))};
+import { IsolatedShellExecutor } from ${JSON.stringify(nativeUrl('services/isolated-shell-executor.js'))};
+import { ShellExecutor } from ${JSON.stringify(nativeUrl('services/shell-executor.js'))};
+const root = ${JSON.stringify(root)};
+confirmMaintenanceBoot(root);
+const pool = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
+const runtime = new SelfMaintenanceRuntime(pool, root, () => {});
+let report;
+try {
+  const owner = runtime.acquire({ source: 'self-update', actor: 'previous-real-native-producer' });
+  const checkpoint = runtime.prepareCheckpoint(owner, { sha: ${JSON.stringify(originalHead)}, branch: 'main' });
+  await runtime.files(owner, 'snapshot', checkpoint);
+  owner.restartScheduled = true; await runtime.retainCheckpoint(owner, checkpoint);
+  report = { pid: process.pid, backupPath: checkpoint.backupPath, released: runtime.release(owner) };
+} finally { await runtime.close(); await pool.close(); }
+process.stdout.write(JSON.stringify(report));
+`);
+      const produced = await pool().execOwnedOperation(`${shellQuote(process.execPath)} ${shellQuote(producer)}`, {
+        cwd: path.join(root, 'cds'), beforeStart: () => {},
+      });
+      expect(produced.exitCode, produced.stderr).toBe(0);
+      const prior = JSON.parse(produced.stdout);
+      expect(prior.pid).toBeGreaterThan(1); expect(prior.released).toBe(true);
+      previousBackupPath = prior.backupPath;
+      expect(fs.existsSync(previousBackupPath!)).toBe(true);
+    }
+    fs.writeFileSync(runner, `
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { SelfMaintenanceRuntime } from ${JSON.stringify(moduleUrl('services/self-maintenance-runtime.ts'))};
+import { createSelfUpdateCheckpoint } from ${JSON.stringify(moduleUrl('services/self-update-handoff.ts'))};
+import { confirmMaintenanceBoot } from ${JSON.stringify(moduleUrl('services/self-maintenance-retention.ts'))};
+import { IsolatedShellExecutor } from ${JSON.stringify(moduleUrl('services/isolated-shell-executor.ts'))};
+import { ShellExecutor } from ${JSON.stringify(moduleUrl('services/shell-executor.ts'))};
+const root = ${JSON.stringify(root)}, directories = ${JSON.stringify(directories)};
+confirmMaintenanceBoot(root);
+const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
+const children = [];
+const instance = new SelfMaintenanceRuntime({ exec: operation.exec.bind(operation), execOwnedOperation: async (command, options) => {
+  let assignment;
+  const result = await operation.execOwnedOperation(command, { ...options, onAssigned: value => {
+    assignment = { ...value }; options.onAssigned?.(value);
+  } });
+  children.push({ command, assignment, result, filesAction: options.stdin ? JSON.parse(options.stdin).action : null }); return result;
+} }, root, () => {});
+let backupPath;
+const prepare = instance.prepareCheckpoint.bind(instance);
+instance.prepareCheckpoint = (...args) => { const handle = prepare(...args); backupPath = handle.backupPath; return handle; };
+let report;
+try {
+  const ticket = instance.acquire({ source: 'self-update', actor: 'source-recovery-fixture' });
+  const checkpoint = await createSelfUpdateCheckpoint(instance, ticket, root, { deferArtifacts: ${JSON.stringify(deferArtifacts)} });
+  const independentProgramBeforeSwitch = fs.existsSync(path.join(backupPath, 'maintenance-recovery.mjs'));
+  await instance.exec(ticket, 'git checkout -f --detach ${oldHead}', { cwd: root, timeout: 30_000 });
+  const absentAfterSwitch = !fs.existsSync(path.join(root, 'cds/src/services/self-maintenance-files-process.ts'));
+  let captureError;
+  if (${JSON.stringify(deferArtifacts)}) {
+    try { await checkpoint.captureArtifacts(); } catch (error) { captureError = String(error); }
+  }
+  for (const relative of captureError ? [] : directories) {
+    const directory = path.join(root, 'cds', relative);
+    fs.rmSync(directory, { recursive: true, force: true }); fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'fixture'), 'new:' + relative);
+  }
+  const beforeRollback = children.length;
+  const rollback = await checkpoint.rollback().then(() => ({ done: true }), error => ({ error: String(error) }));
+  report = { pid: process.pid, independentProgramBeforeSwitch, absentAfterSwitch, captureError, beforeRollback, rollback, children,
+    head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { cwd: root, env: ${JSON.stringify(gitEnv)}, encoding: 'utf8' }).trim(),
+    files: directories.map(relative => fs.readFileSync(path.join(root, 'cds', relative, 'fixture'), 'utf8')),
+    workerPresent: fs.existsSync(path.join(root, 'cds/src/services/self-maintenance-files-process.ts')),
+    rendered: fs.existsSync(path.join(root, 'cds/.cds/rendered-fixture')),
+    backupPresent: fs.existsSync(backupPath), previousBackupPresent: ${JSON.stringify(previousBackupPath)} ? fs.existsSync(${JSON.stringify(previousBackupPath)}) : false,
+    ownerAfter: instance.observe(), finished: instance.finish(ticket) };
+} finally { await instance.close(); await operation.close(); }
+report.poolAfterClose = { active: operation.getStats().active, queued: operation.getStats().queued };
+process.stdout.write(JSON.stringify(report));
+`);
+    const result = await pool().execOwnedOperation(`${shellQuote(process.execPath)} --import tsx ${shellQuote(runner)}`, {
+      cwd: path.join(root, 'cds'), beforeStart: () => {},
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.pid).toBeGreaterThan(1); expect(report.pid).not.toBe(process.pid);
+    expect(report.absentAfterSwitch).toBe(true);
+    expect(report.children.slice(0, report.beforeRollback).every((child: any) => child.result.exitCode === 0)).toBe(true);
+    expect.soft(report.independentProgramBeforeSwitch).toBe(true);
+    expect.soft(report.captureError).toBeUndefined();
+    expect.soft(report.rollback).toEqual({ done: true }); expect.soft(report.head).toBe(originalHead);
+    expect.soft(report.files).toEqual(directories.map(relative => 'old:' + relative));
+    expect.soft(report.workerPresent).toBe(true); expect.soft(report.rendered).toBe(true);
+    expect.soft(report.backupPresent).toBe(false); expect.soft(report.finished).toBe(true);
+    expect.soft(report.previousBackupPresent).toBe(false);
+    const retirements = report.children.filter((child: any) => child.filesAction === 'retire');
+    expect.soft(retirements).toHaveLength(deferArtifacts ? 1 : 0);
+    for (const retired of retirements) {
+      expect.soft(retired.command).toContain('maintenance-recovery.mjs');
+      expect.soft(retired.command).not.toContain('--import tsx');
+      expect.soft(retired.result.exitCode).toBe(0);
+    }
+    expect(report.poolAfterClose).toEqual({ active: 0, queued: 0 });
+    const recovery = report.children[report.beforeRollback];
+    expect.soft(recovery?.command).toContain('maintenance-recovery.mjs');
+    expect.soft(recovery?.command).not.toContain('--import tsx');
+    expect.soft(recovery?.assignment).toMatchObject({ lane: 'operation' });
+    expect.soft(recovery?.result.exitCode).toBe(0);
   });
 
   it.each(['restore', 'discard'] as const)('native dist换代移走新worker后，%s仍用同票完成且不借Master模块缓存', async action => {
