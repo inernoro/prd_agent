@@ -1,11 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { LoadingBlock } from '@/pages/cds-settings/components';
+import { lazy, Suspense, useContext, useEffect, useState } from 'react';
+import { SettingsContentSkeleton, SettingsLoadingContext, SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
+import { AppShell, ConsoleAuthContext, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { apiRequest, fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
+import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
@@ -268,9 +268,11 @@ function getInitialTab(): TabValue {
 }
 
 function SettingsTabFallback(): JSX.Element {
-  // 页签 chunk 未到时画的骨架，与页签自己等数据时的 LoadingBlock 是同一副横条：
-  // 之前这里是居中的品牌 logo，页签挂上后再换成横条——两段等待两副骨架（2026-09-17 用户反馈）。
-  return <LoadingBlock label="加载设置" />;
+  return <SettingsContentSkeleton />;
+}
+
+export function settingsTitleForViewer(status: ShellAuthStatus | null): string {
+  return status?.user && !canManageSystemSettings(status) ? '个人痕迹' : '系统设置';
 }
 
 export function settingsTabForViewer(requested: TabValue, canManageSettings: boolean): TabValue {
@@ -279,7 +281,7 @@ export function settingsTabForViewer(requested: TabValue, canManageSettings: boo
 
 export function CdsSettingsPage(): JSX.Element {
   const [requestedTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
-  const [viewerStatus, setViewerStatus] = useState<ShellAuthStatus | null>(null);
+  const { status: viewerStatus, pending: viewerPending, retry: retryViewer } = useContext(ConsoleAuthContext);
   const canManageSettings = canManageSystemSettings(viewerStatus);
   const activeTab = settingsTabForViewer(requestedTab, canManageSettings);
   const [toast, setToast] = useState('');
@@ -300,11 +302,9 @@ export function CdsSettingsPage(): JSX.Element {
     // 是判定当前模式的权威且安全入口。
     setAuthMode(null);
     setAuthCapabilities(null);
-    setViewerStatus(null);
-    Promise.all([fetchAuthPublicStatus(), apiRequest<ShellAuthStatus>('/api/auth/status')])
-      .then(([status, viewer]) => {
+    fetchAuthPublicStatus()
+      .then((status) => {
         if (alive) {
-          setViewerStatus(viewer);
           setAuthMode(status.mode);
           setAuthCapabilities(status.capabilities);
           setAuthProbeError('');
@@ -349,7 +349,7 @@ export function CdsSettingsPage(): JSX.Element {
             <Crumb
               items={[
                 { label: 'CDS', href: '/project-list' },
-                { label: canManageSettings ? '系统设置' : '个人痕迹' },
+                { label: settingsTitleForViewer(viewerStatus) },
               ]}
             />
           }
@@ -362,7 +362,12 @@ export function CdsSettingsPage(): JSX.Element {
         {authMode === 'probe-failed' ? (
           <AuthModeGatedNotice feature="设置页面" mode="probe-failed" probeError={authProbeError}
             onRetryProbe={() => setAuthProbeSeq(n => n + 1)} onGoToAuth={() => setActiveTab('auth')} />
-        ) : !viewerStatus || !authCapabilities ? <SettingsTabFallback /> : (
+        ) : !viewerPending && !viewerStatus ? (
+          <section role="alert" className="space-y-3 p-6 text-sm">
+            <p>登录状态暂时无法确认，请重试。</p>
+            <button type="button" className="text-primary underline" onClick={retryViewer}>重新检查登录状态</button>
+          </section>
+        ) : viewerPending || !viewerStatus || !authCapabilities ? <SettingsPageSkeleton /> : (
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as TabValue)}
@@ -394,6 +399,7 @@ export function CdsSettingsPage(): JSX.Element {
 
             <div className="cds-settings-content min-w-0">
               <div className="cds-settings-section-body">
+              <SettingsLoadingContext.Provider value={true}>
               <Suspense fallback={<SettingsTabFallback />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
@@ -494,6 +500,7 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'danger' ? <DangerOperationsTab onToast={setToast} /> : null}
                 </TabsContent>
               </Suspense>
+              </SettingsLoadingContext.Provider>
               </div>
             </div>
           </div>

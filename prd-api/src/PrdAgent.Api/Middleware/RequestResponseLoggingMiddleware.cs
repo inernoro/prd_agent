@@ -107,7 +107,7 @@ public class RequestResponseLoggingMiddleware
             || path.EndsWith("/llm/v1/responses", StringComparison.OrdinalIgnoreCase));
 
     private static bool CarriesCredential(string path) =>
-        CredentialBearingPathPrefixes.Any(p =>
+        AskAnswerRating.CarriesReceipt(path) || CredentialBearingPathPrefixes.Any(p =>
         {
             var prefix = p.TrimEnd('/');
             return path.Equals(prefix, StringComparison.OrdinalIgnoreCase)
@@ -172,7 +172,7 @@ public class RequestResponseLoggingMiddleware
         var isEventStream = accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/open-platform/", StringComparison.OrdinalIgnoreCase) 
                && path.Contains("/chat/completions", StringComparison.OrdinalIgnoreCase)
-            || IsDesignRuntimeModelProxy(path);
+            || IsDesignRuntimeModelProxy(path) || AskAnswerRating.IsAnswerStreamPath(path);
         var startedAt = DateTime.UtcNow;
 
         // 记录所有 /api/ 开头的请求（包括 /api/v1/、/api/visual-agent、/api/defect-agent 等）

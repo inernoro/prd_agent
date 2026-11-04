@@ -1,3 +1,10 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
@@ -20,6 +27,52 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public sealed class AskRegenerateRestoreTests
 {
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(null, false)]
+    public async Task 未保存开启或继承关闭时_拒绝生成且不改题库保护(bool? siteEnabled, bool ownerEnabled)
+    {
+        await using var fixture = await RestoreMongoFixture.CreateAsync();
+        var stamp = DateTime.UtcNow;
+        var id = await SeedAsync(fixture, AskOpeningQuestions.SourceManual, stamp);
+        await fixture.Db.HostedSites.UpdateOneAsync(s => s.Id == id,
+            Builders<HostedSite>.Update.Set(s => s.AskEnabled, siteEnabled));
+        await fixture.Db.UserPreferences.InsertOneAsync(new UserPreferences
+        {
+            UserId = "u1", WebPageAskEnabled = ownerEnabled,
+        });
+        var before = await fixture.Db.HostedSites.Find(s => s.Id == id).SingleAsync();
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(s => s.GetByIdAsync(id, "u1", CancellationToken.None)).ReturnsAsync(before);
+        sites.Setup(s => s.CanMaintainAskAsync(id, "u1", CancellationToken.None)).ReturnsAsync(true);
+        var generator = new Mock<IAskOpeningQuestionGenerator>(MockBehavior.Strict);
+        var controller = new WebPageAskController(
+            sites.Object, Mock.Of<ISiteContentSnapshotService>(), Mock.Of<IAskQuotaService>(),
+            generator.Object, Mock.Of<ILlmGateway>(), Mock.Of<ILLMRequestContextAccessor>(),
+            fixture.Db, NullLogger<WebPageAskController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "u1") }, "test")),
+                },
+            },
+        };
+
+        var result = await controller.RegenerateAskQuestions(id);
+
+        var response = result.ShouldBeOfType<BadRequestObjectResult>().Value.ShouldBeOfType<ApiResponse<object>>();
+        response.Error!.Code.ShouldBe("ASK_DISABLED");
+        response.Error.Message.ShouldContain("保存");
+        generator.VerifyNoOtherCalls();
+        var after = await fixture.Db.HostedSites.Find(s => s.Id == id).SingleAsync();
+        after.AskEnabled.ShouldBe(before.AskEnabled);
+        after.AskQuestionsSource.ShouldBe(before.AskQuestionsSource);
+        after.AskQuestionsGeneratedFor.ShouldBe(before.AskQuestionsGeneratedFor);
+        after.AskSuggestedQuestions.ShouldBe(before.AskSuggestedQuestions);
+    }
+
     [Fact]
     public async Task 生成失败期间没人动过_还原照常落下去()
     {
