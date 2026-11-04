@@ -242,6 +242,12 @@ const serviceGraph = (branchId) => ({
 });
 
 const PREFIX = [
+  [/^\/api\/branches\/[^/]+\/effective-config$/, ({ pathname }) => ({
+    branchId: decodeURIComponent(pathname.split('/')[3]), projectId: PROJECT_ID,
+    projectSlug: project.slug, branchStatus: 'running', derivedFrom: null,
+    envLayers: [], profiles: [],
+    plan: { stateBasis: 'recorded', containers: [], networks: { isolation: false, branchNetwork: null, sharedNetwork: 'fixture-shared' }, requiredInfra: [] },
+  })],
   [/^\/api\/branches\/([^/]+)\/service-graph$/, (url) => serviceGraph(
     decodeURIComponent(url.pathname.split('/')[3] || 'fixture-branch-alpha'))],
   [/^\/api\/branches\/[^/]+\/references$/, () => ({ references: [] })],

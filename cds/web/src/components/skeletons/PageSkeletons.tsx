@@ -1,3 +1,5 @@
+import { AuthPageSkeleton } from './AuthPageSkeleton';
+import { PublicStatusSkeleton } from './PublicStatusSkeleton';
 import { AgentRequestsSkeleton, ReleaseCenterSkeleton, TopologyPageSkeleton } from './WorkspaceSkeletons';
 import { loadingSceneForPath } from './loadingScenes';
 import { ReleaseConsoleSkeleton } from './ReleaseConsoleSkeleton';
@@ -136,6 +138,8 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
 export function pageSkeletonForPath(pathname: string): JSX.Element {
   switch (loadingSceneForPath(pathname)?.kind) {
+    case 'auth': return <AuthPageSkeleton />;
+    case 'public-status': return <PublicStatusSkeleton />;
     case 'projects': return <ProjectListSkeleton />;
     case 'branches': return <BranchListSkeleton />;
     case 'relations': return <ContentLoading label="读取关系视图" variant="panel" />;

@@ -1,5 +1,7 @@
+import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
@@ -35,6 +37,8 @@ const TaskSchedulePage = lazy(() => import('@/pages/TaskSchedulePage').then((m) 
  * 2026-05-28 用户反馈:之前是裸 <div>加载中...</div> 一行小字,丑爆。
  */
 function RouteFallback(): JSX.Element {
+  const { pathname } = useLocation();
+  if (loadingSceneForPath(pathname)?.scope === 'standalone') return pageSkeletonForPath(pathname);
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <ContentLoading label="加载页面" variant="panel" className="max-w-5xl p-6" />

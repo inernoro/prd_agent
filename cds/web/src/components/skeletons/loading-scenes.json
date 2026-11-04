@@ -110,5 +110,21 @@
     "page": "pages/CdsSettingsPage.tsx",
     "kind": "settings",
     "workspace": "bleed"
+  },
+  {
+    "route": "/login",
+    "name": "登录",
+    "page": "pages/LoginPage.tsx",
+    "kind": "auth",
+    "workspace": "standalone",
+    "scope": "standalone"
+  },
+  {
+    "route": "/s/:token",
+    "name": "公开状态",
+    "page": "pages/PublicStatusPage.tsx",
+    "kind": "public-status",
+    "workspace": "standalone",
+    "scope": "standalone"
   }
 ]

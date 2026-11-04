@@ -5,8 +5,10 @@
 | 要修改的内容 | 唯一入口 | 更新规则 |
 |---|---|---|
 | 暖灰填色、轻呼吸、浅深主题、减少动效 | `cds/web/src/index.css` 的 `.cds-loading-skeleton-*` | 修改共享样式；不要在页面另写动画或颜色 |
-| 控制台路由对应的加载轮廓、外壳尺寸 | `cds/web/src/components/skeletons/loading-scenes.json` | 每条控制台路由必须登记；实际外壳与目录共同读取 |
+| 控制台路由对应的加载轮廓、外壳尺寸 | `cds/web/src/components/skeletons/loading-scenes.json` | 控制台及有独立骨架的公共路由必须登记；实际外壳与目录共同读取 |
 | 项目/分支列表轮廓 | `cds/web/src/components/skeletons/PageSkeletons.tsx` | 页面等待与路由等待引用同一个导出 |
+| 登录代码/会话/登录方式等待与真实登录卡 | `cds/web/src/components/skeletons/AuthPageSkeleton.tsx` | 实际登录页和等待共用 AuthPageFrame；账号模式确认前只有同一副表单骨架 |
+| 公开状态等待 | `cds/web/src/components/skeletons/PublicStatusSkeleton.tsx` | 代码与取数共用；首次失败退出骨架显示重试，不改变公开权限 |
 | 系统设置、项目设置的导航和表单轮廓 | `cds/web/src/components/skeletons/SettingsSkeleton.tsx` | `SettingsPageSkeleton` 放整页；`SettingsContentSkeleton` 放内容区；页签内通过 `SettingsLoadingContext` 复用 |
 | 发布控制台三栏轮廓和栏宽 | `cds/web/src/components/skeletons/ReleaseConsoleSkeleton.tsx` | 真实页与骨架共用布局常量；仅首次未取得项目/环境数据时使用整页骨架 |
 | 发布中心/拓扑/Agent 请求的导航与筛选占位 | `cds/web/src/components/skeletons/WorkspaceSkeletons.tsx` | 整段轮廓共用，避免页头在两阶段之间把内容向下推 |
@@ -51,4 +53,4 @@ CDS Prebuilt CI 在发布产物前运行真实 Chromium 连续性与相邻场景
 
 ## 本轮边界
 
-2026-11-04：补齐发布控制台、项目设置、发布中心、拓扑、Agent 请求的两阶段整段轮廓，并对齐监控高度；保留项目设置和关系图刷新内容并取消旧请求；通用慢等待提示预留空间。详细运行结果、截图与部署 SHA 随本次交付留存，不把本说明当作全部页面已逐权限实测的结论。
+2026-11-04：同时修复登录三阶段轮廓、基础登录卡就绪高度与公开状态首载失败重试；补齐发布控制台、项目设置、发布中心、拓扑、Agent 请求的两阶段整段轮廓，并对齐监控高度；保留项目设置和关系图刷新内容并取消旧请求；通用慢等待提示预留空间。详细运行结果、截图与部署 SHA 随本次交付留存，不把本说明当作全部页面已逐权限实测的结论。

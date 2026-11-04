@@ -1,3 +1,4 @@
+import { PublicStatusSkeleton } from '@/components/skeletons/PublicStatusSkeleton';
 /*
  * 公开状态页 `/s/:token`。
  *
@@ -62,11 +63,12 @@ export function PublicStatusPage(): JSX.Element {
   // 刻意不用 useParams：这一页不挂在控制台路由树上时也要能独立跑。
   const token = window.location.pathname.split('/').filter(Boolean)[1] || '';
   const [board, setBoard] = useState<PublicBoardPayload | null>(null);
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'gone'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'gone' | 'error'>('loading');
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (): Promise<void> => {
     setRefreshing(true);
+    if (!board) setPhase('loading');
     try {
       const res = await fetch(`/api/public/status/${encodeURIComponent(token)}`, { headers: { accept: 'application/json' } });
       if (res.status === 404) { setPhase('gone'); return; }
@@ -76,7 +78,7 @@ export function PublicStatusPage(): JSX.Element {
     } catch {
       // 一次刷新失败保留上一份数据：对外页宁可显示旧结论 + 旧时间，
       // 也不要把一屏已经看到的内容换成错误页。
-      if (!board) setPhase('loading');
+      if (!board) setPhase('error');
     } finally {
       setRefreshing(false);
     }
@@ -104,21 +106,14 @@ export function PublicStatusPage(): JSX.Element {
     );
   }
 
-  if (phase === 'loading' || !board) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-6">
-        <div className="w-full max-w-2xl">
-          <div className="cds-loading-skeleton-line h-6 w-40 rounded" />
-          <div className="mt-4 cds-loading-skeleton-line h-14 w-full rounded-lg" />
-          <div className="mt-4 space-y-3">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="cds-loading-skeleton-line h-12 w-full rounded-lg" style={{ animationDelay: `${i * 90}ms` }} />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (phase === 'error') return <div className="flex min-h-screen items-center justify-center bg-background px-6">
+    <div role="alert" className="w-full max-w-2xl space-y-4">
+      <p>暂时无法读取状态，请重试。</p>
+      <button type="button" className="rounded-md border border-border px-4 py-2 text-sm" disabled={refreshing} onClick={() => void load()}>重新读取</button>
+    </div>
+  </div>;
+
+  if (phase === 'loading' || !board) return <PublicStatusSkeleton />;
 
   const BannerIcon = BANNER_ICON[board.status];
 

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { verifyPublicLoading } from './loading-public-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
@@ -28,7 +29,7 @@ const gate = () => { let release; const promise = new Promise(r => release = r);
 const browser = await chromium.launch({ headless: true });
 const results = [];
 try {
-  for (const scene of scenes.filter(s => s.route !== '/branch-panel' && (!only || only.includes(s.route)))) {
+  for (const scene of scenes.filter(s => s.scope !== 'standalone' && s.route !== '/branch-panel' && (!only || only.includes(s.route)))) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
     const code = gate(), data = gate();
     const errors = [], requests = [];
@@ -107,6 +108,10 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (scene.kind === 'branch-detail') {
+        await page.getByRole('button',{name:/^生效配置/}).click();
+        await page.getByText('没有任何自定义环境变量层。',{exact:true}).waitFor();
+      }
       assert.deepEqual(errors, []);
     } catch (e) { await page.screenshot({path:path.join(out,`failure-${scene.kind}.jpg`)}); result.failure = String(e); result.requests = [...new Set(requests)]; await fs.writeFile(path.join(out, `failed-${scene.kind}.html`), await page.content()); }
     finally { code.release(); data.release(); await context.close(); }
@@ -116,6 +121,7 @@ try {
   }
   if (!before && !only) {
     try {
+      await verifyPublicLoading(browser, base, out);
       const refresh = await verifyLoadingRefresh(browser, base, out);
       await fs.writeFile(path.join(out, 'refresh-result.json'), JSON.stringify(refresh,null,2));
       console.log('PASS refresh retains content/input/focus; failure/retry; navigate away and reopen');
