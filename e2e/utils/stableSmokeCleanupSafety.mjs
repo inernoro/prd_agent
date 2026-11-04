@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-export const sharedCleanupSafetyPath = resolve(process.env.CODEX_HOME || resolve(homedir(), '.codex'), 'automations/stable-smoke-48h/safety-fuse.json');
+export const sharedCleanupSafetyPath = process.env.STABLE_SMOKE_CLEANUP_SAFETY_PATH
+  ? resolve(process.env.STABLE_SMOKE_CLEANUP_SAFETY_PATH)
+  : resolve(process.env.CODEX_HOME || resolve(homedir(), '.codex'), 'automations/stable-smoke-48h/safety-fuse.json');
 const readOnlyIds = new Set(['CORE-001', 'CORE-002', 'CORE-003', 'CORE-010', 'REG-STSMK-PRODUCTION-READ-ONLY-001', 'REG-AUTH-IDENTITY-PERMISSIONS-001']);
 const localPath = directory => resolve(directory, 'cleanup-safety-circuit.json');
 

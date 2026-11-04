@@ -12,12 +12,15 @@ test('REG-stsmk-cleanup-circuit-001 创建后SIGKILL无reporter仍可回读精�
   const options = fixture(t);
   const scope = { inspectionRunId: 'stsmk-cloud-interruption', environment: 'cds', testId: 'REC-003', retry: 0 };
   const moduleUrl = new URL('../../e2e/utils/stableSmokeCleanupSafety.mjs', import.meta.url).href;
-  const script = `import {persistResourceCreationIntent,persistCreatedResourceEvidence} from ${JSON.stringify(moduleUrl)};
+  const script = `import {persistResourceCreationIntent,persistCreatedResourceEvidence,sharedCleanupSafetyPath} from ${JSON.stringify(moduleUrl)};
     const scope=${JSON.stringify(scope)}, path=${JSON.stringify(options.sharedPath)};
-    persistResourceCreationIntent('transcribe',scope,path);
-    persistCreatedResourceEvidence('recording-run-created',{inspectionRunId:scope.inspectionRunId,runId:'${'a'.repeat(32)}'},scope,path,'transcribe');
+    if(sharedCleanupSafetyPath!==path) throw Error('cloud path binding lost');
+    persistResourceCreationIntent('transcribe',scope);
+    persistCreatedResourceEvidence('recording-run-created',{inspectionRunId:scope.inspectionRunId,runId:'${'a'.repeat(32)}'},scope,undefined,'transcribe');
     process.kill(process.pid,'SIGKILL');`;
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8', env: { ...process.env, STABLE_SMOKE_CLEANUP_SAFETY_PATH: options.sharedPath },
+  });
   assert.equal(child.signal, 'SIGKILL');
   const blocker = readCleanupBlocker({ ...options, environment: 'cds' });
   assert.deepEqual(blocker.resourceIds, ['a'.repeat(32)]);

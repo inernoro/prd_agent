@@ -203,3 +203,5 @@ REG-file-001 的空文件子判据必须从首页进入知识库、使用真实�
 2026-11-04 原 DEF-STSMK-PAID-RETRY-001 / REG-stsmk-paid-retry-001 补充 active 全局判据：STABLE_SMOKE_RUN 模式无论是否CI均默认 retries=0，避免手机或未来未包局部作用域的付费旅程继承全局重试；普通非巡检CI仍保持一次自动重试。只读确定性复验须显式安排并保留首次失败和flaky，不通过全局重试重复业务。原真实业务全回归仍未执行，不升级verified。
 
 2026-11-04 云端继续原 DEF-STSMK-CLEANUP-IDENTITY-001 / REG-stsmk-cleanup-circuit-001：手机真实上传转录和原生REC001开录会话追加创建前意图与响应即时身份账本；桌面、手机上传路径finally先有界等待已登记的响应promise再删除和独立回读，不重发请求。原手机响应回调的离线延迟夹具证明UI首败后晚到run仍入账、错误retry回执不能核销；REC001路由真实执行体只在唯一合法会话放行网络前登记意图。原run欠证和其他未接入路径仍保留，不以工具通过解除fuse。
+
+2026-11-04 同一 REG-stsmk-cleanup-circuit-001 补充云端路径绑定：允许STABLE_SMOKE_CLEANUP_SAFETY_PATH显式指向云端可写的原fuse副本，未设置时保留旧默认路径。SIGKILL子进程实际通过该环境绑定落账并回读，不需要改HOME/CODEX_HOME或本地自动化，不把文件路径作为跨机器租约。原active状态及未知任务仍不核销。
