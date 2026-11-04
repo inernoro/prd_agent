@@ -13,9 +13,10 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
           svg
       div .absolute.bottom-2.flex.gap-1.items-center.left-9.min-w-0.right-2.z-20
         div .flex.gap-1.items-center.ml-auto.shrink-0
-          span .gap-1.inline-flex.items-center.shrink-0.whitespace-nowrap {height:20px;padding:0 6px}
+          span .gap-1.inline-flex.items-center.shrink-0.whitespace-nowrap {height:20px;padding:0 6px} [aria-label=已分享]
             svg
-            "已分享"
+            span .@[220px]:inline.hidden
+              "已分享"
       button .absolute.bottom-[-5px].h-11.inline-flex.items-center.justify-center.left-[-5px].w-11.z-20 [data-no-drag=true aria-label=选择 type=button]
         span .group-hover:opacity-100.h-5.inline-flex.items-center.justify-center.w-5 {opacity:0.5}
       div .[@media(hover:hover)]:flex.absolute.bottom-8.gap-[5px].group-focus-within:opacity-100.group-focus-within:translate-y-0.group-hover:opacity-100.group-hover:translate-y-0.hidden.inset-x-0.items-center.opacity-0.pointer-events-none.translate-y-[6px].z-20 {padding:7px 7px 7px 33px} [data-hoverbar=true]

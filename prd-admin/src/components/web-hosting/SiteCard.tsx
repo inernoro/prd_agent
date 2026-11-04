@@ -425,12 +425,12 @@ export function SiteCard({
               {formBadge}
             </span>}
             <div className="ml-auto flex shrink-0 items-center gap-1">
-              {shared && <span data-site-shared-badge
+              {shared && <span data-site-shared-badge aria-label="已分享"
                 className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap backdrop-blur-md"
                 title={linkCount > 0 ? `已分享 ${linkCount} 条有效链接` : '已分享'}
                 style={{ height: 20, padding: '0 6px', borderRadius: 6, fontSize: 10, fontWeight: 500,
                   color: 'var(--semantic-success-text)', background: 'var(--bg-elevated)', border: '1px solid var(--semantic-success-border)', boxShadow: 'var(--scrim-badge-shadow)' }}>
-                <Link2 size={10} aria-hidden />已分享
+                <Link2 size={10} aria-hidden /><span className="hidden @[220px]:inline">已分享</span>
               </span>}
               <SiteEditCount activity={activity} badge />
             </div>

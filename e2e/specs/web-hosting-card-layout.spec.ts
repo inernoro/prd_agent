@@ -80,7 +80,7 @@ for (const width of [390, 1440]) {
           expect(metric.wrapped, JSON.stringify(metric)).toBe(false);
           expect(metric.statsHeight).toBeCloseTo(16, 0);
           expect(metric.editInThumbnail).toBe(true);
-          expect(metric.metaFits).toBe(true);
+          expect(metric.metaFits, JSON.stringify(metric)).toBe(true);
           if (metric.editRight !== null) expect(metric.editRight).toBeCloseTo(8, 0);
           if (metric.editBottom !== null) expect(metric.editBottom).toBeGreaterThanOrEqual(8);
           if (metric.shareGap !== null) expect(metric.shareGap).toBeCloseTo(4, 0);
