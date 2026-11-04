@@ -432,6 +432,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       await tryExitNativeFullscreen();
       return;
     }
+    setShowComments(false);
     const target = singleViewRef.current;
     if (!target || !await tryEnterNativeFullscreen(target)) setPageFullscreen(true);
   }, [pageFullscreen]);

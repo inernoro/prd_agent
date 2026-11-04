@@ -132,6 +132,19 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
   test.describe(`托管对抗样本 ${viewport.width}px`, () => {
     test.use({ viewport });
 
+    test('讨论打开时进入全屏仍铺满视口，退出后恢复工具栏', async ({ page }) => {
+      await serve(page, { shape: 'multi-file' });
+      await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+      await expect(page.locator('aside.review-sidebar')).toBeVisible();
+      await page.getByRole('button', { name: '全屏演示', exact: true }).click();
+      await expect(page.locator('.share-topbar')).toBeHidden();
+      await expect(page.locator('aside.review-sidebar')).toBeHidden();
+      await expect.poll(async () => (await page.locator('iframe[title="临时预览测试"]').boundingBox())?.height ?? 0)
+        .toBeGreaterThanOrEqual(viewport.height - 1);
+      await page.evaluate(() => document.exitFullscreen());
+      await expect(page.locator('.share-topbar')).toBeVisible();
+    });
+
     test('站内弹窗越过等待窗口后不重载，保留输入和地址状态', async ({ page }, testInfo) => {
       const { requests, contentRequests } = await serve(page, { shape: 'multi-file', modal: true });
       const iframe = page.getByRole('dialog').locator('iframe');
