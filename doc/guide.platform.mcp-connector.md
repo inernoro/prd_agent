@@ -124,4 +124,4 @@ POST /api/admin/agent-open-endpoints
 
 - [doc/design.platform.map-mcp-connector.md](./design.platform.map-mcp-connector.md) —— 设计与实施
 - [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— AgentApiKey + AgentOpenEndpoint 上游设计
-- `.claude/rules/no-rootless-tree.md` —— 借用法则（连接器借现成桩，不重建）
+- [借用法则](../.claude/rules/no-rootless-tree.md) 支持复用现有连接器能力。
