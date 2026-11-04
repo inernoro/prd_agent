@@ -1,4 +1,5 @@
 import { ContentLoading } from './ContentLoading';
+import { SettingsPageSkeleton } from './SettingsSkeleton';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
 import { MonitorCenterSkeleton } from '@/pages/status/primitives';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
@@ -137,7 +138,8 @@ export function pageSkeletonForPath(pathname: string): JSX.Element {
   if (pathname.startsWith('/agent-requests/')) return <ContentLoading label="加载 Agent 请求" variant="table" />;
   if (pathname === '/status') return <MonitorCenterSkeleton />;
   if (pathname === '/branch-panel' || pathname.startsWith('/branch-panel/')) return <BranchDetailLoadingSkeleton />;
-  if (pathname === '/cds-settings' || pathname.startsWith('/settings/') ||
+  if (pathname === '/cds-settings' || pathname === '/cds-settings/') return <SettingsPageSkeleton />;
+  if (pathname.startsWith('/settings/') ||
       ['/reports', '/task-schedule', '/branch-topology', '/release-center'].includes(pathname)) {
     return <LoadingBlock />;
   }

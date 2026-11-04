@@ -240,6 +240,7 @@ export function ConsoleLayout(): JSX.Element {
  */
 function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
+  const settingsPage = pathname === '/cds-settings' || pathname === '/cds-settings/';
   const projectList = pathname === '/project-list';
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
@@ -261,7 +262,7 @@ function ConsoleRouteFallback(): JSX.Element {
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className="cds-workspace cds-workspace--fluid" role="status" aria-label="页面加载中">
+        <div className={cn('cds-workspace cds-workspace--fluid', settingsPage && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
           {pageSkeletonForPath(pathname)}
         </div>
       </main>
@@ -421,6 +422,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
         active={active}
+        authPending={authPending || !authStatus}
         canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
@@ -435,6 +437,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         open={navOpen}
         onClose={() => setNavOpen(false)}
         active={active}
+        authPending={authPending || !authStatus}
         canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
@@ -506,6 +509,7 @@ export function PaletteHint(): JSX.Element | null {
 
 interface RailNavProps {
   active: AppNavKey;
+  authPending?: boolean;
   canManageSettings: boolean;
   canLogout: boolean;
   authMode?: string;
@@ -522,6 +526,7 @@ interface RailNavProps {
  */
 function RailNav({
   active,
+  authPending = false,
   canManageSettings,
   canLogout,
   authMode,
@@ -677,7 +682,7 @@ function RailNav({
           <span className="cds-rail-full">系统设置</span>
           <span className="cds-rail-short">设置</span>
         </Link>
-        </> : (
+        </> : !authPending ? (
           <Link to="/cds-settings#activity" className="cds-rail-item"
             data-active={active === 'cds-settings' ? 'true' : 'false'}
             aria-label="个人操作痕迹" title="查看自己的操作记录" onClick={onNavigate}>
@@ -685,7 +690,7 @@ function RailNav({
             <span className="cds-rail-full">个人操作痕迹</span>
             <span className="cds-rail-short">痕迹</span>
           </Link>
-        )}
+        ) : null}
       </div>
       <div className="cds-rail-footer">
         <RailThemeToggle />

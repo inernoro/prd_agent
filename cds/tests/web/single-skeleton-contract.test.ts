@@ -20,6 +20,7 @@ import { BranchDrawerSkeleton } from '../../web/src/components/branch/BranchDraw
 import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCard.js';
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
 import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
+import { SettingsPageSkeleton } from '../../web/src/components/skeletons/SettingsSkeleton.js';
 import { branchNoticeVisible } from '../../web/src/components/BranchDetailDrawer.js';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '../../web/src/pages/cds-settings/components.js';
 import { MonitorCenterSkeleton } from '../../web/src/pages/status/primitives.js';
@@ -149,10 +150,11 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     expect(generic).toContain('cds-loading-skeleton-panel');
   });
 
-  it('CDS 系统设置的页签 chunk 骨架与页签数据骨架同形（LoadingBlock 横条，不是居中 logo）', () => {
+  it('设置页签的代码等待保留设置卡片结构', () => {
     const settings = stripComments(read('pages/CdsSettingsPage.tsx'));
     const fallback = settings.slice(settings.indexOf('function SettingsTabFallback'), settings.indexOf('function SettingsTabFallback') + 400);
-    expect(fallback).toContain('<LoadingBlock');
+    expect(fallback).toContain('<SettingsContentSkeleton');
+    expect(fallback).not.toContain('<LoadingBlock');
     expect(fallback).not.toContain('CdsLogoLoader');
   });
 });
@@ -164,7 +166,8 @@ describe('统一骨架：路由、数据和预览共用组件', () => {
   it('监控、分支详情、通用局部页的路由等待与数据等待轮廓一致', () => {
     expect(markup(pageSkeletonForPath('/status'))).toBe(markup(createElement(MonitorCenterSkeleton)));
     expect(markup(pageSkeletonForPath('/branch-panel/fixture'))).toBe(markup(createElement(BranchDetailLoadingSkeleton)));
-    for (const route of ['/reports', '/task-schedule', '/branch-topology', '/release-center', '/settings/fixture', '/cds-settings']) {
+    expect(markup(pageSkeletonForPath('/cds-settings'))).toBe(markup(createElement(SettingsPageSkeleton)));
+    for (const route of ['/reports', '/task-schedule', '/branch-topology', '/release-center', '/settings/fixture']) {
       expect(markup(pageSkeletonForPath(route))).toBe(markup(createElement(LoadingBlock)));
     }
   });
