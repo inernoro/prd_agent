@@ -19,6 +19,50 @@ public class HostedSiteReviewVersionAccessTests
 {
     [Theory]
     [Trait("Category", "Integration")]
+    [InlineData("viewer", false)]
+    [InlineData("editor", true)]
+    public async Task TeamMember_CannotBypassHistoryScopeThroughSiteRoutes(string role, bool editor)
+    {
+        await WithReviewDb(async db =>
+        {
+            var site = ReviewSite(); site.SharedTeamIds = new() { "team" };
+            await db.HostedSites.InsertOneAsync(site);
+            await db.HostedSiteRevisions.InsertManyAsync(new[] { ReviewRevision("old", site.ContentVersion.AddDays(-1)), ReviewRevision("current", site.ContentVersion) });
+            await db.HostedSiteComments.InsertManyAsync(new[] {
+                new HostedSiteComment { Id = "old-comment", SiteId = site.Id, AuthorUserId = "member", Content = "removed secret", ContentVersion = HostedSiteCommentRules.VersionKey(site.ContentVersion.AddDays(-1)) },
+                new HostedSiteComment { Id = "current-comment", SiteId = site.Id, Content = "safe", ContentVersion = HostedSiteCommentRules.VersionKey(site.ContentVersion) },
+            });
+            var teams = new Mock<ITeamService>(MockBehavior.Strict);
+            teams.Setup(x => x.GetMyTeamIdsAsync("member", It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "team" });
+            teams.Setup(x => x.GetMyWebHostingTeamRolesAsync("member", It.IsAny<CancellationToken>())).ReturnsAsync(new Dictionary<string, string> { ["team"] = role });
+            var storage = new Mock<IAssetStorage>();
+            storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example/" + key);
+            var sites = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
+            var controller = ReviewController(sites, db, Mock.Of<IHostedSiteRevisionService>(), storage.Object, "member");
+            var list = Assert.IsType<OkObjectResult>(await controller.ListReviewVersions(site.Id));
+            var json = JsonSerializer.Serialize(Assert.IsType<ApiResponse<object>>(list.Value).Data);
+            Assert.Contains("current", json);
+            Assert.Equal(editor, json.Contains("\"Id\":\"old\""));
+            Assert.Equal(editor ? 200 : 404, Assert.IsAssignableFrom<ObjectResult>(await controller.PreviewReviewVersion(site.Id, "old")).StatusCode);
+            Assert.IsType<OkObjectResult>(await controller.PreviewReviewVersion(site.Id, "current"));
+            var comments = await sites.ListCommentsBySiteAsync(site.Id, "member");
+            Assert.NotNull(comments);
+            Assert.Equal(editor, comments.Comments.Any(c => c.Content.Contains("secret")));
+            Assert.Contains(comments.Comments, c => c.Id == "current-comment");
+            var root = await sites.AddCommentBySiteAsync(site.Id, "member", "member", null, "history root", revisionId: "old");
+            Assert.Equal(editor ? 200 : 404, root.HttpStatus);
+            var reply = await sites.AddCommentBySiteAsync(site.Id, "member", "member", null, "history reply", parentId: "old-comment");
+            Assert.Equal(editor ? 200 : 404, reply.HttpStatus);
+            var resolve = await sites.SetCommentResolvedBySiteAsync(site.Id, "old-comment", "member", true);
+            Assert.Equal(editor ? 200 : 404, resolve.HttpStatus);
+            var current = await sites.AddCommentBySiteAsync(site.Id, "member", "member", null, "current remains writable", revisionId: "current");
+            Assert.Equal(200, current.HttpStatus);
+            teams.VerifyAll();
+        });
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
     [InlineData(null, false)]
     [InlineData("outsider", false)]
     [InlineData("owner", true)]
@@ -72,6 +116,7 @@ public class HostedSiteReviewVersionAccessTests
             await db.HostedSiteRevisions.InsertOneAsync(ReviewRevision("old", site.ContentVersion.AddDays(-1)));
             var sites = new Mock<IHostedSiteService>();
             sites.Setup(x => x.GetByIdAsync(site.Id, "owner", It.IsAny<CancellationToken>())).ReturnsAsync(site);
+            sites.Setup(x => x.CanEditSiteAsync(It.IsAny<HostedSite>(), "owner", It.IsAny<CancellationToken>())).ReturnsAsync(true);
             var storage = new Mock<IAssetStorage>();
             storage.Setup(x => x.TryDownloadBytesAsync("current.html", It.IsAny<CancellationToken>())).ThrowsAsync(new IOException("offline"));
             storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>())).Returns("https://assets.example/old.html");

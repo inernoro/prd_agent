@@ -5265,8 +5265,7 @@ public class HostedSiteService : IHostedSiteService
             return new SiteCommentsResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
         var site = sites[0];
-        var canViewHistory = !string.IsNullOrEmpty(viewerUserId) && await CanEditSiteAsync(site, viewerUserId, ct);
-        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true, currentOnly: !canViewHistory);
+        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true);
         return new SiteCommentsResult
         {
             SiteId = site.Id,
@@ -5325,19 +5324,18 @@ public class HostedSiteService : IHostedSiteService
                 ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
         if (sites.Count == 0)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
-        var canViewHistory = await CanEditSiteAsync(sites[0], userId, ct);
-        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true, currentOnly: !canViewHistory);
+        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true);
     }
 
     private async Task<AddCommentResult> SetCommentResolvedAsync(HostedSite site, string commentId, string userId,
-        bool resolved, CancellationToken ct, bool maskUserId = false, bool currentOnly = false)
+        bool resolved, CancellationToken ct, bool maskUserId = false)
     {
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
         var comment = await _db.HostedSiteComments
             .Find(c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted).FirstOrDefaultAsync(ct);
         if (comment == null || !HostedSiteCommentRules.CanResolve(comment, site, userId)
-            || !HostedSiteCommentRules.CanViewSharedVersion(HostedSiteCommentRules.StoredVersion(comment), EffectiveContentVersion(site), !currentOnly))
+            || !HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(comment), EffectiveContentVersion(site), await CanEditSiteAsync(site, userId, ct)))
             return new AddCommentResult { Error = "讨论不存在或无权修改", HttpStatus = 404, ErrorCode = "not_found" };
         var update = Builders<HostedSiteComment>.Update.Set(c => c.IsResolved, resolved).Set(c => c.UpdatedAt, DateTime.UtcNow);
         var changed = await _db.HostedSiteComments.UpdateOneAsync(
@@ -5420,9 +5418,9 @@ public class HostedSiteService : IHostedSiteService
                 return new AddCommentResult { Error = "正在查看的版本已变化，请刷新或重新选择版本后发表", HttpStatus = 409, ErrorCode = "CONTENT_VERSION_CHANGED" };
         }
 
-        if (shareToken != null && !HostedSiteCommentRules.CanViewSharedVersion(contentVersion, EffectiveContentVersion(site),
+        if (!HostedSiteCommentRules.CanViewReviewVersion(contentVersion, EffectiveContentVersion(site),
             await CanEditSiteAsync(site, authorUserId, ct)))
-            return new AddCommentResult { Error = "此分享不提供历史讨论", HttpStatus = 404, ErrorCode = "not_found" };
+            return new AddCommentResult { Error = "当前权限不提供历史讨论", HttpStatus = 404, ErrorCode = "not_found" };
 
         var comment = new HostedSiteComment
         {
@@ -5503,7 +5501,7 @@ public class HostedSiteService : IHostedSiteService
             && (site.OwnerUserId == viewerUserId || comment.AuthorUserId == viewerUserId),
     };
 
-    private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false, bool currentOnly = false)
+    private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false)
     {
         var comments = await _db.HostedSiteComments
             .Find(c => c.SiteId == site.Id && !c.IsDeleted)
@@ -5521,7 +5519,8 @@ public class HostedSiteService : IHostedSiteService
                 && missingParents.Contains(c.Id) && c.ParentId == null).ToListAsync(ct);
             comments.AddRange(roots);
         }
-        if (currentOnly) comments = comments.Where(c => HostedSiteCommentRules.CanViewSharedVersion(
+        var canViewHistory = !string.IsNullOrEmpty(viewerUserId) && await CanEditSiteAsync(site, viewerUserId, ct);
+        if (!canViewHistory) comments = comments.Where(c => HostedSiteCommentRules.CanViewReviewVersion(
             HostedSiteCommentRules.StoredVersion(c), EffectiveContentVersion(site), false)).ToList();
         var rootIds = comments.Where(c => string.IsNullOrEmpty(c.ParentId)).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
         return comments.Where(c => string.IsNullOrEmpty(c.ParentId) || rootIds.Contains(c.ParentId))

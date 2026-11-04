@@ -14,8 +14,8 @@ public class HostedSiteCommentVersionTests
     public void ExternalShare_DoesNotGrantHistoricalCommentAccess(string? version, bool editor, bool allowed)
     {
         var current = new DateTime(2026, 11, 4, 0, 0, 0, DateTimeKind.Utc);
-        Assert.Equal(allowed, HostedSiteCommentRules.CanViewSharedVersion(version, current, editor));
-        Assert.True(HostedSiteCommentRules.CanViewSharedVersion(HostedSiteCommentRules.VersionKey(current), current, false));
+        Assert.Equal(allowed, HostedSiteCommentRules.CanViewReviewVersion(version, current, editor));
+        Assert.True(HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.VersionKey(current), current, false));
     }
 
     [Fact]

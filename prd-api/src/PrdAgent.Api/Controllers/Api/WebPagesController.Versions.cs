@@ -18,7 +18,7 @@ public partial class WebPagesController
     {
         var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None);
         return site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"))
-            : await ListReviewVersionsCoreAsync(site);
+            : await ListReviewVersionsCoreAsync(site, await _siteService.CanEditSiteAsync(site, GetUserId(), CancellationToken.None));
     }
 
     [HttpGet("{siteId}/revisions/{revisionId}/preview")]
@@ -26,7 +26,7 @@ public partial class WebPagesController
     {
         var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None);
         return site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"))
-            : await PreviewReviewVersionCoreAsync(site, revisionId);
+            : await PreviewReviewVersionCoreAsync(site, revisionId, await _siteService.CanEditSiteAsync(site, GetUserId(), CancellationToken.None));
     }
 
     [AllowAnonymous]
@@ -86,7 +86,7 @@ public partial class WebPagesController
             new HostedSiteEditableEntry(site, html, version), CancellationToken.None);
     }
 
-    private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, bool canViewHistory = true)
+    private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, bool canViewHistory)
     {
         // Legacy snapshot capture is best effort here; saved history remains readable if the live object is unavailable.
         try { await EnsureReviewSnapshotAsync(site, site.OwnerUserId); }
@@ -105,7 +105,7 @@ public partial class WebPagesController
         return Ok(ApiResponse<object>.Ok(items.Select((item, index) => ReviewVersionDto(item, site, total - index) with { HistoryRestricted = !canViewHistory }).ToList()));
     }
 
-    private async Task<IActionResult> PreviewReviewVersionCoreAsync(HostedSite site, string revisionId, bool canViewHistory = true)
+    private async Task<IActionResult> PreviewReviewVersionCoreAsync(HostedSite site, string revisionId, bool canViewHistory)
     {
         var item = await _db.HostedSiteRevisions.Find(r => r.Id == revisionId && r.SiteId == site.Id
             && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion != null
