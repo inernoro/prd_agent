@@ -1869,7 +1869,7 @@ public partial class ProductAgentController : ControllerBase
                     var duplicate = temporary
                         ? await TemporaryOptimizationExistsAsync(planName)
                         : await _db.ProductReleases.Find(x => x.ProductId == targetProductId && x.VCode == code && !x.IsDeleted).AnyAsync()
-                            || await LegacyCodeExists(VersionRegistrationKind.Formal, code);
+                            || (string.IsNullOrWhiteSpace(row.ReleaseOrigin) && await LegacyCodeExists(VersionRegistrationKind.Formal, code));
                     if (duplicate)
                     {
                         skipped++;

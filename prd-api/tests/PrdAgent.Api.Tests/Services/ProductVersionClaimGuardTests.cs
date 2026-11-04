@@ -625,6 +625,10 @@ public class ProductVersionClaimGuardTests
             FeatureManifest = new() { new() { FeatureId = "release-feature", ChangeType = FeatureChangeType.Added } },
         };
         await fixture.Db.ProductReleases.InsertOneAsync(original);
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration
+        {
+            Kind = VersionRegistrationKind.Formal, ApplicationName = "测试应用", Code = original.VCode,
+        });
         var action = Assert.IsType<OkObjectResult>(await controller.OverviewReleases(workflow: true));
         var items = Assert.IsType<ProductVersionListResult<ProductRelease>>(Assert.IsType<ApiResponse<object>>(action.Value).Data).Items;
         var token = Assert.IsType<string>(items.Single(x => x.Record.Id == original.Id).ExportFields!.ReleaseOrigin);
