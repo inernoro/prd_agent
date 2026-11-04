@@ -1,4 +1,9 @@
 export const sharedCleanupSafetyPath: string;
+type ResourceJournalScope = { inspectionRunId: string; environment: string; testId: string; retry: number };
+export function persistResourceCreationIntent(operationId: string, scope: ResourceJournalScope, sharedPath?: string): void;
+export function persistCreatedResourceEvidence(name: string, body: unknown, scope: ResourceJournalScope, sharedPath?: string, operationId?: string): void;
+export function persistCleanupResourceEvidence(receipt: unknown, sharedPath?: string): void;
+export function readResourceJournalBlocker(options: { environment: string; sharedPath?: string }): { reason: string; resourceIds: string[] } | undefined;
 export function knownCreatedResources(attachments: Array<{ name: string; body?: Buffer | string }>, inspectionRunId?: string): Array<{id: string; path: string}>;
 export function validCleanupReceipt(body: unknown, scope?: { inspectionRunId?: string; environment?: string; testId?: string; retry?: number; knownResources?: Array<{id: string; path: string}> }): boolean;
 export function cleanupAndReadBackResources(options: { resources: Array<{ kind: string; id: string; path: string }>; remove: () => Promise<unknown>; read: (row: { kind: string; id: string; path: string }) => Promise<number>; attach: (receipt: unknown) => Promise<unknown>; inspectionRunId: string; environment: string; testId: string; retry: number }): Promise<unknown>;

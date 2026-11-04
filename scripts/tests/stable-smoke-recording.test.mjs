@@ -165,9 +165,9 @@ async function executeActualRestyleBlock(source, plan, overrides = {}) {
   const expect = actual => ({ toBe: expected => assert.equal(actual, expected), toBeTruthy: () => assert.ok(actual),
     toBeGreaterThan: minimum => assert.ok(actual > minimum), not: { toBe: expected => assert.notEqual(actual, expected) } });
   expect.poll = fn => ({ toBe: async expected => assert.equal(await fn(), expected) });
-  const run = new Function('recordingJourneyPlan', 'page', 'readEnvelope', 'expect', 'authHeaders',
+  const run = new Function('recordingJourneyPlan', 'page', 'readEnvelope', 'expect', 'authHeaders', 'persistResourceCreationIntent', 'journalScope', 'saveCreated',
     `return (async () => { const token='scoped'; const runId='original'; const entryId='entry'; const transcriptText='原文'; const stableSmokeCleanupTimeoutMs=1; let restyleRunId=''; ${body} })();`);
-  await run(plan, page, async response => (await response.json()).data, expect, () => ({}));
+  await run(plan, page, async response => (await response.json()).data, expect, () => ({}), () => {}, { inspectionRunId: 'stsmk-offline' }, async () => {});
   return calls;
 }
 

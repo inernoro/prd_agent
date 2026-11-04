@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
-import { cleanupAndReadBackResources, validCleanupReceipt } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
+import { cleanupAndReadBackResources, validCleanupReceipt, persistCleanupResourceEvidence } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
 
 const runId = 'stsmk-visual-evidence-test';
 const commit = 'a'.repeat(40);
@@ -52,7 +52,7 @@ test('REG-stsmk-account-scope-001 MVIS003/004创建后导航失败仍按原final
   const rawCleanupHelper = source.split('async function cleanupTrackedFixture(')[1].split('\nasync function cleanupRecordingIdempotencyFixture(')[0];
   const cleanupHelperBody = rawCleanupHelper.slice(rawCleanupHelper.indexOf(') {') + 3).trim().slice(0, -1);
   const executeCleanupHelper = new AsyncFunction('page', 'token', 'resources', 'remove', 'testInfo',
-    'cleanupAndReadBackResources', 'requiredEnv', 'authHeaders', 'stableSmokeCleanupTimeoutMs', cleanupHelperBody);
+    'cleanupAndReadBackResources', 'requiredEnv', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'persistCleanupResourceEvidence', cleanupHelperBody);
   const id = 'a'.repeat(32);
   for (const scenario of ['before-created', 'navigation-failed', 'readback-remains', 'delete-failed', 'evidence-failed']) {
     const calls = [], attachments = [];
@@ -66,7 +66,7 @@ test('REG-stsmk-account-scope-001 MVIS003/004创建后导航失败仍按原final
       get: async path => { calls.push(['GET', path]); return { status: () => scenario === 'readback-remains' ? 200 : 404 }; },
     } };
     const cleanupTrackedFixture = async (page, token, resources, remove, info) => executeCleanupHelper(
-      page, token, resources, remove, info, cleanupAndReadBackResources, requiredEnv, () => ({}), 1234);
+      page, token, resources, remove, info, cleanupAndReadBackResources, requiredEnv, () => ({}), 1234, persistCleanupResourceEvidence);
     const action = () => execute(page, {}, testInfo, async (_page, _request, path) => { assert.equal(path, '/'); return 'offline-token'; },
       async () => calls.push(['UI', 'home-entry']), async (_page, options) => {
         if (scenario === 'before-created') throw Error('before-create');

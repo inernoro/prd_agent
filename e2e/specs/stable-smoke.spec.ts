@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
-import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability, readImageReferenceRejectionCapability, cleanupAndReadBackResources } from '../utils/stableSmokeCleanupSafety.mjs';
+import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability, readImageReferenceRejectionCapability, cleanupAndReadBackResources, persistCreatedResourceEvidence, persistCleanupResourceEvidence, persistResourceCreationIntent } from '../utils/stableSmokeCleanupSafety.mjs';
 import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan, assertRecordingIdempotencyRuns, waitForRecordingIdempotencySettlement, type RecordingSettlementSession, type RecordingSettlementRun } from '../utils/stableSmokeRecording.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
@@ -614,7 +614,10 @@ async function cleanupTrackedFixture(page: Page, token: string, resources: Array
   if (!resources.length) return;
   return cleanupAndReadBackResources({ resources, remove,
     read: async row => (await page.request.get(row.path, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs })).status(),
-    attach: async receipt => testInfo.attach('stable-smoke-cleanup-receipt', { body: JSON.stringify(receipt), contentType: 'application/json' }),
+    attach: async receipt => {
+      persistCleanupResourceEvidence(receipt);
+      await testInfo.attach('stable-smoke-cleanup-receipt', { body: JSON.stringify(receipt), contentType: 'application/json' });
+    },
     inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry,
   });
 }
@@ -5986,6 +5989,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.describe.configure({ retries: 0 });
     test(recordingJourneyPlan.title, { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
+    const journalScope = { inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry };
+    const saveCreated = async (name: string, body: Record<string, string>, operationId?: string) => {
+      persistCreatedResourceEvidence(name, body, journalScope, undefined, operationId);
+      await testInfo.attach(name, { body: JSON.stringify(body), contentType: 'application/json' });
+    };
     // 真值来自完整合成输入，不来自历史ASR输出；尚未经过人工真听核准。
     const speechReference = loadStableSmokeSpeechReference();
     const token = await loginAndReadToken(page, request, '/document-store');
@@ -5995,13 +6003,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let runId = '';
     let restyleRunId = '';
     try {
+      persistResourceCreationIntent('store', journalScope);
       const storeResponse = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: { name: title, description: '稳定冒烟真实录音转录，执行后自动清理', isPublic: false },
       });
       const storeBody = await storeResponse.json() as ApiEnvelope<{ id: string }>;
       storeId = storeBody.data?.id || '';
-      await testInfo.attach('recording-store-created', { body: JSON.stringify({ inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), storeId }), contentType: 'application/json' });
+      if (storeId) await saveCreated('recording-store-created', { inspectionRunId: journalScope.inspectionRunId, storeId }, 'store');
       expect(storeResponse.ok(), storeBody.error?.message || '录音空间创建失败').toBe(true);
       expect(storeBody.success, storeBody.error?.message || '录音空间创建失败').toBe(true);
       expect(storeId).not.toBe('');
@@ -6027,7 +6036,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.url().includes(uploadPath) && response.request().method() === 'POST'
-      ), { timeout: 60_000 });
+      ), { timeout: 60_000 }).then(async response => {
+        const body = await response.json() as ApiEnvelope<{ entry: { id: string } }>;
+        entryId = body.data?.entry?.id || '';
+        if (entryId) await saveCreated('recording-entry-created', { inspectionRunId: journalScope.inspectionRunId, storeId, entryId });
+        return response;
+      });
+      void uploadResponsePromise.catch(() => {});
       const fileName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${speechReference.fileName}`;
       const setFile = page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
         name: fileName,
@@ -6052,7 +6067,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const transcribeResponsePromise = page.waitForResponse((response) => (
         /\/api\/document-store\/entries\/[^/]+\/transcribe(?:\?|$)/.test(response.url())
         && response.request().method() === 'POST'
-      ));
+      )).then(async response => {
+        const body = await response.json() as ApiEnvelope<{ runId: string }>;
+        runId = body.data?.runId || '';
+        if (runId) await saveCreated('recording-run-created', { inspectionRunId: journalScope.inspectionRunId, runId }, 'transcribe');
+        return response;
+      });
+      void transcribeResponsePromise.catch(() => {});
+      persistResourceCreationIntent('transcribe', journalScope);
       releaseUpload?.();
       await setFile;
       const uploadResponse = await uploadResponsePromise;
@@ -6143,6 +6165,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         );
         const style = styles.items.find((item) => item.key !== 'custom');
         expect(style, '转录完成后必须有可用的整理方式').toBeTruthy();
+        persistResourceCreationIntent('restyle', journalScope);
         const restyleResponse = await page.request.post(`/api/document-store/agent-runs/${runId}/restyle`, {
           headers: authHeaders(token),
           data: { styleKey: style!.key },
@@ -6150,6 +6173,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         });
         const restyleBody = await restyleResponse.json() as ApiEnvelope<{ runId: string }>;
         restyleRunId = restyleBody.data?.runId || '';
+        if (restyleRunId) await saveCreated('recording-run-created', { inspectionRunId: journalScope.inspectionRunId, runId: restyleRunId }, 'restyle');
         expect(restyleResponse.ok(), restyleBody.error?.message || '启动主动整理失败').toBe(true);
         expect(restyleBody.success, restyleBody.error?.message || '启动主动整理失败').toBe(true);
         expect(restyleRunId).not.toBe('');

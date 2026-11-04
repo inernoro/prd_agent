@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, openSync, writeSync, fsyncSync, closeSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,7 +113,89 @@ function readCircuit(path, environment) {
 }
 
 export function readCleanupBlocker({ outputDirectory, environment, sharedPath = sharedCleanupSafetyPath }) {
-  return readCircuit(localPath(outputDirectory), environment) || readCircuit(sharedPath, environment);
+  return readCircuit(localPath(outputDirectory), environment) || readCircuit(sharedPath, environment)
+    || readResourceJournalBlocker({ environment, sharedPath });
+}
+
+// 独立于 Playwright reporter 的逐 attempt 账本。只保存白名单资源身份，不保存响应正文或认证头。
+function journalPath(scope, sharedPath) {
+  if (!/^stsmk-[a-z0-9._-]+$/i.test(scope.inspectionRunId || '')
+    || !['cds', 'production'].includes(scope.environment) || !scope.testId
+    || !Number.isInteger(scope.retry) || scope.retry < 0) throw Error('资源账本归属不完整');
+  const key = createHash('sha256').update(JSON.stringify([
+    scope.inspectionRunId, scope.environment, scope.testId, scope.retry,
+  ])).digest('hex');
+  return resolve(dirname(sharedPath), 'resource-journals', `${key}.jsonl`);
+}
+function appendResourceEvent(scope, event, sharedPath) {
+  const path = journalPath(scope, sharedPath);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const fd = openSync(path, 'a', 0o600);
+  try {
+    const bytes = Buffer.from(`${JSON.stringify({ schemaVersion: 1, inspectionRunId: scope.inspectionRunId, environment: scope.environment, testId: scope.testId, retry: scope.retry, ...event })}\n`);
+    let offset = 0;
+    while (offset < bytes.length) offset += writeSync(fd, bytes, offset, bytes.length - offset);
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
+  // 新文件的目录项也须落盘，不能只同步内容。
+  const directory = openSync(dirname(path), 'r');
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+}
+export function persistResourceCreationIntent(operationId, scope, sharedPath = sharedCleanupSafetyPath) {
+  if (!/^[a-z][a-z0-9-]{0,79}$/.test(operationId || '')) throw Error('创建意图标识无效');
+  appendResourceEvent(scope, { event: 'pending', operationId, resources: [] }, sharedPath);
+}
+export function persistCreatedResourceEvidence(name, body, scope, sharedPath = sharedCleanupSafetyPath, operationId) {
+  const resources = knownCreatedResources([{ name, body: JSON.stringify(body) }], scope.inspectionRunId);
+  if (!resources.length) throw Error('资源账本不接受未知创建回执');
+  appendResourceEvent(scope, { event: 'created', resources, ...(operationId ? { operationId } : {}) }, sharedPath);
+}
+export function persistCleanupResourceEvidence(receipt, sharedPath = sharedCleanupSafetyPath) {
+  const scope = { inspectionRunId: receipt.inspectionRunId, environment: receipt.environment, testId: receipt.testId, retry: receipt.retry };
+  if (!existsSync(journalPath(scope, sharedPath))) return;
+  // 非完整/失败回执不能核销；留存的 created 仍使后续执行熔断。
+  if (!validCleanupReceipt(receipt, scope)) return;
+  appendResourceEvent(scope, { event: 'readback', resources: receipt.resources.map(({ id, path, readbackStatus }) => ({ id, path, readbackStatus })) }, sharedPath);
+}
+export function readResourceJournalBlocker({ environment, sharedPath = sharedCleanupSafetyPath }) {
+  const root = resolve(dirname(sharedPath), 'resource-journals');
+  if (!existsSync(root)) return undefined;
+  try {
+    const pending = new Set();
+    let unknownCreation = false;
+    for (const file of readdirSync(root).filter(name => name.endsWith('.jsonl'))) {
+      const path = resolve(root, file);
+      const raw = readFileSync(path, 'utf8');
+      if (!raw.endsWith('\n')) throw Error('资源账本被中断');
+      const events = raw.trim().split('\n').map(line => JSON.parse(line));
+      const outstanding = new Map();
+      const operations = new Set();
+      for (const event of events) {
+        if (event.schemaVersion !== 1 || journalPath(event, sharedPath) !== path
+          || !['pending', 'created', 'readback'].includes(event.event) || !Array.isArray(event.resources)
+          || (event.event !== 'pending' && !event.resources.length)) throw Error('资源账本不完整');
+        if (event.operationId && !/^[a-z][a-z0-9-]{0,79}$/.test(event.operationId)) throw Error('创建意图无效');
+        if (event.event === 'pending') {
+          if (!event.operationId || operations.has(event.operationId)) throw Error('创建意图重复或缺失');
+          operations.add(event.operationId);
+        } else if (event.event === 'created' && event.operationId) {
+          if (!operations.delete(event.operationId)) throw Error('创建回执没有对应意图');
+        }
+        for (const resource of event.resources) {
+          if (!/^[a-f0-9]{32}$/.test(resource.id || '') || !/^\/api\/[a-z0-9/-]+$/.test(resource.path || '')) throw Error('资源身份无效');
+          if (event.event === 'created') outstanding.set(resource.path, resource.id);
+          else if (resource.readbackStatus === 404 && outstanding.get(resource.path) === resource.id) outstanding.delete(resource.path);
+        }
+      }
+      if (events[0].environment === environment) {
+        if (operations.size) unknownCreation = true;
+        for (const id of outstanding.values()) pending.add(id);
+      }
+    }
+    if (pending.size || unknownCreation) return { resourceIds: [...pending], reason: '逐attempt资源账本存在创建身份未知或未经独立404核销的资源；禁止新业务写入，先精确恢复原资源' };
+  } catch {
+    return { resourceIds: [], reason: '逐attempt资源账本损坏或归属未知；禁止新业务写入，保留原文件恢复身份' };
+  }
 }
 
 export function isCleanupReadOnlyJourney(title) {
@@ -138,6 +220,8 @@ export function knownCreatedResources(attachments, inspectionRunId) {
     'short-video-invalid-store-created': [['storeId', '/api/document-store/stores/']],
     'short-video-invalid-seed-created': [['storeId', '/api/document-store/stores/'], ['seedEntryId', '/api/document-store/entries/']],
     'recording-store-created': [['storeId', '/api/document-store/stores/']],
+    'recording-entry-created': [['storeId', '/api/document-store/stores/'], ['entryId', '/api/document-store/entries/']],
+    'recording-run-created': [['runId', '/api/document-store/agent-runs/']],
     'visual-workspace-created': [['workspaceId', '/api/visual-agent/image-master/workspaces/', '/detail']],
     'literary-workspace-created': [['workspaceId', '/api/literary-agent/workspaces/', '/detail']],
     'literary-image-run-created': [['runId', '/api/literary-agent/image-gen/runs/']],

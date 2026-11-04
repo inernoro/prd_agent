@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -7,6 +7,57 @@ import { readCleanupBlocker, writeCleanupBlocker, cleanupFailureFromAttachments,
 import { collectPlaywrightCases } from '../stable-smoke-results.mjs';
 import { runReportRiskRegression } from '../stable-smoke-run.mjs';
 import * as safety from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
+
+test('REG-stsmk-cleanup-circuit-001 创建后SIGKILL无reporter仍可回读精确attempt资源且阻断后续写入', t => {
+  const options = fixture(t);
+  const scope = { inspectionRunId: 'stsmk-cloud-interruption', environment: 'cds', testId: 'REC-003', retry: 0 };
+  const moduleUrl = new URL('../../e2e/utils/stableSmokeCleanupSafety.mjs', import.meta.url).href;
+  const script = `import {persistResourceCreationIntent,persistCreatedResourceEvidence} from ${JSON.stringify(moduleUrl)};
+    const scope=${JSON.stringify(scope)}, path=${JSON.stringify(options.sharedPath)};
+    persistResourceCreationIntent('transcribe',scope,path);
+    persistCreatedResourceEvidence('recording-run-created',{inspectionRunId:scope.inspectionRunId,runId:'${'a'.repeat(32)}'},scope,path,'transcribe');
+    process.kill(process.pid,'SIGKILL');`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+  assert.equal(child.signal, 'SIGKILL');
+  const blocker = readCleanupBlocker({ ...options, environment: 'cds' });
+  assert.deepEqual(blocker.resourceIds, ['a'.repeat(32)]);
+  assert.match(blocker.reason, /逐attempt/);
+  assert.equal(safety.readResourceJournalBlocker({ ...options, environment: 'production' }), undefined);
+});
+
+test('REG-stsmk-cleanup-circuit-001 父库404不能核销未知转录意图，错attempt或200不能核销已知run', t => {
+  const options = fixture(t), path = options.sharedPath;
+  const scope = { inspectionRunId: 'stsmk-cloud-receipt', environment: 'cds', testId: 'REC-003', retry: 0 };
+  const store = 'b'.repeat(32), run = 'c'.repeat(32);
+  safety.persistResourceCreationIntent('transcribe', scope, path);
+  safety.persistCreatedResourceEvidence('recording-store-created', { storeId: store }, scope, path);
+  const receipt = resources => ({ schemaVersion: 1, ...scope, resources, errors: [] });
+  const storeRow = { kind: 'store', id: store, path: `/api/document-store/stores/${store}`, readbackStatus: 404 };
+  const runRow = { kind: 'run', id: run, path: `/api/document-store/agent-runs/${run}`, readbackStatus: 404 };
+  safety.persistCleanupResourceEvidence(receipt([storeRow]), path);
+  assert.ok(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: path }), '库404仍有未知run');
+  safety.persistCreatedResourceEvidence('recording-run-created', { runId: run }, scope, path, 'transcribe');
+  safety.persistCleanupResourceEvidence({ ...receipt([runRow]), retry: 1 }, path);
+  safety.persistCleanupResourceEvidence(receipt([{ ...runRow, readbackStatus: 200 }]), path);
+  assert.deepEqual(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: path }).resourceIds, [run]);
+  safety.persistCleanupResourceEvidence(receipt([runRow]), path);
+  assert.equal(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: path }), undefined);
+  // 外部旧fuse不得被新账本核销逻辑改写或解除。
+  writeCleanupBlocker(options.outputDirectory, { environment: 'cds', inspectionRunId: 'stsmk-old-unknown', resourceIds: [], reason: '原run身份未知', sharedPath: path });
+  assert.match(readCleanupBlocker({ ...options, environment: 'cds' }).reason, /原run身份未知/);
+});
+
+test('REG-stsmk-cleanup-circuit-001 半行或错归属账本failclosed，白名单拒绝未知回执且不保存正文秘密', t => {
+  const options = fixture(t), scope = { inspectionRunId: 'stsmk-cloud-torn', environment: 'cds', testId: 'REC-003', retry: 0 };
+  assert.throws(() => safety.persistCreatedResourceEvidence('unknown', { token: 'DO-NOT-PERSIST' }, scope, options.sharedPath), /未知/);
+  safety.persistCreatedResourceEvidence('recording-run-created', { runId: 'd'.repeat(32), token: 'DO-NOT-PERSIST' }, scope, options.sharedPath);
+  const root = join(options.sharedPath, '..', 'resource-journals');
+  const file = join(root, readdirSync(root)[0]);
+  const content = readFileSync(file, 'utf8');
+  assert.ok(!content.includes('DO-NOT-PERSIST'));
+  writeFileSync(file, content + '{');
+  assert.match(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: options.sharedPath }).reason, /损坏/);
+});
 
 const referenceController = readFileSync(new URL('../../prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs', import.meta.url), 'utf8');
 const referenceContract = readFileSync(new URL('../../prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs', import.meta.url), 'utf8');
