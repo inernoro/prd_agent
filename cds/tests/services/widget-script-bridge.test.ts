@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildWidgetScript } from '../../src/widget-script.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import ts from 'typescript';
 
 describe('widget bridge polling gate', () => {
   const original = process.env.CDS_BRIDGE_ENABLED;
@@ -106,5 +110,24 @@ describe('widget bridge polling gate', () => {
     expect(smoke).toContain("new URL('./widget-mobile-status-fixture.ts', import.meta.url)");
     expect(fixture).toContain('buildWidgetScript(');
     expect(fixture).toContain("provenance: 'deterministic-fixture'");
+  });
+
+  it('浏览器夹具沿用父入口的PWPATH优先、原包兜底及明确失败合同', () => {
+    const source = readFileSync(new URL('../../scripts/widget-mobile-status-fixture.ts', import.meta.url), 'utf8');
+    const file = ts.createSourceFile('fixture.ts', source, ts.ScriptTarget.Latest, true);
+    const loader = file.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'loadPlaywright');
+    expect(loader).toBeDefined();
+    const compiled = ts.transpileModule(loader!.getText(file), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } });
+    const actualRequire = createRequire(new URL('../../package.json', import.meta.url));
+    const externalPackage = actualRequire.resolve('playwright'), chromium = actualRequire('playwright').chromium;
+    const directory = mkdtempSync(path.join(tmpdir(), 'cds-widget-pwpath-'));
+    const isolatedRequire = createRequire(path.join(directory, 'entry.cjs'));
+    const load = (require: NodeRequire, PWPATH: string) => new Function('require', 'process', `${compiled.outputText}\nreturn loadPlaywright;`)(require, { env: { PWPATH } })();
+    try {
+      expect(() => isolatedRequire.resolve('playwright')).toThrow();
+      expect(load(isolatedRequire, externalPackage).chromium).toBe(chromium);
+      expect(load(actualRequire, path.join(directory, 'missing')).chromium).toBe(chromium);
+      expect(() => load(isolatedRequire, path.join(directory, 'missing'))).toThrow('Unable to load Playwright. Tried');
+    } finally { rmdirSync(directory); }
   });
 });

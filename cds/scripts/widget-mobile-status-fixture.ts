@@ -4,8 +4,20 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chromium, type Page } from 'playwright';
+import { createRequire } from 'node:module';
+import type { Page } from 'playwright';
 import { buildWidgetScript } from '../src/widget-script.js';
+
+const require = createRequire(import.meta.url);
+function loadPlaywright(): typeof import('playwright') {
+  const failures: string[] = [];
+  for (const candidate of [process.env.PWPATH, 'playwright'].filter(Boolean) as string[]) {
+    try { return require(candidate); }
+    catch (error) { failures.push(`${candidate}: ${(error as Error).message}`); }
+  }
+  throw new Error(`Unable to load Playwright. Tried ${failures.join('; ')}`);
+}
+const { chromium } = loadPlaywright();
 
 declare global {
   interface Window {

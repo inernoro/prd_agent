@@ -1,7 +1,7 @@
 div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
   input .hidden [type=file]
   div .flex.flex-col.h-full.overflow-hidden.relative
-    div .overflow-hidden.relative {height:140px}
+    div .overflow-hidden.relative.shrink-0 {height:140px}
       img .absolute.h-full.inset-0.w-full
       span .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20 {height:20px;padding:0 6px}
         svg
@@ -11,11 +11,18 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       div .[@media(hover:none)]:block.absolute.hidden.right-[7px].top-[7px].z-20
         button .h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.max-sm:min-w-11.max-sm:w-11.min-h-7.min-w-[26px].pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
           svg
-      span .[@media(hover:hover)]:group-focus-within:opacity-0.[@media(hover:hover)]:group-hover:opacity-0.absolute.bottom-2.inline-flex.items-center.pointer-events-none.right-2.z-20 {height:20px;padding:0 6px}
-        "单页"
+      div .absolute.bottom-2.flex.gap-1.items-center.left-9.min-w-0.right-2.z-20
+        div .flex.gap-1.items-center.ml-auto.shrink-0
+          span .gap-1.inline-flex.items-center.shrink-0.whitespace-nowrap {height:20px;padding:0 6px} [aria-label=已分享]
+            svg
+            span .@[220px]:inline.hidden
+              "已分享"
+          span .gap-1.inline-flex.items-center.shrink-0.whitespace-nowrap {height:20px;padding:0 6px} [aria-label=编辑次数暂不可用]
+            svg
+            "—"
       button .absolute.bottom-[-5px].h-11.inline-flex.items-center.justify-center.left-[-5px].w-11.z-20 [data-no-drag=true aria-label=选择 type=button]
         span .group-hover:opacity-100.h-5.inline-flex.items-center.justify-center.w-5 {opacity:0.5}
-      div .[@media(hover:hover)]:flex.absolute.bottom-0.gap-[5px].group-focus-within:opacity-100.group-focus-within:translate-y-0.group-hover:opacity-100.group-hover:translate-y-0.hidden.inset-x-0.items-center.opacity-0.pointer-events-none.translate-y-[6px].z-20 {padding:7px 7px 7px 33px} [data-hoverbar=true]
+      div .[@media(hover:hover)]:flex.absolute.bottom-8.gap-[5px].group-focus-within:opacity-100.group-focus-within:translate-y-0.group-hover:opacity-100.group-hover:translate-y-0.hidden.inset-x-0.items-center.opacity-0.pointer-events-none.translate-y-[6px].z-20 {padding:7px 7px 7px 33px} [data-hoverbar=true]
         button .gap-1.h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.min-h-7.pointer-events-auto.px-[9px].shrink-0 [data-no-drag=true aria-label=预览 type=button]
           svg
           span .truncate
@@ -33,29 +40,18 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
           button .h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.max-sm:min-w-11.max-sm:w-11.min-h-7.min-w-[26px].pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
             svg
     div .flex.flex-1.flex-col {gap:5px;padding:10px 11px 11px}
-      div .flex.gap-1.items-center.min-w-0 {height:20px}
-        div .flex.flex-1.flex-wrap.gap-1.items-center.min-w-0
-          span .inline-flex.items-center.shrink-0 {padding:2px 6px}
-            "已分享 1"
-        span .shrink-0
-          span .h-[18px].inline-flex.items-center.justify-center.w-[18px]
-            "我"
-      h3 .truncate
-        "多租户架构设计"
-      div .flex.flex-wrap.gap-x-1.5.items-center
-        span
+      div .flex.gap-1.5.items-center.min-w-0 {min-height:20px}
+        h3 .min-w-0.truncate
+          "多租户架构设计"
+        button .h-5.inline-flex.items-center.justify-center.ml-auto.shrink-0.w-5 [data-no-drag=true aria-label=查看网页详情 type=button]
+          svg
+      div .@[240px]:grid-cols-3.gap-x-2.grid.grid-cols-2.items-center.min-w-0.mt-auto
+        span .min-w-0.truncate
           "11.0 KB"
-        span .opacity-40
-          "·"
-        span
-          "9 浏览"
-        span .opacity-40
-          "·"
-        span
+        span .min-w-0.text-right.truncate
+          "— 访问"
+        span .@[240px]:block.hidden.min-w-0.text-right.truncate
           "— 访客"
-      div .flex.gap-1.items-center.min-w-0.mt-auto {min-height:18px}
-        div .flex.flex-1.flex-wrap.gap-1.items-center.min-w-0
-          span {padding:2px 6px}
-            "架构"
-        span .shrink-0
-          "5 天前"
+      div .flex.flex-wrap.gap-1.items-center.min-w-0
+        span .max-w-full.truncate {padding:2px 6px}
+          "架构"
