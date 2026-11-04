@@ -230,6 +230,18 @@ test('REG-stsmk-paid-retry-001 REC003真实录音失败后不得自动再次创�
   assert.match(localSuite, /test\(recordingJourneyPlan\.title/);
 });
 
+test('REG-stsmk-paid-retry-001 巡检全局零自动重试覆盖手机及遗漏局部作用域，普通CI策略保留', () => {
+  const source = readFileSync(new URL('../../e2e/playwright.config.ts', import.meta.url), 'utf8');
+  const expression = source.match(/^\s*retries:\s*([^\n]+),\s*$/m)?.[1];
+  assert.ok(expression);
+  const evaluate = new Function('STABLE_SMOKE_RUN', 'process', `return (${expression});`);
+  for (const ci of [undefined, '1', 'true']) {
+    assert.equal(evaluate(true, { env: { CI: ci } }), 0, '有无CI都不能隐式重复计费');
+  }
+  assert.equal(evaluate(false, { env: {} }), 0);
+  assert.equal(evaluate(false, { env: { CI: '1' } }), 1);
+});
+
 test('REG-stsmk-account-scope-001 GWBASE API入口与真实控制台入口按现存发布合同分离', () => {
   assert.equal(typeof uiContract.resolveGatewayUiBaseUrl, 'function');
   const apiBase = 'https://inspection.invalid';

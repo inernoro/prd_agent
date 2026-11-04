@@ -34,8 +34,9 @@ export default defineConfig({
   // Fail the build on `.only` — `.only` left in CI silently skips the
   // rest of the suite, creating a dangerous false-green.
   forbidOnly: !!process.env.CI,
-  // Retry once on CI; locally fail fast so the developer sees flake.
-  retries: process.env.CI || process.env.STABLE_SMOKE_RUN ? 1 : 0,
+  // 稳定冒烟可能调用付费业务，整个执行器默认零自动重试，避免漏包局部作用域。
+  // 只读失败的唯一确定性复验由巡检显式安排，保留首次失败与flaky账。
+  retries: STABLE_SMOKE_RUN ? 0 : process.env.CI ? 1 : 0,
   // Workers: default to 1 locally (debuggable) and use reported
   // capacity in CI. Keep deterministic ordering for CI log grok.
   workers: process.env.STABLE_SMOKE_RUN ? 1 : process.env.CI ? 2 : 1,

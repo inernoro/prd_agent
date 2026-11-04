@@ -199,3 +199,5 @@ REG-file-001 的空文件子判据必须从首页进入知识库、使用真实�
 当前head的CI38600502458、BranchImage38600502002成功，自动审查完成且无新增主要问题，紧邻合并重新回读未解决线程0。[PR #1690](https://github.com/inernoro/prd_agent/pull/1690) 于00:53:29合入实际工具分支，merge53faab9a62f3b7372d0e1ae07fb6fa40d9058543与实测head的tree均5266497a9394b41932d217c8b609faa1be2dbcfe。现有任务仍读同一origin/codex/stable-smoke-three-pools-20261013，远端已包含本修复；周期与权限不变。计划安全REG为CDS=true、正式=false，next完整周期尚未执行，REG保持active；不因此关闭历史安全扫描或其它正式业务。
 
 2026-11-04 原 DEF-STSMK-CLEANUP-IDENTITY-001 / REC-003、REC-007、REC-012 追加 active 子判据 REG-stsmk-cleanup-circuit-001：桌面真实录音在创建库、触发转录及主动整理前同步保存创建意图；创建响应的 store/entry/run 身份从响应回调立即落盘并 fsync，不依赖最终 JSON reporter。共享安全文件同目录的逐 attempt 账本按 runId、环境、testId、retry 隔离；未收到精确创建回执的意图、缺独立404、200或账本损坏均阻止后续写入，父库404不能核销未知任务。SIGKILL夹具证明无reporter仍保留精确run，错attempt与失败回读不能核销。此文件账本仅供同一执行器恢复，不构成跨机器租约，也不解除2026-10-28原未知run的fuse；其他业务创建路径尚未全量接入，真实业务回归仍未执行，原缺陷保持blocked。
+
+2026-11-04 原 DEF-STSMK-PAID-RETRY-001 / REG-stsmk-paid-retry-001 补充 active 全局判据：STABLE_SMOKE_RUN 模式无论是否CI均默认 retries=0，避免手机或未来未包局部作用域的付费旅程继承全局重试；普通非巡检CI仍保持一次自动重试。只读确定性复验须显式安排并保留首次失败和flaky，不通过全局重试重复业务。原真实业务全回归仍未执行，不升级verified。
