@@ -135,11 +135,13 @@ try {
       })]);
     } finally { clearTimeout(requestTimer); }
     assert.equal(await copy.isEnabled(), false);
-    assert.equal(await dialog.locator('pre').innerText(), '正在读取当前项目范围，随后生成接入口令。');
+    await dialog.getByRole('status', { name: '读取项目接入说明', exact: true }).waitFor();
+    assert.equal(await dialog.locator('pre').count(), 0, 'pending scope must not expose a ready prompt');
     projectMode = 'ok';
     assert(releaseProjects.length > 0);
     for (const release of releaseProjects.splice(0)) release();
     url = await copyPrompt(dialog);
+    assert.equal(await dialog.getByRole('status', { name: '读取项目接入说明', exact: true }).count(), 0);
     assert.equal(url.searchParams.get('project'), FIXTURE_PROJECT_ID);
     console.log(`PASS ${width}: failed discovery → blocked retry → original project restored`);
     await checkLayout('scope-recovered');

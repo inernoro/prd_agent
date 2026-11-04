@@ -213,21 +213,25 @@ export function collectDrainableRuns(sources: {
  * ------------------------------------------------------------------ */
 
 let drainGateUntilMs: number | null = null;
+let drainGateOwnerActive: (() => boolean) | undefined;
 
 /** 默认最长持闸时长：排空超时之外再留一段给 flush + 重启交接。 */
 export const DRAIN_GATE_MAX_HOLD_MS = 10 * 60_000;
 
-export function beginSelfUpdateDrain(nowMs: number, maxHoldMs = DRAIN_GATE_MAX_HOLD_MS): void {
+export function beginSelfUpdateDrain(nowMs: number, maxHoldMs = DRAIN_GATE_MAX_HOLD_MS, ownerActive?: () => boolean): void {
   drainGateUntilMs = nowMs + Math.max(0, maxHoldMs);
+  drainGateOwnerActive = ownerActive;
 }
 
 /** 重启被放弃时显式开闸（正常路径不需要——进程直接没了）。 */
 export function endSelfUpdateDrain(): void {
   drainGateUntilMs = null;
+  drainGateOwnerActive = undefined;
 }
 
 export function isSelfUpdateDraining(nowMs: number): boolean {
   if (drainGateUntilMs === null) return false;
+  if (drainGateOwnerActive?.()) return true; // 原维护票尚未收尾，时间流逝不能证明写者已停。
   if (nowMs >= drainGateUntilMs) {
     drainGateUntilMs = null; // 到点自动开闸
     return false;

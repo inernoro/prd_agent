@@ -15,6 +15,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor, ShellExecutor } from '../../src/services/shell-executor.js';
 import { IsolatedShellExecutor, OperationExecutionError } from '../../src/services/isolated-shell-executor.js';
 import { SelfMaintenanceRuntime } from '../../src/services/self-maintenance-runtime.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { endSelfUpdateDrain, selfUpdateDrainBlockReason } from '../../src/services/deploy-drain.js';
 import { setRestartWait } from '../../src/services/self-restart-wait.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
@@ -48,6 +49,8 @@ function deferred() {
 describe('同实例四入口维护准入与真实请求完成条件', () => {
   let root: string, state: StateService, server: http.Server, shell: MockShellExecutor;
   let maintenance: SelfMaintenanceRuntime, filesPool: IsolatedShellExecutor;
+  let coordinator: BranchOperationCoordinator;
+  let ownedCommands: string[];
   let fullWorkflow: boolean, child: EventEmitter & Pick<ChildProcess, 'pid' | 'exitCode' | 'signalCode'>;
   let permitWrites: string[], childExitCode: number | undefined;
   let permitWrite: ((value: string) => Promise<void>) | undefined, pipeClose: (() => Promise<void>) | undefined;
@@ -69,6 +72,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     fullWorkflow = false; transport = undefined; requests = []; executions = []; gates = []; logFds = new Set();
     realArtifactDeletes = false; artifactDeletePaths = new Set(); ownedDeletes = [];
     realNoopGitEnv = undefined;
+    ownedCommands = [];
     permitWrites = []; childExitCode = undefined; permitWrite = undefined; pipeClose = undefined;
     tearingDown = false; pendingDelays = [];
     vi.stubEnv('CDS_PREVIEW_INSTANCE', '0');
@@ -122,6 +126,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     filesPool = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
     // 旧Mock命令只作受控控制流/分类，不伪造assignment或物理停止；五目录交给真实owned worker。
     const controlledShell: IShellExecutor = { exec: shell.exec.bind(shell), execOwnedOperation: async (cmd, options) => {
+      ownedCommands.push(cmd);
       if (/self-maintenance-files-process\.(ts|js)/.test(cmd)) return filesPool.execOwnedOperation(cmd, options);
       // 仅noOp代表例开启；Git命令原样经真实owned进程执行，不让Mock伪造checkout/reset。
       if (realNoopGitEnv && cmd.startsWith('git ')) {
@@ -168,12 +173,13 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     } };
     maintenance = new SelfMaintenanceRuntime(controlledShell, root, () => {});
     state = new StateService(path.join(root, 'state.json'), root); state.load();
+    coordinator = new BranchOperationCoordinator();
     const config = { repoRoot: root, worktreeBase: path.join(root, 'worktrees'), masterPort: 9900,
       workerPort: 5500, dockerNetwork: 'test', portStart: 10001, sharedEnv: {},
       rootDomains: ['example.test'], jwt: { secret: 'fixture', issuer: 'fixture' },
       mode: 'standalone', executorPort: 9901 } as CdsConfig;
     const app = express(); app.use(express.json());
-    app.use('/api', createBranchRouter({ stateService: state, shell: controlledShell, config, selfMaintenanceRuntime: maintenance,
+    app.use('/api', createBranchRouter({ stateService: state, shell: controlledShell, config, selfMaintenanceRuntime: maintenance, branchOperationCoordinator: coordinator,
       worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config) }));
     server = listenLoopbackFixture(app);
     if (!server.listening) await once(server, 'listening');
@@ -530,6 +536,26 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     return { entered: entered.promise, release };
   }
 
+  it.each(['claimed-replay', 'reserved-continuation'] as const)('%s仍有执行资格时在首个Git写入前取消维护', async mode => {
+    fullWorkflow = true;
+    const active = coordinator.begin({ projectId: 'default', branchId: 'other', kind: mode === 'claimed-replay' ? 'pull' : 'force-rebuild',
+      profileId: 'api', trigger: 'manual', continueWith: mode === 'reserved-continuation' ? 'deploy-profile' : undefined });
+    expect(active.status).toBe('started');
+    if (mode === 'claimed-replay') {
+      const queued = coordinator.begin({ projectId: 'default', branchId: 'other', kind: 'deploy', trigger: 'webhook', commitSha: sha });
+      expect(queued.status).toBe('merged');
+    }
+    const claimed = coordinator.completeAll(active.lease!, 'completed');
+    expect(coordinator.getActiveOperations()).toEqual([]);
+    expect(coordinator.isQuiescentForRestart()).toBe(false);
+    if (mode === 'claimed-replay') expect(claimed).toHaveLength(1);
+    const reply = await post('self-update', { branch: 'main', force: true, drainTimeoutMs: 0 });
+    expect.soft(reply.raw).toContain('self_update_restart_cancelled');
+    expect.soft(ownedCommands.filter(cmd => /^git (?:fetch|checkout|reset)/.test(cmd))).toEqual([]);
+    expect.soft(restartSpawn).not.toHaveBeenCalled();
+    expect.soft(coordinator.isQuiescentForRestart()).toBe(false);
+  });
+
   // 只观察原delay/剩余一秒/15000ms回调；不把手动回调冒充真实elapsed或进程退出。
   function observeRestartTimers() {
     const scheduled: Array<{ ms: number; run: () => void; handle: NodeJS.Timeout; live: boolean; exit: boolean }> = [];
@@ -639,6 +665,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
       expect(responded).toBe(false);
       expect(process.exit).not.toHaveBeenCalled();
       expect(selfUpdateDrainBlockReason(Date.now())).not.toBeNull();
+      expect.soft(selfUpdateDrainBlockReason(Date.now() + 20 * 60_000), '原票物理回滚尚未结束不能因十分钟期限开闸').not.toBeNull();
       await allBusy();
       rollback.resolve();
     }
@@ -650,6 +677,23 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     expect(maintenance.observe()).toBeNull();
     expect(selfUpdateDrainBlockReason(Date.now())).toBeNull();
     expect((await post('self-update-dry-run')).status).toBe(200);
+  });
+
+  it('最终保存await期间新进入的真实分支资格必须取消本次重启', async () => {
+    fullWorkflow = true;
+    const { entered, fire } = observeRestartTimers(), finalFlush = holdFinalFlush();
+    const first = post('self-restart');
+    await entered; fire(500); await finalFlush.entered;
+    const admitted = coordinator.begin({ projectId: 'default', branchId: 'late-during-final-save', kind: 'pull', trigger: 'manual' });
+    expect(admitted.status).toBe('started'); expect(admitted.lease!.isCurrent()).toBe(true);
+    finalFlush.release.resolve();
+    const reply = await first;
+    expect.soft(reply.raw).toContain('event: error');
+    expect.soft(reply.raw).not.toContain('event: done');
+    expect.soft(permitWrites).toEqual([]);
+    expect.soft(admitted.lease!.isCurrent()).toBe(true);
+    expect.soft(process.exit).not.toHaveBeenCalled();
+    coordinator.complete(admitted.lease!, 'completed');
   });
 
   it('force-sync热路径build首reject仍等待迟返esbuild，不提前放入同树维护写者', async () => {

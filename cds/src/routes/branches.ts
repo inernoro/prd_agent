@@ -2491,11 +2491,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     toSha?: string;
     source: string;
     timeoutMs?: number;
+    ownerActive?: () => boolean;
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
   }): Promise<void> {
     const timeoutMs = context.timeoutMs ?? resolveSelfUpdateDrainTimeoutMs({});
     // Close admission before observing work, including when the wait limit is 0.
-    beginSelfUpdateDrain(Date.now(), Math.max(DRAIN_GATE_MAX_HOLD_MS, timeoutMs + 60_000));
+    const holdMs = Math.max(DRAIN_GATE_MAX_HOLD_MS, timeoutMs + 60_000);
+    const ownerActive = context.ownerActive;
+    beginSelfUpdateDrain(Date.now(), holdMs, ownerActive);
     const drainSince = Date.now();
     let lastProgressAt = -Infinity;
     const outcome = await drainInFlightDeploys({
@@ -2505,7 +2508,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
         }),
         // Pull/stop and other branch writes may have no deployment-run record.
-        ...(branchOperationCoordinator?.getActiveOperations() || []).map((op) => ({
+        ...(branchOperationCoordinator?.getRestartBlockingOperations() || []).map((op) => ({
           id: `operation:${op.operationId}`, status: 'preparing', branchId: op.branchId,
         })),
       ],
@@ -2539,7 +2542,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       context.onProgress?.('warning', error.message);
       throw error;
     }
-    beginSelfUpdateDrain(Date.now(), DRAIN_GATE_MAX_HOLD_MS);
+    beginSelfUpdateDrain(Date.now(), holdMs, ownerActive);
     setRestartWait({ source: context.source, phase: 'flushing', since: drainSince, waitedMs: outcome.waitedMs, timeoutMs, pendingRuns: [] });
     context.onProgress?.('done', outcome.skipped ? '没有在途操作，可安全更新' : '在途操作已全部结束，可安全更新');
   }
@@ -2561,6 +2564,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     await drainDeploysBeforeSelfUpdateRestart({
       trigger: context.trigger, branch: context.branch, toSha: context.toSha,
       source: context.source, timeoutMs: context.timeoutMs, onProgress: context.onProgress,
+      ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
     });
     context.onSafeToRestart();
     selfMaintenance.setPhase(maintenanceOwner, 'flush');
@@ -2666,6 +2670,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const saved = await waitForFlushWithTimeout(() => stateService.flush(), Math.max(0, deadline - Date.now()));
         if (saved !== 'flushed' || input.preserveQueued !== true || !permit?.hasChildPid) {
           throw new Error('CDS 重启未获可靠交接许可，已取消更新与重启。请检查状态存储及重启脚本后重试。');
+        }
+        if (branchOperationCoordinator && !branchOperationCoordinator.isQuiescentForRestart()) {
+          throw new Error('CDS 重启最终保存期间出现新的在途分支操作，已取消重启并保留原操作资格。请等待该操作结束后重试。');
         }
         await permit.release();
         // 原一秒退出期限从本次launch开始计算；不串联新的等待预算。
@@ -24776,6 +24783,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       await drainDeploysBeforeSelfUpdateRestart({
         trigger: 'manual', branch, source: 'api.self-restart',
         timeoutMs: resolveSelfUpdateDrainTimeoutMs(req.body),
+        ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
         onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
       });
       const restartFlush = await flushSelfUpdateStateBeforeRestart({
@@ -25045,6 +25053,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       selfMaintenance.setPhase(maintenanceOwner, 'drain');
       await drainDeploysBeforeSelfUpdateRestart({
         trigger: 'manual', branch: branch || '', source: 'api.self-update', timeoutMs: restartDrainTimeoutMs,
+        ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
         onProgress: (status, title) => send('drain-deploys', status, title),
       });
       timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
@@ -25962,6 +25971,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       selfMaintenance.setPhase(maintenanceOwner, 'drain');
       await drainDeploysBeforeSelfUpdateRestart({
         trigger: 'force-sync', branch: branch || '', source: 'api.self-force-sync', timeoutMs: restartDrainTimeoutMs,
+        ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
         onProgress: (status, title) => send('drain-deploys', status, title),
       });
       timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });

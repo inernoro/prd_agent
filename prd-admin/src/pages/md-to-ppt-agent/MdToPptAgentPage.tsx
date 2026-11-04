@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText,
@@ -686,6 +686,35 @@ const FONT_LINKS =
   '<link rel="preconnect" href="https://fonts.googleapis.com" data-map-inject>' +
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin data-map-inject>' +
   '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet" data-map-inject>';
+
+function resolvePresentationViewport(availableWidth: number, availableHeight: number) {
+  // 与既有 16:9 演示预览一致：工具栏占用宿主空间，不压缩作品的逻辑视口。
+  const width = 1280;
+  const height = 720;
+  return { width, height, scale: Math.max(0, Math.min(availableWidth / width, availableHeight / height)) };
+}
+
+function PresentationViewport({ children }: { children: ReactNode }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState(() => resolvePresentationViewport(0, 0));
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const measure = () => setViewport(resolvePresentationViewport(host.clientWidth, host.clientHeight));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={hostRef} data-testid="presentation-viewport" className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden bg-token-nested">
+      <div style={{ width: viewport.width, height: viewport.height, flexShrink: 0, transform: `scale(${viewport.scale})`, visibility: viewport.scale > 0 ? 'visible' : 'hidden' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?: string; assetBaseUrl?: string }): string {
   if (!html) return html;
@@ -5628,7 +5657,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               >退出全屏 (Esc)</button>
             </div>
           </div>
-          <div className="flex-1 min-h-0 bg-token-nested">
+          <PresentationViewport>
             <iframe
               ref={presentIframeRef}
               {...presentationDocument.frameSource}
@@ -5644,7 +5673,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                  }
               }}
             />
-          </div>
+          </PresentationViewport>
           {/* 底部子页缩略条：每页真实缩略（deck 自带样式渲染），点击跳页，当前页高亮 */}
           {deckThumbDocs.length > 0 && (
             <div

@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -386,7 +387,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1 pb-3">
           {results.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {loading ? '加载中…' : '没有匹配项'}
+              {loading ? <ContentLoading label="读取命令与搜索结果" /> : '没有匹配项'}
             </div>
           ) : (
             results.map((item, idx) => (

@@ -14,7 +14,7 @@
  */
 
 import { getLauncherCatalog, LAUNCHER_GROUP_LABELS, type LauncherItem } from '@/lib/launcherCatalog';
-import { getAugmentedAdminMenuCatalog, getSidebarAutoAppendItems } from '@/lib/adminMenuCatalog';
+import { getAugmentedAdminMenuCatalog, getSidebarAutoAppendItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
 import { getShortLabel } from '@/lib/shortLabel';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import type { AdminMenuItem } from '@/services/contracts/authz';
@@ -198,6 +198,7 @@ export function getUnifiedNavCatalog(opts: {
   const idSeen = new Set<string>();
 
   const push = (item: NavCatalogItem) => {
+    if (SIDEBAR_HIDDEN_APPKEYS.has(item.id)) return;
     if (idSeen.has(item.id)) return;
     if (routeSeen.has(item.route)) return;
     idSeen.add(item.id);
@@ -260,7 +261,7 @@ export function getUnifiedNavCatalog(opts: {
  * 新上线但不在此列表中的条目由 NavLayoutEditor 的孤立条目检测自动追加。
  */
 export const DEFAULT_NAV_ORDER: readonly string[] = [
-  'ai-toolbox', 'workflow-agent', 'executive',
+  'ai-toolbox', 'executive',
   NAV_DIVIDER_KEY,
   'marketplace', 'my-assets', 'web-pages', 'document-store', 'emergence',
   NAV_DIVIDER_KEY,
