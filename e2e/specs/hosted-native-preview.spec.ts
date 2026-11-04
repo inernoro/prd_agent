@@ -55,7 +55,7 @@ test.afterAll(async () => { if (directory) await rm(directory, { recursive: true
 test.use({ trace: 'off', video: 'off' });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
@@ -93,7 +93,8 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: options.multiFileHistory ? siteEntry : null, contentShape: options.multiFileHistory ? 'multi-file' : 'self-contained-html' };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
-      data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site] };
+      data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site],
+        ask: options.ask ? { enabled: true, siteId: site.id, allowAnonymous: true, openingQuestions: [] } : undefined };
     } else if (path === '/api/authz/me') {
       data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
     } else if (path === '/api/web-pages') {
@@ -285,6 +286,15 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       await expect(frame.locator('#isolation')).toHaveText('blocked');
       await expect(page.locator('body')).not.toHaveAttribute('data-compromised');
     });
+
+    for (const wrapper of ['pdf', 'video']) {
+      test(`${wrapper} 包装页不等待版本记录，仍可打开向我提问`, async ({ page }) => {
+        await serve(page, { shape: 'multi-file', wrapper, ask: true });
+        await page.getByRole('button', { name: '向我提问', exact: true }).click();
+        await expect(page.getByRole('dialog', { name: '向我提问', exact: true })).toBeVisible();
+        await expect(page.getByRole('textbox', { name: '就这一页提个问题', exact: true })).toBeVisible();
+      });
+    }
 
     test('PDF 课程保留真实点击下载，未登记附件仍被拒绝', async ({ page }) => {
       const html = '<html><body><a href="lesson.pdf">下载课件</a><a href="missing.pdf">未登记课件</a></body></html>';

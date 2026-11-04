@@ -36,14 +36,15 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   const [preview, setPreview] = useState<Preview | null>(null);
   const [override, setOverride] = useState<HostedSite | null>(null);
   const [loading, setLoading] = useState(false);
-  const [versionsLoading, setVersionsLoading] = useState(true);
+  const [versionsLoading, setVersionsLoading] = useState(!!source);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingFocus, setPendingFocus] = useState<string | null>(null);
   const sequence = useRef(0), selectionSequence = useRef(0), mounted = useRef(true);
   const sourceRef = useRef(source); sourceRef.current = source;
   const publishedRef = useRef(onPublished); publishedRef.current = onPublished;
-  const identity = source?.mode === 'share' ? `share:${source.token}:${source.password ?? ''}:${live?.id}` : `site:${live?.id}`;
+  const identity = source?.mode === 'share' ? `share:${source.token}:${source.password ?? ''}:${live?.id}`
+    : `${source ? 'site' : 'none'}:${live?.id}`;
   const identityRef = useRef(identity); identityRef.current = identity;
   const currentSite = override?.id === live?.id ? override : live;
   const published = versions.find(v => v.isCurrent);
@@ -70,8 +71,8 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const refresh = useCallback(async () => {
-    if (!sourceRef.current) return;
     const request = ++sequence.current;
+    if (!sourceRef.current) { setVersionsLoading(false); return; }
     setVersionsLoading(true);
     setError(null);
     try {

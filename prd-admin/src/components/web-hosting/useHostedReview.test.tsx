@@ -16,19 +16,36 @@ const site = { id: 'site', title: '网页', siteUrl: 'https://assets.example/ind
 const current = { id: 'v2', siteId: 'site', versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true,
   entryFile: 'index.html', siteUrl: site.siteUrl };
 const previous = { ...current, id: 'v1', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: 'https://assets.example/v1/index.html?v=10000' };
-function Harness({ live = site }: { live?: typeof site }) {
+function Harness({ live = site, enabled = true }: { live?: typeof site; enabled?: boolean }) {
   const frame = useRef<HTMLIFrameElement>(null);
-  review = useHostedReview(frame, live, { mode: 'site', siteId: site.id }, () => {});
+  review = useHostedReview(frame, live, enabled ? { mode: 'site', siteId: site.id } : null, () => {});
   return <iframe ref={frame} />;
 }
-async function mount(live = site) {
+async function mount(live = site, enabled = true) {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  await act(async () => root.render(<Harness live={live} />));
+  await act(async () => root.render(<Harness live={live} enabled={enabled} />));
 }
 beforeEach(() => { vi.clearAllMocks(); list.mockResolvedValue({ success: true, data: [current, previous] }); });
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('versioned webpage review', () => {
+  it('keeps no-source previews idle without requesting version metadata', async () => {
+    await mount(site, false);
+    expect(review.loading).toBe(false);
+    expect(review.versions).toEqual([]);
+    expect(list).not.toHaveBeenCalled();
+  });
+  it('ends a pending version request when its source is disabled and ignores the late response', async () => {
+    let finish!: (value: unknown) => void;
+    list.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    await mount();
+    expect(review.loading).toBe(true);
+    await act(async () => root.render(<Harness enabled={false} />));
+    expect(review.loading).toBe(false);
+    await act(async () => finish({ success: true, data: [current, previous] }));
+    expect(review.loading).toBe(false);
+    expect(review.versions).toEqual([]);
+  });
   it.each([true, false])('reports the initial metadata wait until its request settles, success=%s', async success => {
     let finish!: (value: unknown) => void;
     list.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
