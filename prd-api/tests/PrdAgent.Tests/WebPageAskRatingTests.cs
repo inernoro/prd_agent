@@ -1,5 +1,8 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Core.Security;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
@@ -56,6 +59,24 @@ public class WebPageAskRatingTests
     [InlineData("/api/web-pages/site/ask/config", false)]
     public void 回执路径不进入请求响应正文日志(string path, bool expected)
         => Assert.Equal(expected, AskAnswerRating.CarriesReceipt(path));
+
+    [Theory]
+    [InlineData("/api/web-pages/ask/messages/answer/rating", "PUT", null)]
+    [InlineData("/api/web-pages/ask/messages/answer/rating/", "PUT", null)]
+    [InlineData("/api/web-pages/ask/messages/answer/rating", "GET", "test.read")]
+    [InlineData("/api/web-pages/ask/messages/answer/rating", "DELETE", "test.write")]
+    [InlineData("/api/web-pages/ask/messages/answer/rating/extra", "PUT", "test.write")]
+    [InlineData("/api/web-pages/ask/messages/answer", "PUT", "test.write")]
+    [InlineData("/api/web-pages/site/publish", "PUT", "test.write")]
+    public void 真实管理权限扫描器只放行回执评分方法(string path, string method, string? expected)
+    {
+        var scanner = new AdminControllerScanner(NullLogger<AdminControllerScanner>.Instance, typeof(WebPagesPermissionFixture).Assembly);
+        Assert.Equal(expected, scanner.GetRequiredPermission(path, method));
+    }
+
+    [AdminController("rating-test", "test.read", WritePermission = "test.write")]
+    [Route("api/web-pages")]
+    public class WebPagesPermissionFixture : ControllerBase { }
 
     [Fact]
     public void 消息对外序列化保留分数但不泄露回执摘要()
