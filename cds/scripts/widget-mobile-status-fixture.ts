@@ -21,7 +21,7 @@ const { chromium } = loadPlaywright();
 
 declare global {
   interface Window {
-    widgetFixture: { calls: string[]; unknown: string[]; status: string; emit: (status: string) => void };
+    widgetFixture: { calls: string[]; unknown: string[]; status: string; emit: (status: string) => void; showOwnedPanel?: (kind: 'handshake' | 'navigate') => void };
   }
 }
 
@@ -69,7 +69,11 @@ async function fixture(hosted = false, width = 390, tags: string[] = []) {
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
   }, tags);
-  await page.addScriptTag({ content: hosted ? buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(40), '', true).replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '') : script });
+  const content = hosted ? buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(40), '', true).replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '') : script;
+  const close = content.lastIndexOf('\n})();'); assert.ok(close > 0);
+  // 仅暴露实际渲染闭包与固定合成请求；不启用Bridge、不点击授权或发送请求。
+  const hooks = '\nwindow.widgetFixture.showOwnedPanel=function(kind){if(kind==="handshake"){bridgeHandshakeRequest={id:"synthetic-handshake",agentName:"fixture"};renderHandshakeRequest();}else{bridgeNavRequest={id:"synthetic-navigate",url:"about:blank"};renderNavRequest();}};';
+  await page.addScriptTag({ content: content.slice(0, close) + hooks + content.slice(close) });
   await page.waitForFunction(() => window.widgetFixture.calls.length === 2 && !!document.querySelector('#cds-widget .cds-badge'), undefined, { timeout: 3000 });
   return page;
 }
@@ -276,6 +280,18 @@ try {
       `由顶部槽展开后，面板和关闭按钮仍须在实际上下安全区内：${JSON.stringify(bounds)}`);
     await page.locator('button[data-action="close-panel"]').click(); await settle(page);
   }, hosted);
+  for (const kind of ['handshake', 'navigate'] as const) for (const status of ['running', 'building', 'error']) await check(`owned-${kind}-${status}-panel-stays-with-badge`, async page => {
+    if (status !== 'running') await page.evaluate(status => window.widgetFixture.emit(status), status);
+    await settle(page); const before = await geometry(page);
+    await page.evaluate(kind => window.widgetFixture.showOwnedPanel!(kind), kind); await settle(page);
+    const panel = page.locator(kind === 'handshake' ? '#cds-handshake-request' : '#cds-nav-request');
+    assert.equal(await panel.isVisible(), true); assert.equal(await panel.locator('button').count(), 2);
+    const after = await geometry(page);
+    writeFileSync(path.join(output, `owned-${kind}-${status}.json`), JSON.stringify({ before, after }, null, 2));
+    await page.screenshot({ path: path.join(output, `owned-${kind}-${status}.png`) });
+    assert.deepEqual([after.x, after.y], [before.x, before.y], '不能把自己的实际确认面板按钮当成业务障碍而移动徽标');
+    await panel.evaluate(el => el.remove()); await settle(page);
+  });
   await check('no-safe-slot', async page => {
     await addFloat(page, 'alert');
     await page.locator('#fixture-status').evaluate(el => { (el as HTMLElement).style.cssText = 'position:fixed;inset:0;background:#fff;z-index:70'; });

@@ -558,7 +558,7 @@ export function buildWidgetScript(
   var avoidanceFrame=null;
 
   function visibleObstacle(el){
-    if(root.contains(el))return null;
+    if(root.contains(el)||el.closest('#cds-handshake-request,#cds-nav-request'))return null;
     var r=el.getBoundingClientRect();
     var rect={left:Math.max(0,r.left),top:Math.max(0,r.top),right:Math.min(window.innerWidth,r.right),bottom:Math.min(window.innerHeight,r.bottom)};
     for(var node=el;node;node=node.parentElement){
