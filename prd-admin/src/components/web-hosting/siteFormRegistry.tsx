@@ -75,7 +75,7 @@ export function siteFormBadge(site: SiteFormInput): string | null {
 export const SITE_SOURCE_LABELS: Record<string, string> = {
   upload: '手动上传',
   workflow: '工作流生成',
-  api: 'API 生成',
+  api: 'MCP 生成',
   'saved-share': '保存自分享',
 };
 
