@@ -12,6 +12,7 @@ import { SelfMaintenanceRuntime } from '../../src/services/self-maintenance-runt
 import { confirmMaintenanceBoot, maintenanceDirectoryIdentity, markRetentionDisposition, sealRetention } from '../../src/services/self-maintenance-retention.js';
 import { createBranchRouter } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
+import { BranchOperationCoordinator, type BranchOperationLease } from '../../src/services/branch-operation-coordinator.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import * as prebuiltRuntime from '../../src/services/cds-prebuilt-runtime.js';
@@ -79,7 +80,7 @@ afterEach(async () => {
 });
 
 describe('CDS 可撤销重启交接', () => {
-  async function exerciseHandoff(endpoint: string, failureMode: 'physical-flush' | 'drain-timeout' = 'physical-flush'): Promise<void> {
+  async function exerciseHandoff(endpoint: string, failureMode: 'physical-flush' | 'drain-timeout' | 'late-operation' = 'physical-flush'): Promise<void> {
     const root = ownedRoot(), stateFile = path.join(root, 'state.json'), sha = 'a'.repeat(40);
     const config = { repoRoot: root, worktreeBase: path.join(root, 'worktrees'), masterPort: 9900,
       workerPort: 5500, dockerNetwork: 'test', portStart: 10001, rootDomains: ['example.test'],
@@ -131,6 +132,8 @@ describe('CDS 可撤销重启交接', () => {
     vi.spyOn(prebuiltRuntime, 'fetchCdsPrebuilt').mockResolvedValue({ ok: true,
       distDir: path.join(root, 'stage/dist'), webDistDir: path.join(root, 'stage/web') });
     const state = new StateService(stateFile, root); state.load();
+    const coordinator = failureMode === 'late-operation' ? new BranchOperationCoordinator() : undefined;
+    let lateLease: BranchOperationLease | undefined;
     let restartDrainTimeout: number | undefined;
     if (failureMode === 'drain-timeout') {
       const actualDrain = drainRuntime.drainInFlightDeploys; let drains = 0;
@@ -144,7 +147,11 @@ describe('CDS 可撤销重启交接', () => {
     }
     const originalFlush = state.flush.bind(state), originalRename = fs.promises.rename.bind(fs.promises);
     vi.spyOn(state, 'flush').mockImplementation(() => {
-      if (++flushes === 2 && failureMode === 'physical-flush') { blockWrite = true; state.save(); }
+      if (++flushes === 1 && coordinator) {
+        const admitted = coordinator.begin({ projectId: 'default', branchId: 'late-branch', kind: 'pull', trigger: 'manual', source: 'handoff-fixture' });
+        expect(admitted.status).toBe('started'); lateLease = admitted.lease!;
+      }
+      if (flushes === 2 && failureMode !== 'drain-timeout') { blockWrite = true; state.save(); }
       return originalFlush();
     });
     vi.spyOn(fs.promises, 'rename').mockImplementation(async (from, to) => {
@@ -154,7 +161,7 @@ describe('CDS 可撤销重启交接', () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     const app = express(); app.use(express.json());
     app.use('/api', createBranchRouter({ stateService: state, shell: controlledShell, config, selfMaintenanceRuntime: runtime,
-      worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config) }));
+      worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config), branchOperationCoordinator: coordinator }));
     const server = await new Promise<ReturnType<typeof app.listen>>(resolve => {
       const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     });
@@ -175,24 +182,27 @@ describe('CDS 可撤销重启交接', () => {
       finishShortSha();
       await rollbackEntered;
       expect(state.getActiveSelfUpdate()).toBeFalsy();
-      expect(state.getSelfUpdateHistory(1)[0].status).toBe(failureMode === 'physical-flush' ? 'success' : 'aborted');
+      expect(state.getSelfUpdateHistory(1)[0].status).toBe(failureMode === 'drain-timeout' ? 'aborted' : 'success');
+      if (coordinator) expect(lateLease?.isCurrent(), '未可靠交接的重启不能撤销新进入的真实分支资格').toBe(true);
       expect(isSelfUpdateDraining(Date.now()), '物理回滚未完成时部署排空闸必须保持关闭').toBe(true);
       if (failureMode === 'drain-timeout') expect(restartDrainTimeout).toBe(0);
       const commands = shell.commands.length;
       for (const endpoint of ['self-force-sync', 'self-restart']) expect(await post(endpoint)).toMatch(/concurrency|self_update_busy/);
       expect(shell.commands).toHaveLength(commands); expect(exit).not.toHaveBeenCalled();
       finishRollback(); const failure = await first;
-      expect(failure).toContain(failureMode === 'physical-flush' ? 'CDS 重启未获可靠交接许可' : 'self_update_restart_cancelled');
+      expect(failure).toContain(failureMode === 'drain-timeout' ? 'self_update_restart_cancelled' : 'CDS 重启未获可靠交接许可');
       expect(failure).not.toContain('event: done');
       await vi.waitFor(() => expect(runtime.observe()).toBeNull());
       expect(isSelfUpdateDraining(Date.now())).toBe(false);
       expect(fs.readFileSync(path.join(root, 'cds/dist/index.js'), 'utf8')).toBe('old backend');
       expect(fs.readFileSync(path.join(root, 'cds/web/dist/index.html'), 'utf8')).toBe('old web');
       expect(fs.existsSync(path.join(root, 'cds/invoked.txt'))).toBe(false);
+      if (coordinator) expect(lateLease?.isCurrent()).toBe(true);
       head = 'invalid'; expect(await post('self-restart')).toContain('无法读取当前 CDS 完整提交 SHA');
       expect(shell.commands.length).toBeGreaterThan(commands); expect(exit).not.toHaveBeenCalled();
     } finally {
       finishShortSha(); finishRollback(); await first; vi.restoreAllMocks(); vi.unstubAllEnvs(); await originalFlush();
+      if (coordinator && lateLease) coordinator.complete(lateLease, 'completed');
       await new Promise<void>(resolve => server.close(() => resolve()));
       endSelfUpdateDrain(); setRestartWait(null); selfStatusCache._resetForTests();
     }
@@ -204,6 +214,10 @@ describe('CDS 可撤销重启交接', () => {
 
   it.each(['self-update', 'self-force-sync'])('切换后再次排空超时保持关闭部署闸直到原票回滚完成，并沿用请求期限：%s', async endpoint => {
     await exerciseHandoff(endpoint, 'drain-timeout');
+  });
+
+  it.each(['self-update', 'self-force-sync'])('最终许可保存前出现新的分支操作时取消重启并保留原操作资格：%s', async endpoint => {
+    await exerciseHandoff(endpoint, 'late-operation');
   });
 
   it.each(['cancel', 'release', 'early-close'])('额外pipe在保存许可前不执行daemon：%s', async mode => {

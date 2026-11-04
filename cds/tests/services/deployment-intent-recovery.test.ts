@@ -11,7 +11,7 @@ import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
 import { flushAllJsonStateStores, JsonStateBackingStore, type JsonStateWriteEvent } from '../../src/infra/state-store/json-backing-store.js';
-import type { BranchOperationRequest } from '../../src/services/branch-operation-coordinator.js';
+import type { BranchOperationLease, BranchOperationRequest } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 import { waitForFlushWithTimeout } from '../../src/services/bounded-flush.js';
 import { MongoSplitStateBackingStore, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
@@ -92,6 +92,14 @@ describe('已受理部署的持久输入与重启恢复', () => {
   async function accepted(profileId?: string, events?: ServerEventLogSink) {
     const fixture = queuedAdmission(profileId, events);
     return { ...fixture, run: await fixture.acceptance };
+  }
+
+  function settleAdmissionBlocker(coordinator: BranchOperationCoordinator, blocker: BranchOperationLease): void {
+    // 队列构造用的占位活动在有效交接前先按生产收割API结束，原待办仍未领取。
+    expect(coordinator.revokeInterrupted({ operationId: blocker.operationId, generation: blocker.generation,
+      projectId: blocker.request.projectId || 'default', branchId: blocker.branchId, profileId: blocker.request.profileId || undefined })).toBe(true);
+    expect(coordinator.isQuiescentForRestart()).toBe(true);
+    expect(coordinator.getPendingWebhookDeploy(blocker.branchId)).toBeDefined();
   }
 
   it.each([undefined, 'api'])('正常关闭保留已确认的%s原待办；旧进程不能领取，新进程同代次只领取一次', async profileId => {
@@ -349,6 +357,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
     try {
       expect(await waitForFlushWithTimeout(() => state.flush(), Number(budget![1]))).toBe('flushed');
       expect(mongo.snapshot()[3].get(run.id)).toMatchObject({ doc: { status: 'queued' }, executionIntent: { runId: run.id } });
+      if (hasPid) settleAdmissionBlocker(coordinator, blocker);
       // 正PID对照也须终止不合格待办；已确认的旧pair仍保持在FakeMongo中。
       if (hasPid && !preserve) run.operationAdmissionGeneration = 99;
       if (preserve) {
@@ -475,6 +484,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
       const result = await waitForFlushWithTimeout(() => write, Number(flushBudget![1]));
       expect(result).toBe(scenario.flush);
       if (scenario.flush !== 'flushed') await writing;
+      if (scenario.flush === 'flushed' && scenario.pid) settleAdmissionBlocker(coordinator, blocker);
       const schedule = vm.runInNewContext(code.outputText, {
         config: { repoRoot: dir }, path, stateService: state, waitForFlushWithTimeout, prepareDetachedCdsRestart, selfMaintenance,
         process: { env, exit }, console: { warn: vi.fn() },
@@ -652,6 +662,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
       preserveQueued: boolean; rollback: () => Promise<void> }) => Promise<void>;
     try {
       // 已确认的原JSON另存原字节；目录使最后一次真实rename报EISDIR，不替换flush实现。
+      settleAdmissionBlocker(coordinator, blocker);
       fs.renameSync(file, savedState); fs.mkdirSync(file);
       state.getState().nextPortIndex++; state.save([{ kind: 'global' }]);
       const completion = schedule({ branchLabel: 'owned-rollback-failure', source: 'api.self-update', maintenanceOwner,

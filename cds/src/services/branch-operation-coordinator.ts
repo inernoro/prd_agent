@@ -706,6 +706,11 @@ export class BranchOperationCoordinator {
     }
   }
 
+  /** 最终交接不能撤销仍有执行资格的操作；已领取待办与保留续步也属于在途。 */
+  isQuiescentForRestart(): boolean {
+    return this.active.size === 0 && this.pendingReplayClaims.size === 0 && this.reservedContinuations.size === 0;
+  }
+
   interruptAll(reason: string, source: string, options: { normalShutdown?: boolean } = {}): void {
     this.artifactTargetReads.clear();
     for (const active of this.active.values()) {

@@ -2655,6 +2655,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (input.preserveQueued !== true || !permit?.hasChildPid) {
           throw new Error('CDS 重启未获可靠交接许可，已取消更新与重启。请检查状态存储及重启脚本后重试。');
         }
+        if (branchOperationCoordinator && !branchOperationCoordinator.isQuiescentForRestart()) {
+          throw new Error('CDS 重启未获可靠交接许可：检测到新的在途分支操作，已取消更新与重启。请等待该操作结束后重试。');
+        }
         operationsInterrupted = Boolean(branchOperationCoordinator);
         branchOperationCoordinator?.interruptAll(
           `CDS restart requested by ${input.source}`, input.source,
