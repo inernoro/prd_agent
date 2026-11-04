@@ -106,7 +106,7 @@
 .review-composer-anchor button { padding: 1px; color: var(--text-muted); }
 .review-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
 .review-composer-footer > span { font-size: 10px; color: var(--text-muted); }
-.review-send-action, .review-login-action { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 8px 12px; border-radius: 8px; color: var(--fg-on-bright-fill); background: var(--accent-fg-amber); font-size: 12px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--accent-fg-amber) 60%, transparent); }
+.review-send-action, .review-login-action { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; padding: 8px 12px; border-radius: 8px; color: var(--accent-on-gold); background: var(--accent-fg-amber); font-size: 12px; font-weight: 600; border: 1px solid color-mix(in srgb, var(--accent-fg-amber) 60%, transparent); }
 .review-send-action:hover:not(:disabled), .review-login-action:hover { filter: brightness(1.08); }
 .review-send-action:disabled { opacity: .35; cursor: not-allowed; }
 .review-composer-hint { color: var(--text-muted); font-size: 10px; line-height: 1.6; margin-top: 8px; }
