@@ -59,16 +59,18 @@ public class HostedSiteReviewVersionAccessTests
     [InlineData("reupload-no-snapshot")]
     [InlineData("stream-no-snapshot")]
     [InlineData("reupload-no-snapshot-cleanup-fails")]
+    [InlineData("legacy-ai-invalid-zip")]
     public async Task ExistingShare_AiAndPackagePublicationRetireTheLegacyEntry(string mode)
     {
         await WithReviewDb(async db =>
         {
             const string prefix = "web-hosting/sites/site/";
             var site = ReviewSite(); site.Files[0].CosKey = prefix + "index.html"; site.PublishedRevisionId = "baseline";
+            if (mode == "legacy-ai-invalid-zip") site.Files[0].CosKey = prefix + "index.v11111111111141118111111111111111.html";
             site.Files.Add(new HostedSiteFile { Path = "style.css", CosKey = prefix + "style.css", Size = 12, MimeType = "text/css" });
             await db.HostedSites.InsertOneAsync(site);
             await db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink { Token = "existing", SiteId = "site", Visibility = "public" });
-            const string privateHtml = "<!doctype html><html><body><h1>private V1</h1></body></html>";
+            const string privateHtml = "<!doctype html><html><head><link rel='stylesheet' href='style.css'></head><body><h1>private V1</h1></body></html>";
             var baseline = ReviewRevision("baseline", site.ContentVersion);
             baseline.Html = privateHtml; baseline.PublishedEntryCosKey = site.Files[0].CosKey;
             baseline.PublishedAssetKeys = site.Files.Select(f => f.CosKey).ToList();
@@ -106,6 +108,24 @@ public class HostedSiteReviewVersionAccessTests
             teams.Setup(x => x.GetMyTeamIdsAsync("owner", It.IsAny<CancellationToken>())).ReturnsAsync(new List<string>());
             var sites = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, null!, Mock.Of<IUploadProgressService>(), Mock.Of<IAskOpeningQuestionGenerator>(), NullLogger<HostedSiteService>.Instance);
             var revisions = new HostedSiteRevisionService(db, sites, storage.Object);
+            if (mode == "legacy-ai-invalid-zip")
+            {
+                using var invalid = new MemoryStream();
+                using (var zip = new System.IO.Compression.ZipArchive(invalid, System.IO.Compression.ZipArchiveMode.Create, true))
+                    zip.CreateEntry("readme.txt");
+                await Assert.ThrowsAsync<InvalidOperationException>(() => sites.ReuploadAsync("site", "owner", invalid.ToArray(), "invalid.zip"));
+                var unchanged = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+                var savedEntry = unchanged.Files.Single(f => f.Path == "index.html").CosKey;
+                var savedCss = unchanged.Files.Single(f => f.Path == "style.css").CosKey;
+                Assert.StartsWith(prefix + ".versions/", savedEntry);
+                Assert.Equal(privateHtml, System.Text.Encoding.UTF8.GetString(objects[savedEntry]));
+                Assert.Equal("h1{color:red}", System.Text.Encoding.UTF8.GetString(objects[savedCss]));
+                Assert.Equal(storage.Object.BuildUrlForKey(savedCss), new Uri(new Uri(unchanged.SiteUrl), "style.css").AbsoluteUri);
+                Assert.Equal(storage.Object.BuildUrlForKey(savedEntry), unchanged.SiteUrl.Split('?')[0]);
+                Assert.False(objects.ContainsKey(prefix + "style.css"));
+                Assert.Equal(site.ContentVersion, unchanged.ContentVersion);
+                return;
+            }
             if (mode.EndsWith("cleanup-fails"))
             {
                 await Assert.ThrowsAsync<InvalidOperationException>(() => sites.ReuploadAsync("site", "owner", bytes, "index.html"));

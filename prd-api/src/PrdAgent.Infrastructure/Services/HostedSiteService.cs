@@ -97,8 +97,11 @@ public class HostedSiteService : IHostedSiteService
             {
                 var byPath = snapshot.PublishedAssetKeys.Where(k => LogicalPath(k) != null)
                     .GroupBy(k => LogicalPath(k)!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+                var retainedEntry = snapshot.PublishedEntryCosKey
+                    ?? throw new InvalidOperationException("当前版本入口尚未归档，请稍后重试");
                 var files = site.Files.Select(f => new HostedSiteFile { Path = f.Path, Size = f.Size, MimeType = f.MimeType,
-                    CosKey = byPath.GetValueOrDefault(f.Path, f.CosKey) }).ToList();
+                    CosKey = string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)
+                        ? retainedEntry : byPath.GetValueOrDefault(f.Path, f.CosKey) }).ToList();
                 if (files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
                     throw new InvalidOperationException("当前版本尚未完整归档，请稍后重试");
                 var entryKey = files.Single(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)).CosKey;
