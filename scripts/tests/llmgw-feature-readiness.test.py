@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -29,9 +30,29 @@ class FeatureReadinessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             probe._feature_routes(["none,defect-agent"])
 
+    def test_thinking_requirement_is_per_caller_and_only_rejects_explicit_false(self):
+        routes = probe._feature_routes(["defect-agent"])
+        for field in ("supportsThinking", "SupportsThinking"):
+            for supported in (False, True, None):
+                with self.subTest(field=field, supported=supported):
+                    payload = {"success": True, field: supported}
+                    with patch.object(probe, "_request", return_value=(200, json.dumps(payload), 0)):
+                        checks = probe._check_feature_routes("http://not-called", "fixture", routes)
+                    sync, stream = checks
+                    self.assertFalse(sync["requiresThinking"])
+                    self.assertTrue(sync["ok"])
+                    self.assertTrue(stream["requiresThinking"])
+                    self.assertEqual(stream["ok"], supported is not False)
+                    self.assertEqual(stream["failureCode"], "THINKING_UNSUPPORTED" if supported is False else "")
+                    if supported is False:
+                        self.assertTrue(stream["nextAction"])
+        # 旧 metadata 未返回该能力时沿非 strict 策略放行。
+        with patch.object(probe, "_request", return_value=(200, '{"success":true}', 0)):
+            self.assertTrue(all(x["ok"] for x in probe._check_feature_routes("http://not-called", "fixture", routes)))
+
     def test_failed_target_blocks_release_command_then_recovery_passes(self):
         requests = []
-        state = {"broken": True}
+        state = {"broken": True, "thinking": None}
 
         class Handler(BaseHTTPRequestHandler):
             def reply(self, status, payload):
@@ -55,7 +76,8 @@ class FeatureReadinessTests(unittest.TestCase):
                 requests.append((self.path, body))
                 broken = state["broken"] and "polish-stream" in body["AppCallerCode"]
                 self.reply(200, {"success": not broken, "failureCode": "APPCALLER_POOL_UNBOUND" if broken else None,
-                                 "logicalModelPublicId": "default-chat-curated" if not broken else None})
+                                 "logicalModelPublicId": "default-chat-curated" if not broken else None,
+                                 "supportsThinking": state["thinking"]})
 
             def log_message(self, *args):
                 pass
@@ -101,6 +123,19 @@ class FeatureReadinessTests(unittest.TestCase):
                 blocked = subprocess.run(["bash", "-euc", shell], cwd=ROOT, env=env, capture_output=True, text=True)
                 self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
                 self.assertEqual(len(json.loads(output.read_text())["featureRoutes"]), 2)
+                # 同一成功路由显式不支持 thinking：真实发布函数必须红，恢复 true/null 才绿。
+                state["broken"] = False
+                for thinking in (False, True, None):
+                    state["thinking"] = thinking
+                    result = subprocess.run(["bash", "-euc", shell], cwd=ROOT, env=env, capture_output=True, text=True)
+                    report = json.loads(output.read_text())
+                    self.assertEqual(result.returncode, 1 if thinking is False else 0, result.stdout + result.stderr)
+                    self.assertTrue(report["featureRoutes"][0]["ok"], "sync polish must not require thinking")
+                    self.assertEqual(report["featureRoutes"][1]["ok"], thinking is not False)
+                    if thinking is False:
+                        self.assertIn("THINKING_UNSUPPORTED", result.stdout)
+                        self.assertIn("defect-agent.polish-stream::chat", result.stdout)
+                self.assertTrue(all(path == "/resolve" and body["ReadOnlyMetadata"] is True for path, body in requests))
                 env["LLMGW_RELEASE_FEATURES"] = "none"
                 unselected = subprocess.run(["bash", "-euc", shell], cwd=ROOT, env=env, capture_output=True, text=True)
                 self.assertEqual(unselected.returncode, 0, unselected.stdout + unselected.stderr)

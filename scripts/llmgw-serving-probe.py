@@ -22,15 +22,16 @@ from datetime import datetime, timezone
 
 
 # 发布范围显式选择功能；不扫描未启用 Agent，也不把配置退化升级为实例摘流。
+# 每项为 (appCallerCode, modelType, requiresThinking)，能力需求属于用途，不按模型名猜测。
 FEATURE_ROUTES = {
     "defect-agent": (
-        ("defect-agent.polish::chat", "chat"),
-        ("defect-agent.polish-stream::chat", "chat"),
+        ("defect-agent.polish::chat", "chat", False),
+        ("defect-agent.polish-stream::chat", "chat", True),
     ),
 }
 
 
-def _feature_routes(features: list[str]) -> list[tuple[str, str]]:
+def _feature_routes(features: list[str]) -> list[tuple[str, str, bool]]:
     selected = [part.strip() for item in features for part in item.split(",") if part.strip()]
     if "none" in selected:
         if selected != ["none"]:
@@ -42,9 +43,9 @@ def _feature_routes(features: list[str]) -> list[tuple[str, str]]:
     return list(dict.fromkeys(route for feature in selected for route in FEATURE_ROUTES[feature]))
 
 
-def _check_feature_routes(base: str, key: str, routes: list[tuple[str, str]]) -> list[dict]:
+def _check_feature_routes(base: str, key: str, routes: list[tuple[str, str, bool]]) -> list[dict]:
     checks = []
-    for caller, model_type in routes:
+    for caller, model_type, requires_thinking in routes:
         code, raw, latency = _request(base, "/resolve", key=key, method="POST", body={
             "AppCallerCode": caller, "ModelType": model_type, "ReadOnlyMetadata": True,
         })
@@ -59,13 +60,20 @@ def _check_feature_routes(base: str, key: str, routes: list[tuple[str, str]]) ->
         failure_code = payload.get("failureCode") or payload.get("FailureCode")
         if not failure_code and isinstance(error, dict):
             failure_code = error.get("code") or error.get("Code")
+        # 对齐该用途实际请求的能力门禁：非 strict 下未知能力仍允许，明确 false 才拒绝。
+        # 同步润色没有 thinking 意图，不能因共用 chat 模型而一并要求此能力。
+        thinking_unsupported = (code == 200 and success and requires_thinking
+                                and payload.get("supportsThinking", payload.get("SupportsThinking")) is False)
+        ready = code == 200 and success and not thinking_unsupported
+        if thinking_unsupported:
+            failure_code = "THINKING_UNSUPPORTED"
         checks.append({
-            "appCallerCode": caller, "modelType": model_type,
-            "ok": code == 200 and success, "httpStatus": code, "latencyMs": latency,
-            "failureCode": failure_code or ("" if code == 200 and success else "ROUTE_READINESS_FAILED"),
+            "appCallerCode": caller, "modelType": model_type, "requiresThinking": requires_thinking,
+            "ok": ready, "httpStatus": code, "latencyMs": latency,
+            "failureCode": failure_code or ("" if ready else "ROUTE_READINESS_FAILED"),
             "failureStage": payload.get("failureStage") or payload.get("FailureStage") or "",
             "logicalModel": payload.get("logicalModelPublicId") or payload.get("LogicalModelPublicId") or "",
-            "nextAction": "" if code == 200 and success else (
+            "nextAction": "" if ready else (
                 "核对该用途的模型授权、启用状态、能力与可用线路；恢复后重跑相同范围验收。"
                 if code not in (401, 403) else "核对发布凭据的 route:read 权限和目标用途范围后重跑。"),
         })
