@@ -6,6 +6,7 @@ import { AskCitationNote } from './AskCitationNote';
 import './askCitations.css';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import { rehypeStreamingText, StreamingMarkdownSpan } from '@/components/streaming/rehypeStreamingText';
+import { remarkLooseStrong } from '@/components/streaming/remarkLooseStrong';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
@@ -142,7 +143,7 @@ export const AskMarkdown = memo(function AskMarkdown({ content, sourceTitle = '�
   return (
     <div ref={rootRef} className="ask-md" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkLooseStrong]}
         remarkRehypeOptions={{ clobberPrefix: prefix, footnoteLabel: '引用原文', footnoteBackLabel: '返回正文' }}
         rehypePlugins={[[rehypeSanitize, citationSchema], [rehypeAskCitations, { notes }], [rehypeStreamingText, { streaming }]]}
         components={components}

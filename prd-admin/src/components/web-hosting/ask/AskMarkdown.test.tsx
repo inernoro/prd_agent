@@ -20,6 +20,23 @@ const popup = () => document.querySelector<HTMLElement>('[role="dialog"][aria-la
 const content = '结论[^1]。再次引用[^1]。\n\n[^1]: 原文条件。';
 
 describe('问答来源小标', () => {
+  it('中文标签紧邻正文或粗体内部留空格时不外露星号，保留时间与来源小标', () => {
+    act(() => root.render(<AskMarkdown content={'- **周二至周五：**14:00—19:00[^1]\n- **周六至周日： **09:30—17:30[^1]\n- **每周一：**闭馆整理[^1]\n- **节假日： **开放安排尚未确定，请勿以本页为准。[^1]\n\n[^1]: 图书角开放时间原文。'} />));
+    expect(container.querySelectorAll('li strong')).toHaveLength(4);
+    expect(container.textContent).not.toContain('**');
+    expect(container.textContent).toContain('14:00—19:00');
+    expect(container.textContent).toContain('09:30—17:30');
+    expect(container.querySelectorAll('[data-citation-badge]')).toHaveLength(4);
+  });
+
+  it('转义星号、代码、未成对星号及原有粗体不被兼容处理改坏', () => {
+    act(() => root.render(<AskMarkdown content={'\\*\\*原样：\\*\\*文字\n\n`**代码：**文字`\n\n```text\n**块代码：**文字\n```\n\n**未闭合\n\n**正常加粗** 与 ***粗斜体***'} />));
+    expect(container.textContent).toContain('**原样：**文字');
+    expect(container.querySelector('code')?.textContent).toBe('**代码：**文字');
+    expect(container.querySelector('pre')?.textContent).toContain('**块代码：**文字');
+    expect(container.textContent).toContain('**未闭合');
+    expect([...container.querySelectorAll('strong')].map((node) => node.textContent)).toEqual(['正常加粗', '粗斜体']);
+  });
   it('句末显示真实网页名称，点击就地查看短摘录，完整片段按需展开', () => {
     const quote = '原文开头。' + '用于核对的原文内容。'.repeat(70) + '仅适用于已审核订单。';
     act(() => root.render(<AskMarkdown sourceTitle="扫码风控架构设计演示文稿" content={`结论[^1]。\n\n[^1]: ${quote}`} />));

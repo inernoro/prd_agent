@@ -16,7 +16,8 @@ import {
   Trash2,
   WandSparkles,
 } from 'lucide-react';
-import type { HostedSite, SiteOwnerCard } from '@/services/real/webPages';
+import type { HostedSite, HostedSiteActivity, SiteOwnerCard } from '@/services/real/webPages';
+import { SiteEditCount, SiteNewBadge } from './SiteActivityMeta';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -68,6 +69,7 @@ export interface SiteCardProps {
   shareStats?: SiteShareStats;
   /** 该站点的独立访客数（后端按 userId / IP 去重聚合）；拿不到就不传，位上显示 —— */
   visitorCount?: number;
+  activity?: HostedSiteActivity;
   caps?: SiteCaps;
   ownerCard?: SiteOwnerCard;
   onSelect: () => void;
@@ -175,6 +177,7 @@ export function SiteCard({
   shared,
   shareStats,
   visitorCount,
+  activity,
   caps,
   ownerCard,
   onSelect,
@@ -267,15 +270,11 @@ export function SiteCard({
 
   const statusChips = (
     <>
-      {shared && chip('shared', `已分享${linkCount > 0 ? ` ${linkCount}` : ''}`,
-        'var(--semantic-success-text)', 'var(--semantic-success-border)', 'var(--semantic-success-soft)')}
       {/* 「已公开」在设计稿里走强调色系（#E8A87C），不是警告黄——它不是一个警告 */}
       {isPublic && chip('public', '已公开',
         'var(--accent-gold-2)', 'rgba(var(--accent-primary-rgb), 0.4)', 'rgba(var(--accent-primary-rgb), 0.12)')}
       {(site.sharedTeamIds?.length ?? 0) > 0 && chip('team', '团队共享',
         'var(--accent-fg-blue)', 'var(--semantic-info-border)', 'var(--semantic-info-soft)')}
-      {!shared && !isPublic && (site.sharedTeamIds?.length ?? 0) === 0 &&
-        chip('none', '未分享', 'var(--text-tertiary)', 'var(--border-subtle)', 'transparent')}
     </>
   );
 
@@ -412,10 +411,10 @@ export function SiteCard({
             </div>
           )}
 
-          {/* 右下：形态量（单页 / N 文件 / N 页 / 时长） */}
+          {/* 文件数量仅在多文件站出现；已分享独立放在右下角，未分享不制造状态噪音。 */}
           {formBadge && (
             <span
-              className={`pointer-events-none absolute bottom-2 right-2 z-20 inline-flex items-center backdrop-blur-md transition-opacity ${!isSmall ? '[@media(hover:hover)]:group-hover:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-0' : ''}`}
+              className={`pointer-events-none absolute bottom-2 left-9 z-20 inline-flex items-center backdrop-blur-md transition-opacity ${!isSmall ? '[@media(hover:hover)]:group-hover:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-0' : ''}`}
               style={{
                 height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
                 fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)',
@@ -426,6 +425,13 @@ export function SiteCard({
               {formBadge}
             </span>
           )}
+          {shared && <span data-site-shared-badge
+            className={`pointer-events-none absolute bottom-2 right-2 z-20 inline-flex items-center gap-1 backdrop-blur-md ${!isSmall ? '[@media(hover:hover)]:group-hover:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-0' : ''}`}
+            title={linkCount > 0 ? `已分享 ${linkCount} 条有效链接` : '已分享'}
+            style={{ padding: '3px 6px', borderRadius: 6, fontSize: 10, fontWeight: 500,
+              color: 'var(--semantic-success-text)', background: 'var(--bg-elevated)', border: '1px solid var(--semantic-success-border)', boxShadow: 'var(--scrim-badge-shadow)' }}>
+            <Link2 size={10} aria-hidden />已分享
+          </span>}
 
           {/* 左下：视觉勾选框保持 20×20，真实按钮热区为 44×44，触屏不用精准点中小方框。 */}
           <button
@@ -510,33 +516,19 @@ export function SiteCard({
             </div>
           )}
 
-          {/* 小卡：状态点 + 已分享，独占一行（设计稿小卡的状态表达） */}
-          {isSmall && (
-            <div
-              className="flex items-center gap-1.5"
-              style={{ height: 12 }}
-              title={shared ? (linkCount > 0 ? `已分享 ${linkCount} 条链接` : '已分享') : '未分享'}
-            >
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ background: shared ? 'var(--semantic-success-text)' : 'var(--text-disabled)' }}
-              />
-              <span style={{ fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)', color: shared ? 'var(--semantic-success-text)' : 'var(--text-tertiary)' }}>
-                {shared ? '已分享' : '未分享'}
-              </span>
-            </div>
-          )}
-
           {/* 标题恒定单行：多一行标题就把整行卡片撑高，短卡下面留出一截空白（用户原话「胡子太长」）。
               截断了也不丢信息——title 属性给全文，右栏「站点上下文」也显示完整标题。 */}
-          <h3
-            className="truncate cursor-pointer hover:underline"
-            style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: 'var(--tracking-title)', color: 'var(--text-primary)' }}
-            onClick={onVisit}
-            title={site.title}
-          >
-            {site.title}
-          </h3>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h3
+              className="min-w-0 flex-1 truncate cursor-pointer hover:underline"
+              style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: 'var(--tracking-title)', color: 'var(--text-primary)' }}
+              onClick={onVisit}
+              title={site.title}
+            >
+              {site.title}
+            </h3>
+            <SiteNewBadge activity={activity} />
+          </div>
 
           {isLarge && (
             <p className="line-clamp-2" style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
@@ -568,6 +560,7 @@ export function SiteCard({
                 )}
               </>
             )}
+            {activity && <span className="ml-auto pl-1"><SiteEditCount activity={activity} /></span>}
           </div>
 
           {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行）。

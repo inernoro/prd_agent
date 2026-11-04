@@ -9,6 +9,13 @@ import type { SseEvent } from '@/lib/sse';
 
 // ─── Types ───
 
+export interface HostedSiteActivity {
+  /** 服务端按已成功发布的内容修改与回退版本统计，不含基线、草稿或元信息修改。 */
+  editCount: number;
+  /** 服务端判断：近七天创建且当前用户未打开。 */
+  isNew: boolean;
+}
+
 export interface HostedSiteFile {
   path: string;
   cosKey: string;
@@ -946,6 +953,7 @@ export async function listSites(params?: {
     /** 每个站点的独立访客数（siteId → 人数，后端按 userId / IP 去重）。
      *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。没有访问记录的站点不出现在表里。 */
     visitors?: Record<string, number>;
+    activity?: Record<string, HostedSiteActivity>;
     /** 团队作用域下，我在该团队的网页托管有效角色（owner/editor/viewer）；个人作用域不返回 */
     myWebHostingRole?: WebHostingRole;
   }>

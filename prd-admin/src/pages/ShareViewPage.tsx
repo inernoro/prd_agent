@@ -1,3 +1,4 @@
+import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -173,6 +174,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
+  const openedSiteId = data?.sites.length === 1 ? data.sites[0].id : undefined;
+  useEffect(() => {
+    if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
+  }, [isAuthenticated, currentUserId, openedSiteId]);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);

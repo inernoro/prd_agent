@@ -737,7 +737,7 @@ public class WebPagesController : ControllerBase
     /// 是我们没去数。两边的身份口径一样（登录用 ViewerUserId，匿名退回 IP），
     /// 所以可以先各自取出「站点 → 访客键集合」再求并，避免同一个人被数两次。
     /// </summary>
-    private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds)
+    private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds, string viewerUserId, ISet<string> openedSites)
     {
         var ids = siteIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
         if (ids.Count == 0) return new Dictionary<string, long>();
@@ -772,6 +772,8 @@ public class WebPagesController : ControllerBase
             var key = row["_id"].AsBsonDocument;
             if (key["site"].IsBsonNull) continue;
             Add(key["site"].AsString, key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString);
+            if (!key["visitor"].IsBsonNull && key["visitor"].AsString == viewerUserId)
+                openedSites.Add(key["site"].AsString);
         }
 
         // 来源二：分享访问。ShareViewLog 只认分享，得先把分享映回它包含的站点。
@@ -787,11 +789,13 @@ public class WebPagesController : ControllerBase
                 .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds))
             .ToListAsync();
         var shareToSites = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var singleSiteShares = new HashSet<string>(StringComparer.Ordinal);
         foreach (var share in shares)
         {
             if (string.IsNullOrEmpty(share.Id)) continue;
             var hit = share.TargetSiteIds().Where(ids.Contains).ToList();
             if (hit.Count > 0) shareToSites[share.Id] = hit;
+            if (share.TargetSiteIds().Count() == 1) singleSiteShares.Add(share.Id);
         }
 
         if (shareToSites.Count > 0)
@@ -813,10 +817,34 @@ public class WebPagesController : ControllerBase
                 if (!shareToSites.TryGetValue(key["share"].AsString, out var sites)) continue;
                 var visitor = key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString;
                 foreach (var siteId in sites) Add(siteId, visitor);
+                // 合集访问不能证明用户打开了每一个站点；这里只采信单站分享。
+                if (singleSiteShares.Contains(key["share"].AsString) && visitor == viewerUserId)
+                    openedSites.Add(sites[0]);
             }
         }
 
         return buckets.ToDictionary(kv => kv.Key, kv => (long)kv.Value.Count);
+    }
+
+    private async Task<Dictionary<string, HostedSiteActivity>> BuildActivityAsync(
+        IReadOnlyCollection<HostedSite> sites, ISet<string> openedSites)
+    {
+        var now = DateTime.UtcNow;
+        var result = sites.ToDictionary(site => site.Id, site => new HostedSiteActivity
+        {
+            IsNew = HostedSiteActivityPolicy.IsNew(site.CreatedAt, openedSites.Contains(site.Id), now),
+        });
+        if (result.Count == 0) return result;
+        var filter = Builders<HostedSiteRevision>.Filter.In(revision => revision.SiteId, result.Keys)
+            & Builders<HostedSiteRevision>.Filter.Where(HostedSiteActivityPolicy.PublishedEdit);
+        var counts = await _db.HostedSiteRevisions.Aggregate().Match(filter)
+            .Group<BsonDocument>(new BsonDocument
+            {
+                { "_id", "$SiteId" }, { "count", new BsonDocument("$sum", 1) },
+            }).ToListAsync(CancellationToken.None);
+        foreach (var count in counts)
+            if (result.TryGetValue(count["_id"].AsString, out var activity)) activity.EditCount = count["count"].ToInt64();
+        return result;
     }
 
     /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
@@ -838,7 +866,9 @@ public class WebPagesController : ControllerBase
 
         // 卡片要展示「N 访客」（设计稿屏 2 中卡与大卡都有这一格），浏览数是累计次数、访客是去重人数，
         // 两个数不是一回事，所以必须单独算，不能拿 ViewCount 冒充。
-        var visitors = await BuildVisitorCountsAsync(items.Select(s => s.Id));
+        var openedSites = new HashSet<string>(StringComparer.Ordinal);
+        var visitors = await BuildVisitorCountsAsync(items.Select(s => s.Id), userId, openedSites);
+        var activity = await BuildActivityAsync(items, openedSites);
 
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
         //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
@@ -852,12 +882,12 @@ public class WebPagesController : ControllerBase
             {
                 var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
                 var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
-                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors }));
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors, activity }));
             }
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors }));
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors, activity }));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, visitors }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, visitors, activity }));
     }
 
     /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>

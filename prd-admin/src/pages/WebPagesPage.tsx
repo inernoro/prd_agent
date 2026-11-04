@@ -38,7 +38,7 @@ import {
   setSiteGroup,
   copySiteToTeam,
 } from '@/services';
-import type { HostedSite, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
+import type { HostedSite, HostedSiteActivity, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSite, getSiteAskConfig } from '@/services/real/webPages';
 import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
@@ -103,6 +103,7 @@ import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSetting
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { listMyTeams } from '@/services/real/teams';
+import { SiteEditCount, SiteNewBadge } from '@/components/web-hosting/SiteActivityMeta';
 import { returnedSiteSpace, highlightReturnedSite } from '@/components/web-hosting/returnToHostedSite';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
 import {
@@ -386,6 +387,7 @@ export default function WebPagesPage() {
   const [showCopyFromPersonal, setShowCopyFromPersonal] = useState(false);
   const { teams, loadTeams } = useTeamStore();
   const [movingSite, setMovingSite] = useState<HostedSite | null>(null);
+  const [siteActivity, setSiteActivity] = useState<Record<string, HostedSiteActivity>>({});
   const [siteVisitors, setSiteVisitors] = useState<Record<string, number>>({});
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
   // 团队空间下我的有效角色（owner/editor/viewer）；个人空间为 null（=自己的，全权）
@@ -582,10 +584,17 @@ export default function WebPagesPage() {
       setTotal(res.data.total);
       setOwnerCards(res.data.owners ?? {});
       setSiteVisitors(res.data.visitors ?? {});
+      setSiteActivity(res.data.activity ?? {});
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
   }, [keyword, activeTag, activeSource, sort, teamScope]);
+
+  useEffect(() => {
+    const refresh = () => { void load(); };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [load]);
 
   // 团队作用域：按「我的网页托管角色 + 是否站点创建者」解析每个站点的操作能力。
   // 个人作用域：列表全是自己的站点，全权。后端是权威（viewer 写会 404/403），这里只控展示。
@@ -981,14 +990,19 @@ export default function WebPagesPage() {
     </select>
   ) : null;
 
-  /**
-   * 打开站点本体。与卡片/列表两个视图共用同一条路径：先记一次访客痕迹，
-   * 再用 /s/wp/{token} 访问链打开（同步开窗规避弹窗拦截，地址异步解析后填入）。
-   */
+  /** 卡片和列表共用访问路径，开窗成功后再记录本人访问。 */
   const handleVisitSite = useCallback((site: HostedSite) => {
-    void recordSiteView(site.id);
     const w = window.open('', '_blank');
-    void resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+    if (!w) return;
+    void resolveVisitUrl(site).then(url => {
+      if (w.closed) return;
+      w.location.href = url;
+      void recordSiteView(site.id).then(result => {
+        if (result.success) setSiteActivity(previous => previous[site.id]
+          ? { ...previous, [site.id]: { ...previous[site.id], isNew: false } }
+          : previous);
+      }).catch(() => { /* 访问记录失败不能关闭已经打开的网页。 */ });
+    }).catch(() => { w.close(); });
   }, []);
   const activeSortLabel = SORT_OPTIONS.find(o => o.value === sort)?.label ?? '最新';
   const activeSpaceLabel = currentSpace.kind === 'team'
@@ -1210,6 +1224,7 @@ export default function WebPagesPage() {
             caps={siteCaps(site)}
             ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
             visitorCount={siteVisitors[site.id]}
+            activity={siteActivity[site.id]}
             onVisit={() => handleVisitSite(site)}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}
@@ -1231,6 +1246,8 @@ export default function WebPagesPage() {
       <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
+            activity={siteActivity[site.id]}
+            onVisit={() => handleVisitSite(site)}
             key={site.id}
             site={site}
             selected={selectedIds.has(site.id)}
@@ -2166,7 +2183,7 @@ export default function WebPagesPage() {
         // 团队归属随请求冻结到服务端，由它建站时应用——用户中途离开时这条回调不会执行。
         // 传实时值即可：工作台在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
         destinationTeamId={currentSpace.kind === 'team' ? currentSpace.teamId : null}
-        onClose={() => setWorkbenchTarget(null)}
+        onClose={() => { setWorkbenchTarget(null); void load(); }}
         onCreated={(siteId) => {
           void (async () => {
             // 团队已由服务端归好，这里只补分组（它依赖当前视图，服务端不知道）。
@@ -3035,11 +3052,13 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, selected, shared, caps, activity, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
   caps?: SiteCaps;
+  activity?: HostedSiteActivity;
+  onVisit?: () => void;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -3063,10 +3082,14 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
   });
   // 访问地址与 SiteCard 网格视图一致：统一走 /s/wp/{token}，避免列表/网格切换得到不同 URL
   const handleVisit = () => {
-    // 记录一次访客痕迹（fire-and-forget，不阻塞打开）
-    void recordSiteView(site.id);
+    if (onVisit) return onVisit();
     const w = window.open('', '_blank');
-    resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+    if (!w) return;
+    void resolveVisitUrl(site).then(url => {
+      if (w.closed) return;
+      w.location.href = url;
+      void recordSiteView(site.id);
+    }).catch(() => { w.close(); });
   };
   return (
     <div
@@ -3101,8 +3124,8 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
         <div className="flex flex-1 min-w-0 items-center gap-2">
           {shared && (
             <span
-              className="hidden shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium @[900px]:inline-flex"
-              style={{ color: 'var(--semantic-warning-text)' }}
+              className="hidden shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium @[900px]:inline-flex"
+              style={{ color: 'var(--semantic-success-text)', background: 'var(--semantic-success-soft)' }}
               title="已分享"
             >
               <Link2 size={10} /> 已分享
@@ -3111,11 +3134,12 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
             title={site.title}
-            style={{ color: shared ? 'var(--semantic-warning-text)' : 'var(--text-primary)' }}
+            style={{ color: 'var(--text-primary)' }}
             onClick={handleVisit}
           >
             {site.title}
           </span>
+          <SiteNewBadge activity={activity} />
           {site.sourceType !== 'upload' && (
             <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
               {siteSourceLabel(site.sourceType)}
@@ -3133,6 +3157,7 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
         </div>
         <div className="hidden shrink-0 items-center gap-3 whitespace-nowrap text-xs text-token-muted @[640px]:flex">
           <span className="hidden @[900px]:inline">{site.files.length} 个文件</span>
+          <SiteEditCount activity={activity} />
           <span className="w-16 text-right">{fmtSize(site.totalSize)}</span>
           <span className="hidden w-28 truncate @[1280px]:inline" title={site.entryFile}>{site.entryFile}</span>
         </div>
@@ -3156,7 +3181,7 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
             aria-label={shared ? '已分享' : '分享'}
           >
             {shared
-              ? <Link2 size={14} style={{ color: '#fcd34d' }} />
+              ? <Link2 size={14} style={{ color: 'var(--semantic-success-text)' }} />
               : <Share2 size={14} className="text-token-muted" />}
           </button>
         )}

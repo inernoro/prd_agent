@@ -11,8 +11,9 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       div .[@media(hover:none)]:block.absolute.hidden.right-[7px].top-[7px].z-20
         button .h-7.inline-flex.items-center.justify-center.max-sm:h-11.max-sm:min-h-11.max-sm:min-w-11.max-sm:w-11.min-h-7.min-w-[26px].pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
           svg
-      span .[@media(hover:hover)]:group-focus-within:opacity-0.[@media(hover:hover)]:group-hover:opacity-0.absolute.bottom-2.inline-flex.items-center.pointer-events-none.right-2.z-20 {height:20px;padding:0 6px}
-        "单页"
+      span .[@media(hover:hover)]:group-focus-within:opacity-0.[@media(hover:hover)]:group-hover:opacity-0.absolute.bottom-2.gap-1.inline-flex.items-center.pointer-events-none.right-2.z-20 {padding:3px 6px}
+        svg
+        "已分享"
       button .absolute.bottom-[-5px].h-11.inline-flex.items-center.justify-center.left-[-5px].w-11.z-20 [data-no-drag=true aria-label=选择 type=button]
         span .group-hover:opacity-100.h-5.inline-flex.items-center.justify-center.w-5 {opacity:0.5}
       div .[@media(hover:hover)]:flex.absolute.bottom-0.gap-[5px].group-focus-within:opacity-100.group-focus-within:translate-y-0.group-hover:opacity-100.group-hover:translate-y-0.hidden.inset-x-0.items-center.opacity-0.pointer-events-none.translate-y-[6px].z-20 {padding:7px 7px 7px 33px} [data-hoverbar=true]
@@ -35,13 +36,12 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
     div .flex.flex-1.flex-col {gap:5px;padding:10px 11px 11px}
       div .flex.gap-1.items-center.min-w-0 {height:20px}
         div .flex.flex-1.flex-wrap.gap-1.items-center.min-w-0
-          span .inline-flex.items-center.shrink-0 {padding:2px 6px}
-            "已分享 1"
         span .shrink-0
           span .h-[18px].inline-flex.items-center.justify-center.w-[18px]
             "我"
-      h3 .truncate
-        "多租户架构设计"
+      div .flex.gap-1.5.items-center.min-w-0
+        h3 .flex-1.min-w-0.truncate
+          "多租户架构设计"
       div .flex.flex-wrap.gap-x-1.5.items-center
         span
           "11.0 KB"
