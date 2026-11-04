@@ -29,6 +29,8 @@
  */
 import type { selfStatusCache } from './self-status-cache.js';
 import { SELF_CHECK_PATH } from './self-check-path.js';
+import type { SchedulerService, PreviewActivityStatus } from './scheduler.js';
+import type { ServerEventLogSink } from './server-event-log-store.js';
 
 export { SELF_CHECK_PATH };
 
@@ -72,6 +74,7 @@ export const SELF_STATUS_GRACE_MS = 5 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_HOUR_MS = 30 * 60 * 1000;
+const PREVIEW_ACTIVITY_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /** 部署的非终态：还在往前走的那几档。 */
 const DEPLOY_IN_FLIGHT = new Set(['pending', 'queued', 'preparing', 'building', 'starting', 'verifying']);
@@ -122,6 +125,28 @@ export interface SelfCheckDeps {
   /** `ready=false` 表示自身状态缓存还没算过一次——刚起来的进程会有几十秒这样。 */
   selfStatus: () => SelfCheckRuntimeStatus | null | Promise<SelfCheckRuntimeStatus | null>;
   storeBackend: () => string;
+  previewActivity?: (sinceMs: number) => Promise<{ current: PreviewActivityStatus | undefined;
+    schedulerEnabled: boolean; recentUnknownCount: number | null }>;
+}
+
+/** index 与回归共用原事件sink接线，不另建持久库、通知通道或探测目标。 */
+export function wireSchedulerPreviewActivitySelfCheck(scheduler: SchedulerService, events: ServerEventLogSink | null,
+  isEventStoreReadable: () => boolean): NonNullable<SelfCheckDeps['previewActivity']> {
+  scheduler.setPreviewActivityTransitionListener(event => events?.record({
+    ts: event.observedAt, category: 'system', severity: event.status === 'unknown' ? 'warn' : 'info',
+    source: 'scheduler-preview-activity', action: event.status === 'unknown' ? 'unknown' : 'recovered',
+    message: event.status === 'unknown' ? '预览活跃状态无法确认，请检查转发器连接' : '预览活跃状态观察已恢复',
+    details: { status: event.status, reason: event.reason, observedAt: event.observedAt },
+  }));
+  return async sinceMs => {
+    const current = await scheduler.readPreviewActivityStatus();
+    let recentUnknownCount: number | null = null;
+    if (isEventStoreReadable() && events?.findRecent) {
+      const rows = await events.findRecent({ source: 'scheduler-preview-activity', action: 'unknown', since: new Date(sinceMs), limit: 1 });
+      if (Array.isArray(rows)) recentUnknownCount = rows.length;
+    }
+    return { current, schedulerEnabled: scheduler.isEnabled(), recentUnknownCount };
+  };
 }
 
 export type HealthStatus = 'pass' | 'warn' | 'fail';
@@ -215,6 +240,29 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   const httpRead = boundedSelfRead(() => deps.httpStats(now - HALF_HOUR_MS), null);
   const dockerRead = boundedSelfRead(() => deps.dockerPing(), { ok: false, ms: 3000, detail: 'Docker 检查超时或读取失败' });
   const selfRead = boundedSelfRead(() => deps.selfStatus(), null);
+  const activityRead = deps.previewActivity
+    ? boundedSelfRead(() => deps.previewActivity!(now - PREVIEW_ACTIVITY_WINDOW_MS), null) : null;
+
+  if (activityRead) {
+    const activity = await activityRead;
+    const currentUnknown = activity?.current?.status === 'unknown';
+    const lastUnknownAt = Date.parse(activity?.current?.lastUnknownAt ?? '');
+    const recentInProcessUnknown = lastUnknownAt >= now - PREVIEW_ACTIVITY_WINDOW_MS && lastUnknownAt <= now;
+    const historicalUnknown = recentInProcessUnknown || (typeof activity?.recentUnknownCount === 'number' && activity.recentUnknownCount > 0);
+    const known = activity?.current?.status === 'ready' && typeof activity.recentUnknownCount === 'number' && activity.recentUnknownCount >= 0;
+    const observed = currentUnknown || historicalUnknown ? 1 : known ? 0 : null;
+    const publicMessage = currentUnknown
+      ? (activity?.schedulerEnabled ? '预览活跃状态无法确认，已暂停自动停机，请检查转发器连接'
+        : '预览活跃状态无法确认，自动停机当前未启用，请检查转发器连接')
+      : historicalUnknown ? '预览活跃状态曾无法确认，请检查转发器连接并确认恢复，异常记录保留六小时'
+        : observed === null ? '预览活跃状态或异常历史无法确认，请检查转发器连接与诊断存储'
+          : '预览活跃状态可确认，近六小时未发现异常记录';
+    checks.push(monitored({ componentId: 'scheduler.preview-activity', componentType: 'self',
+      observedValue: observed, observedUnit: 'flag', status: observed === 0 ? 'pass' : 'fail',
+      output: publicMessage, publicMessage,
+    }, { name: 'CDS · 预览活跃状态', publicName: '预览自动停机保护', op: 'eq', value: 0,
+      intervalSeconds: 21600, failuresToAlarm: 1, severity: 'P1' }, time));
+  }
 
   // ── 部署 ───────────────────────────────────────────────────────────
   const runs = deps.deploymentRuns();
