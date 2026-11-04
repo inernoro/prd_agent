@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { Square } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AskMarkdown } from './AskMarkdown';
+import { AskAnswerFooter } from './AskAnswerFooter';
 import { AskRefusalCard, type AskRefusalKey } from './askRefusal';
 import type { AskMessage } from './askTypes';
 
@@ -44,20 +45,29 @@ export default function AskThread({
 }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const followsBottom = useRef(true);
+
+  useLayoutEffect(() => {
     const el = innerRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    // 在 DOM 增长前记录用户是否贴底，避免完成区突然增高后误判为用户正在上翻。
+    if (messages.length > 0 && followsBottom.current) el.scrollTop = el.scrollHeight;
+  }, [messages, openingQuestions, isBusy]);
 
   const empty = messages.length === 0;
   const showOpening = empty && openingQuestions.length > 0 && !refusal;
+  const latest = messages.at(-1);
+  const completedAnswer = !isBusy && latest?.role === 'assistant'
+    && !latest.streaming && !latest.error && latest.content.trim() ? latest : null;
 
   return (
     <div
       ref={innerRef}
-      style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14 }}
+      onScroll={(event) => {
+        const el = event.currentTarget;
+        followsBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      }}
+      style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14, display: 'flex', flexDirection: 'column' }}
     >
       {empty && !hideIntro && (
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
@@ -102,6 +112,7 @@ export default function AskThread({
         />
       )}
 
+      <div style={{ flexShrink: 0 }}>
       {messages.map((m) => (
         // id 给历史面板做锚点：点一条历史要能滚回那一轮，而不是只把面板关掉
         <div key={m.id} id={`ask-msg-${m.id}`} style={{ marginTop: 16 }}>
@@ -135,6 +146,7 @@ export default function AskThread({
           )}
         </div>
       ))}
+      </div>
 
       {/* 等待期不能静止（CLAUDE.md 规则 #6）：还没有第一个字时给阶段文案 + 转圈 */}
       {isBusy && !messages.some((m) => m.streaming && m.content) && (
@@ -158,6 +170,8 @@ export default function AskThread({
           </button>
         </div>
       )}
+      {completedAnswer && <AskAnswerFooter key={completedAnswer.id} answer={completedAnswer}
+        messages={messages} openingQuestions={openingQuestions} blocked={!!refusal} onAsk={onPick} />}
     </div>
   );
 }
