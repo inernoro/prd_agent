@@ -167,9 +167,10 @@ export const MarketplacePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const loadRequestRef = useRef(0);
-  const latestLoadRef = useRef<{ viewerId: string | undefined; load: (background?: boolean) => Promise<void> } | null>(null);
+  const latestLoadRef = useRef<{ viewerId: string | undefined; hasSkillSnapshot: boolean; load: (background?: boolean) => Promise<void> } | null>(null);
   const [snapshot, setSnapshot] = useState<MarketplaceSnapshot>({ scope: null, viewerId: currentUserId, byType: {} });
   const snapshotMatches = snapshot.scope === scope && snapshot.viewerId === currentUserId;
+  const hasSkillSnapshot = snapshotMatches && Array.isArray(snapshot.byType.skill);
   // 网格、标签和角色共同读取匹配当前范围与账号的快照，切换时不暴露旧筛选数据。
   const dataByType = snapshotMatches ? snapshot.byType : EMPTY_MARKETPLACE_DATA;
   const [forkingId, setForkingId] = useState<string | null>(null);
@@ -264,6 +265,7 @@ export const MarketplacePage: React.FC = () => {
     try {
       const results: Record<string, MarketplaceItemBase[]> = {};
       let personalError = '';
+      let requestFailed = false;
       await Promise.all(
         Object.entries(CONFIG_TYPE_REGISTRY).map(async ([typeKey, typeDef]) => {
           if (scope !== 'all' && typeKey !== 'skill') return;
@@ -272,16 +274,25 @@ export const MarketplacePage: React.FC = () => {
               ? await typeDef.api.listMarketplace({ keyword: '', sort: sortBy })
               : await listMarketplaceSkills({ sort: sortBy, scope });
             if (res.success && res.data?.items) results[typeKey] = res.data.items;
-            else if (scope !== 'all') personalError = res.error?.message || '个人技能加载失败，请重试';
+            else {
+              requestFailed = true;
+              if (scope !== 'all') personalError = res.error?.message || '个人技能加载失败，请重试';
+            }
           } catch (err) {
+            requestFailed = true;
             console.error(`Failed to load ${typeKey}:`, err);
             if (scope !== 'all') personalError = '个人技能加载失败，请重试';
           }
         })
       );
       if (requestId === loadRequestRef.current) {
-        setSnapshot({ scope, viewerId: currentUserId, byType: results });
-        setLoadError(personalError);
+        setSnapshot(previous => ({
+          scope, viewerId: currentUserId,
+          byType: background && previous.scope === scope && previous.viewerId === currentUserId
+            ? { ...previous.byType, ...results } : results,
+        }));
+        setLoadError(background ? '' : personalError);
+        if (background && requestFailed) toast.error('列表刷新失败', '收藏已更新，已保留当前内容，请稍后刷新页面');
       }
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);
@@ -289,13 +300,13 @@ export const MarketplacePage: React.FC = () => {
   }, [cardDemoEnabled, sortBy, scope, currentUserId]);
 
   useLayoutEffect(() => {
-    latestLoadRef.current = { viewerId: currentUserId, load: loadAllData };
-  }, [currentUserId, loadAllData]);
+    latestLoadRef.current = { viewerId: currentUserId, hasSkillSnapshot, load: loadAllData };
+  }, [currentUserId, hasSkillSnapshot, loadAllData]);
   useEffect(() => { loadAllData(); }, [loadAllData]);
 
   const refreshCurrentList = (background = false) => {
     const latest = latestLoadRef.current;
-    if (latest && latest.viewerId === currentUserId) return latest.load(background);
+    if (latest && latest.viewerId === currentUserId) return latest.load(background && latest.hasSkillSnapshot);
   };
 
   const handleFavoriteChange = (updated: MarketplaceSkillDto) => {

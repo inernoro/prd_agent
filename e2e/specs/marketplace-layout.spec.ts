@@ -272,6 +272,35 @@ for (const scope of ['mine', 'favorites'] as const) {
   });
 }
 
+for (const scope of ['all', 'favorites'] as const) {
+  test(`收藏后台刷新失败保留 ${scope} 已确认内容并可恢复`, async ({ page }) => {
+    const items = await installMarketplaceFixture(page);
+    const item = items.find(item => item.id === 'fixture-skill-20')!;
+    await page.goto(scope === 'all' ? '/marketplace' : '/marketplace?scope=favorites');
+    await expect(page.locator('.mkt-card')).toHaveCount(scope === 'all' ? 24 : 3, { timeout: 30_000 });
+    await page.route('**/api/marketplace/skills?*', route => route.fulfill({
+      status: 503, json: { success: false, error: { code: 'TEMPORARY', message: '暂时不可用' } },
+    }));
+    const failed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/marketplace/skills' && response.status() === 503);
+    const card = page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) });
+    await card.getByTitle('取消收藏', { exact: true }).click();
+    await (await failed).finished();
+    await page.waitForLoadState('networkidle');
+    const expected = scope === 'all' ? 24 : 2;
+    await expect(page.locator('.mkt-card')).toHaveCount(expected);
+    await expect(page.getByText('列表刷新失败', { exact: true })).toBeVisible();
+    await expect(page.locator('.marketplace-empty[role="alert"]')).toHaveCount(0);
+    if (scope === 'all') await expect(card.locator('.mkt-card-favorite')).toHaveAttribute('data-active', 'false');
+    else await expect(card).toHaveCount(0);
+    await page.unroute('**/api/marketplace/skills?*');
+    await page.getByRole('button', { name: /^显示/ }).click();
+    const refreshed = page.waitForResponse(response => response.url().includes('sort=new') && new URL(response.url()).pathname === '/api/marketplace/skills' && response.ok());
+    await page.getByRole('button', { name: '最新', exact: true }).click();
+    await refreshed;
+    await expect(page.locator('.mkt-card')).toHaveCount(expected);
+  });
+}
+
 test('网页创作与市场共用显示控件，样式一致且偏好各自保留', async ({ page }) => {
   test.setTimeout(180_000);
   await installMarketplaceFixture(page);
