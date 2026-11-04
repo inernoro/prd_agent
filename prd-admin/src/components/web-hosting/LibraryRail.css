@@ -34,3 +34,107 @@
 .web-folder-drop-target[data-dock-hover='true'] .web-folder-drop-target__hint {
   display: inline;
 }
+
+
+/* 标签与分组共用侧栏节奏：轻量单行、名称左齐、计数右齐。 */
+.web-library-tags {
+  min-width: 0;
+}
+
+.web-library-tags__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.web-library-tags__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.web-library-tags__item,
+.web-library-tags__more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 12px;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.web-library-tags__item:hover,
+.web-library-tags__more:hover,
+.web-library-tags__clear:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.web-library-tags__item[aria-pressed='true'] {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+}
+
+.web-library-tags__icon {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.web-library-tags__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-library-tags__count {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.web-library-tags__item[aria-pressed='true'] .web-library-tags__count {
+  color: inherit;
+}
+
+.web-library-tags__more {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.web-library-tags__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--text-tertiary);
+}
+
+.web-library-tags button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .web-library-tags__item,
+  .web-library-tags__more {
+    transition: none;
+  }
+}
