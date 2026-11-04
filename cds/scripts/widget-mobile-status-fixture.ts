@@ -23,8 +23,8 @@ const script = buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(
   .replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '');
 const scriptSha256 = createHash('sha256').update(script).digest('hex');
 
-async function fixture() {
-  const page = await browser.newPage({ viewport: { width: 390, height: 664 } });
+async function fixture(hosted = false, width = 390) {
+  const page = await browser.newPage({ viewport: { width, height: 664 } });
   page.on('pageerror', error => { pageErrors.push(error.message); });
   await page.route('**/*', route => { externalRequests.push(route.request().url()); return route.abort(); });
   await page.setContent('<html><head><title>deterministic-fixture</title></head><body style="margin:0;min-height:1200px;background:#faf9f6"><h1 style="margin:16px;font:20px sans-serif">业务主任务</h1></body></html>');
@@ -57,7 +57,7 @@ async function fixture() {
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
   });
-  await page.addScriptTag({ content: script });
+  await page.addScriptTag({ content: hosted ? buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(40), '', true).replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '') : script });
   await page.waitForFunction(() => window.widgetFixture.calls.length === 2 && !!document.querySelector('#cds-widget .cds-badge'), undefined, { timeout: 3000 });
   return page;
 }
@@ -99,8 +99,8 @@ async function geometry(page: Page) {
   });
 }
 
-async function check(name: string, run: (page: Page) => Promise<void>) {
-  const page = await fixture();
+async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390) {
+  const page = await fixture(hosted, width);
   try {
     await run(page);
     assert.deepEqual(await page.evaluate(() => window.widgetFixture.unknown), []);
@@ -202,6 +202,34 @@ try {
     await settle(page);
     assert.equal((await geometry(page)).placement, 'clear', '固定应用外壳不能冒充整屏语义浮层');
     assert.equal((await geometry(page)).overlap, false);
+  });
+  for (const width of [360, 390]) await check(`hosted-sync-controls-${width}`, async page => {
+    for (const status of ['building', 'error', 'starting', 'running']) {
+      await page.evaluate(status => window.widgetFixture.emit(status), status); await settle(page);
+      const controls = await page.locator('.cds-badge-main').evaluate(row => [...row.querySelectorAll('button')].map(button => {
+        const r = button.getBoundingClientRect(), badge = row.parentElement!.getBoundingClientRect();
+        return { action: button.dataset.action, visible: r.width >= 44 && r.height >= 44 && r.left >= badge.left && r.right <= badge.right
+          && r.top >= badge.top && r.bottom <= badge.bottom && button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
+      }));
+      assert.deepEqual(controls.map(control => control.action), ['toggle', 'dismiss']);
+      assert.ok(controls.every(control => control.visible), `${status} 的真实托管徽标两按钮都必须可点击`);
+      assert.equal(await page.locator('.cds-sync-chip').isVisible(), true);
+      await page.screenshot({ path: path.join(output, `hosted-${width}-${status}.png`) });
+    }
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    assert.equal(await page.locator('.cds-hosted-panel-note').isVisible(), true, '托管限制说明仍可经真实按钮打开查看');
+  }, true, width);
+  await check('native-nonzero-safe-area', async page => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, left: 20, right: 30, bottom: 34 } });
+    await addFloat(page, 'status');
+    assert.equal(await page.locator('#cds-widget').evaluate(el => parseFloat(getComputedStyle(el).getPropertyValue('--cds-safe-bottom'))), 34, '原生env在当前Chromium计算后须为真实像素');
+    const bounds = await page.locator('#cds-widget').evaluate(el => {
+      const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    });
+    assert.ok(bounds.left >= 32 && bounds.top >= 52 && bounds.right <= 348 && bounds.bottom <= 618,
+      `非零原生env安全区必须真的生效：${JSON.stringify(bounds)}`);
+    assert.equal((await geometry(page)).placement, 'clear');
   });
   await check('no-safe-slot', async page => {
     await addFloat(page, 'alert');

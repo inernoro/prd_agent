@@ -145,6 +145,7 @@ export function buildWidgetScript(
       ${mobileIdleBadge} .cds-badge-main>:not(button[data-action="toggle"]){display:none}
       ${mobileIdleBadge} button[data-action="toggle"]{width:44px;height:44px;padding:0;opacity:1}
       #cds-widget .cds-branch,#cds-widget .cds-mode{display:none}
+      #cds-widget .cds-hosted-label,#cds-widget .cds-hosted-note{display:none}
       #cds-widget .cds-panel{width:calc(100vw - 24px);min-width:min(260px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
       #cds-widget .cds-panel-header{position:sticky;top:-10px;z-index:2;background:rgba(22,27,34,0.98)}
       #cds-widget .cds-panel-close{width:44px;height:44px}
