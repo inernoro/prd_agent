@@ -49,7 +49,7 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
         span .min-w-0.truncate
           "11.0 KB"
         span .min-w-0.text-right.truncate
-          "9 浏览"
+          "— 访问"
         span .@[240px]:block.hidden.min-w-0.text-right.truncate
           "— 访客"
       div .flex.flex-wrap.gap-1.items-center.min-w-0

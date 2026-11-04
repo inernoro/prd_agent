@@ -737,93 +737,79 @@ public class WebPagesController : ControllerBase
     /// 是我们没去数。两边的身份口径一样（登录用 ViewerUserId，匿名退回 IP），
     /// 所以可以先各自取出「站点 → 访客键集合」再求并，避免同一个人被数两次。
     /// </summary>
-    private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds, string viewerUserId, ISet<string> openedSites)
+    private async Task<Dictionary<string, HostedSiteTraffic>> BuildTrafficAsync(
+        IReadOnlyCollection<HostedSite> sites, string viewerUserId, ISet<string> openedSites)
     {
-        var ids = siteIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-        if (ids.Count == 0) return new Dictionary<string, long>();
+        var buckets = sites.ToDictionary(site => site.Id, site => new HostedSiteTrafficAccumulator(site.OwnerUserId));
+        var ids = buckets.Keys.ToList();
+        if (ids.Count == 0) return new Dictionary<string, HostedSiteTraffic>();
 
-        // 登录用户按用户去重，匿名退回 IP；两端用同一把尺子，否则并集会把同一个人算两次
-        var visitorKey = new BsonDocument("$ifNull", new BsonArray
+        // 同一来源先在数据库中合并到访客/半小时时段，跨来源再按同一键合并。
+        BsonDocument Group(string target) => new("$group", new BsonDocument
         {
-            "$ViewerUserId",
-            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "anonymous" }),
+            { "_id", new BsonDocument
+                {
+                    { "target", "$" + target },
+                    { "user", new BsonDocument("$ifNull", new BsonArray { "$ViewerUserId", "" }) },
+                    { "ip", new BsonDocument("$cond", new BsonArray
+                        {
+                            new BsonDocument("$eq", new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$ViewerUserId", "" }), "" }),
+                            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "" }), "",
+                        }) },
+                    { "window", new BsonDocument("$floor", new BsonDocument("$divide", new BsonArray
+                        { new BsonDocument("$toLong", "$ViewedAt"), HostedSiteTrafficAccumulator.WindowMilliseconds })) },
+                }
+            },
+            { "lastViewedAt", new BsonDocument("$max", "$ViewedAt") },
         });
-
-        var buckets = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        void Add(string siteId, string visitor)
+        void Add(string siteId, BsonDocument row, bool provesOpened)
         {
-            if (!buckets.TryGetValue(siteId, out var set))
-                buckets[siteId] = set = new HashSet<string>(StringComparer.Ordinal);
-            set.Add(visitor);
+            if (!buckets.TryGetValue(siteId, out var bucket)) return;
+            var key = row["_id"].AsBsonDocument;
+            var user = key["user"].AsString;
+            bucket.Add(user, key["ip"].AsString, row["lastViewedAt"].ToUniversalTime());
+            if (provesOpened && user == viewerUserId) openedSites.Add(siteId);
         }
 
-        // 来源一：站内访问，本来就带 SiteId
         var sitePipeline = new[]
         {
             new BsonDocument("$match", new BsonDocument("SiteId", new BsonDocument("$in", new BsonArray(ids)))),
-            new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
-            {
-                { "site", "$SiteId" },
-                { "visitor", visitorKey },
-            })),
+            Group("SiteId"),
         };
-        foreach (var row in await _db.SiteViewEvents.Aggregate<BsonDocument>(sitePipeline).ToListAsync())
-        {
-            var key = row["_id"].AsBsonDocument;
-            if (key["site"].IsBsonNull) continue;
-            Add(key["site"].AsString, key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString);
-            if (!key["visitor"].IsBsonNull && key["visitor"].AsString == viewerUserId)
-                openedSites.Add(key["site"].AsString);
-        }
+        using (var cursor = await _db.SiteViewEvents.Aggregate<BsonDocument>(sitePipeline).ToCursorAsync())
+            while (await cursor.MoveNextAsync())
+                foreach (var row in cursor.Current) Add(row["_id"].AsBsonDocument["target"].AsString, row, true);
 
-        // 来源二：分享访问。ShareViewLog 只认分享，得先把分享映回它包含的站点。
-        // 一条分享可以带多个站点，访客算给这条分享里的每个站点——这是这份日志能支持的最细粒度，
-        // 比整列显示 0 诚实得多；真要做到「他到底点开了哪一个」得在分享阅读页按站点埋点，另记一笔账。
-        // 两个字段都要认：合集分享写 SiteIds，存量单站点分享只写 SiteId。只查 SiteIds 的话，
-        // 单站点分享整条被漏掉，而那正是「纯靠分享访问的站点显示 0 访客」最常见的形态——
-        // 修了一半等于没修。字段口径走 WebPageShareLink.TargetSiteIds() 这一个来源。
+        // 包含站内便捷链以及已撤销/已过期链接的历史；链接状态不能抹去已发生的访问。
         var fb = Builders<WebPageShareLink>.Filter;
         var shares = await _db.WebPageShareLinks
             .Find(fb.Or(fb.AnyIn(x => x.SiteIds, ids), fb.In(x => x.SiteId, ids)))
             .Project<WebPageShareLink>(Builders<WebPageShareLink>.Projection
-                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds))
+                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds)
+                .Include(x => x.Purpose).Include(x => x.IsRevoked).Include(x => x.ExpiresAt))
             .ToListAsync();
-        var shareToSites = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        var singleSiteShares = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var share in shares)
-        {
-            if (string.IsNullOrEmpty(share.Id)) continue;
-            var hit = share.TargetSiteIds().Where(ids.Contains).ToList();
-            if (hit.Count > 0) shareToSites[share.Id] = hit;
-            if (share.TargetSiteIds().Count() == 1) singleSiteShares.Add(share.Id);
-        }
-
+        var now = DateTime.UtcNow;
+        foreach (var share in shares.Where(share => share.Purpose != "visit" && !share.IsRevoked && (share.ExpiresAt == null || share.ExpiresAt > now)))
+            foreach (var siteId in share.TargetSiteIds().Distinct())
+                if (buckets.TryGetValue(siteId, out var bucket)) bucket.Value.ActiveShareLinks++;
+        var shareToSites = shares.ToDictionary(share => share.Id, share => share.TargetSiteIds().Distinct().ToList());
         if (shareToSites.Count > 0)
         {
             var sharePipeline = new[]
             {
-                new BsonDocument("$match", new BsonDocument("ShareId",
-                    new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
-                new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
-                {
-                    { "share", "$ShareId" },
-                    { "visitor", visitorKey },
-                })),
+                new BsonDocument("$match", new BsonDocument("ShareId", new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
+                Group("ShareId"),
             };
-            foreach (var row in await _db.ShareViewLogs.Aggregate<BsonDocument>(sharePipeline).ToListAsync())
-            {
-                var key = row["_id"].AsBsonDocument;
-                if (key["share"].IsBsonNull) continue;
-                if (!shareToSites.TryGetValue(key["share"].AsString, out var sites)) continue;
-                var visitor = key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString;
-                foreach (var siteId in sites) Add(siteId, visitor);
-                // 合集访问不能证明用户打开了每一个站点；这里只采信单站分享。
-                if (singleSiteShares.Contains(key["share"].AsString) && visitor == viewerUserId)
-                    openedSites.Add(sites[0]);
-            }
+            using var cursor = await _db.ShareViewLogs.Aggregate<BsonDocument>(sharePipeline).ToCursorAsync();
+            while (await cursor.MoveNextAsync())
+                foreach (var row in cursor.Current)
+                {
+                    var targets = shareToSites[row["_id"].AsBsonDocument["target"].AsString];
+                    foreach (var siteId in targets) Add(siteId, row, targets.Count == 1);
+                }
         }
-
-        return buckets.ToDictionary(kv => kv.Key, kv => (long)kv.Value.Count);
+        return sites.Select(site => (site.Id, Summary: buckets[site.Id].Build(site.ViewCount)))
+            .Where(item => item.Summary != null).ToDictionary(item => item.Id, item => item.Summary!);
     }
 
     private async Task<Dictionary<string, HostedSiteActivity>> BuildActivityAsync(
@@ -864,10 +850,10 @@ public class WebPagesController : ControllerBase
         var (items, total) = await _siteService.ListAsync(
             userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
 
-        // 卡片要展示「N 访客」（设计稿屏 2 中卡与大卡都有这一格），浏览数是累计次数、访客是去重人数，
-        // 两个数不是一回事，所以必须单独算，不能拿 ViewCount 冒充。
+        // 三个访问指标共用记录范围；旧 visitors 映射继续供现有消费方使用，旧累计浏览不覆盖。
         var openedSites = new HashSet<string>(StringComparer.Ordinal);
-        var visitors = await BuildVisitorCountsAsync(items.Select(s => s.Id), userId, openedSites);
+        var traffic = await BuildTrafficAsync(items, userId, openedSites);
+        var visitors = traffic.ToDictionary(kv => kv.Key, kv => kv.Value.All.Visitors);
         var activity = await BuildActivityAsync(items, openedSites);
 
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
@@ -882,12 +868,12 @@ public class WebPagesController : ControllerBase
             {
                 var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
                 var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
-                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors, activity }));
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors, activity, traffic }));
             }
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors, activity }));
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors, activity, traffic }));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, visitors, activity }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, visitors, activity, traffic }));
     }
 
     /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>

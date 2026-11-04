@@ -38,7 +38,7 @@ import {
   setSiteGroup,
   copySiteToTeam,
 } from '@/services';
-import type { HostedSite, HostedSiteActivity, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
+import type { HostedSite, HostedSiteActivity, HostedSiteTraffic, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSite, getSiteAskConfig } from '@/services/real/webPages';
 import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
@@ -200,7 +200,7 @@ function fmtSize(bytes: number) {
  * 仅把"单站点分享"（siteId 或 siteIds 仅含一个）计入，使卡片标记与「只撤单站点」的取消语义一致；
  * 多站点合集分享不标记单卡。 */
 /**
- * 按站点聚合分享侧的成果数据 —— 卡片大卡的「有效链接 / 最近访问」两格。
+ * 按站点聚合分享侧的成果数据 —— 卡片分享操作的有效链接数。
  *
  * 「有效」的口径与分享档顶栏那个数字必须是同一条：**未过期且未撤销**。
  * 合集链接（一条链接指向多个站点）对它命中的每个站点都计一次——用户问的是
@@ -387,6 +387,7 @@ export default function WebPagesPage() {
   const [showCopyFromPersonal, setShowCopyFromPersonal] = useState(false);
   const { teams, loadTeams } = useTeamStore();
   const [movingSite, setMovingSite] = useState<HostedSite | null>(null);
+  const [siteTraffic, setSiteTraffic] = useState<Record<string, HostedSiteTraffic>>({});
   const [siteActivity, setSiteActivity] = useState<Record<string, HostedSiteActivity>>({});
   const [siteVisitors, setSiteVisitors] = useState<Record<string, number>>({});
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
@@ -586,6 +587,7 @@ export default function WebPagesPage() {
       setOwnerCards(res.data.owners ?? {});
       setSiteVisitors(res.data.visitors ?? {});
       setSiteActivity(res.data.activity ?? {});
+      setSiteTraffic(res.data.traffic ?? {});
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
@@ -604,6 +606,7 @@ export default function WebPagesPage() {
         void requestSites().then(result => {
           if (active && id === requestId && generation === loadGeneration.current && result.success) {
             setSiteActivity(result.data.activity ?? {});
+            setSiteTraffic(result.data.traffic ?? {});
             setSiteVisitors(result.data.visitors ?? {});
           }
         }).catch(() => { /* 后台刷新失败保留已有统计。 */ });
@@ -649,7 +652,7 @@ export default function WebPagesPage() {
   const loadShares = useCallback(async () => {
     const res = await listSiteShares();
     if (res.success) {
-      // 只写这一份；「已分享」标记由它派生。卡片的「有效链接 N / 最近访问」也要按站点聚合，
+      // 只写这一份；「已分享」标记由它派生。分享操作中的有效链接数也要按站点聚合，
       // 只留一个 Set 就只能回答「有没有分享过」，回答不了「还有几条有效、上次谁打开的」
       setShareLinks(res.data.items);
     }
@@ -1241,7 +1244,7 @@ export default function WebPagesPage() {
             shareStats={siteShareStats.get(site.id)}
             caps={siteCaps(site)}
             ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
-            visitorCount={siteVisitors[site.id]}
+            traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
             onVisit={() => handleVisitSite(site)}
             onSelect={() => toggleSelect(site.id)}
@@ -1264,6 +1267,7 @@ export default function WebPagesPage() {
       <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
+            traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
             onVisit={() => handleVisitSite(site)}
             key={site.id}
@@ -3070,12 +3074,13 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-export function SiteListItem({ site, selected, shared, caps, activity, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, selected, shared, caps, activity, traffic, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
   caps?: SiteCaps;
   activity?: HostedSiteActivity;
+  traffic?: HostedSiteTraffic;
   onVisit?: () => void;
   onSelect: () => void;
   onEdit: () => void;
@@ -3183,7 +3188,7 @@ export function SiteListItem({ site, selected, shared, caps, activity, onVisit, 
 
       <div className="hidden items-center gap-3 whitespace-nowrap text-xs shrink-0 text-token-muted @[480px]:flex">
         {site.folder && <span className="hidden w-28 items-center gap-1 @[1100px]:flex" title={site.folder}><FolderOpen size={12} className="shrink-0" /> <span className="truncate">{site.folder}</span></span>}
-        <span className="hidden w-12 items-center justify-end gap-1 @[640px]:flex"><Eye size={12} /> {site.viewCount}</span>
+        <span className="hidden w-12 items-center justify-end gap-1 @[640px]:flex" title="全部访问，含作者；每30分钟时段去重"><Eye size={12} /> {traffic?.all.visits ?? '—'}</span>
         <span className="w-20 text-right">{relativeTime(site.createdAt)}</span>
       </div>
 

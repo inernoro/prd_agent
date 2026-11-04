@@ -74,6 +74,8 @@ describe('WebPagesPage SiteCard', () => {
     expect(readShared).toContain('已编辑 3 次');
     expect(renderSiteCard()).not.toContain('已编辑 0 次');
     expect(renderSiteCard()).toContain('编辑次数暂不可用');
+    expect(renderSiteCard()).toContain('— 访问');
+    expect(renderSiteCard()).not.toContain('3 浏览');
   });
 
   it('MCP 创建的旧 api 来源在卡片和列表中显示一致，保留原数据契约', () => {

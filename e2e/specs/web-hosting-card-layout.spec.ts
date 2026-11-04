@@ -9,7 +9,7 @@ for (const width of [390, 1440]) {
         const date = new Date().toISOString();
         const titles = ['米多项目缺陷复发根因审查报告', '活动指南', '超长中文标题与LongUnbrokenEnglishTitle用于验证省略和新标记', '图书角'];
         const counts = [3, 0, 987654321, 0];
-        const views = [8, 0, 987654321, 0];
+        const views = [8, 0, 987654321, 1];
         const cover = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="360" height="190"><rect width="360" height="190" fill="#e1e8ef"/></svg>');
         const sites = titles.map((title, i) => ({
           id: `layout-${i}`, title, sourceType: 'upload', cosPrefix: '', entryFile: 'index.html', siteUrl: '',
@@ -19,6 +19,11 @@ for (const width of [390, 1440]) {
           description: i === 2 ? '用于检查长描述的底部统计是否和短描述对齐。'.repeat(5) : '测试描述',
           createdAt: date, updatedAt: date,
         }));
+        const traffic = Object.fromEntries(sites.map((site, i) => [site.id, {
+          all: { visits: views[i], visitors: views[i], lastViewedAt: views[i] ? date : null },
+          external: { visits: i === 2 ? 2 : 0, visitors: i === 2 ? 1 : 0, lastViewedAt: i === 2 ? date : null },
+          activeShareLinks: i === 0 || i === 2 ? 1 : 0,
+        }]));
         const activity = Object.fromEntries(sites.map((site, i) => [site.id, { editCount: counts[i], isNew: i === 1 || i === 2 }]));
         await page.addInitScript(({ size }) => {
           localStorage.setItem('webpages.pref.cardSize', size);
@@ -34,7 +39,7 @@ for (const width of [390, 1440]) {
         await page.route('**/api/**', async route => {
           const path = new URL(route.request().url()).pathname;
           let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
-          if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity,
+          if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
           else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
@@ -114,6 +119,11 @@ for (const width of [390, 1440]) {
         await testInfo.attach(`真实列表-${width}-${theme}-${size}`, { body: image, contentType: 'image/png' });
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
         // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
+        if (size === 'large') {
+          const lastAccess = cards.nth(3).getByText('最近访问', { exact: true }).locator('..');
+          await expect(lastAccess).toContainText('刚刚');
+          await expect(cards.nth(3).getByText('有效链接', { exact: true }).locator('..')).toContainText('0');
+        }
         const visited: string[] = [];
         page.on('request', request => { if (request.url().includes('/record-view')) visited.push(request.url()); });
         const trigger = cards.nth(2).getByRole('button', { name: '查看网页详情' });
@@ -124,9 +134,15 @@ for (const width of [390, 1440]) {
         await expect(dialog.getByRole('heading', { name: titles[2], exact: true })).toBeVisible();
         await expect(dialog.getByText(sites[2].description, { exact: true })).toBeVisible();
         await expect(dialog.getByText('第四个标签', { exact: true })).toBeVisible();
-        for (const [label, value] of [['已发布的内容修改', '987654321 次'], ['浏览次数', '987654321 次'], ['独立访客', '987654321 人'], ['来源', '手动上传']]) {
+        for (const [label, value] of [['已发布的内容修改', '987654321 次'], ['原累计浏览', '987654321 次（旧口径）'], ['来源', '手动上传']]) {
           await expect(dialog.locator('dt').filter({ hasText: label }).locator('..').locator('dd')).toHaveText(value);
         }
+        const allTraffic = dialog.getByRole('region', { name: '全部访问（含作者）', exact: true });
+        const externalTraffic = dialog.getByRole('region', { name: '外部访问（不含已登录作者）', exact: true });
+        await expect(allTraffic).toContainText('987654321 次');
+        await expect(allTraffic).toContainText('987654321 位');
+        await expect(externalTraffic).toContainText('2 次');
+        await expect(externalTraffic).toContainText('1 位');
         await expect(dialog.getByText('创建时间', { exact: true })).toHaveCount(1);
         await expect(dialog.getByText('更新时间', { exact: true })).toHaveCount(1);
         await expect(dialog.locator('details, [aria-expanded="false"]')).toHaveCount(0);

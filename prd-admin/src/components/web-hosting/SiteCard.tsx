@@ -17,7 +17,7 @@ import {
   Trash2,
   WandSparkles,
 } from 'lucide-react';
-import type { HostedSite, HostedSiteActivity, SiteOwnerCard } from '@/services/real/webPages';
+import type { HostedSite, HostedSiteActivity, HostedSiteTraffic, SiteOwnerCard } from '@/services/real/webPages';
 import { SiteDetailsDialog } from './SiteDetailsDialog';
 import { SiteEditCount, SiteNewBadge } from './SiteActivityMeta';
 import { SitePreview } from '@/components/SitePreview';
@@ -55,7 +55,7 @@ export function canDragSiteCard(caps: SiteCaps): boolean {
   return caps.canShare;
 }
 
-/** 该站点的分享侧真实数据；拿不到就不传，KPI 位显示「—」而不是编一个 0。 */
+/** 分享操作的链接摘要；访问指标只读取独立的 traffic 摘要。 */
 export interface SiteShareStats {
   /** 有效链接数（未过期、未撤销） */
   activeLinks: number;
@@ -70,8 +70,8 @@ export interface SiteCardProps {
   fresh?: boolean;
   shared?: boolean;
   shareStats?: SiteShareStats;
-  /** 该站点的独立访客数（后端按 userId / IP 去重聚合）；拿不到就不传，位上显示 —— */
-  visitorCount?: number;
+  /** 后端统一口径的访问摘要；拿不到时三个访问指标均显示未知。 */
+  traffic?: HostedSiteTraffic;
   activity?: HostedSiteActivity;
   caps?: SiteCaps;
   ownerCard?: SiteOwnerCard;
@@ -179,7 +179,7 @@ export function SiteCard({
   fresh,
   shared,
   shareStats,
-  visitorCount,
+  traffic,
   activity,
   caps,
   ownerCard,
@@ -203,6 +203,8 @@ export function SiteCard({
   const isPublic = site.visibility === 'public';
   const isSmall = size === 'small';
   const isLarge = size === 'large';
+  const visits = traffic?.all.visits;
+  const visitorCount = traffic?.all.visitors;
   const [fileDragOver, setFileDragOver] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const detailsButton = useRef<HTMLButtonElement>(null);
@@ -555,8 +557,8 @@ export function SiteCard({
                 更新于 {relativeTime(site.updatedAt || site.createdAt)}
               </span>
             ) : (
-              <span className="min-w-0 truncate text-right" title={`${site.viewCount} 浏览`}>
-                {formatCompactZh(site.viewCount)} 浏览
+              <span className="min-w-0 truncate text-right" title={`${visits ?? '—'} 次全部访问（含作者；每30分钟时段去重）`}>
+                {visits === undefined ? '—' : formatCompactZh(visits)} 访问
               </span>
             )}
             {!isSmall && !isLarge && <span className="hidden min-w-0 truncate text-right @[240px]:block" title={typeof visitorCount === 'number' ? `${visitorCount} 访客` : '访客统计暂不可用'}>
@@ -579,10 +581,10 @@ export function SiteCard({
           {isLarge && (
             <div className="grid min-w-0 grid-cols-2 items-end gap-2 @[300px]:grid-cols-4" style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 8, marginTop: 2 }}>
               {[
-                { v: formatCompactZh(site.viewCount), full: String(site.viewCount), label: '浏览' },
-                { v: typeof visitorCount === 'number' ? formatCompactZh(visitorCount) : '—', full: String(visitorCount ?? '—'), label: '访客' },
-                { v: shareStats ? formatCompactZh(linkCount) : '—', full: String(shareStats ? linkCount : '—'), label: '有效链接' },
-                { v: shareStats?.lastViewedAt ? relativeTime(shareStats.lastViewedAt) : '—', label: '最近访问' },
+                { v: visits === undefined ? '—' : formatCompactZh(visits), full: String(visits ?? '—'), label: '全部访问' },
+                { v: typeof visitorCount === 'number' ? formatCompactZh(visitorCount) : '—', full: String(visitorCount ?? '—'), label: '全部访客' },
+                { v: traffic ? formatCompactZh(traffic.activeShareLinks) : '—', full: String(traffic?.activeShareLinks ?? '—'), label: '有效链接' },
+                { v: traffic?.all.lastViewedAt ? relativeTime(traffic.all.lastViewedAt) : traffic ? '暂无' : '—', label: '最近访问' },
               ].map((k) => (
                 <div key={k.label} className="min-w-0" title={`${k.full ?? k.v} ${k.label}`}>
                   <div className="truncate" style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, lineHeight: 1, letterSpacing: 'var(--tracking-number)', color: 'var(--text-primary)' }}>
@@ -597,8 +599,8 @@ export function SiteCard({
         </div>
       </div>
     </div>
-      {detailsOpen && <SiteDetailsDialog site={site} activity={activity} visitorCount={visitorCount}
-        shareStats={shareStats} shared={shared} ownerCard={ownerCard} onClose={() => {
+      {detailsOpen && <SiteDetailsDialog site={site} activity={activity} traffic={traffic}
+        shared={shared} ownerCard={ownerCard} onClose={() => {
           setDetailsOpen(false);
           requestAnimationFrame(() => detailsButton.current?.focus());
         }} />}
