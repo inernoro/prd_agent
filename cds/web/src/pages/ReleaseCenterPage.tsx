@@ -135,6 +135,9 @@ export function ReleaseCenterPage(): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const loadedScope = useRef(projectId);
   const [refreshing, setRefreshing] = useState(false);
+  const [sectionRefresh, setSectionRefresh] = useState(0);
+  const [refreshError, setRefreshError] = useState('');
+  const request = useRef<AbortController | null>(null);
   const [archivedTargets, setArchivedTargets] = useState<ReleaseTarget[]>([]);
   // 通知深链 `?target=&run=` 指名要看哪个目标的哪次发布。只在首次挂载时取一次：
   // 之后用户在页面里切目标不该被 URL 上的旧参数拽回去。
@@ -177,25 +180,37 @@ export function ReleaseCenterPage(): JSX.Element {
   const [previewConfig, setPreviewConfig] = useState<PreviewUrlConfig>({});
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (opts?.silent && request.current) return;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     // silent：后台轮询用——不闪 loading 骨架，数据到了原地替换（变化可感知但不清屏）。
     if (!opts?.silent) setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : { status: 'loading' });
+    if (!opts?.silent) setSectionRefresh(value => value + 1);
+    if (!opts?.silent) setRefreshError('');
     setRefreshing(true);
     try {
       const [center, targets] = await Promise.all([
-        apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`),
-        apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`),
+        apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`, {signal:controller.signal}),
+        apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`, {signal:controller.signal}),
       ]);
+      if (controller.signal.aborted) return;
       loadedScope.current = projectId;
       setState({ status: 'ok', center, hosts: targets.remoteHosts || [] });
       setArchivedTargets(targets.archivedTargets || []);
     } catch (err) {
-      if (!opts?.silent) setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      if (controller.signal.aborted) return;
+      if (!opts?.silent) {
+        const message = err instanceof ApiError ? err.message : String(err);
+        setRefreshError(message);
+        setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : {status:'error',message});
+      }
     } finally {
-      setRefreshing(false);
+      if (request.current === controller) { request.current = null; setRefreshing(false); }
     }
   }, [projectId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { request.current?.abort(); }; }, [load]);
   useEffect(() => {
     rememberReleaseCenterProject(projectId, typeof window === 'undefined' ? undefined : window.localStorage);
   }, [projectId]);
@@ -696,6 +711,10 @@ export function ReleaseCenterPage(): JSX.Element {
             ) : null}
 
             {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+            {state.status === 'ok' && refreshError ? <div role="alert" className="mb-4 space-y-2 rounded-md border border-destructive/30 p-3 text-sm">
+              <p>刷新失败，保留上次结果：{refreshError}</p>
+              <Button variant="outline" size="sm" disabled={refreshing} onClick={() => void load()}>重试</Button>
+            </div> : null}
 
             {state.status === 'ok' && rows.length === 0 ? (
               <EmptyEnvironmentsState hostCount={hosts.length} onAdd={openCreateWizard} />
@@ -851,8 +870,9 @@ export function ReleaseCenterPage(): JSX.Element {
                             稿子没画不等于可以删掉，它是另一种触发面。 */}
                         {section === 'rules' ? (
                           <div className="flex min-w-0 flex-col gap-4">
-                            <AutoRulesSection projectId={projectId} rows={rows} onToast={setToast} />
+                            <AutoRulesSection projectId={projectId} rows={rows} onToast={setToast} refreshVersion={sectionRefresh} />
                             <AutoReleaseTab
+                              refreshVersion={sectionRefresh}
                               row={selectedRow}
                               otherRows={otherRows}
                               branches={branches}
@@ -862,7 +882,7 @@ export function ReleaseCenterPage(): JSX.Element {
                         ) : null}
 
                         {section === 'health' ? (
-                          <HealthSection envs={fleetEnvs} selected={fleetEnvs.find((env) => env.id === selectedRow.target.id)} />
+                          <HealthSection refreshVersion={sectionRefresh} envs={fleetEnvs} selected={fleetEnvs.find((env) => env.id === selectedRow.target.id)} />
                         ) : null}
 
                         {/* 稿子 §6 的六列表是唯一的证据表。这里曾经把旧的
@@ -871,6 +891,7 @@ export function ReleaseCenterPage(): JSX.Element {
                             看失败原因、回滚到此版本、提交说明）已折进这一张表。 */}
                         {section === 'evidence' ? (
                           <EvidenceSection
+                            refreshVersion={sectionRefresh}
                             row={selectedRow}
                             rows={rows}
                             runs={runs}

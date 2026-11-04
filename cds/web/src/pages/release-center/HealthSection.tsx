@@ -46,6 +46,7 @@ interface UptimeSummary {
 }
 
 export interface HealthSectionProps {
+  refreshVersion?: number;
   envs: FleetEnv[];
   /** 当前选中的环境，用于左栏探测配置那一卡。 */
   selected: FleetEnv | undefined;
@@ -65,7 +66,7 @@ function barClass(bucket: UptimeBucket): string {
   return 'bg-ok';
 }
 
-export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Element {
+export function HealthSection({ envs, selected, refreshVersion = 0 }: HealthSectionProps): JSX.Element {
   const [summary, setSummary] = useState<UptimeSummary | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -81,7 +82,7 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
       .catch((err) => { if (active) setError(err instanceof Error ? err.message : String(err)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [retry]);
+  }, [retry, refreshVersion]);
 
   if (loading && !summary) return <ContentLoading label="读取发布健康数据" variant="panel" />;
   if (error && !summary) return <div role="alert" className="space-y-3 rounded-xl border p-4 text-sm"><p>{error}</p><Button variant="outline" onClick={() => setRetry((value) => value + 1)}>重试</Button></div>;
@@ -91,7 +92,7 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
   const unmonitored = envs.filter((env) => env.health === 'unmonitored');
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-[26.25rem_minmax(0,1fr)]">
+    <div aria-busy={loading} className="grid items-start gap-4 xl:grid-cols-[26.25rem_minmax(0,1fr)]">
       <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
         <div className="border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
           <h2 className="text-sm font-bold">探测配置</h2>

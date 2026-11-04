@@ -21,7 +21,7 @@ import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCa
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
 import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
 import { SettingsPageSkeleton } from '../../web/src/components/skeletons/SettingsSkeleton.js';
-import { branchNoticeVisible } from '../../web/src/components/BranchDetailDrawer.js';
+import { branchNoticeVisible, ResourceTcpConnectionStatus, ServiceLogsPanel } from '../../web/src/components/BranchDetailDrawer.js';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '../../web/src/pages/cds-settings/components.js';
 import { MonitorCenterSkeleton } from '../../web/src/pages/status/primitives.js';
 import { CommonLoadingSkeleton } from '../../web/src/pages/cds-settings/tabs/LoadingPagesTab.js';
@@ -31,6 +31,31 @@ const SRC = path.resolve(__dirname, '../../web/src');
 const read = (rel: string): string => fs.readFileSync(path.join(SRC, rel), 'utf8');
 /** 扫源码只扫会执行的部分：注释里为讲病根会原样引用错误写法（predicate-and-wiring-discipline 形状 6）。 */
 const stripComments = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+describe('资源与日志等待只覆盖真实等待状态', () => {
+  it('TCP 配置只有未到达时 busy；关闭且缺少原因时给出确定说明', () => {
+    const render = (capability: Parameters<typeof ResourceTcpConnectionStatus>[0]['capability']) => renderToStaticMarkup(createElement(ResourceTcpConnectionStatus, {capability}));
+    expect(render(null)).toContain('aria-busy="true"');
+    for (const reason of [undefined, '']) {
+      const html = render({enabled:false,host:'',reason});
+      expect(html).toContain('当前实例未启用 TCP 直连。');
+      expect(html).not.toContain('aria-busy');
+    }
+    expect(render({enabled:false,host:'',reason:'实例策略未启用'})).toContain('实例策略未启用');
+    expect(render({enabled:true,host:'fixture.invalid'})).toContain('fixture.invalid');
+  });
+
+  it('日志等待在正常容器内，只有就绪日志进入 pre', () => {
+    const service = {profileId:'api',containerName:'fixture-api',hostPort:3000,status:'running' as const};
+    const loading = renderToStaticMarkup(createElement(ServiceLogsPanel,{service,state:{status:'loading',profileId:'api'}}));
+    expect(loading).toContain('aria-label="读取服务日志"');
+    expect(loading).not.toContain('<pre');
+    const ready = renderToStaticMarkup(createElement(ServiceLogsPanel,{service,state:{status:'ok',profileId:'api',logs:'fixture-ready-log'}}));
+    expect(ready).toContain('<pre');
+    expect(ready).toContain('fixture-ready-log');
+    expect(ready).not.toContain('aria-busy');
+  });
+});
 
 describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () => {
   const drawer = stripComments(read('components/BranchDetailDrawer.tsx'));

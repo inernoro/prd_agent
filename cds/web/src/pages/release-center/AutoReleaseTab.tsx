@@ -14,7 +14,7 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
  * - 立即试跑走 check-target，对 release 只跑发布前检查，**不发布**。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Play, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
@@ -30,6 +30,7 @@ import type {
 } from './types';
 
 export interface AutoReleaseTabProps {
+  refreshVersion?: number;
   row: CenterRow;
   /** 同项目的其它环境，用作 promote 来源候选。 */
   otherRows: CenterRow[];
@@ -73,31 +74,37 @@ function emptyDraft(defaults: { branchId: string; fromTargetId: string }): RuleD
   };
 }
 
-export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleaseTabProps): JSX.Element {
+export function AutoReleaseTab({ row, otherRows, branches, onToast, refreshVersion = 0 }: AutoReleaseTabProps): JSX.Element {
   const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState<RuleDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyJobId, setBusyJobId] = useState('');
+  const requestSeq = useRef(0);
+  const loadedProject = useRef<string | null>(null);
 
   const load = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError('');
     try {
       const res = await apiRequest<{ jobs: ScheduledJobSummary[] }>(
         `/api/scheduled-jobs?project=${encodeURIComponent(row.target.projectId)}`,
       );
+      if (seq !== requestSeq.current) return;
+      loadedProject.current = row.target.projectId;
       setJobs(res.jobs || []);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setError(err instanceof ApiError ? err.message : String(err));
-      setJobs([]);
+      if (loadedProject.current !== row.target.projectId) setJobs([]);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, [row.target.projectId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { requestSeq.current++; }; }, [load, refreshVersion]);
 
   // 事件驱动的 push 规则归 AutoRulesSection（设计稿 §4）。不排掉的话同一条规则
   // 会在两块里各出现一次，而且在这里被当成定时规则编辑。
@@ -219,7 +226,8 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
         />
       ) : null}
 
-      {loading ? <ContentLoading label="读取定时发布规则" variant="rows" /> : error ? (
+      {error && loadedProject.current === row.target.projectId ? <p role="alert" className="text-xs text-bad">规则请求失败，保留上次结果：{error}</p> : null}
+      {loading && loadedProject.current !== row.target.projectId ? <ContentLoading label="读取定时发布规则" variant="rows" /> : error && loadedProject.current !== row.target.projectId ? (
         <div className="cds-surface-raised cds-hairline rounded-lg px-4 py-8 text-sm text-muted-foreground">
           规则列表暂时读不到：{error}
         </div>
@@ -234,6 +242,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
         <section className="cds-surface-raised cds-hairline overflow-hidden rounded-lg">
           {releaseJobs.map((job) => (
             <RuleRow
+              refreshVersion={refreshVersion}
               key={job.id}
               job={job}
               action={releaseActionOf(job, row.target.id)!}
@@ -253,6 +262,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
 }
 
 function RuleRow({
+  refreshVersion,
   job,
   action,
   row,
@@ -263,6 +273,7 @@ function RuleRow({
   onEdit,
   onDelete,
 }: {
+  refreshVersion: number;
   job: ScheduledJobSummary;
   action: ScheduledJobActionSummary;
   row: CenterRow;
@@ -312,7 +323,7 @@ function RuleRow({
             已被系统自动停用：{job.autoDisabledReason}
           </div>
         ) : null}
-        <JobRuns jobId={job.id} />
+        <JobRuns jobId={job.id} refreshVersion={refreshVersion} />
       </div>
       <div className="col-start-2 flex flex-wrap gap-2 md:col-start-3">
         <Button size="sm" variant="outline" onClick={onDryRun} disabled={busy}>
@@ -329,18 +340,22 @@ function RuleRow({
   );
 }
 
-function JobRuns({ jobId }: { jobId: string }): JSX.Element {
+function JobRuns({ jobId, refreshVersion }: { jobId: string; refreshVersion: number }): JSX.Element {
   const [runs, setRuns] = useState<ScheduledJobRunSummary[] | null>(null);
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!open || runs !== null) return;
+    if (!open) return;
+    let active = true;
+    setError('');
     apiRequest<{ runs: ScheduledJobRunSummary[] }>(
       `/api/scheduled-jobs/runs?jobId=${encodeURIComponent(jobId)}&limit=10`,
     )
-      .then((res) => setRuns(res.runs || []))
-      .catch(() => setRuns([]));
-  }, [open, runs, jobId]);
+      .then((res) => { if (active) setRuns(res.runs || []); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : String(err)); });
+    return () => { active = false; };
+  }, [open, jobId, refreshVersion]);
 
   return (
     <details className="mt-2" onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}>
@@ -348,7 +363,8 @@ function JobRuns({ jobId }: { jobId: string }): JSX.Element {
         <ChevronDown className="h-3.5 w-3.5" />
         运行记录
       </summary>
-      {runs === null ? (
+      {error ? <p role="alert" className="text-xs text-bad">运行记录读取失败：{error}</p> : null}
+      {error && runs === null ? null : runs === null ? (
         <ContentLoading label="读取规则运行记录" className="mt-1.5" />
       ) : runs.length === 0 ? (
         <div className="mt-1.5 text-[0.7188rem] text-muted-foreground">还没有运行记录。</div>

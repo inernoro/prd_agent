@@ -24,6 +24,7 @@ import { formatDateTime } from './shared';
 import type { CenterRow, ScheduledJobSummary } from './types';
 
 export interface AutoRulesSectionProps {
+  refreshVersion?: number;
   projectId: string;
   /** 同项目的全部环境，用来把 targetId 显示成环境名 + 类型。 */
   rows: CenterRow[];
@@ -63,7 +64,7 @@ function describeRule(job: ScheduledJobSummary): string {
 
 const FIELD = 'h-9 w-full rounded-[0.5625rem] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-3 text-[0.7812rem] outline-none focus:border-primary/60';
 
-export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionProps): JSX.Element {
+export function AutoRulesSection({ projectId, rows, onToast, refreshVersion = 0 }: AutoRulesSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -78,6 +79,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
    * 的情况下删掉了 A 的规则——这不是显示错位，是真的删错东西。
    */
   const reqSeq = useRef(0);
+  const loadedProject = useRef<string | null>(null);
 
   const load = async (): Promise<void> => {
     const seq = ++reqSeq.current;
@@ -89,6 +91,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
         `/api/scheduled-jobs?project=${encodeURIComponent(forProject)}`,
       );
       if (seq !== reqSeq.current) return;
+      loadedProject.current = forProject;
       setJobs(res.jobs || []);
     } catch (err) {
       if (seq !== reqSeq.current) return;
@@ -101,10 +104,11 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
 
   useEffect(() => {
     // 切项目时先把上一项目的列表清空：宁可空一瞬，也不要让 B 的页面挂着 A 的规则。
-    setJobs([]);
+    if (loadedProject.current !== projectId) setJobs([]);
     void load();
+    return () => { reqSeq.current++; };
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
-  }, [projectId]);
+  }, [projectId, refreshVersion]);
 
   const pushRules = jobs.filter((job) => job.schedule.type === 'push');
   const rowOf = (targetId: string | undefined): CenterRow | undefined =>
@@ -270,7 +274,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
           </div>
         ) : null}
 
-        {loading ? <ContentLoading label="读取自动发布规则" variant="rows" /> : pushRules.length === 0 ? (
+        {loading && loadedProject.current !== projectId ? <ContentLoading label="读取自动发布规则" variant="rows" /> : error && loadedProject.current !== projectId ? null : pushRules.length === 0 ? (
           <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">
             还没有自动发布规则。建一条之后，命中的分支被推送时 CDS 会自己发到目标环境，不需要人在场。
           </p>

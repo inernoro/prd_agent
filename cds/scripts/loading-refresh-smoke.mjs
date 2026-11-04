@@ -8,6 +8,8 @@ export async function verifyLoadingRefresh(browser, base, out) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
   let projectGate, relationGate, projectRequested, relationRequested, releaseProject, releaseRelation, centerGate, centerRequested, releaseCenter, centerRequestSeen, failProject = false, failRelation = false;
   let projectCount = 0, relationCount = 0, projectRequestSeen, relationRequestSeen, savedProject;
+  let healthGate, releaseHealth, healthRequestSeen, healthCount = 0, healthInterval = 45, failHealth = false;
+  let sectionGate, releaseSection, sectionRequestSeen, jobsCount = 0, runsCount = 0, changesCount = 0, sectionVersion = 1, failCenter = false, failRuns = false;
   const errors = [];
   await context.route('**/api/**', async route => {
     const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
@@ -16,6 +18,29 @@ export async function verifyLoadingRefresh(browser, base, out) {
     if (p === '/api/auth/status') payload = { enabled: true, authenticated: true, user: { name: '合成验收账号', isSystemOwner: true } };
     if (/\/identity-history$/.test(p)) payload = {records:[],nextCursor:null,coverage:'complete'};
     if (p === '/api/cds-system/connections') payload = { connections: [] };
+    if (p === '/api/uptime/summary') {
+      healthCount++; healthRequestSeen?.();
+      if (healthGate) await healthGate;
+      if (failHealth) return route.fulfill({status:500,json:{error:'合成：健康刷新失败'}});
+      payload = {enabled:true,intervalSeconds:healthInterval,timeoutMs:5432,failureThreshold:3,targets:[]};
+    }
+    if (p === '/api/scheduled-jobs') {
+      jobsCount++; sectionRequestSeen?.(); if (sectionGate) await sectionGate;
+      const target = {type:'release',targetId:'fixture-release-target',source:{kind:'branch',branchId:'fixture-branch-alpha'}};
+      payload = {jobs:[
+        {id:'fixture-refresh-push',projectId:'fixture-project',name:'合成事件规则',enabled:true,schedule:{type:'push',event:'push',branchPattern:`fixture/${sectionVersion}`},target,timeoutSeconds:60,retryCount:0},
+        {id:'fixture-refresh-timer',projectId:'fixture-project',name:`合成定时规则 ${sectionVersion}`,enabled:true,schedule:{type:'interval',intervalMinutes:60},target,timeoutSeconds:60,retryCount:0},
+      ]};
+    }
+    if (p === '/api/scheduled-jobs/runs') {
+      runsCount++; sectionRequestSeen?.(); if (sectionGate) await sectionGate;
+      if (failRuns) return route.fulfill({status:500,json:{error:'合成：运行记录读取失败'}});
+      payload = {runs:[{id:'fixture-refresh-run',jobId:'fixture-refresh-timer',status:'failed',trigger:'manual',queuedAt:'2026-11-04T00:00:00Z',error:`合成运行记录 ${sectionVersion}`} ]};
+    }
+    if (/\/api\/releases\/targets\/[^/]+\/changes$/.test(p)) {
+      changesCount++; sectionRequestSeen?.(); if (sectionGate) await sectionGate;
+      payload = {changes:[{id:'fixture-refresh-change',targetId:'fixture-release-target',at:'2026-11-04T00:00:00Z',kind:'updated',reason:`合成配置记录 ${sectionVersion}`,changes:[]}]};
+    }
     if (p === '/api/projects/fixture-project') {
       if (route.request().method() === 'PUT') {
         savedProject = {...payload,...route.request().postDataJSON()};
@@ -27,6 +52,7 @@ export async function verifyLoadingRefresh(browser, base, out) {
       if (failProject) return route.fulfill({ status: 400, json: { error: '合成：项目读取失败' } });
     }
     if (p === '/api/releases/center' && centerGate) {centerRequestSeen?.(); await centerGate;}
+    if (p === '/api/releases/center' && failCenter) return route.fulfill({status:500,json:{error:'合成：发布中心刷新失败'}});
     if (p.endsWith('/service-graph')) {
       relationCount++; relationRequestSeen?.();
       if (relationGate) await relationGate;
@@ -37,6 +63,11 @@ export async function verifyLoadingRefresh(browser, base, out) {
   const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
   function holdProject() { projectRequested = new Promise(r => projectRequestSeen = r); projectGate = new Promise(r => releaseProject = r); }
   function holdRelation() { relationRequested = new Promise(r => relationRequestSeen = r); relationGate = new Promise(r => releaseRelation = r); }
+  async function requested(promise) {
+    let timer;
+    try { await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('manual refresh did not request section data')),15000);})]); }
+    finally { clearTimeout(timer); }
+  }
   try {
     await page.goto(base + '/settings/fixture-project');
     const name = page.getByLabel('项目名称', { exact: true }); await name.waitFor();
@@ -76,7 +107,60 @@ export async function verifyLoadingRefresh(browser, base, out) {
     assert.equal(await page.locator('[data-release-center-skeleton]').count(),0);
     assert(await page.getByRole('button',{name:/^全环境矩阵/}).isVisible());
     releaseCenter(); centerGate=null;
+    await page.getByRole('button',{name:'刷新',exact:true}).first().waitFor({state:'visible'});
+    failCenter=true; await page.getByRole('button',{name:'刷新',exact:true}).first().click();
+    await page.getByRole('alert').filter({hasText:'合成：发布中心刷新失败'}).waitFor();
+    assert(await page.getByText('fixture-release-target',{exact:true}).first().isVisible());
+    assert.equal(await page.locator('[data-release-center-skeleton]').count(),0);
+    failCenter=false; await page.getByRole('alert').getByRole('button',{name:'重试',exact:true}).click();
+    await page.getByRole('alert').filter({hasText:'合成：发布中心刷新失败'}).waitFor({state:'hidden'});
+    await page.getByRole('button',{name:/^健康监测/}).click();
+    await page.getByText('45 秒',{exact:true}).waitFor();
+    const healthRequested = new Promise(resolve=>healthRequestSeen=resolve);
+    healthGate = new Promise(resolve=>releaseHealth=resolve); healthInterval=77;
+    await page.getByRole('button',{name:'刷新',exact:true}).first().click(); await requested(healthRequested);
+    assert(await page.getByText('45 秒',{exact:true}).isVisible());
+    assert.equal(await page.getByRole('status',{name:'读取发布健康数据',exact:true}).count(),0);
+    releaseHealth(); healthGate=null; await page.getByText('77 秒',{exact:true}).waitFor();
+    failHealth=true; await page.getByRole('button',{name:'刷新',exact:true}).first().click();
+    await page.getByText(/合成：健康刷新失败/).waitFor(); assert(await page.getByText('77 秒',{exact:true}).isVisible());
+    failHealth=false; await page.getByRole('button',{name:'刷新',exact:true}).first().click();
+    await page.getByText(/合成：健康刷新失败/).waitFor({state:'hidden'});
+
+    await page.getByRole('button',{name:/^自动发布规则/}).click();
+    await page.getByText('合成定时规则 1',{exact:true}).waitFor();
+    failRuns=true; await page.locator('summary').filter({hasText:'运行记录'}).click();
+    await page.getByRole('alert').filter({hasText:'合成：运行记录读取失败'}).waitFor();
+    assert.equal(await page.getByText('还没有运行记录。',{exact:true}).count(),0);
+    assert.equal(await page.getByRole('status',{name:'读取规则运行记录',exact:true}).count(),0);
+    failRuns=false; await page.getByRole('button',{name:'刷新',exact:true}).first().click();
+    await page.getByText(/合成运行记录 1/).waitFor();
+    await page.getByRole('button',{name:'新建规则',exact:true}).click();
+    const draft = page.getByLabel('分支匹配',{exact:true}); await draft.fill('wip/unsaved');
+    const beforeJobs=jobsCount, beforeRuns=runsCount;
+    const rulesRequested = new Promise(resolve=>sectionRequestSeen=()=>{if(jobsCount>=beforeJobs+2 && runsCount>=beforeRuns+1)resolve();});
+    sectionGate=new Promise(resolve=>releaseSection=resolve); sectionVersion=2;
+    await page.getByRole('button',{name:'刷新',exact:true}).first().click(); await requested(rulesRequested);
+    assert(await page.getByText('合成定时规则 1',{exact:true}).isVisible());
+    assert(await page.getByText(/合成运行记录 1/).isVisible());
+    assert.equal(await draft.inputValue(),'wip/unsaved'); await draft.focus();
+    releaseSection(); sectionGate=null; await page.getByText('合成定时规则 2',{exact:true}).waitFor(); await page.getByText(/合成运行记录 2/).waitFor();
+    assert.equal(await draft.inputValue(),'wip/unsaved'); assert(await draft.evaluate(e=>e===document.activeElement));
+
+    await page.getByRole('button',{name:/^证据归档/}).click();
+    await page.getByText(/合成配置记录 2/).waitFor();
+    const beforeChanges=changesCount;
+    const changesRequested = new Promise(resolve=>sectionRequestSeen=()=>{if(changesCount>beforeChanges)resolve();});
+    sectionGate=new Promise(resolve=>releaseSection=resolve); sectionVersion=3;
+    await page.getByRole('button',{name:'刷新',exact:true}).first().click(); await requested(changesRequested);
+    assert(await page.getByText(/合成配置记录 2/).isVisible());
+    assert.equal(await page.getByRole('status',{name:'读取变更历史',exact:true}).count(),0);
+    releaseSection(); sectionGate=null; await page.getByText(/合成配置记录 3/).waitFor();
     assert.deepEqual(errors, []);
-    return { projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, errors };
-  } finally { releaseProject?.(); releaseRelation?.(); releaseCenter?.(); await context.close(); }
+    return { projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
+  } catch(e) {
+    await page.screenshot({path:path.join(out,'failure-refresh.jpg')});
+    await fs.writeFile(path.join(out,'failure-refresh.html'),await page.content());
+    throw e;
+  } finally { releaseProject?.(); releaseRelation?.(); releaseCenter?.(); releaseHealth?.(); releaseSection?.(); await context.close(); }
 }

@@ -4264,6 +4264,20 @@ function ResourceOverview({ resource, branchName }: { resource: BranchResource; 
   );
 }
 
+interface ResourceTcpCapability {
+  enabled: boolean;
+  host: string;
+  reason?: string;
+  passportEnabled?: boolean;
+}
+
+export function ResourceTcpConnectionStatus({ capability }: { capability: ResourceTcpCapability | null }): JSX.Element {
+  if (!capability) return <ContentLoading label="读取实例直连配置" variant="inline" />;
+  return <span>{capability.enabled
+    ? `直连主机：${capability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。`
+    : capability.reason || '当前实例未启用 TCP 直连。'}</span>;
+}
+
 function ResourceConnection({
   resource,
   permissions,
@@ -4299,12 +4313,12 @@ function ResourceConnection({
   const [sshGuide, setSshGuide] = useState<{ sshCommand: string; maskedConnectionString: string; localPort: number } | null>(null);
   const [sshBusy, setSshBusy] = useState(false);
   const infraLocalOnly = resource.source === 'infra';
-  const [tcpCapability, setTcpCapability] = useState<{ enabled: boolean; host: string; reason: string; passportEnabled?: boolean } | null>(null);
+  const [tcpCapability, setTcpCapability] = useState<ResourceTcpCapability | null>(null);
   useEffect(() => {
     setTcpCapability(null);
     if (!resource.branchId || !infraLocalOnly) return;
     let cancelled = false;
-    void apiRequest<{ enabled: boolean; host: string; reason: string; passportEnabled?: boolean }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
+    void apiRequest<ResourceTcpCapability>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
     return () => { cancelled = true; };
   }, [resource.branchId, resource.id, infraLocalOnly]);
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
@@ -4456,7 +4470,7 @@ function ResourceConnection({
           <div className="min-w-0 flex-1">
             <div className="font-semibold">临时 TCP 直连</div>
             <div className="mt-1">填写白名单 IP 和有效期后，本地数据库工具可直接连接。到期会断开已有连接并关闭入口，数据库账号密码沿用当前配置。</div>
-            {infraLocalOnly ? <div className="mt-1">{tcpCapability?.enabled ? `直连主机：${tcpCapability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。` : tcpCapability?.reason || <ContentLoading label="读取实例直连配置" variant="inline" />}</div> : null}
+            {infraLocalOnly ? <div className="mt-1"><ResourceTcpConnectionStatus capability={tcpCapability} /></div> : null}
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
               <div className="mt-1 font-mono">
@@ -6734,7 +6748,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
   );
 }
 
-function ServiceLogsPanel({
+export function ServiceLogsPanel({
   service,
   state,
   replica,
@@ -6780,11 +6794,13 @@ function ServiceLogsPanel({
             <div className={`${serviceLogViewportClass} flex items-center justify-center rounded-md border border-destructive/30 bg-destructive/10 px-3 text-center text-xs leading-5 text-destructive`}>
               {state.message}
             </div>
+          ) : state.status === 'loading' && isCurrent ? (
+            <div className={`${serviceLogViewportClass} rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3`}>
+              <ContentLoading label="读取服务日志" variant="log" />
+            </div>
           ) : (
             <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[0.6875rem] leading-5 text-muted-foreground`}>
-              {state.status === 'loading' && isCurrent
-                ? <ContentLoading label="读取服务日志" variant="log" />
-                : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
+              {visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
             </pre>
           )}
         </div>
