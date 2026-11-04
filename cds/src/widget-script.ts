@@ -553,6 +553,12 @@ export function buildWidgetScript(
   }
 
   var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
+  var panelOrigin=null;
+  function setPanelExpanded(value){
+    if(value&&!expanded)panelOrigin={x:pos.x,y:pos.y};
+    expanded=value;
+    if(!value&&panelOrigin){pos.x=panelOrigin.x;pos.y=panelOrigin.y;panelOrigin=null;}
+  }
   var dragState=null;
   var widgetWasDragged=false;
   var avoidanceFrame=null;
@@ -677,6 +683,7 @@ export function buildWidgetScript(
   }
   document.addEventListener('mousemove',function(e){
     if(!dragState)return;
+    if(expanded)panelOrigin=null;
     setWidgetPosition(
       dragState.px+(e.clientX-dragState.mx),
       dragState.py-(e.clientY-dragState.my));
@@ -934,14 +941,14 @@ export function buildWidgetScript(
       avoidanceObserver.disconnect();
       if(avoidanceFrame)cancelAnimationFrame(avoidanceFrame);
       document.removeEventListener('scroll',scheduleWidgetAvoidance,true);
-      if(window.visualViewport){window.visualViewport.removeEventListener('resize',scheduleWidgetAvoidance);window.visualViewport.removeEventListener('scroll',scheduleWidgetAvoidance);}
+      if(window.visualViewport){window.visualViewport.removeEventListener('resize',refreshVisualViewport);window.visualViewport.removeEventListener('scroll',refreshVisualViewport);}
       root.remove();return;
     }
     // 两侧各加了一个独立动作，语义不冲突，都保留。
     // close-panel 是本分支的面板关闭钮；收起之后照 main 的新约定安排手机端重新收成徽章，
     // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收，两条路各行其是。
     if(action==='close-panel'){
-      expanded=false;
+      setPanelExpanded(false);
       render();
       scheduleMobileCompact(8000);
       return;
@@ -964,7 +971,7 @@ export function buildWidgetScript(
       return;
     }
     if(action==='toggle'){
-      expanded=!expanded;
+      setPanelExpanded(!expanded);
       if(expanded)fetchBranchInfo();
       render();
       if(!expanded)scheduleMobileCompact(8000);

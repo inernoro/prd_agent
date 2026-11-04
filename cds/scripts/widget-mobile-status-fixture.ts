@@ -21,7 +21,7 @@ const { chromium } = loadPlaywright();
 
 declare global {
   interface Window {
-    widgetFixture: { calls: string[]; unknown: string[]; status: string; emit: (status: string) => void; showOwnedPanel?: (kind: 'handshake' | 'navigate') => void };
+    widgetFixture: { calls: string[]; unknown: string[]; status: string; emit: (status: string) => void; showOwnedPanel?: (kind: 'handshake' | 'navigate') => void; detachedReads?: number };
   }
 }
 
@@ -115,7 +115,7 @@ async function geometry(page: Page) {
   });
 }
 
-async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390, tags: string[] = [], profileCount = 0) {
+async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390, tags: string[] = [], profileCount = 0, finish?: (page: Page) => Promise<void>) {
   const page = await fixture(hosted, width, tags, profileCount);
   try {
     await run(page);
@@ -124,9 +124,10 @@ async function check(name: string, run: (page: Page) => Promise<void>, hosted = 
     assert.equal(measured.touch, true, '保留 44px 触控目标');
     assert.equal(measured.visible, true, '保留可见、可命中的徽标入口');
     if (measured.placement === 'clear') assert.equal(measured.safe, true, '避让成功必须以落位后的真实安全区为准');
+    if (finish) await finish(page);
     results.push({ name, status: 'PASS', geometry: measured });
   } catch (error) {
-    results.push({ name, status: 'FAIL', detail: String(error), geometry: await geometry(page) });
+    results.push({ name, status: 'FAIL', detail: String(error), geometry: await geometry(page).catch(() => ({ detached: true })) });
   } finally {
     await page.screenshot({ path: path.join(output, `${name}.png`) });
     await page.close();
@@ -280,31 +281,55 @@ try {
       `由顶部槽展开后，面板和关闭按钮仍须在实际上下安全区内：${JSON.stringify(bounds)}`);
     await page.locator('button[data-action="close-panel"]').click(); await settle(page);
   }, hosted);
-  for (const hosted of [false, true]) for (const resize of [false, true]) await check(`filled-panel-safe-band-${hosted}-${resize}`, async page => {
+  for (const hosted of [false, true]) for (const resize of [false, true, 'native'] as const) await check(`filled-panel-safe-band-${hosted}-${resize}`, async page => {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, bottom: 34 } });
-    // 仅替换visualViewport高度合同输入；真实CSS、原生safe-area与实际服务面板渲染不替换，不冒真实键盘。
+    if (hosted && resize === 'native') {
+      await page.evaluate(() => window.widgetFixture.emit('building')); await settle(page);
+      const beforeDrag = await geometry(page), badge = (await page.locator('.cds-badge').boundingBox())!;
+      await page.mouse.move(badge.x + 8, badge.y + badge.height - 4); await page.mouse.down();
+      await page.mouse.move(badge.x + 8, badge.y + badge.height - 28, { steps: 3 }); await page.mouse.up(); await settle(page);
+      assert.ok((await geometry(page)).y < beforeDrag.y, '先实际拖动徽标，不能拿默认位置冒手动位置');
+    }
+    const collapsed = await geometry(page);
+    // native用真实视觉视口；另四场景只替换高度合同输入，不冒真实键盘。
     if (!resize) await page.evaluate(() => Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 400 }));
     await page.locator('button[data-action="toggle"]').click(); await settle(page);
-    if (resize) await page.evaluate(() => {
+    if (resize === true) await page.evaluate(() => {
       Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 400 });
       window.visualViewport!.dispatchEvent(new Event('resize'));
     });
     await settle(page);
-    const bounds = await page.locator('#cds-widget').evaluate(el => {
+    const bounds = await page.locator('#cds-widget').evaluate((el, native) => {
       const root = el.getBoundingClientRect(), close = el.querySelector('button[data-action="close-panel"]')!.getBoundingClientRect();
       const panel = el.querySelector<HTMLElement>('.cds-panel')!, hit = document.elementFromPoint(close.x + close.width / 2, close.y + close.height / 2);
       return { top: root.top, bottom: root.bottom, closeTop: close.top, closeBottom: close.bottom,
         closeHit: !!hit && el.querySelector('button[data-action="close-panel"]')!.contains(hit), scrollable: panel.scrollHeight > panel.clientHeight,
-        layoutHeight: innerHeight, visualHeight: visualViewport!.height, syntheticVisualBand: true };
-    });
+        layoutHeight: innerHeight, visualHeight: visualViewport!.height, syntheticVisualBand: !native };
+    }, resize === 'native');
     writeFileSync(path.join(output, `filled-panel-${hosted}-${resize}.json`), JSON.stringify(bounds, null, 2));
     await page.screenshot({ path: path.join(output, `filled-panel-${hosted}-${resize}-expanded.png`) });
-    assert.ok(bounds.top >= 52 && bounds.bottom <= 354 && bounds.closeTop >= 52 && bounds.closeBottom <= 354 && bounds.closeHit,
-      `填满实际服务内容的面板须留在400px视觉合同安全区，关闭入口可命中：${JSON.stringify(bounds)}`);
+    const bottom = resize === 'native' ? 618 : 354;
+    assert.ok(bounds.top >= 52 && bounds.bottom <= bottom && bounds.closeTop >= 52 && bounds.closeBottom <= bottom && bounds.closeHit,
+      `填满服务的面板须留在视觉安全区，关闭入口可命中：${JSON.stringify(bounds)}`);
     assert.equal(bounds.scrollable, true, '缩小面板后实际内容仍可滚动，不删服务内容');
-    await page.locator('button[data-action="close-panel"]').click(); await settle(page);
+    await page.locator(hosted && resize === 'native' ? 'button[data-action="toggle"]' : 'button[data-action="close-panel"]').click(); await settle(page);
+    if (resize === 'native') { const closed = await geometry(page); assert.deepEqual([closed.x, closed.y], [collapsed.x, collapsed.y], '原生视口下收起后须恢复原徽标落位'); }
   }, hosted, 390, [], 8);
+  await check('dismiss-removes-expanded-viewport-listeners', async page => {
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+  }, false, 390, [], 8, async page => {
+    await page.evaluate(() => {
+      const root = document.querySelector('#cds-widget')!, original = window.getComputedStyle;
+      window.widgetFixture.detachedReads = 0;
+      window.getComputedStyle = (el, pseudo) => { if (el === root && !root.isConnected) window.widgetFixture.detachedReads!++; return original.call(window, el, pseudo); };
+    });
+    await page.screenshot({ path: path.join(output, 'before-dismiss-expanded.png') });
+    await page.locator('button[data-action="dismiss"]').click();
+    await page.evaluate(() => { visualViewport!.dispatchEvent(new Event('resize')); visualViewport!.dispatchEvent(new Event('scroll')); }); await settle(page);
+    assert.equal(await page.locator('#cds-widget').count(), 0);
+    assert.equal(await page.evaluate(() => window.widgetFixture.detachedReads), 0, '实际移除后视觉视口事件不得再访问旧根节点');
+  });
   for (const kind of ['handshake', 'navigate'] as const) for (const status of ['running', 'building', 'error']) await check(`owned-${kind}-${status}-panel-stays-with-badge`, async page => {
     if (status !== 'running') await page.evaluate(status => window.widgetFixture.emit(status), status);
     await settle(page); const before = await geometry(page);

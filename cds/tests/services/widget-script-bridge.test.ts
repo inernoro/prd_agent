@@ -41,11 +41,18 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('data-action="close-panel" title="关闭 CDS 诊断面板" aria-label="关闭 CDS 诊断面板"');
     // 断行为不断字面排版：合并 main 的手机端收起之后，关闭钮同样要安排重新收成徽章，
     // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收。
-    const closeHandler = script.slice(script.indexOf("if(action==='close-panel')"));
-    expect(closeHandler.slice(0, 160)).toContain('expanded=false;');
-    expect(closeHandler.slice(0, 160)).toContain('render();');
-    expect(closeHandler.slice(0, 160), '关闭面板后没有安排手机端重新收起')
-      .toContain('scheduleMobileCompact(8000);');
+    const code = script.replace(/^\s*<script[^>]*>/, '').replace(/<\/script>\s*$/, '');
+    const file = ts.createSourceFile('widget.js', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    let closeHandler = '', setExpanded = '';
+    const visit = (node: ts.Node) => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === 'setPanelExpanded') setExpanded = node.getText(file);
+      if (ts.isIfStatement(node) && node.expression.getText(file) === "action==='close-panel'") closeHandler = node.thenStatement.getText(file);
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    expect(closeHandler).not.toBe(''); expect(setExpanded).not.toBe('');
+    const close = new Function(`var expanded=true,pos={x:12,y:46},panelOrigin={x:12,y:88},renders=0,delay=0;${setExpanded};function render(){renders++}function scheduleMobileCompact(ms){delay=ms}(function()${closeHandler})();return {expanded,pos,renders,delay};`);
+    expect(close()).toEqual({ expanded: false, pos: { x: 12, y: 88 }, renders: 1, delay: 8000 });
     expect(script).toContain('#cds-widget button{min-width:44px;min-height:44px}');
     expect(script).toContain('#cds-widget .cds-mode-select{min-height:44px}');
   });
