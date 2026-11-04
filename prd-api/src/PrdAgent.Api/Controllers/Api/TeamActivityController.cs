@@ -423,10 +423,10 @@ public class TeamActivityController : ControllerBase
             Response.Headers["Server-Timing"] = FormattableString.Invariant($"voc;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}");
             return response;
         }
-        catch (MongoExecutionTimeoutException ex)
+        catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
         {
             _logger.LogWarning(ex, "VOC insights query exceeded its time budget");
-            return StatusCode(503, ApiResponse<object>.Fail("VOC_QUERY_TIMEOUT", "洞察查询超时，请缩短时间范围后重试"));
+            return StatusCode(503, ApiResponse<object>.Fail(TeamActivityQueryTimeout.Code, TeamActivityQueryTimeout.Message));
         }
     }
 
@@ -459,10 +459,10 @@ public class TeamActivityController : ControllerBase
             Response.Headers["Server-Timing"] = FormattableString.Invariant($"voc;dur={Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}");
             return Ok(ApiResponse<object>.Ok(payload));
         }
-        catch (MongoExecutionTimeoutException ex)
+        catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
         {
             _logger.LogWarning(ex, "VOC map query exceeded its time budget");
-            return StatusCode(503, ApiResponse<object>.Fail("VOC_QUERY_TIMEOUT", "热力图查询超时，请缩短时间范围后重试"));
+            return StatusCode(503, ApiResponse<object>.Fail(TeamActivityQueryTimeout.Code, TeamActivityQueryTimeout.Message));
         }
     }
 
@@ -1162,7 +1162,7 @@ public class TeamActivityController : ControllerBase
                         new FindOptions { MaxTime = TimeSpan.FromSeconds(2) })
                     .SortBy(x => x.CreatedAt).Limit(1).Project(x => x.CreatedAt).FirstOrDefaultAsync();
             }
-            catch (MongoExecutionTimeoutException ex)
+            catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
             {
                 _logger.LogWarning(ex, "VOC tracking-start metadata timed out; metrics remain available");
                 return default;
@@ -1251,15 +1251,28 @@ public class TeamActivityController : ControllerBase
         var fromUtc = from?.ToUniversalTime() ?? endUtc.AddDays(-30);
 
         await WriteSseAsync("phase", new { message = "正在聚合行为信号…" });
-        var (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
-        // 尊重洞察生命周期：被管理者忽略的洞察不进简报（与 insights 查询口径一致）
-        var allFingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
-        var ignored = (await _db.BehaviorInsightStates
-                .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, allFingerprints))
-                .ToListAsync())
-            .Where(x => x.Status == "ignored")
-            .Select(x => x.Fingerprint)
-            .ToHashSet();
+        List<Insight> insights;
+        int behaviorEventCount;
+        HashSet<string> ignored;
+        try
+        {
+            (insights, behaviorEventCount) = await ComputeInsightsAsync(fromUtc, endUtc);
+            // 尊重洞察生命周期：被管理者忽略的洞察不进简报（与 insights 查询口径一致）
+            var allFingerprints = insights.Select(i => $"{i.Kind}|{i.Target}").ToList();
+            ignored = (await _db.BehaviorInsightStates
+                    .Find(Builders<BehaviorInsightState>.Filter.In(x => x.Fingerprint, allFingerprints),
+                        new FindOptions { MaxTime = TimeSpan.FromSeconds(10) })
+                    .ToListAsync())
+                .Where(x => x.Status == "ignored")
+                .Select(x => x.Fingerprint)
+                .ToHashSet();
+        }
+        catch (MongoException ex) when (TeamActivityQueryTimeout.IsTimeout(ex))
+        {
+            _logger.LogWarning(ex, "VOC brief query exceeded its time budget");
+            await TeamActivityQueryTimeout.SendSseErrorAsync(WriteSseAsync);
+            return;
+        }
         var top = insights
             .Where(i => !ignored.Contains($"{i.Kind}|{i.Target}"))
             .OrderByDescending(i => i.Severity)
