@@ -3188,6 +3188,8 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       throw err;
     }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const previousWake = { status: branch.status, lastDeployStartedAt: branch.lastDeployStartedAt,
+      services: services.map(svc => ({ svc, status: svc.status })) };
 
     try {
       // Synchronous prefix (runs before the first await): flip to a loading
@@ -3222,6 +3224,15 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
       } catch (evictErr) {
+        if (schedulerService.getSnapshot().previewActivity?.status === 'unknown') {
+          lease?.assertCurrent('auto-wake capacity deferred');
+          branchOperationFinalStatus = 'cancelled';
+          branch.status = previousWake.status;
+          branch.lastDeployStartedAt = previousWake.lastDeployStartedAt;
+          for (const entry of previousWake.services) entry.svc.status = entry.status;
+          stateService.save();
+          return;
+        }
         console.warn(`[auto-wake] capacity eviction skipped for "${slug}": ${(evictErr as Error).message}`);
       }
 
