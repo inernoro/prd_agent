@@ -1,17 +1,16 @@
 /**
  * 趋势爆点曲线（行为洞察 Hero 视图之一）：报错/慢请求随时间的波动曲线，回答「什么时候开始变差」。
- * 数据自取：GET /api/team-activity/experience-trend（按时间桶聚合 apirequestlogs，桶粒度后端自适应 hour/day）。
+ * 数据由父面板共享：GET /api/team-activity/experience-trend（按时间桶聚合 apirequestlogs，桶粒度后端自适应 hour/day）。
  * 报错红线 + 慢琥珀线两条面积曲线叠加；突增桶（环比明显抬升）标「爆点」标记（小圆点 + +N%）。
  * 入场：曲线从左到右画出（stroke-dashoffset），爆点标记依次 pop。冷色海主题，禁止 emoji。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { TrendingUp } from 'lucide-react';
 // 趋势曲线：报错/慢请求随时间的波动。数据不足（桶 < 2 或全 0）时无法成线 → 上报父级以便在四图仪表盘里隐藏本格。
 import { GlassCard } from '@/components/design';
 import { ActivitySectionState } from './ActivitySectionState';
-import { useActivityResource } from './useActivityResource';
-import { getTeamActivityExperienceTrend } from '@/services';
-import type { ExperienceTrendBucket, TeamActivityRequestOptions } from '@/services/contracts/teamActivity';
+import type { ActivityResource } from './useActivityResource';
+import type { ExperienceTrendBucket, TeamActivityExperienceTrendData } from '@/services/contracts/teamActivity';
 
 const ERR = '#f8717a';
 const SLOW = '#fbbf24';
@@ -72,14 +71,12 @@ function fmtBucket(iso: string, unit: 'hour' | 'day'): string {
 }
 
 export function ExperienceTrend({
-  from,
-  to,
+  resource,
   onSwitchHeatmap,
   onEmptyChange,
   hideWhenEmpty = false,
 }: {
-  from?: string;
-  to?: string;
+  resource: ActivityResource<TeamActivityExperienceTrendData>;
   /** 空数据引导：一键切回热力图（移动单图视图用，桌面四图仪表盘走 hideWhenEmpty 直接隐藏本格） */
   onSwitchHeatmap?: () => void;
   /** 上报「是否有可绘制趋势」给父级（桌面四图仪表盘据此把本格移出布局，让其余格自适应铺满） */
@@ -87,8 +84,7 @@ export function ExperienceTrend({
   /** 为真时：数据不足直接返回 null（不渲染空壳），交由父级把本格从 grid 移除 */
   hideWhenEmpty?: boolean;
 }) {
-  const load = useCallback((options: TeamActivityRequestOptions) => getTeamActivityExperienceTrend({ from, to }, options), [from, to]);
-  const { data, loading, error, reload } = useActivityResource(load);
+  const { data, loading, error, reload } = resource;
   // aspect-aware：量出曲线容器真实宽高比，让曲线几何撑满格子高度（消除底部空白），ResizeObserver 量到前用回退值。
   const svgBoxRef = useRef<HTMLDivElement | null>(null);
   const [boxAspect, setBoxAspect] = useState<number | null>(null);

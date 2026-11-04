@@ -15,6 +15,7 @@ import { CalendarRange, X } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { getTeamActivityExperienceTrend } from '@/services';
 import type { ExperienceTrendBucket } from '@/services/contracts/teamActivity';
+import { ACTIVITY_REQUEST_TIMEOUT_MS } from './useActivityResource';
 
 const TEAL = '#2dd4bf';
 const TEAL_SOFT = '#5eead4';
@@ -150,7 +151,7 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
     const id = ++fetchIdRef.current;
     const controller = new AbortController();
     const from = new Date(Date.now() - DENSITY_DAYS * 86_400_000).toISOString();
-    void getTeamActivityExperienceTrend({ from }, { signal: controller.signal, timeoutMs: 45_000 }).then((res) => {
+    void getTeamActivityExperienceTrend({ from }, { signal: controller.signal, timeoutMs: ACTIVITY_REQUEST_TIMEOUT_MS }).then((res) => {
       if (controller.signal.aborted || fetchIdRef.current !== id) return;
       setDensityLoaded(true);
       if (res.success) setDays(buildDensity(res.data.buckets));
