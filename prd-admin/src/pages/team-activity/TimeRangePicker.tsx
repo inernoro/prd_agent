@@ -286,6 +286,9 @@ export function TimeRangePicker({ value, onChange }: { value: TeamRange; onChang
               anchor={brushAnchor}
               isMobile={isMobile}
               days={days}
+              loading={!densityLoaded}
+              error={densityError}
+              onRetry={() => { setDensityError(null); setDensityLoaded(false); }}
               initial={value}
               onClose={() => setBrushOpen(false)}
               onApply={(from, to) => {
@@ -338,13 +341,13 @@ function MicroPreview({
       <div className="flex gap-3.5 mb-2">
         <div>
           <div className="text-[17px] font-semibold tabular-nums" style={{ color: TEAL_SOFT }}>
-            {loading ? '—' : summary.signal.toLocaleString()}
+            {loading || error ? '—' : summary.signal.toLocaleString()}
           </div>
           <div className="text-[10px] text-token-muted">信号</div>
         </div>
         <div>
           <div className="text-[17px] font-semibold tabular-nums" style={{ color: ROSE }}>
-            {loading ? '—' : summary.pain.toLocaleString()}
+            {loading || error ? '—' : summary.pain.toLocaleString()}
           </div>
           <div className="text-[10px] text-token-muted">痛点</div>
         </div>
@@ -369,6 +372,9 @@ function BrushPopover({
   anchor,
   isMobile,
   days,
+  loading,
+  error,
+  onRetry,
   initial,
   onClose,
   onApply,
@@ -376,6 +382,9 @@ function BrushPopover({
   anchor: AnchorRect;
   isMobile: boolean;
   days: DensityDay[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   initial: TeamRange;
   onClose: () => void;
   onApply: (from: string, to: string) => void;
@@ -542,6 +551,12 @@ function BrushPopover({
       onClick={(e) => e.stopPropagation()}
     >
       <style>{`@keyframes voc-brush-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+      {loading || error ? (
+        <div role="status" className="flex items-center justify-center gap-2 text-[12px] text-token-muted py-2">
+          {loading ? '正在加载活动密度…' : '活动密度预览暂不可用'}
+          {error ? <button type="button" onClick={onRetry} className="text-semantic-cyan underline">重试密度预览</button> : null}
+        </div>
+      ) : null}
       {/* 点外关闭遮罩（透明，捕获页面其它点击） */}
       {createPortal(
         <div style={{ position: 'fixed', inset: 0, zIndex: 10029 }} onClick={onClose} />,
