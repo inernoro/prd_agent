@@ -1,3 +1,4 @@
+import { TCP_DISABLED_DESCRIPTION } from '@/lib/resourceTcpStatus';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReactNode } from 'react';
 import { databaseFailure, type DatabaseFailure } from '@/lib/databaseFailure';
@@ -4275,7 +4276,7 @@ export function ResourceTcpConnectionStatus({ capability }: { capability: Resour
   if (!capability) return <ContentLoading label="读取实例直连配置" variant="inline" />;
   return <span>{capability.enabled
     ? `直连主机：${capability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。`
-    : capability.reason || '当前实例未启用 TCP 直连。'}</span>;
+    : capability.reason || TCP_DISABLED_DESCRIPTION}</span>;
 }
 
 function ResourceConnection({

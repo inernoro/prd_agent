@@ -27,6 +27,11 @@ import { BranchListOverview } from '@/components/branch/BranchListOverview';
  *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部保留统计和筛选槽位。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
 const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] as const;
 
+/** 项目列表非管理者/身份未确认时，顶栏计数区域共用同一占位。 */
+export function ProjectListSummarySkeleton(): JSX.Element {
+  return <div className="cds-loading-skeleton-line h-4 w-44 max-w-full" aria-hidden />;
+}
+
 export function BranchListSkeleton(): JSX.Element {
   return (
     <div className="mt-6" aria-busy="true" aria-live="polite" aria-label="加载项目与本地分支列表">

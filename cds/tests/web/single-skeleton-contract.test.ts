@@ -1,3 +1,4 @@
+import { DatabasePassCapability } from '../../web/src/components/branch/DatabasePassPanel.js';
 import { mergeCleanSettings } from '../../web/src/components/project/ProjectSettingsRefresh.js';
 /**
  * 「一个界面一副骨架」守卫（2026-09-17）。
@@ -34,6 +35,16 @@ const read = (rel: string): string => fs.readFileSync(path.join(SRC, rel), 'utf8
 const stripComments = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
 describe('资源与日志等待只覆盖真实等待状态', () => {
+  it('数据库通行证已禁用且原因缺失时明确结束等待', () => {
+    for (const reason of [undefined, '']) {
+      const html = renderToStaticMarkup(createElement(DatabasePassCapability,{capability:{enabled:false,host:'',defaultTtlMinutes:30,reason}}));
+      expect(html).toContain('当前实例未启用 TCP 直连。');
+      expect(html).not.toContain('aria-busy');
+    }
+    expect(renderToStaticMarkup(createElement(DatabasePassCapability,{capability:null}))).toContain('读取通行证配置');
+    expect(renderToStaticMarkup(createElement(DatabasePassCapability,{capability:null,loadError:'读取失败'}))).not.toContain('aria-busy');
+  });
+
   it('TCP 配置只有未到达时 busy；关闭且缺少原因时给出确定说明', () => {
     const render = (capability: Parameters<typeof ResourceTcpConnectionStatus>[0]['capability']) => renderToStaticMarkup(createElement(ResourceTcpConnectionStatus, {capability}));
     expect(render(null)).toContain('aria-busy="true"');
@@ -146,7 +157,7 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     const projectList = stripComments(read('pages/ProjectListPage.tsx'));
     expect(branchList).toContain("import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons'");
     expect(branchList).not.toMatch(/function BranchListSkeleton/);
-    expect(projectList).toContain("import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons'");
+    expect(projectList).toMatch(/import\s+\{[^}]*\bProjectListSkeleton\b[^}]*\}\s+from\s+'@\/components\/skeletons\/PageSkeletons'/);
     expect(projectList).not.toMatch(/function ProjectListSkeleton/);
   });
 

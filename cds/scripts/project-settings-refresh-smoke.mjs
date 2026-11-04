@@ -85,6 +85,15 @@ export async function verifySettingsRefresh(browser, base, out) {
       assert.equal(await page.locator('[role="tabpanel"][data-state="active"] .cds-loading-skeleton-line').count(),0,tab);
       failed='';heldPath='';await refresh().click();await done();
     }
+    await page.goto(`${base}/settings/fixture-project#db-isolation`);
+    await page.getByText('这个项目还没有服务配置，先在「项目配置」里接入服务',{exact:true}).waitFor();
+    const isolationReads=counts.get(`${project}/db-isolation`)||0;
+    failed=`${project}/db-isolation`;await refresh().click();await done();
+    await countAtLeast(failed,isolationReads+1);
+    await page.getByRole('alert').filter({hasText:'合成子页读取失败'}).waitFor();
+    assert.equal(await page.getByRole('status',{name:'正在读取数据库隔离配置',exact:true}).count(),0);
+    failed='';await refresh().click();await done();
+    await page.getByRole('alert').filter({hasText:'合成子页读取失败'}).waitFor({state:'hidden'});
     // Same-data refresh failure keeps a loaded panel and the next refresh recovers.
     await page.goto(`${base}/settings/fixture-project#storage`);
     await page.getByText('合成存储 1 B',{exact:true}).waitFor();
@@ -98,7 +107,7 @@ export async function verifySettingsRefresh(browser, base, out) {
     failed='';await page.getByRole('button',{name:'重试',exact:true}).click();await page.locator('textarea').first().waitFor();
     await page.screenshot({path:path.join(out,'project-settings-refresh-ready.jpg')});
     assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);
-    return {tabs:results,firstLoadReplacementFailureExitsSkeleton:true,backgroundFailureKeepsData:true,retry:true,firstFailureExitsSkeleton:true,errors,writes};
+    return {tabs:results,isolationRefreshErrorVisibleAndRetry:true,firstLoadReplacementFailureExitsSkeleton:true,backgroundFailureKeepsData:true,retry:true,firstFailureExitsSkeleton:true,errors,writes};
   }catch(e){await page.screenshot({path:path.join(out,'project-settings-refresh-failure.jpg')});await fs.writeFile(path.join(out,'project-settings-refresh-failure.html'),await page.content());throw e;}
   finally{release?.();await context.close();}
 }

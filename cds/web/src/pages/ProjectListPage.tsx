@@ -46,7 +46,7 @@ import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
-import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
+import { ProjectListSkeleton, ProjectListSummarySkeleton } from '@/components/skeletons/PageSkeletons';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
@@ -736,7 +736,7 @@ export function ProjectListPage(): JSX.Element {
               {state.status === 'ok' ? <>
                 <span>{projects.length} 个项目</span>
                 <span>{activeCount} 个运行中</span>
-              </> : <div className="cds-loading-skeleton-line h-4 w-44 max-w-full" aria-hidden />}
+              </> : <ProjectListSummarySkeleton />}
             </div>
           )}
           right={

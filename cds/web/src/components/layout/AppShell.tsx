@@ -9,7 +9,7 @@ import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDi
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
-import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
+import { ProjectListSummarySkeleton, pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import { ListLoadingBoundary, ListLoadingFeedback } from '@/components/skeletons/ListLoadingBoundary';
 import {
   requestAgentAccess,
@@ -243,6 +243,7 @@ function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
   const scene = loadingSceneForPath(pathname);
   const projectList = pathname === '/project-list';
+  const consoleOwner = useCanManageConsole();
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
   return (
@@ -250,7 +251,9 @@ function ConsoleRouteFallback(): JSX.Element {
       {listPage ? <TopBar
         centerWide={projectList}
         left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
-        center={<div className="cds-loading-skeleton-line h-9 w-full" aria-hidden />}
+        center={branchList || consoleOwner ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : (
+          <div className="flex h-9 min-w-0 items-center gap-3 text-sm text-muted-foreground"><ProjectListSummarySkeleton /></div>
+        )}
       /> : <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
           <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />

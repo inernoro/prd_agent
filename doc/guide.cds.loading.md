@@ -21,6 +21,7 @@
 | 发布中心/拓扑/Agent 请求的导航与筛选占位 | `cds/web/src/components/skeletons/WorkspaceSkeletons.tsx` | 整段轮廓共用，避免页头在两阶段之间把内容向下推 |
 | 通用列表、表格、资源、日志占位 | `cds/web/src/components/skeletons/ContentLoading.tsx` | 根据真实内容选择 variant；慢等待提示预留高度 |
 | 项目/分支列表跨代码与取数的慢提示 | `cds/web/src/components/skeletons/ListLoadingBoundary.tsx` | 提示只在工作区的固定高度槽位显示；路由与实际页面共用反馈，不新增外壳网格行 |
+| TCP 已禁用的默认说明 | `cds/web/src/lib/resourceTcpStatus.ts` | 资源连接与数据库通行证共用；拿到禁用结果后明确结束等待 |
 | 分支详情抽屉 | `cds/web/src/components/branch/BranchDrawerSkeleton.tsx` | 与总览共用关系/指标部件；不复制一套近似布局 |
 | 指标、关系、监控等专业轮廓 | 下方命令生成的“定义位置” | 保留真实内容几何，共用暖灰样式 |
 | 人工抽检预览 | 系统设置 → 加载页预览 | 展示真实导出组件；预览区域退出设置页骨架作用域 |

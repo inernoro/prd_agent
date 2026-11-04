@@ -565,7 +565,9 @@ export function DbIsolationTab({
       setDraft(current => preserve && previous ? mergeCleanSettings(current, draftFromView(previous), draftFromView(next)) : draftFromView(next));
       setInitDraft(current => preserve && previous ? mergeCleanSettings(current, initDraftFromView(previous), initDraftFromView(next)) : initDraftFromView(next));
     } catch (err) {
-      if (!signal.aborted) setLoadError(messageFromError(err));
+      if (signal.aborted) return;
+      setLoadError(messageFromError(err));
+      if (preserve) throw err;
     } finally {
       if (!signal.aborted) setLoading(false);
     }
@@ -620,7 +622,7 @@ export function DbIsolationTab({
         draft={draft}
         initDraft={initDraft}
         saving={saving}
-        error={saveError}
+        error={saveError || loadError}
         onDraftChange={setDraft}
         onInitDraftChange={setInitDraft}
         onSave={save}

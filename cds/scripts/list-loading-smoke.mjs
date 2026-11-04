@@ -203,12 +203,20 @@ try {
   await noEffect();
   console.log('PASS long-wait status clears on success; error/retry; fast cache without decoration');
 
-  member = true; delay = 1200;
+  member = true; delay = 1200; chunkDelay = 1200;
+  holdData();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
+  await page.getByRole('status', {name:'页面加载中',exact:true}).waitFor();
+  assert.equal(await page.locator('.cds-topbar-center .h-4.w-44').count(),1,'member code wait uses summary silhouette');
+  assert.equal(await page.locator('.cds-topbar-center > .h-9.w-full').count(),0,'member code wait has no owner-only silhouette');
+  await page.getByRole('status', {name:'页面加载中',exact:true}).waitFor({state:'hidden'});
+  assert.equal(await page.locator('.cds-topbar-center .h-4.w-44').count(),1,'member data wait uses the same summary silhouette');
+  assert.equal(await page.locator('.cds-topbar-center > .h-9.w-full').count(),0,'member data wait has no owner-only silhouette');
   await page.waitForSelector('[aria-busy="true"] .cds-card-grid article');
   const memberBefore = await geometry('[aria-busy="true"] .cds-card-grid article');
   assert.equal(await page.locator('#topbar-git-repo-url').count(), 0);
+  releaseData();
   await page.waitForSelector('article a[href="/branches/fixture-project"]');
   aligned('projects member390', memberBefore, await geometry('[data-list-loading-boundary] article'));
   assert.equal(await page.locator('#topbar-git-repo-url').count(), 0);

@@ -9,7 +9,7 @@ export async function verifyPublicLoading(browser, base, out) {
   for (const kind of ['login', 'public-status']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 940 }, colorScheme: 'dark' });
     const chunk = gate(), session = gate(), config = gate(), board = gate(), configSeen = gate(), boardSeen = gate();
-    const errors = []; let failBoard = false;
+    const errors = []; let failBoard = false, failNext = true; const nextBoard = gate(), nextSeen = gate();
     const selector = kind === 'login' ? '[data-auth-form-skeleton]' : '[data-public-status-skeleton]';
     await context.route(`**/assets/${kind === 'login' ? 'LoginPage' : 'PublicStatusPage'}-*.js`, async route => { await chunk.promise; await route.continue(); });
     await context.route('**/api/**', async route => {
@@ -19,6 +19,10 @@ export async function verifyPublicLoading(browser, base, out) {
       if (p === '/api/auth/public-status' || p === '/api/auth/bootstrap-status') {
         configSeen.release(); await config.promise;
         return route.fulfill({json:p.endsWith('/bootstrap-status') ? {needsBootstrap:false} : {enabled:true,mode:'basic',loginMethods:{local:true,github:false,sso:false},capabilities:{userManagement:false,userActivity:false,durableUsers:true}}});
+      }
+      if (p.endsWith('/fixture-next-token')) {
+        nextSeen.release(); await nextBoard.promise;
+        return route.fulfill(failNext ? {status:500,json:{error:'synthetic new token failure'}} : {json:{title:'合成第二状态',headline:'第二状态正常',status:'ok',items:[],updatedAt:Date.now(),refreshHintSeconds:60}});
       }
       if (p.startsWith('/api/public/status/')) {
         boardSeen.release(); await board.promise;
@@ -66,14 +70,22 @@ export async function verifyPublicLoading(browser, base, out) {
         assert.equal(await page.locator(selector).count(),0);
         failBoard=false; await page.getByRole('button',{name:'重新读取',exact:true}).click(); await page.getByRole('heading',{name:'合成公开状态 服务状态',exact:true}).waitFor();
         assert.equal(await page.locator('[aria-label="主导航"]').count(),0);
+        await page.evaluate(()=>{history.pushState({},'', '/s/fixture-next-token');window.dispatchEvent(new PopStateEvent('popstate'));});
+        await nextSeen.promise; await page.locator(selector).waitFor();
+        assert.equal(await page.getByRole('heading',{name:'合成公开状态 服务状态',exact:true}).count(),0);
+        nextBoard.release(); await page.getByRole('alert').filter({hasText:'暂时无法读取状态'}).waitFor();
+        assert.equal(await page.getByRole('heading',{name:'合成公开状态 服务状态',exact:true}).count(),0);
+        failNext=false;await page.getByRole('button',{name:'重新读取',exact:true}).click();
+        await page.getByRole('heading',{name:'合成第二状态 服务状态',exact:true}).waitFor();
+
       }
-      assert.deepEqual(errors,[]); results.push({kind,codeDataGeometry:true,thirdLoginWait:kind==='login',publicFailureRetry:kind==='public-status',errors});
+      assert.deepEqual(errors,[]); results.push({kind,codeDataGeometry:true,thirdLoginWait:kind==='login',publicFailureRetry:kind==='public-status',publicTokenIsolation:kind==='public-status',errors});
       console.log(`PASS standalone ${kind}`);
     } catch(error) {
       await page.screenshot({path:path.join(out,`${kind}-failure.jpg`)});
       await fs.writeFile(path.join(out,`${kind}-failure.html`),await page.content());
       throw new Error(`standalone ${kind}: ${error}`);
-    } finally {chunk.release();session.release();config.release();board.release();await context.close();}
+    } finally {chunk.release();session.release();config.release();board.release();nextBoard.release();await context.close();}
   }
   await fs.writeFile(path.join(out,'public-results.json'),JSON.stringify(results,null,2)); return results;
 }
