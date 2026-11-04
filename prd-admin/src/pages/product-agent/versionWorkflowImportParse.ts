@@ -41,6 +41,8 @@ export type VersionWorkflowImportRow = {
   noTapdLinks?: boolean;
   tapdLinks?: { title: string; url: string }[];
   requirementIds?: string[];
+  releaseOrigin?: string;
+  featureManifest?: Array<{ featureId: string; changeType: string; changeNote?: string }>;
   status?: string;
   voidReason?: string;
   voidedAt?: string;
@@ -91,6 +93,8 @@ function resolveColumns(headers: string[], kind: VersionWorkflowImportKind) {
     teamIndex: find('项目组成员', '组成员'),
     teamIdIndex: find('项目组成员id'),
     requirementIdsIndex: find('关联需求id'),
+    featureManifestIndex: release ? find('功能清单') : -1,
+    releaseOriginIndex: release ? find('记录关联') : -1,
     statusIndex: find('状态', '版本状态'),
     voidReasonIndex: find('作废原因', '作废理由'),
     voidedAtIndex: find('作废时间'),
@@ -205,7 +209,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     planIndex, systemIndex, appIndex, productIndex, projectTypeIndex, versionTypeIndex,
     departmentIndex, ownerIndex, planUrlIndex, requirementDescIndex, customerSourceIndex, remarkIndex,
     developmentIndex, uiDesignIndex, aiPocIndex, announcementIndex, globalOpenIndex, openBrandIndex,
-    teamIndex, teamIdIndex, ownerIdIndex, requirementIdsIndex, statusIndex, voidReasonIndex, voidedAtIndex,
+    teamIndex, teamIdIndex, ownerIdIndex, requirementIdsIndex, featureManifestIndex, releaseOriginIndex, statusIndex, voidReasonIndex, voidedAtIndex,
     tapdIndex, noTapdIndex, actualReleaseIndex, requirementSourceIndex, platformIndex, contractPartyIndex, trainingMinutesIndex,
     codeIndex: headerCodeIndex, tCodeIndex, dateIndex, firstDraftIndex, secondDraftIndex, thirdDraftIndex,
     plannedProjectIndex,
@@ -225,6 +229,18 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     const versionType = versionTypeIndex >= 0 ? values[versionTypeIndex]?.trim() : undefined;
     const temporary = kind === 'release' && versionType === TEMPORARY_OPTIMIZATION_LABEL;
     const date = parseDateValue(values[dateIndex]);
+    const featureCell = values[featureManifestIndex]?.trim();
+    let featureManifest: VersionWorkflowImportRow['featureManifest'];
+    if (featureCell) {
+      try {
+        const items: unknown = JSON.parse(featureCell);
+        if (!Array.isArray(items) || !items.every((item) => item && typeof item.featureId === 'string'
+          && typeof item.changeType === 'string' && (item.changeNote == null || typeof item.changeNote === 'string'))) throw new Error();
+        featureManifest = items;
+      } catch {
+        throw new Error(`第 ${headerRowIndex + offset + 2} 行功能清单无法读取，请检查导出的原始内容。`);
+      }
+    }
 
     const legacyData: Record<string, string> = {};
     const ownerName = ownerIndex >= 0 ? values[ownerIndex]?.trim() : undefined;
@@ -290,6 +306,8 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       noTapdLinks: mapBool(values[noTapdIndex]),
       tapdLinks: parseTapdLinks(values[tapdIndex]),
       requirementIds: splitMembers(values[requirementIdsIndex]),
+      releaseOrigin: values[releaseOriginIndex]?.trim() || undefined,
+      featureManifest,
       status: values[statusIndex]?.trim() || undefined,
       voidReason: values[voidReasonIndex]?.trim() || undefined,
       voidedAt: parseDateValue(values[voidedAtIndex]),

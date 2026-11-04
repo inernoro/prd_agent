@@ -5,6 +5,17 @@ import {
   parseVersionWorkflowImportMatrix,
 } from './versionWorkflowImportParse';
 
+it('reads feature and original-record associations from the standard release table', () => {
+  const feature = { featureId: 'feature-1', changeType: 'added', changeNote: '恢复关联' };
+  const [row] = parseVersionWorkflowImportMatrix([
+    ['产品', '正式版本号', '产品立项方案名称', '功能清单', '记录关联', '上线日期'],
+    ['互动营销', 'V2.3.5', '测试方案', JSON.stringify([feature]), 'signed-record', '2026-11-04T10:20:30.000Z'],
+  ], 'release');
+  expect(row.featureManifest).toEqual([feature]);
+  expect(row.releaseOrigin).toBe('signed-record');
+  expect(row.plannedReleaseAt).toBe('2026-11-04T10:20:30.000Z');
+});
+
 describe('versionWorkflowImportParse', () => {
   it('表头顺序可变，只读取可识别的列，并区分相似字段', () => {
     const csv = [

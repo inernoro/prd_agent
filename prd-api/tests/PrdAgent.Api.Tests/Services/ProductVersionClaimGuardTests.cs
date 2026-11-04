@@ -22,78 +22,6 @@ namespace PrdAgent.Api.Tests.Services;
 public class ProductVersionClaimGuardTests
 {
     [Fact]
-    public async Task FullReleaseBackupRestoresOriginalRecordIdsAndDetailsAfterDebugClear()
-    {
-        await using var fixture = await Fixture.CreateAsync();
-        var time = new DateTime(2026, 11, 4, 1, 2, 3, DateTimeKind.Utc);
-        var record = new ProductRelease
-        {
-            Id = "original-v", ProductId = "product", VCode = "V1.2.3", TCode = "T1.2.3", InitiationId = "source-t",
-            PreviousReleaseId = "previous-v", PlanName = "版本备份往返", OwnerId = "owner", OwnerName = "原负责人",
-            TeamMemberIds = new() { "owner", "member" }, RequirementIds = new() { "req" }, NoTapdLinks = false,
-            TapdLinks = new() { new() { Title = "需求", Url = "https://www.tapd.cn/1" } },
-            FeatureManifest = new() { new() { FeatureId = "feat", ChangeType = FeatureChangeType.Modified, ChangeNote = "本版改动" } },
-            AnnouncementUrl = "https://example.test/announcement", ReleasedAt = time, CreatedAt = time, UpdatedAt = time,
-            Status = "released", CreatedBy = "original-user",
-            ClaimNotification = new() { Status = "sent", Snapshot = "原通知快照", NextAttemptAt = time },
-        };
-        await fixture.Db.ProductReleases.InsertManyAsync(new[]
-        {
-            record, new ProductRelease { Id = "previous-v", ProductId = "product", VCode = "V1.2.2",
-                ClaimNotification = new() { Status = "pending", Snapshot = "待发送快照", NextAttemptAt = time } },
-        });
-        await fixture.Db.Features.InsertOneAsync(new Feature { Id = "feat", ProductId = "product", OfficialReleaseId = record.Id });
-        await fixture.Db.Requirements.InsertOneAsync(new Requirement { Id = "req", ProductId = "product", VersionIds = new() { record.Id } });
-        var protection = new EphemeralDataProtectionProvider();
-        var controller = fixture.Controller(admin: true);
-        var configuration = new ConfigurationBuilder().Build();
-        var file = Assert.IsType<ApiResponse<ProductReleaseBackupFile>>(Assert.IsType<OkObjectResult>(
-            await controller.ExportReleaseBackup(protection, CancellationToken.None)).Value).Data!;
-        Assert.Equal(2, file.RecordCount);
-        var before = await ProductVersionDebugClear.PreviewAsync(fixture.Db, "formal");
-        Assert.Equal(2, (await ProductVersionDebugClear.ClearAsync(fixture.Db, "formal", before.Token, "me"))!.ClearedCount);
-        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
-        var preview = Assert.IsType<ApiResponse<ProductReleaseRestoreResult>>(Assert.IsType<OkObjectResult>(
-            await controller.RestoreReleaseBackup(file, null, protection, configuration, CancellationToken.None)).Value).Data!;
-        Assert.Equal(2, preview.ToRestore);
-        Assert.Equal(0, preview.Restored);
-        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
-        var service = new ProductReleaseBackup(fixture.Db, protection);
-        Assert.Equal(2, (await service.RestoreAsync(file, false, CancellationToken.None)).Restored);
-        Assert.Equal(record.ToBsonDocument(), (await fixture.Db.ProductReleases.Find(row => row.Id == record.Id).SingleAsync()).ToBsonDocument());
-        var pending = await fixture.Db.ProductReleases.Find(row => row.Id == "previous-v").SingleAsync();
-        Assert.Equal("unknown", pending.ClaimNotification!.Status);
-        Assert.Equal("待发送快照", pending.ClaimNotification.Snapshot);
-        Assert.Equal(time, pending.ClaimNotification.NextAttemptAt);
-        Assert.Equal(record.Id, (await fixture.Db.Features.Find(row => row.Id == "feat").SingleAsync()).OfficialReleaseId);
-        Assert.Contains(record.Id, (await fixture.Db.Requirements.Find(row => row.Id == "req").SingleAsync()).VersionIds);
-        Assert.Equal(2, (await service.RestoreAsync(file, false, CancellationToken.None)).Existing);
-    }
-
-    [Fact]
-    public async Task FullReleaseBackupRejectsTamperingAndLeavesAllRecordsUntouchedOnVersionConflict()
-    {
-        await using var fixture = await Fixture.CreateAsync();
-        var service = new ProductReleaseBackup(fixture.Db, new EphemeralDataProtectionProvider());
-        await fixture.Db.ProductReleases.InsertManyAsync(new[]
-        {
-            new ProductRelease { Id = "old", ProductId = "product", VCode = "V1.2.3" },
-            new ProductRelease { Id = "unrelated", ProductId = "product", VCode = "V1.2.4" },
-        });
-        var file = await service.ExportAsync(CancellationToken.None);
-        await fixture.Db.ProductReleases.DeleteManyAsync(_ => true);
-        var bytes = Convert.FromBase64String(file.Payload);
-        bytes[bytes.Length / 2] ^= 1;
-        await Assert.ThrowsAsync<InvalidDataException>(() => service.RestoreAsync(
-            file with { Payload = Convert.ToBase64String(bytes) }, false, CancellationToken.None));
-        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "current", ProductId = "product", VCode = "V1.2.3" });
-        var result = await service.RestoreAsync(file, false, CancellationToken.None);
-        Assert.Equal(1, result.Conflicts);
-        Assert.Equal(0, result.Restored);
-        Assert.Equal("current", (await fixture.Db.ProductReleases.Find(_ => true).SingleAsync()).Id);
-    }
-
-    [Fact]
     public async Task VersionExportResolvesUniqueHistoryNamesAndKeepsAmbiguousIdsBlank()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -676,6 +604,58 @@ public class ProductVersionClaimGuardTests
         Assert.Equal("released", saved.Status);
         Assert.Contains("版本类别：临时优化需求", ProductVersionCopyTemplate.Build(saved));
         Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task ReleaseTableRestoresOriginalRecordAndAssociations()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.Users.InsertOneAsync(new User { UserId = "owner", DisplayName = "唯一负责人" });
+        await fixture.Db.Features.InsertOneAsync(new Feature { Id = "release-feature", ProductId = "product" });
+        var controller = fixture.Controller(admin: true);
+        using var services = new ServiceCollection()
+            .AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider()).BuildServiceProvider();
+        controller.HttpContext.RequestServices = services;
+        var original = new ProductRelease
+        {
+            Id = "original-release-id", ProductId = "product", VCode = "V6.19.6", TCode = "T6.19.5",
+            PlanName = "原方案", OwnerId = "owner", InitiationId = "numbering-t-base",
+            PreviousReleaseId = "numbering-v-base",
+            FeatureManifest = new() { new() { FeatureId = "release-feature", ChangeType = FeatureChangeType.Added } },
+        };
+        await fixture.Db.ProductReleases.InsertOneAsync(original);
+        var action = Assert.IsType<OkObjectResult>(await controller.OverviewReleases(workflow: true));
+        var items = Assert.IsType<ProductVersionListResult<ProductRelease>>(Assert.IsType<ApiResponse<object>>(action.Value).Data).Items;
+        var token = Assert.IsType<string>(items.Single(x => x.Record.Id == original.Id).ExportFields!.ReleaseOrigin);
+        await fixture.Db.ProductReleases.DeleteOneAsync(x => x.Id == original.Id);
+        var row = new ImportVersionWorkflowRow
+        {
+            AppName = "测试应用", Code = original.VCode, TCode = original.TCode,
+            PlanName = "表格修改后的方案", OwnerName = "唯一负责人", ReleaseOrigin = token,
+            FeatureManifest = original.FeatureManifest,
+        };
+        var request = new ImportVersionWorkflowRequest { Kind = "release", Rows = new() { row } };
+        Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(request));
+        Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(request));
+        var restored = await fixture.Db.ProductReleases.Find(x => x.Id == original.Id).SingleAsync();
+        Assert.Equal(row.PlanName, restored.PlanName);
+        Assert.Equal(original.InitiationId, restored.InitiationId);
+        Assert.Equal(original.PreviousReleaseId, restored.PreviousReleaseId);
+        Assert.Equal(original.OwnerId, restored.OwnerId);
+        Assert.Equal("release-feature", Assert.Single(restored.FeatureManifest).FeatureId);
+        Assert.Null(restored.ClaimNotification);
+        row.Code = "V6.19.7";
+        Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(request));
+        Assert.False(await fixture.Db.ProductReleases.Find(x => x.VCode == "V6.19.7").AnyAsync());
+        row.ReleaseOrigin = null;
+        row.TCode = "T6.19.6";
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation
+        {
+            Id = "history-matched-t", ProductId = "product", TCode = row.TCode,
+        });
+        Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(request));
+        Assert.Equal("history-matched-t", (await fixture.Db.ProductReleases.Find(x => x.VCode == "V6.19.7").SingleAsync()).InitiationId);
     }
 
     [Fact]

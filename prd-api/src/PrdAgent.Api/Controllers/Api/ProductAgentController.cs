@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
@@ -1878,6 +1880,44 @@ public partial class ProductAgentController : ControllerBase
                         continue;
                     }
                     var sourceTCode = temporary ? null : row.TCode?.Trim().ToUpperInvariant();
+                    ReleaseTableOrigin? origin = null;
+                    if (!string.IsNullOrWhiteSpace(row.ReleaseOrigin))
+                    {
+                        try
+                        {
+                            origin = JsonSerializer.Deserialize<ReleaseTableOrigin>(ReleaseTableProtector(targetProductId,
+                                ReleaseTableKey(temporary, code, planName)).Unprotect(row.ReleaseOrigin.Trim()));
+                        }
+                        catch (Exception ex) when (ex is CryptographicException or JsonException)
+                        {
+                            errors.Add(new { row = index + 2, message = "记录关联与本环境、应用或版本不匹配，已跳过" });
+                            snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "记录关联与本环境、应用或版本不匹配，已跳过" });
+                            continue;
+                        }
+                    }
+                    var sameSource = origin != null && string.Equals(origin.TCode, sourceTCode, StringComparison.OrdinalIgnoreCase);
+                    var initiationId = sameSource ? origin?.InitiationId : null;
+                    if (initiationId == null && !string.IsNullOrWhiteSpace(sourceTCode))
+                    {
+                        var matches = await _db.ProductInitiations.Find(x => !x.IsDeleted && x.TCode == sourceTCode
+                                && (x.LinkedProductId == targetProductId
+                                    || ((x.LinkedProductId == null || x.LinkedProductId == "") && x.ProductId == targetProductId)))
+                            .Project(x => x.Id).Limit(2).ToListAsync();
+                        if (matches.Count == 1)
+                        {
+                            var matchId = matches[0];
+                            if (!await _db.ProductReleases.Find(x => x.ProductId == targetProductId
+                                    && !x.IsDeleted && (x.InitiationId == matchId || x.TCode == sourceTCode)).AnyAsync())
+                                initiationId = matchId;
+                        }
+                    }
+                    var manifest = NormalizeReleaseFeatureManifest(row.FeatureManifest ?? new());
+                    if (manifest.Count > 0 && await ValidateReleaseFeatureManifestAsync(targetProductId, manifest) is { } manifestError)
+                    {
+                        errors.Add(new { row = index + 2, message = manifestError });
+                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = manifestError });
+                        continue;
+                    }
                     var tapdLinks = new List<ProductReleaseTapdLink>();
                     if (row.TapdLinks is { Count: > 0 })
                     {
@@ -1890,11 +1930,11 @@ public partial class ProductAgentController : ControllerBase
                         }
                     }
                     var status = HistoryVersionStatus(row.Status, "released");
+                    var memberNames = NormalizeVersionMemberNames(row.ProjectMemberNames);
                     var memberIds = NormalizeVersionMemberNames(row.TeamMemberIds);
-                    var userIds = NormalizeVersionMemberNames(memberIds.Append(row.OwnerId ?? ""));
-                    var users = userIds.Count == 0 ? new List<string>() : await _db.Users.Find(x => userIds.Contains(x.UserId))
-                        .Project(x => x.UserId).ToListAsync();
-                    var ownerId = row.OwnerId?.Trim();
+                    var resolveUser = await ResolveVersionPersonKeysAsync(memberIds.Concat(memberNames)
+                        .Append(row.OwnerId ?? "").Append(row.OwnerName ?? ""));
+                    var ownerId = resolveUser(row.OwnerId) ?? resolveUser(row.OwnerName);
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
                     if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
                         legacyData["产品负责人"] = row.OwnerId.Trim();
@@ -1905,26 +1945,39 @@ public partial class ProductAgentController : ControllerBase
                     var release = new ProductRelease
                     {
                         ProductId = targetProductId, TCode = sourceTCode, VCode = code, PlanName = planName,
+                        InitiationId = initiationId, PreviousReleaseId = origin?.PreviousReleaseId, FeatureManifest = manifest,
+                        IsManualTCode = sameSource && origin!.IsManualTCode,
                         IsTemporaryOptimization = temporary,
                         VersionType = NormalizeVersionType(row.VersionType), AnnouncementUrl = row.AnnouncementUrl,
                         SystemName = row.SystemName, AppName = row.AppName,
                         ProjectType = row.ProjectType == "custom" ? "custom" : "standard",
-                        DepartmentName = row.DepartmentName, OwnerId = ownerId != null && users.Contains(ownerId) ? ownerId : null,
+                        DepartmentName = row.DepartmentName, OwnerId = ownerId,
                         DemandSource = row.DemandSource, RequirementDescription = row.RequirementDescription,
-                        OwnerName = row.OwnerName, ProjectMemberNames = NormalizeVersionMemberNames(row.ProjectMemberNames),
+                        OwnerName = row.OwnerName, ProjectMemberNames = memberNames,
                         ContractParty = row.ContractParty, Remark = row.Remark, IsGlobalOpen = row.IsGlobalOpen,
                         OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope)
                             ? row.IsGlobalOpen == false ? "非全域开放" : "上线全域开放"
                             : row.OpenBrandScope,
-                        PlanUrl = row.PlanUrl, TeamMemberIds = memberIds.Where(users.Contains).ToList(),
+                        PlanUrl = row.PlanUrl, TeamMemberIds = NormalizeVersionMemberNames(memberIds.Concat(memberNames)
+                            .Select(name => resolveUser(name) ?? "")),
                         RequirementIds = await ResolveHistoryRequirementIdsAsync(targetProductId, row.RequirementIds),
                         Status = status, NoTapdLinks = row.NoTapdLinks, TapdLinks = tapdLinks,
                         VoidReason = status == "voided" ? row.VoidReason : null,
                         VoidedAt = status == "voided" ? row.VoidedAt : null,
+                        StatusBeforeVoid = status == "voided" ? origin?.StatusBeforeVoid : null,
+                        VoidedBy = status == "voided" ? origin?.VoidedBy : null,
                         PlannedReleaseAt = row.PlannedReleaseAt ?? row.Date, PlannedTrainingMinutes = row.PlannedTrainingMinutes,
                         ReleasedAt = row.ReleasedAt ?? row.Date, CreatedBy = userId, SourceType = "import",
                         LegacyData = legacyData,
                     };
+                    if (origin != null)
+                    {
+                        release.Id = origin.Id;
+                        release.CreatedBy = origin.CreatedBy;
+                        release.CreatedAt = origin.CreatedAt;
+                        release.UpdatedAt = origin.UpdatedAt;
+                        release.SourceType = origin.SourceType;
+                    }
                     await importLease.EnsureHeldAsync();
                     await _db.ProductReleases.InsertOneAsync(release, cancellationToken: CancellationToken.None);
                     importedReleases.Add(release);
@@ -7286,9 +7339,11 @@ public partial class ProductAgentController : ControllerBase
         {
             var result = await ProductVersionListReader.ReadReleasesAsync(
                 _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage));
+            Func<ProductRelease, string>? protectOrigin = await IsProductApplicationAdminAsync(GetUserId())
+                && HttpContext.RequestServices?.GetService<IDataProtectionProvider>() != null ? ProtectReleaseTableOrigin : null;
             return Ok(ApiResponse<object>.Ok(await WithVersionExportFieldsAsync(result, row => new(
                 row.ProductId, row.AppName, row.SystemName, row.OwnerId, row.OwnerName ?? row.LegacyData.GetValueOrDefault("产品负责人"),
-                row.TeamMemberIds, row.ProjectMemberNames))));
+                row.TeamMemberIds, row.ProjectMemberNames), protectOrigin)));
         }
         var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
         await ProductReleaseDeletion.AnnotateAsync(_db, items, GetUserId());
@@ -8349,6 +8404,8 @@ public class CreateProductVersionSnapshotRequest
 
 public class ImportVersionWorkflowRow
 {
+    public string? ReleaseOrigin { get; set; }
+    public List<ReleaseFeatureItem>? FeatureManifest { get; set; }
     public string? Code { get; set; }
     public string? TCode { get; set; }
     public string? PlanName { get; set; }
