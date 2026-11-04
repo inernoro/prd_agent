@@ -1,3 +1,4 @@
+import { buildAskHistory } from './askHistory';
 import { useDeadline } from './useDeadline';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
@@ -119,10 +120,8 @@ export function useAskStream(source: AskSource) {
       setPhaseMessage('正在读取页面内容…');
       setGateError(null);
 
-      // 历史只带纯文本，且不含正在生成的这条
-      const history = messages
-        .filter((m) => m.content.trim().length > 0 && !m.error)
-        .map((m) => ({ role: m.role, content: m.content }));
+      // 原文附录只用于展示，不能挤占追问请求体或带回上一轮引用编号。
+      const history = buildAskHistory(messages);
 
       // 必须过 buildApiUrl：这是裸 fetch（SSE 绕开了 apiRequest），前后端分开部署时
       // 相对路径会打到前端自己身上，拿回 404 或一坨 HTML 而不是事件流。

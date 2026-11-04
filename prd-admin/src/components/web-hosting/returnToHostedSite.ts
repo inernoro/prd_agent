@@ -22,3 +22,12 @@ export function highlightReturnedSite(element: HTMLElement): () => void {
   ], { duration: 1200, iterations: 2 });
   return () => { element.style.outline = previous; if (animation) animation.cancel(); };
 }
+
+/** 深链读取并入唯一列表；只在定位尚未完成时保留分页之外的目标。 */
+export function retainReturnTarget(items: HostedSite[], previous: HostedSite[], targetId: string | null, space: Space): HostedSite[] {
+  if (!targetId || items.some(site => site.id === targetId)) return items;
+  const target = previous.find(site => site.id === targetId);
+  if (!target) return items;
+  const inSpace = space.kind === 'team' ? target.sharedTeamIds?.includes(space.teamId) : !target.sharedTeamIds?.length;
+  return inSpace ? [target, ...items] : items;
+}

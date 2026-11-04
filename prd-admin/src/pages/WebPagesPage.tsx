@@ -104,7 +104,7 @@ import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { listMyTeams } from '@/services/real/teams';
 import { SiteEditCount, SiteNewBadge } from '@/components/web-hosting/SiteActivityMeta';
-import { returnedSiteSpace, highlightReturnedSite } from '@/components/web-hosting/returnToHostedSite';
+import { returnedSiteSpace, highlightReturnedSite, retainReturnTarget } from '@/components/web-hosting/returnToHostedSite';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
 import {
   buildWebPageGroupSlot,
@@ -369,7 +369,8 @@ export default function WebPagesPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const focusSiteId = new URLSearchParams(location.search).get('focusSite');
-  const [returnTarget, setReturnTarget] = useState<HostedSite | null>(null);
+  const [returnTargetId, setReturnTargetId] = useState<string | null>(null);
+  const pendingReturnId = useRef<string | null>(null);
   const { isMobile } = useBreakpoint();
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
@@ -546,7 +547,8 @@ export default function WebPagesPage() {
   const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
 
   useEffect(() => {
-    if (!focusSiteId) return;
+    if (!focusSiteId) { pendingReturnId.current = null; setReturnTargetId(null); return; }
+    pendingReturnId.current = focusSiteId;
     let active = true;
     void Promise.all([getSite(focusSiteId), listMyTeams()]).then(([siteResult, teamResult]) => {
       if (!active) return;
@@ -557,7 +559,8 @@ export default function WebPagesPage() {
       setKeyword(''); setActiveTag(null); setActiveSource(null);
       setActiveFolder(null); setActiveGroupId(null); setWorkspaceTab('library');
       setCurrentSpace(space); rememberSpace(space);
-      setReturnTarget(target);
+      setSites(previous => [target, ...previous.filter(site => site.id !== target.id)]);
+      setReturnTargetId(target.id);
     }).catch((error: unknown) => {
       if (active) toast.error('无法定位网页', error instanceof Error ? error.message : '请稍后重试');
     });
@@ -582,7 +585,7 @@ export default function WebPagesPage() {
     const res = await requestSites();
     if (generation !== loadGeneration.current) return;
     if (res.success) {
-      setSites(res.data.items);
+      setSites(previous => retainReturnTarget(res.data.items, previous, keyword || activeTag || activeSource ? null : pendingReturnId.current, currentSpace));
       setTotal(res.data.total);
       setOwnerCards(res.data.owners ?? {});
       setSiteVisitors(res.data.visitors ?? {});
@@ -591,7 +594,7 @@ export default function WebPagesPage() {
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
-  }, [requestSites]);
+  }, [requestSites, currentSpace, keyword, activeTag, activeSource]);
 
   useEffect(() => {
     let active = true;
@@ -693,7 +696,7 @@ export default function WebPagesPage() {
         load();
         return;
       }
-      setReturnTarget(prev => prev?.id === id ? null : prev);
+      setReturnTargetId(prev => prev === id ? null : prev);
       setSites(prev => prev.filter(s => s.id !== id));
       setTotal(prev => prev - 1);
       loadMeta();
@@ -705,7 +708,9 @@ export default function WebPagesPage() {
     if (!confirm(`确定删除选中的 ${selectedIds.size} 个站点？`)) return;
     const res = await batchDeleteSites([...selectedIds]);
     if (res.success) {
-      setReturnTarget(null);
+      setReturnTargetId(null);
+      pendingReturnId.current = null;
+      setSites(previous => previous.filter(site => !selectedIds.has(site.id)));
       setSelectedIds(new Set());
       load();
       loadMeta();
@@ -835,15 +840,8 @@ export default function WebPagesPage() {
   // 分组：保持服务端排序顺序，仅按 first-seen 切分节（排序与分组并存）
   // 当前空间的网页：个人空间=我拥有且未进任何团队空间的（客户端剔除）；团队空间=后端已按 Id 过滤
   const spaceSites = useMemo(
-    () => {
-      const items = currentSpace.kind === 'team' ? sites : sites.filter((s) => !s.sharedTeamIds?.length);
-      // 深链目标可能在列表前 200 条之外，使用已授权的单站点读取结果补入一次。
-      const targetInSpace = returnTarget && (currentSpace.kind === 'team'
-        ? returnTarget.sharedTeamIds?.includes(currentSpace.teamId) : !returnTarget.sharedTeamIds?.length);
-      return returnTarget && targetInSpace && !keyword && !activeTag && !activeSource && !items.some((item) => item.id === returnTarget.id)
-        ? [returnTarget, ...items] : items;
-    },
-    [sites, currentSpace, returnTarget, keyword, activeTag, activeSource],
+    () => currentSpace.kind === 'team' ? sites : sites.filter((site) => !site.sharedTeamIds?.length),
+    [sites, currentSpace],
   );
   const spaceFolderCanonicalNames = useMemo(() => new Map(
     spaceSites
@@ -903,7 +901,7 @@ export default function WebPagesPage() {
       : spaceSites;
   }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind, personalFolderCanonicalNames]);
   useEffect(() => {
-    if (loading || !focusSiteId || returnTarget?.id !== focusSiteId || !displaySites.some((site) => site.id === focusSiteId)) return;
+    if (loading || !focusSiteId || returnTargetId !== focusSiteId || !displaySites.some((site) => site.id === focusSiteId)) return;
     const element = Array.from(document.querySelectorAll<HTMLElement>('[data-hosted-site-id]'))
       .find((item) => item.dataset.hostedSiteId === focusSiteId);
     if (!element) return;
@@ -915,7 +913,7 @@ export default function WebPagesPage() {
       navigate({ pathname: location.pathname, search: query.toString() }, { replace: true });
     }, 2600);
     return () => { clearTimeout(timer); cleanup(); };
-  }, [loading, focusSiteId, returnTarget, displaySites, location.pathname, location.search, navigate]);
+  }, [loading, focusSiteId, returnTargetId, displaySites, location.pathname, location.search, navigate]);
 
   // 「未分组」是树导航的虚拟节点：投送/移入分组时必须还原成 null
   const activeRealGroupId = activeGroupId === UNGROUPED_ID ? null : activeGroupId;
@@ -1160,6 +1158,9 @@ export default function WebPagesPage() {
     const teamIds = targetSpace.kind === 'team' ? [targetSpace.teamId] : [];
     const r1 = await setSiteTeams(movingSite.id, teamIds);
     if (!r1.success) { toast.error('移动失败', r1.error?.message); return; }
+    // 权限归属已成功变更，不能让尚未结束的返回定位把旧归属重新补回。
+    if (pendingReturnId.current === movingSite.id) pendingReturnId.current = null;
+    setSites(previous => previous.map(site => site.id === movingSite.id ? { ...site, sharedTeamIds: teamIds } : site));
     // 同步文件夹（空间内组织）；移到个人空间也允许带文件夹名
     await updateSite(movingSite.id, { folder: folder ?? '' });
     setMovingSite(null);

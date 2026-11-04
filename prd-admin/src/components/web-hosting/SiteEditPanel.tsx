@@ -210,12 +210,19 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             ? `正在回收运行环境，已检查 ${runtimeRecoveryGate.checks + 1} 次`
             : '按原要求重试';
 
+  const showVersionHistory = () => {
+    setActiveTab('history');
+    window.requestAnimationFrame(() => {
+      historyRef.current?.focus({ preventScroll: true });
+      historyRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  };
+
   const recoverFromVersionConflict = (action: 'refresh' | 'regenerate') => {
     if (action === 'refresh') {
-      setActiveTab('history');
+      showVersionHistory();
       setRecoveryNotice(null);
       void loadHistory();
-      historyRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       return;
     }
     composeRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -293,7 +300,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 )}
                 <button
                   type="button"
-                  onClick={() => historyRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
+                  onClick={showVersionHistory}
                   className="inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-[11px] font-medium text-token-secondary hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   查看版本记录

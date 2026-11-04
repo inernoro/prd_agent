@@ -221,3 +221,45 @@ for (const width of [390, 1440]) {
     }
   }
 }
+
+test('返回定位的分页外网页移到团队后，不会在个人空间恢复旧卡片', async ({ page }) => {
+  const date = new Date().toISOString();
+  const target = { id: 'return-target', title: '返回定位目标', sourceType: 'upload', ownerUserId: 'qa-return',
+    siteUrl: '', cosPrefix: '', entryFile: 'index.html', files: [], totalSize: 42, tags: [], visibility: 'private',
+    createdAt: date, updatedAt: date, sharedTeamIds: [] as string[] };
+  let moved = false;
+  await page.addInitScript(() => {
+    localStorage.setItem('webpages.pref.cardSize', 'small');
+    localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+      isAuthenticated: true, user: { userId: 'qa-return', username: 'qa-return', role: 'ADMIN' },
+      token: 'qa-return-token', refreshToken: 'qa-return-refresh', sessionKey: 'qa-return-session',
+      permissions: ['access', 'web-pages.read'], permissionsLoaded: true, isRoot: false,
+      menuCatalog: [], menuCatalogLoaded: true, cdnBaseUrl: '', permFingerprint: 'qa-return',
+    }, version: 0 }));
+  });
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
+    if (path === '/api/web-pages/return-target') data = target;
+    else if (path === '/api/web-pages/return-target/teams') {
+      expect(route.request().postDataJSON()).toEqual({ teamIds: ['target-team'] });
+      target.sharedTeamIds = ['target-team']; moved = true;
+    } else if (path === '/api/teams') data = { items: [{ team: { id: 'target-team', name: '目标团队' }, role: 'owner' }] };
+    else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+    else if (path === '/api/changelog/current-week') data = { weekStart: date, weekEnd: date, fetchedAt: date,
+      dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
+    await route.fulfill({ json: { success: true, data, error: null } });
+  });
+  await page.goto('/web-pages?focusSite=return-target');
+  const card = page.locator('[data-hosted-site-id="return-target"]').first();
+  await expect(card).toBeVisible();
+  await expect(page).not.toHaveURL(/focusSite=/);
+  await expect(card).toBeVisible();
+  await card.hover();
+  await card.getByRole('button', { name: '更多设置' }).click();
+  await page.getByText('移动到空间或文件夹', { exact: true }).click();
+  await page.getByRole('button', { name: '目标团队', exact: true }).click();
+  await page.getByRole('button', { name: '移动', exact: true }).click();
+  await expect.poll(() => moved).toBe(true);
+  await expect(card).toHaveCount(0);
+});

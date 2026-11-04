@@ -81,6 +81,14 @@ public sealed class WebPageAskEvidence
         return result.ToString().TrimEnd();
     }
 
+    /// <summary>旧客户端回传完整答案时，先去除本系统生成的脚注附录，再裁剪历史。</summary>
+    public static string ToHistoryText(string answer)
+    {
+        var body = Regex.Split(answer, @"\r?\n\r?\n\[\^1\]: ", RegexOptions.None)[0];
+        body = Regex.Replace(body, @"(?<!\\)\[\^[1-9]\d*\]", "");
+        return Regex.Replace(body, @"\[引用:\d+\]", "");
+    }
+
     private static string EscapeMarkdown(string text) => Regex.Replace(
         text.Replace("&", "&amp;"), @"[\\`*_{}\[\]()<>#!|~+\-.]", m => "\\" + m.Value);
 }

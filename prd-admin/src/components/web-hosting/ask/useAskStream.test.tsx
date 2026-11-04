@@ -63,3 +63,26 @@ it('成功 done 的回执用于真实评分，失败不修改分值；回执不�
     expect(fetcher.mock.calls.at(-1)?.[1].body).not.toContain('private-receipt');
   } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
 });
+
+it.each(['site', 'share'] as const)('大量原文引用下连续追问保持正文、重新引用且请求不超过 64 KiB：%s', async (mode) => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const finalText = '当前答案[^1]。' + Array.from({ length: 30 }, (_, i) => `\n\n[^${i + 1}]: ${'原'.repeat(800)}`).join('');
+  const fetcher = vi.fn().mockImplementation(async () => new Response(`event: done\ndata: ${JSON.stringify({ text: finalText })}\n\n`));
+  vi.stubGlobal('fetch', fetcher);
+  let hook: ReturnType<typeof useAskStream>;
+  function Harness() { hook = useAskStream(mode === 'site' ? { mode, siteId: 'site' } : { mode, token: 'share' }); return null; }
+  const root = createRoot(document.createElement('div'));
+  try {
+    act(() => root.render(<Harness />));
+    for (let i = 0; i < 12; i++) await act(async () => { await hook.ask('继续解释'.repeat(100)); });
+    for (const [, options] of fetcher.mock.calls) {
+      expect(new TextEncoder().encode(options.body).byteLength).toBeLessThan(64 * 1024);
+      const { history } = JSON.parse(options.body);
+      expect(history.length).toBeLessThanOrEqual(8);
+      expect(history.reduce((sum: number, item: { content: string }) => sum + item.content.length, 0)).toBeLessThanOrEqual(6000);
+      for (const item of history.filter((h: { role: string }) => h.role === 'assistant')) expect(item.content).toBe('当前答案。');
+    }
+    expect(hook!.messages.filter(message => message.role === 'assistant')).toHaveLength(12);
+    expect(hook!.messages.at(-1)?.content).toBe(finalText);
+  } finally { act(() => root.unmount()); vi.unstubAllGlobals(); }
+});
