@@ -288,7 +288,7 @@ export function MonitorCenterSkeleton(): JSX.Element {
           </div>
           <div className="flex h-9 items-stretch gap-[2px]">
             {Array.from({ length: 60 }).map((_, idx) => (
-              <span key={idx} className="cds-loading-skeleton-line w-full shrink-0 rounded-[2px]" style={{ animationDelay: `${(idx % 12) * 50}ms` }} />
+              <span key={idx} className="cds-loading-skeleton-line min-w-0 flex-1 rounded-[2px]" style={{ animationDelay: `${(idx % 12) * 50}ms` }} />
             ))}
           </div>
           <div className="cds-loading-skeleton-line h-40 w-full" />

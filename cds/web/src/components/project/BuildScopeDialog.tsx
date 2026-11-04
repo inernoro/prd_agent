@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * 挑本项目关心的目录 —— 同仓多项目那条提示的落脚点。
  *
@@ -184,7 +185,7 @@ export function BuildScopeDialog({
             推送只改到没勾中的目录时，这个项目不会建分支、不会构建。下面是这个仓库真实的一级目录。
           </p>
 
-          {loading ? <p className="text-sm text-muted-foreground">正在读取…</p> : null}
+          {loading ? <ContentLoading label="读取仓库目录" variant="rows" /> : null}
           {!loading && options && options.profiles.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               这个项目还没有构建配置，先在「分支控制台」里创建一个，再回来勾目录。

@@ -1,3 +1,4 @@
+import { useProjectSettingsRefresh } from '@/components/project/ProjectSettingsRefresh';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { apiRequest } from '@/lib/api';
@@ -47,10 +48,12 @@ export function ProjectIdentityHistory({ projectId, version }: { projectId: stri
     } catch (err) { if (request === sequence.current) setError(err instanceof Error ? err.message : '记录加载失败，请重试。'); }
     finally { if (request === sequence.current) setLoading(false); }
   }, [projectId]);
+  useEffect(() => { setRecords([]); setCursor(null); setCoverage(''); }, [projectId]);
   useEffect(() => {
-    setRecords([]); setCursor(null); setCoverage(''); void load();
+    void load();
     return () => { sequence.current++; };
   }, [load, version]);
+  useProjectSettingsRefresh(() => load());
   return (
     <Section title="设置变更记录" description="记录名称、项目 slug 和仓库的变化；与部署活动分开保存。">
       {coverage === 'since-baseline' ? <p className="mb-3 text-xs text-muted-foreground">历史未知：记录启用前的修改无法还原。首次基线仅表示当时观察到的值。</p> : null}
@@ -71,7 +74,7 @@ export function ProjectIdentityHistory({ projectId, version }: { projectId: stri
         <Button variant="outline" size="sm" disabled={loading} onClick={() => void load()}><RefreshCw />刷新记录</Button>
         {cursor ? <Button variant="outline" size="sm" disabled={loading} onClick={() => void load(cursor)}>查看更早记录</Button> : null}
       </div>
-      {loading ? <LoadingBlock label="加载设置变更记录" /> : null}
+      {loading && !records.length && !coverage ? <LoadingBlock label="加载设置变更记录" /> : null}
     </Section>
   );
 }

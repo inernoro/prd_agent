@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useContext, type ReactNode } from 'react';
+import { SettingsContentSkeleton, SettingsLoadingContext } from '@/components/skeletons/SettingsSkeleton';
 import { AlertCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -46,6 +47,8 @@ export function Field({
 }
 
 export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.Element {
+  const settings = useContext(SettingsLoadingContext);
+  if (settings) return <SettingsContentSkeleton label={label} />;
   return <PartialLoadingPanel label={label} />;
 }
 

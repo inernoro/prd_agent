@@ -254,9 +254,11 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                     && item.Id == claimed.Id
                     && item.UserId == claimed.UserId
                     && item.ArtifactType == DesignArtifactTypes.HtmlPpt
-                    && item.Runtime == DesignArtifactRuntimes.OpenDesign
-                    && item.Status == RunStatuses.Done)
+                    && item.Runtime == DesignArtifactRuntimes.OpenDesign)
                 .FirstOrDefaultAsync(CancellationToken.None);
+            if ((openDesignRun != null && !WebPageDesignArtifactLifecycleAdapter.IsCompletedPresentation(openDesignRun))
+                || (openDesignRun == null && claimed.Runtime == DesignArtifactRuntimes.OpenDesign))
+                throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿完整产物尚未提交完成");
             var site = openDesignRun == null
                 ? await _sites.CreateFromHtmlIdempotentAsync(
                     claimed.UserId,
@@ -361,6 +363,16 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
             claimed.ArtifactContractSynchronizedAt = null;
             if (openDesignRun == null)
                 await _artifacts.BindPublishedAsync(claimed, site.Id, revision.Id, CancellationToken.None);
+
+            if (openDesignRun != null && (site.Title != claimed.PublishIntentTitle
+                || (site.Description ?? string.Empty) != (claimed.PublishIntentDescription ?? string.Empty)
+                || !site.Tags.SequenceEqual(claimed.PublishIntentTags)))
+            {
+                site = await _sites.UpdateAsync(site.Id, claimed.UserId, claimed.PublishIntentTitle,
+                    claimed.PublishIntentDescription ?? string.Empty, claimed.PublishIntentTags, null, null,
+                    CancellationToken.None)
+                    ?? throw new HtmlPptPublishPendingException(PendingCode, "演示稿已保存，发布元信息等待恢复");
+            }
 
             var completedAt = DateTime.UtcNow;
             var completed = await _db.MdToPptRuns.UpdateOneAsync(
