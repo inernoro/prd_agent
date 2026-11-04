@@ -81,8 +81,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private startTimer?: NodeJS.Timeout;
   private startedMonotonic = 0;
   private readonly lifecycle: PoolLifecycle = {};
-  private startupRestartPending = false;
-  private startupRestartCleanedGeneration?: number;
+  private startupRestartTargetGeneration?: number;
+  private startupCleanedGeneration = 0;
   private stopping?: Promise<void>;
   private closing?: Promise<void>;
   private readonly concurrency: number;
@@ -213,14 +213,15 @@ export class IsolatedShellExecutor implements IShellExecutor {
         this.factoryGeneration = message.generation; this.factoryProcessPid = message.pid; this.supervisorMetrics = message.supervisorMetrics; this.factoryMetrics = undefined;
         return;
       }
+      // 首代started尚未被观察时也可确认它已清理；只记水位，不清理新代状态。
+      if (message.type === 'factory-cleaned' && Number.isSafeInteger(message.generation)
+        && (message.generation === 1 || message.generation === this.factoryGeneration)) {
+        this.startupCleanedGeneration = Math.max(this.startupCleanedGeneration, message.generation);
+      }
       if (message.generation !== this.factoryGeneration) return;
       if (message.factoryMetrics) this.factoryMetrics = message.factoryMetrics;
       if (message.type === 'factory-resetting') { this.ready = false; this.unavailable = true; return; }
       if (message.type === 'factory-cleaned') {
-        if (this.startupRestartPending) {
-          this.startupRestartPending = false;
-          this.startupRestartCleanedGeneration = message.generation;
-        }
         this.actors.clear(); this.factoryProcessPid = undefined; this.factoryMetrics = undefined; this.supervisorMetrics = message.supervisorMetrics;
         for (const job of [...this.jobs.values()]) this.finish(job, undefined, 'unavailable');
         return;
@@ -242,7 +243,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
     }
     if (message.type === 'fatal') { void this.failPool('factory-fatal'); return; }
     if (message.type === 'ready' && !this.closed && (!this.unavailable || this.supervised && !this.failed && !this.stopping)
-      && (!this.supervised || !this.startupRestartPending && (this.startupRestartCleanedGeneration === undefined || this.factoryGeneration > this.startupRestartCleanedGeneration))) {
+      && (!this.supervised || this.startupRestartTargetGeneration === undefined
+        || this.factoryGeneration > this.startupRestartTargetGeneration && this.startupCleanedGeneration >= this.startupRestartTargetGeneration)) {
       const recoveredInitialStart = !!this.lifecycle.startupFailure && !this.lifecycle.readyAt;
       this.lifecycle.readyAt ??= new Date().toISOString();
       this.lifecycle.readyElapsedMs ??= Math.round(performance.now() - this.startedMonotonic);
@@ -357,11 +359,12 @@ export class IsolatedShellExecutor implements IShellExecutor {
     if (this.closed || this.failed || this.ready) return;
     // 原首次5秒照常失败；旧请求不重放。保留预热监督者清理旧代并按原恢复预算替换工厂。
     this.recordPoolFailure('startup-deadline');
-    this.startupRestartPending = true;
+    // initialize的首代固定为1；迟到回调不能把恢复目标重新解析成当前替换代。
+    this.startupRestartTargetGeneration = 1;
     this.ready = false; this.unavailable = true;
     this.startReject?.(this.executionError('unavailable'));
     for (const job of [...this.jobs.values()]) this.finish(job, undefined, 'unavailable');
-    this.send({ type: 'restart-after-startup-deadline' });
+    this.send({ type: 'restart-after-startup-deadline', generation: this.startupRestartTargetGeneration });
   }
   private async failPool(reason: PoolFailureReason): Promise<void> {
     if (this.failed) return;
