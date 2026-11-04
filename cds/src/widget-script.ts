@@ -634,12 +634,22 @@ export function buildWidgetScript(
   avoidanceObserver.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['style','class','hidden','role','aria-live']});
   document.addEventListener('scroll',scheduleWidgetAvoidance,true);
   if(window.visualViewport){
-    window.visualViewport.addEventListener('resize',scheduleWidgetAvoidance);
-    window.visualViewport.addEventListener('scroll',scheduleWidgetAvoidance);
+    var refreshVisualViewport=function(){if(expanded)setWidgetPosition(pos.x,pos.y);else scheduleWidgetAvoidance();};
+    window.visualViewport.addEventListener('resize',refreshVisualViewport);
+    window.visualViewport.addEventListener('scroll',refreshVisualViewport);
   }
 
   function setWidgetPosition(x,y){
     var compactMobile=window.innerWidth<=640&&!expanded;
+    var panel=root.querySelector('.cds-panel');
+    if(isMobileViewport()&&expanded&&panel){
+      var viewport=window.visualViewport,rootStyle=window.getComputedStyle(root);
+      var safeHeight=(viewport?viewport.height:window.innerHeight)-24
+        -Math.max(0,parseFloat(rootStyle.getPropertyValue('--cds-safe-top'))||0)
+        -Math.max(0,parseFloat(rootStyle.getPropertyValue('--cds-safe-bottom'))||0);
+      var otherHeight=Math.max(0,root.offsetHeight-panel.offsetHeight);
+      panel.style.maxHeight=Math.max(0,safeHeight-otherHeight)+'px';
+    }
     var widgetWidth=Math.max(compactMobile?44:180,root.offsetWidth||0);
     var widgetHeight=Math.max(compactMobile?44:50,root.offsetHeight||0);
     var maxX=Math.max(0,window.innerWidth-widgetWidth);

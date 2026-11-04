@@ -35,12 +35,12 @@ const script = buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(
   .replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '');
 const scriptSha256 = createHash('sha256').update(script).digest('hex');
 
-async function fixture(hosted = false, width = 390, tags: string[] = []) {
+async function fixture(hosted = false, width = 390, tags: string[] = [], profileCount = 0) {
   const page = await browser.newPage({ viewport: { width, height: 664 } });
   page.on('pageerror', error => { pageErrors.push(error.message); });
   await page.route('**/*', route => { externalRequests.push(route.request().url()); return route.abort(); });
   await page.setContent('<html><head><title>deterministic-fixture</title></head><body style="margin:0;min-height:1200px;background:#faf9f6"><h1 style="margin:16px;font:20px sans-serif">业务主任务</h1></body></html>');
-  await page.evaluate(tags => {
+  await page.evaluate(({ tags, profileCount }) => {
     const streams: EventTarget[] = [];
     window.EventSource = class extends EventTarget {
       constructor(public url: string) {
@@ -64,11 +64,11 @@ async function fixture(hosted = false, width = 390, tags: string[] = []) {
       window.widgetFixture.calls.push(url);
       let body;
       if (url === '/_cds/api/branches') body = { tabTitleEnabled: false, branches: [{ id: 'fixture-branch', status: window.widgetFixture.status, runningCommitSha: 'a'.repeat(40), tags }] };
-      else if (url === '/_cds/api/build-profiles') body = { profiles: [] };
+      else if (url === '/_cds/api/build-profiles') body = { profiles: Array.from({ length: profileCount }, (_, index) => ({ id: `service-${index}`, name: `合成服务 ${index}` })) };
       else { window.widgetFixture.unknown.push(url); throw new Error(`未登记的夹具请求：${url}`); }
       return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
     };
-  }, tags);
+  }, { tags, profileCount });
   const content = hosted ? buildWidgetScript('fixture-branch', 'fixture/mobile', 'a'.repeat(40), '', true).replace(/^\s*<script data-cds-widget>/, '').replace(/<\/script>\s*$/, '') : script;
   const close = content.lastIndexOf('\n})();'); assert.ok(close > 0);
   // 仅暴露实际渲染闭包与固定合成请求；不启用Bridge、不点击授权或发送请求。
@@ -115,8 +115,8 @@ async function geometry(page: Page) {
   });
 }
 
-async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390, tags: string[] = []) {
-  const page = await fixture(hosted, width, tags);
+async function check(name: string, run: (page: Page) => Promise<void>, hosted = false, width = 390, tags: string[] = [], profileCount = 0) {
+  const page = await fixture(hosted, width, tags, profileCount);
   try {
     await run(page);
     assert.deepEqual(await page.evaluate(() => window.widgetFixture.unknown), []);
@@ -280,6 +280,31 @@ try {
       `由顶部槽展开后，面板和关闭按钮仍须在实际上下安全区内：${JSON.stringify(bounds)}`);
     await page.locator('button[data-action="close-panel"]').click(); await settle(page);
   }, hosted);
+  for (const hosted of [false, true]) for (const resize of [false, true]) await check(`filled-panel-safe-band-${hosted}-${resize}`, async page => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, bottom: 34 } });
+    // 仅替换visualViewport高度合同输入；真实CSS、原生safe-area与实际服务面板渲染不替换，不冒真实键盘。
+    if (!resize) await page.evaluate(() => Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 400 }));
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    if (resize) await page.evaluate(() => {
+      Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 400 });
+      window.visualViewport!.dispatchEvent(new Event('resize'));
+    });
+    await settle(page);
+    const bounds = await page.locator('#cds-widget').evaluate(el => {
+      const root = el.getBoundingClientRect(), close = el.querySelector('button[data-action="close-panel"]')!.getBoundingClientRect();
+      const panel = el.querySelector<HTMLElement>('.cds-panel')!, hit = document.elementFromPoint(close.x + close.width / 2, close.y + close.height / 2);
+      return { top: root.top, bottom: root.bottom, closeTop: close.top, closeBottom: close.bottom,
+        closeHit: !!hit && el.querySelector('button[data-action="close-panel"]')!.contains(hit), scrollable: panel.scrollHeight > panel.clientHeight,
+        layoutHeight: innerHeight, visualHeight: visualViewport!.height, syntheticVisualBand: true };
+    });
+    writeFileSync(path.join(output, `filled-panel-${hosted}-${resize}.json`), JSON.stringify(bounds, null, 2));
+    await page.screenshot({ path: path.join(output, `filled-panel-${hosted}-${resize}-expanded.png`) });
+    assert.ok(bounds.top >= 52 && bounds.bottom <= 354 && bounds.closeTop >= 52 && bounds.closeBottom <= 354 && bounds.closeHit,
+      `填满实际服务内容的面板须留在400px视觉合同安全区，关闭入口可命中：${JSON.stringify(bounds)}`);
+    assert.equal(bounds.scrollable, true, '缩小面板后实际内容仍可滚动，不删服务内容');
+    await page.locator('button[data-action="close-panel"]').click(); await settle(page);
+  }, hosted, 390, [], 8);
   for (const kind of ['handshake', 'navigate'] as const) for (const status of ['running', 'building', 'error']) await check(`owned-${kind}-${status}-panel-stays-with-badge`, async page => {
     if (status !== 'running') await page.evaluate(status => window.widgetFixture.emit(status), status);
     await settle(page); const before = await geometry(page);
