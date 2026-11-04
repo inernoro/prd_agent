@@ -224,7 +224,7 @@ docs:
   guide.platform.e2e-tests: "Playwright E2E 测试 · 指南"
   guide.platform.llm-gateway.acceptance-breadcrumbs: "LLM 网关验收面包屑清单 · 指南"
   guide.platform.llm-gateway.incident-recovery: "LLM Gateway 故障止血与恢复 · 指南"
-  guide.platform.mcp-connector: "MAP MCP 连接器接入 · 指南"
+  guide.platform.mcp-connector: "MAP 智能体连接器 · 指南"
   guide.platform.mongodb-indexes: "MongoDB 索引维护 · 指南"
   guide.platform.principles: "PRD Agent 系统原则速查（命名原则索引） · 指南"
   guide.platform.quickstart: "PRD Agent 快速部署 · 指南"
@@ -275,6 +275,8 @@ docs:
   rule.skill.issues-system: "Issues 体系 · 协议规则 · 规则"
   rule.skill.system: "技能系统规则与创建 · 规则"
   rule.skill.trigger-disambiguation: "技能触发消歧 · 规则"
+
+  plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
   plan.doc.readability.rollout: "文档说人话标准推广 · 计划"

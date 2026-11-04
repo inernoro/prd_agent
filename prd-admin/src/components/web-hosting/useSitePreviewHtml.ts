@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getSiteContent } from '@/services/real/webPages';
-import { canUseSrcDocPreview, hasFetchableHtml, withPreviewBase } from './previewHtml';
+import { canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
 
 /**
  * 取回托管站点入口 HTML，备好可以直接塞进 iframe `srcDoc` 的字符串。
@@ -31,10 +31,13 @@ export interface SitePreviewHtmlSite {
   entryFile?: string;
   wrappedAssetType?: string | null;
   pdfAssetUrl?: string;
+  pdfFilePaths?: readonly string[];
+  contentShape?: 'self-contained-html' | 'multi-file';
+  requiresPreviewBridge?: boolean;
 }
 
 function cacheKey(site: SitePreviewHtmlSite) {
-  return `${site.id}::${site.siteUrl}`;
+  return `${site.id}::${site.siteUrl}::${site.contentShape ?? ''}::${site.wrappedAssetType ?? ''}::${shouldFetchPreviewHtml(site)}`;
 }
 
 async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
@@ -80,7 +83,7 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
   const [loading, setLoading] = useState(false);
 
   const key = site ? cacheKey(site) : '';
-  const fetchable = !!site && hasFetchableHtml(site);
+  const fetchable = !!site && shouldFetchPreviewHtml(site);
 
   useEffect(() => {
     if (!site || !enabled || !fetchable) {
@@ -107,7 +110,11 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
   }, [key, enabled, fetchable]);
 
   const current = entryForKey(entry, key);
-  return { srcDoc: current.srcDoc, error: current.error, loading };
+  return {
+    srcDoc: fetchable ? current.srcDoc : null,
+    error: fetchable ? current.error : null,
+    loading: fetchable && loading,
+  };
 }
 
 /**

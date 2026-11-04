@@ -1,4 +1,4 @@
-import { Code2, FileText, FileType2, MonitorPlay, PlayCircle, Package } from 'lucide-react';
+import { Code2, FileText, FileType2, Image, MonitorPlay, PlayCircle, Package } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { HostedSite } from '@/services/real/webPages';
 
@@ -16,7 +16,7 @@ import type { HostedSite } from '@/services/real/webPages';
  * 注意 `SlideNavCompatVersion` 是无条件盖在所有站点上的垫片版本号，**不能**当 deck 标记
  * （不成立的证据不能当证据）；老数据没有 isSlideDeck 字段，按 false 处理，退回 HTML 站。
  */
-export type SiteFormKey = 'html' | 'zip' | 'pdf' | 'video' | 'markdown' | 'deck';
+export type SiteFormKey = 'html' | 'zip' | 'pdf' | 'video' | 'image' | 'markdown' | 'deck';
 
 export interface SiteFormConfig {
   /** 徽标文案（缩略图左上） */
@@ -31,18 +31,18 @@ export const SITE_FORM_REGISTRY: Record<SiteFormKey, SiteFormConfig> = {
   zip: { label: 'ZIP 站', icon: Package, hint: '打包站点，自动识别入口文件' },
   pdf: { label: 'PDF', icon: FileText, hint: 'PDF 被包装成可翻页阅读的站点' },
   video: { label: '视频', icon: PlayCircle, hint: '视频被包装成播放页，不支持提问' },
+  image: { label: '图片', icon: Image, hint: '原始图片包装成预览页，不支持提问' },
   markdown: { label: 'MD', icon: FileType2, hint: 'Markdown 渲染成网页' },
   deck: { label: '幻灯片', icon: MonitorPlay, hint: '一套幻灯片，访客可用上下键翻页' },
 };
 
 type SiteFormInput = Pick<HostedSite, 'wrappedAssetType' | 'files' | 'contentShape'> & { isSlideDeck?: boolean };
+const WRAPPED_SITE_FORMS = new Set<SiteFormKey>(['pdf', 'video', 'image', 'markdown']);
 
 /** 判定站点形态。包装类型优先（后端权威），其次按文件数区分单页 HTML 与 ZIP 站。 */
 export function resolveSiteForm(site: SiteFormInput): SiteFormKey {
   const wrapped = site.wrappedAssetType?.toLowerCase();
-  if (wrapped === 'pdf') return 'pdf';
-  if (wrapped === 'video') return 'video';
-  if (wrapped === 'markdown') return 'markdown';
+  if (wrapped && WRAPPED_SITE_FORMS.has(wrapped as SiteFormKey)) return wrapped as SiteFormKey;
   // deck 判定在包装类型之后、文件数之前：一套 reveal.js 幻灯片既可能是单页也可能是 ZIP，
   // 但它首先是「幻灯片」——用户在列表里要一眼认出的是这个
   if (site.isSlideDeck) return 'deck';
@@ -75,7 +75,7 @@ export function siteFormBadge(site: SiteFormInput): string | null {
 export const SITE_SOURCE_LABELS: Record<string, string> = {
   upload: '手动上传',
   workflow: '工作流生成',
-  api: 'API 生成',
+  api: 'MCP 生成',
   'saved-share': '保存自分享',
 };
 

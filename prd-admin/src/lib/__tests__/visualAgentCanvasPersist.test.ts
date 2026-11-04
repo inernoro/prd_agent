@@ -499,6 +499,34 @@ describe('VisualAgent Canvas 持久化测试', () => {
   });
 
   describe('保存-恢复 往返测试', () => {
+    it.each(['shape', 'text'] as const)('[REG-canvas-label-roundtrip-001] %s 的派生标签经真实序列化往返仍保留', (kind) => {
+      const item: CanvasImageItem = {
+        key: `label-${kind}`, kind, createdAt: 1, src: '', status: 'done',
+        prompt: kind === 'text' ? '恢复后可以编辑并保留' : 'Shape:rect',
+        x: 32, y: 64, w: 240, h: 160, fill: '#ffffff', stroke: '#000000',
+        ...(kind === 'shape'
+          ? { shapeType: 'rect' as const }
+          : { text: '恢复后可以编辑并保留', fontSize: 26, textColor: '#111111' }),
+      };
+      const saved = JSON.parse(JSON.stringify(canvasToPersistedV1([item]).state)) as PersistedCanvasStateV1;
+      expect(saved.elements[0]).toMatchObject({ name: item.prompt });
+      const restored = persistedV1ToCanvas(saved, []);
+      const savedAgain = JSON.parse(JSON.stringify(canvasToPersistedV1(restored.canvas).state));
+      expect(savedAgain).toEqual(saved);
+      expect(restored.canvas[0].prompt).toBe(item.prompt);
+    });
+
+    it.each(['shape', 'text'] as const)('[REG-canvas-label-roundtrip-001] 旧 %s 缺 name 时不虚构标签或丢失内容', (kind) => {
+      const element = kind === 'shape'
+        ? { id: 'legacy-shape', kind: 'shape' as const, shapeType: 'rect' as const, x: 10, y: 20, w: 240, h: 160 }
+        : { id: 'legacy-text', kind: 'text' as const, text: '旧正文', fontSize: 26, x: 10, y: 20, w: 320, h: 88 };
+      const restored = persistedV1ToCanvas({ schemaVersion: 1, elements: [element] }, []);
+      expect(restored.canvas).toHaveLength(1);
+      expect(restored.canvas[0].prompt).toBe('');
+      const savedAgain = JSON.parse(JSON.stringify(canvasToPersistedV1(restored.canvas).state)) as PersistedCanvasStateV1;
+      expect(savedAgain.elements[0]).toMatchObject(element);
+      expect(savedAgain.elements[0]).not.toHaveProperty('name');
+    });
     
     it('running 状态的占位元素应能完整往返', () => {
       const originalItems: CanvasImageItem[] = [{

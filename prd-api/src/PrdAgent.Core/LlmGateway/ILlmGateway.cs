@@ -37,6 +37,9 @@ namespace PrdAgent.Core.LlmGateway;
 /// </remarks>
 public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
 {
+    const string MetadataResolutionPurposeHeader = "X-Gateway-Resolution-Purpose";
+    const string ReadOnlyMetadataPurpose = "read-only-metadata";
+
     /// <summary>
     /// 发送非流式请求（Chat/Completion）
     /// </summary>
@@ -46,6 +49,21 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
     /// 发送流式请求（Chat/Completion）
     /// </summary>
     IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default);
+
+    /// <summary>
+    /// 流式请求的物理发送前准入。实现必须在最终模型、请求体和输出上限都确定后，
+    /// 且在任何供应商字节发出前调用 admit。未实现该合同的网关必须明确拒绝，不能退回无保护发送。
+    /// </summary>
+    async IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>> admit,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await Task.CompletedTask;
+        yield return GatewayStreamChunk.Fail(
+            "当前网关未提供物理发送前准入",
+            "GATEWAY_PHYSICAL_ADMISSION_UNSUPPORTED");
+    }
 
     /// <summary>
     /// 发送原始 HTTP 请求（使用调用方已解析的模型 Resolution，跳过内部 Resolve 步骤）。
@@ -66,7 +84,7 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         GatewayRawRequest request,
         GatewayModelResolution resolution,
         Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
-        Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null,
+        Func<GatewayNativeAdmissionContext, CancellationToken, Task<GatewayRawResponse?>>? admit = null,
         CancellationToken ct = default)
         => Task.FromResult(GatewayRawResponse.Fail(
             "NATIVE_RESPONSES_UNSUPPORTED", "当前网关未提供原生 Responses 通道", 501));
@@ -94,6 +112,22 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         string? pinnedPlatformId = null,
         string? pinnedModelId = null,
         CancellationToken ct = default);
+
+    /// <summary>只读当前模型元信息，不认领恢复租约；未支持时禁止退回执行解析。</summary>
+    Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+        => Task.FromResult(new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = expectedModel,
+            ErrorMessage = "当前网关实现不支持只读模型元信息",
+        });
 
     /// <summary>
     /// 按异步任务提交阶段记录的 Offering ID 恢复精确路由。
@@ -266,6 +300,9 @@ public class PoolModelInfo
     /// 健康状态
     /// </summary>
     public string HealthStatus { get; init; } = "Healthy";
+
+    /// <summary>只读恢复资格快照；实际请求仍须原子认领半开租约。</summary>
+    public bool IsRecoveryProbeAvailable { get; init; }
 
     /// <summary>
     /// 健康评分（0-100）

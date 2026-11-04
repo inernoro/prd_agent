@@ -2088,6 +2088,7 @@ async function initStateService(): Promise<void> {
 }
 
 await initStateService();
+config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
 await restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch),
   { shell: isPreviewInstance() ? undefined : shell });
 
@@ -2555,6 +2556,9 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
+  resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
+  getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
   // 适配器拿值。老项目 dockerNetwork 字段可能为空,此时返回 undefined,
@@ -3226,6 +3230,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           operation: 'branch-auto-wake',
           source: 'proxy.preview-auto-wake',
           reason: '预览访问自动唤醒（docker restart，未重建代码）',
+          assertCurrent: step => lease?.assertCurrent(step),
         });
         lease?.assertCurrent(`auto-wake after ${svc.profileId}`);
         if (!ok) {
@@ -3871,6 +3876,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  stateService.assertBranchStorageRemovalAllowed(slug);
   const branchOperationLease = beginBackgroundBranchOperation({
     branchId: slug,
     kind: 'janitor-remove',
@@ -3998,6 +4004,11 @@ janitorService.setRemoveFn(async (slug: string) => {
         });
       }
       if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        try { stateService.assertBranchStorageRemovalAllowed(branch.id); }
+        catch (error) {
+          console.warn(`[startup-reconcile] retaining private-storage branch ${branch.id}: ${(error as Error).message}`);
+          continue;
+        }
         activeServerEventLogStore?.record({
           category: 'container',
           severity: 'warn',
@@ -4314,7 +4325,11 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (found && found.running) continue;
         if (!found) continue; // 容器完全不存在 → 已是 error,不在本 loop 范围(走 redeploy)
 
-        const attemptKey = `app:${key}`;
+        // 重试预算属于精确运行身份；重新部署不继承旧容器的失败计数。
+        if (found.containerName !== svc.containerName) continue;
+        if (!found.containerId) continue; // 身份未知时不把预算或命令绑定到可复用名称。
+        const attemptKey = `app:${key}:${found.containerId}`;
+        for (const oldKey of restartAttempts.keys()) if (oldKey.startsWith(`app:${key}:`) && oldKey !== attemptKey) restartAttempts.delete(oldKey);
         const isNewCrash = !restartAttempts.has(attemptKey);
         const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
         // 容器自行退出（崩溃 / OOM / docker kill）首次被巡检发现：留痕，
@@ -4397,7 +4412,9 @@ janitorService.setRemoveFn(async (slug: string) => {
         }
         try {
           branchOperationLease?.assertCurrent(`auto-restart before docker start ${profileId}`);
-          const startRes = await shell.exec(`docker start ${found.containerName}`);
+          const startRes = await shell.exec(`docker start ${found.containerId}`, {
+            beforeStart: () => branchOperationLease?.assertCurrent(`auto-restart execution ${profileId}`),
+          });
           branchOperationLease?.assertCurrent(`auto-restart after docker start ${profileId}`);
           activeServerEventLogStore?.record({
             category: 'container',

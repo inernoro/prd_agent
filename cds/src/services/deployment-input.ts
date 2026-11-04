@@ -9,6 +9,8 @@ export interface DeploymentInputSnapshot {
   ciTargetSha: BranchEntry['ciTargetSha'];
   /** 完整固定提交在受理前即可解析模板，不借用会在受理后被更新的缓存 SHA。 */
   targetCommitSha?: string;
+  targetOrigin?: 'remote-head';
+  remoteHeadObservedAt?: string;
   configuredEnv: Record<string, string>;
   managedPlan?: ManagedProjectPlan | null;
   configHash?: string;

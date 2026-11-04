@@ -13,6 +13,11 @@ import { loadConfig } from '../src/config.js';
 import { probeDaemonHealth } from '../src/engine/client.js';
 import { OpenDesignDaemon, buildDaemonEnv, type DaemonExit } from '../src/engine/daemon.js';
 import { isDeniedEgressAddress, startEgressRelay, type EgressRelay } from '../src/engine/egress-relay.js';
+import {
+  OPEN_DESIGN_PRESENTATION_SKILL_FILES,
+  missingPresentationSkillSourceFiles,
+  registerPresentationSkill,
+} from '../src/engine/presentation-skill.js';
 import { listDesignSystems } from '../src/engine/self-check.js';
 import {
   findTemplateAssertionFailure,
@@ -21,6 +26,11 @@ import {
   prepareWebPrototypeResources,
 } from '../src/engine/web-prototype.js';
 import { OPEN_DESIGN_CODEX_VERSION, buildOpenDesignCodexConfig } from '../src/prompts.js';
+import {
+  probeBrowserQuality,
+  resolveBrowserExecutablePath,
+  summarizeBrowserWorkerFailure,
+} from '../src/quality/browser-runner.js';
 import { FIXTURES, waitFor } from './helpers.js';
 
 const SERVICE_ROOT = path.resolve(__dirname, '..');
@@ -396,6 +406,36 @@ describe('web-prototype template preparation', () => {
   });
 });
 
+describe('presentation skill registration', () => {
+  function makeSource(root: string, name = 'magazine-web-ppt') {
+    const source = path.join(root, 'source');
+    for (const relative of OPEN_DESIGN_PRESENTATION_SKILL_FILES) {
+      const target = path.join(source, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, relative === 'SKILL.md' ? `---\nname: ${name}\n---\n` : relative);
+    }
+    return source;
+  }
+
+  it('registers the complete official bundle byte-for-byte and rejects a wrong registry name', () => {
+    const root = tempDir('design-runtime-presentation-skill-');
+    const source = makeSource(root);
+    registerPresentationSkill({ sourceDir: source, templatesDir: path.join(root, 'templates') }, () => undefined);
+    const target = path.join(root, 'templates', 'guizang-ppt');
+    expect(missingPresentationSkillSourceFiles(target)).toEqual([]);
+    for (const relative of OPEN_DESIGN_PRESENTATION_SKILL_FILES) {
+      expect(fs.readFileSync(path.join(target, relative))).toEqual(fs.readFileSync(path.join(source, relative)));
+    }
+
+    const wrong = tempDir('design-runtime-presentation-skill-wrong-');
+    const wrongSource = makeSource(wrong, 'guizang-ppt');
+    expect(() => registerPresentationSkill(
+      { sourceDir: wrongSource, templatesDir: path.join(wrong, 'templates') },
+      () => undefined,
+    )).toThrow(expect.objectContaining({ code: 'workspace_design_template_init_failed' }));
+  });
+});
+
 describe('wiring guards', () => {
   const executorSource = fs.readFileSync(path.join(SERVICE_ROOT, 'src/executor.ts'), 'utf8');
 
@@ -428,6 +468,66 @@ describe('wiring guards', () => {
     expect(config).not.toMatch(/OPENAI_API_KEY|CODEX_API_KEY|chatgpt|api\.openai\.com/);
   });
 
+  it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
+    const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_VERSION=155.0.8059.84');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_RELEASE=0');
+    expect(dockerfile).toContain('apk add --no-cache chromium="${DESIGN_RUNTIME_CHROMIUM_VERSION}-r${DESIGN_RUNTIME_CHROMIUM_RELEASE}"');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser');
+    expect(dockerfile).toContain('su open-design -s /bin/sh');
+    expect(dockerfile).toContain('scripts/image-browser-smoke.mjs');
+    const smoke = fs.readFileSync(path.join(SERVICE_ROOT, 'scripts/image-browser-smoke.mjs'), 'utf8');
+    expect(smoke).toContain("browser.version() !== expectedVersion");
+    expect(smoke).toContain("{ name: 'desktop', width: 1440, height: 900 }");
+    expect(smoke).toContain("{ name: 'mobile', width: 390, height: 844 }");
+    expect(dockerfile).toContain('mkdir -p /home/open-design');
+    expect(dockerfile).toContain('chown open-design:open-design /home/open-design');
+    expect(dockerfile).toContain('chmod 0700 /home/open-design');
+    expect(dockerfile).toContain('chown open-design:open-design');
+    expect(dockerfile).toContain('/var/lib/map-design-runtime/browser-quality');
+    expect(dockerfile).toContain('chmod 0711 /var/lib/map-design-runtime');
+    expect(dockerfile).toMatch(/chmod 0700 [^\n]*\/var\/lib\/map-design-runtime\/output \/var\/lib\/map-design-runtime\/browser-quality/);
+  });
+
+  it('uses the image-provided Chromium path without changing local Playwright tests', () => {
+    expect(resolveBrowserExecutablePath({
+      DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: ' /usr/bin/chromium-browser ',
+    })).toBe('/usr/bin/chromium-browser');
+    expect(resolveBrowserExecutablePath({})).toContain('chromium');
+  });
+
+  it('rejects an image whose browser HOME is absent and keeps the Chromium crash reason', () => {
+    const root = tempDir('design-runtime-browser-probe-');
+    const browser = path.join(root, 'chromium');
+    fs.writeFileSync(browser, 'binary');
+    const missingHome = path.join(root, 'missing-home');
+    expect(probeBrowserQuality({
+      env: { DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: browser },
+      engineHome: missingHome,
+      engineUid: process.getuid?.(),
+      engineGid: process.getgid?.(),
+    })).toMatchObject({
+      ready: false,
+      observation: expect.stringContaining('Browser HOME is missing or not writable'),
+    });
+    fs.mkdirSync(missingHome, { mode: 0o700 });
+    expect(probeBrowserQuality({
+      env: { DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: browser },
+      engineHome: missingHome,
+      engineUid: process.getuid?.(),
+      engineGid: process.getgid?.(),
+    }).ready).toBe(true);
+
+    const summary = summarizeBrowserWorkerFailure(new Error([
+      'browserType.launch: Target page, context or browser has been closed',
+      'Browser logs:',
+      '[pid=716][err] chrome_crashpad_handler: --database is required',
+      '[pid=716] <process did exit: exitCode=null, signal=SIGTRAP>',
+    ].join('\n')));
+    expect(summary).toContain('chrome_crashpad_handler: --database is required');
+    expect(summary).toContain('signal=SIGTRAP');
+  });
+
   it('keeps the production defaults on the layout the image provides', () => {
     const config = loadConfig({});
     expect(config).toMatchObject({
@@ -437,6 +537,7 @@ describe('wiring guards', () => {
       odDataDir: '/app/.od',
       templatesDir: '/app/design-templates',
       webPrototypeSourceDir: '/app/plugins/_official/examples/web-prototype',
+      presentationSkillSourceDir: '/app/plugins/_official/examples/guizang-ppt',
       odPort: 7456,
       egressPort: 8787,
       engineUid: 1001,

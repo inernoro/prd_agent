@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -36,7 +37,7 @@ describe('waitForReadiness 容器活性早退', () => {
 
   beforeEach(() => {
     mock = new MockShellExecutor();
-    service = new ContainerService(mock, makeConfig());
+    service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
   });
 
   it('连续两次 inspect 到 exited → 提前返回 false 并附崩溃日志', async () => {

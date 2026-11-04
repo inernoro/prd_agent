@@ -46,6 +46,31 @@ export function branchUsesPrebuiltMode(
   });
 }
 
+/** 项目默认失效时拒绝写入，避免静默退回源码模式。 */
+export class InvalidDefaultDeployModeError extends Error {
+  readonly code = 'invalid_default_deploy_mode';
+
+  constructor(profileId: string, mode: string) {
+    super(`服务 '${profileId}' 的项目默认模式 '${mode}' 已不存在；请重新选择有效模式。`);
+    this.name = 'InvalidDefaultDeployModeError';
+  }
+}
+
+/** 先校验完整批次；删除的 Profile 旧键和显式空模式保持兼容。 */
+export function assertValidDefaultDeployModes(
+  defaults: Record<string, string> | undefined,
+  profiles: BuildProfile[],
+): void {
+  for (const profile of profiles) {
+    if (!defaults || !Object.prototype.hasOwnProperty.call(defaults, profile.id)) continue;
+    const mode = defaults[profile.id];
+    if (mode && (!profile.deployModes || !Object.prototype.hasOwnProperty.call(profile.deployModes, mode)
+      || !profile.deployModes[mode] || typeof profile.deployModes[mode] !== 'object')) {
+      throw new InvalidDefaultDeployModeError(profile.id, mode);
+    }
+  }
+}
+
 /**
  * 把项目默认 deploy mode 写进分支 profileOverrides（建分支时调用,SSOT）。
  * 直接 mutate branch.profileOverrides（与历史 branches.ts 行为一致）；不存在 / 空默认时 no-op。
@@ -55,11 +80,11 @@ export function applyDefaultDeployModesToBranch(
   projectDefaultDeployModes: Record<string, string> | undefined,
   profiles: BuildProfile[],
 ): void {
+  assertValidDefaultDeployModes(projectDefaultDeployModes, profiles);
   if (!projectDefaultDeployModes || Object.keys(projectDefaultDeployModes).length === 0) return;
   for (const profile of profiles) {
     if (!Object.prototype.hasOwnProperty.call(projectDefaultDeployModes, profile.id)) continue;
     const mode = projectDefaultDeployModes[profile.id] || '';
-    if (mode && !profile.deployModes?.[mode]) continue;
     if (!branch.profileOverrides) branch.profileOverrides = {};
     branch.profileOverrides[profile.id] = {
       ...(branch.profileOverrides[profile.id] || {}),

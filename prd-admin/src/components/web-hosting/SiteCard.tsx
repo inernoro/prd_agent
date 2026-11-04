@@ -25,6 +25,7 @@ import { useDockDrag } from '@/components/share-dock';
 import { CardIconAction, CardMoreButton, type CardMoreAction } from './SiteCardActions';
 import { resolveSiteForm, siteFormBadge, siteSourceLabel, SITE_FORM_REGISTRY } from './siteFormRegistry';
 import { fmtSize, relativeTime } from './siteFormat';
+import { WEB_HOSTING_UPLOAD_ACCEPT } from '@/lib/webHostingUploadLimits';
 
 /** 网页托管卡片拖进 ShareDock 投放槽时用的 MIME（页面与卡片共用同一个常量，不各写一份）。 */
 export const WEB_PAGE_MIME = 'application/x-map-site-id';
@@ -303,7 +304,7 @@ export function SiteCard({
         id={`site-replace-${site.id}`}
         type="file"
         className="hidden"
-        accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+        accept={WEB_HOSTING_UPLOAD_ACCEPT}
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (f) onReplaceFile(f);
@@ -413,7 +414,7 @@ export function SiteCard({
           {/* 右下：形态量（单页 / N 文件 / N 页 / 时长） */}
           {formBadge && (
             <span
-              className="absolute bottom-2 right-2 z-20 inline-flex items-center backdrop-blur-md"
+              className={`pointer-events-none absolute bottom-2 right-2 z-20 inline-flex items-center backdrop-blur-md transition-opacity ${!isSmall ? '[@media(hover:hover)]:group-hover:opacity-0 [@media(hover:hover)]:group-focus-within:opacity-0' : ''}`}
               style={{
                 height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
                 fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)',
@@ -468,12 +469,16 @@ export function SiteCard({
                   label={shared ? `管理分享${linkCount > 0 ? ` · ${linkCount}` : ''}` : '分享'}
                   icon={shared ? <Link2 size={12} /> : <Share2 size={12} />}
                   onClick={onShare}
+                  compact={size === 'medium'}
                 />
               )}
-              <div className="ml-auto flex items-center gap-[5px]">
-                {hoverActions.map((a) => (
-                  <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact onScrim />
-                ))}
+              <div className="ml-auto flex shrink-0 items-center gap-[5px]">
+                {/* 窄屏按钮放大至 44px，次要操作由更多菜单承接，避免挤掉菜单入口。 */}
+                <div className="hidden items-center gap-[5px] sm:flex">
+                  {hoverActions.map((a) => (
+                    <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact onScrim />
+                  ))}
+                </div>
                 <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
               </div>
             </div>

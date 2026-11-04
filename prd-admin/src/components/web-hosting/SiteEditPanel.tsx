@@ -50,7 +50,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     progress,
     elapsedSeconds,
     resolvedModel,
-    thinking,
     previewHtml,
     previewUrl,
     previewedRevision,
@@ -67,8 +66,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setSelectedKnowledge,
     loadingKnowledge,
     capabilities,
-    selectedRuntime,
-    setSelectedRuntime,
     screenshots,
     previewFromEvent,
     runInfo,
@@ -78,11 +75,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setRecoveryNotice,
     runtimeRecoveryGate,
     setRuntimeRecoveryGate,
-    enabledRuntimes,
     activeRuntime,
     unavailableRuntimes,
     activeRuntimeFact,
-    runtimeFallback,
     screenshotsSupported,
     addScreenshots,
     generationStageIndex,
@@ -198,6 +193,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
   const recoveryActionLabel = recoveryNotice?.action === 'history'
     ? '刷新版本记录'
+    : recoveryNotice?.action === 'restart'
+      ? '按原要求重新开始'
     : recoveryNotice?.action === 'preview'
       ? '重新预览'
       : recoveryNotice?.action === 'publish'
@@ -279,7 +276,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                     disabled={generating || mutatingId !== null}
                     className="inline-flex min-h-11 items-center justify-center rounded-lg border border-amber-500/40 px-3 text-[11px] font-semibold text-token-primary hover:bg-amber-500/10 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
                   >
-                    调整要求或切换执行器
+                    调整要求或稍后重试
                   </button>
                 )}
                 <button
@@ -416,24 +413,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             ))}
           </ol>
 
-          {enabledRuntimes.length > 1 && (
-            <select
-              value={selectedRuntime}
-              onChange={(event) => setSelectedRuntime(event.target.value)}
-              disabled={generating}
-              aria-label="页面修改执行器"
-              className="mt-3 min-h-11 w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-base text-token-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:text-xs"
-            >
-              {enabledRuntimes.map((item) => (
-                <option key={item.id} value={item.id}>{item.label}</option>
-              ))}
-            </select>
-          )}
-          {runtimeFallback && (
-            <p className="mt-2 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed" style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
-              {runtimeFallback}
-            </p>
-          )}
           {capabilities.length > 0 && (
             <details className="group mt-3 rounded-lg border border-token-subtle bg-token-nested text-[10px] leading-relaxed text-token-muted">
               <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 font-medium text-token-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
@@ -484,7 +463,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             <p className="mt-1 text-[10px] leading-relaxed text-token-muted">
               {screenshotsSupported
                 ? '把有问题的地方截图圈出来，执行器会对照截图修改；也可以直接在这里粘贴截图。'
-                : '截图需要精细设计（OpenDesign）：当前是快速修改，截图不会随这次修改提交。在上方切换执行器后可用。'}
+                : '设计服务尚未就绪，暂时不能附上截图。请稍后重试。'}
             </p>
             <div
               className="mt-2 flex flex-wrap gap-2"
@@ -531,7 +510,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 <button
                   type="button"
                   disabled={generating || !screenshotsSupported}
-                  title={screenshotsSupported ? undefined : '截图需要精细设计'}
+                  title={screenshotsSupported ? undefined : '设计服务就绪后可用'}
                   onClick={() => screenshotInputRef.current?.click()}
                   className="flex h-16 w-24 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-token-subtle text-[10px] text-token-muted transition-colors hover-bg-soft disabled:opacity-50"
                 >
@@ -642,11 +621,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                   style={generating ? undefined : { width: `${progress}%` }}
                 />
               </div>
-              {thinking && generating && (
-                <div className="mt-2 rounded-lg bg-token-nested px-2.5 py-2 text-[10px] leading-relaxed text-token-muted">
-                  <span className="font-medium text-token-secondary">正在分析：</span>{thinking}
-                </div>
-              )}
             </div>
 
             {generating && !previewHtml && (

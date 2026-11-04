@@ -179,11 +179,13 @@ public sealed class LlmLogListItem
     public int? StatusCode { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public int? ReasoningTokens { get; set; }
     public string? TokenUsageSource { get; set; }
     public int? ImageSuccessCount { get; set; }
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    public string? CostKind { get; set; }
     public string? PriceSnapshotHash { get; set; }
     public string? ProviderRequestId { get; set; }
     public decimal? ProviderReportedCost { get; set; }
@@ -256,6 +258,10 @@ public sealed class LlmLogDetail
     public int? ToolCallCount { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public int? ReasoningTokens { get; set; }
+    public int? CacheCreationInputTokens { get; set; }
+    public int? CacheReadInputTokens { get; set; }
+    public bool? CacheCreationCountedInsideInput { get; set; }
     public int? ImageSuccessCount { get; set; }
     public List<LogImageDto> OutputImages { get; set; } = new();
     public string? OutputImageCaptureStatus { get; set; }
@@ -286,6 +292,8 @@ public sealed class LlmLogDetail
     public string? CostStatus { get; set; }
     /// <summary>算不出钱时的人话原因，直接给用户看。</summary>
     public string? CostUnpricedReason { get; set; }
+    /// <summary>金额证据性质：供应商实算、官方基准估算、供应商策略估算、未计价或无用量。</summary>
+    public string? CostKind { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
     public string? PriceSnapshotHash { get; set; }
     public string? ProviderRequestId { get; set; }

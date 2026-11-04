@@ -13,7 +13,7 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.9.1", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.9.2", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("自主三档边界", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("五层自治回路", OfficialSkillTemplates.AiDefectResolveSkillMd);

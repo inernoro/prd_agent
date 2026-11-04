@@ -4,8 +4,8 @@ import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, Users, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { itemComboboxInputClass } from './itemSearchCombobox';
+import { AnchoredMenu } from './ui/AnchoredMenu';
 
 /** 相对时间格式化 */
 function fmtRelative(v?: string | null) {
@@ -36,6 +36,8 @@ export interface UserSearchSelectProps {
   onSelectUser?: (user: AdminUser) => void;
   /** 预加载的用户列表（不传则组件内部自动获取） */
   users?: AdminUser[];
+  /** 已确认的当前已选用户，仅用于回显；不替代目录搜索或改变可选范围。 */
+  selectedUser?: Pick<AdminUser, 'userId' | 'username' | 'displayName'> | null;
   /** 占位文本 */
   placeholder?: string;
   /** 是否显示"全部用户"选项（用于过滤场景） */
@@ -64,6 +66,7 @@ export function UserSearchSelect({
   onChange,
   onSelectUser,
   users: externalUsers,
+  selectedUser,
   placeholder = '搜索用户名或昵称...',
   showAllOption = false,
   allOptionLabel = '全部用户',
@@ -77,8 +80,8 @@ export function UserSearchSelect({
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 下拉面板位置（Portal 渲染需要绝对坐标）。空间不足时向上翻转，并按可用空间限高。
-  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null);
+  // 面板尺寸按视口可用空间限高，具体定位和模态内挂载交给共享锚定菜单。
+  const [pos, setPos] = useState<{ width: number; maxHeight: number } | null>(null);
 
   // 内部用户数据（当外部未提供时自动获取）
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
@@ -112,6 +115,7 @@ export function UserSearchSelect({
   // 已选 value 但用户未加载（关闭态/首次渲染）时，预拉目录解析显示名，避免触发器空白（如「处理人」框已指派却显示占位）。
   useEffect(() => {
     if (externalUsers || !value || open) return;
+    if (selectedUser?.userId === value) return;
     if (users.some((u) => u.userId === value)) return;
     let cancelled = false;
     void searchDirectoryUsers('', 200).then((res) => {
@@ -138,9 +142,9 @@ export function UserSearchSelect({
     return () => { cancelled = true; };
     // users 故意不入依赖（派生自 internalUsers，入依赖会在 setInternalUsers 后循环触发）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, open, externalUsers]);
+  }, [value, open, externalUsers, selectedUser?.userId]);
 
-  const selected = users.find((u) => u.userId === value);
+  const selected = users.find((u) => u.userId === value) ?? (selectedUser?.userId === value ? selectedUser : undefined);
   const q = filter.trim().toLowerCase();
   const filtered = q
     ? users.filter(
@@ -151,8 +155,7 @@ export function UserSearchSelect({
       )
     : users;
 
-  // 计算下拉面板位置：默认向下；若下方空间不足且上方更宽裕则向上翻转，maxHeight 按可用空间收敛，
-  // 同时把 left 夹在视口内，避免靠近底部/右侧时被裁切（修复评论区 @ 弹层显示不全）。
+  // 与锚定菜单的向上翻转规则一致，按较宽裕的一侧计算高度。
   const updatePos = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
@@ -162,12 +165,7 @@ export function UserSearchSelect({
     const spaceAbove = rect.top - margin;
     const openUp = spaceBelow < Math.min(desired, 200) && spaceAbove > spaceBelow;
     const width = Math.max(rect.width, 260);
-    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
-    if (openUp) {
-      setPos({ bottom: window.innerHeight - rect.top + 4, left, width, maxHeight: Math.max(160, Math.min(desired, spaceAbove)) });
-    } else {
-      setPos({ top: rect.bottom + 4, left, width, maxHeight: Math.max(160, Math.min(desired, spaceBelow)) });
-    }
+    setPos({ width, maxHeight: Math.max(160, Math.min(desired, openUp ? spaceAbove : spaceBelow)) });
   }, []);
 
   // 打开时计算位置，滚动/resize 时更新
@@ -181,23 +179,6 @@ export function UserSearchSelect({
       window.removeEventListener('resize', updatePos);
     };
   }, [open, updatePos]);
-
-  // Close on outside click (检查 trigger 和 portal panel)
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (
-        triggerRef.current && !triggerRef.current.contains(target) &&
-        panelRef.current && !panelRef.current.contains(target)
-      ) {
-        setOpen(false);
-        setFilter('');
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
 
   // Auto-focus search input
   useEffect(() => {
@@ -215,20 +196,19 @@ export function UserSearchSelect({
   const inputDisplayValue = open ? filter : closedLabel;
   const inputPlaceholder = showAllOption && !value ? allOptionLabel : placeholder;
 
-  const closePanel = () => {
+  const closePanel = useCallback(() => {
     setOpen(false);
     setFilter('');
-  };
+  }, []);
 
-  const dropdownPanel = open && pos && createPortal(
-    <div
-      ref={panelRef}
+  // 与普通选项搜索统一：弹窗内挂到当前 dialog，保留 Radix 的点击、焦点和滚动保护。
+  // 不能只提高 body portal 的 z-index，否则候选可见但仍被模态点击锁拦截。
+  const dropdownPanel = open && pos && (
+    <AnchoredMenu
+      open onClose={closePanel} anchorRef={triggerRef} align="left" gap={4} minWidth={pos.width}
       className="rounded-[12px] flex flex-col overflow-hidden"
       style={{
-        position: 'fixed',
-        top: pos.top,
-        bottom: pos.bottom,
-        left: pos.left,
+        padding: 0,
         width: pos.width,
         maxHeight: pos.maxHeight,
         zIndex: 9999,
@@ -239,8 +219,9 @@ export function UserSearchSelect({
         WebkitBackdropFilter: 'blur(40px) saturate(180%)',
       }}
     >
+      <div ref={panelRef} className="flex min-h-0 flex-col" style={{ minHeight: 0 }}>
       {/* User list */}
-      <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
+      <div className="flex-1 py-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {/* 全部用户（清除选择）选项 */}
         {showAllOption && !q && (
           <>
@@ -331,8 +312,8 @@ export function UserSearchSelect({
       <div className="px-3 py-1.5 text-[10px] shrink-0 border-t border-token-subtle" style={{ color: 'var(--text-muted)' }}>
         {q ? `${filtered.length} / ${users.length} 人匹配` : `共 ${users.length} 人`}
       </div>
-    </div>,
-    document.body,
+      </div>
+    </AnchoredMenu>
   );
 
   return (

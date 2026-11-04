@@ -1,3 +1,4 @@
+import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -61,7 +62,7 @@ import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/componen
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
 import { DIRECT_PREVIEW_SANDBOX } from '@/components/web-hosting/previewHtml';
-import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
+import { resolveSiteForm, siteSourceLabel, SITE_FORM_REGISTRY } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { QuickSharePopover } from '@/components/web-hosting/QuickSharePopover';
@@ -228,13 +229,6 @@ function buildSharedSiteIds(items: ShareLinkItem[]): Set<string> {
   return set;
 }
 
-const sourceTypeLabels: Record<string, string> = {
-  upload: '手动上传',
-  workflow: '工作流',
-  api: 'API',
-  'saved-share': '从分享保存',
-};
-
 /**
  * 「访问」专用地址解析 —— 与「分享」彻底分开：
  * - 访问：地址一律走 ≥12 字母 token 形式 /s/wp/{token}
@@ -393,7 +387,7 @@ export default function WebPagesPage() {
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  // 来源筛选（手动上传 / 工作流生成 / API 生成 / 保存自分享）；null = 不限
+  // 来源筛选（手动上传 / 工作流生成 / MCP 生成 / 保存自分享）；null = 不限
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
@@ -1462,7 +1456,7 @@ export default function WebPagesPage() {
           compactSlots
           dropzone={{
           hint: '拖文件到此上传',
-          accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
+          accept: [...WEB_HOSTING_UPLOAD_EXTENSIONS],
           // 两阶段：先只上传，再由用户在 dock 内二选一（无密码 / 有密码）创建分享并自动复制链接
           onFiles: async (files) => {
             const f = files[0];
@@ -1608,6 +1602,21 @@ export default function WebPagesPage() {
                 <span className="text-[13px] font-semibold">筛选</span>
                 {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
               </button>
+              <button
+                type="button"
+                onClick={openCreateUploadDialog}
+                aria-label="上传网页"
+                title="上传网页"
+                data-tour-id="webpages-mobile-upload"
+                className="h-11 w-11 rounded-[12px] inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <Upload size={17} />
+              </button>
             </div>
             <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px] text-token-muted">
               <span className="truncate">{activeSpaceLabel}</span>
@@ -1628,7 +1637,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
+          <MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />
         )}
 
         {/* Batch actions */}
@@ -2975,7 +2984,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -3010,7 +3019,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   };
   return (
     <div
-      className={`group flex items-center gap-4 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      className={`group @container flex items-center gap-3 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
       data-dock-draggable={canDrag ? 'true' : 'false'}
       style={{
         background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
@@ -3026,20 +3035,21 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
       />
 
       {site.coverImageUrl ? (
-        <img src={site.coverImageUrl} alt="" className="shrink-0 w-10 h-10 rounded object-cover" />
+        <img src={site.coverImageUrl} alt="" className="shrink-0 w-8 h-8 rounded object-cover" />
       ) : isPdfSite(site) ? (
-        <PdfThumbnail className="shrink-0 w-10 h-10 rounded overflow-hidden" compact />
+        <PdfThumbnail className="shrink-0 w-8 h-8 rounded overflow-hidden" compact />
       ) : (
-        <div className="shrink-0 w-10 h-10 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
+        <div className="shrink-0 w-8 h-8 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
           <SitePreview site={site} url={site.siteUrl} className="w-full h-full" />
         </div>
       )}
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+      {/* 徽标与文件字段分档展开，避免在临界宽度同时抢占标题空间。 */}
+      <div className="flex flex-1 min-w-0 items-center gap-3">
+        <div className="flex flex-1 min-w-0 items-center gap-2">
           {shared && (
             <span
-              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium"
+              className="hidden shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium @[900px]:inline-flex"
               style={{ color: 'var(--semantic-warning-text)' }}
               title="已分享"
             >
@@ -3048,19 +3058,20 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           )}
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
+            title={site.title}
             style={{ color: shared ? 'var(--semantic-warning-text)' : 'var(--text-primary)' }}
             onClick={handleVisit}
           >
             {site.title}
           </span>
           {site.sourceType !== 'upload' && (
-            <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
-              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+            <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
+              {siteSourceLabel(site.sourceType)}
             </Badge>
           )}
           {isPublic && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+              className="hidden shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium @[1100px]:inline-flex"
               style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }}
               title="已公开"
             >
@@ -3068,17 +3079,17 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 mt-0.5 text-xs text-token-muted">
-          <span>{site.files.length} 个文件</span>
-          <span>{fmtSize(site.totalSize)}</span>
-          <span>{site.entryFile}</span>
+        <div className="hidden shrink-0 items-center gap-3 whitespace-nowrap text-xs text-token-muted @[640px]:flex">
+          <span className="hidden @[900px]:inline">{site.files.length} 个文件</span>
+          <span className="w-16 text-right">{fmtSize(site.totalSize)}</span>
+          <span className="hidden w-28 truncate @[1280px]:inline" title={site.entryFile}>{site.entryFile}</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-xs shrink-0 text-token-muted">
-        {site.folder && <span className="flex items-center gap-1"><FolderOpen size={12} /> {site.folder}</span>}
-        <span className="flex items-center gap-1"><Eye size={12} /> {site.viewCount}</span>
-        <span>{relativeTime(site.createdAt)}</span>
+      <div className="hidden items-center gap-3 whitespace-nowrap text-xs shrink-0 text-token-muted @[480px]:flex">
+        {site.folder && <span className="hidden w-28 items-center gap-1 @[1100px]:flex" title={site.folder}><FolderOpen size={12} className="shrink-0" /> <span className="truncate">{site.folder}</span></span>}
+        <span className="hidden w-12 items-center justify-end gap-1 @[640px]:flex"><Eye size={12} /> {site.viewCount}</span>
+        <span className="w-20 text-right">{relativeTime(site.createdAt)}</span>
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
@@ -3326,6 +3337,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
   const handleSave = async () => {
     if (!isEdit && !file) return;
+    const sizeError = file ? getWebHostingUploadError(file) : null;
+    if (sizeError) {
+      toast.error('文件过大或为空', sizeError);
+      return;
+    }
     // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
     const pendingTag = tagInput.trim();
     const effectiveTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
@@ -3479,7 +3495,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   {created.title || created.entryFile}
                 </div>
                 <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  {resolveSiteForm(created).toUpperCase()} 站 · {created.files.length.toLocaleString()} 文件 · {fmtSize(created.totalSize)}
+                  {SITE_FORM_REGISTRY[resolveSiteForm(created)].label} · {created.files.length.toLocaleString()} 文件 · {fmtSize(created.totalSize)}
                 </div>
               </div>
             </div>
@@ -3519,7 +3535,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 </span>
               ) : (
                 <span>
-                  这个站点是视频，没有可供阅读的正文，
+                  这个站点是{SITE_FORM_REGISTRY[resolveSiteForm(created)].label}，当前没有可供提问的正文，
                   <span style={{ color: 'var(--text-primary)' }}>不支持提问</span>
                   ，访客不会看到提问入口，也不会产生模型消耗。
                 </span>
@@ -3815,13 +3831,14 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
                     <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
-                    <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
+                    <p className="text-xs text-token-muted">图片：.png / .jpg / .jpeg / .gif / .webp / .svg / .avif / .ico / .bmp</p>
+                    <p className="text-xs text-token-muted">ZIP 包与解压总量上限 5000 MB；单个文件上限 500 MB</p>
                   </div>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  accept={WEB_HOSTING_UPLOAD_ACCEPT}
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
                 />
@@ -3839,7 +3856,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  accept={WEB_HOSTING_UPLOAD_ACCEPT}
                   className="hidden"
                   onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
                 />

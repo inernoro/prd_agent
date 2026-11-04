@@ -145,6 +145,46 @@ public sealed class DesignArtifactTimingStatsTests
         Assert.Equal(12 * 60d, group.MaterialToShareLink.P50Seconds);
     }
 
+    [Fact]
+    public void Summarize_ExposesPreviewProgressRecoveryAndBrowserQualityWithoutRawEvidence()
+    {
+        var run = Done(DesignArtifactRuntimes.OpenDesign, 600) with
+        {
+            FirstPreviewAt = T0.AddSeconds(90),
+            MaxStaticGapSeconds = 300,
+            Restarted = true,
+            Recovered = true,
+            StreamReconnectCount = 2,
+            PublishedAt = T0.AddHours(2),
+            BrowserQuality = new DesignArtifactBrowserQualitySummary
+            {
+                SchemaVersion = "map-browser-quality-evidence-v1",
+                RuleVersion = "browser-hard-gate-v1",
+                HeuristicVersion = "browser-aesthetic-heuristic-v1",
+                FirstPassPassed = false,
+                RepairAttempts = 1,
+                RepairSucceeded = true,
+                FinalHardPassed = true,
+                FinalScore = 88,
+                Viewports = new List<string> { "desktop", "mobile" },
+                EvidenceRef = "artifact://quality/report.json",
+            },
+        };
+
+        var group = Assert.Single(Summarize(new[] { run }).Groups);
+        Assert.Equal(90d, group.FirstPreview.P50Seconds);
+        Assert.Equal(300d, group.MaxStaticGap.P50Seconds);
+        Assert.Equal(1, group.RestartedCount);
+        Assert.Equal(1, group.RecoveredCount);
+        Assert.Equal(2, group.StreamReconnectCount);
+        Assert.Equal(1, group.PublishedWithin24HoursCount);
+        Assert.Equal(1, group.BrowserQuality.SampleCount);
+        Assert.Equal(0d, group.BrowserQuality.FirstPassRate);
+        Assert.Equal(1d, group.BrowserQuality.RepairSuccessRate);
+        Assert.Equal(88d, group.BrowserQuality.FinalScore.P50Seconds);
+        Assert.Equal(new[] { "browser-hard-gate-v1" }, group.BrowserQuality.RuleVersions);
+    }
+
     private static string Render(FilterDefinition<DesignArtifactRun> filter)
         => filter.Render(new RenderArgs<DesignArtifactRun>(
                 BsonSerializer.SerializerRegistry.GetSerializer<DesignArtifactRun>(),

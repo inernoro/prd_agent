@@ -1,3 +1,4 @@
+import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
@@ -23,10 +24,10 @@ import {
   tryExitNativeFullscreen,
 } from '@/components/web-hosting/shareFullscreen';
 import {
-  DIRECT_PREVIEW_SANDBOX,
+  directPreviewSandbox,
   SRCDOC_PREVIEW_SANDBOX,
   canUseSrcDocPreview,
-  hasFetchableHtml,
+  shouldFetchPreviewHtml,
   resolvePreviewSource,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
@@ -194,6 +195,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
    * 不做成一闪而过的 toast——它是结论，用户得来得及读完。
    */
   const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
+  const pdfDownload = useHostedPdfDownload(data?.sites.length === 1 ? data.sites[0] : null,
+    token ? { token, password: password || undefined } : undefined);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
@@ -256,10 +259,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         description: updated.description,
         siteUrl: updated.siteUrl,
         entryFile: updated.entryFile,
+        contentShape: updated.contentShape,
+        requiresPreviewBridge: updated.requiresPreviewBridge,
         totalSize: updated.totalSize,
         fileCount: updated.files.length,
         coverImageUrl: updated.coverImageUrl,
         pdfAssetUrl: updated.pdfAssetUrl,
+        pdfFilePaths: updated.pdfFilePaths,
         wrappedAssetType: updated.wrappedAssetType,
       } : item),
     } : current);
@@ -409,11 +415,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
-    if (!site || !token || !hasFetchableHtml(site)) {
-      // 包装资产站（PDF/视频）注定走直链，没有可等的正文——直接落到 settled，
+    if (!site || !token || !shouldFetchPreviewHtml(site)) {
+      // 多文件网站和包装资产站（PDF/视频）走真实地址——直接落到 settled，
       // 让 resolvePreviewSource 立刻给 direct，不要让这类站点白等一个超时窗口。
       setEmbeddedHtml(null);
       setEmbeddedHtmlError(null);
+      setLateHtml(null);
+      setIsDeck(false);
       setPreviewFetch(site ? { siteUrl: site.siteUrl, settled: true } : null);
       setDirectFallbackFor(null);
       return;
@@ -768,7 +776,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
      * 判据本体在 previewHtml.ts 的 resolvePreviewSource（那里有完整缘由）。
      */
     const previewSource = resolvePreviewSource({
-      fetchable: hasFetchableHtml(site),
+      fetchable: shouldFetchPreviewHtml(site),
       inlineHtml: iframeHtml,
       // 对不上 siteUrl 就当这一趟还没开始，绝不拿上一趟的结论去判 direct
       settled: previewFetch?.siteUrl === site.siteUrl && previewFetch.settled,
@@ -978,14 +986,17 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               srcDoc 注入 base 后保留相对资源路径，同时不加 allow-same-origin，
               避免用户上传 HTML 获得 MAP 同源能力。
               PDF 壳子仍走 siteUrl：它需要以托管域名为文档源才加载得到同目录那份 PDF。 */}
+          <HostedPdfDownloadStatus status={pdfDownload.status} />
           <iframe
+            ref={pdfDownload.iframeRef}
+            onLoad={pdfDownload.notifyFrame}
             // siteUrl 为空时必须给 undefined 而不是 ''：空串在 HTML 里是「相对当前文档」，
             // iframe 会把分享页自己再加载一遍。下面那块空态提示正是为这种站点准备的。
             src={previewSource === 'direct' && site.siteUrl ? site.siteUrl : undefined}
-            srcDoc={previewSource === 'srcdoc' ? iframeHtml || undefined : undefined}
+            srcDoc={previewSource === 'srcdoc' && iframeHtml ? pdfDownload.decorateHtml(iframeHtml) : undefined}
             title={site.title}
             style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
-            sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX}
+            sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(site.siteUrl)}
             // 全屏权限归 `allow`（Permissions Policy）管，**不是** sandbox 的取值。
             // 这里原先写的 `allow-fullscreen` 不是合法 sandbox flag，Chrome 会报
             // "Error while parsing the 'sandbox' attribute: 'allow-fullscreen' is an

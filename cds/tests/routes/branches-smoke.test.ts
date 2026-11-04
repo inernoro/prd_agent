@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 /**
  * Tests for POST /api/branches/:id/smoke (Phase 3).
  *
@@ -129,7 +130,7 @@ describe('POST /api/branches/:id/smoke', () => {
     stateService.load();
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    const containerService = new ContainerService(mock, config);
+    const containerService = new ContainerService(mock, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
 
     const app = express();
     app.use(express.json());
@@ -184,7 +185,7 @@ describe('POST /api/branches/:id/smoke', () => {
       status: 'running', createdAt: new Date().toISOString(), projectId: 'default',
     } as any);
     const ws = new WorktreeService(mock, naked.repoRoot);
-    const cs = new ContainerService(mock, naked);
+    const cs = new ContainerService(mock, naked, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const app2 = express();
     app2.use(express.json());
     app2.use('/api', createBranchRouter({ stateService: st2, worktreeService: ws, containerService: cs, shell: mock, config: naked }));

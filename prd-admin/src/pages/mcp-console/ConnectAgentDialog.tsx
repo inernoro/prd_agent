@@ -17,11 +17,12 @@ import { toast } from '@/lib/toast';
 import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
 import { autoPicks, picksToScopes, samePicks, type CapabilityPicks } from './scopePlan';
+import { buildConnectionPrompt, CLIENT_KINDS, CLIENT_REGISTRY, DEFAULT_CLIENT, type ClientKind } from './clientRegistry';
+import { MapAgentSkillPanel, type MapAgentSkillState } from './MapAgentSkillPanel';
 
 /** 只有两屏：填名字 / 拿配置。中间那道「选能力」被收进高级设置了。 */
 type Step = 'form' | 'connect';
 
-type ClientKind = 'claude-code' | 'claude-desktop' | 'codex';
 
 /**
  * 授权自检的等待上限。
@@ -53,13 +54,8 @@ function withTimeout<T>(task: Promise<T>, ms: number): Promise<T | null> {
  *   - 没动过高级设置 → 自动档，钥匙不存清单，平台以后新上一块能力它自动就有；
  *   - 动过 → 手动档，按当时那份清单钉死，平台新增的不会自动进来（面板会告诉用户「你还能给它什么」）。
  *
- * 收不回来的动作（删除、公开发布）不在它拿到的工具里，两档都一样，高级设置里也调不出来。
- *
- * 这句话的**范围**要说准：挡住的是智能体经由 MCP 拿到的那套工具，以及它直连普通业务控制器
- * 时按方法与路径认得出来的破坏性动作。认不出来的还有一类 —— 由请求体里的一个字段决定的
- * 状态翻转（例如把站点的可见性改成公开），路径与方法上看不出任何破坏性。所以文案写「它拿到的
- * 工具里没有」，不写「一律不给」：后者是一句这一版兑现不了的话，而这一整页的规矩就是
- * 界面不许说系统做不到的事。边界与真正的收口方案记在 doc/debt.platform.md #34。
+ * 站点删除仍不开放；可见性和分享操作走受控开放接口，遵循对象权限和资料确认。
+ * 连接配置与技能包在同一屏交付，避免只接了工具却没有操作指引。
  */
 export function ConnectAgentDialog({
   open,
@@ -67,15 +63,17 @@ export function ConnectAgentDialog({
   capabilities,
   endpointUrl,
   onCreated,
+  skillState,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   capabilities: McpCapabilityDto[];
   endpointUrl: string;
   onCreated: () => void;
+  skillState: MapAgentSkillState;
 }) {
   const [step, setStep] = useState<Step>('form');
-  const [clientName, setClientName] = useState('我的 Claude Code');
+  const [clientName, setClientName] = useState('我的 Codex');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState('');
@@ -85,7 +83,11 @@ export function ConnectAgentDialog({
   const [checkError, setCheckError] = useState<string | null>(null);
   // 留着密钥 id 才能重试自检。明文不能重来，自检可以。
   const [issuedKeyId, setIssuedKeyId] = useState<string | null>(null);
-  const [configTab, setConfigTab] = useState<ClientKind>('claude-code');
+  const [configTab, setConfigTab] = useState<ClientKind>(DEFAULT_CLIENT);
+  const selectClient = useCallback((next: ClientKind) => {
+    setClientName((name) => name === `我的 ${CLIENT_REGISTRY[configTab].label}` ? `我的 ${CLIENT_REGISTRY[next].label}` : name);
+    setConfigTab(next);
+  }, [configTab]);
 
   const defaults = useMemo(() => autoPicks(capabilities), [capabilities]);
   const [picks, setPicks] = useState<CapabilityPicks>(defaults);
@@ -113,7 +115,8 @@ export function ConnectAgentDialog({
 
   const reset = useCallback(() => {
     setStep('form');
-    setClientName('我的 Claude Code');
+    setClientName('我的 Codex');
+    setConfigTab(DEFAULT_CLIENT);
     setAdvancedOpen(false);
     setPicks(defaults);
     setDirty(false);
@@ -193,39 +196,27 @@ export function ConnectAgentDialog({
     await runSelfCheck(keyId);
   }, [clientName, scopes, scopeMode, onCreated, runSelfCheck]);
 
-  const configSnippet = useMemo(() => {
-    const key = plaintext || 'sk-ak-你的密钥';
-    if (configTab === 'claude-code') {
-      return `claude mcp add --transport http map \\\n  ${endpointUrl} \\\n  --header "Authorization: Bearer ${key}"`;
-    }
-    if (configTab === 'claude-desktop') {
-      return JSON.stringify(
-        {
-          mcpServers: {
-            map: { type: 'http', url: endpointUrl, headers: { Authorization: `Bearer ${key}` } },
-          },
-        },
-        null,
-        2,
-      );
-    }
-    // Codex 的键是 http_headers（map<string,string>），不是嵌套的 [mcp_servers.map.headers] 表 ——
-    // 写成嵌套表 TOML 照样解析得过，但 Codex 认不出来，鉴权头被静默丢掉，
-    // 请求会以匿名身份打到需要密钥的 MCP 端点。见 Codex 配置参考 mcp_servers.<id>.http_headers。
-    return `[mcp_servers.map]\nurl = "${endpointUrl}"\nhttp_headers = { Authorization = "Bearer ${key}" }`;
-  }, [configTab, endpointUrl, plaintext]);
+  const configSnippet = useMemo(
+    () => CLIENT_REGISTRY[configTab].config(endpointUrl, plaintext || 'sk-ak-你的密钥'),
+    [configTab, endpointUrl, plaintext],
+  );
+  const connectionPrompt = useMemo(
+    () => buildConnectionPrompt(configTab, endpointUrl, plaintext || 'sk-ak-你的密钥', skillState.manifest),
+    [configTab, endpointUrl, plaintext, skillState.manifest],
+  );
 
   return (
     <Dialog
       open={open}
       onOpenChange={handleClose}
       title="接入你的智能体"
-      description="复制一段配置粘进 Claude Code、Codex，它就能替你生图、写稿、整理知识库、把网页托管出来"
+      description="优先接入 Codex、WorkBuddy，连接配置和配套技能一起拿到"
       maxWidth={560}
       content={
         <div className="flex flex-col gap-4">
           {step === 'form' && (
             <>
+              <ClientTabs value={configTab} onChange={selectClient} />
               <label className="flex flex-col gap-1.5">
                 <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                   给它起个名字
@@ -287,31 +278,11 @@ export function ConnectAgentDialog({
                 <CopyButton text={plaintext} label="复制" />
               </div>
 
-              <div className="flex gap-1 rounded-[11px] p-1" style={{ background: 'var(--tab-container-bg)' }}>
-                {([
-                  { key: 'claude-code' as const, label: 'Claude Code' },
-                  { key: 'claude-desktop' as const, label: 'Claude 桌面' },
-                  { key: 'codex' as const, label: 'Codex' },
-                ]).map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setConfigTab(t.key)}
-                    className="flex-1 rounded-[9px] py-1.5 text-[12.5px] font-medium"
-                    style={
-                      configTab === t.key
-                        ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
-                        : { background: 'transparent', color: 'var(--text-muted)' }
-                    }
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
+              <ClientTabs value={configTab} onChange={selectClient} />
 
               <div className="flex flex-col gap-2">
                 <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-                  {configTab === 'claude-code' ? '在终端里跑这一行' : '粘进配置文件'}
+                  {CLIENT_REGISTRY[configTab].configLocation}
                 </span>
                 <pre
                   className="overflow-x-auto rounded-[11px] px-3.5 py-3 text-[11.5px] leading-relaxed"
@@ -325,6 +296,13 @@ export function ConnectAgentDialog({
                   {configSnippet}
                 </pre>
               </div>
+
+              <details className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+                <summary className="cursor-pointer">查看完整接入提示词</summary>
+                <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-relaxed">{connectionPrompt}</pre>
+              </details>
+
+              <MapAgentSkillPanel state={skillState} endpointUrl={endpointUrl} clientKind={configTab} />
 
               {checking && (
                 <div
@@ -407,7 +385,7 @@ export function ConnectAgentDialog({
           )}
 
           {/* 底部动作 */}
-          <div className="flex items-center gap-2.5 pt-0.5">
+          <div className="flex flex-wrap items-center gap-2.5 pt-0.5">
             {step === 'form' && (
               <button
                 type="button"
@@ -421,7 +399,8 @@ export function ConnectAgentDialog({
             )}
             {step === 'connect' && (
               <>
-                <CopyPrimaryButton text={configSnippet} />
+                <CopyPrimaryButton text={connectionPrompt} />
+                <CopyButton text={configSnippet} label="仅复制配置" />
                 <button
                   type="button"
                   onClick={() => handleClose(false)}
@@ -440,12 +419,31 @@ export function ConnectAgentDialog({
 
           <p className="text-center text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {step === 'form'
-              ? '有效期 90 天；明文只显示一次。续期在「海鲜市场 → 开放接口 → 密钥」那一屏（接入台这一页暂时只能调上限和断开）。'
-              : '粘完重启客户端，跟它说一句「把这周周报做成一页网页发出来」就能用。'}
+              ? '有效期 90 天，凭证仅显示一次。接入后可在“管理”中调整权限与额度；续期请前往“海鲜市场 → 开放接口 → 密钥”。'
+              : '把完整提示词交给对应客户端，按指引连接并安装技能；实际调用成功后才算接入完成。'}
           </p>
         </div>
       }
     />
+  );
+}
+
+function ClientTabs({ value, onChange }: { value: ClientKind; onChange: (kind: ClientKind) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1 rounded-[11px] p-1" style={{ background: 'var(--tab-container-bg)' }} aria-label="接入客户端">
+      {CLIENT_KINDS.map((kind) => (
+        <button
+          key={kind}
+          type="button"
+          aria-pressed={value === kind}
+          onClick={() => onChange(kind)}
+          className="flex-1 whitespace-nowrap rounded-[9px] px-1.5 py-1.5 text-[12px] font-medium"
+          style={value === kind
+            ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
+            : { background: 'transparent', color: 'var(--text-muted)' }}
+        >{CLIENT_REGISTRY[kind].label}</button>
+      ))}
+    </div>
   );
 }
 
@@ -501,7 +499,7 @@ function ScopeDisclosure({
         </button>
       </div>
 
-      {/* 折叠态：只告知它能做什么、以及什么永远不给 */}
+      {/* 折叠态：告知可用能力与站点删除边界 */}
       {!open && (
         <div className="flex flex-wrap gap-1.5">
           {granted.map((cap) => {
@@ -529,7 +527,7 @@ function ScopeDisclosure({
             }}
           >
             <X size={11} aria-hidden />
-            删除 · 公开发布
+            站点删除不开放
           </span>
         </div>
       )}
@@ -677,7 +675,7 @@ function ScopeDisclosure({
       )}
 
       <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-        它拿到的工具里没有删除、也没有公开发布这类收不回来的动作，高级设置里也调不出来。生图会花钱，每天有上限。
+        站点删除不开放。对外发布需在客户端设置中单独开启，分享仍需权限和资料确认；生图每天有额度上限。
       </p>
     </div>
   );
@@ -699,11 +697,11 @@ function CopyPrimaryButton({ text }: { text: string }) {
           window.setTimeout(() => setFailed(false), 3200);
         }
       }}
-      className="flex h-10 flex-1 items-center justify-center gap-2 rounded-[11px] text-[13.5px] font-semibold"
+      className="flex h-10 min-w-[180px] flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-[11px] text-[13.5px] font-semibold"
       style={{ background: 'var(--accent-primary-solid)', color: 'var(--accent-on-primary)' }}
     >
       {copied ? <Check size={15} aria-hidden /> : <Copy size={15} aria-hidden />}
-      {copied ? '已复制' : failed ? '复制失败，请手动选中' : '一键复制配置'}
+      {copied ? '已复制' : failed ? '复制失败，请手动选中' : '复制完整接入提示词'}
     </button>
   );
 }

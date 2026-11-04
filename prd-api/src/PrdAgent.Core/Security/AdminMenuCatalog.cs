@@ -101,6 +101,12 @@ public static class AdminMenuCatalog
                 continue;
             }
 
+            if (menu.AppKey is "product-agent" && permSet.Contains(AdminPermissionCatalog.ProductAgentVersionApply))
+            {
+                result.Add(menu);
+                continue;
+            }
+
             // 查找该 appKey 下的所有 Controller
             if (!appKeyMap.TryGetValue(menu.AppKey, out var controllers) || controllers.Count == 0)
             {
