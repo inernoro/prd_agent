@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -26,10 +27,11 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 import type { Project, BranchEntry, BuildProfile, CdsConfig } from '../../src/types.js';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
-import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 import { namedServiceLabel } from '../../src/services/preview-entrypoints.js';
+import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { attachHttpFixtureObservation, listenLoopbackFixture, projectHttpFixtureResponse, type HttpFixtureEvent } from '../helpers/loopback-http-fixture.js';
 /**
  * Stateful docker network mock. Tracks which networks currently "exist"
  * so that `inspect` correctly reports 0 after a successful `create` and
@@ -87,9 +89,14 @@ async function request(
   urlPath: string,
   body?: unknown,
   headers?: Record<string, string>,
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: any; evidence: ReturnType<typeof projectHttpFixtureResponse> }> {
+  attachHttpFixtureObservation(server);
+  const phase = method === 'POST' && urlPath === '/api/projects' ? 'project-create' : 'projects';
   return new Promise((resolve, reject) => {
+    const fail = (event: HttpFixtureEvent, response?: http.IncomingMessage, raw = '', bytes = 0) =>
+      reject(new Error(JSON.stringify(projectHttpFixtureResponse(server, { phase, event, response, raw, bytes }))));
     const addr = server.address() as { port: number };
+    if (!addr) { fail('request-error'); return; }
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
     const req = http.request(
       {
@@ -106,18 +113,23 @@ async function request(
         },
       },
       (res) => {
-        let raw = '';
-        res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+        let raw = '', bytes = 0;
+        res.on('data', (chunk: Buffer) => { bytes += chunk.length; raw += chunk.toString(); });
         res.on('end', () => {
+          if (!res.complete) { fail('aborted', res, raw, bytes); return; }
+          const evidence = projectHttpFixtureResponse(server, { phase, event: 'end', response: res, raw, bytes });
           try {
-            resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null });
+            resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null, evidence });
           } catch {
-            resolve({ status: res.statusCode!, body: raw });
+            resolve({ status: res.statusCode!, body: raw, evidence });
           }
         });
+        res.on('aborted', () => fail('aborted', res, raw, bytes));
+        res.on('error', () => fail('response-error', res, raw, bytes));
+        res.on('close', () => { if (!res.complete) fail('aborted', res, raw, bytes); });
       },
     );
-    req.on('error', reject);
+    req.on('error', () => fail('request-error'));
     if (payload) req.write(payload);
     req.end();
   });
@@ -148,7 +160,7 @@ describe('Projects router (P4 Part 2)', () => {
   let server: http.Server;
   let projectConfig: CdsConfig;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-test-'));
     const stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile, tmpDir);
@@ -175,7 +187,8 @@ describe('Projects router (P4 Part 2)', () => {
     projectConfig = { rootDomains: ['preview.test', 'secondary.test'] } as CdsConfig;
     app.use('/api', createProjectsRouter({ stateService, shell, githubApp, config: projectConfig }));
 
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
+    if (!server.address()) await once(server, 'listening');
   });
 
   afterEach(async () => {
@@ -897,7 +910,11 @@ describe('Projects router (P4 Part 2)', () => {
     });
 
     it.each(['alias', 'domain'].flatMap(source => ['self-named', 'self-member', 'other-member'].map(kind => [source, kind])))('改名拒绝%s占用%s服务入口，状态不变', async (source, kind) => {
-      const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
+      const created = await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' });
+      expect(created.status === 201 && created.evidence.hasProject
+        && created.evidence.fixtureIdMatches && created.evidence.fixturePidMatches
+        && created.evidence.arrivalMatches && created.evidence.finishMatches, JSON.stringify(created.evidence)).toBe(true);
+      const id = created.body.project.id;
       const profile = { id: 'gateway', projectId: id, name: 'Gateway', dockerImage: 'nginx:alpine', workDir: '.', containerPort: 80, subdomain: 'llmgw' };
       stateService.addBuildProfile(profile);
       const slug = 'after-rename';
@@ -1662,7 +1679,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     return volumes;
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-clone-test-'));
     const stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile, tmpDir);
@@ -1690,7 +1707,8 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     } as GitHubAppClient;
     app.use('/api', createProjectsRouter({ stateService, shell, config, githubApp }));
 
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
+    if (!server.address()) await once(server, 'listening');
   });
 
   afterEach(async () => {
@@ -2403,7 +2421,7 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
   let reposBase: string;
   let worktreeBase: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-f11-test-'));
     reposBase = path.join(tmpDir, 'repos');
     worktreeBase = path.join(tmpDir, 'worktrees');
@@ -2430,7 +2448,8 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createProjectsRouter({ stateService, shell, config }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
+    if (!server.address()) await once(server, 'listening');
   });
 
   afterEach(async () => {

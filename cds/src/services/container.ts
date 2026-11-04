@@ -96,6 +96,7 @@ export interface ProjectNetworkResolver {
 
 export interface ContainerRemoveContext {
   assertCurrent?: (step: string) => void;
+  onProgress?: (step: 'admitted' | 'diagnostics-returned' | 'stop' | 'stop-returned' | 'rm' | 'rm-returned') => void;
   kind?: ContainerLifecycleIntentKind;
   reason?: string;
   projectId?: string | null;
@@ -104,6 +105,7 @@ export interface ContainerRemoveContext {
   serviceId?: string | null;
   requestId?: string | null;
   operationId?: string | null;
+  operationGeneration?: number;
   actor?: string | null;
   trigger?: string | null;
   operation?: string | null;
@@ -1480,6 +1482,7 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
+      operationGeneration?: number;
       assertCurrent?: (step: string) => void;
       preserveContainerNames?: readonly string[];
       onRuntimeCreated?: (service: ServiceState) => Promise<void>;
@@ -1522,7 +1525,7 @@ export class ContainerService {
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
     let shell = this.qualifiedShell(context.assertCurrent);
-    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
+    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId, operationGeneration: context.operationGeneration };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
@@ -2956,17 +2959,19 @@ export class ContainerService {
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
     const terminal = ['branch-delete', 'executor-delete-branch', 'build-profile-delete', 'cleanup-stopped'].includes(context.operation || '');
     return deploymentPhaseBudget.run(terminal ? 'terminal' : 'cleanup', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
-      profileId: context.profileId || undefined, operationId: context.operationId },
+      profileId: context.profileId || undefined, operationId: context.operationId, operationGeneration: context.operationGeneration },
       () => this.removeUnbudgeted(containerName, context), { check: () => context.assertCurrent?.('cleanup phase admission') });
   }
 
   private async removeUnbudgeted(containerName: string, context: ContainerRemoveContext): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
+    context.onProgress?.('admitted');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
     const kind = context.kind || 'cds-remove';
     const before = await this.captureContainerDiagnostics(containerName, 300);
     context.assertCurrent?.('after-remove-diagnostics');
+    context.onProgress?.('diagnostics-returned');
     this.recordContainerEvent({
       severity: 'warn',
       source: 'cds-container-service',
@@ -2992,8 +2997,16 @@ export class ContainerService {
       },
     });
     this.noteLifecycleIntent(containerName, kind, reason, context);
-    const stopResult = await shell.exec(`docker stop ${containerName}`);
-    const rmResult = await shell.exec(`docker rm ${containerName}`);
+    const dispatch = (step: 'stop' | 'rm') => shell.exec(`docker ${step} ${containerName}`, {
+      executionLane: 'operation', executionPurpose: 'temporary-cleanup', beforeStart: () => {
+        context.assertCurrent?.(`cleanup ${step} dispatch`);
+        context.onProgress?.(step);
+      },
+    });
+    const stopResult = await dispatch('stop');
+    context.assertCurrent?.('after cleanup stop return');
+    context.onProgress?.('stop-returned');
+    const rmResult = await dispatch('rm');
     const completion = classifyRemoveCompletion(rmResult);
     if (completion.severity !== 'error') deploymentPhaseBudget.releaseMemory(containerName);
     this.recordContainerEvent({
@@ -3025,6 +3038,8 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    context.assertCurrent?.('after cleanup rm return');
+    context.onProgress?.('rm-returned');
   }
 
   async isRunning(containerName: string): Promise<boolean> {
@@ -3956,7 +3971,8 @@ export class ContainerService {
       const refs = Object.values(entry.services).flatMap(service => serviceRuntimeRefs(service).map(runtime => ({ service, runtime })));
       if (refs.some(({ runtime }) => runtime.networkName === network)) continue;
       const shell = this.qualifiedShell(context.assertCurrent);
-      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id }, async () => {
+      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id,
+        operationId: context.operationId, operationGeneration: context.operationGeneration }, async () => {
         const networkView = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(network)}`,
           { timeout: 5000, executionLane: 'observation' });
         context.assertCurrent?.('after unused replacement network ownership');
