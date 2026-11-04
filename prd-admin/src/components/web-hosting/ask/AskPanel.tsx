@@ -4,7 +4,7 @@ import { ASK_REFUSAL_REGISTRY, resolveAskRefusal } from './askRefusal';
 import AskThread from './AskThread';
 import { AskResizeHandle, useAskWidth } from './AskResizeHandle';
 import { clampAskWidth } from './askDockGeometry';
-import { useAskSubmitKey } from './useAskSubmitKey';
+import { useImeSubmit } from '@/hooks/useImeSubmit';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
@@ -55,7 +55,7 @@ export default function AskPanel({
     return () => window.removeEventListener('resize', resize);
   }, []);
   const [draft, setDraft] = useState('');
-  const submitKeys = useAskSubmitKey(() => submit(draft));
+  const submitKeys = useImeSubmit(() => submit(draft));
 
   // 几种「问不了」各有各的下一步，判定收在 resolveAskRefusal 里（有守卫）
   const refusal = resolveAskRefusal({ isAuthenticated, allowAnonymous, gateErrorCode: gateError?.code });

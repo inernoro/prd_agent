@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useImeSubmit } from '@/hooks/useImeSubmit';
 import { ImagePlus, Library, Plus, Send, Square, X } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import KnowledgeEntryPicker from '@/components/knowledge/KnowledgeEntryPicker';
@@ -19,6 +20,7 @@ export default function SiteEditComposer(props: Props) {
   const submit = () => {
     if (!props.generating && props.instruction.trim() && !attachmentsPending) void props.generate();
   };
+  const submitKeys = useImeSubmit(submit);
   return <div className="shrink-0 border-t border-token-subtle bg-token-elevated p-3">
     {(props.selectedKnowledge.length > 0 || props.screenshots.items.length > 0) && <div className="mb-2 flex flex-wrap gap-1.5" aria-label="已添加的内容">
       {props.selectedKnowledge.map((entry) => <span key={`${entry.storeId}:${entry.entryId}`} className="inline-flex max-w-full items-center gap-1 rounded-md bg-token-nested px-2 py-1 text-xs">
@@ -48,8 +50,9 @@ export default function SiteEditComposer(props: Props) {
       </div>}
       <textarea aria-label="修改要求" value={props.instruction} disabled={props.generating} maxLength={4000}
         rows={2} placeholder="说说你想怎么修改…" onChange={(event) => props.setInstruction(event.target.value)}
+        {...submitKeys}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); }
+          submitKeys.onKeyDown(event);
           if (event.key === 'Escape' && menuOpen) { event.stopPropagation(); setMenuOpen(false); }
         }} className="max-h-36 min-h-10 min-w-0 flex-1 resize-none bg-transparent py-2 text-base text-token-primary outline-none sm:text-sm" />
       {props.generating ? <button type="button" aria-label="停止生成" disabled={!props.activeRunId || props.stopRequested}

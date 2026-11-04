@@ -23,7 +23,15 @@ it('默认只有输入框，知识从加号打开；输入法回车不会误提�
     const textarea = container.querySelector('textarea')!;
     act(() => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true })));
     expect(generate).not.toHaveBeenCalled();
+    act(() => textarea.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })));
+    act(() => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    act(() => textarea.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })));
+    act(() => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(generate).not.toHaveBeenCalled();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 100);
+    act(() => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true })));
+    expect(generate).not.toHaveBeenCalled();
     await act(async () => textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
     expect(generate).toHaveBeenCalledOnce();
-  } finally { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); }
+  } finally { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); }
 });

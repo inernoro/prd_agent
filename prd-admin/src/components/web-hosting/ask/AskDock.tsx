@@ -5,7 +5,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import AskThread from './AskThread';
 import { AskResizeHandle, useAskWidth } from './AskResizeHandle';
-import { useAskSubmitKey } from './useAskSubmitKey';
+import { useImeSubmit } from '@/hooks/useImeSubmit';
 import { ASK_REFUSAL_REGISTRY, resolveAskRefusal } from './askRefusal';
 import {
   askDockGeometry, askHintsBottom, askMetaBottom,
@@ -85,7 +85,7 @@ export default function AskDock({
   const [state, setState] = useState<AskDockState>('collapsed');
   const [moving, setMoving] = useState(false);
   const [draft, setDraft] = useState('');
-  const submitKeys = useAskSubmitKey(() => submit(draft));
+  const submitKeys = useImeSubmit(() => submit(draft));
   const [hintsExpanded, setHintsExpanded] = useState(false);
   const [composerFolded, setComposerFolded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
