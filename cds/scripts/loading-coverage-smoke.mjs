@@ -39,6 +39,7 @@ try {
   const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   await page.goto(base + '/cds-settings?loadingPage=common-loading-block&loadingScenario=content-rows#loading-pages');
   await page.locator('[data-content-loading="rows"]').waitFor();
+  for (const name of ['项目设置', '服务拓扑', '服务拓扑面板']) assert.equal(await page.getByRole('button', { name, exact: true }).count(), 1, `preview option must be unambiguous: ${name}`);
   const style = await page.locator('[data-content-loading] .cds-loading-skeleton-line').first().evaluate(el => { const s = getComputedStyle(el); return { animation: s.animationName, duration: s.animationDuration, gradient: s.backgroundImage }; });
   assert.equal(style.animation, 'cds-loading-skeleton-pulse'); assert.equal(style.duration, '2s'); assert.equal(style.gradient, 'none');
   const waitHeight = await page.locator('[data-content-loading]').first().evaluate(e=>e.getBoundingClientRect().height);

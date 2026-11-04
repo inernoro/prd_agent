@@ -60,7 +60,7 @@ const failedBranchScenarios: LoadingScenario[] = [
   { id: 'stopping', label: '正在停止 / 不可达', status: 'stopping' },
 ];
 
-const commonLoadingScenarios: LoadingScenario[] = [
+export const commonLoadingScenarios: LoadingScenario[] = [
   { id: 'content-rows', label: '列表与配置', status: 'loading' },
   { id: 'content-table', label: '表格与结果', status: 'loading' },
   { id: 'content-log', label: '日志区域', status: 'loading' },
@@ -79,13 +79,12 @@ const commonLoadingScenarios: LoadingScenario[] = [
   { id: 'branch-detail', label: '分支详情', status: 'loading', loadingLabel: '加载分支详情' },
   { id: 'container-logs', label: '容器日志', status: 'loading', loadingLabel: '加载容器日志' },
   { id: 'webhook-logs', label: 'Webhook 日志', status: 'loading', loadingLabel: '加载 Webhook 日志' },
-  { id: 'service-topology', label: '服务拓扑', status: 'loading', loadingLabel: '加载服务拓扑' },
+  { id: 'service-topology', label: '服务拓扑面板', status: 'loading', loadingLabel: '加载服务拓扑' },
   { id: 'github-repos', label: 'GitHub 仓库', status: 'loading', loadingLabel: '加载 GitHub 仓库' },
   { id: 'github-app', label: 'GitHub App', status: 'loading', loadingLabel: '加载 GitHub App 状态' },
   { id: 'github-installations', label: '安装列表', status: 'loading', loadingLabel: '加载安装' },
   { id: 'repo-select', label: '仓库选择', status: 'loading', loadingLabel: '加载仓库' },
   { id: 'device-flow', label: 'Device Flow', status: 'loading', loadingLabel: '加载 Device Flow 状态' },
-  { id: 'project-settings', label: '项目设置', status: 'loading', loadingLabel: '加载项目设置' },
   { id: 'build-config', label: '构建配置', status: 'loading', loadingLabel: '加载构建配置' },
   { id: 'env-vars', label: '环境变量', status: 'loading', loadingLabel: '加载环境变量' },
   { id: 'agent-keys', label: 'Agent Keys', status: 'loading', loadingLabel: '加载 Agent Keys' },

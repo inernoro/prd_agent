@@ -12,12 +12,16 @@ import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkel
 import { AgentRequestsSkeleton, ReleaseCenterSkeleton, TopologyPageSkeleton } from '../../web/src/components/skeletons/WorkspaceSkeletons';
 import { ReleaseConsoleSkeleton } from '../../web/src/components/skeletons/ReleaseConsoleSkeleton';
 import { SettingsPageSkeleton } from '../../web/src/components/skeletons/SettingsSkeleton';
-import { CommonLoadingSkeleton } from '../../web/src/pages/cds-settings/tabs/LoadingPagesTab';
+import { CommonLoadingSkeleton, commonLoadingScenarios } from '../../web/src/pages/cds-settings/tabs/LoadingPagesTab';
 import { loadingCondition } from '../../scripts/loading-coverage-audit.mjs';
 
 const render = renderToStaticMarkup;
 const src = path.resolve('web/src');
 describe('加载场景登记由真实路由约束', () => {
+  it('人工抽检选项的标识与显示名称唯一，避免一个骨架有两个入口', () => {
+    expect(new Set(commonLoadingScenarios.map(s => s.id)).size).toBe(commonLoadingScenarios.length);
+    expect(new Set(commonLoadingScenarios.map(s => s.label)).size).toBe(commonLoadingScenarios.length);
+  });
   it('所有控制台路由有明确登记，不能静默退回六方块', () => {
     const routes = [...fs.readFileSync(path.join(src, 'App.tsx'), 'utf8').matchAll(/<Route path="([^"]+)"/g)].map(m => m[1]);
     const standalone = new Set(['/', '/login', '/auth/sso', '/preview-preparing', '/hello', '/s/:token', '*']);
