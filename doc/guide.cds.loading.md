@@ -1,4 +1,6 @@
-# CDS 骨架维护与验收
+# CDS 骨架维护与验收 · 指南
+
+> **版本**：v1.0 | **日期**：2026-11-04 | **状态**：已落地
 
 **一句话**：统一骨架的样式、路由登记和验收入口，避免代码加载与数据加载出现两套轮廓。
 **谁该读**：维护 CDS 页面、加载组件和发布验收的工程师。
@@ -6,7 +8,7 @@
 
 ## 从哪里改
 
-| 要修改的内容 | 唯一入口 | 更新规则 |
+| 要修改的内容 | 代码位置 | 更新规则 |
 |---|---|---|
 | 暖灰填色、轻呼吸、浅深主题、减少动效 | `cds/web/src/index.css` 的 `.cds-loading-skeleton-*` | 修改共享样式；不要在页面另写动画或颜色 |
 | 控制台路由对应的加载轮廓、外壳尺寸 | `cds/web/src/components/skeletons/loading-scenes.json` | 控制台及有独立骨架的公共路由必须登记；实际外壳与目录共同读取 |
@@ -17,6 +19,7 @@
 | 发布控制台三栏轮廓和栏宽 | `cds/web/src/components/skeletons/ReleaseConsoleSkeleton.tsx` | 真实页与骨架共用布局常量；仅首次未取得项目/环境数据时使用整页骨架 |
 | 发布中心/拓扑/Agent 请求的导航与筛选占位 | `cds/web/src/components/skeletons/WorkspaceSkeletons.tsx` | 整段轮廓共用，避免页头在两阶段之间把内容向下推 |
 | 通用列表、表格、资源、日志占位 | `cds/web/src/components/skeletons/ContentLoading.tsx` | 根据真实内容选择 variant；慢等待提示预留高度 |
+| 项目/分支列表跨代码与取数的慢提示 | `cds/web/src/components/skeletons/ListLoadingBoundary.tsx` | 提示只在工作区的固定高度槽位显示；路由与实际页面共用反馈，不新增外壳网格行 |
 | 分支详情抽屉 | `cds/web/src/components/branch/BranchDrawerSkeleton.tsx` | 与总览共用关系/指标部件；不复制一套近似布局 |
 | 指标、关系、监控等专业轮廓 | 下方命令生成的“定义位置” | 保留真实内容几何，共用暖灰样式 |
 | 人工抽检预览 | 系统设置 → 加载页预览 | 展示真实导出组件；预览区域退出设置页骨架作用域 |

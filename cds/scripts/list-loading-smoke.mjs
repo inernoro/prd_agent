@@ -151,14 +151,33 @@ try {
   await noEffect();
   console.log('PASS dark390 aligned geometry; reduced motion; rapid SPA switch with no overlay');
 
-  delay = 7200;
-  await page.reload();
-  await page.getByText('正在等待服务器返回列表数据。').waitFor({ timeout: 9000 });
-  assert(await page.getByRole('button', { name: '重新加载', exact: true }).isVisible());
-  await page.waitForSelector('article a[href="/branches/fixture-project"]');
-  assert.equal(await page.getByText('正在等待服务器返回列表数据。').count(), 0);
+  const shellGeometry = () => page.evaluate(() => {
+    const shape = selector => {
+      const r = document.querySelector(selector).getBoundingClientRect();
+      return { x:r.x, y:r.y, width:r.width, height:r.height };
+    };
+    return { main:shape('.cds-main'), workspace:shape('.cds-workspace'), rail:shape('.cds-rail'),
+      card:shape('[aria-busy="true"] article'), rows:getComputedStyle(document.querySelector('.cds-app-shell')).gridTemplateRows };
+  });
+  const slowLayouts = [];
+  delay = 8500;
+  for (const [route, real] of [['/project-list','article a[href="/branches/fixture-project"]'], ['/branches/fixture-project','[data-branch-card-id]']]) {
+    await page.goto(base + route);
+    await page.waitForSelector('[aria-busy="true"] article');
+    const before = await shellGeometry();
+    await page.getByText('正在等待服务器返回列表数据。').waitFor({ timeout: 9000 });
+    const after = await shellGeometry();
+    for (const part of ['main','workspace','rail','card']) for (const axis of ['x','y','width','height']) assert(Math.abs(before[part][axis]-after[part][axis])<1, `${route}: slow status moved ${part}.${axis}: ${before[part][axis]} -> ${after[part][axis]}`);
+    assert.equal(after.rows.split(/\s+/).length,2,'slow status must not add an app-shell grid row');
+    assert(await page.getByText('正在等待服务器返回列表数据。').evaluate(el=>Boolean(el.closest('.cds-workspace'))),'status belongs inside the workspace');
+    assert(await page.getByRole('button', { name: '重新加载', exact: true }).isVisible());
+    await page.waitForSelector(real);
+    assert.equal(await page.getByText('正在等待服务器返回列表数据。').count(),0);
+    slowLayouts.push({route,before,after});
+  }
+  await fs.writeFile(out + '/slow-layout.json',JSON.stringify(slowLayouts,null,2));
   fail = true; delay = 600;
-  await page.reload();
+  await page.goto(base + '/project-list');
   await page.getByText(/fixture: 请求失败/).waitFor({ timeout: 10000 });
   await noEffect();
   fail = false; delay = 10; chunkDelay = 0;

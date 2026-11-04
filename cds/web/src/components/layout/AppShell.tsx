@@ -10,7 +10,7 @@ import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
-import { ListLoadingBoundary } from '@/components/skeletons/ListLoadingBoundary';
+import { ListLoadingBoundary, ListLoadingFeedback } from '@/components/skeletons/ListLoadingBoundary';
 import {
   requestAgentAccess,
   resolveAgentPageContext,
@@ -265,6 +265,7 @@ function ConsoleRouteFallback(): JSX.Element {
         */}
         <div className={cn('cds-workspace cds-workspace--fluid', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
           {pageSkeletonForPath(pathname)}
+          <ListLoadingFeedback />
         </div>
       </main>
     </>
@@ -1227,6 +1228,7 @@ export function Workspace({ wide = false, fluid = false, className, children }: 
       )}
     >
       {children}
+      <ListLoadingFeedback />
     </div>
   );
 }
