@@ -74,10 +74,11 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     expect(calls.update).toHaveBeenCalledWith({ ...edited, id: 'draft-1', templateId: '', projectId: '', teamId: '' });
   });
 
-  it('提交响应丢失后按服务器已提交状态恢复，不再修改草稿或重复上传', async () => {
+  it.each(['throw', 'response'] as const)('提交响应丢失（%s）后按服务器状态恢复，不再修改草稿或重复上传', async (mode) => {
     const file = new File(['a'], 'a.txt');
     calls.submit.mockImplementationOnce(async () => {
       draft = { ...draft, status: 'submitted' };
+      if (mode === 'response') return fail('NETWORK_ERROR', '网络连接异常，请检查网络后重试。');
       throw new Error('Failed to fetch');
     });
     await act(async () => { expect(await current.submit(input, [{ file }])).toBe(false); });

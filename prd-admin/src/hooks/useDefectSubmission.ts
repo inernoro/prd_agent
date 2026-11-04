@@ -107,7 +107,7 @@ export function useDefectSubmission(options: Options) {
       // 已提交请求的重放交给后端判断，不在客户端推导或回退业务状态。
       const submitted = await submitDefect({ id: defect.id });
       if (!submitted.success) {
-        confirmingSubmission = false;
+        // apiRequest 也把断连、超时转换成业务形状的失败；没有确认结果时不能断言服务端未提交。
         throw submitted.error;
       }
       if (!submitted.data?.defect) throw new Error('提交结果尚未确认');
