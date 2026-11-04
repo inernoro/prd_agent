@@ -1499,6 +1499,11 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
     PrdAgent.Infrastructure.Services.Authorization.GitHubAuthHandler>();
 
+// 历史资源只探测配置的可信源，不跟随跳转；保留系统代理与 TLS 验证。
+builder.Services.AddSingleton<PrdAgent.Api.Services.HistoricalAssetUrlResolver>();
+builder.Services.AddHttpClient(nameof(PrdAgent.Api.Services.HistoricalAssetUrlResolver))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+
 // 注册 Webhook 通知服务。Webhook URL 由用户配置，禁用自动重定向防止绕过首跳 SSRF 校验。
 builder.Services.AddHttpClient("WebhookClient")
     .ConfigurePrimaryHttpMessageHandler(sp =>

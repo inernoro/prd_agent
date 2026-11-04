@@ -134,7 +134,7 @@ public sealed class DefectSubmissionPersistenceTests
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync(new StoredAsset("hash", "https://storage.invalid/file.png", 3, "image/png"));
         var controller = new DefectAgentController(fixture.Db, null!, NullLogger<DefectAgentController>.Instance,
-            storage.Object, null!, null!, null!, null!, null!, null!, null!, null!, null!)
+            storage.Object, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext
             {
@@ -212,7 +212,7 @@ public sealed class DefectSubmissionPersistenceTests
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>()))
             .ThrowsAsync(new HttpRequestException("sensitive-storage-detail"));
         var controller = new DefectAgentController(fixture.Db, null!, NullLogger<DefectAgentController>.Instance,
-            storage.Object, null!, null!, null!, null!, null!, null!, null!, null!, null!)
+            storage.Object, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!)
         {
             ControllerContext = new ControllerContext
             {

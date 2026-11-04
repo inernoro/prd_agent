@@ -12,9 +12,6 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import type { AdminUser } from '@/types/admin';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import {
-  createDefect,
-  submitDefect,
-  addDefectAttachment,
   analyzeDefectImage,
   listDefectTemplates,
   getDefectUsers,
@@ -24,6 +21,7 @@ import { toast } from '@/lib/toast';
 import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
 import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useDefectSubmission } from '@/hooks/useDefectSubmission';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
 import type { DefectTemplate, DefectUser, ApiLogPreviewItem } from '@/services/contracts/defectAgent';
 import {
@@ -132,6 +130,25 @@ export function GlobalDefectSubmitDialog() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const attachmentsRef = useRef<AnalyzedAttachment[]>([]);
+  const submission = useDefectSubmission({
+    onCreated: (defect) => onCreated?.({ id: defect.id, title: defect.title || extractTitleFromContent(content) || '未命名缺陷' }),
+    onSubmitted: () => {
+      setTimeout(() => {
+        setContent('');
+        clearAttachments();
+        setSeverity(DefectSeverity.Trivial);
+        closeDialog();
+      }, 1500);
+    },
+  });
+  const { submitting, reset: resetSubmission } = submission;
+  const closeIfIdle = useCallback(() => {
+    if (!submitting) closeDialog();
+  }, [submitting, closeDialog]);
+  useEffect(() => {
+    if (!showDialog) resetSubmission();
+  }, [showDialog, resetSubmission]);
+
   const polishStream = useAiPreviewStream({
     url: '/api/defect-agent/defects/polish/stream',
     onApply: (final) => {
@@ -148,11 +165,11 @@ export function GlobalDefectSubmitDialog() {
   useEffect(() => {
     if (!showDialog || polishStream.open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeDialog();
+      if (event.key === 'Escape') closeIfIdle();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showDialog, polishStream.open, closeDialog]);
+  }, [showDialog, polishStream.open, closeIfIdle]);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -243,7 +260,7 @@ export function GlobalDefectSubmitDialog() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Command+B (Mac) 或 Control+B (Windows)
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
-        if (polishStream.open) return;
+        if (polishStream.open || submitting) return;
         // 检查是否在输入框中（排除某些场景）
         const active = document.activeElement;
         const isInInput = active instanceof HTMLInputElement ||
@@ -263,7 +280,7 @@ export function GlobalDefectSubmitDialog() {
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [showDialog, polishStream.open]);
+  }, [showDialog, polishStream.open, submitting]);
 
   // 应用预填草稿（行为洞察「转为缺陷」复用本面板时携带）：打开瞬间把标题/正文/严重度/指派人灌进表单。
   // title 作为正文首行（本面板用首行提取标题），避免再开一个标题输入框，复用既有「首行即标题」交互。
@@ -444,55 +461,15 @@ export function GlobalDefectSubmitDialog() {
       return false;
     }
 
-    try {
-      // 从内容中提取标题
-      const title = extractTitleFromContent(content);
+    const title = extractTitleFromContent(content);
+    return submission.submit({
+      templateId: selectedTemplateId || undefined,
+      title: title || undefined,
+      content: content.trim(),
+      assigneeUserId,
+      severity,
+    }, attachments);
 
-      // Create defect
-      const createRes = await createDefect({
-        templateId: selectedTemplateId || undefined,
-        title: title || undefined,
-        content: content.trim(),
-        assigneeUserId,
-        severity,
-      });
-
-      if (!createRes.success || !createRes.data) {
-        toast.error(createRes.error?.message || '创建失败');
-        return false;
-      }
-
-      const defect = createRes.data.defect;
-
-      // 创建成功即回调（缺陷已落库，后续 submit 失败也不影响调用方回写洞察状态）
-      onCreated?.({ id: defect.id, title: defect.title || extractTitleFromContent(content) || '未命名缺陷' });
-
-      // Upload attachments
-      for (const item of attachments) {
-        await addDefectAttachment({ id: defect.id, file: item.file });
-      }
-
-      // Submit defect
-      const submitRes = await submitDefect({ id: defect.id });
-      if (submitRes.success && submitRes.data) {
-        toast.success('缺陷已提交');
-        // 重置表单（延迟执行，等撒花动画结束后关闭）
-        setTimeout(() => {
-          setContent('');
-          clearAttachments();
-          setSeverity(DefectSeverity.Trivial);
-          closeDialog();
-        }, 1500);
-        return true;
-      } else {
-        toast.warning('缺陷已保存为草稿');
-        closeDialog();
-        return false;
-      }
-    } catch (e) {
-      toast.error(String(e));
-      return false;
-    }
   };
 
   const defaultTemplate = templates.find((t) => t.isDefault);
@@ -516,7 +493,7 @@ export function GlobalDefectSubmitDialog() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="global-defect-submit-title"
-      onClick={closeDialog}
+      onClick={closeIfIdle}
     >
       <GlassCard
         glow
@@ -541,14 +518,26 @@ export function GlobalDefectSubmitDialog() {
             </span>
           </div>
           <button
-            onClick={closeDialog}
+            onClick={closeIfIdle}
             aria-label="关闭提交缺陷"
+            disabled={submitting}
             className="p-2 rounded-lg text-token-muted hover-bg-soft transition-colors"
           >
             <X size={18} />
           </button>
         </div>
 
+        <fieldset disabled={submitting} className="flex flex-1 flex-col min-w-0 border-0 p-0 m-0" style={{ minHeight: 0, pointerEvents: submitting ? 'none' : undefined }}>
+        {submission.error && (
+          <div role="alert" className="shrink-0 px-3 py-2 text-[12px] text-token-error">
+            {submission.error}
+            {submission.savedDefect && (
+              <div>{submission.confirmationPending
+                ? `缺陷 ${submission.savedDefect.defectNo} 已保存，提交结果待确认；重试会核对服务端结果。`
+                : `草稿 ${submission.savedDefect.defectNo} 已保存，尚未提交；重试会继续此草稿。`}</div>
+            )}
+          </div>
+        )}
         {/* Selectors */}
         <div className="shrink-0 px-3 py-3 sm:px-5 sm:py-4 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -971,7 +960,7 @@ export function GlobalDefectSubmitDialog() {
               <SuccessConfettiButton
                 size="sm"
                 readyText="提交缺陷"
-                loadingText="提交中"
+                loadingText={submission.progress || '提交中'}
                 successText="已提交"
                 showLoadingText
                 disabled={!content.trim()}
@@ -981,6 +970,7 @@ export function GlobalDefectSubmitDialog() {
             </div>
           </div>
         </div>
+        </fieldset>
       </GlassCard>
     </div>
     <AiPreviewModal

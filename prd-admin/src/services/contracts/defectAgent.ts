@@ -36,6 +36,7 @@ export interface DefectTemplate {
  */
 export interface DefectAttachment {
   id: string;
+  clientRequestId?: string;
   fileName: string;
   fileSize: number;
   mimeType: string;
@@ -285,6 +286,8 @@ export type ListDefectsContract = (input?: {
 export type GetDefectContract = (input: { id: string }) => Promise<ApiResponse<{ defect: DefectReport }>>;
 
 export type CreateDefectContract = (input: {
+  /** 同一编辑会话的重试保持不变，用于恢复响应丢失的创建结果。 */
+  clientRequestId?: string;
   templateId?: string;
   title?: string;
   content: string;
@@ -297,12 +300,15 @@ export type CreateDefectContract = (input: {
 
 export type UpdateDefectContract = (input: {
   id: string;
+  templateId?: string;
   title?: string;
   content?: string;
   structuredData?: Record<string, string>;
   severity?: string;
   priority?: string;
   assigneeUserId?: string;
+  projectId?: string;
+  teamId?: string;
 }) => Promise<ApiResponse<{ defect: DefectReport }>>;
 
 export type DeleteDefectContract = (input: { id: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
@@ -344,6 +350,8 @@ export type SendDefectMessageContract = (input: {
 export type AddDefectAttachmentContract = (input: {
   id: string;
   file: File;
+  /** 同一附件的重试保持不变，避免响应丢失时重复上传记录。 */
+  clientRequestId?: string;
   /** AI 图片分析描述（Vision 解析结果） */
   description?: string;
 }) => Promise<ApiResponse<{ attachment: DefectAttachment }>>;
