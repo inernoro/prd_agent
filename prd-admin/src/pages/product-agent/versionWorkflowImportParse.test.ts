@@ -49,6 +49,15 @@ describe('versionWorkflowImportParse', () => {
     expect(rows[0]).toMatchObject({ code: 'V3.1.2', appName: '互动营销' });
   });
 
+  it('读取手工表里的多个纯 TAPD 链接，支持与其他文本混排', () => {
+    const [row] = parseVersionWorkflowImportCsv([
+      '应用,正式版本号,TAPD 链接,无 TAPD 链接',
+      '互动营销,V3.1.2,"需求说明 https://www.tapd.cn/1；https://www.tapd.cn/2",否',
+    ].join('\n'), 'release');
+    expect(row.tapdLinks?.map(({ url }) => url)).toEqual(['https://www.tapd.cn/1', 'https://www.tapd.cn/2']);
+    expect(row.noTapdLinks).toBe(false);
+  });
+
   it('识别实表E1空表头的唯一T列，保留T号及应用并跳过短横占位', () => {
     const rows = parseVersionWorkflowImportMatrix([
       ['平台', '系统', '应用', '项目类别', '', '版本类别', '产品立项方案名称'],

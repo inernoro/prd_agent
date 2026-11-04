@@ -644,6 +644,55 @@ public class ProductVersionClaimGuardTests
         Assert.DoesNotContain(saved, x => x.TCode == "T6.19.6");
     }
 
+    [Fact]
+    public async Task VersionHistoryImportRestoresBusinessFieldsWithoutUpdatingExistingRecords()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.Requirements.InsertManyAsync(new[]
+        {
+            new Requirement { Id = "same-app", ProductId = "product", Title = "本应用需求" },
+            new Requirement { Id = "another-app", ProductId = "other-product", Title = "其他应用需求" },
+        });
+        var controller = fixture.Controller(admin: true);
+        var releasedAt = new DateTime(2026, 11, 3, 12, 0, 0, DateTimeKind.Utc);
+        var row = new ImportVersionWorkflowRow
+        {
+            AppName = "测试应用", Code = "V6.19.6", PlanName = "业务资料补齐", OwnerId = "me",
+            TeamMemberIds = new() { "me", "unknown" }, RequirementIds = new() { "same-app", "another-app" },
+            NoTapdLinks = false, TapdLinks = new() { new() { Title = "原 TAPD 名称", Url = "https://www.tapd.cn/1" }, new() { Url = "https://www.tapd.cn/2" } },
+            Status = "已作废", VoidReason = "历史记录已经作废", VoidedAt = releasedAt.AddDays(1),
+            PlannedReleaseAt = releasedAt.AddDays(-1), ReleasedAt = releasedAt,
+        };
+        var request = new ImportVersionWorkflowRequest { Kind = "release", Rows = new() { row } };
+        Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(request));
+        row.TapdLinks.Clear(); row.NoTapdLinks = true;
+        Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(request));
+        var v = await fixture.Db.ProductReleases.Find(x => x.VCode == "V6.19.6").SingleAsync();
+        Assert.Equal(new[] { "https://www.tapd.cn/1", "https://www.tapd.cn/2" }, v.TapdLinks.Select(x => x.Url));
+        Assert.Equal("原 TAPD 名称", v.TapdLinks[0].Title);
+        Assert.False(v.NoTapdLinks);
+        Assert.Equal("me", v.OwnerId);
+        Assert.Equal(new[] { "me" }, v.TeamMemberIds);
+        Assert.Equal(new[] { "same-app" }, v.RequirementIds);
+        Assert.Equal(releasedAt, v.ReleasedAt);
+        Assert.Equal(releasedAt.AddDays(-1), v.PlannedReleaseAt);
+        Assert.Equal("voided", v.Status);
+        Assert.Equal(row.VoidReason, v.VoidReason);
+        Assert.Equal(row.VoidedAt, v.VoidedAt);
+        Assert.Null(v.ClaimNotification);
+        Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(new()
+        {
+            Kind = "initiation", Rows = new() { new() { AppName = "测试应用", Code = "T6.19.6", PlanName = "历史立项",
+                OwnerId = "me", RequirementIds = new() { "same-app" }, Status = "已作废", VoidReason = row.VoidReason, VoidedAt = row.VoidedAt } },
+        }));
+        var t = await fixture.Db.ProductInitiations.Find(x => x.TCode == "T6.19.6").SingleAsync();
+        Assert.Equal(new[] { "same-app" }, t.RequirementIds);
+        Assert.Equal("me", t.OwnerId);
+        Assert.Equal("voided", t.Status);
+        Assert.Equal(row.VoidReason, t.VoidReason);
+    }
+
     [Theory]
     [InlineData(null, "me", "真实申请人")]
     [InlineData("owner", "owner", "其他负责人")]

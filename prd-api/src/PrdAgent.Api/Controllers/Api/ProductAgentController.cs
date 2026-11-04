@@ -1769,6 +1769,23 @@ public partial class ProductAgentController : ControllerBase
     private Task<bool> TemporaryOptimizationExistsAsync(string title, string? exceptId = null) =>
         _db.ProductReleases.Find(x => !x.IsDeleted && x.IsTemporaryOptimization && x.PlanName == title && x.Id != exceptId).AnyAsync();
 
+    private static string HistoryVersionStatus(string? status, string fallback) => status?.Trim() switch
+    {
+        "voided" or "已作废" => "voided",
+        "legacy_readonly" or "历史登记" => "legacy_readonly",
+        "announcement_pending" or "待填写上线公告" when fallback == "released" => "announcement_pending",
+        _ => fallback,
+    };
+
+    private async Task<List<string>> ResolveHistoryRequirementIdsAsync(string productId, List<string>? requested)
+    {
+        var ids = NormalizeVersionMemberNames(requested);
+        if (ids.Count == 0) return ids;
+        var existing = await _db.Requirements.Find(x => x.ProductId == productId && !x.IsDeleted && ids.Contains(x.Id))
+            .Project(x => x.Id).ToListAsync();
+        return ids.Where(existing.Contains).ToList();
+    }
+
     private async Task<IActionResult> ImportVersionWorkflowCoreAsync(ImportVersionWorkflowRequest request, string? fixedProductId = null)
     {
         if (request.Kind is not ("initiation" or "release") || request.Rows == null || request.Rows.Count == 0)
@@ -1861,6 +1878,23 @@ public partial class ProductAgentController : ControllerBase
                         continue;
                     }
                     var sourceTCode = temporary ? null : row.TCode?.Trim().ToUpperInvariant();
+                    var tapdLinks = new List<ProductReleaseTapdLink>();
+                    if (row.TapdLinks is { Count: > 0 })
+                    {
+                        var tapdError = NormalizeReleaseTapdLinks(row.NoTapdLinks == true, row.TapdLinks, out tapdLinks);
+                        if (tapdError != null)
+                        {
+                            errors.Add(new { row = index + 2, message = tapdError });
+                            snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = tapdError });
+                            continue;
+                        }
+                    }
+                    var status = HistoryVersionStatus(row.Status, "released");
+                    var memberIds = NormalizeVersionMemberNames(row.TeamMemberIds);
+                    var userIds = NormalizeVersionMemberNames(memberIds.Append(row.OwnerId ?? ""));
+                    var users = userIds.Count == 0 ? new List<string>() : await _db.Users.Find(x => userIds.Contains(x.UserId))
+                        .Project(x => x.UserId).ToListAsync();
+                    var ownerId = row.OwnerId?.Trim();
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
                     if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
                         legacyData["产品负责人"] = row.OwnerId.Trim();
@@ -1875,15 +1909,20 @@ public partial class ProductAgentController : ControllerBase
                         VersionType = NormalizeVersionType(row.VersionType), AnnouncementUrl = row.AnnouncementUrl,
                         SystemName = row.SystemName, AppName = row.AppName,
                         ProjectType = row.ProjectType == "custom" ? "custom" : "standard",
-                        DepartmentName = row.DepartmentName, OwnerId = null,
+                        DepartmentName = row.DepartmentName, OwnerId = ownerId != null && users.Contains(ownerId) ? ownerId : null,
                         DemandSource = row.DemandSource, RequirementDescription = row.RequirementDescription,
                         OwnerName = row.OwnerName, ProjectMemberNames = NormalizeVersionMemberNames(row.ProjectMemberNames),
                         ContractParty = row.ContractParty, Remark = row.Remark, IsGlobalOpen = row.IsGlobalOpen,
-                        OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope) ? "上线全域开放" : row.OpenBrandScope,
-                        PlanUrl = row.PlanUrl, TeamMemberIds = row.TeamMemberIds ?? new(),
-                        Status = "released",
-                        PlannedReleaseAt = row.Date, PlannedTrainingMinutes = row.PlannedTrainingMinutes,
-                        ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
+                        OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope)
+                            ? row.IsGlobalOpen == false ? "非全域开放" : "上线全域开放"
+                            : row.OpenBrandScope,
+                        PlanUrl = row.PlanUrl, TeamMemberIds = memberIds.Where(users.Contains).ToList(),
+                        RequirementIds = await ResolveHistoryRequirementIdsAsync(targetProductId, row.RequirementIds),
+                        Status = status, NoTapdLinks = row.NoTapdLinks, TapdLinks = tapdLinks,
+                        VoidReason = status == "voided" ? row.VoidReason : null,
+                        VoidedAt = status == "voided" ? row.VoidedAt : null,
+                        PlannedReleaseAt = row.PlannedReleaseAt ?? row.Date, PlannedTrainingMinutes = row.PlannedTrainingMinutes,
+                        ReleasedAt = row.ReleasedAt ?? row.Date, CreatedBy = userId, SourceType = "import",
                         LegacyData = legacyData,
                     };
                     await importLease.EnsureHeldAsync();
@@ -1929,13 +1968,17 @@ public partial class ProductAgentController : ControllerBase
                         legacyData["备注"] = row.Remark.Trim();
                     if (row.TeamMemberIds is { Count: > 0 } teamNames && !legacyData.ContainsKey("项目组成员"))
                         legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
+                    var status = HistoryVersionStatus(row.Status, string.IsNullOrWhiteSpace(code) ? "draft" : "approved");
+                    var ownerId = row.OwnerId?.Trim();
+                    if (!string.IsNullOrWhiteSpace(ownerId) && !await _db.Users.Find(x => x.UserId == ownerId).AnyAsync())
+                        ownerId = null;
                     var initiation = new ProductInitiation
                     {
                         ProductId = targetProductId, TCode = code, PlanName = row.PlanName.Trim(),
                         VersionType = NormalizeVersionType(row.VersionType), PlanUrl = row.PlanUrl,
                         SystemName = row.SystemName, AppName = row.AppName,
                         ProjectType = row.ProjectType == "custom" ? "custom" : "standard", CustomerSource = row.CustomerSource,
-                        DemandSource = row.DemandSource, OwnerName = row.OwnerName,
+                        DemandSource = row.DemandSource, OwnerName = row.OwnerName, OwnerId = ownerId,
                         ProjectMemberNames = NormalizeVersionMemberNames(row.ProjectMemberNames),
                         RequirementDescription = row.RequirementDescription, DepartmentName = row.DepartmentName,
                         PrimaryOwnerId = null, FirstDraftMeetingAt = row.FirstDraftMeetingAt,
@@ -1944,7 +1987,9 @@ public partial class ProductAgentController : ControllerBase
                         NeedUiDesign = row.NeedUiDesign, IsAiPoc = row.IsAiPoc,
                         DevelopmentStatus = string.IsNullOrWhiteSpace(row.DevelopmentStatus) ? "待开发" : row.DevelopmentStatus,
                         Remark = row.Remark,
-                        Status = string.IsNullOrWhiteSpace(row.Code) ? "draft" : "approved", CreatedBy = userId,
+                        RequirementIds = await ResolveHistoryRequirementIdsAsync(targetProductId, row.RequirementIds),
+                        Status = status, VoidReason = status == "voided" ? row.VoidReason : null,
+                        VoidedAt = status == "voided" ? row.VoidedAt : null, CreatedBy = userId,
                         SourceType = "import", ImportFingerprint = importFingerprint, LegacyData = legacyData,
                     };
                     await importLease.EnsureHeldAsync();
@@ -8325,6 +8370,14 @@ public class ImportVersionWorkflowRow
     public int? PlannedTrainingMinutes { get; set; }
     public string? AnnouncementUrl { get; set; }
     public DateTime? Date { get; set; }
+    public DateTime? PlannedReleaseAt { get; set; }
+    public DateTime? ReleasedAt { get; set; }
+    public bool? NoTapdLinks { get; set; }
+    public List<ProductReleaseTapdLink?>? TapdLinks { get; set; }
+    public List<string>? RequirementIds { get; set; }
+    public string? Status { get; set; }
+    public string? VoidReason { get; set; }
+    public DateTime? VoidedAt { get; set; }
     public Dictionary<string, string>? LegacyData { get; set; }
 }
 

@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { extractReleaseTapdLinks } from './releaseTapdLinks';
 
 export type VersionWorkflowImportKind = 'release' | 'initiation';
 export const TEMPORARY_OPTIMIZATION_LABEL = '临时优化需求';
@@ -35,6 +36,14 @@ export type VersionWorkflowImportRow = {
   plannedTrainingMinutes?: number;
   announcementUrl?: string;
   date?: string;
+  plannedReleaseAt?: string;
+  releasedAt?: string;
+  noTapdLinks?: boolean;
+  tapdLinks?: { title: string; url: string }[];
+  requirementIds?: string[];
+  status?: string;
+  voidReason?: string;
+  voidedAt?: string;
   legacyData?: Record<string, string>;
   sourceRow: number;
 };
@@ -68,6 +77,7 @@ function resolveColumns(headers: string[], kind: VersionWorkflowImportKind) {
     versionTypeIndex: find('版本类别', '版本级别', '版本类型'),
     departmentIndex: find('所属部门', '部门'),
     ownerIndex: find('产品负责人', '产品责任人', '负责人', '申领人'),
+    ownerIdIndex: find('产品负责人id'),
     planUrlIndex: find('方案地址', '方案链接', '产品方案地址'),
     requirementDescIndex: find('项目需求描述', '需求描述'),
     customerSourceIndex: find('客户来源'),
@@ -79,6 +89,14 @@ function resolveColumns(headers: string[], kind: VersionWorkflowImportKind) {
     globalOpenIndex: find('是否全域开放', '全域开放'),
     openBrandIndex: find('当前开放品牌', '当前开放范围', '开放范围'),
     teamIndex: find('项目组成员', '组成员'),
+    teamIdIndex: find('项目组成员id'),
+    requirementIdsIndex: find('关联需求id'),
+    statusIndex: find('状态', '版本状态'),
+    voidReasonIndex: find('作废原因', '作废理由'),
+    voidedAtIndex: find('作废时间'),
+    tapdIndex: release ? find('tapd链接', 'tapd需求链接') : -1,
+    noTapdIndex: release ? find('无tapd链接') : -1,
+    actualReleaseIndex: release ? find('实际上线时间', '实际上线日期') : -1,
     requirementSourceIndex: find('需求来源'),
     platformIndex: find('平台'),
     contractPartyIndex: find('合同签订方'),
@@ -86,7 +104,7 @@ function resolveColumns(headers: string[], kind: VersionWorkflowImportKind) {
     codeIndex: release ? find('正式版本号', 'v号', 'v上线号', '上线号', 'v版本号') : find(...internalCodes),
     tCodeIndex: release ? find(...internalCodes) : -1,
     dateIndex: release
-      ? find('上线日期', '实际上线时间', '上线时间', '计划上线时间', '日期')
+      ? find('上线日期', '上线时间', '计划上线时间', '计划上线日期', '日期')
       : find('立项时间', '立项时间（三稿通过）', '三稿通过'),
     firstDraftIndex: find('第一稿会议时间', '第一稿'),
     secondDraftIndex: find('第二稿会议时间', '第二稿'),
@@ -97,7 +115,7 @@ function resolveColumns(headers: string[], kind: VersionWorkflowImportKind) {
 
 function parseDateValue(value: unknown): string | undefined {
   const text = cellStr(value);
-  if (!text) return undefined;
+  if (!text || /^[-—–]+$/.test(text)) return undefined;
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
   if (typeof value === 'number' && value > 20000 && value < 100000) {
     const parsed = XLSX.SSF.parse_date_code(value);
@@ -106,7 +124,7 @@ function parseDateValue(value: unknown): string | undefined {
       if (!Number.isNaN(date.getTime())) return date.toISOString();
     }
   }
-  const normalized = text.replace(/\./g, '-').replace(/\//g, '-');
+  const normalized = /^\d{4}-\d{2}-\d{2}T/.test(text) ? text : text.replace(/\./g, '-').replace(/\//g, '-');
   const date = new Date(normalized);
   if (!Number.isNaN(date.getTime())) return date.toISOString();
   return undefined;
@@ -159,6 +177,21 @@ function splitMembers(raw?: string): string[] | undefined {
   return raw.split(/[、,，;；]/).map((item) => item.trim()).filter(Boolean);
 }
 
+function parseTapdLinks(value?: string): VersionWorkflowImportRow['tapdLinks'] {
+  if (!value) return undefined;
+  if (value.startsWith('[')) {
+    try {
+      const links: unknown = JSON.parse(value);
+      if (Array.isArray(links)) {
+        return links.flatMap((link) => link && typeof link.url === 'string'
+          ? [{ title: typeof link.title === 'string' ? link.title : '', url: link.url }] : []);
+      }
+    } catch { /* 支持历史表的纯链接文本。 */ }
+  }
+  const { links } = extractReleaseTapdLinks(value);
+  return links.length ? links : undefined;
+}
+
 function parseTrainingMinutes(raw?: string): number | undefined {
   const text = raw?.trim();
   if (!text) return undefined;
@@ -172,7 +205,8 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     planIndex, systemIndex, appIndex, productIndex, projectTypeIndex, versionTypeIndex,
     departmentIndex, ownerIndex, planUrlIndex, requirementDescIndex, customerSourceIndex, remarkIndex,
     developmentIndex, uiDesignIndex, aiPocIndex, announcementIndex, globalOpenIndex, openBrandIndex,
-    teamIndex, requirementSourceIndex, platformIndex, contractPartyIndex, trainingMinutesIndex,
+    teamIndex, teamIdIndex, ownerIdIndex, requirementIdsIndex, statusIndex, voidReasonIndex, voidedAtIndex,
+    tapdIndex, noTapdIndex, actualReleaseIndex, requirementSourceIndex, platformIndex, contractPartyIndex, trainingMinutesIndex,
     codeIndex: headerCodeIndex, tCodeIndex, dateIndex, firstDraftIndex, secondDraftIndex, thirdDraftIndex,
     plannedProjectIndex,
   } = resolveColumns(headers, kind);
@@ -190,6 +224,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     if (!planName && !code) return;
     const versionType = versionTypeIndex >= 0 ? values[versionTypeIndex]?.trim() : undefined;
     const temporary = kind === 'release' && versionType === TEMPORARY_OPTIMIZATION_LABEL;
+    const date = parseDateValue(values[dateIndex]);
 
     const legacyData: Record<string, string> = {};
     const ownerName = ownerIndex >= 0 ? values[ownerIndex]?.trim() : undefined;
@@ -205,12 +240,11 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     }
 
     const explicitProduct = productIndex >= 0 ? values[productIndex]?.trim() : undefined;
-    let systemName = systemIndex >= 0 ? values[systemIndex]?.trim() : undefined;
+    const systemName = systemIndex >= 0 ? values[systemIndex]?.trim() : undefined;
     let appName = appIndex >= 0 ? values[appIndex]?.trim() : undefined;
     if (explicitProduct) {
       legacyData['产品'] = explicitProduct;
       appName = explicitProduct;
-      systemName = undefined;
     } else if (appName && !systemName) {
       legacyData['产品'] = appName;
     } else if (systemName && !appName) {
@@ -231,9 +265,9 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       demandSource: requirementSourceIndex >= 0 ? values[requirementSourceIndex]?.trim() : undefined,
       requirementDescription: requirementDescIndex >= 0 ? values[requirementDescIndex]?.trim() : undefined,
       departmentName: departmentIndex >= 0 ? values[departmentIndex]?.trim() : undefined,
-      ownerId: ownerName,
+      ownerId: values[ownerIdIndex]?.trim() || undefined,
       ownerName,
-      teamMemberIds: teamIndex >= 0 ? splitMembers(values[teamIndex]) : undefined,
+      teamMemberIds: splitMembers(values[teamIdIndex]),
       projectMemberNames: teamIndex >= 0 ? splitMembers(values[teamIndex]) : undefined,
       planUrl: planUrlIndex >= 0 ? values[planUrlIndex]?.trim() : undefined,
       firstDraftMeetingAt: firstDraftIndex >= 0 ? parseDateValue(values[firstDraftIndex]) : undefined,
@@ -250,7 +284,15 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       contractParty: contractPartyIndex >= 0 ? values[contractPartyIndex]?.trim() : undefined,
       plannedTrainingMinutes: trainingMinutes,
       announcementUrl: announcementIndex >= 0 ? values[announcementIndex]?.trim() : undefined,
-      date: dateIndex >= 0 ? parseDateValue(values[dateIndex]) : undefined,
+      date: actualReleaseIndex < 0 ? date : undefined,
+      plannedReleaseAt: kind === 'release' ? date : undefined,
+      releasedAt: parseDateValue(values[actualReleaseIndex]),
+      noTapdLinks: mapBool(values[noTapdIndex]),
+      tapdLinks: parseTapdLinks(values[tapdIndex]),
+      requirementIds: splitMembers(values[requirementIdsIndex]),
+      status: values[statusIndex]?.trim() || undefined,
+      voidReason: values[voidReasonIndex]?.trim() || undefined,
+      voidedAt: parseDateValue(values[voidedAtIndex]),
       legacyData: Object.keys(legacyData).length > 0 ? legacyData : undefined,
       sourceRow: headerRowIndex + offset + 2,
     });
