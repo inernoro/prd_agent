@@ -36,7 +36,8 @@ public class HostedSiteService : IHostedSiteService
         bool Predictable(string key) => key.StartsWith(prefix, StringComparison.Ordinal)
             && !VersionDirectory(key[prefix.Length..]);
         var versions = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId
-            && r.Status == HostedSiteRevisionStatuses.Published).ToListAsync(ct);
+            && r.Status == HostedSiteRevisionStatuses.Published)
+            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles)).ToListAsync(ct);
         foreach (var revision in versions)
         {
             var keys = revision.PublishedAssetKeys.Append(revision.PublishedEntryCosKey ?? "")
@@ -81,6 +82,7 @@ public class HostedSiteService : IHostedSiteService
             var version = EffectiveContentVersion(site);
             var snapshot = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId
                 && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
+                .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles))
                 .FirstOrDefaultAsync(ct);
             if (snapshot != null)
             {
@@ -90,7 +92,7 @@ public class HostedSiteService : IHostedSiteService
                     CosKey = byPath.GetValueOrDefault(f.Path, f.CosKey) }).ToList();
                 if (files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
                     throw new InvalidOperationException("当前版本尚未完整归档，请稍后重试");
-                var entryKey = files.Single(f => f.Path == site.EntryFile).CosKey;
+                var entryKey = files.Single(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)).CosKey;
                 var moved = await _db.HostedSites.UpdateOneAsync(BuildExpectedContentVersionFilter(siteId, version)
                     & Builders<HostedSite>.Filter.Eq(s => s.Files, site.Files),
                     Builders<HostedSite>.Update.Set(s => s.Files, files).Set(s => s.SiteUrl,
@@ -875,6 +877,12 @@ public class HostedSiteService : IHostedSiteService
         if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
             throw new KeyNotFoundException("站点不存在"); // 不可见/无编辑权一并按不存在处理，不泄露存在性
 
+        var acceptedVersion = EffectiveContentVersion(site);
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
+        site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
+        if (EffectiveContentVersion(site) != acceptedVersion)
+            throw new InvalidOperationException("站点在归档期间发生变化，请刷新后重试");
+
         // 先在内存里完整校验（ZIP 元数据校验 / HTML 直接可用）。校验通过后写入不可变版本目录，
         // 最后用 ContentVersion CAS 原子切换站点指针；旧版本在切换后进入持久清理账本。
         var oldFiles = site.Files ?? new List<HostedSiteFile>();
@@ -1107,6 +1115,11 @@ public class HostedSiteService : IHostedSiteService
         if (expectedContentVersion.HasValue && current.ContentVersion != expectedContentVersion.Value)
             throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
 
+        var acceptedVersion = current.ContentVersion;
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
+        current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (current.ContentVersion != acceptedVersion)
+            throw new InvalidOperationException("站点在归档期间已经发布过其他内容，请刷新后重试");
         var site = current.Site;
         var bytes = System.Text.Encoding.UTF8.GetBytes(html);
         if (bytes.Length > MaxEditableEntryBytes)
@@ -1115,40 +1128,35 @@ public class HostedSiteService : IHostedSiteService
         var entry = site.Files.First(x => string.Equals(x.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
         var rewritten = RewritePublishedEntryHtml(bytes, site.EntryFile);
         var isSlideDeck = DetectSlideDeck(rewritten);
-        // 不覆盖当前线上对象：先写同目录下的新入口，再通过 Mongo 条件更新原子切换指针。
-        // 若并发发布输掉 CAS，只留下一个未引用对象，不会把赢家的线上正文反向覆盖。
+        // Each publication gets its own directory; a current URL must not reveal the old archive directory.
         var now = DateTime.UtcNow;
-        var nextEntryKey = BuildVersionedEntryKey(entry.CosKey, site.EntryFile);
-        await ReservePublishKeysAsync(siteId, current.ContentVersion, [nextEntryKey], now);
+        var root = ".versions/" + Guid.NewGuid().ToString("N");
+        var removeGeneratedSidecars = HostedSiteContentShapeRules.IsSelfContainedHtml(site) && site.Files.Count > 1;
+        var sources = removeGeneratedSidecars ? new List<HostedSiteFile> { entry } : site.Files;
+        var updatedFiles = sources.Select(file => new HostedSiteFile { Path = file.Path,
+            CosKey = _storage.BuildSiteKey(siteId, root + "/" + file.Path), Size = file.Size, MimeType = file.MimeType }).ToList();
+        var nextEntry = updatedFiles.Single(file => string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        var nextEntryKey = nextEntry.CosKey;
+        var newKeys = updatedFiles.Select(file => file.CosKey).ToArray();
+        await ReservePublishKeysAsync(siteId, current.ContentVersion, newKeys, now);
         try
         {
-            await _storage.UploadToKeyAsync(
-                nextEntryKey,
-                rewritten,
-                "text/html; charset=utf-8",
-                CancellationToken.None,
-                SiteCacheControl);
+            foreach (var file in updatedFiles)
+            {
+                var isEntry = ReferenceEquals(file, nextEntry);
+                var content = isEntry ? rewritten : await _storage.TryDownloadBytesAsync(
+                    sources.Single(source => source.Path == file.Path).CosKey, ct)
+                    ?? throw new InvalidOperationException("网页资源读取失败，原版本未覆盖");
+                file.Size = content.LongLength;
+                if (isEntry) file.MimeType = "text/html";
+                await _storage.UploadToKeyAsync(file.CosKey, content, file.MimeType, CancellationToken.None, SiteCacheControl);
+            }
         }
         catch
         {
-            await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: true);
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
             throw;
         }
-        var nextEntry = new HostedSiteFile
-        {
-            Path = site.EntryFile,
-            CosKey = nextEntryKey,
-            Size = rewritten.LongLength,
-            MimeType = "text/html",
-        };
-        var removeGeneratedSidecars = HostedSiteContentShapeRules.IsSelfContainedHtml(site)
-                                      && site.Files.Count > 1;
-        var updatedFiles = removeGeneratedSidecars
-            ? new List<HostedSiteFile> { nextEntry }
-            : site.Files.Select(file =>
-                string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)
-                    ? nextEntry
-                    : file).ToList();
         var obsoleteKeys = ComputeObsoleteAssetKeys(site.Files, updatedFiles);
         var totalSize = updatedFiles.Sum(file => file.Size);
         var siteUrl = AppendVersion(_storage.BuildUrlForKey(nextEntryKey), now);
@@ -1184,10 +1192,10 @@ public class HostedSiteService : IHostedSiteService
         var result = await _db.HostedSites.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (result.ModifiedCount == 0)
         {
-            await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: true);
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
             throw new InvalidOperationException("站点在发布时已经发生变化，请刷新后重试");
         }
-        await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: false);
+        await ReleasePublishKeysAsync(siteId, newKeys, keepPending: false);
 
         if (obsoleteKeys.Count > 0)
         {
@@ -1219,6 +1227,10 @@ public class HostedSiteService : IHostedSiteService
         if (current.ContentVersion != expectedContentVersion)
             throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
         var ordered = ValidateVerifiedGeneratedFiles(files);
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
+        current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (current.ContentVersion != expectedContentVersion)
+            throw new InvalidOperationException("站点在归档期间已经发布过其他内容，请刷新后重试");
         var indexFile = ordered.Single(file => file.Path == "index.html");
         if (!string.IsNullOrWhiteSpace(current.Site.PublishedRevisionId))
         {
@@ -1473,16 +1485,6 @@ public class HostedSiteService : IHostedSiteService
             .Where(key => !string.IsNullOrWhiteSpace(key) && !retained.Contains(key))
             .Distinct(StringComparer.Ordinal)
             .ToList();
-    }
-
-    private static string BuildVersionedEntryKey(string currentKey, string entryFile)
-    {
-        var slash = currentKey.LastIndexOf('/');
-        var directory = slash >= 0 ? currentKey[..(slash + 1)] : string.Empty;
-        var fileName = Path.GetFileName(entryFile);
-        var extension = Path.GetExtension(fileName);
-        var stem = Path.GetFileNameWithoutExtension(fileName);
-        return $"{directory}{stem}.v{Guid.NewGuid():N}{extension}";
     }
 
     // ─────────────────────────────────────────────

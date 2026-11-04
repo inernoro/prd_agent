@@ -19,6 +19,77 @@ public class HostedSiteReviewVersionAccessTests
 {
     [Theory]
     [Trait("Category", "Integration")]
+    [InlineData("entry")]
+    [InlineData("package")]
+    [InlineData("reupload")]
+    public async Task ExistingShare_AiAndPackagePublicationRetireTheLegacyEntry(string mode)
+    {
+        await WithReviewDb(async db =>
+        {
+            const string prefix = "web-hosting/sites/site/";
+            var site = ReviewSite(); site.Files[0].CosKey = prefix + "index.html"; site.PublishedRevisionId = "baseline";
+            site.Files.Add(new HostedSiteFile { Path = "style.css", CosKey = prefix + "style.css", Size = 12, MimeType = "text/css" });
+            await db.HostedSites.InsertOneAsync(site);
+            await db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink { Token = "existing", SiteId = "site", Visibility = "public" });
+            const string privateHtml = "<!doctype html><html><body><h1>private V1</h1></body></html>";
+            var baseline = ReviewRevision("baseline", site.ContentVersion);
+            baseline.Html = privateHtml; baseline.PublishedEntryCosKey = site.Files[0].CosKey;
+            baseline.PublishedAssetKeys = site.Files.Select(f => f.CosKey).ToList();
+            baseline.CapturedContentShape = HostedSiteContentShapes.MultiFile;
+            await db.HostedSiteRevisions.InsertOneAsync(baseline);
+            const string html = "<!doctype html><html><body><h1>sanitized V2</h1></body></html>";
+            var bytes = System.Text.Encoding.UTF8.GetBytes(html);
+            var draft = new HostedSiteRevision { Id = "draft", SiteId = "site", CreatedByUserId = "owner", Status = HostedSiteRevisionStatuses.Draft,
+                BasedOnContentVersion = site.ContentVersion, Source = HostedSiteRevisionSources.AiEdit, Html = html };
+            if (mode == "package")
+            {
+                draft.Html = HostedSiteRevisionRules.HardenGeneratedHtml(html);
+                draft.VerifiedFiles = new[] { "index.html", "manifest.json" }.Select(path => {
+                    var content = System.Text.Encoding.UTF8.GetBytes(path == "index.html" ? draft.Html : "{}");
+                    return new HostedSiteRevisionFile { Path = path, Content = content,
+                        Sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)).ToLowerInvariant(),
+                        MimeType = path == "index.html" ? "text/html" : "application/json" };
+                }).ToList();
+            }
+            await db.HostedSiteRevisions.InsertOneAsync(draft);
+            var objects = new Dictionary<string, byte[]> { [site.Files[0].CosKey] = System.Text.Encoding.UTF8.GetBytes(privateHtml), [prefix + "style.css"] = System.Text.Encoding.UTF8.GetBytes("h1{color:red}") };
+            var storage = new Mock<IAssetStorage>();
+            storage.Setup(x => x.BuildSiteKey("site", It.IsAny<string>())).Returns((string _, string path) => prefix + path);
+            storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example/" + key);
+            storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string key, CancellationToken _) => objects.GetValueOrDefault(key));
+            storage.Setup(x => x.UploadToKeyAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+                .Returns((string key, byte[] content, string _, CancellationToken __, string ___) => { objects[key] = content; return Task.CompletedTask; });
+            storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns((string key, CancellationToken _) => { objects.Remove(key); return Task.CompletedTask; });
+            var teams = new Mock<ITeamService>();
+            teams.Setup(x => x.GetMyTeamIdsAsync("owner", It.IsAny<CancellationToken>())).ReturnsAsync(new List<string>());
+            var sites = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, null!, null!, Mock.Of<IAskOpeningQuestionGenerator>(), NullLogger<HostedSiteService>.Instance);
+            var revisions = new HostedSiteRevisionService(db, sites, storage.Object);
+            var published = mode == "reupload"
+                ? await sites.ReuploadAsync("site", "owner", bytes, "index.html", null)
+                : (await revisions.PublishAsync("site", "draft", "owner")).Site;
+            Assert.False(objects.ContainsKey(prefix + "index.html"));
+            Assert.Contains("sanitized V2", System.Text.Encoding.UTF8.GetString(objects[published.Files[0].CosKey]));
+            var saved = await db.HostedSiteRevisions.Find(r => r.Id == "baseline").FirstAsync();
+            Assert.Contains("private V1", System.Text.Encoding.UTF8.GetString(objects[saved.PublishedEntryCosKey!]));
+            Assert.StartsWith(prefix + ".versions/", saved.PublishedEntryCosKey);
+            var oldDirectory = saved.PublishedEntryCosKey![..(saved.PublishedEntryCosKey.LastIndexOf('/') + 1)];
+            Assert.False(published.Files[0].CosKey.StartsWith(oldDirectory, StringComparison.Ordinal));
+            if (mode == "entry")
+            {
+                var css = published.Files.Single(f => f.Path == "style.css");
+                Assert.Equal("h1{color:red}", System.Text.Encoding.UTF8.GetString(objects[css.CosKey]));
+                Assert.False(css.CosKey.StartsWith(oldDirectory, StringComparison.Ordinal));
+            }
+            Assert.True(await db.WebPageShareLinks.Find(s => s.Token == "existing" && !s.IsRevoked).AnyAsync());
+            var controller = ReviewController(sites, db, revisions, storage.Object, null);
+            Assert.IsType<NotFoundObjectResult>(await controller.PreviewSharedReviewVersion("existing", "baseline", null));
+        });
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]
@@ -29,6 +100,7 @@ public class HostedSiteReviewVersionAccessTests
             const string prefix = "web-hosting/sites/site/";
             var site = ReviewSite();
             site.Files[0].CosKey = relocateCurrent ? prefix + "index.html" : prefix + ".versions/11111111111141118111111111111111/index.html";
+            if (relocateCurrent) site.EntryFile = "INDEX.HTML";
             var legacyEntry = prefix + (relocateCurrent ? "v1/index.html" : "index.html");
             var legacyStyle = prefix + (relocateCurrent ? "v1/style.css" : "style.css");
             await db.HostedSites.InsertOneAsync(site);
@@ -67,6 +139,13 @@ public class HostedSiteReviewVersionAccessTests
                 await Assert.ThrowsAsync<InvalidOperationException>(() => sites.CreateShareWithReuseInfoAsync(
                     "owner", "Owner", "site", null, "single", null, null, null, 7, visibility: "public", forceNew: true));
                 Assert.Equal(0, await db.WebPageShareLinks.CountDocumentsAsync(_ => true));
+                var controller = ReviewController(sites, db, Mock.Of<IHostedSiteRevisionService>(), storage.Object, "owner");
+                var refused = Assert.IsType<ConflictObjectResult>(await controller.CreateShare(new CreateWebPageShareRequest { SiteId = "site", ShareType = "single", Visibility = "public" }));
+                Assert.Contains("清理", Assert.IsType<ApiResponse<object>>(refused.Value).Error!.Message);
+                Assert.IsType<ConflictObjectResult>(await controller.SetVisibility("site", new SetVisibilityRequest { Visibility = "public" }));
+                await db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink { Id = "owner-share", CreatedBy = "owner", SiteId = "site", Visibility = "owner-only" });
+                Assert.IsType<ConflictObjectResult>(await controller.UpdateShareSettings("owner-share", new UpdateShareSettingsRequest { Visibility = "public" }));
+                Assert.Equal("owner-only", (await db.WebPageShareLinks.Find(s => s.Id == "owner-share").FirstAsync()).Visibility);
             }
             else await sites.PrepareReviewHistoryAssetsAsync("site", "owner");
             var archived = await db.HostedSiteRevisions.Find(r => r.Id == "old").FirstAsync();

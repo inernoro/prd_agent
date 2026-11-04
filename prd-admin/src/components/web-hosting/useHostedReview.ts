@@ -11,6 +11,13 @@ function urlVersionKey(url: string): string {
   catch { return ''; }
 }
 
+function inlineSnapshotBase(site: ReviewSite, entryFile: string) {
+  const base = new URL('.', new URL(site.siteUrl, window.location.href));
+  const directory = site.entryFile.split('/').slice(0, -1).map(encodeURIComponent).join('/');
+  if (directory && base.pathname.endsWith(directory + '/')) base.pathname = base.pathname.slice(0, -directory.length - 1);
+  return new URL(entryFile, base).href;
+}
+
 type Preview = { revision: HostedReviewVersion; html: string; siteUrl: string | null };
 
 /** Version selection affects only this review; uploading appends and publishes using the existing upload contract. */
@@ -42,7 +49,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     entryFile: historical ? selected.entryFile : liveSite.entryFile,
     contentShape: historical ? selected.contentShape : liveSite.contentShape } : null;
   // A logical hosted address anchors inline snapshots; it is never used as their navigation fallback.
-  const previewBaseUrl = historical ? selectedUrl || liveSite?.siteUrl : liveSite?.siteUrl;
+  const previewBaseUrl = historical ? selectedUrl || (liveSite ? inlineSnapshotBase(liveSite, selected.entryFile) : undefined) : liveSite?.siteUrl;
   const annotationSite = displaySite && previewBaseUrl ? { ...displaySite, siteUrl: previewBaseUrl } : null;
   const annotations = useHostedAnnotations(frameRef, annotationSite, onOpen, selected?.contentVersionKey);
   const annotationsRef = useRef(annotations); annotationsRef.current = annotations;

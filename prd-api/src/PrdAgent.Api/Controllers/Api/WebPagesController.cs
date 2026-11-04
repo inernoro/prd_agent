@@ -1522,6 +1522,10 @@ public partial class WebPagesController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
             return Ok(ApiResponse<object>.Ok(updated));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
@@ -1715,6 +1719,10 @@ public partial class WebPagesController : ControllerBase
                 unifiedShareUrl = share.ShortSeq > 0 ? $"/s/{share.Token}" : null,
             }));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
@@ -1863,8 +1871,15 @@ public partial class WebPagesController : ControllerBase
             }
         }
 
-        var result = await _siteService.UpdateShareSettingsAsync(
-            shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        UpdateShareSettingsResult result;
+        try
+        {
+            result = await _siteService.UpdateShareSettingsAsync(shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         if (!result.Ok)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "修改失败"));
         return Ok(ApiResponse<object>.Ok(new { visibility = result.Visibility, expiresAt = result.ExpiresAt }));

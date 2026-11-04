@@ -55,8 +55,19 @@ describe('versioned webpage review', () => {
     await act(async () => review.selectVersion('v1'));
     expect(review.historical).toBe(true);
     expect(review.site?.siteUrl).toBe('');
-    expect(review.previewBaseUrl).toBe(site.siteUrl);
+    expect(review.previewBaseUrl).toBe('https://assets.example/index.html');
     expect(review.preview?.html).toContain('只有旧版正文');
+  });
+  it('uses the historical entry name when the current AI publication has a generated filename', async () => {
+    const inline = { ...previous, siteUrl: null, contentShape: 'self-contained-html' };
+    const generated = { ...current, siteUrl: 'https://assets.example/pack/index.vnew.html?v=20000', entryFile: 'pack/index.html' };
+    list.mockResolvedValue({ success: true, data: [generated, inline] });
+    preview.mockResolvedValue({ success: true, data: { revision: inline, html: '<h1>旧版</h1>', siteUrl: null } });
+    await mount();
+    await act(async () => root.render(<Harness live={{ ...site, siteUrl: generated.siteUrl, entryFile: generated.entryFile }} />));
+    await act(async () => review.selectVersion('v1'));
+    expect(review.previewBaseUrl).toBe('https://assets.example/index.html');
+    expect(review.site?.siteUrl).toBe('');
   });
   it('rejects an HTML-only multi-file snapshot whose old resources cannot be recovered', async () => {
     const incomplete = { ...previous, siteUrl: null, contentShape: 'multi-file' };
