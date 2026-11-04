@@ -16,7 +16,7 @@ import { useIsMobile } from '@/hooks/useBreakpoint';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
-import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, canUseSrcDocPreview, withPreviewBase } from './previewHtml';
+import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
@@ -113,7 +113,7 @@ export default function SitePreviewModal({
   );
   const historyHtml = review.preview?.html;
   const srcDoc = review.historical
-    ? (historyHtml && canUseSrcDocPreview(historyHtml) ? withPreviewBase(historyHtml, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
+    ? (historyHtml && site.contentShape === 'self-contained-html' && shouldFetchPreviewHtml(site) && canUseSrcDocPreview(historyHtml) ? withPreviewBase(historyHtml, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
     : currentSrcDoc;
   const htmlLoading = review.historical ? review.loading : currentHtmlLoading;
   /**

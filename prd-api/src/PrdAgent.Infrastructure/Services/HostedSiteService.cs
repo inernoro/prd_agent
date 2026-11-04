@@ -878,6 +878,9 @@ public class HostedSiteService : IHostedSiteService
             throw new KeyNotFoundException("站点不存在"); // 不可见/无编辑权一并按不存在处理，不泄露存在性
 
         var acceptedVersion = EffectiveContentVersion(site);
+        // Open API and optimization also call this common path without opening the review UI.
+        await HostedSiteRevisionService.CaptureReviewSnapshotAsync(_db, _storage,
+            new HostedSiteRevisionService(_db, this, _storage), site, userId, ct);
         await PrepareReviewHistoryAssetsAsync(siteId, userId, ct, relocateCurrent: true);
         site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
         if (EffectiveContentVersion(site) != acceptedVersion)

@@ -22,6 +22,9 @@ public class HostedSiteReviewVersionAccessTests
     [InlineData("entry")]
     [InlineData("package")]
     [InlineData("reupload")]
+    [InlineData("reupload-no-snapshot")]
+    [InlineData("stream-no-snapshot")]
+    [InlineData("reupload-no-snapshot-cleanup-fails")]
     public async Task ExistingShare_AiAndPackagePublicationRetireTheLegacyEntry(string mode)
     {
         await WithReviewDb(async db =>
@@ -36,7 +39,7 @@ public class HostedSiteReviewVersionAccessTests
             baseline.Html = privateHtml; baseline.PublishedEntryCosKey = site.Files[0].CosKey;
             baseline.PublishedAssetKeys = site.Files.Select(f => f.CosKey).ToList();
             baseline.CapturedContentShape = HostedSiteContentShapes.MultiFile;
-            await db.HostedSiteRevisions.InsertOneAsync(baseline);
+            if (!mode.Contains("no-snapshot")) await db.HostedSiteRevisions.InsertOneAsync(baseline);
             const string html = "<!doctype html><html><body><h1>sanitized V2</h1></body></html>";
             var bytes = System.Text.Encoding.UTF8.GetBytes(html);
             var draft = new HostedSiteRevision { Id = "draft", SiteId = "site", CreatedByUserId = "owner", Status = HostedSiteRevisionStatuses.Draft,
@@ -61,17 +64,39 @@ public class HostedSiteReviewVersionAccessTests
             storage.Setup(x => x.UploadToKeyAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
                 .Returns((string key, byte[] content, string _, CancellationToken __, string ___) => { objects[key] = content; return Task.CompletedTask; });
             storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns((string key, CancellationToken _) => { objects.Remove(key); return Task.CompletedTask; });
+                .Returns((string key, CancellationToken _) => {
+                    if (mode.EndsWith("cleanup-fails")) return Task.FromException(new IOException("storage deletion unavailable"));
+                    objects.Remove(key); return Task.CompletedTask;
+                });
             var teams = new Mock<ITeamService>();
             teams.Setup(x => x.GetMyTeamIdsAsync("owner", It.IsAny<CancellationToken>())).ReturnsAsync(new List<string>());
-            var sites = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, null!, null!, Mock.Of<IAskOpeningQuestionGenerator>(), NullLogger<HostedSiteService>.Instance);
+            var sites = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, null!, Mock.Of<IUploadProgressService>(), Mock.Of<IAskOpeningQuestionGenerator>(), NullLogger<HostedSiteService>.Instance);
             var revisions = new HostedSiteRevisionService(db, sites, storage.Object);
-            var published = mode == "reupload"
+            if (mode.EndsWith("cleanup-fails"))
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() => sites.ReuploadAsync("site", "owner", bytes, "index.html"));
+                var unchanged = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+                Assert.Equal(site.ContentVersion, unchanged.ContentVersion);
+                Assert.All(objects.Values, value => Assert.DoesNotContain("sanitized V2", System.Text.Encoding.UTF8.GetString(value)));
+                Assert.True(await db.HostedSiteRevisions.Find(r => r.SiteId == "site" && r.PublishedContentVersion == site.ContentVersion).AnyAsync());
+                await Assert.ThrowsAsync<InvalidOperationException>(() => sites.PrepareReviewHistoryAssetsAsync("site", "owner"));
+                return;
+            }
+            HostedSite published;
+            if (mode == "stream-no-snapshot")
+            {
+                using var zip = new MemoryStream();
+                using (var archive = new System.IO.Compression.ZipArchive(zip, System.IO.Compression.ZipArchiveMode.Create, true))
+                using (var target = archive.CreateEntry("index.html").Open()) await target.WriteAsync(bytes);
+                zip.Position = 0;
+                published = await sites.ReuploadAsync("site", "owner", zip, "new.zip");
+            }
+            else published = mode.StartsWith("reupload")
                 ? await sites.ReuploadAsync("site", "owner", bytes, "index.html", null)
                 : (await revisions.PublishAsync("site", "draft", "owner")).Site;
             Assert.False(objects.ContainsKey(prefix + "index.html"));
             Assert.Contains("sanitized V2", System.Text.Encoding.UTF8.GetString(objects[published.Files[0].CosKey]));
-            var saved = await db.HostedSiteRevisions.Find(r => r.Id == "baseline").FirstAsync();
+            var saved = await db.HostedSiteRevisions.Find(r => r.SiteId == "site" && r.PublishedContentVersion == site.ContentVersion).FirstAsync();
             Assert.Contains("private V1", System.Text.Encoding.UTF8.GetString(objects[saved.PublishedEntryCosKey!]));
             Assert.StartsWith(prefix + ".versions/", saved.PublishedEntryCosKey);
             var oldDirectory = saved.PublishedEntryCosKey![..(saved.PublishedEntryCosKey.LastIndexOf('/') + 1)];

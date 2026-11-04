@@ -55,7 +55,7 @@ test.afterAll(async () => { if (directory) await rm(directory, { recursive: true
 test.use({ trace: 'off', video: 'off' });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; multiFileHistory?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
@@ -77,7 +77,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     if (!(name in files)) { await route.fulfill({ status: 404, body: 'Missing file' }); return; }
     const types: Record<string, string> = { html: 'text/html', js: 'text/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml' };
     await route.fulfill({ contentType: types[name.split('.').pop()!]!, body: name === 'index.html' && options.nativeHtml
-      ? options.nativeHtml : await readFile(join(directory, name)) });
+      ? options.nativeHtml : name === 'index.html' && options.multiFileHistory ? files['index.html'].replace('<script type="module" src="./module.js"></script>', '') : await readFile(join(directory, name)) });
   });
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -86,7 +86,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       return;
     }
     const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: 'self-contained-html' };
-    const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: null };
+    const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: options.multiFileHistory ? siteEntry : null, contentShape: options.multiFileHistory ? 'multi-file' : 'self-contained-html' };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
       data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site] };
@@ -110,7 +110,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     } else if (path.endsWith('/revisions')) {
       data = options.inlineHistory ? [currentVersion, inlineVersion] : [];
     } else if (path.endsWith('/revisions/inline-history/preview')) {
-      data = { revision: inlineVersion, siteUrl: null, html: '<!doctype html><html><head><meta charset="utf-8"></head><body><h1 id="old-heading">仅保留 HTML 的旧版正文</h1><p>这是旧版，不能替换为当前版或后台页面。</p></body></html>' };
+      data = { revision: inlineVersion, siteUrl: inlineVersion.siteUrl, html: options.multiFileHistory ? files['index.html'].replace('<script type="module" src="./module.js"></script>', '') : '<!doctype html><html><head><meta charset="utf-8"></head><body><h1 id="old-heading">仅保留 HTML 的旧版正文</h1><p>这是旧版，不能替换为当前版或后台页面。</p></body></html>' };
     }
     await route.fulfill({ json: { success: true, data, error: null } });
   });
@@ -162,6 +162,19 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         await expect(page.getByText('已选中标题', { exact: true })).toBeVisible();
         await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
         await expect(preview).toHaveAttribute('srcdoc', /仅保留 HTML 的旧版正文/);
+      });
+    }
+
+    for (const modal of [false, true]) {
+      test(`${modal ? '站内' : '分享'}的历史多文件版本保留真实来源与同源 fetch`, async ({ page }) => {
+        const { frame, preview } = await serve(page, { modal, inlineHistory: true, multiFileHistory: true, shape: 'multi-file' });
+        await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
+        await page.getByRole('option', { name: /V1/ }).click();
+        await expect(page.getByRole('button', { name: '网页版本：V1', exact: true })).toBeVisible();
+        await expect(frame.locator('#result')).toHaveText('fetch-ok:entry');
+        await expect(preview).not.toHaveAttribute('srcdoc');
+        expect(await frame.locator('body').evaluate(() => location.href)).toBe(entry);
+        await expect(frame.locator('body')).toHaveAttribute('data-storage', 'ok');
       });
     }
 

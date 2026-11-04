@@ -1368,7 +1368,6 @@ public partial class WebPagesController : ControllerBase
         {
             try
             {
-                await SnapshotBeforeReuploadAsync(id);
                 using var zipStream = file.OpenReadStream();
                 var zipSite = await _siteService.ReuploadAsync(
                     id, GetUserId(), zipStream, file.FileName, uploadId: uploadId);
@@ -1410,7 +1409,6 @@ public partial class WebPagesController : ControllerBase
             // uploadId 要一路传到解包那层，否则前端轮询的那个键下面永远没有进度：
             // 换 ZIP 时解包面板会一直停在「等待中」，而服务层其实早就支持这个参数了，
             // 断的只是控制器这一跳（线只建了一半）。
-            await SnapshotBeforeReuploadAsync(id);
             var updated = await _siteService.ReuploadAsync(
                 id, GetUserId(), fileBytes, uploadName, wrappedAssetType, uploadId: uploadId);
             await EnsureReviewSnapshotAsync(updated, GetUserId());

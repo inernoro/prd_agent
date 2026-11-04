@@ -53,37 +53,11 @@ public partial class WebPagesController
             : await PreviewReviewVersionCoreAsync(access.Site, revisionId, !string.IsNullOrEmpty(viewer) && await _siteService.CanEditSiteAsync(access.Site, viewer, CancellationToken.None));
     }
 
-    private async Task SnapshotBeforeReuploadAsync(string siteId)
-    {
-        var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None)
-            ?? throw new KeyNotFoundException("站点不存在");
-        if (!await _siteService.CanEditSiteAsync(site, GetUserId(), CancellationToken.None))
-            throw new KeyNotFoundException("站点不存在");
-        await EnsureReviewSnapshotAsync(site, GetUserId());
-    }
-
     private async Task EnsureReviewSnapshotAsync(HostedSite site, string actorUserId)
     {
         if (_reviewRevisions == null || _reviewStorage == null) return;
-        var version = HostedSiteService.EffectiveContentVersion(site);
-        var saved = await _db.HostedSiteRevisions.Find(r => r.SiteId == site.Id
-            && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
-            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Include(r => r.PublishedEntryCosKey)).FirstOrDefaultAsync(CancellationToken.None);
-        if (!string.IsNullOrWhiteSpace(saved?.PublishedEntryCosKey)) return;
-        var entry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
-        if (entry == null || string.IsNullOrWhiteSpace(entry.CosKey))
-            throw new InvalidOperationException("网页入口缺失，无法保留当前版本");
-        // 大入口保留对象引用而不塞进 MongoDB。小入口同时保存正文，供隔离的 srcDoc 预览。
-        var html = string.Empty;
-        if (entry.Size <= HostedSiteRevisionRules.MaxHtmlBytes)
-        {
-            var bytes = await _reviewStorage.TryDownloadBytesAsync(entry.CosKey, CancellationToken.None)
-                ?? throw new InvalidOperationException("网页入口读取失败，未覆盖当前版本");
-            if (bytes.Length <= HostedSiteRevisionRules.MaxHtmlBytes)
-                html = System.Text.Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
-        }
-        await _reviewRevisions.EnsureCurrentSnapshotAsync(site.Id, actorUserId,
-            new HostedSiteEditableEntry(site, html, version), CancellationToken.None);
+        await HostedSiteRevisionService.CaptureReviewSnapshotAsync(_db, _reviewStorage, _reviewRevisions,
+            site, actorUserId, CancellationToken.None);
     }
 
     private async Task<IActionResult> ListReviewVersionsCoreAsync(HostedSite site, bool canViewHistory)

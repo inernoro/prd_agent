@@ -817,7 +817,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     const site = { ...liveSite, ...review.site };
     // 打包型 SPA（入口是外链 module 脚本）必须留在直链 iframe：srcDoc 的不透明源会让
     // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
-    const fetchedHtml = review.historical ? (review.preview ? withPreviewBase(review.preview.html, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
+    const fetchedHtml = review.historical ? (review.preview && site.contentShape === 'self-contained-html' && shouldFetchPreviewHtml(site) ? withPreviewBase(review.preview.html, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
       : embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
     const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
     /**

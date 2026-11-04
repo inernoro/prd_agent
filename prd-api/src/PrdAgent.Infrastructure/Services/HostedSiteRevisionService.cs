@@ -34,6 +34,29 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         _storage = storage;
     }
 
+    public static async Task CaptureReviewSnapshotAsync(MongoDbContext db, IAssetStorage storage,
+        IHostedSiteRevisionService revisions, HostedSite site, string actorUserId, CancellationToken ct = default)
+    {
+        var version = HostedSiteService.EffectiveContentVersion(site);
+        var saved = await db.HostedSiteRevisions.Find(r => r.SiteId == site.Id
+            && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
+            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Include(r => r.PublishedEntryCosKey)).FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(saved?.PublishedEntryCosKey)) return;
+        var entry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        if (entry == null || string.IsNullOrWhiteSpace(entry.CosKey))
+            throw new InvalidOperationException("网页入口缺失，无法保留当前版本");
+        var html = string.Empty;
+        if (entry.Size <= HostedSiteRevisionRules.MaxHtmlBytes)
+        {
+            var bytes = await storage.TryDownloadBytesAsync(entry.CosKey, ct)
+                ?? throw new InvalidOperationException("网页入口读取失败，未覆盖当前版本");
+            if (bytes.Length <= HostedSiteRevisionRules.MaxHtmlBytes)
+                html = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+        }
+        await revisions.EnsureCurrentSnapshotAsync(site.Id, actorUserId,
+            new HostedSiteEditableEntry(site, html, version), ct);
+    }
+
     public Task<HostedSiteRevision> EnsureCurrentSnapshotAsync(
         string siteId,
         string userId,
