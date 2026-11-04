@@ -3044,11 +3044,12 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
         </div>
       )}
 
+      {/* 徽标与文件字段分档展开，避免在临界宽度同时抢占标题空间。 */}
       <div className="flex flex-1 min-w-0 items-center gap-3">
         <div className="flex flex-1 min-w-0 items-center gap-2">
           {shared && (
             <span
-              className="hidden shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium @[480px]:inline-flex"
+              className="hidden shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium @[900px]:inline-flex"
               style={{ color: 'var(--semantic-warning-text)' }}
               title="已分享"
             >
@@ -3064,13 +3065,13 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
             {site.title}
           </span>
           {site.sourceType !== 'upload' && (
-            <Badge className="hidden shrink-0 whitespace-nowrap @[480px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
+            <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
               {siteSourceLabel(site.sourceType)}
             </Badge>
           )}
           {isPublic && (
             <span
-              className="hidden shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium @[480px]:inline-flex"
+              className="hidden shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium @[1100px]:inline-flex"
               style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }}
               title="已公开"
             >
@@ -3081,12 +3082,12 @@ export function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, o
         <div className="hidden shrink-0 items-center gap-3 whitespace-nowrap text-xs text-token-muted @[640px]:flex">
           <span className="hidden @[900px]:inline">{site.files.length} 个文件</span>
           <span className="w-16 text-right">{fmtSize(site.totalSize)}</span>
-          <span className="hidden w-28 truncate @[1100px]:inline" title={site.entryFile}>{site.entryFile}</span>
+          <span className="hidden w-28 truncate @[1280px]:inline" title={site.entryFile}>{site.entryFile}</span>
         </div>
       </div>
 
       <div className="hidden items-center gap-3 whitespace-nowrap text-xs shrink-0 text-token-muted @[480px]:flex">
-        {site.folder && <span className="hidden w-28 items-center gap-1 @[900px]:flex" title={site.folder}><FolderOpen size={12} className="shrink-0" /> <span className="truncate">{site.folder}</span></span>}
+        {site.folder && <span className="hidden w-28 items-center gap-1 @[1100px]:flex" title={site.folder}><FolderOpen size={12} className="shrink-0" /> <span className="truncate">{site.folder}</span></span>}
         <span className="hidden w-12 items-center justify-end gap-1 @[640px]:flex"><Eye size={12} /> {site.viewCount}</span>
         <span className="w-20 text-right">{relativeTime(site.createdAt)}</span>
       </div>
