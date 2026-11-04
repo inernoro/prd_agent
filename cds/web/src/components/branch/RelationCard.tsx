@@ -8,7 +8,7 @@
  * 2026-09-16 之前这里画的是缩略版二维图，固定 180px 高、只按宽度缩放，宽屏上被裁得只剩
  * 「入口」一枚节点——文案说 2 个服务挂在壳下面，图里一个都没有。
  */
-import { useCallback, useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Expand, Maximize2, Wrench, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,17 +16,36 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { RelationEmptyState, RelationGraph, RelationLegend, relationHeadline, type LintFindingView, type RelationPayload } from './RelationGraph';
 import { FlowFacts, RelationFlowSkeleton, RelationFlowStrip, layoutFlow } from './RelationFlowStrip';
 
-export function useRelationPayload(branchId: string | undefined): { state: { status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string }; reload: () => void } {
-  const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string }>({ status: 'loading' });
+type RelationLoadState = { status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string };
+
+export function useRelationPayload(branchId: string | undefined): { state: RelationLoadState; reload: () => void; refreshing: boolean; refreshError: string } {
+  const [snapshot, setSnapshot] = useState<{ key: string | undefined; state: RelationLoadState }>({ key: branchId, state: { status: 'loading' } });
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+  const request = useRef<AbortController | null>(null);
   const reload = useCallback(() => {
-    if (!branchId) return;
-    setState({ status: 'loading' });
-    apiRequest<RelationPayload>(`/api/branches/${encodeURIComponent(branchId)}/service-graph`)
-      .then((data) => setState({ status: 'ok', data }))
-      .catch((err) => setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) }));
+    request.current?.abort();
+    if (!branchId) {
+      setSnapshot({ key: branchId, state: { status: 'error', message: '缺少分支 ID' } });
+      return;
+    }
+    const controller = new AbortController();
+    request.current = controller;
+    setRefreshing(true);
+    setRefreshError('');
+    setSnapshot(prev => prev.key === branchId && prev.state.status === 'ok' ? prev : { key: branchId, state: { status: 'loading' } });
+    apiRequest<RelationPayload>(`/api/branches/${encodeURIComponent(branchId)}/service-graph`, { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) setSnapshot({ key: branchId, state: { status: 'ok', data } }); })
+      .catch(err => {
+        if (controller.signal.aborted) return;
+        const message = err instanceof ApiError ? err.message : String(err);
+        setRefreshError(message);
+        setSnapshot(prev => prev.key === branchId && prev.state.status === 'ok' ? prev : { key: branchId, state: { status: 'error', message } });
+      })
+      .finally(() => { if (!controller.signal.aborted) setRefreshing(false); });
   }, [branchId]);
-  useEffect(() => { reload(); }, [reload]);
-  return { state, reload };
+  useEffect(() => { reload(); return () => request.current?.abort(); }, [reload]);
+  return { state: snapshot.key === branchId ? snapshot.state : { status: 'loading' }, reload, refreshing, refreshError };
 }
 
 const SEV_LABEL: Record<LintFindingView['severity'], string> = { error: '错误', warn: '警告', info: '建议' };
@@ -140,7 +159,7 @@ export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems =
  */
 export type RelationCardVariant = 'card' | 'row';
 
-export function RelationCardSkeleton({ badge = '正在体检', note = '正在算服务关系与体检，通常 1 秒内完成', variant = 'card' }: { badge?: string; note?: string; variant?: RelationCardVariant }): JSX.Element {
+export function RelationCardSkeleton({ badge = '正在体检', note, variant = 'card' }: { badge?: string; note?: string; variant?: RelationCardVariant }): JSX.Element {
   if (variant === 'row') {
     return (
       <div className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-3.5" data-testid="relation-card" data-loading="true" data-variant="row">

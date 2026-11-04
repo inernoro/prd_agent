@@ -1,0 +1,130 @@
+[
+  {
+    "route": "/project-list",
+    "name": "项目列表",
+    "page": "pages/ProjectListPage.tsx",
+    "kind": "projects",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/branches/:projectId",
+    "name": "分支列表",
+    "page": "pages/BranchListPage.tsx",
+    "kind": "branches",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/branch-list",
+    "name": "分支列表兼容入口",
+    "page": "pages/BranchListPage.tsx",
+    "kind": "branches",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/branch-panel",
+    "name": "分支详情入口",
+    "page": "pages/BranchDetailPage.tsx",
+    "kind": "branch-detail",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/branch-panel/:branchId",
+    "name": "分支详情",
+    "page": "pages/BranchDetailPage.tsx",
+    "kind": "branch-detail",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/branch-relations/:branchId",
+    "name": "分支关系",
+    "page": "pages/BranchRelationsPage.tsx",
+    "kind": "relations",
+    "workspace": "fill"
+  },
+  {
+    "route": "/branch-topology",
+    "name": "服务拓扑",
+    "page": "pages/BranchTopologyPage.tsx",
+    "kind": "topology",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/overview",
+    "name": "全局关系概览",
+    "page": "pages/OverviewPage.tsx",
+    "kind": "relations",
+    "workspace": "fill"
+  },
+  {
+    "route": "/release-center",
+    "name": "发布中心",
+    "page": "pages/ReleaseCenterPage.tsx",
+    "kind": "release-center",
+    "workspace": "bleed"
+  },
+  {
+    "route": "/release-console",
+    "name": "发布控制台",
+    "page": "pages/ReleaseConsolePage.tsx",
+    "kind": "release-console",
+    "workspace": "bleed"
+  },
+  {
+    "route": "/reports",
+    "name": "验收报告",
+    "page": "pages/ReportsPage.tsx",
+    "kind": "rows",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/status",
+    "name": "监控中心",
+    "page": "pages/StatusPage.tsx",
+    "kind": "monitor",
+    "workspace": "fill"
+  },
+  {
+    "route": "/task-schedule",
+    "name": "任务调度",
+    "page": "pages/TaskSchedulePage.tsx",
+    "kind": "rows",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/settings/:projectId",
+    "name": "项目设置",
+    "page": "pages/ProjectSettingsPage.tsx",
+    "kind": "project-settings",
+    "workspace": "bleed"
+  },
+  {
+    "route": "/agent-requests/:projectId",
+    "name": "Agent 请求",
+    "page": "pages/AgentRequestsPage.tsx",
+    "kind": "agent-table",
+    "workspace": "fluid"
+  },
+  {
+    "route": "/cds-settings",
+    "name": "系统设置",
+    "page": "pages/CdsSettingsPage.tsx",
+    "kind": "settings",
+    "workspace": "bleed"
+  },
+  {
+    "route": "/login",
+    "name": "登录",
+    "page": "pages/LoginPage.tsx",
+    "kind": "auth",
+    "workspace": "standalone",
+    "scope": "standalone"
+  },
+  {
+    "route": "/s/:token",
+    "name": "公开状态",
+    "page": "pages/PublicStatusPage.tsx",
+    "kind": "public-status",
+    "workspace": "standalone",
+    "scope": "standalone"
+  }
+]

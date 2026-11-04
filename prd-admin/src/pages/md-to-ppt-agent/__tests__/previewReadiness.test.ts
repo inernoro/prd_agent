@@ -21,6 +21,12 @@ const frameFactory = new Function(
   }) => number | null;
 };
 const prepare = frameFactory.prepareIframeHtml;
+const viewportStart = source.indexOf('function resolvePresentationViewport(');
+const viewportEnd = source.indexOf('function PresentationViewport(', viewportStart);
+const resolveViewport = viewportStart < 0 || viewportEnd < 0
+  ? null
+  : new Function(ts.transpile(source.slice(viewportStart, viewportEnd)) + ';return resolvePresentationViewport;')() as
+    ((width: number, height: number) => { width: number; height: number; scale: number }) | null;
 const publishFactory = source.slice(source.indexOf('const PERSISTED_FONT_LINK'), source.indexOf('// 从生成 HTML 提取'));
 const preparePublish = new Function(ts.transpile(publishFactory.replace('export function', 'function')) + ';return preparePublishHtml;')() as (html: string, runtime?: string) => string;
 const html = prepare('<html><head></head><body></body></html>', { documentId: 'current-document' });
@@ -62,6 +68,25 @@ function runtime(
 }
 
 describe('PPT 文档导航就绪合同', () => {
+  it('全屏宿主保留完整演示逻辑视口，仅等比容纳进工具栏之间的剩余空间', () => {
+    expect(resolveViewport).not.toBeNull();
+    const viewport = resolveViewport!(1280, 568);
+    expect(viewport.width).toBe(1280);
+    expect(viewport.height).toBe(720);
+    expect(viewport.scale).toBeCloseTo(568 / 720);
+    expect(viewport.width * viewport.scale).toBeLessThanOrEqual(1280);
+    expect(viewport.height * viewport.scale).toBe(568);
+    expect(resolveViewport!(640, 568)).toEqual({ width: 1280, height: 720, scale: 0.5 });
+
+    const presentation = source.slice(source.indexOf('{/* 演示模式（自定义全屏）'), source.indexOf('{/* KB picker modal */}'));
+    expect(presentation).toContain('<PresentationViewport>');
+    expect(presentation).toContain('{...presentationDocument.frameSource}');
+    expect(presentation).toContain('sandbox="allow-scripts"');
+    const host = source.slice(viewportEnd, source.indexOf('function prepareIframeHtml('));
+    expect(host).toContain('new ResizeObserver(measure)');
+    expect(host).toContain('observer.disconnect()');
+  });
+
   it('OpenDesign 完成稿按权威原字节发布，旧历史仍保留字体规范化', () => {
     const prefix = '<!DOCTYPE html><html><head><title>完成稿</title></head><body>';
     const suffix = '</body></html>';

@@ -136,6 +136,7 @@ CDS 会检查应用目录、安装方式、构建方式、启动命令、端口�
 
 | 你想了解什么 | 文档 |
 | --- | --- |
+| 修改骨架、定位加载入口与执行连续性验收 | [骨架维护与验收](../doc/guide.cds.loading.md) |
 | 从零完成第一次使用 | [从零开始使用 CDS](../doc/guide.cds.tutorial.md) |
 | 接入 Codex 或 Claude Code | [自动交付与 Agent 接入](../doc/guide.cds.managed-delivery.md) |
 | 选择托管、Compose 或 Agent 操作 | [部署方式选择](../doc/guide.cds.deploy-three-paths.md) |

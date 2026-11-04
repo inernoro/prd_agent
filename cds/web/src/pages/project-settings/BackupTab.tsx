@@ -1,3 +1,4 @@
+import { useProjectSettingsRefresh } from '@/components/project/ProjectSettingsRefresh';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -353,8 +354,10 @@ export function BackupTab({ projectId }: { projectId: string }): JSX.Element {
   // 上一个项目的那一屏，标题却已经是新项目了。宁可显示「加载中」。
   useEffect(() => { setData(null); setError(null); }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useProjectSettingsRefresh(refresh);
+  useEffect(() => () => { latest.current.begin(); }, []);
 
-  if (error) return <ErrorBlock message={error} />;
+  if (error && !data) return <ErrorBlock message={error} />;
   if (!data) return <LoadingBlock label="加载周期备份…" />;
-  return <BackupPanel data={data} busy={busy} onRefresh={() => void refresh()} />;
+  return <>{error ? <ErrorBlock message={error} /> : null}<BackupPanel data={data} busy={busy} onRefresh={() => void refresh()} /></>;
 }

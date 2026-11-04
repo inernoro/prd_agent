@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText,
@@ -686,6 +686,35 @@ const FONT_LINKS =
   '<link rel="preconnect" href="https://fonts.googleapis.com" data-map-inject>' +
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin data-map-inject>' +
   '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet" data-map-inject>';
+
+function resolvePresentationViewport(availableWidth: number, availableHeight: number) {
+  // 与既有 16:9 演示预览一致：工具栏占用宿主空间，不压缩作品的逻辑视口。
+  const width = 1280;
+  const height = 720;
+  return { width, height, scale: Math.max(0, Math.min(availableWidth / width, availableHeight / height)) };
+}
+
+function PresentationViewport({ children }: { children: ReactNode }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState(() => resolvePresentationViewport(0, 0));
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const measure = () => setViewport(resolvePresentationViewport(host.clientWidth, host.clientHeight));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={hostRef} data-testid="presentation-viewport" className="flex-1 min-h-0 min-w-0 flex items-center justify-center overflow-hidden bg-token-nested">
+      <div style={{ width: viewport.width, height: viewport.height, flexShrink: 0, transform: `scale(${viewport.scale})`, visibility: viewport.scale > 0 ? 'visible' : 'hidden' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?: string; assetBaseUrl?: string }): string {
   if (!html) return html;
@@ -1945,12 +1974,14 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
     // 恢复对账：把聊天里残留的「正在生成/修改」气泡按 run 真实状态翻转——
     // 此前只恢复 deck 不对账消息，刷新后气泡永远停在"正在生成 PPT..."（2026-06-11 实测）
-    const reconcileMessages = (status: 'done' | 'error', error?: string | null, doneContent?: string) => {
+    const reconcileMessages = (status: 'done' | 'error' | 'cancelled', error?: string | null, doneContent?: string) => {
       setMessages((prev) =>
         prev.map((m) =>
           m.role === 'assistant' && (m.phase === 'generating' || m.phase === 'patching')
             ? status === 'done'
               ? { ...m, phase: 'done', content: doneContent ?? 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。' }
+              : status === 'cancelled'
+                ? { ...m, phase: 'text', content: doneContent ?? '本次修改已取消，原版本仍然保留，可从历史记录载入。' }
               : { ...m, phase: 'error', content: '生成失败：' + (error ?? '未知错误') }
             : m
         )
@@ -1975,7 +2006,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         const parent = await recoverPatchParentRun(run);
         if (cancelled) return;
         releaseRecovery();
-        if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
+        const wasCancelled = run.errorCode === 'design_artifact_cancelled';
+        if (wasCancelled) {
+          resetStreamPreview();
+          hasRuntimePreviewRef.current = false;
+        }
+        if (!wasCancelled && run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
           hasRuntimePreviewRef.current = true;
           setGeneratedHtml(run.latestPreviewHtml);
           setArtifactSiteUrl('');
@@ -1992,7 +2028,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setArtifactPhase('idle');
           setRepairableRunId('');
         }
-        reconcileMessages('error', run.error);
+        reconcileMessages(wasCancelled ? 'cancelled' : 'error', run.error,
+          wasCancelled && parent ? '本次修改已取消，已恢复原版本，可以继续编辑或发布。' : undefined);
       } else if (run.status === 'running') {
         canCancel = run.runtime === 'open-design' && ['convert', 'patch', 'manual-edit'].includes(run.op);
         if (canCancel && cancelRequested) void sendCancellation();
@@ -3017,7 +3054,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           )
         );
       };
-      const finishFailure = (err: string) => {
+      const finishFailure = (err: string, errorCode?: string | null) => {
         if (!mountedRef.current || !patchSubmissionRef.current || activePatchRef.current !== operation) return;
         activePatchRef.current = null;
         cleanupRef.current?.();
@@ -3025,19 +3062,28 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
         if (manualIntent?.settled && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
         patchSubmissionRef.current = false;
+        const wasCancelled = errorCode === 'design_artifact_cancelled';
         setMessages((prev) =>
           prev.map((m) =>
             m.id === patchMsg.id
-              ? { ...m, content: '修改失败：' + err, phase: 'error', error: err }
+              ? { ...m, content: wasCancelled
+                  ? manualEditHtml ? '本次保存已取消，编辑草稿和原版本都已保留。' : '本次修改已取消，已恢复原版本，可以继续编辑或发布。'
+                  : '修改失败：' + err, phase: wasCancelled ? 'text' : 'error', error: wasCancelled ? undefined : err }
               : m
           )
         );
         setIsProcessing(false);
-        setArtifactPhase(hasRuntimePreviewRef.current && !manualEditHtml ? 'error' : 'done');
+        if (wasCancelled) {
+          resetStreamPreview();
+          hasRuntimePreviewRef.current = false;
+          setGeneratedHtml(base);
+          setRepairableRunId('');
+        }
+        setArtifactPhase(!wasCancelled && hasRuntimePreviewRef.current && !manualEditHtml ? 'error' : 'done');
         setPatchingSlide(null);
         setActiveRunId(sourceRunId);
         setArtifactSiteUrl(sourceSiteUrl);
-        if (manualEditHtml) {
+        if (manualEditHtml && !wasCancelled) {
           toast.error('保存编辑失败', '当前草稿和原版本都已保留，可检查后再次保存。');
         }
         patchParentRef.current = null;
@@ -3051,7 +3097,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           if (run.status === 'done' && run.html) { finishSuccess({ html: run.html, siteUrl: run.siteUrl ?? undefined }); return; }
           if (run.status === 'error') {
             if (manualIntent) manualIntent.settled = true;
-            finishFailure(run.error ?? '本次修改未完成，原稿仍然保留');
+            finishFailure(run.error ?? '本次修改未完成，原稿仍然保留', run.errorCode);
             return;
           }
           setArtifactProgress(Math.max(0, run.progress ?? 0));
@@ -5611,7 +5657,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               >退出全屏 (Esc)</button>
             </div>
           </div>
-          <div className="flex-1 min-h-0 bg-token-nested">
+          <PresentationViewport>
             <iframe
               ref={presentIframeRef}
               {...presentationDocument.frameSource}
@@ -5627,7 +5673,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                  }
               }}
             />
-          </div>
+          </PresentationViewport>
           {/* 底部子页缩略条：每页真实缩略（deck 自带样式渲染），点击跳页，当前页高亮 */}
           {deckThumbDocs.length > 0 && (
             <div

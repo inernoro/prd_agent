@@ -17,8 +17,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { getMenuGroupedDefaultOrder, DEFAULT_NAV_ORDER } from '@/lib/unifiedNavCatalog';
-import { getSidebarMenuItems, getSidebarAutoAppendItems, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
+import { getMenuGroupedDefaultOrder, getUnifiedNavCatalog, DEFAULT_NAV_ORDER } from '@/lib/unifiedNavCatalog';
+import { getSidebarMenuItems, getSidebarAutoAppendItems, getAugmentedAdminMenuCatalog, SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
+import { getLauncherCatalog } from '@/lib/launcherCatalog';
+import { collapseDividers } from '@/pages/settings/NavLayoutEditor';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 
@@ -57,10 +59,10 @@ const BASE_MENU: AdminMenuItem[] = [
 ];
 
 // 模拟后端返回有 group 字段（sidebar 会显示）和无 group 字段（sidebar 不显示）的条目
-const WITH_POSTER_AND_NO_GROUP: AdminMenuItem[] = [
+const WITH_EXTRA_AND_NO_GROUP: AdminMenuItem[] = [
   ...BASE_MENU,
   // 有 group 字段 → getSidebarMenuItems 包含
-  { appKey: 'weekly-poster', path: '/weekly-poster', label: '海报设计', icon: 'Sparkles', group: 'tools', sortOrder: 15 },
+  { appKey: 'extra-tool', path: '/extra-tool', label: '扩展工具', icon: 'Sparkles', group: 'tools', sortOrder: 15 },
   // 无 group 字段 → getSidebarMenuItems 排除（!!m.group === false）
   { appKey: 'skills', path: '/skills', label: '技能', icon: 'Wrench', sortOrder: 50 } as AdminMenuItem,
   { appKey: 'prompts', path: '/prompts', label: '提示词', icon: 'MessageSquare', sortOrder: 51 } as AdminMenuItem,
@@ -76,91 +78,91 @@ describe('SIDEBAR_HIDDEN_APPKEYS 护栏', () => {
 
 describe('getSidebarMenuItems 过滤规则', () => {
   it('settings 出现在结果里（普通导航条目，不再被过滤）', () => {
-    const ids = getSidebarMenuItems({ items: WITH_POSTER_AND_NO_GROUP, permissions: [], isRoot: true })
+    const ids = getSidebarMenuItems({ items: WITH_EXTRA_AND_NO_GROUP, permissions: [], isRoot: true })
       .map((m) => m.appKey);
     expect(ids).toContain('settings');
   });
 
   it('无 group 字段的条目不出现在结果里', () => {
-    const ids = getSidebarMenuItems({ items: WITH_POSTER_AND_NO_GROUP, permissions: [], isRoot: true })
+    const ids = getSidebarMenuItems({ items: WITH_EXTRA_AND_NO_GROUP, permissions: [], isRoot: true })
       .map((m) => m.appKey);
     expect(ids).not.toContain('skills');
     expect(ids).not.toContain('prompts');
   });
 
   it('有 group 字段的非隐藏条目出现在结果里', () => {
-    const ids = getSidebarMenuItems({ items: WITH_POSTER_AND_NO_GROUP, permissions: [], isRoot: true })
+    const ids = getSidebarMenuItems({ items: WITH_EXTRA_AND_NO_GROUP, permissions: [], isRoot: true })
       .map((m) => m.appKey);
     expect(ids).toContain('toolbox');
-    expect(ids).toContain('weekly-poster');
+    expect(ids).toContain('extra-tool');
   });
 });
 
 describe('孤立条目检测（orphan detection）', () => {
   it('navOrder 为空时不产生孤立条目（getMenuGroupedDefaultOrder 已覆盖所有侧边栏条目）', () => {
-    // BASE_MENU 中 toolbox 和 settings 是侧边栏条目（isRoot=true 还会注入 weekly-poster）；
+    // BASE_MENU 中 toolbox 和 settings 是侧边栏条目（isRoot=true 注入的海报仍被过滤）；
     // getMenuGroupedDefaultOrder 将全部纳入 base，inBase 覆盖 appShellVisibleIds → 孤立集合为空
     const orphans = detectOrphans([], BASE_MENU);
     expect(orphans).toHaveLength(0);
   });
 
-  it('navOrder 不含 weekly-poster 时将其识别为孤立条目', () => {
-    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP);
-    expect(orphans).toContain('weekly-poster');
+  it('navOrder 不含 extra-tool 时将其识别为孤立条目', () => {
+    const orphans = detectOrphans(['toolbox'], WITH_EXTRA_AND_NO_GROUP);
+    expect(orphans).toContain('extra-tool');
   });
 
-  it('navOrder 已含 weekly-poster 时不再重复追加', () => {
-    const orphans = detectOrphans(['toolbox', 'weekly-poster'], WITH_POSTER_AND_NO_GROUP);
-    expect(orphans).not.toContain('weekly-poster');
+  it('navOrder 已含 extra-tool 时不再重复追加', () => {
+    const orphans = detectOrphans(['toolbox', 'extra-tool'], WITH_EXTRA_AND_NO_GROUP);
+    expect(orphans).not.toContain('extra-tool');
   });
 
   it('settings 若不在 navOrder 中会被识别为孤立条目（与普通菜单条目行为一致）', () => {
-    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP);
+    const orphans = detectOrphans(['toolbox'], WITH_EXTRA_AND_NO_GROUP);
     expect(orphans).toContain('settings');
   });
 
   it('home 条目不出现在孤立条目里（group=home 被 getSidebarAutoAppendItems 排除）', () => {
-    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP);
+    const orphans = detectOrphans(['toolbox'], WITH_EXTRA_AND_NO_GROUP);
     expect(orphans).not.toContain('home');
   });
 
   it('无 group 字段的条目不出现在孤立条目里', () => {
-    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP);
+    const orphans = detectOrphans(['toolbox'], WITH_EXTRA_AND_NO_GROUP);
     expect(orphans).not.toContain('skills');
     expect(orphans).not.toContain('prompts');
   });
 
   it('用户已隐藏的条目不被重新追加（navHidden 优先）', () => {
-    // 用户隐藏了 weekly-poster，navOrder 里也没有它
-    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP, ['weekly-poster']);
-    expect(orphans).not.toContain('weekly-poster');
+    // 用户隐藏了 extra-tool，navOrder 里也没有它
+    const orphans = detectOrphans(['toolbox'], WITH_EXTRA_AND_NO_GROUP, ['extra-tool']);
+    expect(orphans).not.toContain('extra-tool');
   });
 
   it('fallbackNavHidden 同样生效', () => {
-    const orphans = detectOrphans(['toolbox'], WITH_POSTER_AND_NO_GROUP, [], ['weekly-poster']);
-    expect(orphans).not.toContain('weekly-poster');
+    const orphans = detectOrphans(['toolbox'], WITH_EXTRA_AND_NO_GROUP, [], ['extra-tool']);
+    expect(orphans).not.toContain('extra-tool');
   });
 
   it('navOrder 为空但 fallbackNavOrder 非空时，同样触发孤立检测', () => {
-    // fallbackNavOrder 只含 toolbox，weekly-poster 是新上线条目 → 应识别为孤立
-    const orphans = detectOrphans([], WITH_POSTER_AND_NO_GROUP, [], [], ['toolbox']);
-    expect(orphans).toContain('weekly-poster');
+    // fallbackNavOrder 只含 toolbox，extra-tool 是新上线条目 → 应识别为孤立
+    const orphans = detectOrphans([], WITH_EXTRA_AND_NO_GROUP, [], [], ['toolbox']);
+    expect(orphans).toContain('extra-tool');
   });
 
   it('navOrder 和 fallbackNavOrder 均为空时，getMenuGroupedDefaultOrder 已涵盖全部侧边栏条目，孤立检测返回空', () => {
     // getMenuGroupedDefaultOrder 现在把侧边栏可见但不在 DEFAULT_NAV_ORDER 的条目
-    // 也插入对应组段——toolbox/weekly-poster 均被纳入 base，无孤立条目
-    const orphans = detectOrphans([], WITH_POSTER_AND_NO_GROUP);
+    // 也插入对应组段——toolbox/extra-tool 均被纳入 base，无孤立条目
+    const orphans = detectOrphans([], WITH_EXTRA_AND_NO_GROUP);
     expect(orphans).toHaveLength(0);
   });
 
   it('追加孤立条目后，currentOrder 覆盖的 id 集合 ⊇ AppShell 会展示的非隐藏条目', () => {
     const navOrder = ['toolbox'];
-    const orphans = detectOrphans(navOrder, WITH_POSTER_AND_NO_GROUP);
+    const orphans = detectOrphans(navOrder, WITH_EXTRA_AND_NO_GROUP);
     const effectiveOrder = [...navOrder, ...orphans];
 
     const sidebarIds = getSidebarAutoAppendItems({
-      items: WITH_POSTER_AND_NO_GROUP,
+      items: WITH_EXTRA_AND_NO_GROUP,
       permissions: [],
       isRoot: true,
     }).map((m) => m.appKey);
@@ -174,7 +176,8 @@ describe('孤立条目检测（orphan detection）', () => {
 describe('DEFAULT_NAV_ORDER 硬编码默认顺序', () => {
   it('包含预期的核心条目', () => {
     expect(DEFAULT_NAV_ORDER).toContain('ai-toolbox');
-    expect(DEFAULT_NAV_ORDER).toContain('workflow-agent');
+    expect(DEFAULT_NAV_ORDER).not.toContain('workflow-agent');
+    expect(DEFAULT_NAV_ORDER).not.toContain('weekly-poster');
     expect(DEFAULT_NAV_ORDER).toContain('executive');
     expect(DEFAULT_NAV_ORDER).toContain('marketplace');
     expect(DEFAULT_NAV_ORDER).toContain('my-assets');
@@ -214,7 +217,7 @@ describe('DEFAULT_NAV_ORDER 硬编码默认顺序', () => {
 
 describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
   it('只返回用户有权访问的侧边栏条目', () => {
-    // isRoot=false + 无权限 → weekly-poster 不注入，BASE_MENU 中 toolbox 和 settings 是侧边栏条目
+    // isRoot=false + 无权限 → 海报不注入，BASE_MENU 中 toolbox 和 settings 是侧边栏条目
     // home(group='home') 不参与导航
     const order = getMenuGroupedDefaultOrder({
       menuCatalog: BASE_MENU,
@@ -224,12 +227,12 @@ describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
     expect(order).toContain('toolbox');
     expect(order).toContain('settings');
     expect(order).not.toContain('home');
-    expect(order).not.toContain('weekly-poster');
+    expect(order).not.toContain('extra-tool');
   });
 
   it('包含 settings（settings 是普通导航条目）', () => {
     const order = getMenuGroupedDefaultOrder({
-      menuCatalog: WITH_POSTER_AND_NO_GROUP,
+      menuCatalog: WITH_EXTRA_AND_NO_GROUP,
       permissions: [],
       isRoot: true,
     });
@@ -255,19 +258,18 @@ describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
   });
 
   it('不在 DEFAULT_NAV_ORDER 的条目按 sortOrder 插入段内正确位置，而非追加到末尾', () => {
-    // weekly-poster sortOrder:15 应插入到 ai-toolbox(10) 和 workflow-agent(20) 之间
+    // extra-tool sortOrder:15 应插入到 ai-toolbox(10) 和 design-tool(20) 之间
     const catalogWithExtra: AdminMenuItem[] = [
       { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
-      { appKey: 'workflow-agent', path: '/workflow-agent', label: '工作流', icon: 'Workflow', group: 'tools', sortOrder: 20 },
+      { appKey: 'design-tool', path: '/design-tool', label: '设计工具', icon: 'Workflow', group: 'tools', sortOrder: 20 },
       { appKey: 'executive', path: '/executive', label: '洞察', icon: 'BarChart3', group: 'tools', sortOrder: 25 },
-      // weekly-poster 不在 DEFAULT_NAV_ORDER，sortOrder:15 应在 ai-toolbox 和 workflow-agent 之间
-      { appKey: 'weekly-poster', path: '/weekly-poster', label: '海报', icon: 'Sparkles', group: 'tools', sortOrder: 15 },
+      // extra-tool 不在 DEFAULT_NAV_ORDER，sortOrder:15 应在 ai-toolbox 和 design-tool 之间
+      { appKey: 'extra-tool', path: '/extra-tool', label: '扩展工具', icon: 'Sparkles', group: 'tools', sortOrder: 15 },
     ];
-    // isRoot=false 避免 getAugmentedAdminMenuCatalog 注入第二个 weekly-poster
     const order = getMenuGroupedDefaultOrder({ menuCatalog: catalogWithExtra, permissions: [], isRoot: false });
-    const wpIdx = order.indexOf('weekly-poster');
+    const wpIdx = order.indexOf('extra-tool');
     expect(wpIdx).toBeGreaterThan(order.indexOf('ai-toolbox'));
-    expect(wpIdx).toBeLessThan(order.indexOf('workflow-agent'));
+    expect(wpIdx).toBeLessThan(order.indexOf('design-tool'));
   });
 
   it('相邻组之间保留一个分隔符', () => {
@@ -275,11 +277,51 @@ describe('getMenuGroupedDefaultOrder 基于硬编码顺序过滤', () => {
       { appKey: 'ai-toolbox', path: '/ai-toolbox', label: '百宝箱', icon: 'Sparkles', group: 'tools', sortOrder: 10 },
       { appKey: 'users', path: '/users', label: '用户权限', icon: 'Users', group: 'admin', sortOrder: 60 },
     ];
-    // isRoot=false → weekly-poster 不自动注入，结果只含 ai-toolbox 和 users
+    // isRoot=false → 海报不自动注入，结果只含 ai-toolbox 和 users
     const order = getMenuGroupedDefaultOrder({ menuCatalog: mixedCatalog, permissions: [], isRoot: false });
     // ai-toolbox(tools 组) 和 users(admin 组) 之间恰好一个分隔符
     const dividerCount = order.filter((k) => k === NAV_DIVIDER_KEY).length;
     expect(dividerCount).toBe(1);
     expect(order).toEqual(['ai-toolbox', NAV_DIVIDER_KEY, 'users']);
+  });
+});
+
+describe('海报和工作流永久退出首页导航', () => {
+  const retired = ['weekly-poster', 'workflow-agent'];
+  const menuCatalog: AdminMenuItem[] = [
+    ...BASE_MENU,
+    { appKey: 'weekly-poster', path: '/weekly-poster', label: '海报', icon: 'Sparkles', group: 'tools', sortOrder: 15 },
+    { appKey: 'workflow-agent', path: '/workflow-agent', label: '工作流', icon: 'Workflow', group: 'tools', sortOrder: 20 },
+  ];
+
+  it.each([false, true])('导航、默认布局和可添加池均排除两项（root=%s）', (isRoot) => {
+    const permissions = ['workflow-agent.use', 'report-agent.template.manage'];
+    const options = { items: menuCatalog, menuCatalog, permissions, isRoot };
+    const collections = [
+      getSidebarMenuItems(options).map((m) => m.appKey),
+      getSidebarAutoAppendItems(options).map((m) => m.appKey),
+      getMenuGroupedDefaultOrder(options),
+      getUnifiedNavCatalog(options).map((m) => m.id),
+      detectOrphans(['toolbox'], menuCatalog, [], [], [], permissions, isRoot),
+    ];
+    for (const ids of collections) {
+      for (const id of retired) expect(ids).not.toContain(id);
+    }
+    const catalog = getAugmentedAdminMenuCatalog(options).map((m) => m.appKey);
+    const launcher = getLauncherCatalog(options).map((m) => m.route);
+    for (const id of retired) {
+      expect(catalog).toContain(id);
+      expect(launcher).toContain(`/${id}`);
+    }
+  });
+
+  it('管理员自动注入的海报也不会回流到侧栏', () => {
+    expect(getAugmentedAdminMenuCatalog({ items: BASE_MENU, isRoot: true }).map((m) => m.appKey)).toContain('weekly-poster');
+    expect(getSidebarMenuItems({ items: BASE_MENU, isRoot: true }).map((m) => m.appKey)).not.toContain('weekly-poster');
+  });
+
+  it('导航编辑器清理旧顺序和分隔符，保留其他条目', () => {
+    expect(collapseDividers(['weekly-poster', '---', 'toolbox', '---', 'infra:workflow-agent', '---', 'settings', '---', '__weekly-poster__']))
+      .toEqual(['toolbox', '---', 'settings']);
   });
 });
