@@ -82,3 +82,12 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 |------|------|
 | 版本双值对账 | `prd-api/Dockerfile`（build 阶段 `ARG GIT_COMMIT` + `-p:SourceRevisionId`）、`prd-api/src/PrdAgent.Core/Diagnostics/BuildIdentity.cs`、`prd-api/src/PrdAgent.Api/Program.cs` 的 `VersionInfo`、`prd-api/tests/PrdAgent.Tests/BuildIdentityTests.cs`、`.claude/rules/config-runtime-drift.md` 第三点五节；未覆盖项：`llmgw/console-api/Dockerfile`、`llmgw/serving/Dockerfile` |
 | 总览 | `.github/workflows/branch-image.yml`、`cds-compose.yml`、`cds/src/services/{container,deploy-runtime,github-webhook-dispatcher,state,branch-events}.ts`、`cds/src/routes/{branches,github-webhook}.ts`、`cds/web/src/pages/BranchListPage.tsx`、`cds/src/services/compose-parser.ts` |
+
+
+### 2026-11-04 冷恢复与等价产物的主干承接候选
+
+原冷恢复与镜像准入目标在最新主干上重新接线，保留固定目标、组件完整输入、实际镜像来源及主从独立核验。缺少归属、范围、历史对象或可靠读取结果时保持拒绝或等待，不借当前配置缩窄历史证明，也不使用宿主源码补齐必需镜像。
+
+本轮两条真实反例已在未改主干生产代码时失败：冷登记目录未恢复，以及已证明输入未变的组件仍永久等待目标镜像。候选工程门、准确提交产物及原生部署与预览业务验收尚待，旧分支工程或旧在线证据不转借本候选。发布脚本、鉴权、数据库隔离、权限与容量沿用主干合同；未展开维护、活动、卡片及额外身份兼容功能。
+
+冷恢复仅在本次独占空目录的派发前资格校验明确拒绝、执行收尾未报清理未知且目录身份一致时，非递归移除空预留，允许新请求恢复。已派发后的启动失败仍保守保留；非空、被替换或无法确认身份的目录不自动删除。进程清理未确认时，原异常及目录保护必须继续保留；本批只覆盖当前控制进程，跨重启恢复仍不在本次范围。 共享仓库元数据操作仍串行等待；资格撤销在获槽和派发前核验，但不承诺立即结束等待。可取消等待与原租约、关停期限的收敛仍需按既定预算验证，不能据此提前释放已派发或清理未知的保护。
