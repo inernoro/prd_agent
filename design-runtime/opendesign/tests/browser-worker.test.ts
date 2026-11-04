@@ -1,10 +1,13 @@
 import fs from 'node:fs';
+import http from 'node:http';
+import net, { type AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { runBrowserWorker } from '../src/quality/browser-worker.js';
+import { runBrowserWorker, startBrowserQualityServer } from '../src/quality/browser-worker.js';
 import { browserRepairMessage, summarizeAttempt } from '../src/quality/browser-contract.js';
+import { createArtifactQualityGate } from '../src/quality/gate.js';
 
 const roots: string[] = [];
 
@@ -30,6 +33,106 @@ function presentationWorkspace(html: string, targetPages: number): { workspaceDi
   }));
   return result;
 }
+
+async function requestFile(server: http.Server, requestPath: string): Promise<{ status: number; body: string; csp?: string | string[] }> {
+  return new Promise((resolve, reject) => {
+    // A raw request path keeps encoded separators intact until the real server parses them.
+    http.get({ host: '127.0.0.1', port: (server.address() as AddressInfo).port, path: requestPath }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode!, body, csp: res.headers['content-security-policy'] }));
+    }).on('error', reject);
+  });
+}
+
+describe('quality browser public-file and egress boundary', () => {
+  it('serves only the canonical public subtree, including encoded traversal and symlink cases', async () => {
+    const sample = workspace('<!doctype html><html><body><main><h1>Public sample</h1></main></body></html>');
+    const assets = path.join(sample.workspaceDir, 'assets');
+    const source = path.join(sample.workspaceDir, 'source');
+    fs.mkdirSync(assets);
+    fs.mkdirSync(source);
+    fs.writeFileSync(path.join(source, 'presentation.md'), 'SYNTHETIC_PRIVATE_SOURCE');
+    fs.writeFileSync(path.join(assets, 'public.js'), 'self.postMessage("public-worker-ready")');
+    fs.mkdirSync(path.join(assets, 'media'));
+    fs.writeFileSync(path.join(assets, 'media', 'sample.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    fs.symlinkSync(source, path.join(assets, 'source-link'), 'dir');
+    fs.symlinkSync(path.join(source, 'presentation.md'), path.join(assets, 'file-link.md'));
+    const server = await startBrowserQualityServer(sample.workspaceDir);
+    try {
+      for (const requestPath of [
+        '/source/presentation.md',
+        '/assets/../source/presentation.md',
+        '/assets/%2e%2e%2fsource%2fpresentation.md',
+        '/assets/%2e%2e/source/presentation.md',
+        '/assets/source-link/presentation.md',
+        '/assets/file-link.md',
+        '/assets/%E0%A4%A',
+      ]) {
+        const response = await requestFile(server, requestPath);
+        expect(response.status, requestPath).toBe(404);
+        expect(response.body).not.toContain('SYNTHETIC_PRIVATE_SOURCE');
+      }
+      for (const requestPath of ['/', '/index.html', '/assets/public.js', '/assets/media/sample.svg']) {
+        const response = await requestFile(server, requestPath);
+        expect(response.status, requestPath).toBe(200);
+        expect(response.csp).toBe("connect-src 'none'");
+      }
+      expect((await requestFile(server, '/index.html')).body).toBe(fs.readFileSync(path.join(sample.workspaceDir, 'index.html'), 'utf8'));
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps a same-origin worker functional without allowing its HTTP, WS or WSS connections', async () => {
+    const observed = { http: 0, ws: 0, wssTransportAttempts: 0 };
+    const receiver = http.createServer((_req, res) => { observed.http += 1; res.end('synthetic-only'); });
+    receiver.on('upgrade', (_req, socket) => { observed.ws += 1; socket.destroy(); });
+    // No certificate exception: count only a TLS transport attempt, never accept WSS or any payload.
+    const tlsReceiver = net.createServer((socket) => {
+      socket.once('data', (bytes) => {
+        if (bytes[0] === 0x16) observed.wssTransportAttempts += 1;
+        socket.destroy();
+      });
+    });
+    await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => tlsReceiver.listen(0, '127.0.0.1', resolve));
+    const port = (receiver.address() as AddressInfo).port;
+    const tlsPort = (tlsReceiver.address() as AddressInfo).port;
+    const rawHtml = `<!doctype html><html><head></head><body><main><p>Public readable sample</p></main><script>
+      const worker = new Worker('/assets/worker.js');
+      worker.onmessage = () => { const title = document.createElement('h1'); title.textContent = 'Worker ready'; document.querySelector('main').append(title); };
+      worker.postMessage('SYNTHETIC_ONLY');
+      for (const url of ['ws://127.0.0.1:${port}/page-only', 'wss://127.0.0.1:${tlsPort}/page-only']) {
+        const socket = new WebSocket(url);
+        socket.onclose = (event) => {
+          if (event.code === 1008) { const title = document.createElement('h2'); title.textContent = 'Socket denied'; document.querySelector('main').append(title); }
+        };
+      }
+    </script></body></html>`;
+    const html = createArtifactQualityGate('', [], '', false)(rawHtml, ['index.html', 'assets/worker.js']);
+    const sample = workspace(html);
+    fs.mkdirSync(path.join(sample.workspaceDir, 'assets'));
+    fs.writeFileSync(path.join(sample.workspaceDir, 'assets', 'worker.js'), `
+      onmessage = () => {
+        fetch('http://127.0.0.1:${port}/synthetic-only').catch(() => {});
+        new WebSocket('ws://127.0.0.1:${port}/synthetic-only');
+        new WebSocket('wss://127.0.0.1:${tlsPort}/synthetic-only');
+        postMessage('ready');
+      };
+    `);
+    try {
+      const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+      expect(result.measurements.map((measurement) => measurement.h1Count)).toEqual([1, 1]);
+      expect(result.measurements.map((measurement) => measurement.visibleHeadingCount)).toEqual([3, 3]);
+      expect(observed).toEqual({ http: 0, ws: 0, wssTransportAttempts: 0 });
+      expect(fs.readFileSync(path.join(sample.workspaceDir, 'index.html'), 'utf8')).toBe(html);
+    } finally {
+      await Promise.all([receiver, tlsReceiver].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+    }
+  }, 30_000);
+});
 
 describe('isolated Chromium quality measurements', () => {
   it('detects every deterministic hard-gate category from a fixed broken sample', async () => {
