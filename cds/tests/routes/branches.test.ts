@@ -5788,7 +5788,7 @@ describe('Branch Routes', () => {
           status: kind === 'failed-candidate' ? 'error' : 'running', creationIssued: true,
           networkName: kind === 'failed-candidate' ? unusedNetwork : 'current-network',
           ...(kind === 'failed-candidate' ? { servingRuntime: { containerName: 'old-api', containerId: oldCid,
-            hostPort: 10001, networkName: 'old-network' } } : { retainedRuntimes: [{ containerName: 'unknown-old-api', hostPort: 10003 }] }),
+            hostPort: 10001, networkName: 'old-network' } } : { retainedRuntimes: [{ containerName: 'unknown-old-api', containerId: oldCid, hostPort: 10003 }] }),
         } } };
       stateService.addBranch(entry);
       const lease = branchOperationCoordinator.begin({ projectId: 'default', branchId: id, kind: 'deploy', trigger: 'manual' }).lease!;
@@ -5820,7 +5820,8 @@ describe('Branch Routes', () => {
         release(); expect(await result).toBeUndefined();
         expect(mock.commands.some(command => command === `docker network rm '${unusedNetwork}'`)).toBe(true);
         expect(entry.replacementNetworks).toEqual([]);
-        expect(mock.commands.some(command => command === `docker rm ${oldCid}`)).toBe(false);
+        expect(entry.services.api.retainedRuntimes).toEqual([expect.objectContaining({ containerName: 'unknown-old-api', containerId: oldCid })]);
+        expect(mock.commands.filter(command => /^docker (?:stop|rm) /.test(command) && (command.includes(oldCid) || command.includes('unknown-old-api')))).toEqual([]);
       } finally { release(); await result; }
     });
 
