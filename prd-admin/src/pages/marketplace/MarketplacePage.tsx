@@ -44,7 +44,6 @@ type CardDemoSkill = MarketplaceSkillDto & MarketplaceItemBase & {
   shareCount?: number;
 };
 
-type FavoritePatch = Pick<MarketplaceSkillDto, 'id' | 'favoriteCount' | 'isFavoritedByCurrentUser'>;
 type MarketplaceSnapshot = {
   scope: MarketplaceSkillScope | null;
   viewerId: string | undefined;
@@ -52,7 +51,11 @@ type MarketplaceSnapshot = {
 };
 const EMPTY_MARKETPLACE_DATA: Record<string, MarketplaceItemBase[]> = {};
 
-function applyFavoritePatch(items: MarketplaceItemBase[], updated: FavoritePatch, scope: MarketplaceSkillScope | null) {
+function applyFavoritePatch(items: MarketplaceItemBase[], updated: MarketplaceSkillDto, scope: MarketplaceSkillScope | null) {
+  // 收藏确认可能晚于范围切换；完整服务端 DTO 让刷新失败时也能保留刚确认的新成员。
+  if (scope === 'favorites' && updated.isFavoritedByCurrentUser && !items.some(item => item.id === updated.id)) {
+    return [...items, { ...updated, ownerUserAvatar: updated.ownerUserAvatar ?? undefined }];
+  }
   return items.flatMap<MarketplaceItemBase>(item =>
     item.id !== updated.id ? [item] : scope === 'favorites' && !updated.isFavoritedByCurrentUser ? [] : [{
       ...item, favoriteCount: updated.favoriteCount, isFavoritedByCurrentUser: updated.isFavoritedByCurrentUser,

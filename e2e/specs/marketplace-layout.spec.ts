@@ -159,34 +159,49 @@ for (const scope of ['all', 'mine'] as const) {
   });
 }
 
-test('收藏确认晚于切换范围时，新收藏与计数进入当前个人列表', async ({ page }) => {
-  const items = await installMarketplaceFixture(page);
-  const item = items.find(item => item.id === 'fixture-skill-4')!;
-  let releaseFavorite!: () => void;
-  const gate = new Promise<void>(resolve => { releaseFavorite = resolve; });
-  await page.route(`**/api/marketplace/skills/${item.id}/favorite`, async route => {
-    await gate;
-    item.isFavoritedByCurrentUser = true;
-    item.favoriteCount = 1;
-    await route.fulfill({ json: { success: true, data: { item }, error: null } });
+for (const refreshFails of [false, true]) {
+  test(`收藏确认晚于切换范围时，新收藏与计数进入当前个人列表（刷新${refreshFails ? '失败' : '成功'}）`, async ({ page }) => {
+    const items = await installMarketplaceFixture(page);
+    const item = items.find(item => item.id === 'fixture-skill-4')!;
+    let releaseFavorite!: () => void;
+    const gate = new Promise<void>(resolve => { releaseFavorite = resolve; });
+    await page.route(`**/api/marketplace/skills/${item.id}/favorite`, async route => {
+      await gate;
+      item.isFavoritedByCurrentUser = true;
+      item.favoriteCount = 1;
+      await route.fulfill({ json: { success: true, data: { item }, error: null } });
+    });
+    try {
+      await page.goto('/marketplace');
+      await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
+      const card = page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) });
+      const started = page.waitForRequest(request => request.url().endsWith(`/${item.id}/favorite`));
+      await card.getByTitle('收藏', { exact: true }).click();
+      await started;
+      await page.getByRole('button', { name: '我的收藏', exact: true }).click();
+      await expect(page.locator('.mkt-card')).toHaveCount(3);
+      if (refreshFails) await page.route('**/api/marketplace/skills?*', route => route.fulfill({
+        status: 503, json: { success: false, error: { code: 'TEMPORARY', message: '暂时不可用' } },
+      }));
+      releaseFavorite();
+      await expect(page.locator('.mkt-card')).toHaveCount(4);
+      await expect(card.locator('.mkt-card-favorite')).toHaveAttribute('data-active', 'true');
+      await expect(page.locator('[data-tour-id="marketplace-tag-filters"]').getByRole('button', { name: '工具 3', exact: true })).toBeVisible();
+      if (refreshFails) {
+        await expect(page.getByText('列表刷新失败', { exact: true })).toBeVisible();
+        await expect(page.locator('.marketplace-empty[role="alert"]')).toHaveCount(0);
+        await page.unroute('**/api/marketplace/skills?*');
+        await page.getByRole('button', { name: /^显示/ }).click();
+        await page.getByRole('button', { name: '最新', exact: true }).click();
+        await page.waitForLoadState('networkidle');
+        await expect(page.locator('.mkt-card')).toHaveCount(4);
+        await expect(card.locator('.mkt-card-favorite')).toHaveAttribute('data-active', 'true');
+      }
+    } finally {
+      releaseFavorite();
+    }
   });
-  try {
-    await page.goto('/marketplace');
-    await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
-    const card = page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) });
-    const started = page.waitForRequest(request => request.url().endsWith(`/${item.id}/favorite`));
-    await card.getByTitle('收藏', { exact: true }).click();
-    await started;
-    await page.getByRole('button', { name: '我的收藏', exact: true }).click();
-    await expect(page.locator('.mkt-card')).toHaveCount(3);
-    releaseFavorite();
-    await expect(page.locator('.mkt-card')).toHaveCount(4);
-    await expect(card.locator('.mkt-card-favorite')).toHaveAttribute('data-active', 'true');
-    await expect(page.locator('[data-tour-id="marketplace-tag-filters"]').getByRole('button', { name: '工具 3', exact: true })).toBeVisible();
-  } finally {
-    releaseFavorite();
-  }
-});
+}
 
 for (const responseOrder of ['list-first', 'favorite-first'] as const) {
   test(`取消收藏与同范围排序并发：${responseOrder} 保留已确认结果`, async ({ page }) => {
