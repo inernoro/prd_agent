@@ -644,8 +644,16 @@ export function buildWidgetScript(
     var widgetHeight=Math.max(compactMobile?44:50,root.offsetHeight||0);
     var maxX=Math.max(0,window.innerWidth-widgetWidth);
     var maxY=Math.max(0,window.innerHeight-widgetHeight);
+    var minY=0;
+    if(isMobileViewport()&&expanded){
+      var view=window.visualViewport,style=window.getComputedStyle(root);
+      var top=(view?view.offsetTop:0)+Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-top'))||0)+12;
+      var bottom=(view?view.offsetTop+view.height:window.innerHeight)-Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-bottom'))||0)-12;
+      minY=Math.max(0,window.innerHeight-bottom);
+      maxY=Math.max(minY,window.innerHeight-top-widgetHeight);
+    }
     pos.x=Math.max(0,Math.min(maxX,x));
-    pos.y=Math.max(0,Math.min(maxY,y));
+    pos.y=Math.max(minY,Math.min(maxY,y));
     root.style.left=pos.x+'px';
     root.style.bottom=pos.y+'px';
     scheduleWidgetAvoidance();

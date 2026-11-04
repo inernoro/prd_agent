@@ -259,6 +259,23 @@ try {
       `非零原生env安全区必须真的生效：${JSON.stringify(bounds)}`);
     assert.equal((await geometry(page)).placement, 'clear');
   });
+  for (const hosted of [false, true]) await check(`top-relocated-panel-safe-area-${hosted}`, async page => {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 40, bottom: 34 } });
+    await addFloat(page, 'status');
+    await page.locator('#fixture-status').evaluate(el => { (el as HTMLElement).style.cssText = 'position:fixed;left:0;right:0;top:160px;bottom:0;background:#fff;z-index:70'; });
+    await settle(page);
+    assert.equal((await geometry(page)).placement, 'clear');
+    assert.ok((await geometry(page)).y >= 52 && (await geometry(page)).y < 160, '真实底部浮层应先把徽标移到顶部安全槽');
+    await page.locator('button[data-action="toggle"]').click(); await settle(page);
+    const bounds = await page.locator('#cds-widget').evaluate(el => {
+      const root = el.getBoundingClientRect(), close = el.querySelector('button[data-action="close-panel"]')!.getBoundingClientRect();
+      return { top: root.top, bottom: root.bottom, closeTop: close.top, closeBottom: close.bottom };
+    });
+    assert.ok(bounds.top >= 52 && bounds.bottom <= 618 && bounds.closeTop >= 52 && bounds.closeBottom <= 618,
+      `由顶部槽展开后，面板和关闭按钮仍须在实际上下安全区内：${JSON.stringify(bounds)}`);
+    await page.locator('button[data-action="close-panel"]').click(); await settle(page);
+  }, hosted);
   await check('no-safe-slot', async page => {
     await addFloat(page, 'alert');
     await page.locator('#fixture-status').evaluate(el => { (el as HTMLElement).style.cssText = 'position:fixed;inset:0;background:#fff;z-index:70'; });
