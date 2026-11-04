@@ -40,6 +40,7 @@ import {
   retainMdToPptManualSaveIntent,
   publishMdToPpt,
   getMdToPptRun,
+  observeMdToPptRun,
   getRecentMdToPptRuns,
   streamMdToPptOutline,
   getMdToPptTemplates,
@@ -52,7 +53,7 @@ import { useLocation } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 import { sessionStorageOrNull } from '@/lib/designArtifactLaunch';
 import { listMyTeams } from '@/services/real/teams';
-import { restartDesignArtifactRun } from '@/services/real/webPages';
+import { cancelDesignArtifactRun, restartDesignArtifactRun } from '@/services/real/webPages';
 import { buildPptPublishRequest, markLaunchDraftSent, publishDestinationLabel, resolveLaunchDraft } from './launchHandoff';
 import { activatePptSessionContext, resolvePptSessionContext, type PptSessionContext } from './sessionContext';
 import { NextStepBar } from './NextStepBar';
@@ -1859,6 +1860,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const patchParentRef = useRef<{ runId: string; siteUrl: string } | null>(null);
+  const activePatchRef = useRef<{ runId: string; cancel: () => void } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // 演示模式（自定义全屏覆盖层 + 底部缩略条，诉求 9）
   const [presentMode, setPresentMode] = useState(false);
@@ -1906,6 +1908,40 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
     let cancelled = false;
     let timer: number | undefined;
+    let canCancel = false;
+    let cancelRequested = false;
+    let cancelSent = false;
+    const operation: NonNullable<typeof activePatchRef.current> = {
+      runId,
+      cancel: () => {
+        cancelRequested = true;
+        setArtifactPhaseMessage('正在确认取消结果，原稿仍然保留');
+        if (canCancel) void sendCancellation();
+      },
+    };
+    const sendCancellation = async () => {
+      if (cancelSent || cancelled) return;
+      cancelSent = true;
+      await cancelDesignArtifactRun(runId).catch(() => null);
+    };
+    const stopRecovery = () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+      if (activePatchRef.current === operation) {
+        activePatchRef.current = null;
+        patchSubmissionRef.current = false;
+      }
+    };
+    const releaseRecovery = () => {
+      if (activePatchRef.current === operation) activePatchRef.current = null;
+      patchSubmissionRef.current = false;
+      setIsProcessing(false);
+      if (cleanupRef.current === stopRecovery) cleanupRef.current = null;
+    };
+    activePatchRef.current = operation;
+    patchSubmissionRef.current = true;
+    setIsProcessing(true);
+    cleanupRef.current = stopRecovery;
 
     // 恢复对账：把聊天里残留的「正在生成/修改」气泡按 run 真实状态翻转——
     // 此前只恢复 deck 不对账消息，刷新后气泡永远停在"正在生成 PPT..."（2026-06-11 实测）
@@ -1922,10 +1958,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     };
 
     const poll = async () => {
-      const run = await getMdToPptRun(runId);
+      const run = await getMdToPptRun(runId).catch(() => null);
       if (cancelled) return;
-      if (!run) return;
+      if (!run) { timer = window.setTimeout(poll, 3000); return; }
       if (run.status === 'done' && run.html) {
+        releaseRecovery();
         const recovered = resolveRecoveredDeckState(run);
         setGeneratedHtml(recovered.html);
         setArtifactSiteUrl(run.siteUrl ?? '');
@@ -1937,6 +1974,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       } else if (run.status === 'error') {
         const parent = await recoverPatchParentRun(run);
         if (cancelled) return;
+        releaseRecovery();
         if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
           hasRuntimePreviewRef.current = true;
           setGeneratedHtml(run.latestPreviewHtml);
@@ -1956,9 +1994,15 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         }
         reconcileMessages('error', run.error);
       } else if (run.status === 'running') {
+        canCancel = run.runtime === 'open-design' && ['convert', 'patch', 'manual-edit'].includes(run.op);
+        if (canCancel && cancelRequested) void sendCancellation();
+        if (!canCancel) {
+          if (activePatchRef.current === operation) activePatchRef.current = null;
+          patchSubmissionRef.current = false;
+        }
         // 计时基准 = 服务端 run.createdAt（服务器权威性：刷新后显示真实已等待时长）
         genStartAtRef.current = new Date(run.createdAt).getTime();
-        setArtifactPhase('generating');
+        setArtifactPhase(run.op === 'patch' || run.op === 'manual-edit' ? 'patching' : 'generating');
         if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
           hasRuntimePreviewRef.current = true;
           setGeneratedHtml(run.latestPreviewHtml);
@@ -1972,10 +2016,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     };
     void poll();
 
-    return () => {
-      cancelled = true;
-      if (timer) window.clearTimeout(timer);
-    };
+    return stopRecovery;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── 大纲刷新恢复（服务器权威性 server-authority.md）：大纲也是一次 Run，
@@ -2919,12 +2960,125 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         content: '正在修改 PPT...',
         phase: 'patching',
       });
+      let cancelRequested = false;
+      let cancelSent = false;
+      const operation: NonNullable<typeof activePatchRef.current> = {
+        runId: '',
+        cancel: () => {
+          if (cancelRequested) return;
+          cancelRequested = true;
+          setArtifactPhaseMessage('正在请求取消，原稿仍然保留');
+          if (operation.runId) void sendCancellation();
+        },
+      };
+      activePatchRef.current = operation;
+      const finishSuccess = (result: { html: string; siteUrl?: string }) => {
+        if (!mountedRef.current || !patchSubmissionRef.current || activePatchRef.current !== operation) return;
+        activePatchRef.current = null;
+        cleanupRef.current?.();
+        cleanupRef.current = null;
+
+        if (manualIntent) manualIntent.settled = true;
+        if (manualIntent && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
+        patchSubmissionRef.current = false;
+        const html = result.html;
+        if (!isPreviewableDeck(html)) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === patchMsg.id
+                ? { ...m, content: '修改结果异常，请重试。', phase: 'error' }
+                : m
+            )
+          );
+          setIsProcessing(false);
+          setArtifactPhase('done');
+          setPatchingSlide(null);
+          setActiveRunId(sourceRunId);
+          patchParentRef.current = null;
+          return;
+        }
+        setGeneratedHtml(html);
+        hasRuntimePreviewRef.current = true;
+        setArtifactSiteUrl(result.siteUrl ?? '');
+        if (manualEditHtml) {
+          editedHtmlRef.current = '';
+          setDirtyEdits(false);
+          setEditMode(false);
+        }
+        setArtifactPhase('done');
+        setIsProcessing(false);
+        setPatchingSlide(null);
+        patchParentRef.current = null;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === patchMsg.id
+              ? { ...m, content: '已更新，右侧预览已刷新。继续告诉我你想修改什么。', phase: 'done' }
+              : m
+          )
+        );
+      };
+      const finishFailure = (err: string) => {
+        if (!mountedRef.current || !patchSubmissionRef.current || activePatchRef.current !== operation) return;
+        activePatchRef.current = null;
+        cleanupRef.current?.();
+        cleanupRef.current = null;
+
+        if (manualIntent?.settled && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
+        patchSubmissionRef.current = false;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === patchMsg.id
+              ? { ...m, content: '修改失败：' + err, phase: 'error', error: err }
+              : m
+          )
+        );
+        setIsProcessing(false);
+        setArtifactPhase(hasRuntimePreviewRef.current && !manualEditHtml ? 'error' : 'done');
+        setPatchingSlide(null);
+        setActiveRunId(sourceRunId);
+        setArtifactSiteUrl(sourceSiteUrl);
+        if (manualEditHtml) {
+          toast.error('保存编辑失败', '当前草稿和原版本都已保留，可检查后再次保存。');
+        }
+        patchParentRef.current = null;
+      };
+      const followAcceptedRun = (message: string) => {
+        if (!mountedRef.current || !patchSubmissionRef.current || activePatchRef.current !== operation) return;
+        setArtifactPhaseMessage(message);
+        cleanupRef.current?.();
+        cleanupRef.current = observeMdToPptRun(operation.runId, (run) => {
+          if (!mountedRef.current || !patchSubmissionRef.current || activePatchRef.current !== operation) return;
+          if (run.status === 'done' && run.html) { finishSuccess({ html: run.html, siteUrl: run.siteUrl ?? undefined }); return; }
+          if (run.status === 'error') {
+            if (manualIntent) manualIntent.settled = true;
+            finishFailure(run.error ?? '本次修改未完成，原稿仍然保留');
+            return;
+          }
+          setArtifactProgress(Math.max(0, run.progress ?? 0));
+          setArtifactPhaseMessage(run.phaseMessage || message);
+          setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, run.runtimeModelCallCount ?? 0));
+          if (!manualEditHtml && run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
+            hasRuntimePreviewRef.current = true;
+            setGeneratedHtml(run.latestPreviewHtml);
+          }
+        });
+      };
+      const sendCancellation = async () => {
+        if (cancelSent) return;
+        cancelSent = true;
+        await cancelDesignArtifactRun(operation.runId).catch(() => null);
+        // 取消可能已被接纳，也可能已进入保存；均对账同一任务，不假报已停止。
+        followAcceptedRun('正在确认取消结果，原稿仍然保留');
+      };
       const cleanup = streamMdToPptPatch({
         ...request,
         manualSaveIntent: manualIntent ?? undefined,
         idempotencyKey: modificationKey,
         onRun: (runId) => {
-          if (runId) setActiveRunId(runId);
+          if (!runId || !patchSubmissionRef.current || activePatchRef.current !== operation) return;
+          operation.runId = runId;
+          setActiveRunId(runId);
+          if (cancelRequested) void sendCancellation();
         },
         onModel: (info) => setModelInfo(info),
         onDiag: (d) => {
@@ -2949,64 +3103,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setGeneratedHtml(preview.html);
           setArtifactSiteUrl('');
         },
-        onDone: (result) => {
-          if (manualIntent && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
-          patchSubmissionRef.current = false;
-          const html = result.html;
-          if (!isPreviewableDeck(html)) {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === patchMsg.id
-                  ? { ...m, content: '修改结果异常，请重试。', phase: 'error' }
-                  : m
-              )
-            );
-            setIsProcessing(false);
-            setArtifactPhase('done');
-            setPatchingSlide(null);
-            setActiveRunId(sourceRunId);
-            patchParentRef.current = null;
-            return;
-          }
-          setGeneratedHtml(html);
-          hasRuntimePreviewRef.current = true;
-          setArtifactSiteUrl(result.siteUrl ?? '');
-          if (manualEditHtml) {
-            editedHtmlRef.current = '';
-            setDirtyEdits(false);
-            setEditMode(false);
-          }
-          setArtifactPhase('done');
-          setIsProcessing(false);
-          setPatchingSlide(null);
-          patchParentRef.current = null;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === patchMsg.id
-                ? { ...m, content: '已更新，右侧预览已刷新。继续告诉我你想修改什么。', phase: 'done' }
-                : m
-            )
-          );
-        },
+        onDone: finishSuccess,
         onError: (err) => {
-          if (manualIntent?.settled && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
-          patchSubmissionRef.current = false;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === patchMsg.id
-                ? { ...m, content: '修改失败：' + err, phase: 'error', error: err }
-                : m
-            )
-          );
-          setIsProcessing(false);
-          setArtifactPhase(hasRuntimePreviewRef.current && !manualEditHtml ? 'error' : 'done');
-          setPatchingSlide(null);
-          setActiveRunId(sourceRunId);
-          setArtifactSiteUrl(sourceSiteUrl);
-          if (manualEditHtml) {
-            toast.error('保存编辑失败', '当前草稿和原版本都已保留，可检查后再次保存。');
-          }
-          patchParentRef.current = null;
+          if (operation.runId) followAcceptedRun('连接有些波动，正在继续跟踪同一次修改');
+          else finishFailure(err);
         },
       });
 
@@ -3352,6 +3452,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Abort
   const handleAbort = useCallback(() => {
+    if (patchSubmissionRef.current && activePatchRef.current) { activePatchRef.current.cancel(); return; }
     patchSubmissionRef.current = false;
     cleanupRef.current?.();
     cleanupRef.current = null;

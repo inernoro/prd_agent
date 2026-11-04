@@ -5,6 +5,7 @@ import {
   streamMdToPptConvert,
   streamMdToPptOutline,
   streamMdToPptPatch,
+  observeMdToPptRun,
   retainMdToPptManualSaveIntent,
   type MdToPptManualSaveIntent,
 } from '../mdToPptService';
@@ -202,4 +203,27 @@ describe('md-to-ppt native request URLs', () => {
     expect(retainMdToPptManualSaveIntent(retry, request).idempotencyKey === retry.idempotencyKey).toBe(false);
     expect(posts).toHaveLength(2); // 确定结果后仅释放本地身份，没有第三次发送。
   });
+  it('recovers the same accepted run through read-only snapshots after an unavailable read', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'accepted-child', status: 'running', html: '' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'accepted-child', status: 'done', html: '<html>saved child</html>' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const snapshots = vi.fn();
+    const stop = observeMdToPptRun('accepted-child', snapshots);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(snapshots).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(snapshots.mock.calls.map(([run]) => run.status)).toEqual(['running', 'done']);
+      expect(snapshots.mock.lastCall?.[0].html).toBe('<html>saved child</html>');
+      expect(fetchMock.mock.calls).toHaveLength(3);
+      expect(fetchMock.mock.calls.every(([url, init]) => String(url).endsWith('/api/md-to-ppt/runs/accepted-child')
+        && (!init?.method || init.method === 'GET'))).toBe(true);
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(fetchMock.mock.calls).toHaveLength(3);
+    } finally { stop(); vi.useRealTimers(); }
+  });
+
 });
