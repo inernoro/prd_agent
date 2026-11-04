@@ -1,7 +1,5 @@
 # prd-admin — React 18 管理后台 (Vite, TypeScript, Zustand, Radix UI)
 
-## 构建命令
-
 ```bash
 pnpm install
 pnpm dev          # Dev server (port 8000, proxies /api → localhost:5000)
