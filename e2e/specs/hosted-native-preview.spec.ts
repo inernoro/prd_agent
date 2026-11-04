@@ -197,6 +197,9 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
       const { frame, preview, releaseVersions } = await serve(page, { modal: true, shape: 'multi-file', metadataLag: true });
       await expect(frame.locator('#result')).toHaveText('fetch-ok:entry');
       await frame.getByLabel('保留输入').fill('等待版本记录时保留');
+      await page.getByRole('dialog').getByRole('button', { name: '批注与讨论', exact: true }).click();
+      await expect(page.locator('.review-thread-scroll')).toContainText('正在确认网页版本');
+      await expect(page.getByRole('dialog')).not.toContainText('无法确认网页版本');
       const original = await preview.elementHandle();
       const listed = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/revisions'));
       releaseVersions(); await listed;

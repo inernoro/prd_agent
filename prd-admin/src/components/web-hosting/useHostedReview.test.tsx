@@ -29,6 +29,18 @@ beforeEach(() => { vi.clearAllMocks(); list.mockResolvedValue({ success: true, d
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('versioned webpage review', () => {
+  it.each([true, false])('reports the initial metadata wait until its request settles, success=%s', async success => {
+    let finish!: (value: unknown) => void;
+    list.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    await mount();
+    expect(review.loading).toBe(true);
+    expect(review.selected).toBeUndefined();
+    await act(async () => finish(success ? { success: true, data: [current, previous] }
+      : { success: false, error: { message: '版本请求失败' } }));
+    expect(review.loading).toBe(false);
+    expect(review.selected?.id).toBe(success ? 'v2' : undefined);
+    expect(review.error).toBe(success ? null : '版本请求失败');
+  });
   it('keeps the live preview available when the version response has an invalid shape', async () => {
     list.mockResolvedValue({ success: true, data: { items: [] } });
     await mount();

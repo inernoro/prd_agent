@@ -45,6 +45,7 @@ export default function CommentsSection(props: Props) {
   const callbacks = useRef(props); callbacks.current = props;
   const { mode, token, password, siteId, annotations, review } = props;
   const versionKey = review?.selected?.contentVersionKey;
+  const versionPending = !!review?.loading;
   const canWrite = isAuthenticated && commentsEnabled && canComment && (!review || (!!review.selected && !review.loading));
   const pickingHintId = useId();
   const loginToAnnotate = !loading && !error && commentsEnabled && (!isAuthenticated || !canComment) && !!props.onLogin;
@@ -55,7 +56,7 @@ export default function CommentsSection(props: Props) {
     if (!isAuthenticated) return '登录后可选择网页元素或文字留下批注，并参与回复。';
     if (!canComment) return '当前登录状态无法批注，请重新登录后再试。';
     if (review?.uploading) return '新版本正在上传，完成后即可批注。';
-    if (review?.loading) return '正在切换网页版本，请稍候…';
+    if (versionPending) return review?.historical ? '正在切换网页版本，请稍候…' : '正在确认网页版本，请稍候…';
     if (review && !review.selected) return '无法确认网页版本，请在顶部重新加载版本。';
     if (submitting) return '正在发表批注，请稍候…';
     if (!annotations?.ready) return annotations?.connectionChecked
@@ -63,6 +64,7 @@ export default function CommentsSection(props: Props) {
     return '先在网页上选择位置，意见就会留在那里。';
   })();
   const identity = `${mode}:${token ?? siteId}:${password ?? ''}`;
+  const confirmedDraftVersion = useRef({ identity, versionKey });
   const identityRef = useRef(identity); identityRef.current = identity;
   const draftScope = `${identity}:${review?.selected?.id ?? ''}:${versionKey ?? ''}`;
   const draftScopeRef = useRef({ key: draftScope, draft, replyTo, anchor: annotations?.draftAnchor });
@@ -82,7 +84,14 @@ export default function CommentsSection(props: Props) {
     const activeRoots = comments.filter(c => !c.parentId && (!callbacks.current.review || (!!versionKey && c.contentVersion === versionKey)));
     callbacks.current.annotations?.setThreads(activeRoots);
   }, [comments, versionKey]);
-  useEffect(() => { setOtherVersions(false); setReplyTo(null); setDraft(''); setFilter('open'); }, [versionKey]);
+  useEffect(() => {
+    const previous = confirmedDraftVersion.current;
+    if (previous.identity !== identity || (versionKey && previous.versionKey && versionKey !== previous.versionKey)) {
+      setOtherVersions(false); setReplyTo(null); setDraft(''); setFilter('open');
+    }
+    // An unresolved metadata response does not change which publication owns the draft.
+    if (previous.identity !== identity || versionKey) confirmedDraftVersion.current = { identity, versionKey };
+  }, [identity, versionKey]);
 
   const load = useCallback(async (silent = false) => {
     const request = ++fetchId.current;
@@ -174,20 +183,20 @@ export default function CommentsSection(props: Props) {
       <div className="review-scope">
         {review && <>
           <div className="review-scope-tabs" role="tablist" aria-label="批注版本范围">
-            <button type="button" role="tab" aria-selected={!otherVersions} onClick={() => setOtherVersions(false)}>本版 <span>{versionRoots.length}</span></button>
-            <button type="button" role="tab" aria-selected={otherVersions} onClick={() => setOtherVersions(true)}>其他版本 <span>{outsideRoots.length}</span></button>
+            <button type="button" role="tab" disabled={versionPending} aria-selected={!otherVersions} onClick={() => setOtherVersions(false)}>本版 <span>{versionPending ? '—' : versionRoots.length}</span></button>
+            <button type="button" role="tab" disabled={versionPending} aria-selected={otherVersions} onClick={() => setOtherVersions(true)}>其他版本 <span>{versionPending ? '—' : outsideRoots.length}</span></button>
           </div>
           <div className="review-scope-caption"><span>{review.selected ? `${review.selected.versionLabel} · ${review.historical ? '历史版本' : '当前发布'}` : '正在读取版本归属…'}</span><span>{otherVersions ? '选择版本，回到原内容' : '批注随版本保留'}</span></div>
         </>}
         <div role="tablist" aria-label="讨论状态" className="review-status-tabs">
           {([{ value: 'open', label: '未解决', count: openCount }, { value: 'resolved', label: '已解决', count: resolvedCount },
             { value: 'all', label: '全部', count: roots.length }] as const).map(tab => (
-            <button key={tab.value} type="button" role="tab" aria-selected={filter === tab.value} onClick={() => setFilter(tab.value)}>{tab.label} <span>{tab.count}</span></button>
+            <button key={tab.value} type="button" role="tab" disabled={versionPending} aria-selected={filter === tab.value} onClick={() => setFilter(tab.value)}>{tab.label} <span>{versionPending ? '—' : tab.count}</span></button>
           ))}
         </div>
       </div>
       <div className="review-thread-scroll">
-        {loading ? <MapSectionLoader text="正在加载讨论…" /> : <>
+        {loading || versionPending ? <MapSectionLoader text={versionPending ? '正在确认网页版本…' : '正在加载讨论…'} /> : <>
           {visible.length === 0 && !error && <div className="review-empty">
             <MessageSquare size={23} /><strong>{filter === 'resolved' ? '还没有已解决的讨论' : filter === 'open' && resolvedCount ? '本版意见已全部处理' : '让意见留在对应的位置'}</strong>
             <p>{otherVersions ? '其他版本的讨论会保留在这里。' : '选取一个元素或一段文字，开始第一条批注。'}</p>
@@ -226,7 +235,7 @@ export default function CommentsSection(props: Props) {
       </div>
       <div className="review-composer">
         {!commentsEnabled || !canWrite ? <div className="review-composer-unavailable">
-          <Lock size={19} /><strong>{!commentsEnabled ? '评论与批注已关闭' : !isAuthenticated ? '加入这份网页的讨论' : '暂时无法开始批注'}</strong>
+          {versionPending ? <MapSpinner size={19} /> : <Lock size={19} />}<strong>{!commentsEnabled ? '评论与批注已关闭' : !isAuthenticated ? '加入这份网页的讨论' : versionPending ? '正在确认网页版本' : '暂时无法开始批注'}</strong>
           <p id={pickingHintId}>{pickingHint}</p>{pickEntry}
           {!annotations && !isAuthenticated && props.onLogin && <button type="button" className="review-login-action" onClick={props.onLogin}><LogIn size={15} />登录后评论</button>}
         </div> : otherVersions ? <div className="review-composer-unavailable"><History size={19} /><p>回到对应版本，继续那里的讨论。</p><button type="button" className="review-pick-action" onClick={() => setOtherVersions(false)}>返回本版发表评论</button></div> : <>

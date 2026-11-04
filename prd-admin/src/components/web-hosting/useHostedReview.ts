@@ -36,6 +36,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   const [preview, setPreview] = useState<Preview | null>(null);
   const [override, setOverride] = useState<HostedSite | null>(null);
   const [loading, setLoading] = useState(false);
+  const [versionsLoading, setVersionsLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingFocus, setPendingFocus] = useState<string | null>(null);
@@ -71,6 +72,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   const refresh = useCallback(async () => {
     if (!sourceRef.current) return;
     const request = ++sequence.current;
+    setVersionsLoading(true);
     setError(null);
     try {
       const result = await listHostedReviewVersions(sourceRef.current);
@@ -78,6 +80,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
       if (result.success && Array.isArray(result.data)) setVersions(result.data);
       else setError(result.error?.message || '无法加载版本');
     } catch { if (mounted.current && request === sequence.current) setError('无法加载版本，请重试'); }
+    finally { if (mounted.current && request === sequence.current) setVersionsLoading(false); }
   }, []);
   useEffect(() => {
     selectionSequence.current++; setSelectedId(null); setPreview(null); setOverride(null); setVersions([]); setPendingFocus(null); setLoading(false);
@@ -126,6 +129,6 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   }, [live, uploading, identity, refresh]);
 
   return { versions, selected, historical, preview, previewBaseUrl, site: displaySite, liveSite, annotations,
-    loading: loading || (metadataBehind && !selectedId), uploading, error, selectVersion, upload, refresh };
+    loading: loading || (!selectedId && (metadataBehind || (versionsLoading && !published))), uploading, error, selectVersion, upload, refresh };
 }
 export type HostedReview = ReturnType<typeof useHostedReview>;

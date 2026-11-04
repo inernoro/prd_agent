@@ -12,7 +12,7 @@ const { auth, list, login, select, add } = vi.hoisted(() => ({
 vi.mock('../../stores/authStore', () => ({ useAuthStore: (selector: (state: typeof auth) => unknown) => selector(auth) }));
 vi.mock('../../services/real/webPages', () => ({ listShareComments: list, listSiteComments: list,
   addShareComment: add, addSiteComment: add, deleteSiteComment: vi.fn(), setSiteCommentResolved: vi.fn() }));
-vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: () => <p>正在加载讨论…</p> }));
+vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: ({ text }: { text?: string }) => <p>{text ?? '正在加载讨论…'}</p> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
 const annotations = (): HostedAnnotations => ({ ready: true, enabled: false, connectionChecked: true, displayMode: 'bubble', setDisplayMode: vi.fn(),
@@ -36,6 +36,28 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('annotation entry availability', () => {
+  it.each(['10000', '20000'])('waits for version metadata and preserves drafts only for the same publication, next=%s', async next => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });
+    const known = { selected: { id: 'v1', versionLabel: 'V1', contentVersionKey: '10000' }, loading: false } as HostedReview;
+    const pending = { selected: undefined, loading: true } as HostedReview;
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    const render = (review: HostedReview) => root.render(<CommentsSection mode="share" token="share" review={review} annotations={annotations()} />);
+    await act(async () => render(known));
+    await act(async () => {
+      const input = container.querySelector('textarea')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, '不能丢失的草稿');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => render(pending));
+    expect(container.querySelector('.review-thread-scroll')?.textContent).toContain('正在确认网页版本');
+    expect(container.textContent).not.toContain('无法确认网页版本');
+    expect(container.textContent).not.toContain('让意见留在对应的位置');
+    expect(button('绑定页面元素 / 选中文字').disabled).toBe(true);
+    expect(container.querySelector('[aria-label="批注版本范围"]')?.textContent).toContain('—');
+    await act(async () => render({ ...known, selected: { ...known.selected!, contentVersionKey: next } }));
+    expect(container.querySelector('textarea')?.value).toBe(next === '10000' ? '不能丢失的草稿' : '');
+  });
   it('offers an actionable login entry to guests even before the annotation layer connects', async () => {
     await mount({ ready: false });
     const entry = button('登录后批注');
