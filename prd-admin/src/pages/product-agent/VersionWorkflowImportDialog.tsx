@@ -139,7 +139,7 @@ export function VersionWorkflowImportDialog({
           <div>
             <div className="text-base font-semibold text-token-primary">导入历史{KIND_LABEL[kind]}</div>
             <div className="mt-1 text-xs text-token-muted">
-              Excel「应用」列映射到系统「产品」；匹配不到的行直接跳过，不会写入任何产品。
+              按表头识别列，列顺序不限，未识别的列会跳过。应用需能匹配到系统产品。
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-token-muted hover-bg-soft hover-text-primary" title="关闭">

@@ -39,57 +39,60 @@ export type VersionWorkflowImportRow = {
   sourceRow: number;
 };
 
-const RELEASE_HINTS = ['正式版本号', 'v号', 'v 号', '上线号', '上线公告'];
-const INITIATION_HINTS = ['立项号', 't立项号', 't 立项号', '第一稿', '开发状态'];
-
 function cellStr(value: unknown): string {
   if (value == null) return '';
   return String(value).trim();
 }
 
 function normalizeHeader(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, '');
+  return value.normalize('NFKC').toLowerCase().replace(/\s+/g, '').replace(/\((url|分钟)\)$/, '');
 }
 
-function headerScore(row: string[], kind: VersionWorkflowImportKind): number {
-  const hints = kind === 'release' ? RELEASE_HINTS : INITIATION_HINTS;
-  const normalized = row.map(normalizeHeader);
-  if (!normalized.some(Boolean)) return -1;
-  let score = 0;
-  for (const hint of hints) {
-    const key = normalizeHeader(hint);
-    if (normalized.some((header) => header && (header.includes(key) || key.includes(header)))) score += 1;
-  }
-  if (normalized.some((header) => header && (header.includes('方案名称') || header.includes('产品立项方案名称')))) score += 2;
-  return score;
-}
-
-function findHeaderIndex(matrix: string[][], kind: VersionWorkflowImportKind): number {
-  const limit = Math.min(matrix.length, 20);
-  let bestIndex = 0;
-  let bestScore = 0;
-  for (let index = 0; index < limit; index += 1) {
-    const score = headerScore(matrix[index] ?? [], kind);
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = index;
-    }
-  }
-  return bestIndex;
-}
-
-function indexOfHeader(headers: string[], ...names: string[]): number {
+function resolveColumns(headers: string[], kind: VersionWorkflowImportKind) {
   const normalized = headers.map(normalizeHeader);
-  return normalized.findIndex((header) => Boolean(header) && names.some((name) => {
-    const key = normalizeHeader(name);
-    return header.includes(key) || key.includes(header);
-  }));
-}
-
-/** 仅匹配表头与 name 完全一致（避免「产品」误命中「产品立项方案名称」）。 */
-function indexOfExactHeader(headers: string[], name: string): number {
-  const key = normalizeHeader(name);
-  return headers.map(normalizeHeader).findIndex((header) => header === key);
+  const find = (...aliases: string[]) => {
+    for (const alias of aliases) {
+      const index = normalized.indexOf(normalizeHeader(alias));
+      if (index >= 0) return index;
+    }
+    return -1;
+  };
+  const release = kind === 'release';
+  const internalCodes = ['内部版本号', 't立项号', '立项号', 't号', 't版本号'];
+  return {
+    planIndex: find('产品立项方案名称', '产品方案名称', '方案名称', '立项方案名称', '上线项目', '方案'),
+    systemIndex: find('系统', '系统名称'),
+    appIndex: find('应用', '应用名称', '所属应用', '应用/产品', '产品名称', '产品'),
+    productIndex: find('产品'),
+    projectTypeIndex: find('项目类别', '项目类型'),
+    versionTypeIndex: find('版本类别', '版本级别', '版本类型'),
+    departmentIndex: find('所属部门', '部门'),
+    ownerIndex: find('产品负责人', '产品责任人', '负责人', '申领人'),
+    planUrlIndex: find('方案地址', '方案链接', '产品方案地址'),
+    requirementDescIndex: find('项目需求描述', '需求描述'),
+    customerSourceIndex: find('客户来源'),
+    remarkIndex: find('备注'),
+    developmentIndex: find('开发状态'),
+    uiDesignIndex: find('是否需要ui设计', '是否需要ui', 'ui设计'),
+    aiPocIndex: find('是否属于ai poc项目', '是否ai poc', 'ai poc'),
+    announcementIndex: find('上线公告地址', '公告地址', '上线公告链接', '公告链接'),
+    globalOpenIndex: find('是否全域开放', '全域开放'),
+    openBrandIndex: find('当前开放品牌', '当前开放范围', '开放范围'),
+    teamIndex: find('项目组成员', '组成员'),
+    requirementSourceIndex: find('需求来源'),
+    platformIndex: find('平台'),
+    contractPartyIndex: find('合同签订方'),
+    trainingMinutesIndex: release ? find('预计培训时长', '培训时长', '预计培训时间') : -1,
+    codeIndex: release ? find('正式版本号', 'v号', 'v上线号', '上线号', 'v版本号') : find(...internalCodes),
+    tCodeIndex: release ? find(...internalCodes) : -1,
+    dateIndex: release
+      ? find('上线日期', '实际上线时间', '上线时间', '计划上线时间', '日期')
+      : find('立项时间', '立项时间（三稿通过）', '三稿通过'),
+    firstDraftIndex: find('第一稿会议时间', '第一稿'),
+    secondDraftIndex: find('第二稿会议时间', '第二稿'),
+    thirdDraftIndex: find('第三稿会议时间', '第三稿'),
+    plannedProjectIndex: find('计划立项时间'),
+  };
 }
 
 function parseDateValue(value: unknown): string | undefined {
@@ -135,8 +138,7 @@ function inferInternalCodeColumn(headers: string[], body: string[][]): number {
     const values = body.map((row) => normalizeInternalCode(row[index])).filter((value): value is string => Boolean(value));
     return values.length > 0 && values.every((value) => /^T\d+\.\d+\.\d+$/i.test(value)) ? [index] : [];
   });
-  if (candidates.length > 1) throw new Error('发现多个没有表头的 T 号列，请为正确列补充“立项号”表头后重试。');
-  return candidates[0] ?? -1;
+  return candidates.length === 1 ? candidates[0] : -1;
 }
 
 function internalCodeFromPlanName(planName: string): string | undefined {
@@ -166,54 +168,22 @@ function parseTrainingMinutes(raw?: string): number | undefined {
 }
 
 function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImportKind, headerRowIndex: number): VersionWorkflowImportRow[] {
-  const planIndex = indexOfHeader(headers, '产品立项方案名称', '方案名称', '方案');
-  const systemIndex = indexOfHeader(headers, '系统');
-  const appIndex = indexOfHeader(headers, '应用', '应用/产品', '产品');
-  const productIndex = indexOfExactHeader(headers, '产品');
-  const projectTypeIndex = indexOfHeader(headers, '项目类别');
-  const versionTypeIndex = indexOfHeader(headers, '版本类别', '版本级别');
-  const departmentIndex = indexOfHeader(headers, '所属部门', '部门');
-  const ownerIndex = indexOfHeader(headers, '产品负责人', '负责人', '申领人');
-  const planUrlIndex = indexOfHeader(headers, '方案地址');
-  const requirementDescIndex = indexOfHeader(headers, '项目需求描述', '需求描述');
-  const customerSourceIndex = indexOfHeader(headers, '客户来源');
-  const remarkIndex = indexOfHeader(headers, '备注');
-  const developmentIndex = indexOfHeader(headers, '开发状态');
-  const uiDesignIndex = indexOfHeader(headers, '是否需要ui设计', '是否需要 ui 设计', 'ui设计');
-  const aiPocIndex = indexOfHeader(headers, '是否属于ai poc项目', '是否属于 ai poc 项目', 'ai poc', 'aipoc');
-  const announcementIndex = indexOfHeader(headers, '上线公告地址', '公告地址');
-  const openBrandIndex = indexOfHeader(headers, '是否全域开放', '当前开放品牌', '当前开放范围', '开放范围');
-  const teamIndex = indexOfHeader(headers, '项目组成员', '组成员');
-  const requirementSourceIndex = indexOfHeader(headers, '需求来源');
-  const platformIndex = indexOfHeader(headers, '平台');
-  const contractPartyIndex = indexOfHeader(headers, '合同签订方');
-  const trainingMinutesIndex = kind === 'release'
-    ? indexOfHeader(headers, '预计培训时长', '培训时长', '预计培训时间')
-    : -1;
-
-  let codeIndex = kind === 'release'
-    ? indexOfHeader(headers, '正式版本号', 'v号', 'v 号', 'v上线号', '上线号')
-    : indexOfHeader(headers, 't立项号', 't 立项号', '立项号', 't号', '内部版本号');
-  if (kind === 'initiation' && codeIndex < 0) codeIndex = inferInternalCodeColumn(headers, body);
-  const tCodeIndex = kind === 'release'
-    ? indexOfHeader(headers, '内部版本号', 't立项号', 't 立项号', '立项号', 't号')
-    : -1;
-  const dateIndex = kind === 'release'
-    ? indexOfHeader(headers, '上线日期', '实际上线时间', '计划上线时间', '上线时间', '日期')
-    : indexOfHeader(headers, '立项时间', '立项时间（三稿通过）', '三稿通过');
-  const firstDraftIndex = indexOfHeader(headers, '第一稿会议时间', '第一稿');
-  const secondDraftIndex = indexOfHeader(headers, '第二稿会议时间', '第二稿');
-  const thirdDraftIndex = indexOfHeader(headers, '第三稿会议时间', '第三稿');
-  const plannedProjectIndex = indexOfHeader(headers, '计划立项时间');
-
-  const effectivePlanIndex = planIndex >= 0 ? planIndex : codeIndex >= 0 ? -1 : 0;
+  const {
+    planIndex, systemIndex, appIndex, productIndex, projectTypeIndex, versionTypeIndex,
+    departmentIndex, ownerIndex, planUrlIndex, requirementDescIndex, customerSourceIndex, remarkIndex,
+    developmentIndex, uiDesignIndex, aiPocIndex, announcementIndex, globalOpenIndex, openBrandIndex,
+    teamIndex, requirementSourceIndex, platformIndex, contractPartyIndex, trainingMinutesIndex,
+    codeIndex: headerCodeIndex, tCodeIndex, dateIndex, firstDraftIndex, secondDraftIndex, thirdDraftIndex,
+    plannedProjectIndex,
+  } = resolveColumns(headers, kind);
+  const codeIndex = kind === 'initiation' && headerCodeIndex < 0 ? inferInternalCodeColumn(headers, body) : headerCodeIndex;
 
   const rows: VersionWorkflowImportRow[] = [];
   body.forEach((values, offset) => {
     const trainingText = trainingMinutesIndex >= 0 ? values[trainingMinutesIndex]?.trim() : '';
     const trainingMinutes = parseTrainingMinutes(trainingText);
     if (trainingText && trainingMinutes == null) throw new Error(`第 ${headerRowIndex + offset + 2} 行预计培训时长应填写非负整数分钟，不能填写日期。`);
-    const planName = (effectivePlanIndex >= 0 ? values[effectivePlanIndex]?.trim() : '') || '';
+    const planName = values[planIndex]?.trim() ?? '';
     const code = kind === 'initiation'
       ? normalizeInternalCode(codeIndex >= 0 ? values[codeIndex] : undefined) ?? internalCodeFromPlanName(planName)
       : codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
@@ -276,7 +246,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       developmentStatus: developmentIndex >= 0 ? values[developmentIndex]?.trim() : undefined,
       remark: remarkIndex >= 0 ? values[remarkIndex]?.trim() : undefined,
       openBrandScope: openBrandIndex >= 0 ? values[openBrandIndex]?.trim() : undefined,
-      isGlobalOpen: openBrandIndex >= 0 ? mapBool(values[openBrandIndex]) : undefined,
+      isGlobalOpen: globalOpenIndex >= 0 ? mapBool(values[globalOpenIndex]) : undefined,
       contractParty: contractPartyIndex >= 0 ? values[contractPartyIndex]?.trim() : undefined,
       plannedTrainingMinutes: trainingMinutes,
       announcementUrl: announcementIndex >= 0 ? values[announcementIndex]?.trim() : undefined,
@@ -291,7 +261,18 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
 export function parseVersionWorkflowImportMatrix(matrix: unknown[][], kind: VersionWorkflowImportKind): VersionWorkflowImportRow[] {
   const rows = matrix.map((row) => (row ?? []).map(cellStr));
   if (rows.length < 2) return [];
-  const headerRowIndex = findHeaderIndex(rows, kind);
+  let headerRowIndex = -1;
+  let bestScore = 0;
+  rows.slice(0, -1).forEach((row, index) => {
+    const columns = resolveColumns(row, kind);
+    if (columns.planIndex < 0 && columns.codeIndex < 0) return;
+    const score = new Set(Object.values(columns).filter((column) => column >= 0)).size;
+    if (score > bestScore) {
+      bestScore = score;
+      headerRowIndex = index;
+    }
+  });
+  if (headerRowIndex < 0) return [];
   const headers = rows[headerRowIndex] ?? [];
   const body = rows.slice(headerRowIndex + 1).filter((row) => row.some(Boolean));
   return mapRows(headers, body, kind, headerRowIndex);
@@ -341,7 +322,16 @@ export function parseVersionWorkflowImportXlsxBuffer(buffer: ArrayBuffer, kind: 
 
 export async function parseVersionWorkflowImportFile(file: File, kind: VersionWorkflowImportKind): Promise<VersionWorkflowImportRow[]> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith('.csv')) return parseVersionWorkflowImportCsv(await file.text(), kind);
+  if (lower.endsWith('.csv')) {
+    const bytes = await file.arrayBuffer();
+    let content: string;
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      content = new TextDecoder('gb18030').decode(bytes);
+    }
+    return parseVersionWorkflowImportCsv(content, kind);
+  }
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
     return parseVersionWorkflowImportXlsxBuffer(await file.arrayBuffer(), kind);
   }

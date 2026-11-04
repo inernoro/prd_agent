@@ -1,10 +1,54 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseVersionWorkflowImportCsv,
+  parseVersionWorkflowImportFile,
   parseVersionWorkflowImportMatrix,
 } from './versionWorkflowImportParse';
 
 describe('versionWorkflowImportParse', () => {
+  it('表头顺序可变，只读取可识别的列，并区分相似字段', () => {
+    const csv = [
+      '录入日期,方案地址（URL）,公告发布日期,上线公告地址（URL）,当前开放品牌,是否全域开放,应用名称,Ｖ 号,产品方案名称,上线时间,负责人备注',
+      '2026/1/1,https://example.com/plan,2026/1/4,https://example.com/announcement,拜耳,否,互动营销,V3.1.2,渠道优化,2026/1/3,不能当负责人',
+    ].join('\n');
+    const [row] = parseVersionWorkflowImportCsv(csv, 'release');
+    expect(row).toMatchObject({
+      code: 'V3.1.2',
+      appName: '互动营销',
+      planName: '渠道优化',
+      planUrl: 'https://example.com/plan',
+      announcementUrl: 'https://example.com/announcement',
+      isGlobalOpen: false,
+      openBrandScope: '拜耳',
+    });
+    expect(row.date).toBe(new Date(2026, 0, 3).toISOString());
+    expect(row.ownerName).toBeUndefined();
+  });
+
+  it('有标题说明行时仍能找到表头，缺少可选列也能识别', () => {
+    const preamble = Array.from({ length: 23 }, (_, index) => [`说明 ${index + 1}`]);
+    const rows = parseVersionWorkflowImportMatrix([
+      ...preamble,
+      ['备注以外的说明', '应用名称', 'T号'],
+      ['其他信息', '互动营销', 'T3.2.1'],
+    ], 'initiation');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ code: 'T3.2.1', appName: '互动营销', planName: 'T3.2.1' });
+    expect(rows[0].remark).toBeUndefined();
+  });
+
+  it('没有可识别表头时不猜测第一列是方案名称', () => {
+    expect(parseVersionWorkflowImportCsv('记录名称,应用,原项目负责人备注\n样例,互动营销,未知字段', 'initiation')).toEqual([]);
+  });
+
+  it('读取 Excel 另存为 GBK 的中文 CSV 表头', async () => {
+    // GBK 编码的「产品,V号\n互动营销,V3.1.2」。
+    const bytes = Uint8Array.from(Buffer.from('b2fac6b72c56bac50abba5b6afd3aacffa2c56332e312e32', 'hex'));
+    const rows = await parseVersionWorkflowImportFile(new File([bytes], '版本.csv'), 'release');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ code: 'V3.1.2', appName: '互动营销' });
+  });
+
   it('识别实表E1空表头的唯一T列，保留T号及应用并跳过短横占位', () => {
     const rows = parseVersionWorkflowImportMatrix([
       ['平台', '系统', '应用', '项目类别', '', '版本类别', '产品立项方案名称'],
@@ -36,11 +80,13 @@ describe('versionWorkflowImportParse', () => {
     expect(rows.map((row) => row.code)).toEqual(['T3.6.1', undefined, undefined, undefined]);
   });
 
-  it('两个无表头T列无法唯一判断时明确阻止，不静默选第一列', () => {
-    expect(() => parseVersionWorkflowImportMatrix([
+  it('两个无表头T列无法唯一判断时忽略这两列，其他字段照常读取', () => {
+    const [row] = parseVersionWorkflowImportMatrix([
       ['应用', '', '', '产品立项方案名称'],
       ['互动营销', 'T3.6.1', 'T4.0.0', '方案'],
-    ], 'initiation')).toThrow('多个没有表头的 T 号列');
+    ], 'initiation');
+    expect(row).toMatchObject({ appName: '互动营销', planName: '方案' });
+    expect(row.code).toBeUndefined();
   });
 
   it('正式版本导入不套用无表头T推断或方案名T提取', () => {
@@ -164,7 +210,7 @@ describe('versionWorkflowImportParse', () => {
     ].join('\n');
     const rows = parseVersionWorkflowImportCsv(csv, 'release');
     expect(rows[0].isAiPoc).toBe(true);
-    expect(rows[0].openBrandScope).toBe('否');
+    expect(rows[0].openBrandScope).toBeUndefined();
     expect(rows[0].isGlobalOpen).toBe(false);
   });
 
