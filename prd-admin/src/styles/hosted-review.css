@@ -1,15 +1,16 @@
 /* Shared chrome for hosted-page review. Colors inherit the surrounding surface theme. */
-.review-toolbar-controls { display: flex; align-items: center; gap: 7px; flex-shrink: 0; }
-.review-tool { position: relative; display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 7px; padding: 7px 11px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-nested); color: var(--text-secondary); font-size: 12px; font-weight: 500; line-height: 1.2; white-space: nowrap; cursor: pointer; transition: background 160ms, border-color 160ms; }
+.review-toolbar-controls { display: flex; align-items: center; gap: 0; flex-shrink: 0; padding: 2px; border: 1px solid var(--border-subtle); border-radius: 13px; background: var(--bg-nested); }
+.review-tool { position: relative; display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 7px; padding: 7px 11px; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500; line-height: 1.2; white-space: nowrap; cursor: pointer; transition: background 160ms, border-color 160ms; }
 .review-tool:hover { color: var(--text-primary); background: var(--button-secondary-bg-hover); border-color: var(--button-secondary-border); }
 .review-tool:focus-visible, .review-popover button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .review-annotate-trigger { color: var(--accent-fg-amber); border-color: color-mix(in srgb, var(--accent-fg-amber) 36%, transparent); background: color-mix(in srgb, var(--accent-fg-amber) 11%, transparent); }
 .review-annotate-trigger:hover, .review-annotate-trigger.is-selected { color: var(--accent-fg-amber); background: color-mix(in srgb, var(--accent-fg-amber) 19%, transparent); border-color: color-mix(in srgb, var(--accent-fg-amber) 55%, transparent); }
-.review-attention-dot { position: absolute; width: 6px; height: 6px; right: 2px; top: 2px; border-radius: 50%; background: var(--accent-fg-amber); animation: review-attention 2.8s ease-in-out infinite; }
+.review-attention-dot { position: static; order: -1; flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-fg-amber); animation: review-attention 2.8s ease-in-out infinite; }
 @keyframes review-attention { 0%, 100% { opacity: .4; box-shadow: 0 0 0 0 transparent; } 50% { opacity: 1; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-fg-amber) 15%, transparent); } }
 .review-count { font-size: 10px; min-width: 16px; text-align: center; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--accent-fg-amber) 15%, transparent); }
-.review-version-control { display: flex; align-items: center; }
-.review-version-state { margin-left: 6px; font-size: 11px; color: var(--text-muted); font-weight: 400; }
+.review-version-control { display: flex; align-items: center; position: relative; }
+.review-version-control::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 1px; background: var(--border-subtle); }
+.review-version-state { display: none; }
 .review-chevron-open { transform: rotate(180deg); }
 .review-popover { color: var(--text-primary); padding: 6px !important; border-radius: 13px !important; }
 .review-popover-heading { padding: 12px 12px 9px; }
@@ -119,7 +120,7 @@
 .review-discussion-error button { margin-left: 8px; text-decoration: underline; }
 @media (max-width: 767px) {
   .review-tool { min-height: 44px; padding: 8px 10px; }
-  .review-toolbar-controls { gap: 4px; }
+  .review-toolbar-controls { gap: 0; }
   .review-control-label, .review-version-state { display: none; }
   .review-version-trigger > svg:first-child { display: none; }
   .review-display-trigger > svg:last-child { display: none; }
@@ -139,4 +140,32 @@
 @media (prefers-reduced-motion: reduce) {
   .review-attention-dot { animation: none; opacity: .8; }
   .review-tool { transition: none; }
+}
+
+/* Read-only comment previews live over the canvas in the host, outside the uploaded document. */
+.annotation-bubble-canvas { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 25; }
+.annotation-chat-bubble { position: absolute; width: 292px; max-width: calc(100% - 20px); padding: 12px 13px 10px; border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-elevated); color: var(--text-primary); box-shadow: var(--shadow-glass-toast); pointer-events: auto; }
+.annotation-chat-bubble::before { content: ''; position: absolute; width: 10px; height: 10px; background: var(--bg-elevated); border: solid var(--border-default); transform: rotate(45deg); }
+.annotation-chat-bubble[data-placement="top"]::before { bottom: -6px; left: var(--bubble-tail-x); border-width: 0 1px 1px 0; }
+.annotation-chat-bubble[data-placement="bottom"]::before { top: -6px; left: var(--bubble-tail-x); border-width: 1px 0 0 1px; }
+.annotation-chat-bubble[data-placement="left"]::before { right: -6px; top: var(--bubble-tail-y); border-width: 1px 1px 0 0; }
+.annotation-chat-bubble[data-placement="right"]::before { left: -6px; top: var(--bubble-tail-y); border-width: 0 0 1px 1px; }
+.annotation-chat-author { display: flex; align-items: center; gap: 7px; font-size: 10px; color: var(--text-muted); }
+.annotation-chat-avatar { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 8px; background: color-mix(in srgb, var(--accent-fg-amber) 13%, transparent); color: var(--accent-fg-amber); font-size: 11px; font-weight: 600; }
+.annotation-chat-author strong { max-width: 115px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: 11px; font-weight: 500; }
+.annotation-chat-author > button { margin-left: auto; padding: 4px; border-radius: 5px; color: var(--text-muted); }
+.annotation-chat-author > button:hover { background: var(--bg-nested); color: var(--text-primary); }
+.annotation-chat-bubble > p { margin: 10px 0; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.annotation-chat-open { display: flex; align-items: center; gap: 5px; width: 100%; border-top: 1px solid var(--border-subtle); padding-top: 8px; color: var(--text-muted); font-size: 10px; text-align: left; }
+.annotation-chat-open > svg:last-child { margin-left: auto; }
+.annotation-chat-open:hover { color: var(--accent-fg-amber); }
+.annotation-chat-bubble button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+@media (max-width: 767px) {
+  .annotation-chat-bubble { width: 276px; padding: 8px 12px; }
+  .annotation-chat-bubble > p { -webkit-line-clamp: 2; margin: 6px 0 0; font-size: 12px; }
+  .annotation-chat-author { padding-right: 38px; }
+  .annotation-chat-avatar { width: 20px; height: 20px; border-radius: 6px; }
+  .annotation-chat-author > button { position: absolute; right: 6px; top: 6px; }
+  .annotation-chat-open { position: absolute; top: 8px; right: 32px; width: 20px; height: 20px; padding: 0; border: 0; font-size: 0; }
+  .annotation-chat-open > svg:first-child { display: none; }
 }

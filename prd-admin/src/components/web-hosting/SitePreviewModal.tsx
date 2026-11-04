@@ -11,6 +11,7 @@ import { withAnnotationRuntime } from './useHostedAnnotations';
 import { AnnotationModeBar } from './AnnotationModeBar';
 import { useHostedReview } from './useHostedReview';
 import { ReviewToolbarControls } from './ReviewToolbarControls';
+import { AnnotationBubble } from './AnnotationBubble';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
@@ -261,7 +262,7 @@ export default function SitePreviewModal({
             </button>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
-            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} />
+            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} onBubbleMode={() => { if (isMobile) setShowComments(false); }} />
             {askEnabled && !review.historical && (
               <button
                 type="button"
@@ -385,6 +386,7 @@ export default function SitePreviewModal({
                 : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(previewSource.src)} allow-modals`}
               title={site.title}
             />
+            <AnnotationBubble annotations={annotations} hidden={isMobile && showComments} />
           </div>
 
           {/* 评论面板 */}

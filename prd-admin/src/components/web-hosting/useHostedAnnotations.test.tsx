@@ -24,6 +24,23 @@ async function mount() {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('hosted annotation bridge', () => {
+  it('keeps comment text in the host and accepts only finite preview geometry from its frame', async () => {
+    await mount();
+    const frame = container.querySelector('iframe')!.contentWindow!;
+    const send = vi.spyOn(frame, 'postMessage');
+    await act(async () => annotations.setThreads([{ id: 'private', content: '仅宿主显示的正文', authorName: '评审者', anchor: { kind: 'element' } } as HostedSiteCommentDto]));
+    const config = send.mock.calls.at(-1)![0];
+    expect(JSON.stringify(config)).not.toContain('仅宿主显示的正文');
+    expect(JSON.stringify(config)).not.toContain('评审者');
+    const post = (rect: unknown) => window.dispatchEvent(new MessageEvent('message', { source: frame, data: { ...config, type: 'map-annotation-preview', id: 'private', rect } }));
+    await act(async () => post({ left: 1, top: 2, width: Infinity, height: 20 }));
+    expect(annotations.preview).toBeNull();
+    await act(async () => post({ left: 1, top: 2, width: 40, height: 20 }));
+    expect(annotations.preview?.id).toBe('private');
+    await act(async () => annotations.dismissPreview());
+    expect(annotations.preview).toBeNull();
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'map-annotation-preview-dismiss' });
+  });
   it('sends display preferences without replacing the page context and makes a new selection visible', async () => {
     await mount();
     const frame = container.querySelector('iframe')!.contentWindow!;
@@ -33,8 +50,8 @@ describe('hosted annotation bridge', () => {
     await act(async () => annotations.setDisplayMode('hidden'));
     expect(send.mock.calls.at(-1)![0]).toMatchObject({ nonce: original.nonce, displayMode: 'hidden' });
     await act(async () => annotations.select());
-    expect(annotations.displayMode).toBe('bubble');
-    expect(send.mock.calls.at(-1)![0]).toMatchObject({ nonce: original.nonce, displayMode: 'bubble', enabled: true });
+    expect(annotations.displayMode).toBe('standard');
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({ nonce: original.nonce, displayMode: 'standard', enabled: true });
   });
   it('rejects another window and a stale nonce, accepting only the active frame context', async () => {
     await mount();

@@ -7,6 +7,7 @@
   var currentHover = null, pending = null, lastLocations = '', activeId = null;
   var records = new Map(), structureDirty = true, geometryDirty = true, hoverDirty = true, threadsKey = '';
   var pendingBox = null, pointer = null;
+  var previewId = null, dismissedPreview = null, previewLast = '', previewMuted = false, previewTimer = 0;
   var excluded = 'script,style,noscript,input,textarea,select,option,[contenteditable="true"]';
   function post(type, extra) {
     if (!context) return;
@@ -117,8 +118,13 @@
       if (!record) {
         var pin = document.createElement('button'); pin.setAttribute('data-mark', '');
         pin.onclick = function (event) {
-          event.stopPropagation(); activeId = thread.id;
+          event.stopPropagation();
+          if (context.displayMode === 'bubble') { previewId = thread.id; dismissedPreview = null; previewLast = ''; schedule(false); return; }
+          activeId = thread.id;
           post('map-annotation-activate', { id: thread.id }); schedule(false);
+        };
+        pin.onpointerenter = function () {
+          if (context && context.displayMode === 'bubble' && !context.enabled) { previewId = thread.id; dismissedPreview = null; previewLast = ''; schedule(false); }
         };
         shadow.appendChild(pin);
         record = { boxes: [], pin: pin }; records.set(thread.id, record);
@@ -131,6 +137,38 @@
       if (!keep.has(id)) { record.pin.remove(); record.boxes.forEach(function (box) { box.remove(); }); records.delete(id); }
     });
     structureDirty = false;
+  }
+  function hidePreview() {
+    if (previewLast) post('map-annotation-preview-hide');
+    previewLast = '';
+  }
+  function previewRect(rect) { return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; }
+  function publishPreview(force) {
+    if (context.displayMode !== 'bubble' || context.enabled || context.pending || previewMuted) { hidePreview(); return; }
+    var record = records.get(previewId || activeId);
+    if (!record) {
+      for (var item of records.values()) {
+        if (!item.found || !item.found.el.isConnected) continue;
+        var candidate = item.found.el.getBoundingClientRect();
+        if (candidate.bottom > 0 && candidate.top < innerHeight) { record = item; previewId = item.thread.id; break; }
+      }
+    }
+    if (!record || !record.found || !record.found.el.isConnected || dismissedPreview === record.thread.id) { hidePreview(); return; }
+    var target = record.found.range ? record.found.range.getBoundingClientRect() : record.found.el.getBoundingClientRect();
+    if (!target.width || !target.height || target.bottom <= 0 || target.top >= innerHeight || target.right <= 0 || target.left >= innerWidth) { hidePreview(); return; }
+    var rect = previewRect(target), key = record.thread.id + JSON.stringify(rect);
+    if (!force && key === previewLast) return;
+    var obstacles = [];
+    // Geometry only. Comment text and author information never enter the uploaded page.
+    for (var element of document.querySelectorAll('h1,h2,h3,h4,p,li,button,a,img,input,pre,table,header,section,aside,blockquote,article,div,span')) {
+      if (element === record.found.el || record.found.el.contains(element) || element.contains(record.found.el)) continue;
+      if (/^(DIV|SECTION|ASIDE|ARTICLE|HEADER)$/.test(element.tagName) && !Array.from(element.childNodes).some(function (node) { return node.nodeType === Node.TEXT_NODE && node.textContent.trim(); })) continue;
+      var box = element.getBoundingClientRect();
+      if (box.width && box.height && box.bottom > 0 && box.top < innerHeight) obstacles.push(previewRect(box));
+      if (obstacles.length >= 80) break;
+    }
+    previewLast = key;
+    post('map-annotation-preview', { id: record.thread.id, rect: rect, obstacles: obstacles });
   }
   function paint() {
     frame = 0;
@@ -173,7 +211,7 @@
       });
     });
     records.forEach(function (record) {
-      record.pin.hidden = !record.located || context.displayMode === 'standard';
+      record.pin.hidden = !record.located;
       record.pin.className = 'pin' + (record.thread.id === activeId ? ' active' : '');
     });
     if (geometryDirty) {
@@ -185,6 +223,7 @@
       if (serialized !== lastLocations) { lastLocations = serialized; post('map-annotation-locations', { missingIds: missing }); }
     }
     hover.hidden = !hoverRect; if (hoverRect) place(hover, hoverRect, origin);
+    publishPreview(geometryDirty);
     geometryDirty = false; hoverDirty = false;
   }
   function schedule(geometry) { if (geometry !== false) geometryDirty = true; if (!frame) frame = requestAnimationFrame(paint); }
@@ -195,16 +234,18 @@
     if (data.type === 'map-annotation-init') {
       if (typeof data.nonce !== 'string' || data.nonce.length > 100 || !data.nonce || typeof data.siteId !== 'string' || !data.siteId) return;
       try { new URL(data.siteUrl); } catch (_) { return; }
+      if (!context || context.displayMode !== data.displayMode || context.contentVersion !== data.contentVersion) { previewId = null; dismissedPreview = null; previewMuted = false; hidePreview(); }
       var nextKey = JSON.stringify(data.threads || []);
       if (!context || context.siteUrl !== data.siteUrl || context.contentVersion !== data.contentVersion || activeId !== (data.activeId || null) || nextKey !== threadsKey) structureDirty = true;
       threadsKey = nextKey; context = data; activeId = data.activeId || null; if (!data.pending) pending = null;
       mount(); observe(); post('map-annotation-ready'); schedule(); return;
     }
     if (!context || data.siteId !== context.siteId || data.nonce !== context.nonce) return;
+    if (data.type === 'map-annotation-preview-dismiss') { dismissedPreview = previewId || activeId; hidePreview(); return; }
     if (data.type === 'map-annotation-focus') {
       var thread = (context.threads || []).find(function (item) { return item.id === data.id; });
       var found = thread && resolve(thread.anchor);
-      if (found) { activeId = thread.id; structureDirty = true; found.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); schedule(); }
+      if (found) { activeId = thread.id; previewId = thread.id; dismissedPreview = null; structureDirty = true; found.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); schedule(); }
       else post('map-annotation-locations', { missingIds: [data.id] });
     }
   });
@@ -234,6 +275,10 @@
   window.addEventListener('scroll', function (event) {
     if (!context) return;
     if (event.target === document || event.target === window) {
+      if (context.displayMode === 'bubble') {
+        previewMuted = true; hidePreview(); clearTimeout(previewTimer);
+        previewTimer = setTimeout(function () { previewMuted = false; schedule(false); }, 120);
+      }
       if (context.enabled) { hoverDirty = true; schedule(false); }
       return;
     }
@@ -256,5 +301,5 @@
       attributeFilter: ['class', 'style', 'hidden', 'id'] });
   }
   observe();
-  window.addEventListener('pagehide', function () { observer.disconnect(); if (frame) cancelAnimationFrame(frame); frame = 0; context = null; });
+  window.addEventListener('pagehide', function () { observer.disconnect(); if (frame) cancelAnimationFrame(frame); clearTimeout(previewTimer); frame = 0; context = null; });
 })();

@@ -16,6 +16,7 @@ import { withAnnotationRuntime } from '@/components/web-hosting/useHostedAnnotat
 import { AnnotationModeBar } from '@/components/web-hosting/AnnotationModeBar';
 import { useHostedReview } from '@/components/web-hosting/useHostedReview';
 import { ReviewToolbarControls } from '@/components/web-hosting/ReviewToolbarControls';
+import { AnnotationBubble } from '@/components/web-hosting/AnnotationBubble';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
 import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
@@ -889,7 +890,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
             <div className="share-topbar-actions">
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
-                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType} />}
+                onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
+                onBubbleMode={() => { if (isMobile) setShowComments(false); }} />}
               <span className="share-topbar-divider" />
               {!site.pdfAssetUrl && (
                 <button
@@ -899,7 +901,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   aria-label="全屏演示"
                 >
                   {isFullscreen ? <Minimize size={isMobile ? 15 : 13} /> : <Maximize size={isMobile ? 15 : 13} />}
-                  {!isMobile && '全屏演示'}
                 </button>
               )}
               {!isOwner && (
@@ -915,15 +916,15 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   }
                 >
                   {saving ? (
-                    <><MapSpinner size={isMobile ? 15 : 13} /> {!isMobile && '保存中...'}</>
+                    <><MapSpinner size={isMobile ? 15 : 13} /></>
                   ) : saveStatus === 'saved' ? (
-                    <><Check size={isMobile ? 15 : 13} /> {!isMobile && '已保存'}</>
+                    <><Check size={isMobile ? 15 : 13} /></>
                   ) : saveStatus === 'already' ? (
-                    <><Check size={isMobile ? 15 : 13} /> {!isMobile && '你已经保存过了'}</>
+                    <><Check size={isMobile ? 15 : 13} /></>
                   ) : !isAuthenticated ? (
-                    <><LogIn size={isMobile ? 15 : 13} /> {!isMobile && '登录并保存'}</>
+                    <><LogIn size={isMobile ? 15 : 13} /></>
                   ) : (
-                    <><Download size={isMobile ? 15 : 13} /> {!isMobile && '保存到我的托管'}</>
+                    <><Download size={isMobile ? 15 : 13} /></>
                   )}
                 </button>
               )}
@@ -947,7 +948,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                     : downloadPlan.kind === 'open'
                       ? <ExternalLink size={isMobile ? 15 : 13} />
                       : <FileDown size={isMobile ? 15 : 13} />}
-                  {!isMobile && (downloading ? offlineExportLabel : downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件')}
                 </button>
               )}
               <span className="share-topbar-divider" />
@@ -960,7 +960,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 aria-label="新窗口打开"
               >
                 <ExternalLink size={isMobile ? 15 : 13} />
-                {!isMobile && '新窗口打开'}
               </a>
 
             </div>
@@ -1037,6 +1036,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             allow="fullscreen"
             allowFullScreen
           />
+          <AnnotationBubble annotations={annotations} hidden={isFullscreen || (isMobile && showComments)} />
           {/* 既没有取回的正文、也没有入口地址 —— iframe 会停在 about:blank，
               用户看到的就是标题栏下面一片白、控制台一条错都没有，无从判断发生了什么。
               这种时候必须把「为什么是空的」说出来（no-rootless-tree / expectation-management）。 */}

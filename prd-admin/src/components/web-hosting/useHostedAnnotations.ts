@@ -7,7 +7,7 @@ export function withAnnotationRuntime(html: string): string {
   if (!html || /data-map-artifact-mode\s*=\s*["']declarative-only["']/i.test(html)
     || /http-equiv\s*=\s*["']content-security-policy["']/i.test(html)) return html;
   html = html.replace(/<script\b[^>]*\bdata-map-annotations\s*=\s*(["'])[^"']*\1[^>]*>[\s\S]*?<\/script\s*>/gi, '');
-  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=3'), window.location.href);
+  const url = new URL(buildApiUrl('/api/web-pages/annotation-runtime.js?v=4'), window.location.href);
   const safeUrl = url.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
   return `${html}<script data-map-annotations="v1" src="${safeUrl}"></script>`;
 }
@@ -25,12 +25,21 @@ export function isAnnotationAnchor(value: unknown): value is HostedSiteCommentAn
 }
 
 export type AnnotationDisplayMode = 'hidden' | 'standard' | 'bubble';
+export type AnnotationRect = { left: number; top: number; width: number; height: number };
+export type AnnotationPreview = { id: string; rect: AnnotationRect; obstacles: AnnotationRect[] };
+const isRect = (value: unknown): value is AnnotationRect => {
+  if (!value || typeof value !== 'object') return false;
+  const rect = value as Record<string, unknown>;
+  return ['left', 'top', 'width', 'height'].every(key => typeof rect[key] === 'number' && Number.isFinite(rect[key]) && Math.abs(rect[key] as number) < 1e7)
+    && (rect.width as number) > 0 && (rect.height as number) > 0;
+};
 
 export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, site: { id: string; siteUrl: string } | null,
   onOpen: () => void, contentVersionKey?: string) {
   const siteId = site?.id ?? '', siteUrl = site?.siteUrl ?? '';
   const [enabled, setEnabled] = useState(false);
-  const [displayMode, setDisplayMode] = useState<AnnotationDisplayMode>('bubble');
+  const [displayMode, setDisplayMode] = useState<AnnotationDisplayMode>('standard');
+  const [preview, setPreview] = useState<AnnotationPreview | null>(null);
   const [ready, setReady] = useState(false);
   const [draftAnchor, setDraftAnchor] = useState<HostedSiteCommentAnchor | null>(null);
   const [threads, setThreads] = useState<HostedSiteCommentDto[]>([]);
@@ -51,7 +60,7 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   };
   useEffect(() => {
     connected.current = false;
-    setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null);
+    setReady(false); setEnabled(false); setDraftAnchor(null); setActiveId(null); setPreview(null);
     setMissingIds([]); setConnectionChecked(false);
   }, [siteId, siteUrl, contentVersionKey]);
   useEffect(() => { setThreads([]); }, [siteId]);
@@ -61,6 +70,10 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
       if (event.source !== frameRef.current?.contentWindow || !data || typeof data !== 'object'
         || data.nonce !== nonce || data.siteId !== siteId) return;
       if (data.type === 'map-annotation-ready') { connected.current = true; setReady(true); }
+      if (data.type === 'map-annotation-preview' && typeof data.id === 'string' && isRect(data.rect)) {
+        setPreview({ id: data.id, rect: data.rect, obstacles: Array.isArray(data.obstacles) ? data.obstacles.slice(0, 100).filter(isRect) : [] });
+      }
+      if (data.type === 'map-annotation-preview-hide') setPreview(null);
       if (data.type === 'map-annotation-selected' && isAnnotationAnchor(data.anchor)) {
         setDraftAnchor(data.anchor); setActiveId(null); setEnabled(false); openRef.current();
       }
@@ -80,13 +93,18 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
   }, [frameRef, nonce, siteId]);
   useEffect(() => { initRef.current(); }, [enabled, displayMode, threads, activeId, draftAnchor, contentVersionKey]);
   const notifyFrame = useCallback(() => { connected.current = false; setReady(false); initRef.current(); }, []);
-  const select = useCallback(() => { setDraftAnchor(null); setEnabled(true); setDisplayMode(mode => mode === 'hidden' ? 'bubble' : mode); }, []);
+  const select = useCallback(() => { setDraftAnchor(null); setEnabled(true); setPreview(null); setDisplayMode(mode => mode === 'hidden' ? 'standard' : mode); }, []);
   const clearDraft = useCallback(() => setDraftAnchor(null), []);
   const focus = useCallback((id: string) => {
     setActiveId(id);
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-focus', siteId, nonce, id }, '*');
   }, [frameRef, siteId, nonce]);
-  return { enabled, ready, connectionChecked, displayMode, setDisplayMode, draftAnchor, activeId, missingIds, threads,
+  const dismissPreview = useCallback(() => {
+    setPreview(null);
+    frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-preview-dismiss', siteId, nonce }, '*');
+  }, [frameRef, siteId, nonce]);
+  const openThread = useCallback((id: string) => { dismissPreview(); setActiveId(id); setEnabled(false); openRef.current(); }, [dismissPreview]);
+  return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, dismissPreview, openThread, draftAnchor, activeId, missingIds, threads,
     select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId };
 }
 

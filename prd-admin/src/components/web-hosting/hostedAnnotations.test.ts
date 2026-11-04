@@ -26,20 +26,34 @@ async function setup() {
 }
 
 describe('hosted page annotation runtime', () => {
+  it('previews a chat bubble using geometry only, dismisses it and keeps standard numbered markers', async () => {
+    const t = await setup();
+    const threads = [{ id: 'chat', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }];
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, threads, displayMode: 'bubble' });
+    await tick();
+    expect(t.messages.find(message => message.type === 'map-annotation-preview')).toMatchObject({ id: 'chat', rect: { left: 10, top: 20, width: 200, height: 40 } });
+    expect(t.messages.find(message => message.type === 'map-annotation-preview')).not.toHaveProperty('content');
+    t.send({ type: 'map-annotation-preview-dismiss' });
+    await tick();
+    expect(t.messages.at(-1)?.type).toBe('map-annotation-preview-hide');
+    t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, threads, displayMode: 'standard' });
+    await tick();
+    expect(t.layer()?.querySelector<HTMLButtonElement>('.pin')?.hidden).toBe(false);
+  });
   it('switches between bubbles, standard highlights and hidden marks without losing threads or rebuilding pins', async () => {
     const t = await setup();
     const threads = [{ id: 'display', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }];
     const show = (displayMode: string) => t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html?v=1', enabled: false, threads, displayMode });
     show('bubble'); await tick();
-    const pin = t.layer()!.querySelector<HTMLButtonElement>('button')!;
+    const pin = t.layer()!.querySelector<HTMLButtonElement>('.pin')!;
     expect(pin.hidden).toBe(false);
     show('standard'); await tick();
-    expect(pin.hidden).toBe(true);
+    expect(pin.hidden).toBe(false);
     expect(t.layer()!.querySelector('.outline[data-mark]')).toBeTruthy();
     show('hidden'); await tick();
     expect(t.win.document.querySelector<HTMLElement>('[data-map-annotation-layer]')!.style.display).toBe('none');
     show('bubble'); await tick();
-    expect(t.layer()!.querySelector('button')).toBe(pin);
+    expect(t.layer()!.querySelector('.pin')).toBe(pin);
     expect(pin.hidden).toBe(false);
     expect(t.win.document.querySelector<HTMLElement>('[data-map-annotation-layer]')!.style.display).toBe('block');
   });
@@ -59,18 +73,18 @@ describe('hosted page annotation runtime', () => {
   it('reuses marker nodes and cached elements through document and nested scrolling', async () => {
     const t = await setup();
     t.init([{ id: 'smooth', anchor: { pagePath: '/site/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }], false);
-    await expect.poll(() => t.layer()?.querySelector('button:not([hidden])')).toBeTruthy();
+    await expect.poll(() => t.layer()?.querySelector('.pin:not([hidden])')).toBeTruthy();
     const layer = t.layer()!;
-    const pin = layer.querySelector('button'), box = layer.querySelector('.outline[data-mark]');
+    const pin = layer.querySelector('.pin'), box = layer.querySelector('.outline[data-mark]');
     const lookup = vi.spyOn(t.win.document, 'querySelector');
     for (let i = 0; i < 20; i++) t.win.dispatchEvent(new t.win.Event('scroll'));
     await tick();
-    expect(layer.querySelector('button')).toBe(pin);
+    expect(layer.querySelector('.pin')).toBe(pin);
     expect(layer.querySelector('.outline[data-mark]')).toBe(box);
     expect(lookup).not.toHaveBeenCalled();
     t.win.document.querySelector('main')!.dispatchEvent(new t.win.Event('scroll', { bubbles: false }));
     lookup.mockClear(); await tick();
-    expect(layer.querySelector('button')).toBe(pin);
+    expect(layer.querySelector('.pin')).toBe(pin);
     expect(lookup).not.toHaveBeenCalled();
     lookup.mockRestore();
   });
@@ -79,7 +93,7 @@ describe('hosted page annotation runtime', () => {
     const anchor = t.messages.find(m => m.type === 'map-annotation-selected')!.anchor;
     t.win.document.querySelector('#submit')!.textContent = '发送申请';
     t.init([{ id: 'thread', anchor }], false); await tick();
-    expect(t.layer()?.querySelector('button')?.textContent).toBe('1');
+    expect(t.layer()?.querySelector('.pin')?.textContent).toBe('1');
     t.win.document.querySelector('#submit')!.remove(); await tick();
     await expect.poll(() => t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual(['thread']);
 
@@ -101,14 +115,14 @@ describe('hosted page annotation runtime', () => {
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/site/index.html', enabled: true }, t.win);
     expect(t.layer()).toBeUndefined();
     t.init([{ id: 'foreign', anchor: { pagePath: '/other.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }], false); await tick();
-    expect(t.layer()?.querySelector('button:not([hidden])')).toBeNull();
+    expect(t.layer()?.querySelector('.pin:not([hidden])')).toBeNull();
 
   });
   it('restores the same logical page across immutable publishing directories', async () => {
     const t = await setup();
     t.send({ type: 'map-annotation-init', siteUrl: 'https://hosting.example/web-hosting/sites/site1/.versions/revision-2/index.html?v=2', enabled: false,
       threads: [{ id: 'published', anchor: { pagePath: '/web-hosting/sites/site1/index.html', selector: '#submit', tagName: 'button', kind: 'element', elementText: '提交申请' } }] });
-    await expect.poll(() => t.layer()?.querySelector('button')?.textContent).toBe('1');
+    await expect.poll(() => t.layer()?.querySelector('.pin')?.textContent).toBe('1');
     expect(t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual([]);
   });
   it('requires a unique semantic match for positional anchors after a content version change', async () => {
@@ -116,13 +130,13 @@ describe('hosted page annotation runtime', () => {
     t.init([{ id: 'changed', anchor: { pagePath: '/site/index.html', selector: 'p:nth-of-type(2)', tagName: 'p',
       kind: 'element', elementText: '重复文字', contentVersion: 'previous-version' } }], false);
     await expect.poll(() => t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual(['changed']);
-    expect(t.layer()?.querySelector('button:not([hidden])')).toBeNull();
+    expect(t.layer()?.querySelector('.pin:not([hidden])')).toBeNull();
   });
   it('does not guess between duplicate replacements when a positional target disappears', async () => {
     const t = await setup();
     t.init([{ id: 'duplicate', anchor: { pagePath: '/site/index.html', selector: '#missing', tagName: 'p', kind: 'element', elementText: '重复文字' } }], false);
     await tick();
-    expect(t.layer()?.querySelector('button:not([hidden])')).toBeNull();
+    expect(t.layer()?.querySelector('.pin:not([hidden])')).toBeNull();
     await expect.poll(() => t.messages.filter(m => m.type === 'map-annotation-locations').at(-1)?.missingIds).toEqual(['duplicate']);
 
   });
