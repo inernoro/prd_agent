@@ -29,6 +29,7 @@ import {
 } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
+import { slugifyBranchForImage } from './image-template-vars.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
@@ -339,12 +340,7 @@ export function resolveImageTemplate(image: string | undefined, branch?: BranchE
  *   - 例: `my/branch`→`my-branch`、`Codex/fix`→`Codex-fix`、`release/v1.2`→`release-v1.2`。
  * 额外去掉前导 '.'/'-'(Docker tag 不能以它们开头) + 截到 128 字符上限。
  */
-export function slugifyBranchForImage(branch: string): string {
-  return branch
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^[.-]+/, '')
-    .slice(0, 128);
-}
+export { slugifyBranchForImage };
 
 /**
  * Merge a branch-level BuildProfileOverride onto the shared baseline profile.
@@ -420,6 +416,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
 export function resolveEffectiveProfile(
   profile: BuildProfile,
   branch?: BranchEntry,
+  options: { preserveImageTemplates?: boolean } = {},
 ): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
   const withBranchOverride = applyProfileOverride(profile, branchOverride);
@@ -427,10 +424,11 @@ export function resolveEffectiveProfile(
   // 2026-06-23 极速版：deploy-mode 解析完后,把 dockerImage / fallbackImage 里的
   // ${CDS_COMMIT_SHA} 等模板变量按当前分支上下文替换。无模板变量时是 no-op。
   // fallbackImage 可为字符串或有序数组(逐组件回退链),逐元素解析。
-  const resolvedImage = resolveImageTemplate(withMode.dockerImage, branch);
+  const resolveImage = (image: string | undefined) => options.preserveImageTemplates ? image : resolveImageTemplate(image, branch);
+  const resolvedImage = resolveImage(withMode.dockerImage);
   const resolvedFallback = Array.isArray(withMode.fallbackImage)
-    ? withMode.fallbackImage.map((f) => resolveImageTemplate(f, branch) || f)
-    : resolveImageTemplate(withMode.fallbackImage, branch);
+    ? withMode.fallbackImage.map((f) => resolveImage(f) || f)
+    : resolveImage(withMode.fallbackImage);
   const imageChanged = resolvedImage !== withMode.dockerImage;
   const fallbackChanged = JSON.stringify(resolvedFallback) !== JSON.stringify(withMode.fallbackImage);
   let resolved = (imageChanged || fallbackChanged)
@@ -470,7 +468,7 @@ export function resolveEffectiveProfile(
         hotReload: undefined,
       };
       const srcResolved = resolveProfileWithMode(srcBase);
-      const srcImg = resolveImageTemplate(srcResolved.dockerImage, branch);
+      const srcImg = resolveImage(srcResolved.dockerImage);
       const srcProfile = srcImg !== srcResolved.dockerImage
         ? { ...srcResolved, dockerImage: srcImg || srcResolved.dockerImage }
         : srcResolved;
@@ -1950,7 +1948,8 @@ export class ContainerService {
     });
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(
-      runCommitSha ? { ...entry, pinnedCommit: undefined, githubCommitSha: runCommitSha } : entry,
+      // 已选定不可变产物/源码的实际提交优先于分支缓存的另一次 CI 目标。
+      runCommitSha ? { ...entry, pinnedCommit: undefined, ciTargetSha: undefined, githubCommitSha: runCommitSha } : entry,
       profile,
       customEnv,
     );

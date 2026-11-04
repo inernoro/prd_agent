@@ -1307,6 +1307,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/migration\/config-preview$/, '预览可复刻配置'],
     [/^POST \/projects\/(.+)\/migration\/replicate-config$/, '推送配置到目标 CDS'],
     [/^POST \/projects\/(.+)\/migration\/data-plan$/, '扫描数据迁移计划'],
+    [/^GET \/projects\/([^/]+)\/migration\/fingerprint$/, '核对项目指纹'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby$/, '读取分支同步策略'],
+    [/^PUT \/projects\/([^/]+)\/migration\/standby$/, '保存分支同步策略'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/audit$/, '核对备用项目'],
+    [/^POST \/projects\/([^/]+)\/migration\/standby\/reconcile$/, '同步项目分支'],
+    [/^GET \/projects\/([^/]+)\/migration\/standby-health$/, '读取备用项目状态'],
     // CDS 配对连接 :id 路径
     [/^POST \/cds-system\/connections\/(.+)\/revoke$/, '撤销配对连接'],
     [/^GET \/cds-system\/connections\/(.+)$/, '查看配对连接'],
@@ -4621,6 +4627,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
     authMode,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
   // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
   app.use('/api', createProjectStorageRouter({

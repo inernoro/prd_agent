@@ -428,7 +428,14 @@ export class BranchOperationCoordinator {
   }
 
 
-  begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean } = {}): BranchOperationDecision {
+  begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean; requireImmediate?: boolean } = {}): BranchOperationDecision {
+    if (options.requireImmediate) this.prunePendingReplayClaims();
+    // 实时快照不能在延迟重放中降级成普通人工意图；拒绝而非持久化半份条件。
+    if (options.requireImmediate && (options.waitForArtifacts || request.pendingReplay || this.findBlockingActive(request)
+      || this.findWaitingBarrier(request) || this.getUsableReservedContinuation(request.branchId, request))) {
+      return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
+        reason: '本次实时快照条件不能排队或合并，请在产物齐备且分支空闲后重新规划' };
+    }
     if (options.waitForArtifacts && (request.versionId || request.hasOneShotOptions)) {
       return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
         reason: '本次指定版本或一次性选项不能作为产物等待恢复，请在产物齐备后重试' };
