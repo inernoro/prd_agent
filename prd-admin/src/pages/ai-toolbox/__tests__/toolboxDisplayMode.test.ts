@@ -13,7 +13,7 @@ describe('百宝箱展示方式偏好', () => {
     expect(normalizeToolboxDisplayMode('unknown')).toBe('compact');
   });
 
-  it.each(['compact', 'standard', 'showcase'] as const)('保留合法模式 %s', (mode) => {
+  it.each(['compact', 'standard', 'showcase', 'list'] as const)('保留合法模式 %s', (mode) => {
     expect(normalizeToolboxDisplayMode(mode)).toBe(mode);
   });
 

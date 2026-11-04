@@ -1,25 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { Surface } from '@/components/design/Surface';
 import { useToolboxStore, type ToolboxCategory } from '@/stores/toolboxStore';
-import type { ToolboxItem } from '@/services';
 import {
   Package,
+  Boxes,
   Search,
   Plus,
-  Boxes,
   User,
   Star,
   Globe2,
-  Bot,
-  Zap,
   X,
-  Grid3X3,
   LayoutGrid,
-  Image,
-  Clock3,
-  ArrowUpRight,
+  List,
+  ChevronDown,
 } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
@@ -42,7 +36,7 @@ import './toolbox-discovery.css';
 
 // 权属维度（原有）
 const CATEGORY_TABS: ToolboxSegmentedItem[] = [
-  { key: 'all', label: '全部工具', icon: <Boxes size={14} /> },
+  { key: 'all', label: '全部工具' },
   { key: 'mine', label: '我的创建', icon: <User size={14} /> },
   { key: 'others', label: '公开共享', icon: <Globe2 size={14} /> },
   { key: 'favorite', label: '收藏', icon: <Star size={14} /> },
@@ -50,20 +44,19 @@ const CATEGORY_TABS: ToolboxSegmentedItem[] = [
 
 // 功能类型维度（新增）
 const KIND_TABS: ToolboxSegmentedItem[] = [
-  { key: 'all', label: '全部类型', icon: <Boxes size={14} /> },
-  { key: 'agent', label: '智能体', icon: <Bot size={14} /> },
-  { key: 'tool', label: '工具', icon: <Zap size={14} /> },
+  { key: 'all', label: '全部类型' },
+  { key: 'agent', label: '智能体' },
+  { key: 'tool', label: '工具' },
 ];
 
 const DISPLAY_MODES: Array<{
   key: ToolboxDisplayMode;
   label: string;
   description: string;
-  icon: typeof Grid3X3;
+  icon: typeof LayoutGrid;
 }> = [
-  { key: 'compact', label: '紧凑', description: '用图标和用途快速查找工具', icon: Grid3X3 },
-  { key: 'standard', label: '标准', description: '平衡图片与信息密度', icon: LayoutGrid },
-  { key: 'showcase', label: '大图', description: '突出智能体插画', icon: Image },
+  { key: 'compact', label: '画廊视图', description: '画廊视图', icon: LayoutGrid },
+  { key: 'list', label: '列表视图', description: '列表视图', icon: List },
 ];
 
 export default function AiToolboxPage() {
@@ -82,7 +75,6 @@ export default function AiToolboxPage() {
     favoriteIds,
     funcKindFilter,
     activeTagFilter,
-    recentlyUsedIds,
     setPageTab,
     setCategory,
     setSearchQuery,
@@ -118,14 +110,6 @@ export default function AiToolboxPage() {
     },
   });
 
-  // 最近使用：从 items 里按 recentlyUsedIds 顺序取，过滤掉已从列表消失的 id
-  const recentItems = useMemo(() => {
-    if (!recentlyUsedIds.length || !items.length) return [];
-    return recentlyUsedIds
-      .map((id) => items.find((it) => it.id === id))
-      .filter(Boolean) as typeof items;
-  }, [recentlyUsedIds, items]);
-
   // 筛选：权属 + 类型 + Tag + 搜索
   const filteredItems = useMemo(() => {
     let result = items;
@@ -153,7 +137,6 @@ export default function AiToolboxPage() {
   }, [items, category, searchQuery, favoriteIds, funcKindFilter, activeTagFilter]);
 
   const gridLoading = itemsLoading;
-  const favoriteItems = items.filter((item) => favoriteIds.has(item.id));
 
   // Render based on current view
   if (view === 'detail' && selectedItem) {
@@ -213,109 +196,87 @@ export default function AiToolboxPage() {
       pageTab={pageTab}
       onPageTabChange={setPageTab}
       contentClassName="overflow-auto"
+      className="toolbox-gallery"
       primaryAction={
-        <Button variant="primary" size="sm" onClick={startCreate}>
-          <Plus size={13} />
-          创建智能体
-        </Button>
+        <div className="toolbox-header-actions">
+          <div className="toolbox-discovery-search">
+            <Search size={15} aria-hidden />
+            <input
+              type="search"
+              aria-label="搜索工具"
+              data-tour-id="toolbox-search"
+              placeholder="搜索工具"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button type="button" onClick={() => setSearchQuery('')} aria-label="清空搜索"><X size={13} /></button>
+            )}
+          </div>
+          <Button variant="primary" size="sm" onClick={startCreate}>
+            <Plus size={14} />创建智能体
+          </Button>
+        </div>
       }
       controls={
-        <div className="toolbox-discovery-controls">
-          <div className="toolbox-discovery-search-row">
-            <div className="toolbox-discovery-search">
-              <Search size={19} aria-hidden />
-              <input
-                type="search"
-                aria-label="搜索工具"
-                data-tour-id="toolbox-search"
-                placeholder="搜索名称、用途或标签，例如 Markdown PPT"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button type="button" onClick={() => setSearchQuery('')} aria-label="清空搜索">
-                  <X size={15} />
-                </button>
-              )}
+        <div className="toolbox-gallery-toolbar">
+          <ToolboxSegmentedControl
+            items={CATEGORY_TABS}
+            activeKey={category}
+            label="工具分类"
+            compact
+            onChange={(key) => setCategory(key as ToolboxCategory)}
+          />
+          <div className="toolbox-gallery-options">
+            <div className="toolbox-kind-select">
+              <Boxes size={13} className="toolbox-kind-icon" aria-hidden />
+              <select
+                aria-label="工具类型"
+                value={funcKindFilter}
+                onChange={(e) => setFuncKindFilter(e.target.value as 'all' | 'agent' | 'tool')}
+              >
+                {KIND_TABS.map((kind) => <option key={kind.key} value={kind.key}>{kind.label}</option>)}
+              </select>
+              <ChevronDown size={13} aria-hidden />
             </div>
-            <span className="toolbox-discovery-total">{items.length} 个工具，随时开始</span>
-          </div>
-          <div className="toolbox-discovery-toolbar">
-            <ToolboxSegmentedControl
-              items={CATEGORY_TABS}
-              activeKey={category}
-              label="工具分类"
-              compact
-              onChange={(key) => setCategory(key as ToolboxCategory)}
-            />
-            <div className="toolbox-discovery-options">
-              <ToolboxSegmentedControl
-                items={KIND_TABS}
-                activeKey={funcKindFilter}
-                label="工具类型"
-                compact
-                onChange={(key) => setFuncKindFilter(key as 'all' | 'agent' | 'tool')}
-              />
-              <div className="toolbox-display-switch" role="group" aria-label="展示方式">
-                {DISPLAY_MODES.map((mode) => {
-                  const Icon = mode.icon;
-                  return (
-                    <button
-                      key={mode.key}
-                      type="button"
-                      className="toolbox-display-option"
-                      data-active={displayMode === mode.key}
-                      aria-pressed={displayMode === mode.key}
-                      title={mode.description}
-                      onClick={() => handleDisplayModeChange(mode.key)}
-                    >
-                      <Icon size={13} aria-hidden />
-                      <span>{mode.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="toolbox-display-switch" role="group" aria-label="展示方式">
+              {DISPLAY_MODES.map((mode) => {
+                const Icon = mode.icon;
+                const active = mode.key === 'list' ? displayMode === 'list' : displayMode !== 'list';
+                return (
+                  <button
+                    key={mode.key}
+                    type="button"
+                    className="toolbox-display-option"
+                    data-active={active}
+                    aria-pressed={active}
+                    aria-label={mode.label}
+                    title={mode.description}
+                    onClick={() => handleDisplayModeChange(mode.key)}
+                  >
+                    <Icon size={15} aria-hidden />
+                  </button>
+                );
+              })}
             </div>
+            <span className="toolbox-gallery-count" role="status" aria-live="polite">{filteredItems.length} 个工具</span>
           </div>
         </div>
       }
     >
-      {!gridLoading && category === 'all' && !hasActiveFilters && (
-        <div className="toolbox-quick-access">
-          <div className="toolbox-quick-group">
-            <span className="toolbox-quick-label"><Star size={13} />收藏</span>
-            {favoriteItems.length ? (
-              <div className="toolbox-quick-items">
-                {favoriteItems.slice(0, 3).map((item) => <RecentChip key={item.id} item={item} />)}
-                <button type="button" className="toolbox-quick-more" onClick={() => setCategory('favorite')}>
-                  查看全部 <ArrowUpRight size={12} />
-                </button>
-              </div>
-            ) : <span className="toolbox-quick-hint">点击卡片星标，收藏常用工具</span>}
+      {hasActiveFilters && (
+        <div className="toolbox-results-heading">
+          <div className="toolbox-results-title">
+            {searchQuery.trim() && <span>搜索结果</span>}
+            {activeTagFilter && (
+              <button className="toolbox-active-tag-chip" onClick={() => setActiveTagFilter(null)} title="清除标签过滤">
+                {activeTagFilter}<X size={11} />
+              </button>
+            )}
           </div>
-          <div className="toolbox-quick-group">
-            <span className="toolbox-quick-label"><Clock3 size={13} />最近使用</span>
-            {recentItems.length ? (
-              <div className="toolbox-quick-items">
-                {recentItems.slice(0, 4).map((item) => <RecentChip key={item.id} item={item} />)}
-              </div>
-            ) : <span className="toolbox-quick-hint">打开工具后，可以从这里快速返回</span>}
-          </div>
+          <button type="button" className="toolbox-quick-more" onClick={resetFilters}>清除筛选</button>
         </div>
       )}
-
-      <div className="toolbox-results-heading">
-        <div className="toolbox-results-title">
-          <h2>{searchQuery.trim() ? '搜索结果' : CATEGORY_TABS.find((tab) => tab.key === category)?.label}</h2>
-          <span role="status" aria-live="polite">{filteredItems.length} 个工具</span>
-          {activeTagFilter && (
-            <button className="toolbox-active-tag-chip" onClick={() => setActiveTagFilter(null)} title="清除标签过滤">
-              {activeTagFilter}<X size={11} />
-            </button>
-          )}
-        </div>
-        {hasActiveFilters && <button type="button" className="toolbox-quick-more" onClick={resetFilters}>清除筛选</button>}
-      </div>
 
       {gridLoading ? (
         <div className="flex items-center justify-center h-48">
@@ -351,30 +312,5 @@ export default function AiToolboxPage() {
         </div>
       )}
     </ToolboxPageShell>
-  );
-}
-
-// 最近使用芯片 — 轻量组件，避免引入完整 ToolCard 的复杂逻辑
-function RecentChip({ item }: { item: ToolboxItem }) {
-  const { selectItem, trackRecentlyUsed } = useToolboxStore();
-  const navigate = useNavigate();
-
-  const handleClick = () => {
-    trackRecentlyUsed(item.id);
-    if (item.routePath) {
-      if (item.agentKey === 'cds-agent') {
-        window.location.assign(item.routePath);
-        return;
-      }
-      navigate(item.routePath);
-    } else {
-      selectItem(item);
-    }
-  };
-
-  return (
-    <button className="toolbox-recent-chip" onClick={handleClick} title={item.description}>
-      <span className="toolbox-recent-chip-name">{item.name}</span>
-    </button>
   );
 }

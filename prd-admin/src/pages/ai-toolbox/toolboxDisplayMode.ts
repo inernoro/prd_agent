@@ -1,11 +1,11 @@
-export type ToolboxDisplayMode = 'compact' | 'standard' | 'showcase';
+export type ToolboxDisplayMode = 'compact' | 'standard' | 'showcase' | 'list';
 
 export const DEFAULT_TOOLBOX_DISPLAY_MODE: ToolboxDisplayMode = 'compact';
 
 const TOOLBOX_DISPLAY_MODE_STORAGE_KEY = 'ai-toolbox.pref.displayMode';
 
 export function normalizeToolboxDisplayMode(value: string | null): ToolboxDisplayMode {
-  return value === 'compact' || value === 'standard' || value === 'showcase'
+  return value === 'compact' || value === 'standard' || value === 'showcase' || value === 'list'
     ? value
     : DEFAULT_TOOLBOX_DISPLAY_MODE;
 }

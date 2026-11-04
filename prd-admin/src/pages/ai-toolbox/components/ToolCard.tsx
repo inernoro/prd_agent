@@ -71,7 +71,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
-import { AgentCardArtwork, AgentCardFrame, AgentCardTask, getAgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
+import { AgentCardArtwork, AgentCardFrame, getAgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 import type { ToolboxDisplayMode } from '../toolboxDisplayMode';
 
 interface ToolCardProps {
@@ -104,15 +104,7 @@ function getIconComponent(iconName: string): LucideIcon {
   return ICON_MAP[iconName] || Bot;
 }
 
-/**
- * ToolCard —— 与首页启动器同一套视觉语言（2026-07-08 风格统一）。
- *
- * 早期版本是 16:10 封面卡（CDN 封面图 / 悬停视频 / 内联插画 / 星云兜底），
- * 与首页的紧凑玻璃瓦片是两套语言，用户点名"首页风格带入百宝箱，做成统一"。
- * 现改为 lib/tileAccent 的玻璃瓦片（色阶尺图标芯片 + 半透玻璃底 + hover 色相描边），
- * 全部行为保留：NEW/施工中/已公开徽章、编辑/公开/删除浮条、创建副本、收藏、标签过滤。
- * 封面/视频资产仍在 CDN 与 homepageAssetsStore 中，详情页可继续使用。
- */
+/** 图文分区画廊卡：复用工具路由、管理、标签筛选、复制与收藏行为。 */
 export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: ToolCardProps) {
   const {
     selectItem,
@@ -132,10 +124,9 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
   const navigate = useNavigate();
   const accent = getAccent(item.icon);
   const IconComponent = getIconComponent(item.icon);
-  const hasArtwork = hasAgentCardArtwork(item.agentKey) && displayMode !== 'compact';
+  const hasArtwork = hasAgentCardArtwork(item.agentKey);
   const isCompact = displayMode === 'compact';
   const visibleTagCount = isCompact ? 2 : displayMode === 'showcase' ? 4 : 3;
-  const isPaAgent = item.agentKey === 'pa-agent';
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
@@ -312,7 +303,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
         role="button"
         data-display-mode={displayMode}
         data-has-artwork={hasArtwork}
-        data-has-footer-details={isOwnCustomCard || isMarketplaceCard || isPaAgent || item.usageCount > 0}
+        data-has-footer-details={isOwnCustomCard || isMarketplaceCard}
         tabIndex={0}
         onClick={handleClick}
         onKeyDown={(e) => {
@@ -327,21 +318,14 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
         className="toolbox-tool-card group relative w-full h-full overflow-hidden text-left cursor-pointer transition-all duration-200 hover:-translate-y-0.5 flex flex-col"
         style={{
           ...glassTileStyle(accent),
-          background: hasArtwork ? 'var(--media-card-base)' : isCompact ? 'var(--bg-card)' : glassTileStyle(accent).background,
-          border: hasArtwork ? 'none' : isCompact ? undefined : glassTileStyle(accent).border,
+          background: hasArtwork ? 'var(--media-card-base)' : 'var(--bg-card)',
+          border: hasArtwork ? 'none' : undefined,
         }}
       >
-        {hasArtwork && <AgentCardArtwork agentKey={item.agentKey} tint={accent.color} />}
         {hasArtwork && (
-          <div
-            aria-hidden
-            className="toolbox-tool-card-media-panel absolute inset-x-0 bottom-0 pointer-events-none"
-            style={{
-              background: 'var(--media-card-panel-translucent)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-            }}
-          />
+          <div className="toolbox-card-visual">
+            <AgentCardArtwork agentKey={item.agentKey} tint={accent.color} layout="gallery" />
+          </div>
         )}
         {hasArtwork ? (
           <AgentCardFrame hoverBorder="var(--media-card-border-hover)" />
@@ -352,37 +336,17 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
           />
         )}
 
-        {/* 头行：大图卡显示名称与直接任务；普通卡保留图标芯片。 */}
+        {/* 管理操作浮在插画上，名称与用途始终在独立文字区。 */}
         <div className="toolbox-card-heading relative z-10 flex items-start justify-between gap-2">
-          {hasArtwork ? (
+          {!hasArtwork && (
             <div
-              className="toolbox-tool-card-title max-w-[60%] font-semibold leading-[1.2] tracking-[-0.02em]"
-              style={{ color: 'var(--text-on-media)' }}
-            >
-              {item.name}
-            </div>
-          ) : (
-            <div
-              className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+              className="toolbox-custom-icon shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center"
               style={{ background: accent.soft, border: `1px solid ${accent.border}` }}
             >
               <IconComponent size={19} style={{ color: accent.color }} />
             </div>
           )}
-
-          {isCompact && (
-            <div className="toolbox-compact-copy">
-              <div className="toolbox-compact-name" title={item.name}>{item.name}</div>
-              <p className="toolbox-compact-description" title={item.description}>
-                {getAgentCardTask(item.agentKey) ?? item.description}
-              </p>
-            </div>
-          )}
-
           <div className="flex flex-col items-end gap-2 shrink-0">
-            {hasArtwork && (
-              <AgentCardTask agentKey={item.agentKey} compact={isCompact} dense={isCompact} />
-            )}
             <div className="flex items-center gap-1">
             {/* NEW 徽章 — 别人 7 天内发布的公开条目 */}
             {isNewByOthers && (
@@ -483,20 +447,12 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
           </div>
         </div>
 
-        {/* 普通卡保留名称与描述；大图卡只显示更易扫描的标签。 */}
-        {!hasArtwork && !isCompact && (
-          <div className="relative z-10 min-w-0">
-            <div className="text-[14px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-              {item.name}
-            </div>
-            <p
-              className="mt-1 line-clamp-2 text-[12px] leading-relaxed"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              {item.description}
-            </p>
-          </div>
-        )}
+        <div className="toolbox-gallery-caption relative z-10 min-w-0">
+          <div className="toolbox-gallery-name" title={item.name}>{item.name}</div>
+          <p className="toolbox-gallery-description" title={item.description}>
+            {getAgentCardTask(item.agentKey) ?? item.description}
+          </p>
+        </div>
 
         {/* Tags — 可点击进行过滤 */}
         {item.tags.length > 0 && (
@@ -541,21 +497,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
           className={`toolbox-card-footer relative z-10 flex items-center justify-between gap-1 pt-1.5 border-t ${hasArtwork ? 'mt-0' : 'mt-auto'}`}
           style={{ borderColor: hasArtwork ? 'var(--media-card-border)' : 'var(--border-faint)' }}
         >
-          {isPaAgent ? (
-            <div className="flex items-center gap-1 min-w-0">
-              <span
-                className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
-                style={{
-                  background: 'var(--selection-icon-bg)',
-                  color: 'var(--selection-text)',
-                  border: '1px solid var(--selection-border)',
-                }}
-                title="定位：私人助理"
-              >
-                私人助理
-              </span>
-            </div>
-          ) : (isOwnCustomCard || isMarketplaceCard) ? (
+          {(isOwnCustomCard || isMarketplaceCard) ? (
             <>
               {/* 用户创建的智能体：左侧 头像 + 名字 + 状态徽章 */}
               <div className="flex items-center gap-1 min-w-0">
