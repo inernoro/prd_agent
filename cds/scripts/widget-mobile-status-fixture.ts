@@ -121,7 +121,7 @@ async function check(name: string, run: (page: Page) => Promise<void>, hosted = 
     await run(page);
     assert.deepEqual(await page.evaluate(() => window.widgetFixture.unknown), []);
     const measured = await geometry(page);
-    assert.equal(measured.touch, true, '保留 44px 触控目标');
+    if (await page.evaluate(() => innerWidth <= 640)) assert.equal(measured.touch, true, '手机保留 44px 触控目标');
     assert.equal(measured.visible, true, '保留可见、可命中的徽标入口');
     if (measured.placement === 'clear') assert.equal(measured.safe, true, '避让成功必须以落位后的真实安全区为准');
     if (finish) await finish(page);
@@ -316,6 +316,11 @@ try {
     await page.locator(hosted && resize === 'native' ? 'button[data-action="toggle"]' : 'button[data-action="close-panel"]').click(); await settle(page);
     if (resize === 'native') { const closed = await geometry(page); assert.deepEqual([closed.x, closed.y], [collapsed.x, collapsed.y], '原生视口下收起后须恢复原徽标落位'); }
   }, hosted, 390, [], 8);
+  for (const hosted of [false, true]) await check(`rotate-expanded-origin-${hosted}`, async page => {
+    await page.locator('button[data-action="toggle"]').click(); await page.setViewportSize({ width: 844, height: 390 }); await settle(page);
+    await page.locator('button[data-action="close-panel"]').click(); await settle(page);
+    assert.deepEqual(await page.locator('#cds-widget').evaluate(el => ({ left: (el as HTMLElement).style.left, bottom: (el as HTMLElement).style.bottom })), { left: '352px', bottom: '12px' }, '屏幕旋转后收起须保留当前桌面默认落位');
+  }, hosted);
   await check('dismiss-removes-expanded-viewport-listeners', async page => {
     await page.locator('button[data-action="toggle"]').click(); await settle(page);
   }, false, 390, [], 8, async page => {

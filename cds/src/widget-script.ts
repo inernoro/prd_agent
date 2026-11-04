@@ -690,6 +690,7 @@ export function buildWidgetScript(
   });
   document.addEventListener('mouseup',function(){dragState=null;scheduleWidgetAvoidance();});
   window.addEventListener('resize',function(){
+    if(panelOrigin&&!widgetWasDragged)panelOrigin={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
     if(!isMobileViewport()&&compact){compact=false;render();}
     else if(isMobileViewport()&&!compact&&!compactTimer)scheduleMobileCompact(4000);
     if(widgetWasDragged){
