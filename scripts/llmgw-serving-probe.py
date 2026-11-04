@@ -21,6 +21,57 @@ import urllib.request
 from datetime import datetime, timezone
 
 
+# 发布范围显式选择功能；不扫描未启用 Agent，也不把配置退化升级为实例摘流。
+FEATURE_ROUTES = {
+    "defect-agent": (
+        ("defect-agent.polish::chat", "chat"),
+        ("defect-agent.polish-stream::chat", "chat"),
+    ),
+}
+
+
+def _feature_routes(features: list[str]) -> list[tuple[str, str]]:
+    selected = [part.strip() for item in features for part in item.split(",") if part.strip()]
+    if "none" in selected:
+        if selected != ["none"]:
+            raise ValueError("feature none cannot be combined with a model feature")
+        return []
+    unknown = sorted(set(selected) - FEATURE_ROUTES.keys())
+    if unknown:
+        raise ValueError("unknown release features: " + ",".join(unknown))
+    return list(dict.fromkeys(route for feature in selected for route in FEATURE_ROUTES[feature]))
+
+
+def _check_feature_routes(base: str, key: str, routes: list[tuple[str, str]]) -> list[dict]:
+    checks = []
+    for caller, model_type in routes:
+        code, raw, latency = _request(base, "/resolve", key=key, method="POST", body={
+            "AppCallerCode": caller, "ModelType": model_type, "ReadOnlyMetadata": True,
+        })
+        try:
+            payload = _json(raw)
+            if not isinstance(payload, dict):
+                payload = {}
+        except (ValueError, TypeError):
+            payload = {}
+        error = payload.get("error") or payload.get("Error") or {}
+        success = payload.get("success", payload.get("Success")) is True
+        failure_code = payload.get("failureCode") or payload.get("FailureCode")
+        if not failure_code and isinstance(error, dict):
+            failure_code = error.get("code") or error.get("Code")
+        checks.append({
+            "appCallerCode": caller, "modelType": model_type,
+            "ok": code == 200 and success, "httpStatus": code, "latencyMs": latency,
+            "failureCode": failure_code or ("" if code == 200 and success else "ROUTE_READINESS_FAILED"),
+            "failureStage": payload.get("failureStage") or payload.get("FailureStage") or "",
+            "logicalModel": payload.get("logicalModelPublicId") or payload.get("LogicalModelPublicId") or "",
+            "nextAction": "" if code == 200 and success else (
+                "核对该用途的模型授权、启用状态、能力与可用线路；恢复后重跑相同范围验收。"
+                if code not in (401, 403) else "核对发布凭据的 route:read 权限和目标用途范围后重跑。"),
+        })
+    return checks
+
+
 def _env_first(names: list[str]) -> tuple[str, str]:
     for name in names:
         value = os.environ.get(name, "").strip()
@@ -199,6 +250,11 @@ def _write_markdown(path: str, report: dict) -> None:
         fh.write(f"- keyEnv: `{cell(route.get('keyEnv') or '')}`\n")
         fh.write(f"- protocols: `{cell(','.join(route.get('protocols') or []))}`\n")
         fh.write(f"- missingProtocols: `{cell(','.join(route.get('missingProtocols') or []))}`\n")
+        fh.write("\n## Release Feature Routes\n\n")
+        fh.write(f"- scope: `{cell(','.join(report.get('featureScope') or []))}`\n\n")
+        fh.write("| appCaller | ready | failureCode | nextAction |\n|---|---|---|---|\n")
+        for item in report.get("featureRoutes") or []:
+            fh.write(f"| {cell(item['appCallerCode'])} | {cell(item['ok'])} | {cell(item['failureCode'])} | {cell(item['nextAction'])} |\n")
         fh.write("\n## Failures\n\n")
         failures = report.get("failures") or []
         if failures:
@@ -284,6 +340,8 @@ def main() -> int:
                         help="protected endpoint that must reject missing key, format 'METHOD /path' or METHOD:/path; repeatable")
     parser.add_argument("--key", default="", help="Gateway key for authenticated route-self-test; defaults to key envs.")
     parser.add_argument("--key-env", default="LLMGW_GATE_KEY")
+    parser.add_argument("--feature", action="append", default=[],
+                        help="required release feature, repeatable/comma-separated; defect-agent or explicit none; defaults to LLMGW_RELEASE_FEATURES")
     parser.add_argument(
         "--require-route-self-test",
         action="store_true",
@@ -294,6 +352,7 @@ def main() -> int:
     parser.add_argument("--report-md", default=os.environ.get("LLMGW_SERVING_PROBE_REPORT_MD", ""))
     parser.add_argument("--print-json", action="store_true")
     args = parser.parse_args()
+    features = args.feature or [os.environ.get("LLMGW_RELEASE_FEATURES", "")]
 
     base = (args.base or "").strip().rstrip("/")
     key_name, key = _env_first([args.key_env, "LLMGW_GATE_KEY", "LLMGW_SERVE_KEY"])
@@ -303,12 +362,14 @@ def main() -> int:
     sample_count = max(1, args.samples)
     interval = max(0, args.interval)
     try:
+        feature_routes = _feature_routes(features)
         protected_checks = [{"method": "GET", "path": path, "body": None} for path in args.protected_path]
         protected_checks.extend(_parse_protected_endpoint(item) for item in args.protected_endpoint)
         if not protected_checks:
             protected_checks = _default_protected_checks()
         protected_parse_failure = ""
     except ValueError as exc:
+        feature_routes = []
         protected_checks = []
         protected_parse_failure = str(exc)
 
@@ -329,6 +390,8 @@ def main() -> int:
         },
         "healthSamples": [],
         "protectedChecks": [],
+        "featureScope": features,
+        "featureRoutes": [],
         "routeSelfTest": {
             "required": bool(args.require_route_self_test),
             "ok": not bool(args.require_route_self_test),
@@ -442,6 +505,13 @@ def main() -> int:
                         f"missingProtocols={','.join(route_result.get('missingProtocols') or []) or 'none'}"
                     )
 
+        report["featureRoutes"] = _check_feature_routes(base, key, feature_routes)
+        for item in report["featureRoutes"]:
+            if not item["ok"]:
+                report["failures"].append(
+                    f"feature route {item['appCallerCode']} failed: HTTP {item['httpStatus']} "
+                    f"{item['failureCode']}; {item['nextAction']}")
+
     report["verdict"] = "fail" if report["failures"] else "pass"
     _write_json(args.json_out, report)
     _write_markdown(args.report_md, report)
@@ -453,6 +523,9 @@ def main() -> int:
     print(f"- readiness={report['readiness'].get('status')}")
     print(f"- protected_checks={len(report['protectedChecks'])}")
     print(f"- route_self_test={report['routeSelfTest'].get('ok')}")
+    print(f"- feature_routes={len(report['featureRoutes'])}")
+    for failure in report["failures"]:
+        print(f"- {failure}")
     print(f"- failures={len(report['failures'])}")
     return 1 if report["failures"] else 0
 
