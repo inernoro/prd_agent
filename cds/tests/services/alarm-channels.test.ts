@@ -94,22 +94,23 @@ describe('通知正文', () => {
   it('第一句就说清谁出事、要不要紧，并给下一步', () => {
     const m = renderAlarmMessage(EVENT, { boardUrl: 'https://cds.example.com/status' });
     expect(m.title).toContain('MAP 后端');
-    expect(m.body).toContain('用户现在用不了');
-    expect(m.body).toContain('已连续 3 次');
-    expect(m.body).toContain('https://cds.example.com/status');
-    expect(m.level).toBe('critical');
+    expect(m.body).not.toContain('用户现在用不了');
+    expect(m.title).toContain('检查异常');
+    expect(m.body).toContain('检查连续未通过');
+    expect(m.url).toBe('https://cds.example.com/status');
+    expect(m.level).toBe('active');
   });
 
   it('基础设施故障不冒充业务故障', () => {
     const m = renderAlarmMessage({ ...EVENT, kind: 'infra-down' });
-    expect(m.body).toContain('依赖它的业务');
+    expect(m.body).toContain('影响范围需结合实际业务核实');
     expect(m.level).toBe('active');
   });
 
   it('恢复是 passive，并明说无需处理', () => {
     const m = renderAlarmMessage({ ...EVENT, kind: 'business-recovered' });
     expect(m.level).toBe('passive');
-    expect(m.body).toContain('无需处理');
+    expect(m.body).toContain('检查已持续恢复');
   });
 
   it('拿不到面板地址就不放 —— 不编一个点不开的链接', () => {
@@ -142,7 +143,7 @@ describe('Bark URL', () => {
   it('标题与正文进路径且转义，级别跟事件走', () => {
     const url = buildBarkUrl(channel(), renderAlarmMessage(EVENT));
     expect(url.startsWith('https://api.day.app/abcd1234/')).toBe(true);
-    expect(url).toContain('level=critical');
+    expect(url).toContain('level=active');
     expect(url).toContain('group=');
     // 中文标题必须是转义过的，不能裸出现在 URL 里
     expect(url).not.toContain('MAP 后端');

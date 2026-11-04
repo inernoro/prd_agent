@@ -56,7 +56,9 @@ describe('零采样与真实故障的边界', () => {
       at += 5 * MIN; outcome = { up: false, noData: true, ms: 1 };
       expect(await svc.probeNow('monitor@m')).toMatchObject({ status: 'down', sample: { noData: true } });
       const disk = JSON.parse(fs.readFileSync(path.join(dir, 'uptime.json'), 'utf8'));
-      expect(disk.targets[0].samples).toHaveLength(2);
+      expect(disk.targets[0].samples).toHaveLength(3);
+      expect(disk.targets[0].samples[2].noData).toBe(true);
+      expect(svc.getSummary().targets[0].sampleCount24h).toBe(2);
       expect(alerts).toHaveLength(1);
       outcome = { up: true, noData: false, ms: 1 };
       for (let i = 0; i < 3; i++) { at += 5 * MIN; await svc.probeNow('monitor@m'); }
@@ -91,7 +93,7 @@ describe('通知恢复策略', () => {
   });
   it('内部指标异常不再声称业务挂掉', () => {
     const result = renderAlarmMessage({ projectId: 'cds-self-monitor', targetName: 'P95', kind: 'business-down', message: '观测超标', detectedAt: '', consecutiveFailures: 3 });
-    expect(result.title).toBe('P95 指标异常'); expect(result.level).toBe('active');
+    expect(result.title).toBe('P95：检查异常'); expect(result.level).toBe('active');
     expect(result.body).not.toContain('用户现在用不了');
   });
 });

@@ -67,12 +67,6 @@ public sealed class HostedSiteEditsController : ControllerBase
         _privateSources = privateSources;
     }
 
-    /// <summary>默认执行器读网页生成设置（内置默认 open-design）；未注入设置服务的构造（单测）保留旧默认直连。</summary>
-    private async Task<string> ResolveDefaultRuntimeAsync()
-        => _generationSettings == null
-            ? HostedSiteEditRuntimes.MapGateway
-            : (await _generationSettings.GetAsync(CancellationToken.None)).DefaultRuntime;
-
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
     {
@@ -82,7 +76,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             .ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
-            defaultRuntime = await ResolveDefaultRuntimeAsync(),
+            defaultRuntime = WebPageDesignRuntimePolicy.RequiredRuntime,
             runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
@@ -113,10 +107,16 @@ public sealed class HostedSiteEditsController : ControllerBase
         var knowledgeReferences = request.KnowledgeReferences ?? new List<HostedSiteKnowledgeReference>();
         if (knowledgeReferences.Count > 3)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "首版一次最多引用 3 篇知识"));
-        var runtime = string.IsNullOrWhiteSpace(request.Runtime)
-            ? await ResolveDefaultRuntimeAsync()
-            : request.Runtime.Trim().ToLowerInvariant();
-        var runsInWorkspace = runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex;
+        var runtimeDecision = WebPageDesignRuntimePolicy.ResolveForNewRun(request.Runtime);
+        var runtime = runtimeDecision.Runtime;
+        if (runtimeDecision.ClientOverrideIgnored)
+        {
+            _logger.LogWarning(
+                "网页修改任务忽略了旧客户端提交的执行器选择，统一使用 OpenDesign。userId={UserId} siteId={SiteId} operation={Operation}",
+                userId,
+                siteId,
+                DesignArtifactOperations.Edit);
+        }
         List<DesignUploadedSource> uploadedSources;
         List<DesignReferenceImage> referenceImages;
         DesignArtifactDesignDirection? designDirection = null;
@@ -126,41 +126,27 @@ public sealed class HostedSiteEditsController : ControllerBase
                 _db, userId, request.AttachmentIds, CancellationToken.None);
             referenceImages = await DesignRunInputAttachments.ResolveImagesAsync(
                 _db, userId, request.ScreenshotAttachmentIds, CancellationToken.None);
-            if (_generationSettings != null)
-                designDirection = await _generationSettings.FreezeAsync(null, CancellationToken.None);
         }
         catch (DesignRunInputException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
-        catch (DesignGenerationSettingsException ex)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-        // 直连执行器是一次纯文本调用，截图递不进去；静默丢掉会让用户以为模型看过了图。
-        if (referenceImages.Count > 0 && !runsInWorkspace)
-            return BadRequest(ApiResponse<object>.Fail(
-                ErrorCodes.INVALID_FORMAT,
-                "截图参考需要用精细设计（OpenDesign）执行器，快速修改只接受文字描述"));
         var capability = await _providers.FindAsync(userId, runtime, CancellationToken.None);
         if (capability == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的页面修改运行时"));
+            return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "设计服务未配置，请联系管理员检查部署状态"));
         if (!capability.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
             || !capability.Operations.Contains(DesignArtifactOperations.Edit, StringComparer.Ordinal))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选执行器不支持修改网页"));
+            return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "设计服务暂不支持修改网页"));
         if (!capability.Enabled)
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
-                capability.Reason ?? "所选页面修改执行器尚未部署并通过健康检查"));
+                capability.Reason ?? "设计服务尚未部署并通过健康检查，请稍后重试"));
 
         HostedSiteEditableEntry editable;
         try
         {
             editable = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
-            // 单 HTML、无脚本只是直连执行器的限制：它把整页当一段文本改写，只能按声明式规则加固。
-            // OpenDesign 拿到的是整站文件，产物按「整包校验」放行包内脚本与资源（CDS 与 MAP 两道闸都认包清单），
-            // 所以带脚本、多文件的网页走它可以改。
-            if (!runsInWorkspace) ValidateEditInputCompatibility(editable);
+            // 新修改任务固定走 OpenDesign 整站工作区，不再套用直连执行器的单 HTML、无脚本限制。
         }
         catch (KeyNotFoundException)
         {
@@ -179,13 +165,9 @@ public sealed class HostedSiteEditsController : ControllerBase
                     reference.EntryId ?? string.Empty,
                     reference.StoreId ?? string.Empty,
                     reference.ContentHash)).ToList();
-            if (runtime == DesignArtifactRuntimes.OpenDesign)
-            {
-                var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
-                snapshots = workspace.KnowledgeReferences;
-                originals = workspace.Originals;
-            }
-            else snapshots = await _knowledgeSnapshots.ResolveForRunAsync(userId, identities, CancellationToken.None);
+            var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
+            snapshots = workspace.KnowledgeReferences;
+            originals = workspace.Originals;
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
@@ -196,7 +178,21 @@ public sealed class HostedSiteEditsController : ControllerBase
                     : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
         }
 
+        var inheritedContext = await FindOwnedFrozenContextAsync(editable, userId);
+        if (inheritedContext == null && _generationSettings != null)
+        {
+            try
+            {
+                designDirection = await _generationSettings.FreezeAsync(null, CancellationToken.None);
+            }
+            catch (DesignGenerationSettingsException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            }
+        }
+
         var runId = Guid.NewGuid().ToString("N");
+        var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
         try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
         catch (InvalidOperationException ex)
@@ -231,8 +227,26 @@ public sealed class HostedSiteEditsController : ControllerBase
             UserSuppliedContentHash = System.Convert.ToHexString(
                 SHA256.HashData(Encoding.UTF8.GetBytes(instruction))).ToLowerInvariant(),
             Progress = 2,
+            PhaseCode = DesignArtifactPhaseCodes.Queued,
             Phase = "修改任务已进入队列",
+            FirstVisibleFeedbackAt = createdAt,
+            LastProgressAt = createdAt,
+            CreatedAt = createdAt,
+            UpdatedAt = createdAt,
         };
+        if (inheritedContext is { } inherited)
+        {
+            DesignArtifactBriefFactory.TryInheritFrozenContext(
+                run,
+                inherited.Run,
+                inherited.ContextSource,
+                inherited.RevisionId);
+        }
+        else
+        {
+            DesignArtifactBriefFactory.MarkLegacyEditFallback(run, editable.Site.PublishedRevisionId);
+            DesignArtifactBriefFactory.Freeze(run, editable.Html);
+        }
         if (runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex)
         {
             try
@@ -266,7 +280,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                 RunKinds.DesignArtifact,
                 runId,
                 "phase",
-                new { progress = 2, message = "修改任务已进入队列" },
+                new { phaseCode = run.PhaseCode, progress = 2, message = "修改任务已进入队列" },
                 RunTtl,
                 CancellationToken.None);
         }
@@ -285,6 +299,121 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
         return Accepted(ApiResponse<object>.Ok(new { runId, status = meta.Status, runtime }));
     }
+
+    private async Task<FrozenDesignContext?> FindOwnedFrozenContextAsync(
+        HostedSiteEditableEntry editable,
+        string userId)
+    {
+        // 这个入口编辑的是当前线上站点，不接受任意 draft id。若站点已有精确发布指针，先沿当前版本取来源。
+        var revisionId = editable.Site.PublishedRevisionId?.Trim();
+        if (!string.IsNullOrWhiteSpace(revisionId))
+        {
+            var currentRevision = await FindOwnedRevisionContextAsync(
+                editable.Site.Id,
+                revisionId,
+                userId);
+            if (currentRevision != null) return currentRevision;
+        }
+
+        // 新生成站点在用户发布版本或创建分享链接之前，PublishedRevisionId 合法为空；生成 Worker 已把
+        // design-agent + runId 写进站点来源，这才是该状态下不可歧义的权威关联。team-copy 等其他来源
+        // 明确不沿原站继承，避免跨站点或跨用户拿上下文。
+        var sourceRunId = string.Equals(editable.Site.SourceType, "design-agent", StringComparison.Ordinal)
+            ? editable.Site.SourceRef?.Trim()
+            : null;
+        if (!string.IsNullOrWhiteSpace(sourceRunId))
+        {
+            var source = await FindOwnedSourceRunAsync(
+                sourceRunId,
+                editable.Site.Id,
+                userId,
+                requiredRevisionId: null,
+                requireGenerateOperation: true);
+            if (source != null)
+            {
+                var sourceRevisionId = source.ArtifactRevisionId ?? source.ProducedArtifactRevisionId;
+                return new FrozenDesignContext(
+                    source,
+                    DesignArtifactContextSources.InheritedSiteSourceRun,
+                    sourceRevisionId);
+            }
+        }
+
+        // 兼容生成链已经写入 baseline、但旧站点来源字段不完整的记录。baseline id 由站点和
+        // ContentVersion 确定，不查询“最近一次 run”，因此不会在并发任务之间猜错来源。
+        var baselineId = $"baseline_{editable.Site.Id}_{editable.ContentVersion.Ticks}";
+        var baselineContext = await FindOwnedRevisionContextAsync(
+            editable.Site.Id,
+            baselineId,
+            userId,
+            HostedSiteRevisionSources.Baseline);
+        return baselineContext;
+    }
+
+    private async Task<FrozenDesignContext?> FindOwnedRevisionContextAsync(
+        string siteId,
+        string revisionId,
+        string userId,
+        string? requiredSource = null)
+    {
+        var revisionFilter = Builders<HostedSiteRevision>.Filter.Eq(item => item.Id, revisionId)
+                             & Builders<HostedSiteRevision>.Filter.Eq(item => item.SiteId, siteId)
+                             & Builders<HostedSiteRevision>.Filter.Eq(item => item.Status, HostedSiteRevisionStatuses.Published)
+                             & Builders<HostedSiteRevision>.Filter.Eq(item => item.CreatedByUserId, userId);
+        if (!string.IsNullOrWhiteSpace(requiredSource))
+            revisionFilter &= Builders<HostedSiteRevision>.Filter.Eq(item => item.Source, requiredSource);
+
+        var revision = await _db.HostedSiteRevisions.Find(revisionFilter)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (revision == null || string.IsNullOrWhiteSpace(revision.SourceRunId)) return null;
+
+        var source = await FindOwnedSourceRunAsync(
+            revision.SourceRunId.Trim(),
+            siteId,
+            userId,
+            revisionId,
+            requireGenerateOperation: false);
+        return source == null
+            ? null
+            : new FrozenDesignContext(
+                source,
+                DesignArtifactContextSources.InheritedSiteRevision,
+                revisionId);
+    }
+
+    private async Task<DesignArtifactRun?> FindOwnedSourceRunAsync(
+        string runId,
+        string siteId,
+        string userId,
+        string? requiredRevisionId,
+        bool requireGenerateOperation)
+    {
+        var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, RunStatuses.Done)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactType, DesignArtifactTypes.WebPage)
+                     & (Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactSiteId, siteId)
+                        | Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, siteId));
+        if (requireGenerateOperation)
+            filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.Operation, DesignArtifactOperations.Generate);
+        if (!string.IsNullOrWhiteSpace(requiredRevisionId))
+        {
+            filter &= Builders<DesignArtifactRun>.Filter.Or(
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactRevisionId, requiredRevisionId),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, requiredRevisionId));
+        }
+
+        var source = await _db.DesignArtifactRuns.Find(filter)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (source?.DesignBrief == null || source.BrandPackage == null) return null;
+        return source;
+    }
+
+    private sealed record FrozenDesignContext(
+        DesignArtifactRun Run,
+        string ContextSource,
+        string? RevisionId);
 
     internal static string ValidateEditInputCompatibility(HostedSiteEditableEntry editable)
     {
@@ -384,6 +513,26 @@ public sealed class HostedSiteEditsController : ControllerBase
             return;
         }
 
+        if (afterSeq > 0)
+        {
+            try
+            {
+                var reconnectedAt = DateTime.UtcNow;
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    item => item.Id == initial.Id
+                            && item.UserId == userId
+                            && item.DeploymentSlug == initial.DeploymentSlug,
+                    Builders<DesignArtifactRun>.Update
+                        .Inc(item => item.StreamReconnectCount, 1)
+                        .Set(item => item.LastStreamReconnectAt, reconnectedAt),
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "记录网页修改事件流重连失败 runId={RunId}", runId);
+            }
+        }
+
         var cursor = Math.Max(0, afterSeq);
         var idleRounds = 0;
         var redisProjectionAvailable = true;
@@ -440,6 +589,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                 {
                     await WriteEventAsync(null, "phase", JsonSerializer.Serialize(new
                     {
+                        phaseCode = snapshot.PhaseCode,
                         progress = snapshot.Progress,
                         message = snapshot.Phase,
                     }), ct);
@@ -489,13 +639,11 @@ public sealed class HostedSiteEditsController : ControllerBase
                 }
                 if (snapshot.Status == RunStatuses.Error)
                 {
-                    await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
-                    {
-                        code = "DESIGN_ARTIFACT_FAILED",
-                        message = string.IsNullOrWhiteSpace(snapshot.Error)
-                            ? "页面修改未完成，请重新发起"
-                            : snapshot.Error,
-                    }), ct);
+                    await WriteEventAsync(
+                        null,
+                        "error",
+                        JsonSerializer.Serialize(BuildRunFailurePayload(snapshot, "页面修改未完成，请重新发起")),
+                        ct);
                     return;
                 }
 
@@ -841,7 +989,17 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.Runtime,
         run.Title,
         run.Progress,
+        run.PhaseCode,
         run.Phase,
+        run.FirstVisibleFeedbackAt,
+        run.FirstPreviewAt,
+        previewHtml = run.Status == RunStatuses.Error ? run.LatestPreviewHtml : null,
+        previewRevision = run.Status == RunStatuses.Error ? run.LatestPreviewRevision : null,
+        run.LastProgressAt,
+        run.MaxStaticGapSeconds,
+        run.StreamReconnectCount,
+        run.LastStreamReconnectAt,
+        run.BrowserQuality,
         artifactSiteId = run.ArtifactSiteId ?? run.ProducedArtifactSiteId,
         artifactRevisionId = run.ArtifactRevisionId ?? run.ProducedArtifactRevisionId,
         run.LinkedRunId,
@@ -850,6 +1008,14 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.ResolvedModel,
         run.ResolvedPlatform,
         run.Error,
+        runtimeFailure = run.RuntimeFailure == null ? null : new
+        {
+            run.RuntimeFailure.Code,
+            run.RuntimeFailure.IssueCodes,
+            run.RuntimeFailure.RepairAttempts,
+            run.RuntimeFailure.RepairBudgetExhausted,
+            run.RuntimeFailure.BrowserQualityEvidence,
+        },
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,
         run.CancelledAt,
@@ -858,6 +1024,33 @@ public sealed class HostedSiteEditsController : ControllerBase
         styleName = run.DesignDirection?.StyleName,
         promptFingerprint = run.DesignDirection?.PromptFingerprint,
         reviewMode = run.DesignDirection?.ReviewMode,
+        designBrief = run.DesignBrief == null ? null : new
+        {
+            run.DesignBrief.SchemaVersion,
+            run.DesignBrief.Version,
+            run.DesignBrief.Fingerprint,
+            run.DesignBrief.BrandKitRef,
+            run.DesignBrief.BrandKitVersion,
+        },
+        brandPackage = run.BrandPackage == null ? null : new
+        {
+            run.BrandPackage.SchemaVersion,
+            run.BrandPackage.Version,
+            run.BrandPackage.Ref,
+            run.BrandPackage.Source,
+            run.BrandPackage.DesignSystemId,
+            run.BrandPackage.Fingerprint,
+        },
+        designContextProvenance = run.DesignContextProvenance == null ? null : new
+        {
+            run.DesignContextProvenance.SchemaVersion,
+            run.DesignContextProvenance.Version,
+            run.DesignContextProvenance.Source,
+            run.DesignContextProvenance.SourceRunId,
+            run.DesignContextProvenance.SourceRevisionId,
+            run.DesignContextProvenance.ParentDesignBriefFingerprint,
+            run.DesignContextProvenance.ParentBrandPackageFingerprint,
+        },
         uploadedSources = run.UploadedSources?.Select(item => new { item.AttachmentId, item.FileName, item.ContentHash }),
         referenceImages = run.ReferenceImages?.Select(item => new { item.AttachmentId, item.FileName, item.MimeType, item.Size }),
         knowledgeReferences = run.KnowledgeReferences.Select(item => new
@@ -868,6 +1061,21 @@ public sealed class HostedSiteEditsController : ControllerBase
             item.Title,
             item.ContentHash,
         }),
+    };
+
+    private static object BuildRunFailurePayload(DesignArtifactRun run, string fallbackMessage) => new
+    {
+        code = run.RuntimeFailure?.Code
+               ?? run.LifecycleFailureCode
+               ?? WebPageDesignArtifactLifecycleAdapter.ExecutionFailureCode,
+        message = string.IsNullOrWhiteSpace(run.Error) ? fallbackMessage : run.Error,
+        details = run.RuntimeFailure == null ? null : new
+        {
+            issueCodes = run.RuntimeFailure.IssueCodes,
+            run.RuntimeFailure.RepairAttempts,
+            run.RuntimeFailure.RepairBudgetExhausted,
+            browserQualityEvidence = run.RuntimeFailure.BrowserQualityEvidence,
+        },
     };
 
     private static object ToPublicCapability(DesignArtifactProviderCapability item) => new

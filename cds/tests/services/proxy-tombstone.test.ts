@@ -94,6 +94,22 @@ describe('ProxyService stopped-branch tombstone divert', () => {
     expect(gone).not.toHaveBeenCalled();
   });
 
+  it('短域重新分配给已有分支后，旧项目墓碑不能覆盖新归属', async () => {
+    stateService.addProject({ id: 'default', slug: 'demo', name: 'demo', createdAt: '2026-01-01', updatedAt: '2026-01-01' } as any);
+    const branch = addStoppedBranch();
+    stateService.updateProject('default', { previewAddresses: { [branch.branch]: { customSubdomain: 'released-name' } } });
+    stateService.recordRemovedBranch({
+      previewSlug: 'released-name', branch: 'old', branchId: 'other-old', projectId: 'other',
+      reason: 'merged', removedAt: '2026-06-24T00:00:00.000Z',
+    });
+    const gone = vi.fn();
+    proxy.setOnBranchGone(gone);
+    const response = makeRes();
+    await proxy.handleRequest(makeReq('/', { host: 'released-name.preview.example.com' }), response);
+    expect(gone).not.toHaveBeenCalled();
+    expect(response.end).toHaveBeenCalled();
+  });
+
   it('does NOT divert a stopped branch with NO tombstone (fail-safe)', async () => {
     addStoppedBranch();
     const gone = vi.fn();

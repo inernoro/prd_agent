@@ -49,23 +49,24 @@ describe('通知实例身份', () => {
       await (reloaded.getBackingStore() as {flush():Promise<void>}).flush();
     } finally { fs.rmSync(dir,{recursive:true,force:true}); }
   });
-  it('故障和恢复都说明检查方与故障对象，分组保持一致', () => {
+  it('通知突出业务名称，技术身份不占正文，分组保持一致', () => {
     const down=renderAlarmMessage(event),up=renderAlarmMessage({...event,kind:'business-recovered'});
-    expect(down.title).toContain('示例目标');expect(down.body).toContain('检查方：示例检查方');
-    expect(up.body).toContain('故障对象：示例目标');expect(up.group).toBe(down.group);
+    expect(down.title).toContain('入口检查');expect(down.body).not.toContain('示例检查方');
+    expect(up.body).not.toContain('故障对象：');expect(up.group).toBe(down.group);
   });
   it('MAP 跨实例相同目标与时刻不会碰撞去重键', () => {
     const alert={...event,type:'uptime.target.down' as const,targetId:event.targetId!};
     const a=buildNotificationPayload(alert),b=buildNotificationPayload({...alert,identity:{...event.identity!,observer:{...settings.instance,id:'another-instance'}}});
-    expect(a.dedupKey).not.toBe(b.dedupKey);expect(a.title).toContain('示例目标');
+    expect(a.dedupKey).not.toBe(b.dedupKey);expect(a.title).toContain('入口检查');
   });
   it('实际 Bark 传输使用对象分组与身份文案', async () => {
     const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('{}',{status:200}));
     try {
       const result=await sendAlarm({id:'sample',name:'测试',kind:'bark',enabled:true,projects:[],events:['business-down'],bark:{key:'fixture-only'},createdAt:0,updatedAt:0} as AlarmChannelConfig,event);
       expect(result.ok).toBe(true);const url=new URL(String(fetch.mock.calls[0][0]));
-      expect(decodeURIComponent(url.pathname)).toContain('检查方：示例检查方');
-      expect(url.searchParams.get('group')).toContain('sample-peer');
+      expect(decodeURIComponent(url.pathname)).not.toContain('检查方：');
+      expect(url.searchParams.get('group')).toContain(event.projectId);
+      expect(url.searchParams.get('group')).not.toContain('sample-peer');
     } finally {fetch.mockRestore();}
   });
 });

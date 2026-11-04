@@ -19,6 +19,7 @@ SPEC.loader.exec_module(MODULE)
 
 BASE = "https://example.test/"
 COMMIT_A = "a" * 40
+COMMIT_B = "b" * 40
 HEALTH = json.dumps({"status": "healthy", "commit": "a" * 40}).encode()
 VERSION = json.dumps({"service": "prd-api", "commit": "a" * 40}).encode()
 RESPONSES = {
@@ -99,6 +100,7 @@ passed = MODULE.probe_once(
 )
 assert passed["verdict"] == "pass", passed
 assert len(passed["checks"]) == 8, passed
+assert passed["commandSemantics"] == "single-commit", passed
 
 broken = dict(RESPONSES)
 broken[f"https://example.test/assets/app-{COMMIT_A}.js"] = MODULE.HttpResult(
@@ -161,6 +163,94 @@ metadata_only_result = MODULE.probe_once(
 )
 assert metadata_only_result["verdict"] == "fail", metadata_only_result
 assert any("entry asset commit mismatch" in item for item in metadata_only_result["failures"]), metadata_only_result
+
+split_responses = dict(RESPONSES)
+split_responses["https://example.test/"] = MODULE.HttpResult(
+    "https://example.test/",
+    200,
+    "text/html",
+    f'<script src="/assets/app-{COMMIT_B}.js"></script><link rel="stylesheet" href="/assets/app-{COMMIT_B}.css">'.encode(),
+)
+split_responses[f"https://example.test/assets/app-{COMMIT_B}.js"] = MODULE.HttpResult(
+    f"https://example.test/assets/app-{COMMIT_B}.js", 200, "application/javascript", b"console.log('new')"
+)
+split_responses[f"https://example.test/assets/app-{COMMIT_B}.css"] = MODULE.HttpResult(
+    f"https://example.test/assets/app-{COMMIT_B}.css", 200, "text/css", b"body{}"
+)
+split_passed = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    lambda url, _timeout: split_responses[url],
+    expected_static_commit=COMMIT_B,
+    expected_runtime_commit=COMMIT_A,
+)
+assert split_passed["verdict"] == "pass", split_passed
+assert split_passed["commandSemantics"] == "static-runtime-split", split_passed
+assert split_passed["expectedStaticCommit"] == COMMIT_B, split_passed
+assert split_passed["expectedRuntimeCommit"] == COMMIT_A, split_passed
+
+old_mode_mixed = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    lambda url, _timeout: split_responses[url],
+    expected_commit=COMMIT_A,
+)
+assert old_mode_mixed["verdict"] == "fail", old_mode_mixed
+assert any("entry asset commit mismatch" in item for item in old_mode_mixed["failures"]), old_mode_mixed
+
+split_old_static = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    fake_fetch,
+    expected_static_commit=COMMIT_B,
+    expected_runtime_commit=COMMIT_A,
+)
+assert split_old_static["verdict"] == "fail", split_old_static
+assert any("entry asset commit mismatch" in item for item in split_old_static["failures"]), split_old_static
+
+split_wrong_runtime = MODULE.probe_once(
+    BASE,
+    "/api/version",
+    "/health",
+    "/llmgw/",
+    "/llmgw/gw/healthz",
+    "/llmgw/gw/v1/healthz",
+    1,
+    lambda url, _timeout: split_responses[url],
+    expected_static_commit=COMMIT_B,
+    expected_runtime_commit=COMMIT_B,
+)
+assert split_wrong_runtime["verdict"] == "fail", split_wrong_runtime
+assert any("api-version commit mismatch" in item for item in split_wrong_runtime["failures"]), split_wrong_runtime
+assert any("llmgw-serving-health commit mismatch" in item for item in split_wrong_runtime["failures"]), split_wrong_runtime
+
+for invalid_args in (
+    ("map", "", COMMIT_B, ""),
+    ("map", COMMIT_A, COMMIT_B, COMMIT_A),
+    ("gateway", "", COMMIT_B, COMMIT_A),
+    ("map", "", "short", COMMIT_A),
+):
+    try:
+        MODULE.resolve_expected_commits(*invalid_args)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"expected split identity contract to reject: {invalid_args}")
 
 
 def fake_gateway_request(method: str, url: str, _timeout: float, _body: bytes | None):

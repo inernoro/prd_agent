@@ -25,7 +25,13 @@ async function runnableMembers(group: number, exclude?: number): Promise<number[
   if (process.platform !== 'darwin') throw new Error('Observation process groups require Linux or macOS');
   let probePid: number | undefined;
   const stdout = await new Promise<string>((resolve, reject) => {
-    const probe = execFile('ps', ['-axo', 'pid=,pgid=,stat='], { timeout: 2000, maxBuffer: 4 * 1024 * 1024 }, (error, output) => error ? reject(error) : resolve(output));
+    // Darwin原生按PGID选择；每个查询结束都枚举全机，会在默认并行下放大扫描与输出。
+    const probe = execFile('ps', ['-g', String(group), '-o', 'pid=,pgid=,stat='],
+      { timeout: 2000, maxBuffer: 4 * 1024 * 1024 }, (error, output, stderr) => {
+        // 空组返回1且无输出；权限/信号/部分输出错误仍不得冒充已清理。
+        if (!error || (error.code === 1 && !output.trim() && !stderr.trim())) resolve(output);
+        else reject(error);
+      });
     probePid = probe.pid;
   });
   return stdout.split('\n').flatMap(line => {
@@ -70,9 +76,24 @@ export async function findObservationOwners(owner: string): Promise<Array<{ pid:
     }
     return found;
   }
-  const stdout = await new Promise<string>((resolve, reject) => {
-    execFile('ps', ['-axo', 'pid=,pgid=,args='], { timeout: 2000, maxBuffer: 4 * 1024 * 1024 }, (error, output) => error ? reject(error) : resolve(output));
+  // 原生筛选完整argv标记，JS只接收候选PID；两步共用原2秒读取预算。
+  const deadline = performance.now() + 2000;
+  const query = (command: string, args: string[]): Promise<string> => new Promise((resolve, reject) => {
+    const remaining = Math.ceil(deadline - performance.now());
+    if (remaining <= 0) { reject(new Error('Observation owner discovery deadline')); return; }
+    execFile(command, args, { timeout: remaining, maxBuffer: 4 * 1024 * 1024 }, (error, output, stderr) => {
+      if (!error || (error.code === 1 && !output.trim() && !stderr.trim())) resolve(output);
+      else reject(error);
+    });
   });
+  const candidates = (await query('pgrep', ['-f', `(^|[[:space:]])${owner}([[:space:]]|$)`]))
+    .trim().split(/\s+/).filter(Boolean);
+  if (!candidates.length) return [];
+  if (candidates.some(pid => !/^\d+$/.test(pid) || !Number.isSafeInteger(Number(pid)) || Number(pid) <= 1)) {
+    throw new Error('Invalid observation owner candidate');
+  }
+  // 仍二次核验真实PID、组及独立argv，不以正则命中直接认领或杀进程。
+  const stdout = await query('ps', ['-p', candidates.join(','), '-o', 'pid=,pgid=,args=']);
   return stdout.split('\n').flatMap(line => {
     const fields = line.trim().split(/\s+/);
     return fields.slice(2).includes(owner) ? [{ pid: Number(fields[0]), group: Number(fields[1]) }] : [];

@@ -13,7 +13,7 @@ public class OfficialSkillCatalogTests
     [Fact]
     public void AiDefectResolveOfficialTemplate_StatesDailyAutomationContract()
     {
-        Assert.Equal("1.9.1", OfficialSkillTemplates.AiDefectResolveVersion);
+        Assert.Equal("1.9.2", OfficialSkillTemplates.AiDefectResolveVersion);
         Assert.Contains("本技能的主目标是自动化闭环", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("自主三档边界", OfficialSkillTemplates.AiDefectResolveSkillMd);
         Assert.Contains("五层自治回路", OfficialSkillTemplates.AiDefectResolveSkillMd);
@@ -46,7 +46,7 @@ public class OfficialSkillCatalogTests
 
         Assert.NotNull(entry);
         Assert.Equal("create-visual-test-to-kb", entry.Key);
-        Assert.Equal("1.0.1", entry.Version);
+        Assert.Equal("1.0.2", entry.Version);
 
         var paths = entry.Files.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
         Assert.Contains("SKILL.md", paths);
@@ -66,7 +66,7 @@ public class OfficialSkillCatalogTests
 
         var skillMd = entry.Files.Single(f => f.Path == "SKILL.md").Content;
         Assert.Contains("name: create-visual-test-to-kb", skillMd);
-        Assert.Contains("version: 1.0.1", skillMd);
+        Assert.Contains("version: 1.0.2", skillMd);
     }
 
     [Fact]
@@ -110,7 +110,7 @@ public class OfficialSkillCatalogTests
 
         var item = ReadObject(response!, "item");
         Assert.Equal("official-create-visual-test-to-kb", Read<string>(item, "Id"));
-        Assert.Equal("1.0.1", Read<string>(item, "version"));
+        Assert.Equal("1.0.2", Read<string>(item, "version"));
     }
 
     [Fact]

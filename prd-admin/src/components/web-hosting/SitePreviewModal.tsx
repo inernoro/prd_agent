@@ -1,3 +1,4 @@
+import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
@@ -9,7 +10,7 @@ import CommentsSection from './CommentsSection';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
-import { DIRECT_PREVIEW_SANDBOX, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
+import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
@@ -74,7 +75,9 @@ export default function SitePreviewModal({
   const [askEnabled, setAskEnabled] = useState(site.askEnabled === true);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const pdfDownload = useHostedPdfDownload({ id: site.id, siteUrl: site.siteUrl, entryFile: site.entryFile,
+    pdfFilePaths: site.pdfFilePaths });
+  const iframeRef = pdfDownload.iframeRef;
 
   useEffect(() => {
     if (site.askEnabled != null) return;
@@ -342,14 +345,17 @@ export default function SitePreviewModal({
                 </button>
               </div>
             )}
+            <HostedPdfDownloadStatus status={pdfDownload.status} />
             <iframe
               ref={iframeRef}
-              key={renderMode}
+              // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
+              key={useSrcDoc ? 'srcdoc' : 'direct'}
               src={useSrcDoc ? undefined : previewSource.src}
-              srcDoc={useSrcDoc ? srcDoc! : undefined}
+              srcDoc={useSrcDoc && srcDoc ? pdfDownload.decorateHtml(srcDoc) : undefined}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {
+                pdfDownload.notifyFrame();
                 // iframe 成功加载：清 loading 同时清 errored
                 // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
                 setLoading(false);
@@ -365,7 +371,7 @@ export default function SitePreviewModal({
               // 跨域这一层隔离仍在（PDF 来自托管域名，拿不到 MAP 的同源能力）。
               sandbox={previewSource.usingNativePdfViewer
                 ? undefined
-                : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX} allow-modals`}
+                : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(previewSource.src)} allow-modals`}
               title={site.title}
             />
           </div>

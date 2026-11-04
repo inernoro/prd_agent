@@ -1,5 +1,6 @@
 export type AgentExperienceId = 'newcomer' | 'experienced';
-export type AgentRoleId = 'pm' | 'owner' | 'domain-expert' | 'dev' | 'qa';
+import type { AgentRoleId } from '../../../src/shared/agent-setup';
+export type { AgentRoleId } from '../../../src/shared/agent-setup';
 
 export interface AgentExperienceProfile {
   id: AgentExperienceId;

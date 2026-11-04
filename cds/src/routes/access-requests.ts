@@ -276,7 +276,11 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (!requireHumanOperator(req, res)) return;
     const decidedCount = stateService.listAccessRequests().filter((r) => r.status !== 'pending').length;
     if (decidedCount > 20) stateService.pruneAccessRequests(AUDIT_RETENTION_MS);
-    const list = stateService.listAccessRequests().map(publicView);
+    const list = stateService.listAccessRequests().map(item => ({
+      ...publicView(item),
+      ...(item.kind === 'bootstrap' && item.status === 'approved' && item.createdProject
+        && stateService.isProjectRemovalConfirmed(item.createdProject.id) ? { receiptArchived: true, creationReceiptEnabled: false } : {}),
+    }));
     res.json({ requests: list, pendingCount: list.filter((r) => r.status === 'pending').length });
   });
 

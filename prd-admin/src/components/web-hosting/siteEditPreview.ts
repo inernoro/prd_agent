@@ -12,24 +12,47 @@ export function runningGenerationActivity(phase: string, elapsedSeconds: number)
   return `当前步骤：${currentPhase}。已运行 ${seconds} 秒，任务仍在继续，页面会自动更新。`;
 }
 
-export function chooseDesignRuntime(
-  capabilities: DesignRuntimeCapability[],
-  defaultRuntime: string,
+export const REQUIRED_WEB_PAGE_RUNTIME = 'open-design';
+
+export type RuntimeRecoveryAction = 'generate' | 'restart';
+
+export function runtimeRecoveryActionNeedsPolling(action: string | null | undefined): action is RuntimeRecoveryAction {
+  return action === 'generate' || action === 'restart';
+}
+
+export function runtimeRecoveredForOperation(
+  capabilities: readonly DesignRuntimeCapability[],
+  runtimeId: string,
+  operation: 'generate' | 'edit',
 ) {
-  return capabilities.find((item) => item.id === defaultRuntime && item.enabled)?.id
-    ?? capabilities.find((item) => item.enabled)?.id
-    ?? '';
+  const runtime = capabilities.find((item) => item.id === runtimeId);
+  return runtime?.enabled === true
+    && runtime.healthy === true
+    && runtime.operations.includes(operation);
+}
+
+export function runtimeRecoverySuccessDetail(detail: string, action: RuntimeRecoveryAction) {
+  const nextAction = action === 'restart' ? '按原要求重新开始' : '按原要求重试';
+  return `${detail} 运行环境已回收，可以${nextAction}。`;
+}
+
+/** 新网页任务只认 OpenDesign；其它 capability 只用于历史任务显示和诊断。 */
+export function requiredWebPageRuntime(
+  capabilities: readonly DesignRuntimeCapability[],
+  operation: 'generate' | 'edit',
+) {
+  return capabilities.find((item) => item.id === REQUIRED_WEB_PAGE_RUNTIME
+    && item.enabled
+    && item.operations.includes(operation));
 }
 
 export function displayedDesignRuntime(
-  capabilities: DesignRuntimeCapability[],
+  capabilities: readonly DesignRuntimeCapability[],
   selectedRuntime: string,
   activeRunRuntime?: string | null,
 ) {
   const runtimeId = activeRunRuntime || selectedRuntime;
-  return capabilities.find((item) => item.id === runtimeId)
-    ?? capabilities.find((item) => item.id === selectedRuntime && item.enabled)
-    ?? capabilities.find((item) => item.enabled);
+  return capabilities.find((item) => item.id === runtimeId);
 }
 
 /**
@@ -138,25 +161,6 @@ export function designPreviewEventDocument(html: string): string {
 /** preview 事件按 revision 单调推进：断线重连会重放旧事件，旧的不许把新页面盖回去。 */
 export function isNewerPreviewRevision(revision: number, latest: number): boolean {
   return revision >= latest;
-}
-
-/**
- * 设置里的默认执行器不可用时，界面要说清为什么换了一个——不能悄悄换掉（形状 10：静默降级）。
- * 默认执行器可用、或已经选中它时返回空串。
- */
-export function runtimeFallbackNotice(
-  capabilities: readonly Pick<DesignRuntimeCapability, 'id' | 'label' | 'enabled' | 'reason'>[],
-  defaultRuntime: string | null | undefined,
-  chosenRuntime: string | null | undefined,
-): string {
-  if (!defaultRuntime || defaultRuntime === chosenRuntime) return '';
-  const preferred = capabilities.find((item) => item.id === defaultRuntime);
-  if (!preferred || preferred.enabled) return '';
-  const chosen = capabilities.find((item) => item.id === chosenRuntime);
-  const reason = preferred.reason?.trim() || '未启用';
-  return chosen
-    ? `默认的「${preferred.label}」暂不可用（${reason}），本次改用「${chosen.label}」。`
-    : `默认的「${preferred.label}」暂不可用（${reason}），当前也没有其它可用执行器。`;
 }
 
 // Verified multi-file packages are served from a short-lived, opaque-origin route.

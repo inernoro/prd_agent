@@ -12,6 +12,8 @@ import {
   normalizeReadOnlyStatement,
   stripSqlComments,
   normalizeWriteStatement,
+  normalizeConsoleWrite,
+  isSqlScript,
 } from '../../src/services/sql-statement-policy.js';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
@@ -105,10 +107,10 @@ describe('工作台 SQL 准入：该放的都放行', () => {
    * 事务控制两条路都不收：每次执行是独立连接，BEGIN / UPDATE / ROLLBACK 三条全「成功」
    * 而数据回不去，等于给了一个假的安全信号（Codex P1）。
    */
-  it('事务控制语句被拒绝，并指向初始化 SQL', () => {
+  it('事务控制语句被拒绝，并提示把完整脚本放进当前执行框', () => {
     for (const sql of ['BEGIN', 'START TRANSACTION', 'COMMIT', 'ROLLBACK', 'SAVEPOINT s1']) {
-      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
-      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/当前执行框/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/当前执行框/);
     }
     expect(TRANSACTION_CONTROL_HEADS).toContain('begin');
     for (const head of TRANSACTION_CONTROL_HEADS) {
@@ -120,10 +122,10 @@ describe('工作台 SQL 准入：该放的都放行', () => {
    * 连接作用域语句和事务控制同理：设置/选中的库/表锁随进程退出消失，下一条语句拿不到，
    * 可这一条还报「成功」（Codex P1，第二轮）。
    */
-  it('连接作用域语句被拒绝，并指向初始化 SQL', () => {
+  it('连接作用域语句被拒绝，并提示把完整脚本放进当前执行框', () => {
     for (const sql of ['SET SESSION sql_mode = ""', 'USE other_db', 'LOCK TABLES demo WRITE', 'UNLOCK TABLES', 'RESET QUERY CACHE']) {
-      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
-      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/当前执行框/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/当前执行框/);
     }
     for (const head of CONNECTION_SCOPED_HEADS) {
       expect(WRITE_STATEMENT_HEADS, `${head} 不该再出现在写白名单里`).not.toContain(head);
@@ -151,15 +153,15 @@ describe('工作台 SQL 准入：该放的都放行', () => {
    * 加锁读同属连接作用域：行锁在语句返回时就释放，保护不了随后那条 UPDATE，
    * 却会报「成功」（Codex P1，第三轮）。两条通道都不收。
    */
-  it('加锁读两条通道都拒，并指向初始化 SQL', () => {
+  it('加锁读两条通道都拒，并提示把完整脚本放进当前执行框', () => {
     for (const sql of [
       'SELECT * FROM demo WHERE id = 1 FOR UPDATE',
       'SELECT * FROM demo FOR SHARE',
       'SELECT * FROM demo LOCK IN SHARE MODE',
       'SELECT * FROM demo FOR NO KEY UPDATE',
     ]) {
-      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
-      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/当前执行框/);
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/当前执行框/);
     }
     // 字面量里的 for update 不算加锁读
     expect(isLockingRead("SELECT * FROM demo WHERE note = 'for update'")).toBe(false);
@@ -177,6 +179,24 @@ describe('工作台 SQL 准入：该放的都放行', () => {
 });
 
 describe('工作台 SQL 准入：该拦的仍拦', () => {
+  it('SELECT INTO 属于写：普通读取拒绝，审批写入入口接收', () => {
+    for (const sql of [
+      'SELECT id INTO qa_copy FROM qa_items',
+      'SELECT id INTO/**/TEMP TABLE qa_copy FROM qa_items',
+      'WITH x AS (SELECT 1) SELECT id INTO qa_copy FROM qa_items',
+      'SELECT 1; SELECT id INTO qa_copy FROM qa_items',
+    ]) {
+      expect(() => normalizeReadOnlyStatement(sql, 'postgres')).toThrow(/写 SQL/);
+      expect(() => normalizeConsoleWrite(sql, 'postgres')).not.toThrow();
+    }
+    for (const sql of ["SELECT 'into', 'update'", 'SELECT id AS "into" FROM qa_items', 'SELECT id /* INTO qa_copy */ FROM qa_items']) {
+      expect(() => normalizeReadOnlyStatement(sql, 'postgres')).not.toThrow();
+    }
+  });
+
+  it('单条可执行注释也不能藏入只读通道', () => {
+    expect(() => normalizeReadOnlyStatement('SELECT 1 /*! INTO @x */', 'mysql')).toThrow(/可执行注释/);
+  });
   it('披着读皮的写不许走读通道', () => {
     expect(() => normalizeReadOnlyStatement('WITH x AS (SELECT 1) DELETE FROM demo')).toThrow(/写入关键字|写 SQL/);
     expect(() => normalizeReadOnlyStatement('SELECT * FROM demo FOR UPDATE')).toThrow();
@@ -227,14 +247,37 @@ describe('工作台 SQL 准入：该拦的仍拦', () => {
     }
   });
 
-  it('多语句被拒绝，并指向初始化 SQL 输入框', () => {
-    expect(() => normalizeReadOnlyStatement('SELECT 1; SELECT 2')).toThrow(/初始化 SQL/);
+  it('只读脚本逐条准入，混入修改、会话或锁语句仍拒绝', () => {
+    expect(normalizeReadOnlyStatement("SELECT 'a;b'; SELECT 2", 'mysql')).toContain('SELECT 2');
+    for (const sql of ['SELECT 1; UPDATE sample SET n=2', 'SELECT 1; SET @x=2', 'SELECT 1; SELECT * FROM sample FOR UPDATE', 'SELECT 1; /*! DELETE FROM sample */ SELECT 2']) {
+      expect(() => normalizeReadOnlyStatement(sql, 'mysql')).toThrow();
+    }
     expect(() => normalizeWriteStatement('DELETE FROM a; DELETE FROM b')).toThrow(/初始化 SQL/);
   });
 
   it('空 / 超长被拒绝', () => {
     expect(() => normalizeReadOnlyStatement('   ')).toThrow(/不能为空/);
     expect(() => normalizeWriteStatement(`INSERT INTO demo VALUES ('${'x'.repeat(20_001)}')`)).toThrow(/过长/);
+  });
+});
+
+describe('执行框的批量修改', () => {
+  it('多条修改与事务在同一脚本放行，单独事务仍拒绝', () => {
+    for (const dialect of ['mysql', 'postgres'] as const) {
+      const sql = 'BEGIN; UPDATE demo SET n=1; UPDATE demo SET n=2; COMMIT;';
+      expect(normalizeConsoleWrite(sql, dialect)).toBe(sql.slice(0, -1));
+      expect(() => normalizeConsoleWrite('BEGIN', dialect)).toThrow();
+    }
+  });
+  it('字面量和注释内的分号不产生第二条语句', () => {
+    const sql = "UPDATE demo SET name='a;b' /* ; */";
+    expect(isSqlScript(sql, 'mysql')).toBe(false);
+    expect(normalizeConsoleWrite(sql, 'mysql')).toBe(sql);
+  });
+  it('批量语句不能绕过宿主逃逸与客户端命令边界', () => {
+    for (const sql of ["UPDATE demo SET n=1; SELECT 1 INTO OUTFILE '/tmp/data'", 'UPDATE demo SET n=1; \\! id', 'UPDATE demo SET n=1; source /tmp/evil.sql']) {
+      expect(() => normalizeConsoleWrite(sql, 'mysql')).toThrow();
+    }
   });
 });
 
@@ -254,7 +297,7 @@ describe('前后端判据不许漂移', () => {
     const source = fs.readFileSync(path.join(CDS_ROOT, 'src/routes/branches.ts'), 'utf8');
     // 必须把方言一起传下去：不传就用「# 不是注释」的兜底，MySQL 的真注释会被当代码
     expect(source).toMatch(/return normalizeReadOnlyStatement\(sql, runtime\);/);
-    expect(source).toMatch(/return normalizeWriteStatement\(sql, runtime\);/);
+    expect(source).toMatch(/return normalizeConsoleWrite\(sql, runtime\);/);
     expect(source, '路由里不应再自己维护一份语句头白名单')
       .not.toContain("['select', 'show', 'describe', 'desc', 'explain'].includes(head)");
   });
@@ -280,5 +323,47 @@ describe('前后端判据不许漂移', () => {
       expect(heads).toEqual([...READ_STATEMENT_HEADS]);
     };
     expectGuardRedOnMutation(guard, realFront, mutate(realFront, "'with', 'table', 'values'", "'table', 'values'"));
+  });
+});
+
+describe('write scripts under resource string modes',()=>{
+  const prefix=String.raw`UPDATE demo SET x='a\'; `;
+  it('recognizes a second statement exposed by NO_BACKSLASH_ESCAPES',()=>{
+    expect(isSqlScript(prefix+String.raw`UPDATE demo SET n=2; SELECT 'x'`,'mysql')).toBe(true);
+  });
+  it('rejects hidden host access and client commands in either string interpretation',()=>{
+    for(const suffix of [
+      String.raw`SELECT 1 INTO OUTFILE '/tmp/p'; SELECT 'x'`,
+      String.raw`LOAD/**/DATA INFILE '/tmp/p' INTO TABLE demo; SELECT 'x'`,
+      String.raw`source /tmp/p; SELECT 'x'`,
+      String.raw`\! id; SELECT 'x'`,
+    ]){
+      expect(()=>normalizeConsoleWrite(prefix+suffix,'mysql'),suffix).toThrow();
+      expect(()=>normalizeWriteStatement(prefix+suffix,'mysql'),suffix).toThrow();
+    }
+  });
+  it('also scans PostgreSQL writes with either standard string configuration',()=>{
+    expect(()=>normalizeConsoleWrite(prefix+String.raw`COPY demo TO/**/'/tmp/p'; SELECT 'x'`,'postgres')).toThrow();
+  });
+});
+
+
+describe('executable comments cannot bypass write admission', () => {
+  for (const marker of ['/*!', '/*!80000', '/*M!', '/*m!100000']) {
+    it(`rejects ${marker} in single writes and batches before stripping`, () => {
+      for (const suffix of ['SHUTDOWN', 'SET GLOBAL read_only=0', 'CREATE USER other']) {
+        for (const sql of [`UPDATE demo SET n=1; ${marker} ${suffix} */`, `UPDATE demo SET n=1 ${marker} ${suffix} */`, `UPDATE demo SET n=1 ${marker}; ${suffix} */`]) {
+          expect(() => normalizeConsoleWrite(sql, 'mysql')).toThrow(/可执行注释/);
+          expect(() => normalizeWriteStatement(sql, 'mysql')).toThrow();
+        }
+      }
+    });
+  }
+  it('preserves quoted comment text, ordinary comments and PostgreSQL comments', () => {
+    for (const sql of ["UPDATE demo SET note='/*! SHUTDOWN */'; UPDATE demo SET n=2", 'UPDATE demo SET n=1 /* ordinary comment */; UPDATE demo SET n=2']) {
+      expect(normalizeConsoleWrite(sql, 'mysql')).toBe(sql);
+    }
+    expect(normalizeConsoleWrite('UPDATE demo SET n=1; /*! ordinary PG comment */ SELECT 1', 'postgres')).toContain('SELECT 1');
+    expect(() => normalizeConsoleWrite(String.raw`UPDATE demo SET note='a\'; /*! SHUTDOWN */ SELECT 'x'`, 'mysql')).toThrow(/可执行注释/);
   });
 });

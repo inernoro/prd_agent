@@ -90,7 +90,7 @@ const JSON_OUTPUT = process.argv.includes('--json');
 const DETAILS_OUTPUT = process.argv.includes('--details');
 const CHECK_BASELINE = process.argv.includes('--check-baseline');
 const UPDATE_BASELINE = process.argv.includes('--update-baseline');
-const METRIC_VERSION = 3;
+const METRIC_VERSION = 4;
 const EXCLUDE_PATTERNS = getArgValues('--exclude')
   .flatMap((value) => value.split(','))
   .map((value) => value.trim())
@@ -256,16 +256,34 @@ function scoreSnapshot(report) {
 }
 
 function loadBaseline(projectRoot) {
-  const filePath = baselinePath(projectRoot);
-  if (!existsSync(filePath)) {
-    throw new Error(`Missing style debt baseline: ${filePath}`);
+  const originalPath = baselinePath(projectRoot);
+  if (!existsSync(originalPath)) {
+    throw new Error(`Missing style debt baseline: ${originalPath}`);
   }
-  return { filePath, value: JSON.parse(readFileSync(filePath, 'utf8')) };
+  const original = JSON.parse(readFileSync(originalPath, 'utf8'));
+  const migratedPath = path.join(projectRoot, 'scripts', `style-debt-baseline-v${METRIC_VERSION}.json`);
+  if (!existsSync(migratedPath)) return { filePath: originalPath, value: original };
+  const migrated = JSON.parse(readFileSync(migratedPath, 'utf8'));
+  if (migrated.metricVersion !== METRIC_VERSION || migrated.referenceMetricVersion !== original.metricVersion
+      || JSON.stringify(migrated.originalCurrentCeiling) !== JSON.stringify(original.currentCeiling)) {
+    throw new Error('Style debt baseline migration does not match the original metric snapshot.');
+  }
+  return { filePath: migratedPath, value: { ...original, ...migrated } };
+}
+
+function baselineSnapshot(report, metricVersion) {
+  if (metricVersion === report.metricVersion) return scoreSnapshot(report);
+  if (metricVersion === 3 && report.historicalBridge?.metricVersion === 3) {
+    const keys = Object.keys(scoreSnapshot(report));
+    return Object.fromEntries(keys.map((key) => [key, report.historicalBridge[key]]));
+  }
+  throw new Error(`Unsupported style debt baseline metric version: ${metricVersion}`);
 }
 
 function checkBaseline(report) {
   const { value } = loadBaseline(report.projectRoot);
-  const current = scoreSnapshot(report);
+  const current = baselineSnapshot(report, value.metricVersion);
+  const reference = baselineSnapshot(report, value.referenceMetricVersion ?? value.metricVersion);
   const violations = value.enforcedMetrics.flatMap((metric) => {
     const ceiling = value.currentCeiling[metric];
     return current[metric] > ceiling
@@ -276,6 +294,7 @@ function checkBaseline(report) {
 
   console.log('\nStyle debt baseline');
   console.log(`Metric version: ${value.metricVersion}`);
+  console.log(`Historical reference metric version: ${value.referenceMetricVersion ?? value.metricVersion}`);
   console.log(`Program baseline score: ${value.programBaseline.score}`);
   console.log(`Current score: ${current.score}`);
   console.log(`Program baseline adaptive risk: ${value.programBaseline.adaptiveThemeRisk}`);
@@ -286,7 +305,7 @@ function checkBaseline(report) {
   console.log(`Milestone target undeclared risk: ${value.milestoneTarget.undeclaredThemeRisk}`);
   console.log(`Milestone target adaptive risk: ${value.milestoneTarget.adaptiveThemeRisk}`);
   const milestoneMet = Object.entries(value.milestoneTarget)
-    .every(([metric, target]) => current[metric] <= target);
+    .every(([metric, target]) => reference[metric] <= target);
   console.log(`Milestone status: ${milestoneMet ? 'ACHIEVED' : 'IN PROGRESS'}`);
   if (value.nextTarget) {
     console.log(`Next target score: ${value.nextTarget.score}`);
@@ -305,10 +324,11 @@ function checkBaseline(report) {
 
 function updateBaseline(report) {
   const { filePath, value } = loadBaseline(report.projectRoot);
+  const currentCeiling = baselineSnapshot(report, value.metricVersion);
   const next = {
     ...value,
     updatedAt: new Date().toISOString(),
-    currentCeiling: scoreSnapshot(report),
+    currentCeiling,
   };
   writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`);
   console.log(`Updated style debt baseline: ${filePath}`);
@@ -318,8 +338,15 @@ function isExcluded(row) {
   return EXCLUDE_PATTERNS.some((pattern) => row.path.startsWith(pattern) || row.module === pattern);
 }
 
-function summarize(projectRoot) {
-  const files = walkFiles(path.join(projectRoot, 'src'));
+function isTestSource(relativePath) {
+  return /(^|\/)(?:__tests__|__fixtures__)(\/|$)/.test(relativePath)
+    || /\.(?:test|spec)\.[jt]sx?$/.test(relativePath);
+}
+
+function summarize(projectRoot, includeTestSources = false) {
+  const sourceFiles = walkFiles(path.join(projectRoot, 'src'));
+  const relativeSource = (file) => path.relative(path.join(projectRoot, 'src'), file).replace(/\\/g, '/');
+  const files = sourceFiles.filter((file) => includeTestSources || !isTestSource(relativeSource(file)));
   const allRows = files.map((file) => analyzeFile(projectRoot, file));
   const rows = allRows.filter((row) => !isExcluded(row));
   const emptyPatternCounts = Object.fromEntries(Object.keys(PATTERNS).map((key) => [key, 0]));
@@ -357,7 +384,9 @@ function summarize(projectRoot) {
     ...classificationManifest.infrastructureFiles,
   ];
   const classifiedPaths = new Set(classificationEntries.map((entry) => entry.path));
-  const rowPaths = new Set(rows.map((row) => row.path));
+  // Excluded test samples may still have valid registrations; existence is not a score waiver.
+  const rowPaths = new Set(sourceFiles.map(relativeSource)
+    .filter((relativePath) => !isExcluded({ path: relativePath, module: moduleKey(relativePath) })));
   const duplicatePaths = classificationEntries
     .map((entry) => entry.path)
     .filter((entryPath, index, all) => all.indexOf(entryPath) !== index);
@@ -378,7 +407,7 @@ function summarize(projectRoot) {
     .reduce((sum, row) => sum + row.fixedThemeSurface, 0);
   const actionableThemeRisk = ordinaryAdaptiveRisk + ordinaryFixedSurfaceRisk;
   const themeLayers = {
-    metricVersion: METRIC_VERSION,
+    metricVersion: includeTestSources ? 3 : METRIC_VERSION,
     rawMaintenanceDebt: totals.score,
     legacyThemeSignals: {
       undeclaredThemeRisk: totals.undeclaredThemeRisk,
@@ -422,8 +451,8 @@ function summarize(projectRoot) {
     .filter((row) => row.adaptiveThemeRisk > 0)
     .sort((a, b) => b.adaptiveThemeRisk - a.adaptiveThemeRisk);
 
-  return {
-    metricVersion: METRIC_VERSION,
+  const report = {
+    metricVersion: includeTestSources ? 3 : METRIC_VERSION,
     projectRoot,
     generatedAt: new Date().toISOString(),
     excluded: EXCLUDE_PATTERNS,
@@ -447,6 +476,17 @@ function summarize(projectRoot) {
       .sort((a, b) => b.score - a.score)
       .slice(0, PRINT_TOP),
   };
+  if (!includeTestSources) {
+    // v4 changes only the production input set. Preserve v3's identical formula
+    // over the same checkout (including samples), without changing any ceiling.
+    const legacy = summarize(projectRoot, true);
+    report.historicalBridge = {
+      metricVersion: 3,
+      files: legacy.totals.files,
+      ...scoreSnapshot(legacy),
+    };
+  }
+  return report;
 }
 
 function printTable(title, rows, columns) {
@@ -466,6 +506,8 @@ function printHuman(report) {
   console.log(`Files scanned: ${report.totals.files}`);
   console.log(`Debt score: ${report.totals.score}`);
   console.log(`Metric version: ${report.metricVersion}`);
+  console.log(`Historical v3 (including tests): ${JSON.stringify(report.historicalBridge)}`);
+  console.log(`Production v4 (excluding tests): ${JSON.stringify({ files: report.totals.files, ...scoreSnapshot(report) })}`);
   console.log(`Actionable theme risk: ${report.themeLayers.actionableThemeRisk}`);
   console.log(`Ordinary UI risk: ${report.themeLayers.ordinaryUiRisk}`);
   console.log(`Unclassified theme risk: ${report.themeLayers.unclassifiedThemeRisk}`);

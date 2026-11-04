@@ -161,7 +161,10 @@ public record LlmLogDone(
     string? ModelGroupName = null,
     decimal? ProviderReportedCost = null,
     string? ProviderCostCurrency = null,
-    List<LlmLogImagePayload>? OutputImagePayloads = null);
+    List<LlmLogImagePayload>? OutputImagePayloads = null,
+    int? ReasoningTokens = null,
+    bool? CacheCreationCountedInsideInput = null,
+    string? CostKind = null);
 
 public sealed record LlmLogImagePayload(
     string? Base64Data,

@@ -406,7 +406,7 @@ export function buildReleaseInventoryCommand(
   const appPath = shellQuote(target.ssh.appPath);
   const targetId = shellQuote(target.id);
   const head = `cd ${appPath} || exit 1; repo="$PWD"; parent="$(dirname "$repo")"; wt="$parent/.cds-releases/"${targetId}"/worktrees"`;
-  if (strategy.mode === 'generated-compose') {
+  if (strategy.mode === 'generated-compose' || strategy.mode === 'project-script' || strategy.mode === 'managed-script') {
     return [
       head,
       'root="$(dirname "$wt")"',

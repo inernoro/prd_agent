@@ -70,6 +70,7 @@ export interface PreviewProjectIdentity {
   id?: string | null;
   slug?: string | null;
   identityHistory?: ProjectIdentityRecord[];
+  previewAddresses?: Record<string, { branchName?: string; projectSlug?: string; customSubdomain?: string }>;
   mirror?: { routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] } };
   name?: string | null;
   gitRepoUrl?: string | null;
@@ -333,4 +334,14 @@ export function computePreviewSlug(branch: string, projectSlug: string): string 
   else if (!tail) slug = `${prefix}-${project}`;
   else slug = `${tail}-${prefix}-${project}`;
   return capPreviewSlug(slug);
+}
+
+export function previewBranchName(branch: string): string { return computePreviewSlug(branch, '').replace(/-+$/, ''); }
+
+/** DNS-facing branch configuration; all public URL producers consume this. */
+export function configuredPreviewSlug(branch: string, project: PreviewProjectIdentity | undefined | null, fallback?: string | null): string {
+  const override = project?.previewAddresses && Object.hasOwn(project.previewAddresses, branch) ? project.previewAddresses[branch] : undefined;
+  if (override?.customSubdomain) return override.customSubdomain;
+  if (override?.branchName || override?.projectSlug) return `${override.branchName || previewBranchName(branch)}-${override.projectSlug || previewProjectSlug(project, fallback)}`;
+  return computePreviewSlug(branch, previewProjectSlug(project, fallback));
 }

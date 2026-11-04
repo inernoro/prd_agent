@@ -19,7 +19,9 @@ import { projectResourceNamespace } from './preview-slug.js';
  */
 
 import type { StateService } from './state.js';
-import { WorktreeService } from './worktree.js';
+import { WorktreeService, deploymentNeedsSourceCheckout } from './worktree.js';
+import { mergeBranchProfiles } from './branch-extra-services.js';
+import { resolveEffectiveProfile } from './container.js';
 import { worktreePathActivity } from './worktree-path-activity.js';
 import type { IShellExecutor, CdsConfig, BranchEntry, Project } from '../types.js';
 import type { GitHubAppClient } from './github-app-client.js';
@@ -28,7 +30,7 @@ import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 import { analyzeChangeImpact } from './change-impact-analyzer.js';
 import { isTrunkBranch } from './branch-protection.js';
-import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deploy-runtime.js';
+import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch, assertValidDefaultDeployModes } from './deploy-runtime.js';
 import { decideProjectScope, resolveProjectScope } from './project-scope.js';
 
 /**
@@ -37,8 +39,17 @@ import { decideProjectScope, resolveProjectScope } from './project-scope.js';
  * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
  * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds.ci-prebuilt.md）。
  */
-const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
-const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
+export const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
+export const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
+
+/** 有路径时以路径为准；仅旧回执缺少路径时才回退名称。 */
+export function isPrebuiltImageWorkflow(run: { path?: string; name?: string }): boolean {
+  const workflowPath = (run.path || '').trim();
+  return workflowPath
+    ? workflowPath.split('@', 1)[0].split('/').pop() === CI_PREBUILT_WORKFLOW_FILE
+    : (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+}
+
 
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before
@@ -1033,12 +1044,7 @@ export class GitHubWebhookDispatcher {
 
   /** 极速版（CI 预构建）：判断 workflow_run 是否来自「构建预构建镜像」的工作流。 */
   private isPrebuiltImageWorkflow(run: NonNullable<GitHubWorkflowRunEvent['workflow_run']>): boolean {
-    // workflow_run.path 形如 `.github/workflows/branch-image.yml`。只认这个工作流,
-    // 避免 ci.yml / cds.yml 等其它工作流先完成就误触发部署（那时镜像还没 push）。
-    const base = (run.path || '').split('/').pop() || '';
-    if (base === CI_PREBUILT_WORKFLOW_FILE) return true;
-    // 兜底:按 workflow name 匹配（防止个别 GitHub 投递缺 path）。
-    return (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+    return isPrebuiltImageWorkflow(run);
   }
 
   private emitCiStatus(
@@ -1582,6 +1588,7 @@ export class GitHubWebhookDispatcher {
     // 项目构建配置（极速版判定 + created 分支默认对齐共用）。早算一次,供下面
     // docs-only / dry-run / express 分流复用,避免散落多处重复读取。
     const profiles = this.deps.stateService.getBuildProfilesForProject(project.id);
+    if (!entry) assertValidDefaultDeployModes(project.defaultDeployModes, profiles);
     // 判定某分支(或 webhook 即将新建的分支)是否走极速版(CI 预构建)模式。
     //  - 已存在分支:直接按其 profileOverrides 判定。
     //  - 即将新建分支(existing=undefined):webhook 建分支时会 applyDefaultDeployModesToBranch
@@ -1689,29 +1696,35 @@ export class GitHubWebhookDispatcher {
         project.id,
         branchId,
       );
-      await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
+      // 在任何外部等待前冻结默认覆盖；State 不发布暂时回到源码基线的半分支。
+      const pendingEntry: BranchEntry = {
+        id: branchId,
+        projectId: project.id,
+        branch: branchName,
+        worktreePath,
+        services: {},
+        status: 'idle',
+        createdAt: new Date().toISOString(),
+      };
+      applyDefaultDeployModesToBranch(pendingEntry, project.defaultDeployModes, profiles);
+      const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(profiles, pendingEntry)
+        .map(profile => resolveEffectiveProfile(profile, pendingEntry)));
       entry = await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
-        try {
-          await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-        } catch (err) {
-          // A push for a branch our local clone hasn't fetched yet can fail
-          // because `git worktree add` refuses unknown refs. Try a fetch and
-          // retry once; give up if that also fails.
-          await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
-          await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-          void err;
+        if (needsSource) {
+          await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
+          try {
+            await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+          } catch (err) {
+            // A push for a branch our local clone hasn't fetched yet can fail
+            // because `git worktree add` refuses unknown refs. Try a fetch and
+            // retry once; give up if that also fails.
+            await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
+            await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+            void err;
+          }
         }
-        const entry: BranchEntry = {
-          id: branchId,
-          projectId: project.id,
-          branch: branchName,
-          worktreePath,
-          services: {},
-          status: 'idle',
-          createdAt: new Date().toISOString(),
-        };
-        this.deps.stateService.addBranch(entry);
-        return entry;
+        this.deps.stateService.addBranch(pendingEntry);
+        return pendingEntry;
       });
       created = true;
     }
@@ -1779,28 +1792,15 @@ export class GitHubWebhookDispatcher {
       }
     }
 
-    // ── 2026-06-23 极速版（CI 预构建）分流 ──────────────────────────────
-    // webhook 自动建分支时补回项目默认 deploy mode（与 UI 建分支一致;否则新分支
-    // 拿不到极速版 override）。已存在分支不动（其 override 已是 SSOT）。
-    // profiles 已在 handlePush 顶部 hoist。
-    if (created && project.defaultDeployModes && profiles.length > 0) {
-      const fresh = this.deps.stateService.getBranch(branchId);
-      if (fresh) {
-        applyDefaultDeployModesToBranch(fresh, project.defaultDeployModes, profiles);
-        // 显式落盘（mongo-split store 下 getBranch 可能返回副本,mutate 不持久化）
-        for (const [pid, ov] of Object.entries(fresh.profileOverrides || {})) {
-          this.deps.stateService.setBranchProfileOverride(branchId, pid, ov);
-        }
-      }
-    }
-
+    // 新分支默认已在任何工作树写入前冻结，并随 addBranch 整体发布。
+    // 已存在分支保持自己的 override，不因项目默认变化而被改写。
     // 该分支是否走预构建镜像模式？是 → 不本机编译,改为「等待 CI 镜像就绪」,
     // 等 GitHub Actions 的 workflow_run.completed 到达后再按 commit SHA 拉取部署。
     //
     // 注意（Bugbot/Codex review）：此处**不传** project.defaultDeployModes —— 部署路径
     // resolveEffectiveProfile 按 2026-05-14 产品决策**不读**项目默认（默认只在建分支时
     // 拷贝一次写进 override）。若这里用项目默认判定,则「已存在、无 override」的分支会被
-    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支上面
+    // 误判成极速版 → 置 waiting 等 CI,但 deploy 仍走源码模式,自相矛盾。created 分支在创建前
     // 已 applyDefaultDeployModesToBranch 写了 override,靠 override 即可命中。
     const entryForMode = this.deps.stateService.getBranch(branchId) ?? entry;
     const isExpress = branchUsesPrebuiltMode(profiles, entryForMode);

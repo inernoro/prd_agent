@@ -16,7 +16,7 @@
  *     所以每条通道旁边永远有一个「演练」，而不是把它藏进某个菜单。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BellRing, CheckCircle2, Plus, Send, Trash2, XCircle } from 'lucide-react';
+import { BellRing, CheckCircle2, Clock, Plus, Send, Trash2, XCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
@@ -138,7 +138,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [drill, setDrill] = useState<{ id: string; ok: boolean; reason?: string } | null>(null);
+  const [drill, setDrill] = useState<{ id: string; ok?: boolean; queued?: boolean; reason?: string } | null>(null);
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -191,8 +191,8 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
   const runDrill = useCallback(async (id: string): Promise<void> => {
     setBusy(true);
     try {
-      const res = await apiRequest<{ ok: boolean; reason?: string }>(`/api/cds-system/alarm-channels/${id}/drill`, { method: 'POST', body: {} });
-      setDrill({ id, ...res });
+      const res = await apiRequest<{ ok?: boolean; queued?: boolean; reason?: string }>(`/api/cds-system/alarm-channels/${id}/drill`, { method: 'POST', body: {} });
+      setDrill({ ...res, id });
       await load();
     } catch (e) {
       setDrill({ id, ok: false, reason: e instanceof ApiError ? e.message : String(e) });
@@ -276,9 +276,9 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
               </div>
             ) : null}
             {drill?.id === c.id ? (
-              <div className={cn('flex items-center gap-1.5 text-[0.6875rem]', drill.ok ? 'text-ok' : 'text-destructive')}>
-                {drill.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                {drill.ok ? '演练已送达 —— 这条链现在是通的，去手机上确认收到了' : `演练失败：${drill.reason ?? '原因不明'}`}
+              <div className={cn('flex items-center gap-1.5 text-[0.6875rem]', drill.queued ? 'text-muted-foreground' : drill.ok ? 'text-ok' : 'text-destructive')}>
+                {drill.queued ? <Clock className="h-3 w-3" /> : drill.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                {drill.queued ? '演练已交给独立监控。稍后刷新本页，可在此通道查看投递结果。' : drill.ok ? '演练已送达 —— 这条链现在是通的，去手机上确认收到了' : `演练失败：${drill.reason ?? '原因不明'}`}
               </div>
             ) : null}
           </div>

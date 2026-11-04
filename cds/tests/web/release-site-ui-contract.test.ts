@@ -33,6 +33,7 @@ const releaseCenterLibSource = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/web/src/lib/releaseCenter.ts'),
   'utf8',
 );
+const releaseCenterLinksSource = fs.readFileSync(path.resolve(process.cwd(), 'src/shared/release-center-links.ts'), 'utf8');
 
 function stringLiterals(source: string): string[] {
   const literals: string[] = [];
@@ -110,9 +111,9 @@ describe('release site publishing UI contract', () => {
   });
 
   it('keeps the default release center entry clean while retaining project scoping', () => {
-    expect(releaseCenterLibSource).toContain("DEFAULT_RELEASE_CENTER_PROJECT_ID = 'prd-agent'");
-    expect(releaseCenterLibSource).toContain("return '/release-center'");
-    expect(releaseCenterLibSource).toContain('release-center?project=');
+    expect(releaseCenterLinksSource).toContain("DEFAULT_RELEASE_CENTER_PROJECT_ID = 'prd-agent'");
+    expect(releaseCenterLinksSource).toContain("return '/release-center'");
+    expect(releaseCenterLinksSource).toContain('release-center?project=');
     expect(releaseCenterSource).toContain('initialReleaseCenterProject(');
     expect(releaseCenterSource).toContain('rememberReleaseCenterProject(');
     expect(branchListSource).toContain('releaseCenterHref(branch.projectId)');

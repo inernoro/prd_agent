@@ -9,6 +9,7 @@ export interface ServiceConfig {
   templatesDir: string;
   outputDir: string;
   webPrototypeSourceDir: string;
+  presentationSkillSourceDir: string;
   designSystemsDir: string;
   odPort: number;
   odCommand: string[];
@@ -42,6 +43,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     templatesDir: env.DESIGN_RUNTIME_TEMPLATES_DIR || '/app/design-templates',
     outputDir: env.DESIGN_RUNTIME_OUTPUT_DIR || '/var/lib/map-design-runtime/output',
     webPrototypeSourceDir: env.DESIGN_RUNTIME_WEB_PROTOTYPE_SOURCE || '/app/plugins/_official/examples/web-prototype',
+    presentationSkillSourceDir: env.DESIGN_RUNTIME_PRESENTATION_SKILL_SOURCE || '/app/plugins/_official/examples/guizang-ppt',
     designSystemsDir: env.DESIGN_RUNTIME_DESIGN_SYSTEMS_DIR || '/app/design-systems',
     odPort: integer(env.DESIGN_RUNTIME_OD_PORT, 7456, 'DESIGN_RUNTIME_OD_PORT'),
     odCommand: env.DESIGN_RUNTIME_OD_COMMAND

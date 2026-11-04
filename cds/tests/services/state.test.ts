@@ -71,7 +71,7 @@ describe('StateService', () => {
       }
     });
 
-    it('should migrate legacy /data cache mounts to the active cache base', () => {
+    it('retires known legacy compiler binds as metadata without moving cache files or regenerating mounts', async () => {
       const oldCdsCacheBase = process.env.CDS_CACHE_BASE;
       const repoRoot = path.join(path.dirname(stateFile), 'prd_agent');
       const cacheRoot = path.join(path.dirname(stateFile), 'local-cache', '{projectSlug}');
@@ -117,10 +117,15 @@ describe('StateService', () => {
         const scoped = new StateService(stateFile, repoRoot);
         scoped.load();
         const profiles = scoped.getBuildProfiles();
-        const expectedBase = path.join(path.dirname(stateFile), 'local-cache', 'prd-agent');
-        expect(profiles[0].cacheMounts?.[0].hostPath).toBe(path.join(expectedBase, 'nuget'));
-        expect(profiles[1].cacheMounts?.[0].hostPath).toBe(path.join(expectedBase, 'pnpm'));
-        expect(profiles[1].cacheMounts?.[0].containerPath).toBe('/pnpm/store');
+        expect(profiles[0].cacheMounts).toEqual([]);
+        expect(profiles[1].cacheMounts).toEqual([]);
+        expect(profiles[0].retiredCatalogCacheMounts).toEqual([{hostPath:'/data/cds/prd-agent/cache/nuget',containerPath:'/root/.nuget/packages'}]);
+        expect(profiles[1].retiredCatalogCacheMounts).toEqual([{hostPath:'pnpm',containerPath:'/root/.local/share/pnpm/store'}]);
+        expect(fs.existsSync(path.join(path.dirname(stateFile),'local-cache'))).toBe(false);
+        await scoped.flush(); const restored=new StateService(stateFile,repoRoot);restored.load();
+        expect(restored.getBuildProfiles().map(p=>p.cacheMounts)).toEqual([[],[]]);
+        expect(restored.getBuildProfiles().map(p=>p.retiredCatalogCacheMounts)).toEqual(profiles.map(p=>p.retiredCatalogCacheMounts));
+        await restored.flush();
       } finally {
         if (oldCdsCacheBase === undefined) delete process.env.CDS_CACHE_BASE;
         else process.env.CDS_CACHE_BASE = oldCdsCacheBase;

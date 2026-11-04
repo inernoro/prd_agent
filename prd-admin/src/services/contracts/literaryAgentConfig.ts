@@ -170,6 +170,7 @@ export interface LiteraryAgentModelPoolItem {
   actualPlatformId?: string | null;
   priority: number;
   healthStatus: string;
+  isRecoveryProbeAvailable?: boolean;
 }
 
 /**

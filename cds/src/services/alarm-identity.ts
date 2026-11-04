@@ -6,6 +6,8 @@ export interface AlarmInstanceIdentity {
   name: string;
   environment: string;
   location?: string;
+  /** 独立托管的通知头像，不包含签名或凭据。 */
+  iconUrl?: string;
 }
 export interface AlarmIdentitySettings {
   instance: AlarmInstanceIdentity;
@@ -29,7 +31,13 @@ export function parseAlarmIdentity(value: unknown, previous?: AlarmIdentitySetti
       return s.trim();
     };
     const location = label(v?.location, false);
-    return { id: id || crypto.randomUUID(), name: label(v?.name, true), environment: label(v?.environment, true), ...(location ? { location } : {}) };
+    let iconUrl: string | undefined;
+    if (v?.iconUrl) {
+      const url = new URL(v.iconUrl);
+      if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || v.iconUrl.length > 512) throw new Error('头像请使用不含凭据、查询参数的 HTTPS 图片地址');
+      iconUrl = url.href;
+    }
+    return { id: id || crypto.randomUUID(), name: label(v?.name, true), environment: label(v?.environment, true), ...(location ? { location } : {}), ...(iconUrl ? { iconUrl } : {}) };
   };
   const result: AlarmIdentitySettings = { instance: parse(body?.instance, previous?.instance.id) };
   const targets = body?.targets ?? previous?.targets;

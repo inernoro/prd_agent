@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
-using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -41,7 +40,14 @@ public class TasksOpenApiController : ControllerBase
         _db = db;
     }
 
-    private string GetUserId() => this.GetRequiredUserId();
+    // ApiKey 身份只提供 boundUserId；通过 RequireScope 后按绑定用户访问任务。
+    private string GetUserId()
+    {
+        var id = User.FindFirst("boundUserId")?.Value;
+        if (string.IsNullOrWhiteSpace(id))
+            throw new UnauthorizedAccessException("Missing boundUserId claim");
+        return id;
+    }
 
     /// <summary>我在做什么、队列里还堆着什么、最近结了哪些案。</summary>
     [HttpGet("mine")]
@@ -230,7 +236,7 @@ public class TasksOpenApiController : ControllerBase
     /// **只覆盖正文**（标题 / 现状 / 补的条件）；谁认领了、转成了哪条任务，同步一律不碰。
     /// </summary>
     [HttpPost("debts/sync")]
-    [RequireScope(ScopeUse, ScopeManage)]
+    [RequireScope(ScopeManage)]
     public async Task<IActionResult> SyncDebts([FromBody] DebtSyncRequest req, CancellationToken ct = default)
     {
         if (req?.Items == null || req.Items.Count == 0)

@@ -141,6 +141,33 @@ def json_text_field(body: bytes, field: str) -> str | None:
     return str(value).strip() if value is not None else None
 
 
+def normalize_expected_commit(value: str | None, label: str) -> str:
+    normalized = (value or "").removeprefix("sha-").strip().lower()
+    if normalized and (len(normalized) != 40 or any(character not in "0123456789abcdef" for character in normalized)):
+        raise ValueError(f"{label} must be a full 40-character commit SHA")
+    return normalized
+
+
+def resolve_expected_commits(
+    surface: str,
+    expected_commit: str | None,
+    expected_static_commit: str | None,
+    expected_runtime_commit: str | None,
+) -> tuple[str, str, str]:
+    same_commit = normalize_expected_commit(expected_commit, "expect-commit")
+    static_commit = normalize_expected_commit(expected_static_commit, "expect-static-commit")
+    runtime_commit = normalize_expected_commit(expected_runtime_commit, "expect-runtime-commit")
+    if static_commit or runtime_commit:
+        if surface != "map":
+            raise ValueError("split static/runtime commit expectations are only valid for the MAP surface")
+        if same_commit:
+            raise ValueError("expect-commit cannot be combined with split static/runtime expectations")
+        if not static_commit or not runtime_commit:
+            raise ValueError("expect-static-commit and expect-runtime-commit must be provided together")
+        return static_commit, runtime_commit, "static-runtime-split"
+    return same_commit, same_commit, "single-commit"
+
+
 def probe_once(
     base: str,
     api_health_path: str,
@@ -151,10 +178,14 @@ def probe_once(
     timeout: float,
     fetcher: Callable[[str, float], HttpResult] = fetch_once,
     expected_commit: str | None = None,
+    expected_static_commit: str | None = None,
+    expected_runtime_commit: str | None = None,
 ) -> dict[str, object]:
     checks: list[dict[str, object]] = []
     failures: list[str] = []
-    expected_commit = (expected_commit or "").removeprefix("sha-").strip().lower()
+    static_commit, runtime_commit, command_semantics = resolve_expected_commits(
+        "map", expected_commit, expected_static_commit, expected_runtime_commit
+    )
 
     def fetch_check(name: str, url: str, expected_type: str | None = None) -> HttpResult:
         result = fetcher(url, timeout)
@@ -189,12 +220,12 @@ def probe_once(
         failures.append("main-page does not reference a same-origin JavaScript entry asset")
     if not styles:
         failures.append("main-page does not reference a same-origin CSS entry asset")
-    if expected_commit:
-        stale_entry_assets = [url for url in [*scripts, *styles] if expected_commit not in url.lower()]
+    if static_commit:
+        stale_entry_assets = [url for url in [*scripts, *styles] if static_commit not in url.lower()]
         if stale_entry_assets:
             failures.append(
                 "main-page entry asset commit mismatch: "
-                f"expected={expected_commit} assets={','.join(stale_entry_assets)}"
+                f"expected={static_commit} assets={','.join(stale_entry_assets)}"
             )
 
     for index, asset_url in enumerate(scripts, start=1):
@@ -216,10 +247,10 @@ def probe_once(
     api_state = health_state(api.body)
     if api.status == 200 and api_state not in {"healthy", "ok", "ready", "success"} and not api_identity_is_healthy(api.body):
         failures.append(f"api-version identity is not healthy: {api_state or 'missing'}")
-    if expected_commit and api.status == 200:
+    if runtime_commit and api.status == 200:
         api_commit = (json_text_field(api.body, "commit") or "").lower()
-        if api_commit != expected_commit:
-            failures.append(f"api-version commit mismatch: expected={expected_commit} actual={api_commit or 'missing'}")
+        if api_commit != runtime_commit:
+            failures.append(f"api-version commit mismatch: expected={runtime_commit} actual={api_commit or 'missing'}")
 
     fetch_check("llmgw-page", urllib.parse.urljoin(base, llmgw_page_path), "html")
     console_health = fetch_check("llmgw-console-health", urllib.parse.urljoin(base, llmgw_console_health_path), "json")
@@ -228,17 +259,20 @@ def probe_once(
         state = health_state(result.body)
         if result.status == 200 and state not in {"healthy", "ok", "ready", "success"}:
             failures.append(f"{name} business status is not healthy: {state or 'missing'}")
-    if expected_commit and serving_health.status == 200:
+    if runtime_commit and serving_health.status == 200:
         serving_commit = (json_text_field(serving_health.body, "commit") or "").lower()
-        if serving_commit != expected_commit:
+        if serving_commit != runtime_commit:
             failures.append(
-                f"llmgw-serving-health commit mismatch: expected={expected_commit} actual={serving_commit or 'missing'}"
+                f"llmgw-serving-health commit mismatch: expected={runtime_commit} actual={serving_commit or 'missing'}"
             )
 
     return {
         "verdict": "pass" if not failures else "fail",
         "base": base,
         "checkedAt": datetime.now(timezone.utc).isoformat(),
+        "commandSemantics": command_semantics,
+        "expectedStaticCommit": static_commit or None,
+        "expectedRuntimeCommit": runtime_commit or None,
         "checks": checks,
         "failures": failures,
     }
@@ -390,17 +424,34 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=5.0)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--expect-commit", default="")
+    parser.add_argument("--expect-static-commit", default="")
+    parser.add_argument("--expect-runtime-commit", default="")
     parser.add_argument("--json-out")
     args = parser.parse_args()
 
     if args.attempts < 1 or args.interval < 0 or args.timeout <= 0:
         parser.error("attempts must be positive, interval non-negative, and timeout positive")
+    try:
+        expected_static_commit, expected_runtime_commit, _ = resolve_expected_commits(
+            args.surface,
+            args.expect_commit,
+            args.expect_static_commit,
+            args.expect_runtime_commit,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     base = args.base.rstrip("/") + "/"
     result: dict[str, object] = {}
     for attempt in range(1, args.attempts + 1):
         if args.surface == "gateway":
             result = probe_gateway_once(base, args.timeout, expected_commit=args.expect_commit)
         else:
+            probe_kwargs: dict[str, str] = {}
+            if args.expect_commit:
+                probe_kwargs["expected_commit"] = args.expect_commit
+            else:
+                probe_kwargs["expected_static_commit"] = expected_static_commit
+                probe_kwargs["expected_runtime_commit"] = expected_runtime_commit
             result = probe_once(
                 base,
                 args.api_health_path,
@@ -409,7 +460,7 @@ def main() -> int:
                 args.llmgw_console_health_path,
                 args.llmgw_serving_health_path,
                 args.timeout,
-                expected_commit=args.expect_commit,
+                **probe_kwargs,
             )
         result["attempt"] = attempt
         result["attemptsConfigured"] = args.attempts

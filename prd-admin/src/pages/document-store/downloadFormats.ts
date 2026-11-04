@@ -1,6 +1,6 @@
 /** 下载范围：当前正在读的这一篇 / 整个知识库（打包 ZIP） */
 export type DocDownloadScope = 'entry' | 'store';
-/** 下载格式：markdown = 统一 .md；text = 统一 .txt 纯文本；original = 尽量保持上传时的原始文件 */
+/** 下载格式：markdown = 统一 .md；text = 统一 .txt 纯文本；original = 原附件，不以解析正文替代 */
 export type DocDownloadFormat = 'markdown' | 'text' | 'original';
 
 export const DOC_DOWNLOAD_FORMATS: { value: DocDownloadFormat; label: string; hint: string }[] = [
@@ -21,17 +21,18 @@ export function isTextDownloadType(contentType?: string | null): boolean {
 /** 正文落盘时的扩展名：只有「原始文件」格式才保留 html，其余按所选格式统一。 */
 export function resolveTextExtension(format: DocDownloadFormat, contentType?: string | null): string {
   if (format === 'text') return '.txt';
+  if (format === 'original' && (contentType ?? '').toLowerCase().split(';')[0].trim() === 'text/plain') return '.txt';
   if (format === 'original' && (contentType ?? '').toLowerCase().includes('html')) return '.html';
   return '.md';
 }
 
-/** 是否应该先去取原始二进制文件（只有「原始文件」格式 + 非文字类条目 + 有 fileUrl 才值得试）。 */
+/** 原始格式只要有附件地址就取原件；文字附件同样不能用解析正文替代。 */
 export function shouldFetchOriginalFile(
   format: DocDownloadFormat,
-  contentType: string | null | undefined,
+  _contentType: string | null | undefined,
   fileUrl: string | null | undefined,
 ): boolean {
-  return format === 'original' && !!fileUrl && !isTextDownloadType(contentType);
+  return format === 'original' && !!fileUrl;
 }
 
 /**

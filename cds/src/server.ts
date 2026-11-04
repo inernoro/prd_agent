@@ -26,6 +26,7 @@ import { createProjectsRouter, assertProjectAccess, isBranchGroupsSaveRequest } 
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
+import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
@@ -75,6 +76,7 @@ import { collectControlPlanePressure } from './services/control-plane-pressure.j
 import type { UptimeCycleHealth } from './services/uptime-monitor.js';
 import type { OffHostAuditBreakerState } from './services/offhost-audit-log.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { verifyProjectReleaseCI } from './services/project-release-ci.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
@@ -635,11 +637,21 @@ function isSealedStorageRequest(req: express.Request): boolean {
   return [req.url, req.originalUrl].some((value) => normalizedSealedStoragePath(value) !== null);
 }
 
+function normalizedDatabasePassCredentialPath(value: unknown): string | null {
+  const pathname=String(value||'').split('?')[0].replace(/^\/_cds\/api\//i,'/api/').replace(/\/$/,'');
+  return /^\/api\/branches\/[^/]+\/resources\/[^/]+\/database-passes\/[a-f0-9]{20}\/credentials$/i.test(pathname)?pathname:null;
+}
+function isDatabasePassCredentialRequest(req: express.Request): boolean {
+  return [req.url,req.originalUrl].some(value=>normalizedDatabasePassCredentialPath(value)!==null);
+}
+
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
+    ?? normalizedDatabasePassCredentialPath(req.url)
+    ?? normalizedDatabasePassCredentialPath(raw)
     ?? '/api/cds-system/sealed-storage';
 }
 
@@ -1017,6 +1029,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
     'GET /bootstrap/presets': '列出初始化预设',
+    'GET /agent/setup.md': '读取智能体接入与任务说明',
+    'GET /agent/setup.json': '读取智能体接入版本与技能选择',
     'GET /skills/bundles': '列出角色套装',
     'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
@@ -1551,6 +1565,7 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (isPublicAgentSetupRoute(method, path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
@@ -1830,8 +1845,10 @@ export function createServer(deps: ServerDeps): express.Express {
       undefined,
       {
         recreate: async (service) => {
-          await deps.containerService.stopInfraService(service.containerName);
-          await deps.containerService.startInfraService(service, deps.stateService.getCustomEnv(service.projectId));
+          // Credential replacement requires recreation authority before stopping the old DB.
+          const accepted = await deps.containerService.preflightInfraStorage(service);
+          await deps.containerService.stopInfraService(accepted.containerName);
+          await deps.containerService.startInfraService(accepted, deps.stateService.getCustomEnv(service.projectId));
           deps.stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, service.projectId);
           deps.stateService.save();
           await deps.stateService.flush();
@@ -1894,7 +1911,9 @@ export function createServer(deps: ServerDeps): express.Express {
   }
   // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
-  const releaseService = new ReleaseService(deps.stateService);
+  const releaseService = new ReleaseService(deps.stateService, {
+    verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
+  });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
   // 远端现场巡检（阶段三 · 记账）：另起一个 starter 而不塞进上面的收割器 —— 收割器
@@ -1982,7 +2001,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req)) {
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2356,7 +2375,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
     // request flowing before async authentication finishes, draining uploads
@@ -4559,6 +4578,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
+    publicBaseUrl: deps.config.publicBaseUrl,
     skillProxy: new SkillProxy({
       mapBase: process.env.CDS_MAP_BASE?.trim() || '',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
@@ -4583,10 +4603,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
+    shell: deps.shell,
     stateService: deps.stateService,
     containerService: deps.containerService,
     serverEventLogStore: deps.serverEventLogStore,
-    config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
+    config: deps.config,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)

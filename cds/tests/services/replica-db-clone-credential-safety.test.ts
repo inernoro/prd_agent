@@ -111,6 +111,12 @@ describe('replica Mongo credential transport', () => {
     });
 
     expect(result.snapshot.dedicatedHostPort).toBe(32123);
+    const creators = dockerHarness.calls.filter((call) => call.argv[0] === 'run');
+    expect(creators).toHaveLength(3); // original dump helper, dedicated Mongo, restore helper
+    for (const { argv } of creators) {
+      expect(argv).toEqual(expect.arrayContaining(['--log-driver', 'json-file', '--log-opt', 'max-size=50m', 'max-file=3']));
+      expect(argv.filter((arg) => arg === '--log-driver')).toHaveLength(1);
+    }
     expect(dockerHarness.envFiles.length).toBeGreaterThanOrEqual(3);
     for (const entry of dockerHarness.envFiles) {
       expect(entry.mode).toBe(0o600);

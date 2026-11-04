@@ -18,6 +18,8 @@
 
 ## 文档列表
 
+- [CDS 项目发布脚本 · 指南](./guide.cds.release-scripts.md) `guide.cds.release-scripts`
+
 ### 一、产品规格
 
 - [cds-compose 契约 · SSOT · 规格](./spec.cds.compose-contract.md) `spec.cds.compose-contract`
@@ -76,6 +78,7 @@
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
+- [MyCDS 外网通行证 · 设计](./design.cds.public.pass.md) `design.cds.public.pass`
 - [CDS 角色化 Agent 一键上手范型 · 设计](./design.cds.agent-onboarding-harness.md) `design.cds.agent-onboarding-harness`
 - [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
@@ -223,7 +226,7 @@
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
 - [LLM Gateway 故障止血与恢复 · 指南](./guide.platform.llm-gateway.incident-recovery.md) `guide.platform.llm-gateway.incident-recovery`
-- [MAP MCP 连接器接入 · 指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
+- [MAP 智能体连接器 · 指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
 - [MongoDB 索引维护 · 指南](./guide.platform.mongodb-indexes.md) `guide.platform.mongodb-indexes`
 - [PRD Agent 系统原则速查（命名原则索引） · 指南](./guide.platform.principles.md) `guide.platform.principles`
 - [PRD Agent 快速部署 · 指南](./guide.platform.quickstart.md) `guide.platform.quickstart`
@@ -277,6 +280,8 @@
 - [技能触发消歧 · 规则](./rule.skill.trigger-disambiguation.md) `rule.skill.trigger-disambiguation`
 
 ### 五、计划
+
+- [MCP 接入与能力补齐 · 计划](./plan.platform.mcp-capability-completion.md) `plan.platform.mcp-capability-completion`
 
 - [文档说人话标准推广 · 计划](./plan.doc.readability.rollout.md) `plan.doc.readability.rollout`
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`

@@ -8,6 +8,7 @@
 //   - POST /api/self-refresh 立刻 202 返回 jobId,git fetch 在后台跑,进度走事件流
 
 import { Router, type Request, type Response } from 'express';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 import { selfStatusCache, type RefreshTrigger } from '../services/self-status-cache.js';
 import { cdsEventsBus, type CdsEventEnvelope } from '../services/cds-events-bus.js';
 
@@ -52,6 +53,10 @@ export function createCdsEventsRouter(): Router {
     //     全局事件(self.*/operator.*/infra.* 等无 projectId 的)一律不转发
     const projectScope = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId;
     const envelopeAllowed = (env: CdsEventEnvelope): boolean => {
+      // Approval payloads may contain cross-project SQL, results and shell output.
+      // Only the verified human who can approve may receive this broadcast.
+      // Agents retain their caller-bound request polling endpoint.
+      if (env.type.startsWith('operator.request.') && !isHumanSystemOwner(req)) return false;
       if (!projectScope) return true;
       if (env.type === 'heartbeat') return true;
       const pid = (env.data as { projectId?: string } | null | undefined)?.projectId;
