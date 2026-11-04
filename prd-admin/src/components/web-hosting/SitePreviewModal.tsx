@@ -147,9 +147,13 @@ export default function SitePreviewModal({
     const frame = iframeRef.current;
     if (!frame) return;
     // PPT/幻灯片类托管页的快捷键通常绑在 iframe 内部 window 上。
-    // 弹窗打开后焦点仍可能停在后台按钮/关闭按钮上，需要把键盘焦点交给预览内容。
-    requestAnimationFrame(() => frame.focus());
-    window.setTimeout(() => frame.focus(), 80);
+    // 仅在用户尚未操作工具栏时交给预览，迟到的加载不能抢走菜单或输入框焦点。
+    const focusIfIdle = () => {
+      const active = document.activeElement;
+      if (active === document.body || active === dialogRef.current || active === frame) frame.focus();
+    };
+    requestAnimationFrame(focusIfIdle);
+    window.setTimeout(focusIfIdle, 80);
   };
 
   useEffect(() => {

@@ -14,7 +14,7 @@ namespace PrdAgent.Infrastructure.Services;
 
 public class HostedSiteService : IHostedSiteService
 {
-    public async Task PrepareReviewHistoryAssetsAsync(string siteId, string userId, CancellationToken ct = default)
+    public async Task PrepareReviewHistoryAssetsAsync(string siteId, string userId, CancellationToken ct = default, bool relocateCurrent = false)
     {
         var site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
         if (!await CanEditSiteAsync(site, userId, ct)) throw new UnauthorizedAccessException("无权整理站点历史资源");
@@ -77,7 +77,7 @@ public class HostedSiteService : IHostedSiteService
         // Move an active legacy entry to the identical retained copy before permitting a replacement.
         // The business version and publication time stay unchanged; a failed cleanup leaves V1 readable.
         site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
-        if (site.Files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
+        if (relocateCurrent && site.Files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
         {
             var version = EffectiveContentVersion(site);
             var snapshot = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId
@@ -878,7 +878,7 @@ public class HostedSiteService : IHostedSiteService
             throw new KeyNotFoundException("站点不存在"); // 不可见/无编辑权一并按不存在处理，不泄露存在性
 
         var acceptedVersion = EffectiveContentVersion(site);
-        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct, relocateCurrent: true);
         site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
         if (EffectiveContentVersion(site) != acceptedVersion)
             throw new InvalidOperationException("站点在归档期间发生变化，请刷新后重试");
@@ -1116,7 +1116,7 @@ public class HostedSiteService : IHostedSiteService
             throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
 
         var acceptedVersion = current.ContentVersion;
-        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct, relocateCurrent: true);
         current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
         if (current.ContentVersion != acceptedVersion)
             throw new InvalidOperationException("站点在归档期间已经发布过其他内容，请刷新后重试");
@@ -1148,7 +1148,7 @@ public class HostedSiteService : IHostedSiteService
                     sources.Single(source => source.Path == file.Path).CosKey, ct)
                     ?? throw new InvalidOperationException("网页资源读取失败，原版本未覆盖");
                 file.Size = content.LongLength;
-                if (isEntry) file.MimeType = "text/html";
+                if (isEntry) file.MimeType = "text/html; charset=utf-8";
                 await _storage.UploadToKeyAsync(file.CosKey, content, file.MimeType, CancellationToken.None, SiteCacheControl);
             }
         }
@@ -1227,7 +1227,7 @@ public class HostedSiteService : IHostedSiteService
         if (current.ContentVersion != expectedContentVersion)
             throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
         var ordered = ValidateVerifiedGeneratedFiles(files);
-        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct, relocateCurrent: true);
         current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
         if (current.ContentVersion != expectedContentVersion)
             throw new InvalidOperationException("站点在归档期间已经发布过其他内容，请刷新后重试");

@@ -78,6 +78,9 @@ public class HostedSiteReviewVersionAccessTests
             Assert.False(published.Files[0].CosKey.StartsWith(oldDirectory, StringComparison.Ordinal));
             if (mode == "entry")
             {
+                var publishedEntry = published.Files.Single(f => f.Path == "index.html");
+                Assert.Equal("text/html; charset=utf-8", publishedEntry.MimeType);
+                storage.Verify(x => x.UploadToKeyAsync(publishedEntry.CosKey, It.IsAny<byte[]>(), "text/html; charset=utf-8", It.IsAny<CancellationToken>(), It.IsAny<string>()), Times.Once);
                 var css = published.Files.Single(f => f.Path == "style.css");
                 Assert.Equal("h1{color:red}", System.Text.Encoding.UTF8.GetString(objects[css.CosKey]));
                 Assert.False(css.CosKey.StartsWith(oldDirectory, StringComparison.Ordinal));
@@ -147,7 +150,7 @@ public class HostedSiteReviewVersionAccessTests
                 Assert.IsType<ConflictObjectResult>(await controller.UpdateShareSettings("owner-share", new UpdateShareSettingsRequest { Visibility = "public" }));
                 Assert.Equal("owner-only", (await db.WebPageShareLinks.Find(s => s.Id == "owner-share").FirstAsync()).Visibility);
             }
-            else await sites.PrepareReviewHistoryAssetsAsync("site", "owner");
+            else await sites.PrepareReviewHistoryAssetsAsync("site", "owner", relocateCurrent: relocateCurrent);
             var archived = await db.HostedSiteRevisions.Find(r => r.Id == "old").FirstAsync();
             Assert.StartsWith(prefix + ".versions/", archived.PublishedEntryCosKey);
             Assert.All(archived.PublishedAssetKeys, key => Assert.StartsWith(prefix + ".versions/", key));

@@ -11,6 +11,11 @@ function urlVersionKey(url: string): string {
   catch { return ''; }
 }
 
+function versionAtLeast(recorded: string, live: string) {
+  try { return !live || BigInt(recorded) >= BigInt(live); }
+  catch { return false; }
+}
+
 function inlineSnapshotBase(site: ReviewSite, entryFile: string) {
   const base = new URL('.', new URL(site.siteUrl, window.location.href));
   const directory = site.entryFile.split('/').slice(0, -1).map(encodeURIComponent).join('/');
@@ -39,10 +44,14 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   const identityRef = useRef(identity); identityRef.current = identity;
   const currentSite = override?.id === live?.id ? override : live;
   const published = versions.find(v => v.isCurrent);
-  const selected = selectedId ? versions.find(v => v.id === selectedId) : published;
+  const metadataBehind = !!currentSite && !!published
+    && !versionAtLeast(published.contentVersionKey, urlVersionKey(currentSite.siteUrl));
+  const selected = selectedId ? versions.find(v => v.id === selectedId) : metadataBehind ? undefined : published;
+  const useRecordedMetadata = !!published && !metadataBehind;
   const liveSite = currentSite ? { ...currentSite,
-    siteUrl: published?.siteUrl && urlVersionKey(currentSite.siteUrl) !== published.contentVersionKey ? published.siteUrl : currentSite.siteUrl,
-    entryFile: published?.entryFile ?? currentSite.entryFile, contentShape: published?.contentShape ?? currentSite.contentShape } : null;
+    siteUrl: useRecordedMetadata && published.siteUrl ? published.siteUrl : currentSite.siteUrl,
+    entryFile: useRecordedMetadata ? published.entryFile : currentSite.entryFile,
+    contentShape: useRecordedMetadata ? published.contentShape ?? currentSite.contentShape : currentSite.contentShape } : null;
   const historical = !!selectedId && !!selected && !selected.isCurrent;
   const selectedUrl = historical ? (preview?.revision.id === selectedId ? preview.siteUrl : selected.siteUrl) : liveSite?.siteUrl;
   const displaySite = liveSite ? { ...liveSite, siteUrl: selectedUrl || '',
@@ -51,7 +60,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   // A logical hosted address anchors inline snapshots; it is never used as their navigation fallback.
   const previewBaseUrl = historical ? selectedUrl || (liveSite ? inlineSnapshotBase(liveSite, selected.entryFile) : undefined) : liveSite?.siteUrl;
   const annotationSite = displaySite && previewBaseUrl ? { ...displaySite, siteUrl: previewBaseUrl } : null;
-  const annotations = useHostedAnnotations(frameRef, annotationSite, onOpen, selected?.contentVersionKey);
+  const annotations = useHostedAnnotations(frameRef, metadataBehind && !selectedId ? null : annotationSite, onOpen, selected?.contentVersionKey);
   const annotationsRef = useRef(annotations); annotationsRef.current = annotations;
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -113,6 +122,6 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   }, [live, uploading, identity, refresh]);
 
   return { versions, selected, historical, preview, previewBaseUrl, site: displaySite, liveSite, annotations,
-    loading, uploading, error, selectVersion, upload, refresh };
+    loading: loading || (metadataBehind && !selectedId), uploading, error, selectVersion, upload, refresh };
 }
 export type HostedReview = ReturnType<typeof useHostedReview>;

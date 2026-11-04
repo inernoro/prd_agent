@@ -129,8 +129,10 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     await card.hover();
     await card.getByRole('button', { name: '更多' }).filter({ visible: true }).first().click();
     // 固定父页时钟，让输入操作稳定发生在 1.5 秒等待窗内，不依赖 CI 机器速度。
-    await page.clock.install({ time: new Date('2026-11-03T12:00:00Z') });
-    await page.clock.pauseAt(new Date('2026-11-03T12:00:01Z'));
+    if (!options.inlineHistory) {
+      await page.clock.install({ time: new Date('2026-11-03T12:00:00Z') });
+      await page.clock.pauseAt(new Date('2026-11-03T12:00:01Z'));
+    }
     await page.getByText('评论管理', { exact: true }).click();
   } else {
     await page.goto('/s/wp/qa-native');
@@ -147,7 +149,6 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     for (const modal of [false, true]) {
       test(`${modal ? '站内' : '分享'}的无直链历史正文保持内联预览并可绑定批注`, async ({ page }) => {
         const { frame, preview } = await serve(page, { modal, inlineHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
-        if (modal) await page.clock.resume();
         await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
         await page.getByRole('option', { name: /V1/ }).click();
         await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();

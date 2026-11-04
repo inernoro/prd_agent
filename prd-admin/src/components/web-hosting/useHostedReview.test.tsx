@@ -97,6 +97,24 @@ describe('versioned webpage review', () => {
     expect(review.site?.siteUrl).toBe(current.siteUrl);
     expect(upload).not.toHaveBeenCalled();
   });
+  it('uses the recorded migrated URL even when its business version is unchanged', async () => {
+    const moved = { ...current, siteUrl: 'https://assets.example/.versions/random/index.html?v=20000' };
+    list.mockResolvedValue({ success: true, data: [moved, previous] });
+    await mount();
+    expect(review.selected?.contentVersionKey).toBe('20000');
+    expect(review.liveSite?.siteUrl).toBe(moved.siteUrl);
+    expect(review.site?.siteUrl).toBe(moved.siteUrl);
+  });
+  it('does not replace a newer live publication with an older version-list response', async () => {
+    await mount();
+    const newer = { ...site, siteUrl: 'https://assets.example/.versions/new/nested/page.html?v=30000', entryFile: 'nested/page.html' };
+    await act(async () => root.render(<Harness live={newer} />));
+    expect(review.liveSite?.siteUrl).toBe(newer.siteUrl);
+    expect(review.liveSite?.entryFile).toBe(newer.entryFile);
+    expect(review.site?.siteUrl).toBe(newer.siteUrl);
+    expect(review.selected).toBeUndefined();
+    expect(review.loading).toBe(true);
+  });
   it('discards a late historical response after the reviewer has switched back to current', async () => {
     let finish!: (value: unknown) => void;
     preview.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
