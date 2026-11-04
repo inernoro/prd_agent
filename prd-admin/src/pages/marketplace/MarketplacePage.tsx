@@ -274,7 +274,10 @@ export const MarketplacePage: React.FC = () => {
 
   useEffect(() => { loadAllData(); }, [loadAllData]);
 
+  const favoriteListRequest = loadRequestRef.current;
   const handleFavoriteChange = (updated: MarketplaceSkillDto) => {
+    // 收藏请求可能晚于范围切换或列表刷新返回，只回写发起组件所属的列表代次。
+    if (favoriteListRequest !== loadRequestRef.current) return;
     setDataByType(previous => ({ ...previous, skill: (previous.skill || []).flatMap<MarketplaceItemBase>(item =>
       item.id !== updated.id ? [item] : scope === 'favorites' && !updated.isFavoritedByCurrentUser ? [] : [{
         ...item, favoriteCount: updated.favoriteCount, isFavoritedByCurrentUser: updated.isFavoritedByCurrentUser,
@@ -341,6 +344,7 @@ export const MarketplacePage: React.FC = () => {
   }, [scope, skillTags, dataByType.skill]);
   const filters = (
     <MarketplaceFilters category={categoryFilter} onCategoryChange={updateTypeFilter}
+      categoryTourAnchor={!isMobile}
       roles={roleEntries} role={roleFilter} onRoleChange={setRoleFilter}
       tags={viewTags} tag={tagFilter} onTagChange={setTagFilter} />
   );
@@ -394,11 +398,13 @@ export const MarketplacePage: React.FC = () => {
                 rememberPreferences />
             </ToolbarPopover>
             {isMobile && (
-              <ToolbarPopover label="筛选" count={filterCount} open={toolbarPanel === 'filters'}
-                onOpenChange={open => { setToolbarPanel(open ? 'filters' : null); setQuickConnectOpen(false); }}
-                tourId="marketplace-mobile-filters">
-                {filters}
-              </ToolbarPopover>
+              <div className="shrink-0" data-tour-id="marketplace-category-tabs">
+                <ToolbarPopover label="筛选" count={filterCount} open={toolbarPanel === 'filters'}
+                  onOpenChange={open => { setToolbarPanel(open ? 'filters' : null); setQuickConnectOpen(false); }}
+                  tourId="marketplace-mobile-filters">
+                  {filters}
+                </ToolbarPopover>
+              </div>
             )}
             <div className="marketplace-primary-actions">
               {categoryFilter === 'skill' && (

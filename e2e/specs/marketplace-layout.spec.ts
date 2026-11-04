@@ -53,7 +53,11 @@ test('手机筛选和接入浮层：小屏不横溢出，生成结果与 Esc 关
   await page.goto('/marketplace');
   await expect(page.locator('.mkt-card-density-tile')).toHaveCount(24, { timeout: 30_000 });
   await expect(page.locator('.marketplace-filter-rail')).toHaveCount(0);
+  const categoryAnchor = page.locator('[data-tour-id="marketplace-category-tabs"]');
+  await expect(categoryAnchor).toBeVisible();
+  await expect(categoryAnchor).toHaveCount(1);
   await page.getByRole('button', { name: /^筛选/ }).click();
+  await expect(categoryAnchor).toHaveCount(1);
   await page.getByRole('button', { name: '产品经理', exact: true }).click();
   await expect(page.locator('.mkt-card')).toHaveCount(8);
   await page.keyboard.press('Escape');
@@ -116,6 +120,43 @@ test('个人列表请求失败可重试，取消收藏失败保留列表与状�
   await expect(favorite).toHaveAttribute('data-active', 'true');
   await expect(page.locator('.mkt-card')).toHaveCount(3);
 });
+
+for (const scope of ['all', 'mine'] as const) {
+  test(`取消收藏延迟返回不能移除已切换的${scope}范围卡片`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const items = await installMarketplaceFixture(page);
+    const item = items.find(item => item.id === 'fixture-skill-20')!;
+    let releaseResponse!: () => void;
+    const responseGate = new Promise<void>(resolve => { releaseResponse = resolve; });
+    await page.route(`**/api/marketplace/skills/${item.id}/unfavorite`, async route => {
+      await responseGate;
+      item.isFavoritedByCurrentUser = false;
+      item.favoriteCount = 0;
+      await route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { item }, error: null }) });
+    });
+    try {
+      await page.goto('/marketplace?scope=favorites');
+      await expect(page.locator('.mkt-card')).toHaveCount(3, { timeout: 60_000 });
+      const card = page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) });
+      const requestStarted = page.waitForRequest(request => request.url().endsWith(`/${item.id}/unfavorite`));
+      await card.getByTitle('取消收藏', { exact: true }).click();
+      await requestStarted;
+      await page.getByRole('button', { name: scope === 'all' ? '全部内容' : '我的技能', exact: true }).click();
+      const count = scope === 'all' ? 24 : 4;
+      await expect(page.locator('.mkt-card')).toHaveCount(count);
+      await expect(card).toBeVisible();
+      const response = page.waitForResponse(response => response.url().endsWith(`/${item.id}/unfavorite`));
+      releaseResponse();
+      await (await response).finished();
+      await page.waitForLoadState('networkidle');
+      await expect(page.locator('.mkt-card')).toHaveCount(count);
+      await expect(card).toBeVisible();
+    } finally {
+      releaseResponse();
+    }
+  });
+}
 
 test('网页创作与市场共用显示控件，样式一致且偏好各自保留', async ({ page }) => {
   test.setTimeout(180_000);

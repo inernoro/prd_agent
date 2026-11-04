@@ -4,6 +4,7 @@ import { getCategoryFilterOptions } from '@/lib/marketplaceTypes';
 interface Props {
   category: string;
   onCategoryChange: (category: string) => void;
+  categoryTourAnchor?: boolean;
   roles: Array<[string, string]>;
   role: string;
   onRoleChange: (role: string) => void;
@@ -13,10 +14,10 @@ interface Props {
 }
 
 /** 桌面左栏与手机筛选弹层共用，分类与角色仍由原有注册表/接口提供。 */
-export function MarketplaceFilters({ category, onCategoryChange, roles, role, onRoleChange, tags, tag, onTagChange }: Props) {
+export function MarketplaceFilters({ category, onCategoryChange, categoryTourAnchor = true, roles, role, onRoleChange, tags, tag, onTagChange }: Props) {
   return (
     <div className="marketplace-filters" aria-label="市场筛选">
-      <fieldset data-tour-id="marketplace-category-tabs">
+      <fieldset data-tour-id={categoryTourAnchor ? 'marketplace-category-tabs' : undefined}>
         <legend>内容类型</legend>
         {getCategoryFilterOptions().filter(option => option.key !== 'all').map(({ key, label, icon: Icon }) => (
           <button key={key} type="button" aria-pressed={category === key} data-active={category === key}
