@@ -117,7 +117,7 @@ export function TargetDetail({
   const history = useHistory(target.id, range, generatedAt, reloadToken);
   const own = useMemo(() => incidents.filter((i) => i.targetId === target.id).slice(0, 20), [incidents, target.id]);
   const link = sourceLink(target);
-  const isCustom = target.source === 'custom' && !target.id.startsWith('monitor@self-collection-');
+  const isCustom = target.source === 'custom' && !target.collectionMembers && !target.id.startsWith('monitor@self-collection-');
   const rangeBuckets = history.status === 'ok' ? history.history.points : null;
   const rangeAvailability = rangeBuckets ? availabilityOfBuckets(rangeBuckets) : null;
   const statusTone = target.status === 'down' ? 'danger' : target.status === 'up' ? 'ok' : target.status === 'unknown' ? 'warn' : 'default';
@@ -127,7 +127,7 @@ export function TargetDetail({
     ? (target.userView ? 'CDS 主机 → 容器端口（进程视角） + 预览域名整条链路（用户视角）' : 'CDS 主机 → 容器端口（进程视角，单点）')
     : 'CDS 检查器 → 配置的目标地址；检查位置与用户设备不同，结果不能代表所有用户的访问情况';
   const explanation = explainTarget(target);
-  const isMetric = Boolean(target.healthCheck);
+  const isMetric = Boolean(target.healthCheck || target.collectionMembers);
   const rateLabel = isMetric ? '检查通过率' : '可用率';
   const recentSamples = history.status === 'ok' ? (history.history.recentSamples || []) : [];
 
@@ -223,9 +223,15 @@ export function TargetDetail({
           <p className="text-muted-foreground">立即检查只重新读取状态，不会重试部署或清除故障记录。</p>
           {target.healthCheck?.componentId === 'webhook.dispatch-unresolved' ? <Button variant="outline" asChild><Link to="/project-list">查看项目与部署记录</Link></Button> : null}
         </section>
+        {target.collectionMembers ? <section className="rounded-lg border p-4 space-y-3" aria-label="关联检查">
+          <h2 className="text-base font-semibold">本事件关联 {target.collectionMembers.length} 项检查</h2>
+          <p>共同数据源读取失败已合并通知。每项原始采样和独立故障仍保留，可逐项查看。</p>
+          <div className="flex flex-wrap gap-3">{target.collectionMembers.map(member => <Button key={member.id} variant="outline" asChild><Link to={`/status?target=${encodeURIComponent(member.id)}`}>{member.name}</Link></Button>)}</div>
+        </section> : null}
+        {target.collectionTargetId && target.lastSample?.noData ? <Button variant="outline" asChild><Link to={`/status?target=${encodeURIComponent(target.collectionTargetId)}`}>查看共同数据源事件</Link></Button> : null}
         {target.alarmIdentity ? <section className="rounded-lg border p-4 text-base leading-relaxed" aria-label="监控身份">
           <p>检查方：{[target.alarmIdentity.observer.name, target.alarmIdentity.observer.environment, target.alarmIdentity.observer.location].filter(Boolean).join(' · ')}</p>
-          <p>故障对象：{[target.alarmIdentity.subject.name, target.alarmIdentity.subject.environment, target.alarmIdentity.subject.location].filter(Boolean).join(' · ')}</p>
+          <p>检查对象：{target.projectName || target.projectId} · {target.environmentLabel} · {target.name}</p>
         </section> : null}
         {target.lastSample?.noData ? <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-base leading-relaxed text-warn">
           本轮没有有效读数。当前状态待确认，历史故障与最后有效检查结果仍保留。
@@ -352,7 +358,7 @@ export function TargetDetail({
                 ) : recentSamples.map((s) => (
                   <div key={s.t} className="grid grid-cols-[6.25rem_3.75rem_4.375rem_5rem_minmax(0,1fr)] gap-3 border-t border-[hsl(var(--hairline))] px-3 py-1.5 font-mono text-xs">
                     <span>{formatShortClock(s.t)}</span>
-                    <span className={cn('font-semibold', s.up ? 'text-ok' : 'text-destructive')}>{s.up ? '成功' : '失败'}</span>
+                    <span className={cn('font-semibold', s.noData ? 'text-warn' : s.up ? 'text-ok' : 'text-destructive')}>{s.noData ? '待确认' : s.up ? '成功' : '失败'}</span>
                     <span>{s.code ?? '—'}</span>
                     <span>{formatLatency(s.ms)}</span>
                     <span className="truncate text-muted-foreground" title={s.err}>{s.err || ''}</span>

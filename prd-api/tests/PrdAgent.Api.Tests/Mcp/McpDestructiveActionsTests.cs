@@ -54,7 +54,7 @@ public class McpDestructiveActionsTests
     [InlineData("GET", "/api/web-pages/deleted-items")]
     [InlineData("GET", "/api/document-store/stores/s1")]
     [InlineData("POST", "/api/mcp")]
-    [InlineData("POST", "/api/web-pages/batch-delete-preview")]
+    [InlineData("POST", "/api/projects/batch-delete-preview")]
     // 内置的「网页托管发布」走的是这条 —— 最后一段是 pages，不该被公开发布那半句误伤
     [InlineData("POST", "/api/open/web-pages/pages")]
     // 分享链按工具说明只对本人与团队可见，不是公开发布

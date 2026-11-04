@@ -139,11 +139,11 @@ export function sendRoute(input: {
 }
 
 /**
- * 没有可用执行器时的拦截文案。能力接口还没回来时不能报「没有」——那是还没查到，
+ * 设计服务尚未就绪时的拦截文案。能力接口还没回来时不能报「不可用」——那是还没查到，
  * 不是查过了没有；先报「正在检测」，接口回来仍为空才报缺失。
  */
 export function missingRuntimeBlocker(runtimesLoaded: boolean): string {
   return runtimesLoaded
-    ? '没有可用的设计执行器，请联系管理员检查部署状态'
+    ? '设计服务暂不可用，请联系管理员检查部署状态'
     : '正在检测设计服务…';
 }

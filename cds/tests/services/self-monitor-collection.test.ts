@@ -59,10 +59,10 @@ describe('自检采集故障合并', () => {
     expect(service.getRecord('monitor@m2')?.incidents[0].endedAt).toBeNull();
     expect(service.getRecord('monitor@m0')?.lastSample?.noData).toBe(true);
   });
-  it('独立通知链接只应用于 CDS 自身，保留具体目标与发现时间', () => {
+  it('各项目通知均保留独立入口、具体目标与发现时间', () => {
     const c = { incidentPageUrl: 'https://status.example/index.html' } as AlarmChannelConfig;
-    const event = { projectId: 'cds-self-monitor', targetId: 'monitor@test', detectedAt: '2026-09-30T10:00:00Z' } as AlarmEvent;
+    const event = { projectId: 'cds-self-monitor', targetId: 'monitor@test', targetName: '示例检查', kind: 'business-down', detectedAt: '2026-09-30T10:00:00Z' } as AlarmEvent;
     expect(new URL(independentIncidentUrl(c, event)!).searchParams.get('target')).toBe('monitor@test');
-    expect(independentIncidentUrl(c, { ...event, projectId: 'other' })).toBeUndefined();
+    expect(new URL(independentIncidentUrl(c, { ...event, projectId: 'other' })!).searchParams.get('target')).toBe('monitor@test');
   });
 });

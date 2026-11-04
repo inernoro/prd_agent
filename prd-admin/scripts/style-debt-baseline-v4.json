@@ -1,0 +1,39 @@
+{
+  "metricVersion": 4,
+  "referenceMetricVersion": 3,
+  "sourceCommit": "1de51766324f268c8b5853f76814f1b2b22e8f86",
+  "migrationNote": "在原基线准确源码上重新执行原v3与生产v4扫描；仅扣除当时测试样本的贡献，不以当前分支重新设定阈值。原项目基线、目标和历史仍按v3读取，原文件不变。",
+  "originalCurrentCeiling": {
+    "score": 67696,
+    "undeclaredThemeRisk": 549,
+    "adaptiveBorderRisk": 216,
+    "adaptiveSurfaceRisk": 128,
+    "adaptiveHoverRisk": 0,
+    "adaptiveThemeRisk": 344,
+    "actionableThemeRisk": 0,
+    "ordinaryUiRisk": 0,
+    "unclassifiedThemeRisk": 0
+  },
+  "excludedTestContribution": {
+    "score": 80,
+    "undeclaredThemeRisk": 5,
+    "adaptiveBorderRisk": 1,
+    "adaptiveSurfaceRisk": 1,
+    "adaptiveHoverRisk": 0,
+    "adaptiveThemeRisk": 2,
+    "actionableThemeRisk": 0,
+    "ordinaryUiRisk": 0,
+    "unclassifiedThemeRisk": 0
+  },
+  "currentCeiling": {
+    "score": 67616,
+    "undeclaredThemeRisk": 544,
+    "adaptiveBorderRisk": 215,
+    "adaptiveSurfaceRisk": 127,
+    "adaptiveHoverRisk": 0,
+    "adaptiveThemeRisk": 342,
+    "actionableThemeRisk": 0,
+    "ordinaryUiRisk": 0,
+    "unclassifiedThemeRisk": 0
+  }
+}

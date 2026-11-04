@@ -478,7 +478,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       <div
         className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
         style={{
-          background: isUser ? 'rgba(62, 55, 42, 0.92)' : 'rgba(42, 43, 50, 0.92)',
+          background: 'var(--nested-block-bg)',
           border: '1px solid var(--border-subtle)',
           boxShadow: '0 10px 24px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.06)',
           backdropFilter: 'blur(14px) saturate(150%)',

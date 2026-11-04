@@ -192,7 +192,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
     {
         if (string.IsNullOrWhiteSpace(jobId))
         {
-            return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = "jobId 不能为空" };
+            throw new ArgumentException("视频任务标识为空，请返回视频页面重新打开任务");
         }
 
         // 优先复用 SubmitAsync 已算好的解析结果，避免每次轮询都查一次 DB
@@ -206,7 +206,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 ? await _gateway.ResolveOfferingAsync(appCallerCode, ModelTypes.VideoGen, offeringId, ct)
                 : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!statusResolution.Success)
-            return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = VideoGenerationUserError.ServiceUnavailable() };
+            throw new InvalidOperationException(VideoGenerationUserError.ServiceUnavailable());
 
         var statusBody = IsVolcengineVideoResolution(statusResolution)
             ? new JsonObject
@@ -230,11 +230,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         if (!rawResp.Success || string.IsNullOrWhiteSpace(rawResp.Content))
         {
-            return new OpenRouterVideoStatus
-            {
-                Status = "failed",
-                ErrorMessage = VideoGenerationUserError.FromGateway(rawResp)
-            };
+            // 查询未成功不代表供应商任务终结，沿既有异常渠道由调用方处理。
+            throw new HttpRequestException(VideoGenerationUserError.FromGateway(rawResp));
         }
 
         var doc = JsonNode.Parse(rawResp.Content)?.AsObject();

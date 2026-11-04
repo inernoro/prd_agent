@@ -39,8 +39,13 @@ import { createHash } from 'node:crypto';
  */
 function argsHashFor(args: Record<string, unknown> | undefined): string {
   if (!args || Object.keys(args).length === 0) return 'no-args';
-  const canonical = JSON.stringify(args, Object.keys(args).sort());
-  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+  // 数组 replacer 是递归字段白名单，会把嵌套 write 的 action/filter 等字段丢掉。
+  // 对每层对象排序，数组保留顺序，确保批准绑定实际完整参数。
+  const canonical = JSON.stringify(args, (_key, value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]));
+  });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 export type RequestStatus =
@@ -166,11 +171,19 @@ export class OperatorApprovalService {
       status: 'pending',
       logs: [],
     };
+    try {
+      if (op.prepareArgs) req.args = await op.prepareArgs(opts.args);
+    } catch (error) {
+      req.status = 'rejected';
+      req.error = (error as Error).message;
+      this.persist(req);
+      return req;
+    }
     this.persist(req);
 
     // 检查 session 自动通过 — 2026-05-28 session key 加 argsHash,防止
     // "批一条 dmesg 等于授权 7 天任意 root 命令" 的 High 级漏洞。
-    const argsHash = argsHashFor(opts.args);
+    const argsHash = argsHashFor(req.args);
     const sessionKey = `${opts.callerKey}::${op.id}::${argsHash}`;
     const session = this.sessions.get(sessionKey);
     if (session && session.expiresAt > Date.now()) {
@@ -324,7 +337,7 @@ export class OperatorApprovalService {
           details: { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr },
         };
       } else {
-        result = await op.run(ctx);
+        result = await op.run(ctx, req.args);
       }
       req.status = 'completed';
       req.result = result;

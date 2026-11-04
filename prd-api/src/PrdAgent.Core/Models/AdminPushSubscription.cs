@@ -58,6 +58,10 @@ public class AdminPushDeliveryLog
     public string UserId { get; set; } = string.Empty;
     public string SubscriptionId { get; set; } = string.Empty;
     public string NotificationId { get; set; } = string.Empty;
+    public List<string> CoveredNotificationIds { get; set; } = [];
+    /// <summary>本次尝试覆盖的通知及代次；空列表是升级前第 0 代回执。</summary>
+    public List<string> CoveredNotificationDeliveryKeys { get; set; } = [];
+    public string DeliveryState { get; set; } = string.Empty;
     public string TopicKey { get; set; } = string.Empty;
     public string ChannelType { get; set; } = string.Empty;
     public string Method { get; set; } = string.Empty;

@@ -25,6 +25,14 @@ CDS 服务端的 `/api/export-skill` 端点每次被调用时，都是**实时**
 
 ## AI 辅助同步（推荐工作流）
 
+### 修改随仓库分发的五技能包
+
+修改 `cds`、`cds-project-scan`、`cds-deploy-pipeline`、`cds-release` 或 `preview-url`
+后，在仓库根运行 `pnpm -C cds run sync:skill-manifest`，将生成的
+`cds/cli/cds-skill-manifest.json` 与改动一同提交。它记录完整包的版本与文件 SHA-256，
+使仓库内 CLI 无需下载即可通过 `setup-check`；CI 会拒绝缺失或过期的 manifest。
+匿名下载和已登录导出也使用同一生成器。预览镜像仍需 CI 构建并实际冒烟通过后才发布。
+
 **你一句话，Agent 全包**：
 
 > 改完 CDS 端点后，**必须用明确包含 "cds" 的指令**（避免误触发）。

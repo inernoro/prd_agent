@@ -280,8 +280,12 @@ public class LlmRequestLog
     // usage/cache
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    /// <summary>输出 token 中的推理 token；已包含在 OutputTokens 内，不重复计费。</summary>
+    public int? ReasoningTokens { get; set; }
     public int? CacheCreationInputTokens { get; set; }
     public int? CacheReadInputTokens { get; set; }
+    /// <summary>缓存创建 token 是否已包含在 InputTokens 中。</summary>
+    public bool? CacheCreationCountedInsideInput { get; set; }
 
     // 成本快照（来自 GW 模型池成员价格配置；按请求完成时的 token 用量计算）
     public decimal? InputPricePerMillion { get; set; }
@@ -314,6 +318,8 @@ public class LlmRequestLog
     public string? CostStatus { get; set; }
     /// <summary>算不出钱时的人话原因，直接给控制台显示。</summary>
     public string? CostUnpricedReason { get; set; }
+    /// <summary>金额证据性质，取值见 GatewayCostKind。</summary>
+    public string? CostKind { get; set; }
     /// <summary>请求开始时价格字段的不可逆 SHA-256 快照，用于证明 estimated 的复算口径。</summary>
     public string? PriceSnapshotHash { get; set; }
     /// <summary>供应商响应头返回的请求标识，用于关联 provider actual；不接受客户端自报。</summary>

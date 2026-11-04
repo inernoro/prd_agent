@@ -236,7 +236,7 @@ export function InitiationWorkflowPanel({
         ) : (
           <p className="text-sm text-token-muted">
             立项决策时选择「不需要开评审会」，无线下会议稿次需回填。
-            {initiation.primaryOwnerId ? ' 已走负责人审批流程。' : ''}
+            评审通过后自动发号，无需人工审批。
           </p>
         )}
       </WorkflowDetailCard>

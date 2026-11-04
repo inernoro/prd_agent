@@ -63,6 +63,8 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<ProductPermissionConfiguration> ProductPermissionConfigurations =>
+        _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
         _database.GetCollection<BsonDocument>("console_sso_tickets");
     /// <summary>本站作为「源站」签发的一次性数据导出授权（含导出令牌散列）</summary>
@@ -510,6 +512,15 @@ public class MongoDbContext
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
     public IMongoCollection<ProductInitiation> ProductInitiations => _database.GetCollection<ProductInitiation>("product_initiations");
     public IMongoCollection<ProductRelease> ProductReleases => _database.GetCollection<ProductRelease>("product_releases");
+    public IMongoCollection<ProductAnnouncement> ProductAnnouncements => _database.GetCollection<ProductAnnouncement>("product_announcements");
+    public IMongoCollection<ProductAnnouncementSync> ProductAnnouncementSyncs => _database.GetCollection<ProductAnnouncementSync>("product_announcement_syncs");
+    public IMongoCollection<ProductWorkdayCalendar> ProductWorkdayCalendars => _database.GetCollection<ProductWorkdayCalendar>("product_workday_calendars");
+    public IMongoCollection<ProductVersionWorkflowSnapshot> ProductVersionWorkflowSnapshots => _database.GetCollection<ProductVersionWorkflowSnapshot>("product_version_workflow_snapshots");
+    public IMongoCollection<VersionRegistrySystem> VersionRegistrySystems => _database.GetCollection<VersionRegistrySystem>("version_registry_systems");
+    public IMongoCollection<VersionRegistryApplication> VersionRegistryApplications => _database.GetCollection<VersionRegistryApplication>("version_registry_applications");
+    public IMongoCollection<VersionRegistration> VersionRegistrations => _database.GetCollection<VersionRegistration>("version_registrations");
+    public IMongoCollection<VersionRegistrationSnapshot> VersionRegistrationSnapshots => _database.GetCollection<VersionRegistrationSnapshot>("version_registration_snapshots");
+    public IMongoCollection<VersionRegistrationSequence> VersionRegistrationSequences => _database.GetCollection<VersionRegistrationSequence>("version_registration_sequences");
     public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");

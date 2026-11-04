@@ -122,6 +122,7 @@ describe('MongoDB 与 Redis 本地隔离恢复门禁', () => {
     expect(calls.every((call) => !call.args.join(' ').includes(secret))).toBe(true);
     const start = calls.find((call) => call.args[0] === 'run');
     expect(start?.args).toContain('none');
+    expect(start?.args.slice(0, 8)).toEqual(['run', '-d', '--log-driver', 'json-file', '--log-opt', 'max-size=50m', '--log-opt', 'max-file=3']);
     expect(start?.args).not.toContain('-p');
     expect(fs.existsSync(localBackup)).toBe(true);
     expect(fs.statSync(localBackup).mode & 0o777).toBe(0o600);
@@ -155,6 +156,7 @@ describe('MongoDB 与 Redis 本地隔离恢复门禁', () => {
     expect(calls.every((call) => !call.args.join(' ').includes(secret))).toBe(true);
     const start = calls.find((call) => call.args[0] === 'run');
     expect(start?.args).toContain('none');
+    expect(start?.args.slice(0, 8)).toEqual(['run', '-d', '--log-driver', 'json-file', '--log-opt', 'max-size=50m', '--log-opt', 'max-file=3']);
     expect(start?.args).not.toContain('-p');
     expect(calls.at(-1)?.args.slice(0, 3)).toEqual(['rm', '-f', expect.stringMatching(/^cds-infra-drill-/)]);
     expect(fs.existsSync(localBackup)).toBe(true);

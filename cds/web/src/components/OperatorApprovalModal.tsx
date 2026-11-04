@@ -99,6 +99,8 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
   if (!pending) return null;
   const meta = DANGER_META[pending.opDanger] ?? DANGER_META.safe;
+  const target = pending.args?.databaseTarget as { runtime?: string; database?: string; port?: number; containerId?: string } | undefined;
+  const visibleArgs = pending.args && Object.fromEntries(Object.entries(pending.args).filter(([key]) => key !== 'databaseTarget'));
 
   return (
     <Dialog open={!!pending} onOpenChange={(open) => { if (!open) setPending(null); }}>
@@ -146,11 +148,14 @@ export function OperatorApprovalModal(): JSX.Element | null {
             <div className="text-xs text-muted-foreground">
               <code className="font-mono">{pending.opId}</code>
             </div>
-            {pending.args && Object.keys(pending.args).length > 0 ? (
-              <details className="mt-2">
+            {target ? <p className="mt-2 break-words text-xs" role="note">
+              审批目标：{target.runtime} · {target.database} · 端口 {target.port} · 实例 {target.containerId?.slice(0, 12)}
+            </p> : null}
+            {visibleArgs && Object.keys(visibleArgs).length > 0 ? (
+              <details className="mt-2" open={pending.opId.startsWith('database.') ? true : undefined}>
                 <summary className="cursor-pointer text-xs text-foreground/70">参数</summary>
-                <pre className="mt-1 max-h-40 overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
-                  {JSON.stringify(pending.args, null, 2)}
+                <pre className="mt-1 max-h-40 whitespace-pre-wrap break-words overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
+                  {JSON.stringify(visibleArgs, null, 2)}
                 </pre>
               </details>
             ) : null}
@@ -158,7 +163,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
           <p className="text-xs leading-5 text-muted-foreground">
             选择「<strong>允许本次</strong>」只放行这一次请求。<br />
-            选择「<strong>授权 7 天</strong>」放行接下来 7 天内同一发起方(同一 access key)+ 同一 op 的所有请求,免重复点击。
+            选择「<strong>授权 7 天</strong>」仅放行接下来 7 天内同一发起方、同一操作且参数完全相同的请求；更换目标或 SQL 需要重新批准。
           </p>
         </div>
 

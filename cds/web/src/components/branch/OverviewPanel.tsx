@@ -917,10 +917,10 @@ function EntryCards({
             type="button"
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             onClick={onConfigure}
-            title="手动配置入口（新增子域入口 / 改名 / 改落地路径）"
+            title="修改分支地址、项目 slug 或独立子域"
           >
             <Settings className="h-3.5 w-3.5" />
-            配置入口
+            修改地址
           </button>
         ) : null}
       </header>
@@ -1526,8 +1526,8 @@ export function OverviewPanel({
             ? <><a href={primaryEntry.url} target="_blank" rel="noreferrer" className={`font-mono ${entriesReachable ? 'text-ok hover:underline' : 'text-muted-foreground hover:text-foreground'}`} title={primaryEntry.url}>{entryHost}</a><span className="ml-1.5">· {copy.entryLabel.replace(/^\s*·\s*/, '')}</span></>
             : copy.entryLabel.replace(/^\s*·\s*/, '') || '没有入口'}
           action={onConfigureEntries ? (
-            <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.75rem] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground" onClick={onConfigureEntries} title="手动配置入口（新增子域入口 / 改名 / 改落地路径）">
-              <Settings className="h-3 w-3" />配置
+            <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.75rem] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground" onClick={onConfigureEntries} title="修改分支地址、项目 slug 或独立子域">
+              <Settings className="h-3 w-3" />修改地址
             </button>
           ) : undefined}
           testId="kpi-entries"

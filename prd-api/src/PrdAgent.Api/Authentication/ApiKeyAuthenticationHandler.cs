@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services.Mcp;
@@ -20,6 +21,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
     private readonly IConfiguration _configuration;
     private readonly IAdminPermissionService _permissionService;
     private readonly McpLoopbackSignal _mcpLoopback;
+    private readonly IDataProtectionProvider? _uploadProtection;
 
     public ApiKeyAuthenticationHandler(
         IOptionsMonitor<ApiKeyAuthenticationOptions> options,
@@ -29,7 +31,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         IAgentApiKeyService agentApiKeyService,
         IConfiguration configuration,
         IAdminPermissionService permissionService,
-        McpLoopbackSignal mcpLoopback)
+        McpLoopbackSignal mcpLoopback,
+        IDataProtectionProvider? uploadProtection = null)
         : base(options, logger, encoder)
     {
         _openPlatformService = openPlatformService;
@@ -37,6 +40,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         _configuration = configuration;
         _permissionService = permissionService;
         _mcpLoopback = mcpLoopback;
+        _uploadProtection = uploadProtection;
     }
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -45,31 +49,24 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         var requestMethod = Request.Method;
         var clientIp = Context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        // 从 Authorization header 提取 API Key；缺陷分享提示词历史上使用 X-AI-Access-Key，
-        // 这里兼容 sk-ak 临时密钥，避免外部 Agent 拿到分享文本后无法发表评论。
-        if (!Request.Headers.TryGetValue("Authorization", out var authHeader))
-        {
-            if (!Request.Headers.TryGetValue("X-AI-Access-Key", out authHeader))
-            {
-                return AuthenticateResult.NoResult();
-            }
-        }
-
-        var authHeaderValue = authHeader.ToString();
-        if (string.IsNullOrWhiteSpace(authHeaderValue))
+        var apiKey = ApiKeyCredentialHeaders.Read(Request);
+        if (string.IsNullOrWhiteSpace(apiKey))
         {
             return AuthenticateResult.NoResult();
         }
 
-        // 支持 "Bearer sk-xxx" 格式
-        string apiKey;
-        if (authHeaderValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        // 文件上传凭证只有十分钟且绑定具体上传路径；解包后仍走下面的密钥查找、撤销和当前权限核验。
+        // 原始 key 与短期凭证都不写日志、不改写请求头，调用审计仍关联原 agentApiKeyId。
+        var isUploadTicket = apiKey.StartsWith(McpHostedSiteUploadTicket.Prefix, StringComparison.Ordinal);
+        if (isUploadTicket)
         {
-            apiKey = authHeaderValue["Bearer ".Length..].Trim();
-        }
-        else
-        {
-            apiKey = authHeaderValue.Trim();
+            if (_uploadProtection == null || !McpHostedSiteUploadTicket.TryRead(
+                    _uploadProtection, apiKey, requestMethod, requestPath ?? string.Empty, out var delegatedKey))
+            {
+                AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.UploadCredentialInvalid);
+                return AuthenticateResult.Fail("上传凭证已失效或不适用于此操作，请重新获取上传凭证");
+            }
+            apiKey = delegatedKey;
         }
 
         // 如果不是 sk- 开头的 API Key，静默跳过让其他认证方案处理（如 JWT）
@@ -107,7 +104,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             if (lookup == null)
             {
                 Logger.LogWarning("[401] AgentApiKey 无效/过期/已撤销 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
-                    requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
+                    requestPath, requestMethod, clientIp, isUploadTicket ? "<upload-credential>" : apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
                 AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AgentKeyInvalid);
                 return AuthenticateResult.Fail("Invalid, expired or revoked AgentApiKey");
             }
@@ -149,8 +146,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
             // 「它此刻拿得到什么」只此一处推导（McpCapabilityCatalog.EffectiveScopesFor），
             // 接入台面板、授权自检、密钥管理页读的是同一个函数 —— 抄第二份的那一刻，
             // 就是下一次「面板说已授权、这里每个请求都拒」的起点。
-            var declaredScopes = McpCapabilityCatalog.EffectiveScopesFor(
-                key.ScopeMode, storedScopes, ownerPermissions ?? Array.Empty<string>());
+            var declaredScopes = McpCapabilityCatalog.EffectiveScopesForKey(
+                key, ownerPermissions ?? Array.Empty<string>(), DateTime.UtcNow);
 
             // 被剥掉的那几个要留痕：权限回收之后智能体会突然少几个工具，
             // 日志里没有这一行的话，排障时只看得到「它就是调不动」。
@@ -197,7 +194,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         if (app == null)
         {
             Logger.LogWarning("[401] API Key无效或未激活 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
-                requestPath, requestMethod, clientIp, apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
+                requestPath, requestMethod, clientIp, isUploadTicket ? "<upload-credential>" : apiKey.Length > 15 ? apiKey[..15] + "..." : apiKey);
             AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.OpenPlatformKeyInvalid);
             return AuthenticateResult.Fail("Invalid or inactive API Key");
         }

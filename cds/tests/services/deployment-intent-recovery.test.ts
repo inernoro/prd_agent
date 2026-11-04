@@ -94,7 +94,9 @@ describe('已受理部署的持久输入与重启恢复', () => {
     const recovered = new DeploymentRunService(reopened), coordinator = new BranchOperationCoordinator();
     expect(recovered.restoreQueued(coordinator).map((r) => r.id)).toEqual([run.id]);
     expect(coordinator.drainReady()).toHaveLength(1);
-    await reopened.flush(); await state.flush();
+    await reopened.flush();
+    // A different store's successful recovery must not acknowledge this store's failed claim.
+    await expect(state.flush()).rejects.toThrow('synthetic disk unavailable');
   });
 
   it('正在确认的取消记录不被其他分支新增历史裁剪，确认后才允许回收', async () => {

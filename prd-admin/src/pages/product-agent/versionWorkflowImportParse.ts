@@ -11,10 +11,13 @@ export type VersionWorkflowImportRow = {
   versionType?: string;
   projectType?: string;
   customerSource?: string;
+  demandSource?: string;
   requirementDescription?: string;
   departmentName?: string;
   ownerId?: string;
+  ownerName?: string;
   teamMemberIds?: string[];
+  projectMemberNames?: string[];
   planUrl?: string;
   firstDraftMeetingAt?: string;
   secondDraftMeetingAt?: string;
@@ -22,9 +25,13 @@ export type VersionWorkflowImportRow = {
   projectAt?: string;
   plannedProjectAt?: string;
   needUiDesign?: boolean;
+  isAiPoc?: boolean;
   developmentStatus?: string;
   remark?: string;
   openBrandScope?: string;
+  isGlobalOpen?: boolean;
+  contractParty?: string;
+  plannedTrainingMinutes?: number;
   announcementUrl?: string;
   date?: string;
   legacyData?: Record<string, string>;
@@ -72,7 +79,7 @@ function findHeaderIndex(matrix: string[][], kind: VersionWorkflowImportKind): n
 
 function indexOfHeader(headers: string[], ...names: string[]): number {
   const normalized = headers.map(normalizeHeader);
-  return normalized.findIndex((header) => names.some((name) => {
+  return normalized.findIndex((header) => Boolean(header) && names.some((name) => {
     const key = normalizeHeader(name);
     return header.includes(key) || key.includes(header);
   }));
@@ -115,6 +122,27 @@ function normalizeCode(value?: string): string | undefined {
   return text;
 }
 
+function normalizeInternalCode(value?: string): string | undefined {
+  const text = value?.trim();
+  return !text || /^-+$/.test(text) ? undefined : text;
+}
+
+/** 只推断无表头且非空值全部为完整T号的唯一列，不能把普通空表头列当成业务字段。 */
+function inferInternalCodeColumn(headers: string[], body: string[][]): number {
+  const candidates = headers.flatMap((header, index) => {
+    if (header.trim()) return [];
+    const values = body.map((row) => normalizeInternalCode(row[index])).filter((value): value is string => Boolean(value));
+    return values.length > 0 && values.every((value) => /^T\d+\.\d+\.\d+$/i.test(value)) ? [index] : [];
+  });
+  if (candidates.length > 1) throw new Error('发现多个没有表头的 T 号列，请为正确列补充“立项号”表头后重试。');
+  return candidates[0] ?? -1;
+}
+
+function internalCodeFromPlanName(planName: string): string | undefined {
+  const codes = [...new Set([...planName.matchAll(/(?<![A-Za-z0-9])T\d+\.\d+\.\d+(?![\d.])/gi)].map((match) => match[0].toUpperCase()))];
+  return codes.length === 1 ? codes[0] : undefined;
+}
+
 function mapBool(raw?: string): boolean | undefined {
   if (!raw) return undefined;
   const value = raw.trim().toLowerCase();
@@ -126,6 +154,14 @@ function mapBool(raw?: string): boolean | undefined {
 function splitMembers(raw?: string): string[] | undefined {
   if (!raw?.trim()) return undefined;
   return raw.split(/[、,，;；]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function parseTrainingMinutes(raw?: string): number | undefined {
+  const text = raw?.trim();
+  if (!text) return undefined;
+  const match = text.match(/^(\d+)\s*(?:分钟)?$/);
+  const value = match ? Number(match[1]) : NaN;
+  return Number.isInteger(value) && value >= 0 && value <= 2147483647 ? value : undefined;
 }
 
 function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImportKind, headerRowIndex: number): VersionWorkflowImportRow[] {
@@ -143,16 +179,21 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const remarkIndex = indexOfHeader(headers, '备注');
   const developmentIndex = indexOfHeader(headers, '开发状态');
   const uiDesignIndex = indexOfHeader(headers, '是否需要ui设计', '是否需要 ui 设计', 'ui设计');
+  const aiPocIndex = indexOfHeader(headers, '是否属于ai poc项目', '是否属于 ai poc 项目', 'ai poc', 'aipoc');
   const announcementIndex = indexOfHeader(headers, '上线公告地址', '公告地址');
-  const openBrandIndex = indexOfHeader(headers, '当前开放品牌', '当前开放范围', '开放范围');
+  const openBrandIndex = indexOfHeader(headers, '是否全域开放', '当前开放品牌', '当前开放范围', '开放范围');
   const teamIndex = indexOfHeader(headers, '项目组成员', '组成员');
   const requirementSourceIndex = indexOfHeader(headers, '需求来源');
   const platformIndex = indexOfHeader(headers, '平台');
   const contractPartyIndex = indexOfHeader(headers, '合同签订方');
+  const trainingMinutesIndex = kind === 'release'
+    ? indexOfHeader(headers, '预计培训时长', '培训时长', '预计培训时间')
+    : -1;
 
-  const codeIndex = kind === 'release'
+  let codeIndex = kind === 'release'
     ? indexOfHeader(headers, '正式版本号', 'v号', 'v 号', 'v上线号', '上线号')
     : indexOfHeader(headers, 't立项号', 't 立项号', '立项号', 't号', '内部版本号');
+  if (kind === 'initiation' && codeIndex < 0) codeIndex = inferInternalCodeColumn(headers, body);
   const tCodeIndex = kind === 'release'
     ? indexOfHeader(headers, '内部版本号', 't立项号', 't 立项号', '立项号', 't号')
     : -1;
@@ -168,8 +209,13 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
 
   const rows: VersionWorkflowImportRow[] = [];
   body.forEach((values, offset) => {
+    const trainingText = trainingMinutesIndex >= 0 ? values[trainingMinutesIndex]?.trim() : '';
+    const trainingMinutes = parseTrainingMinutes(trainingText);
+    if (trainingText && trainingMinutes == null) throw new Error(`第 ${headerRowIndex + offset + 2} 行预计培训时长应填写非负整数分钟，不能填写日期。`);
     const planName = (effectivePlanIndex >= 0 ? values[effectivePlanIndex]?.trim() : '') || '';
-    const code = codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
+    const code = kind === 'initiation'
+      ? normalizeInternalCode(codeIndex >= 0 ? values[codeIndex] : undefined) ?? internalCodeFromPlanName(planName)
+      : codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
     if (!planName && !code) return;
 
     const legacyData: Record<string, string> = {};
@@ -209,10 +255,13 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       versionType: versionTypeIndex >= 0 ? values[versionTypeIndex]?.trim() : undefined,
       projectType: projectTypeIndex >= 0 ? mapProjectType(values[projectTypeIndex]) : undefined,
       customerSource: customerSourceIndex >= 0 ? values[customerSourceIndex]?.trim() : undefined,
+      demandSource: requirementSourceIndex >= 0 ? values[requirementSourceIndex]?.trim() : undefined,
       requirementDescription: requirementDescIndex >= 0 ? values[requirementDescIndex]?.trim() : undefined,
       departmentName: departmentIndex >= 0 ? values[departmentIndex]?.trim() : undefined,
       ownerId: ownerName,
+      ownerName,
       teamMemberIds: teamIndex >= 0 ? splitMembers(values[teamIndex]) : undefined,
+      projectMemberNames: teamIndex >= 0 ? splitMembers(values[teamIndex]) : undefined,
       planUrl: planUrlIndex >= 0 ? values[planUrlIndex]?.trim() : undefined,
       firstDraftMeetingAt: firstDraftIndex >= 0 ? parseDateValue(values[firstDraftIndex]) : undefined,
       secondDraftMeetingAt: secondDraftIndex >= 0 ? parseDateValue(values[secondDraftIndex]) : undefined,
@@ -220,9 +269,13 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       projectAt: dateIndex >= 0 ? parseDateValue(values[dateIndex]) : undefined,
       plannedProjectAt: plannedProjectIndex >= 0 ? parseDateValue(values[plannedProjectIndex]) : undefined,
       needUiDesign: uiDesignIndex >= 0 ? mapBool(values[uiDesignIndex]) : undefined,
+      isAiPoc: aiPocIndex >= 0 ? mapBool(values[aiPocIndex]) : undefined,
       developmentStatus: developmentIndex >= 0 ? values[developmentIndex]?.trim() : undefined,
       remark: remarkIndex >= 0 ? values[remarkIndex]?.trim() : undefined,
       openBrandScope: openBrandIndex >= 0 ? values[openBrandIndex]?.trim() : undefined,
+      isGlobalOpen: openBrandIndex >= 0 ? mapBool(values[openBrandIndex]) : undefined,
+      contractParty: contractPartyIndex >= 0 ? values[contractPartyIndex]?.trim() : undefined,
+      plannedTrainingMinutes: trainingMinutes,
       announcementUrl: announcementIndex >= 0 ? values[announcementIndex]?.trim() : undefined,
       date: dateIndex >= 0 ? parseDateValue(values[dateIndex]) : undefined,
       legacyData: Object.keys(legacyData).length > 0 ? legacyData : undefined,

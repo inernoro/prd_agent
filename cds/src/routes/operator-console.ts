@@ -14,6 +14,7 @@ import { operatorOpRegistry, type OperatorOpContext } from '../services/operator
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { operatorApprovalService } from '../services/operator-approval.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { assertProjectAccess } from './projects.js';
 
 export function createOperatorConsoleRouter(deps: {
   stateService: StateService;
@@ -78,9 +79,31 @@ export function createOperatorConsoleRouter(deps: {
       res.status(400).json({ ok: false, error: 'opId 必填' });
       return;
     }
+    if (opId === 'database.sql' || opId === 'database.mongo') {
+      const branch = deps.stateService.getBranch(String(args?.branchId || ''));
+      if (!branch || !args?.projectId || branch.projectId !== args.projectId || !args?.resourceId || (opId === 'database.sql' ? !args?.sql : !args?.write)) {
+        res.status(400).json({ error: '必须提供匹配的项目、分支、数据库资源与具体 SQL 或 MongoDB 写入。' });
+        return;
+      }
+      if (opId === 'database.mongo' && (!args.write || typeof args.write !== 'object' || Array.isArray(args.write) || JSON.stringify(args.write).length > 100_000)) {
+        res.status(400).json({ error: 'MongoDB write 必须为 JSON object 且不能超过 100KB。' });
+        return;
+      }
+      if (opId === 'database.sql' && (typeof args.sql !== 'string' || args.sql.length > 100_000)) {
+        res.status(400).json({ error: 'SQL 必须为文本且不能超过 100KB。' });
+        return;
+      }
+      if (!isHumanSystemOwner(req) && !(req as Request & { cdsProjectKey?: unknown }).cdsProjectKey) {
+        res.status(403).json({ error: 'database_project_key_required', message: '数据库请求需要目标项目的 Agent Key；全局密钥不能申请数据库写入。' });
+        return;
+      }
+      const mismatch = assertProjectAccess(req as any, branch.projectId || 'default');
+      if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+    }
     const actor =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'ai';
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
@@ -96,8 +119,9 @@ export function createOperatorConsoleRouter(deps: {
   router.post('/cds-system/operator/requests/:id/approve', requireHuman, (req, res) => {
     const scope = (req.body ?? {}).scope === 'session' ? 'session' : 'once';
     const approver =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'admin';
     const updated = operatorApprovalService.approve({ requestId: req.params.id, scope, approver });
@@ -110,8 +134,9 @@ export function createOperatorConsoleRouter(deps: {
 
   router.post('/cds-system/operator/requests/:id/reject', requireHuman, (req, res) => {
     const approver =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'admin';
     const updated = operatorApprovalService.reject({ requestId: req.params.id, approver });
@@ -154,8 +179,9 @@ export function createOperatorConsoleRouter(deps: {
       args?: Record<string, unknown>;
     };
     const actor =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'unknown';
 
@@ -236,7 +262,7 @@ export function createOperatorConsoleRouter(deps: {
           details: { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr },
         };
       } else {
-        result = await op.run(ctx);
+        result = await op.run(ctx, op.prepareArgs ? await op.prepareArgs(args) : args);
       }
       const durationMs = Date.now() - startedAt;
       send('done', { opId: op.id, durationMs, ...result });

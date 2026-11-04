@@ -1,18 +1,39 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+// @vitest-environment jsdom
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
+import { describe, expect, it, vi } from 'vitest';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  buildDeckPreviewPageDocs,
+  buildPptRepairIdempotencyKey,
   buildLiveSlideDoc,
+  countDeckPages,
   estimatePages,
   extractCompletedSections,
   extractHeadAssets,
   looksLikeDeck,
+  mergeRuntimeModelCallCount,
   parseExplicitPages,
   parseSlideProgress,
+  PptRuntimeLivePreview,
+  PptRuntimeProgressHeader,
+  isPreviewableDeck,
+  isOpenableHistoryRun,
+  isRestartablePresentationQualityRun,
+  MdToPptAgentPage,
+  resolveOutlineTargetPages,
   resolveNaturalPatchSlideIndex,
   recoverPatchParentRun,
   resolveRecoveredDeckState,
+  selectRuntimeLivePreviewDoc,
 } from '../MdToPptAgentPage';
+import { NextStepBar } from '../NextStepBar';
 import type { MdToPptRunDetail } from '@/services/real/mdToPptService';
+import { useAuthStore } from '@/stores/authStore';
 
 // 守护「生成等待面板逐页点亮」：从流式 HTML 里解析已闭合 <section> 的页标题，
 // 以及是否有正在绘制（已开口未闭合）的页。
@@ -59,50 +80,478 @@ describe('estimatePages', () => {
     expect(parseExplicitPages('输出十二页技术方案')).toBe(12);
     expect(estimatePages('严格生成 2 页高级产品发布会 PPT，' + '内容很长'.repeat(500))).toBe(2);
   });
+
+  it('不把章节号、文档内页码或 P 开头的单词当成页数', () => {
+    expect(parseExplicitPages('### 6.1 PR 的大小与标题')).toBeNull();
+    expect(parseExplicitPages('请参考本文档第 20 页')).toBeNull();
+    expect(parseExplicitPages('1 prompt 示例')).toBeNull();
+  });
+
+  it('只从用户需求识别显式页数，自动页数交给服务端按冻结来源容量计算', () => {
+    const reference = '附件共 2 页\n### 6.1 PR 的大小与标题\n' + '资料'.repeat(8000);
+    expect(resolveOutlineTargetPages('请把附件整理成演示稿', reference)).toBeUndefined();
+    expect(resolveOutlineTargetPages('请生成 20 页演示稿', '附件共 2 页')).toBe(20);
+    expect(resolveOutlineTargetPages('请生成 20p 演示稿', '附件共 2 页')).toBe(20);
+    expect(resolveOutlineTargetPages('请生成 34 页演示稿', reference)).toBe(34);
+    expect(resolveOutlineTargetPages('请生成 41 页演示稿', reference)).toBe(41);
+  });
+
+  it('大纲、确认与生成请求都把附件作为独立字段发送，不拼回普通需求 content', () => {
+    const page = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
+    const service = readFileSync(resolve(process.cwd(), 'src/services/real/mdToPptService.ts'), 'utf8');
+    const outlineRequestStart = page.indexOf('const cleanup = streamMdToPptOutline({');
+    const outlineRequestEnd = page.indexOf('onKnowledgeResolved:', outlineRequestStart);
+    const outlineRequest = page.slice(outlineRequestStart, outlineRequestEnd);
+    expect(outlineRequest).toContain('content: userText');
+    expect(outlineRequest).toContain('attachmentText: attachmentText || undefined');
+    expect(outlineRequest).not.toContain('[userText, attachmentText]');
+    expect(page).toContain('attachmentText: attachmentText || undefined');
+    expect(service.match(/attachmentText: options\.attachmentText/g)).toHaveLength(3);
+  });
 });
 
 describe('looksLikeDeck', () => {
-  it('只接受正文中存在真实幻灯元素且完整闭合的文档', () => {
-    const padding = '正文'.repeat(120);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{color:red}</style></head><body>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{color:red}</style></head>${padding}`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><script>const fake = '<div class="deck"><section class="slide">x</section></div>';</script>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><script>const fake = '<section class="slide">x</section>';${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><script>const fake='</head><body><section class="slide">x</section>${padding}</body></html>'`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><script>const fake='</head><body><section class="slide">x</section>${padding}</body></html>';</script></head></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="presentation"><div class="slide active"><h1>${padding}</h1></div></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class='reveal'><div class='slides'><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class='SLIDE active'><h1>${padding}</h1></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>${padding}</style></head><body><section class="slide"></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><h1>${padding}</h1></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>body{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body style="visibility:hidden"><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><main id="root"><section class="slide"><h1>${padding}</h1></section></main></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide" hidden><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide" aria-hidden="true"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><svg></svg></section>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><svg><defs><path d="M0 0"></path></defs><path d=""></path></svg></section>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>/* deck */ .slide{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>@media print{body{display:none}}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>@media screen{body{display:none}}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide .notes{display:none}</style></head><body><section class="slide active"><h1>序</h1><div class="notes">备注</div></section>${padding}</body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide:not(.active){display:none}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="deck" hidden><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.deck{display:none}</style></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.missing .deck{display:none}</style></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.deck{display:none}.deck.active{display:block}</style></head><body><div class="deck active"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{opacity:0!important}.slide.active{opacity:1}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{opacity:0!important}.slide.active{opacity:1!important}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none!important}.missing .slide.active{display:block!important}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none}.slide.active{opacity:1}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.reveal{display:none}</style></head><body><div class="reveal"><div class="slides"><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.reveal .slides section{display:none}</style></head><body><div class="reveal"><div class="slides"><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"></div></div><template><section><h1>${padding}</h1></section></template></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>标题</h1></section><section></section></div></div>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><section><h1>${padding}</h1></section><section></section></section></div></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide">&#32;&#32;</section>${padding}</body></html>`)).toBe(false);
+  it('只校验完整 HTML 文件，不以 PPT 结构、页数或可见性阻断预览', () => {
+    expect(looksLikeDeck('')).toBe(false);
+    expect(looksLikeDeck('<html><head></head><body></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><main>普通 OpenDesign 文档</main></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head><style>body{display:none}</style></head><body hidden><main>内容</main></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><section>没有 Reveal 或 slide 类名</section></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><script>const marker = "<section>";</script></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><script>const broken = true;</body></html>')).toBe(false);
+    expect(looksLikeDeck('<html><head><style>body{color:red}</head><body></body></html>')).toBe(false);
+    expect(looksLikeDeck('<html><head></head><body><!-- incomplete</body></html>')).toBe(false);
+    expect(looksLikeDeck('<html><head></head><body>缺少 html 闭合')).toBe(false);
+  });
+});
+
+describe('countDeckPages', () => {
+  it('counts only top-level authored pages from OpenDesign previews', () => {
+    expect(countDeckPages('<div class="reveal"><div class="slides"><section>A</section><section>B</section></div></div>')).toBe(2);
+    expect(countDeckPages('<div class="deck"><section class="slide"><div class="slide">nested</div></section><section class="slide">B</section></div>')).toBe(2);
+    expect(countDeckPages('<main><section>A</section></main>')).toBe(0);
+  });
+});
+
+describe('OpenDesign 运行态可见信息', () => {
+  it('脚本初始化导航的真实 Reveal 预览通过事件接受、拆页和桌面选择链', () => {
+    const padding = '冻结来源正文'.repeat(80);
+    const previewHtml = `<!doctype html><html><head><style>
+      .slides>section{display:none;height:100%}
+      .slides>section.present{display:flex}
+    </style></head><body><div class="reveal"><div class="slides">
+      <section><h1>第一页</h1><p>${padding}</p></section>
+      <section><h1>第二页</h1><p>${padding}</p></section>
+    </div></div><script>document.querySelector('.slides>section')?.classList.add('present')</script></body></html>`;
+    expect(looksLikeDeck(previewHtml)).toBe(true);
+    expect(isPreviewableDeck(previewHtml)).toBe(true);
+    const generatedHtml = isPreviewableDeck(previewHtml) ? previewHtml : '';
+    const previewPageDocs = buildDeckPreviewPageDocs(generatedHtml);
+    expect(previewPageDocs).toHaveLength(2);
+    expect(previewPageDocs.every(looksLikeDeck)).toBe(true);
+    expect(selectRuntimeLivePreviewDoc({
+      pagesTotal: 0,
+      pagesLiveDoc: '',
+      legacyLiveDoc: '',
+      previewPageDocs,
+      previewPageIndex: 1,
+    })).toContain('第二页');
+    expect(isPreviewableDeck(`<!doctype html><html><head></head><body><main><section style="display:none"><p>${padding}</p></section></main></body></html>`)).toBe(true);
+    const staticHiddenReveal = `<!doctype html><html><head><style>.slides>section{display:none}</style></head><body><div class="reveal"><div class="slides"><section><p>${padding}</p></section></div></div></body></html>`;
+    expect(isPreviewableDeck(staticHiddenReveal)).toBe(true);
+    expect(buildDeckPreviewPageDocs(staticHiddenReveal).every(looksLikeDeck)).toBe(true);
+    expect(isPreviewableDeck('<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section></section></div></div></body></html>')).toBe(true);
+
+    const capturedPreviewPath = process.env.PPT_RUNTIME_REAL_PREVIEW_HTML;
+    if (capturedPreviewPath) {
+      const capturedPreview = readFileSync(capturedPreviewPath, 'utf8');
+      expect(looksLikeDeck(capturedPreview)).toBe(true);
+      expect(isPreviewableDeck(capturedPreview)).toBe(true);
+      const capturedPages = buildDeckPreviewPageDocs(capturedPreview);
+      expect(capturedPages).toHaveLength(34);
+      expect(capturedPages.every(looksLikeDeck)).toBe(true);
+      expect(selectRuntimeLivePreviewDoc({
+        pagesTotal: 0,
+        pagesLiveDoc: '',
+        legacyLiveDoc: '',
+        previewPageDocs: capturedPages,
+        previewPageIndex: 33,
+      })).not.toBe('');
+    }
+  });
+
+  it('空预览与 legacy 实况优先级保持不变', () => {
+    expect(isPreviewableDeck('')).toBe(false);
+    expect(selectRuntimeLivePreviewDoc({
+      pagesTotal: 0,
+      pagesLiveDoc: '',
+      legacyLiveDoc: '<html>legacy</html>',
+      previewPageDocs: ['<html>runtime</html>'],
+      previewPageIndex: 0,
+    })).toBe('<html>legacy</html>');
+    expect(selectRuntimeLivePreviewDoc({
+      pagesTotal: 2,
+      pagesLiveDoc: '<html>parallel</html>',
+      legacyLiveDoc: '<html>legacy</html>',
+      previewPageDocs: ['<html>runtime</html>'],
+      previewPageIndex: 0,
+    })).toBe('<html>parallel</html>');
+  });
+
+  it('无 legacy 帧时仍把 OpenDesign 运行中 HTML 渲染为只读未验收预览', () => {
+    const previewHtml = '<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>运行中初稿</h1></section></div></div></body></html>';
+    const html = renderToStaticMarkup(createElement(PptRuntimeLivePreview, {
+      html: previewHtml,
+      pageNumber: 1,
+      allowScripts: false,
+    }));
+
+    expect(html).toContain('data-testid="runtime-live-preview"');
+    expect(html).toContain('data-testid="runtime-live-preview-frame"');
+    expect(html).toContain('设计中初稿');
+    expect(html).toContain('尚未通过检查');
+    expect(html).toContain('运行中初稿');
+    expect(html).toContain('sandbox=""');
+  });
+
+  it('尚无 OpenDesign 或 legacy 页面时不伪造预览，继续由骨架承担等待反馈', () => {
+    expect(renderToStaticMarkup(createElement(PptRuntimeLivePreview, {
+      html: '',
+      pageNumber: 0,
+      allowScripts: false,
+    }))).toBe('');
+  });
+
+  it('用捕获的阶段与预览事实渲染真实组件，页数、流程进度和模型调用次数互不冒充', () => {
+    const captured = {
+      phaseMessage: '正在修复质量问题',
+      progress: 82,
+      runtimeModelCallCount: 33,
+      previewHtml: '<div class="reveal"><div class="slides">' + '<section>正文</section>'.repeat(20) + '</div></div>',
+    };
+    const previewPages = countDeckPages(captured.previewHtml);
+    const html = renderToStaticMarkup(createElement(PptRuntimeProgressHeader, {
+      stageText: captured.phaseMessage,
+      elapsedSec: 465,
+      draftDetail: `已形成 ${previewPages}/20 页真实初稿`,
+      model: 'default-chat-curated',
+      runtimeModelCallCount: captured.runtimeModelCallCount,
+      processProgress: captured.progress,
+      hasPreview: true,
+    }));
+
+    expect(html).toContain('正在修复质量问题');
+    expect(html).toContain('已形成 20/20 页真实初稿');
+    expect(html).toContain('模型调用 33 次');
+    expect(html).toContain('aria-valuenow="82"');
+    expect(html).toContain('width:82%');
+
+    const fixtureOutput = process.env.PPT_RUNTIME_FIXTURE_OUTPUT;
+    if (fixtureOutput) {
+      const fixturePreviewPath = process.env.PPT_RUNTIME_FIXTURE_PREVIEW_HTML;
+      const fixturePreviewHtml = fixturePreviewPath
+        ? readFileSync(fixturePreviewPath, 'utf8')
+        : captured.previewHtml;
+      const fixturePreviewPages = countDeckPages(fixturePreviewHtml);
+      const panel = renderToStaticMarkup(createElement('main', { 'data-provenance': 'captured-runtime-fields-and-preview-html' },
+        createElement(PptRuntimeProgressHeader, {
+          stageText: captured.phaseMessage,
+          elapsedSec: 465,
+          draftDetail: `已形成 ${previewPages}/20 页真实初稿`,
+          model: 'default-chat-curated',
+          runtimeModelCallCount: captured.runtimeModelCallCount,
+          processProgress: captured.progress,
+          hasPreview: true,
+        }),
+        createElement(PptRuntimeLivePreview, {
+          html: fixturePreviewHtml,
+          pageNumber: fixturePreviewPages,
+          allowScripts: true,
+        }),
+        createElement(NextStepBar, {
+          onPublish: () => undefined,
+          publishBusy: false,
+          publishDisabled: true,
+          publishDisabledReason: '质量检查尚未通过，当前初稿只能预览，不能发布。',
+          published: false,
+          onDownload: () => undefined,
+          onSeedPatch: () => undefined,
+        }),
+      ));
+      writeFileSync(fixtureOutput, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PPT 捕获事件组件夹具</title><style>:root{color-scheme:dark;--text-secondary:#d6d8de;--text-tertiary:#9ba1ad;--accent-primary-solid:#b0523a}body{margin:0;padding:24px;background:#0d0f14;color:#f4f4f5;font-family:system-ui}main{max-width:960px;margin:auto;display:grid;gap:16px;padding:16px;border:1px solid #343946;border-radius:14px;background:#171a21}.flex{display:flex}.items-center{align-items:center}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.min-w-0{min-width:0}.shrink-0{flex-shrink:0}.ml-auto{margin-left:auto}.w-full{width:100%}.h-full{height:100%}.rounded-full{border-radius:999px}.overflow-hidden{overflow:hidden}.bg-token-nested{background:#262b35}.text-sm{font-size:.875rem}.text-\\[11px\\],.text-\\[10px\\]{font-size:11px}.mt-0\\.5{margin-top:2px}.tabular-nums{font-variant-numeric:tabular-nums}.font-mono{font-family:monospace}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}iframe{display:block;width:100%;height:330px;border:1px solid #343946;border-radius:12px}button{font:inherit;color:inherit}</style></head><body>${panel}</body></html>`, 'utf8');
+    }
+  });
+
+  it('乱序阶段事件不会让累计调用次数回退', () => {
+    const observed = [1, 18, 33, 20];
+    expect(observed.reduce(mergeRuntimeModelCallCount, 0)).toBe(33);
+  });
+});
+
+describe('失败演示稿继续打磨', () => {
+  const qualityFailure = {
+    id: 'quality-failed-run',
+    status: 'error',
+    op: 'convert',
+    errorCode: 'design_browser_quality_rejected',
+    latestPreviewHtml: '<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>只读初稿</h1></section></div></div></body></html>',
+  } as MdToPptRunDetail & { errorCode: string };
+
+  it('只允许带冻结初稿的确定性质量失败进入权威 restart', () => {
+    expect(isRestartablePresentationQualityRun(qualityFailure)).toBe(true);
+    expect(isRestartablePresentationQualityRun({ ...qualityFailure, errorCode: 'task_failed' })).toBe(false);
+    expect(isRestartablePresentationQualityRun({ ...qualityFailure, latestPreviewHtml: '' })).toBe(false);
+    expect(isRestartablePresentationQualityRun({ ...qualityFailure, status: 'done' })).toBe(false);
+  });
+
+  it('历史列表可打开失败预览但不把大纲或一般失败冒充成品', () => {
+    const base = {
+      id: 'history-run',
+      engine: 'agent',
+      provider: 'open-design',
+      title: '历史演示稿',
+      contentPreview: '',
+      model: null,
+      platform: null,
+      createdAt: '2026-10-20T15:49:21.164Z',
+    } as const;
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'done',
+      runtime: 'html-ppt-pipeline',
+      op: 'outline',
+      hasHtml: false,
+    })).toBe(false);
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'error',
+      runtime: 'open-design',
+      op: 'convert',
+      errorCode: 'open_design_run_failed',
+      hasHtml: false,
+    })).toBe(true);
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'error',
+      runtime: 'open-design',
+      op: 'convert',
+      errorCode: 'design_output_quality_rejected',
+      hasHtml: false,
+    })).toBe(true);
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'error',
+      runtime: 'open-design',
+      op: 'convert',
+      errorCode: 'unrelated_failure',
+      hasHtml: false,
+    })).toBe(false);
+  });
+
+  it('历史载入复用失败预览恢复与继续打磨权威判定', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
+    const handlerStart = source.indexOf('const loadHistoryRun = useCallback');
+    const handlerEnd = source.indexOf('// ─── Outline adjust', handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+    expect(handlerStart).toBeGreaterThan(0);
+    expect(handler).toContain('run.latestPreviewHtml');
+    expect(handler).toContain("setArtifactPhase(isCompleted ? 'done' : 'error')");
+    expect(handler).toContain('isRestartablePresentationQualityRun(run)');
+    expect(handler).toContain('setGeneratedHtml(completedHtml || failedPreviewHtml)');
+  });
+
+  it('继续打磨调用既有 restart 并轮询新 run，失败初稿不提前开放写操作', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
+    const handlerStart = source.indexOf('const handleContinuePolishing = useCallback');
+    const handlerEnd = source.indexOf('const handleRegenerateDeck = useCallback', handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+    expect(handlerStart).toBeGreaterThan(0);
+    expect(handler).toContain('restartDesignArtifactRun(sourceRunId, idempotencyKey)');
+    expect(handler).toContain('getMdToPptRun(restartedRunId)');
+    expect(handler).toContain("setArtifactPhase('generating')");
+    expect(handler).toContain("setArtifactPhase('done')");
+    expect(handler).toContain('isRestartablePresentationQualityRun(run)');
+    expect(handler).not.toContain('publishMdToPpt');
+    expect(source).toContain('data-testid="continue-polishing"');
+    expect(source).toContain("disabled={isStreaming || artifactPhase !== 'done'}");
+    expect(source).toContain('const canPublish = artifactPhase === \'done\' && Boolean(activeRunId)');
+  });
+
+  it('真实页面经 service 与 apiRequest 重挂载仍复用同一幂等键，并轮询新 run 到完成后才解锁', async () => {
+    vi.useFakeTimers();
+    const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const originalFetch = globalThis.fetch;
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const previousAuth = useAuthStore.getState();
+    useAuthStore.setState({ token: 'local-fixture-token', isAuthenticated: true });
+    sessionStorage.clear();
+    sessionStorage.setItem('md-to-ppt-chat-v1', JSON.stringify({
+      messages: [],
+      activeRunId: qualityFailure.id,
+      activeKnowledgeRefs: [],
+      pendingKbRefs: [],
+      launchImported: false,
+      theme: 'tech-dark',
+      templateId: null,
+      outlineDraft: null,
+    }));
+
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    let restartAttempts = 0;
+    let retryPolls = 0;
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+    const failedRun = {
+      ...qualityFailure,
+      engine: 'openai',
+      runtime: 'open-design',
+      title: '失败初稿',
+      contentPreview: '',
+      html: '',
+      error: '发布前质量检查未通过',
+      progress: 82,
+      phaseMessage: '质量检查未通过',
+      runtimeModelCallCount: 14,
+      createdAt: '2026-10-21T00:00:00Z',
+      updatedAt: '2026-10-21T00:01:00Z',
+    };
+    const completedHtml = '<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>打磨完成</h1><p>完整正文</p></section></div></div></body></html>';
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? init.body : '';
+      requests.push({ url, method, body });
+      if (url.endsWith('/api/md-to-ppt/templates'))
+        return json({ success: true, data: [], error: null });
+      if (url.endsWith(`/api/md-to-ppt/runs/${qualityFailure.id}`))
+        return json({ success: true, data: failedRun, error: null });
+      if (url.endsWith(`/api/design-artifacts/runs/${qualityFailure.id}/restart`) && method === 'POST') {
+        restartAttempts += 1;
+        if (restartAttempts === 1)
+          return json({ success: false, data: null, error: { code: 'SERVER_UNAVAILABLE', message: '响应中断' } }, 503);
+        return json({ success: true, data: { runId: 'repair-run-1', status: 'queued' }, error: null });
+      }
+      if (url.endsWith('/api/md-to-ppt/runs/repair-run-1')) {
+        retryPolls += 1;
+        if (retryPolls === 1) {
+          return json({ success: true, data: {
+            id: 'repair-run-1', status: 'running', op: 'convert', engine: 'openai', runtime: 'open-design',
+            title: '继续打磨', contentPreview: '', html: '', progress: 45, phaseMessage: '正在设计',
+            runtimeModelCallCount: 1, createdAt: '2026-10-21T00:02:00Z', updatedAt: '2026-10-21T00:02:10Z',
+          }, error: null });
+        }
+        return json({ success: true, data: {
+          id: 'repair-run-1', status: 'done', op: 'convert', engine: 'openai', runtime: 'open-design',
+          title: '继续打磨', contentPreview: '', html: completedHtml, progress: 100, phaseMessage: '已完成',
+          runtimeModelCallCount: 2, createdAt: '2026-10-21T00:02:00Z', updatedAt: '2026-10-21T00:03:00Z',
+        }, error: null });
+      }
+      throw new Error(`unexpected fixture request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let root: Root | undefined;
+    const flush = async () => {
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    const mount = async () => {
+      root = createRoot(host);
+      await act(async () => {
+        root?.render(createElement(MemoryRouter, { initialEntries: ['/md-to-ppt-agent'] }, createElement(MdToPptAgentPage)));
+      });
+      await flush();
+      await flush();
+    };
+    const clickContinue = async () => {
+      const button = host.querySelector('[data-testid="continue-polishing"]') as HTMLButtonElement | null;
+      expect(button).not.toBeNull();
+      await act(async () => button?.click());
+      await flush();
+    };
+
+    try {
+      await mount();
+      await clickContinue();
+      const firstPost = requests.find((item) => item.method === 'POST');
+      expect(firstPost?.url).toContain(`/api/design-artifacts/runs/${qualityFailure.id}/restart`);
+      expect(JSON.parse(firstPost?.body ?? '{}')).toEqual({
+        idempotencyKey: buildPptRepairIdempotencyKey(qualityFailure.id),
+      });
+      expect(host.textContent).toContain('AI服务暂时不可用');
+      expect(host.querySelector('[data-testid="continue-polishing"]')).not.toBeNull();
+
+      await act(async () => root?.unmount());
+      host.replaceChildren();
+      await mount();
+      await clickContinue();
+
+      const posts = requests.filter((item) => item.method === 'POST');
+      expect(posts).toHaveLength(2);
+      expect(JSON.parse(posts[1].body)).toEqual(JSON.parse(posts[0].body));
+      expect(host.textContent).toContain('通过全部检查前不能编辑或发布');
+      expect(host.querySelector('[data-testid="continue-polishing"]')).toBeNull();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      await flush();
+      expect(retryPolls).toBe(2);
+      expect(host.textContent).toContain('演示稿已生成');
+      const publish = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('发布为网页'));
+      const theme = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('换风格'));
+      expect(publish).toBeDefined();
+      expect((publish as HTMLButtonElement).disabled).toBe(false);
+      expect(theme).toBeDefined();
+      expect((theme as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      await act(async () => root?.unmount());
+      host.remove();
+      globalThis.fetch = originalFetch;
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      useAuthStore.setState({
+        isAuthenticated: previousAuth.isAuthenticated,
+        user: previousAuth.user,
+        token: previousAuth.token,
+        refreshToken: previousAuth.refreshToken,
+        sessionKey: previousAuth.sessionKey,
+      });
+      sessionStorage.clear();
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('NextStepBar 移动端布局', () => {
+  it('窄屏允许建议换行，并让下载与发布动作独占一行且右对齐', () => {
+    const html = renderToStaticMarkup(createElement(NextStepBar, {
+      onPublish: () => undefined,
+      publishBusy: false,
+      publishDisabled: true,
+      publishDisabledReason: '质量检查尚未完成',
+      published: false,
+      onDownload: () => undefined,
+      onSeedPatch: () => undefined,
+    }));
+
+    expect(html).toMatch(/data-testid="next-step-bar"[^>]*class="[^"]*max-sm:flex-wrap[^"]*"/);
+    expect(html).toMatch(/class="[^"]*max-sm:basis-full[^"]*max-sm:justify-end[^"]*"/);
+    expect(html).toContain('标题更有冲击力');
+    expect(html).toContain('配色更商务');
+    expect(html).toContain('加一页总结');
+    expect(html).toContain('下载 HTML');
+    expect(html).toContain('发布为网页');
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('质量检查尚未完成');
   });
 });
 
@@ -115,10 +564,12 @@ describe('自然语言单页精修识别', () => {
     expect(resolveNaturalPatchSlideIndex('把第 3 页移到最后')).toBeNull();
     expect(resolveNaturalPatchSlideIndex('把第 3 页和封面交换')).toBeNull();
     expect(resolveNaturalPatchSlideIndex('将第 3 页与下一页对调')).toBeNull();
+    expect(resolveNaturalPatchSlideIndex('增加第 34 页标题字号')).toBe(34);
+    expect(resolveNaturalPatchSlideIndex('增加第 41 页标题字号')).toBeNull();
   });
 
   it('将自然语言解析的页码传给服务端，不退化为整稿精修', () => {
-    const source = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
     expect(source).toContain('slideIndex: effectiveSlideIndex ?? undefined');
     expect(source).not.toMatch(/streamMdToPptPatch\(\{[\s\S]*?\n\s*slideIndex,\n/);
   });

@@ -74,7 +74,8 @@ public interface IAgentApiKeyService
         CancellationToken ct = default,
         AgentApiKeyQuotaPatch? quota = null,
         AgentApiKeyScopeMode? scopeMode = null,
-        AgentApiKeyLiteraryImageModelPatch? literaryImageModel = null);
+        AgentApiKeyLiteraryImageModelPatch? literaryImageModel = null,
+        bool? webPublicExposureAllowed = null);
 
     /// <summary>删除 Key（硬删除；撤销用 RevokeAsync）</summary>
     Task<bool> DeleteAsync(string id, CancellationToken ct = default);

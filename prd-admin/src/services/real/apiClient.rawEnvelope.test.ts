@@ -37,13 +37,13 @@ describe('apiRequest 对非信封 2xx 的兜底', () => {
       token: 'token',
       logout: vi.fn(),
     });
-    // 就是 md-to-ppt 本地编辑那条端点的真实返回形状。
+    // 某些兼容端点仍返回裸对象，客户端必须按 data 收下。
     const raw = { runId: 'run-2', parentRunId: 'run-1', html: '<html></html>', contentHash: 'h', unchanged: false };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
       new Response(JSON.stringify(raw), { status: 200, headers: { 'content-type': 'application/json' } }),
     ));
 
-    const res = await apiRequest<typeof raw>('/api/md-to-ppt/runs/run-1/local-edit', { method: 'POST', body: {} });
+    const res = await apiRequest<typeof raw>('/api/compatibility/raw-envelope', { method: 'POST', body: {} });
 
     expect(res.success).toBe(true);
     expect(res.data).toEqual(raw);

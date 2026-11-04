@@ -64,7 +64,7 @@ describe('通知逐次发送历史', () => {
     const result = await query(store);
     expect(result.status).toBe(200);
     expect(result.data.summary).toEqual({ total: 1, sent: 1, failed: 0, unknown: 0 });
-    expect(result.data.deliveries[0]).toMatchObject({ targetId: 'p95', channelName: '我的手机', title: '首屏接口 P95 指标异常' });
+    expect(result.data.deliveries[0]).toMatchObject({ targetId: 'p95', channelName: '我的手机', title: '首屏接口 P95：检查异常' });
   });
   it('发送失败保留原因，演练与实际告警分开，不追加重试', async () => {
     const { store, events } = journal();

@@ -1,3 +1,4 @@
+import { projectBranchPreviewSlugs } from './preview-entrypoints.js';
 import http from 'node:http';
 import { runningCommitSha } from './running-version.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
@@ -247,8 +248,8 @@ export class ProxyService {
     for (const entry of Object.values(state.branches)) {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
-      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
-        if (computePreviewSlug(entry.branch, projectSlug) === slug) {
+      for (const previewSlug of projectBranchPreviewSlugs(entry, project)) {
+        if (previewSlug === slug) {
           previewMatches.push(entry);
           break;
         }
@@ -595,8 +596,7 @@ export class ProxyService {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
       let profiles: BuildProfile[] | undefined;
-      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
-        const ps = computePreviewSlug(entry.branch, projectSlug);
+      for (const ps of projectBranchPreviewSlugs(entry, project)) {
         if (!ps || !slug.startsWith(`${ps}-`)) continue;
         const sub = slug.slice(ps.length + 1); // 去掉 `<ps>-`
         if (!sub) continue;
@@ -699,7 +699,11 @@ export class ProxyService {
         Date.parse(branch.lastDeployAt || '') || 0,
       );
       const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
-      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
+      // A released hostname can now belong to a different existing branch whose
+      // creation predates this tombstone. History never overrides its new owner.
+      const tombOwnsBranch = tomb && tomb.projectId === branch.projectId
+        && (tomb.branchId ? tomb.branchId === branch.id : tomb.branch === branch.branch);
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tombOwnsBranch && tombAt >= liveSince) {
         this.onBranchGone(tomb.previewSlug || branch.id, req, res);
         return;
       }
@@ -2445,6 +2449,7 @@ ${shouldAutoRefresh ? `;(function(){
       clientRes.setHeader('X-CDS-Request-Id', requestId);
       // 判定来源（master 兜底）与落点服务：与 forwarder 的 X-CDS-Resolver / X-CDS-Profile 同名
       clientRes.setHeader('X-CDS-Resolver', 'master-fallback');
+      if (branchCtx?.branchId) clientRes.setHeader('X-CDS-Branch', branchCtx.branchId);
       if (branchCtx?.profileId) clientRes.setHeader('X-CDS-Profile', branchCtx.profileId);
     }
     const suppressPreviewBody = isHostedSitePreviewRequest(clientReq.url || '/');
@@ -2596,6 +2601,8 @@ ${shouldAutoRefresh ? `;(function(){
     }
 
     const proxyReq = http.request(options, (proxyRes) => {
+      if (branchCtx?.branchId) proxyRes.headers['x-cds-branch'] = branchCtx.branchId;
+      else delete proxyRes.headers['x-cds-branch'];
       const headers = { ...proxyRes.headers };
       // When routing via cookie (same URL serves different branches), prevent
       // browser disk-cache from mixing assets across branch switches.

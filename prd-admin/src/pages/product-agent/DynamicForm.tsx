@@ -54,10 +54,15 @@ export function useEffectiveTemplate(entityType: ProductEntityType, productId: s
   return { template, loading };
 }
 
-export function useEffectiveWorkflow(entityType: ProductEntityType, productId: string | null) {
+export function useEffectiveWorkflow(entityType: ProductEntityType, productId: string | null, enabled = true) {
   const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    if (!enabled) {
+      setWorkflow(null);
+      setLoading(false);
+      return;
+    }
     let alive = true;
     setLoading(true);
     void (async () => {
@@ -77,7 +82,7 @@ export function useEffectiveWorkflow(entityType: ProductEntityType, productId: s
     return () => {
       alive = false;
     };
-  }, [entityType, productId]);
+  }, [enabled, entityType, productId]);
   return { workflow, loading };
 }
 

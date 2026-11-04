@@ -356,7 +356,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     kind: 'agent',
     agentKey: 'product-agent',
     routePath: '/product-agent',
-    permission: 'product-agent.use',
+    permission: ['product-agent.use', 'product-agent.version-apply'],
     tags: ['产品管理', '版本', '需求', '功能', '缺陷追溯', '知识图谱', 'RTM'],
     usageCount: 0,
     createdAt: new Date().toISOString(),

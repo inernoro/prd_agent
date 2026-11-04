@@ -87,6 +87,7 @@ public class DataSyncScopeCoverageTests
             "agent_api_keys", "console_sso_tickets", "external_authorizations", "workflow_secrets",
             "github_user_connections", "sessions", "openplatformapps", "invitecodes",
             "desktop_asset_keys", "peer_pairing_codes", "short_links",
+            "product_permission_configurations",
         };
         var leaked = mustNeverExport.Where(n => DataSyncScope.AllExportableCollections.Contains(n)).ToList();
         Assert.True(leaked.Count == 0, "凭据类集合出现在可导出清单里：" + string.Join(", ", leaked));
@@ -98,7 +99,10 @@ public class DataSyncScopeCoverageTests
         // 已知会带密钥的可导出集合 -> 至少要清空的字段。
         var required = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["users"] = new[] { "PasswordHash" },
+            ["users"] = new[] { "PasswordHash", "NotificationIdentityProtected" },
+            ["product_agent_settings"] = new[] { "ClaimWebhook" },
+            ["product_initiations"] = new[] { "ClaimNotification" },
+            ["product_releases"] = new[] { "ClaimNotification" },
             ["llmplatforms"] = new[] { "ApiKeyEncrypted" },
             ["llmmodels"] = new[] { "ApiKeyEncrypted" },
             ["channel_settings"] = new[] { "ImapPassword", "SmtpPassword" },
