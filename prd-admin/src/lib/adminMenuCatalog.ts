@@ -35,10 +35,10 @@ export function getAugmentedAdminMenuCatalog(args: {
 }
 
 /**
- * sidebar 不显示的 appKey 集合（唯一来源）。
- * AppShell 和 NavLayoutEditor 统一引用此常量，避免两份独立定义漂移。
+ * 永久退出 sidebar 的 appKey（唯一来源），用户自定义顺序也不能恢复。
+ * 只限制导航展示，保留功能目录和页面的其他入口。
  */
-export const SIDEBAR_HIDDEN_APPKEYS = new Set<string>();
+export const SIDEBAR_HIDDEN_APPKEYS = new Set<string>(['weekly-poster', 'workflow-agent']);
 
 /**
  * 返回 sidebar 实际可见的 menuCatalog 条目（单一数据源），含 home 分组。

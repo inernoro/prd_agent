@@ -866,6 +866,23 @@ export async function getMdToPptRun(id: string): Promise<MdToPptRunDetail | null
   return res.success ? (res.data ?? null) : null;
 }
 
+/** 只观察已接纳的同一任务；断流恢复不会重发生成/修改请求。 */
+export function observeMdToPptRun(id: string, onSnapshot: (run: MdToPptRunDetail) => void): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poll = async () => {
+    const run = await getMdToPptRun(id).catch(() => null);
+    if (stopped) return;
+    if (run) {
+      onSnapshot(run);
+      if (run.status === 'done' || run.status === 'error') return;
+    }
+    timer = setTimeout(() => void poll(), 3000);
+  };
+  void poll();
+  return () => { stopped = true; if (timer != null) clearTimeout(timer); };
+}
+
 /** 最近生成历史 */
 export async function getRecentMdToPptRuns(): Promise<MdToPptRunSummary[]> {
   const res = await apiRequest<MdToPptRunSummary[]>('/api/md-to-ppt/runs');

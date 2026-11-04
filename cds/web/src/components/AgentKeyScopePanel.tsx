@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /**
  * AgentKeyScopePanel — 统一的 Agent Key 授权作用域勾选面板(2026-07-09)。
  *
@@ -10,7 +11,7 @@
  * 主题:所有颜色走 hsl(var(--*)) token(.claude/rules/cds-theme-tokens.md),禁暗色字面量。
  */
 import { useEffect, useState } from 'react';
-import { AlertTriangle, FolderGit2, Loader2, PlusCircle } from 'lucide-react';
+import { AlertTriangle, FolderGit2, PlusCircle } from 'lucide-react';
 
 import { apiRequest, ApiError } from '@/lib/api';
 
@@ -131,12 +132,7 @@ export function AgentKeyScopePanel({ value, onChange, disabled, currentProjectId
           指定一个现有项目
           {allProjects ? <span className="text-xs font-normal text-muted-foreground">（已选「所有项目」，无需再选）</span> : null}
         </div>
-        {loadState === 'loading' ? (
-          <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            加载项目列表…
-          </div>
-        ) : null}
+        {loadState === 'loading' ? <ContentLoading label="加载项目列表" variant="rows" /> : null}
         {loadState === 'error' ? (
           <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
             加载项目失败：{loadError}

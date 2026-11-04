@@ -1,3 +1,4 @@
+import { SettingsLoadingContext } from '@/components/skeletons/SettingsSkeleton';
 import { useEffect, useState } from 'react';
 import { apiRequest, type CdsPublicUser } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -51,6 +52,7 @@ export function UserProjectAccessDialog({ user, onClose, onToast }: {
   };
 
   return (
+    <SettingsLoadingContext.Provider value={false}>
     <Dialog open={Boolean(user)} onOpenChange={open => { if (!open && !busy) onClose(); }}>
       <DialogContent frame className="max-w-xl" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onPointerDownOutside={event => { if (busy) event.preventDefault(); }}>
         <DialogHeader className="shrink-0 border-b border-border px-5 py-4 pr-12">
@@ -86,5 +88,6 @@ export function UserProjectAccessDialog({ user, onClose, onToast }: {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </SettingsLoadingContext.Provider>
   );
 }

@@ -200,6 +200,7 @@ docs:
   guide.cds.github-app: "CDS GitHub App 接入与私有仓库部署 · 指南"
   guide.cds.github-webhook-events: "CDS GitHub Webhook 订阅配置指南 · 指南"
   guide.cds.host-migration: "CDS 宿主迁移 Runbook（拉取 / 构建 / 性能检查单） · 指南"
+  guide.cds.loading: "CDS 骨架维护与验收 · 指南"
   guide.cds.managed-delivery: "CDS 自动交付与 Agent 接入 · 指南"
   guide.cds.mongo-migration: "CDS 状态存储迁移到 MongoDB · 指南"
   guide.cds.multi-branch-db: "CDS 多分支数据库隔离指南(Phase 5) · 指南"
