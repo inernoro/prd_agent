@@ -225,4 +225,66 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     await act(async () => { expect(await current.submit(input, [])).toBe(true); });
     expect(calls.create.mock.calls[1][0].clientRequestId).not.toBe(originalIdentity);
   });
+
+  it.each([false, true])('同File异步分析补充描述后更换上传身份，已存=%s 时精确删除旧附件', async (persisted) => {
+    const file = new File(['image'], 'evidence.png', { type: 'image/png' });
+    calls.upload.mockImplementationOnce(async request => {
+      if (persisted) draft = { ...draft, attachments: [
+        { id: 'own-old', clientRequestId: request.clientRequestId },
+        { id: 'other-source', clientRequestId: 'foreign-request' },
+      ] as DefectAttachment[] };
+      return fail('NETWORK_ERROR', '上传响应丢失');
+    });
+    await act(async () => { expect(await current.submit(input, [{ file }])).toBe(false); });
+    const oldId = calls.upload.mock.calls[0][0].clientRequestId;
+    calls.upload.mockResolvedValueOnce(fail('NETWORK_ERROR', '再次断连'));
+    const analyzed = [{ file, description: '异步图片分析结果' }];
+    await act(async () => { expect(await current.submit(input, analyzed)).toBe(false); });
+    expect(calls.upload.mock.calls[1][0]).toMatchObject({ file, description: analyzed[0].description });
+    const newId = calls.upload.mock.calls[1][0].clientRequestId;
+    expect(newId).not.toBe(oldId);
+    expect(calls.remove.mock.calls).toEqual(persisted ? [[{ id: 'draft-1', attachmentId: 'own-old' }]] : []);
+    // 模拟服务端删除后的真实草稿；其他来源附件仍保留。
+    draft = { ...draft, attachments: (draft.attachments ?? []).filter(item => item.id !== 'own-old') };
+    await act(async () => { expect(await current.submit(input, analyzed)).toBe(true); });
+    expect(calls.upload.mock.calls[2][0].clientRequestId).toBe(newId);
+    expect(calls.upload.mock.calls[2][0].description).toBe(analyzed[0].description);
+    expect(calls.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('替换描述前删除失败保留旧身份，重试成功删除后才上传新身份', async () => {
+    const file = new File(['image'], 'evidence.png', { type: 'image/png' });
+    calls.upload.mockImplementationOnce(async request => {
+      draft = { ...draft, attachments: [{ id: 'own-old', clientRequestId: request.clientRequestId }] as DefectAttachment[] };
+      return fail('NETWORK_ERROR', '上传响应丢失');
+    });
+    await act(async () => { await current.submit(input, [{ file }]); });
+    const oldId = calls.upload.mock.calls[0][0].clientRequestId;
+    calls.remove.mockResolvedValueOnce(fail('NETWORK_ERROR', '删除失败'));
+    const analyzed = [{ file, description: '延迟分析完成' }];
+    await act(async () => { expect(await current.submit(input, analyzed)).toBe(false); });
+    expect(calls.upload).toHaveBeenCalledTimes(1);
+    expect(calls.submit).not.toHaveBeenCalled();
+    await act(async () => { expect(await current.submit(input, analyzed)).toBe(true); });
+    expect(calls.remove.mock.calls).toEqual([
+      [{ id: 'draft-1', attachmentId: 'own-old' }], [{ id: 'draft-1', attachmentId: 'own-old' }],
+    ]);
+    expect(calls.upload.mock.calls[1][0].clientRequestId).not.toBe(oldId);
+    expect(calls.upload.mock.calls[1][0].description).toBe('延迟分析完成');
+  });
+
+  it('已提交后分析描述变化仍保护未应用编辑，不删除或再上传', async () => {
+    const file = new File(['image'], 'evidence.png', { type: 'image/png' });
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return fail('NETWORK_ERROR', '提交响应丢失');
+    });
+    await act(async () => { await current.submit(input, [{ file }]); });
+    await act(async () => { expect(await current.submit(input, [{ file, description: '延迟分析结果' }])).toBe(false); });
+    expect(current.unappliedChanges).toBe(true);
+    expect(calls.upload).toHaveBeenCalledTimes(1);
+    expect(calls.remove).not.toHaveBeenCalled();
+    expect(onSubmitted).not.toHaveBeenCalled();
+  });
+
 });

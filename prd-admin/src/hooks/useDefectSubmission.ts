@@ -134,6 +134,17 @@ export function useDefectSubmission(options: Options) {
         for (let index = 0; index < currentSnapshot.attachments.length; index++) {
           const item = currentSnapshot.attachments[index];
           let identity = attempt.files.get(item.file);
+          if (identity && normalized(identity.description) !== normalized(item.description)) {
+            // 后台图片分析可能晚于首轮上传返回。只替换本会话旧身份对应的附件；
+            // 删除失败保留旧身份，避免下一轮遗失对已存旧附件的追踪。
+            for (const uploaded of defect.attachments ?? []) {
+              if (uploaded.clientRequestId !== identity.clientRequestId) continue;
+              setProgress('正在同步附件说明');
+              const removed = await deleteDefectAttachment({ id: defect.id, attachmentId: uploaded.id });
+              if (!removed.success) throw removed.error;
+            }
+            identity = undefined;
+          }
           if (!identity) {
             identity = { clientRequestId: crypto.randomUUID(), description: item.description };
             attempt.files.set(item.file, identity);

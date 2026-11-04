@@ -1500,7 +1500,10 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
     PrdAgent.Infrastructure.Services.Authorization.GitHubAuthHandler>();
 
 // 历史资源只探测配置的可信源，不跟随跳转；保留系统代理与 TLS 验证。
-builder.Services.AddSingleton<PrdAgent.Api.Services.HistoricalAssetUrlResolver>();
+builder.Services.AddSingleton(sp => new PrdAgent.Api.Services.HistoricalAssetUrlResolver(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<ILogger<PrdAgent.Api.Services.HistoricalAssetUrlResolver>>(),
+    sp.GetRequiredService<MongoDbContext>().ApiRequestLogs, sp.GetRequiredService<IHttpContextAccessor>()));
 builder.Services.AddHttpClient(nameof(PrdAgent.Api.Services.HistoricalAssetUrlResolver))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 

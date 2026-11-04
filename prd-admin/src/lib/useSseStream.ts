@@ -125,26 +125,18 @@ export function useSseStream<T = unknown>(
     const finalHeaders = { ...defaultHeaders, ...overrides?.headers };
 
     try {
-      const token = useAuthStore.getState().token;
-      const isPost = defaultMethod === 'POST' || finalBody !== undefined;
-
-      const reqHeaders: Record<string, string> = {
-        Accept: 'text/event-stream',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(isPost ? { 'Content-Type': 'application/json' } : {}),
-        ...finalHeaders,
-      };
-
-      const res = await fetch(finalUrl, {
-        method: isPost ? 'POST' : defaultMethod,
-        headers: reqHeaders,
-        ...(isPost && finalBody !== undefined ? { body: JSON.stringify(finalBody) } : {}),
+      const res = await fetchSseWithRefresh({
+        url: finalUrl,
+        method: defaultMethod,
+        body: finalBody,
+        headers: finalHeaders,
         signal: ac.signal,
       });
       if (ac.signal.aborted) return;
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
+        if (ac.signal.aborted) return;
         const errMsg = toUserReadableErrorMessage(errText, {
           fallbackMessage: '智能处理未完成',
           recoveryMessage: '请稍后重试，或保留原文继续操作。',
@@ -216,7 +208,7 @@ export function useSseStream<T = unknown>(
         setPhase('done');
       }
     } catch (err) {
-      if (!ac.signal.aborted && (err as Error).name !== 'AbortError') {
+      if (!terminal && !ac.signal.aborted && (err as Error).name !== 'AbortError') {
         setPhase('error');
         const message = '连接中断，请检查网络后重试；原文已保留。';
         setPhaseMessage(message);
@@ -257,6 +249,38 @@ export interface ConnectSseOptions {
   skipAuth?: boolean;
 }
 
+/** 只在消费响应体前恢复一次会话；刷新等待期间取消的请求不得重发。 */
+async function fetchSseWithRefresh(
+  opts: Omit<ConnectSseOptions, 'onEvent'>,
+): Promise<Response> {
+  const { url, method = 'GET', body, headers = {}, signal, skipAuth } = opts;
+  const isPost = method === 'POST' || body !== undefined;
+  // 首次发送和重试使用同一传输快照，避免刷新等待时调用方修改正文。
+  const requestBody = isPost && body !== undefined ? JSON.stringify(body) : undefined;
+
+  for (let attempt = 0; ; attempt++) {
+    signal.throwIfAborted();
+    const token = skipAuth ? null : useAuthStore.getState().token;
+    const res = await fetch(url, {
+      method: isPost ? 'POST' : method,
+      headers: {
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(isPost ? { 'Content-Type': 'application/json' } : {}),
+        ...headers,
+      },
+      ...(requestBody !== undefined ? { body: requestBody } : {}),
+      signal,
+    });
+    signal.throwIfAborted();
+    if (res.status !== 401 || skipAuth || attempt > 0) return res;
+
+    const refreshed = await tryRefreshAdminToken();
+    signal.throwIfAborted();
+    if (!refreshed) return res;
+  }
+}
+
 /**
  * 服务层 SSE 连接工具 — 封装 fetch + auth + 401 处理 + readSseStream
  *
@@ -264,44 +288,20 @@ export interface ConnectSseOptions {
  * 返回 { success, errorCode?, errorMessage? }
  */
 export async function connectSse(opts: ConnectSseOptions): Promise<{ success: boolean; errorCode?: string; errorMessage?: string }> {
-  return connectSseWithRefresh(opts, false);
-}
-
-async function connectSseWithRefresh(
-  opts: ConnectSseOptions,
-  didRefresh: boolean,
-): Promise<{ success: boolean; errorCode?: string; errorMessage?: string }> {
-  const { url, method = 'GET', body, headers = {}, onEvent, signal, skipAuth } = opts;
-
-  const token = skipAuth ? null : useAuthStore.getState().token;
-  if (!skipAuth && !token) return { success: false, errorCode: 'UNAUTHORIZED', errorMessage: '未登录' };
-
-  const isPost = method === 'POST' || body !== undefined;
-
-  const reqHeaders: Record<string, string> = {
-    Accept: 'text/event-stream',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(isPost ? { 'Content-Type': 'application/json' } : {}),
-    ...headers,
-  };
+  const { onEvent, signal, skipAuth } = opts;
+  if (!skipAuth && !useAuthStore.getState().token) {
+    return { success: false, errorCode: 'UNAUTHORIZED', errorMessage: '未登录' };
+  }
 
   let res: Response;
   try {
-    res = await fetch(url, {
-      method: isPost ? 'POST' : method,
-      headers: reqHeaders,
-      ...(isPost && body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal,
-    });
+    res = await fetchSseWithRefresh(opts);
   } catch {
     if (signal.aborted) return { success: true };
     return { success: false, errorCode: 'NETWORK_ERROR', errorMessage: '网络连接异常，请检查网络后重试。' };
   }
 
   if (res.status === 401) {
-    if (!skipAuth && !didRefresh && await tryRefreshAdminToken()) {
-      return connectSseWithRefresh(opts, true);
-    }
     const authStore = useAuthStore.getState();
     if (authStore.isAuthenticated) {
       authStore.logout();
