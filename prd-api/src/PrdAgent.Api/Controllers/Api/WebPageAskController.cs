@@ -721,8 +721,9 @@ public class WebPageAskController : ControllerBase
             }
 
             var finalText = evidence.CompleteAnswer(answer.ToString());
-            await PersistMessageAsync(session, site, "assistant", finalText,
-                snapshot.Text.Length, model, platform, Elapsed(startedAt), null);
+            var ratingToken = AskAnswerRating.CreateToken();
+            var savedAnswer = await PersistMessageAsync(session, site, "assistant", finalText,
+                snapshot.Text.Length, model, platform, Elapsed(startedAt), null, AskAnswerRating.Hash(ratingToken));
 
             try
             {
@@ -732,6 +733,9 @@ public class WebPageAskController : ControllerBase
                     truncated = snapshot.Truncated,
                     // 流结束时以服务端核对编号并附原文后的版本替换临时文本。
                     text = finalText,
+                    // 消息落库失败时仍返回答案，但不签发无法保存的评分控件。
+                    messageId = savedAnswer?.Id,
+                    ratingToken = savedAnswer == null ? null : ratingToken,
                 });
             }
             catch (ObjectDisposedException) { }
@@ -789,16 +793,16 @@ public class WebPageAskController : ControllerBase
         return session;
     }
 
-    private async Task PersistMessageAsync(
+    private async Task<HostedSiteAskMessage?> PersistMessageAsync(
         HostedSiteAskSession session, HostedSite site, string role, string content,
-        int contextChars, string? model, string? platform, int? elapsedMs, string? error)
+        int contextChars, string? model, string? platform, int? elapsedMs, string? error, string? ratingTokenHash = null)
     {
         // 空答案且没有错误 = 什么都没发生，不值得落一条空记录
-        if (string.IsNullOrWhiteSpace(content) && error == null) return;
+        if (string.IsNullOrWhiteSpace(content) && error == null) return null;
 
         try
         {
-            await _db.HostedSiteAskMessages.InsertOneAsync(new HostedSiteAskMessage
+            var message = new HostedSiteAskMessage
             {
                 SessionId = session.Id,
                 SiteId = site.Id,
@@ -809,12 +813,17 @@ public class WebPageAskController : ControllerBase
                 ContextChars = contextChars,
                 ElapsedMs = elapsedMs,
                 Error = error,
-            });
+                RatingTokenHash = ratingTokenHash,
+                DeploymentSlug = DeploymentScope.Current,
+            };
+            await _db.HostedSiteAskMessages.InsertOneAsync(message, cancellationToken: CancellationToken.None);
+            return message;
         }
         catch (Exception ex)
         {
             // 落库失败不该让已经答完的内容丢给用户一个错误
             _logger.LogWarning(ex, "网页托管提问：消息落库失败 session={SessionId}", session.Id);
+            return null;
         }
     }
 

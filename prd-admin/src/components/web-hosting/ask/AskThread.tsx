@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { Square } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { AskMarkdown } from './AskMarkdown';
 import { AskAnswerFooter } from './AskAnswerFooter';
 import { AskRefusalCard, type AskRefusalKey } from './askRefusal';
@@ -9,6 +9,7 @@ import type { AskMessage } from './askTypes';
 
 interface Props {
   messages: AskMessage[];
+  onRate?: (answerId: string, rating: number) => Promise<void>;
   /** 一条都还没问时的开场白；空则用站点标题兜底 */
   welcome?: string | null;
   title: string;
@@ -39,7 +40,7 @@ interface Props {
  * 和消息列表是同一件事，拆开两边都要重写一遍。
  */
 export default function AskThread({
-  messages, welcome, title, openingQuestions, onPick,
+  messages, welcome, title, openingQuestions, onPick, onRate,
   refusal, refusalServerMessage, onLogin, onRetry,
   isBusy, phaseMessage, elapsedSeconds, onCancel, hideIntro,
 }: Props) {
@@ -148,30 +149,16 @@ export default function AskThread({
       ))}
       </div>
 
-      {/* 等待期不能静止（CLAUDE.md 规则 #6）：还没有第一个字时给阶段文案 + 转圈 */}
-      {isBusy && !messages.some((m) => m.streaming && m.content) && (
-        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-          <MapSpinner size={14} />
-          <span style={{ flex: 1 }}>
-            {phaseMessage || '正在思考…'}
-            {elapsedSeconds > 0 ? ` · 已等待 ${elapsedSeconds} 秒` : ''}
-          </span>
-          <button
-            type="button"
-            onClick={onCancel}
-            aria-label="停止回答"
-            style={{
-              minWidth: 44, minHeight: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-              border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)',
-              color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11,
-            }}
-          >
+      {isBusy && <div style={{ marginTop: 12, flexShrink: 0 }} role="status" aria-live="polite">
+        <SsePhaseBar phase={messages.some((m) => m.streaming && m.content) ? 'streaming' : 'connecting'}
+          message={`${phaseMessage || '正在思考…'}${elapsedSeconds > 0 ? ` · 已等待 ${elapsedSeconds} 秒` : ''}`}
+          extra={<button type="button" onClick={onCancel} aria-label="停止回答"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28 }}>
             <Square size={10} fill="currentColor" />停止
-          </button>
-        </div>
-      )}
+          </button>} />
+      </div>}
       {completedAnswer && <AskAnswerFooter key={completedAnswer.id} answer={completedAnswer}
-        messages={messages} openingQuestions={openingQuestions} blocked={!!refusal} onAsk={onPick} />}
+        messages={messages} openingQuestions={openingQuestions} blocked={!!refusal} onAsk={onPick} onRate={onRate} />}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { memo, useId, useRef } from 'react';
+import { memo, useId, useRef, type ReactNode } from 'react';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { AskCitationBadge } from './AskCitationBadge';
 import { citationReferences, rehypeAskCitations } from './citationNodes';
@@ -12,6 +12,12 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 // remark 已给脚注加上每条回答独立的安全前缀；再加一次会使 href 和 id 不匹配。
 // 不启用 rehypeRaw，保留其余默认过滤规则。
 const citationSchema = { ...defaultSchema, clobberPrefix: '' };
+
+function AskMarkdownTable({ children }: { children?: ReactNode }) {
+  return <div className="ask-md-table-scroll" role="region" aria-label="回答表格，可横向滚动" tabIndex={0}>
+    <table>{children}</table>
+  </div>;
+}
 
 /**
  * 提问答案的 markdown 渲染。
@@ -52,6 +58,7 @@ export const AskMarkdown = memo(function AskMarkdown({ content, sourceTitle = '�
         remarkRehypeOptions={{ clobberPrefix: prefix, footnoteLabel: '引用原文', footnoteBackLabel: '返回正文' }}
         rehypePlugins={[[rehypeSanitize, citationSchema], [rehypeAskCitations, { notes }]]}
         components={{
+          table: AskMarkdownTable,
           p: ({ children }) => <p style={{ margin: 0 }}>{children}</p>,
           ul: ({ children }) => <ul style={{ margin: 0, paddingLeft: 18, listStyle: 'disc' }}>{children}</ul>,
           ol: ({ children }) => <ol style={{ margin: 0, paddingLeft: 18, listStyle: 'decimal' }}>{children}</ol>,

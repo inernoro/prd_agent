@@ -21,6 +21,9 @@ export interface AskMessage {
   content: string;
   /** 仅 assistant：这条是不是还在流式输出中 */
   streaming?: boolean;
+  messageId?: string;
+  ratingToken?: string;
+  rating?: number;
   /** 仅 assistant：失败原因 */
   error?: string;
 }

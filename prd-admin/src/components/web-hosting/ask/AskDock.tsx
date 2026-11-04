@@ -4,6 +4,8 @@ import { MapMarkGlyph } from '@/components/ui/MapBrandMark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import AskThread from './AskThread';
+import { AskResizeHandle, useAskWidth } from './AskResizeHandle';
+import { useAskSubmitKey } from './useAskSubmitKey';
 import { ASK_REFUSAL_REGISTRY, resolveAskRefusal } from './askRefusal';
 import {
   askDockGeometry, askHintsBottom, askMetaBottom,
@@ -76,12 +78,14 @@ export default function AskDock({
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const {
     messages, status, phaseMessage, elapsedSeconds, model, gateError,
-    clearGateError, isBusy, ask, cancel,
+    clearGateError, isBusy, ask, cancel, rate,
   } = useAskStream(source);
 
+  const [chatWidth, setChatWidth] = useAskWidth();
   const [state, setState] = useState<AskDockState>('collapsed');
   const [moving, setMoving] = useState(false);
   const [draft, setDraft] = useState('');
+  const submitKeys = useAskSubmitKey(() => submit(draft));
   const [hintsExpanded, setHintsExpanded] = useState(false);
   const [composerFolded, setComposerFolded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -102,8 +106,8 @@ export default function AskDock({
   stateRef.current = state;
 
   const viewport: AskDockViewport = useMemo(
-    () => ({ ...viewportSize, isMobile, safeBottom }),
-    [viewportSize, isMobile, safeBottom],
+    () => ({ ...viewportSize, isMobile, safeBottom, chatWidth }),
+    [viewportSize, isMobile, safeBottom, chatWidth],
   );
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
@@ -251,6 +255,7 @@ export default function AskDock({
   useEffect(() => {
     if (dockHidden) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (stateRef.current === 'collapsed') openFromPill();
@@ -440,6 +445,8 @@ export default function AskDock({
                 }),
         }}
       >
+        {state === 'chat' && !isMobile && !moving && <AskResizeHandle
+          width={askDockGeometry('chat', viewport).width} viewportWidth={viewport.width} onWidth={setChatWidth} />}
         {/* ── 收起：胶囊 ── */}
         <button
           type="button"
@@ -476,7 +483,7 @@ export default function AskDock({
             ref={barInputRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(draft); } }}
+            {...submitKeys}
             // 「问点什么…」没说清能问什么，用户会拿它当通用聊天框问页面外的事，
             // 然后吃一句「页面里没有提到」。把范围写进 placeholder，问之前就知道边界。
             placeholder={blocked ? ASK_REFUSAL_REGISTRY[refusal].placeholder : '就这一页提个问题'}
@@ -589,6 +596,7 @@ export default function AskDock({
 
           <AskThread
             messages={messages}
+        onRate={rate}
             welcome={welcome}
             title={title}
             openingQuestions={openingQuestions}
@@ -657,9 +665,7 @@ export default function AskDock({
                   ref={sideInputRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(draft); }
-                  }}
+                  {...submitKeys}
                   placeholder={blocked ? ASK_REFUSAL_REGISTRY[refusal].placeholder : '接着问'}
                   disabled={blocked}
                   rows={1}

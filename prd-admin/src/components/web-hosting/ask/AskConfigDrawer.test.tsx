@@ -118,3 +118,16 @@ describe('开场问题生成使用已保存的启用状态', () => {
     expect(updateSiteAskConfig).toHaveBeenLastCalledWith('site', expect.objectContaining({ suggestedQuestions: ['旧问题', '尚未保存的问题'] }));
   });
 });
+
+it('服务端保存成功但分享刷新失败时，不再把开关当成未保存并锁住生成', async () => {
+  vi.mocked(getSiteAskConfig).mockResolvedValue({ success: true, data: { ...config, enabled: false }, error: null });
+  vi.mocked(updateSiteAskConfig).mockResolvedValue({ success: true, data: { ...config, enabled: true }, error: null });
+  const onSaved = vi.fn().mockRejectedValue(new Error('设置已保存，页面刷新失败'));
+  await act(async () => root.render(<AskConfigDrawer siteId="site" siteTitle="网页" embedded onClose={vi.fn()} onSaved={onSaved} />));
+  await openQuestions();
+  await act(async () => enabledSwitch().click());
+  expect(regenerate().disabled).toBe(true);
+  await act(async () => save().click());
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('页面刷新失败');
+  expect(regenerate().disabled).toBe(false);
+});

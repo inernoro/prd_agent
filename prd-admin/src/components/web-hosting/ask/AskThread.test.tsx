@@ -66,12 +66,12 @@ describe('回答完成后的操作与本页续问', () => {
     expect(footer()).toBeNull();
   });
 
-  it('无题库或本条分享未选问题时只显示操作，不编造推荐；问完一轮只保留最新完成区', () => {
+  it('无题库或分享未选开场问题时仍提供三个本页续问；只保留最新完成区', () => {
     render({ openingQuestions: [] });
     expect(footer()).not.toBeNull();
-    expect(container.querySelector('.ask-answer-next')).toBeNull();
+    expect(container.querySelectorAll('.ask-answer-followup')).toHaveLength(3);
     render({ openingQuestions: ['风险评分由哪些维度组成?'] });
-    expect(container.querySelector('.ask-answer-next')).toBeNull();
+    expect(container.querySelectorAll('.ask-answer-followup')).toHaveLength(3);
     render({ messages: [...messages, { id: 'u2', role: 'user', content: '规则如何降级？' }, { id: 'a2', role: 'assistant', content: '新回答' }] });
     expect(container.querySelectorAll('.ask-answer-footer')).toHaveLength(1);
     expect(container.querySelector('.ask-answer-next')?.textContent).not.toContain('规则如何降级？');
@@ -112,5 +112,46 @@ describe('回答完成后的操作与本页续问', () => {
     Object.defineProperty(scroll, 'scrollHeight', { value: 1500, configurable: true });
     render({ messages: [...messages] });
     expect(scroll.scrollTop).toBe(100);
+  });
+});
+
+
+describe('评分、表格和公共流式状态', () => {
+  it('评分仅成功后更新，失败显示原因并可重试，旧回答无回执不显示虚假控件', async () => {
+    const onRate = vi.fn().mockRejectedValueOnce(new Error('评分未保存'));
+    render({ onRate });
+    expect(button('评 4 分')).toBeNull();
+    const rated = [...messages.slice(0, 1), { ...messages[1], messageId: 'db-answer', ratingToken: 'receipt' }];
+    render({ messages: rated, onRate });
+    await act(async () => button('评 4 分').click());
+    expect(onRate).toHaveBeenCalledWith('a1', 4);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('评分未保存');
+    expect(button('评 4 分').getAttribute('aria-pressed')).toBe('false');
+    onRate.mockResolvedValueOnce(undefined);
+    await act(async () => button('评 4 分').click());
+    render({ messages: [rated[0], { ...rated[1], rating: 4 }], onRate });
+    expect(button('评 4 分').getAttribute('aria-pressed')).toBe('true');
+    expect(container.textContent).toContain('已评 4 分');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('回答表格有独立可键盘操作的横向滚动容器，保留列和引用', () => {
+    render({ messages: [messages[0], { ...messages[1], content: '| 设计维度 | Cloudflare 参照 | 本页应用 |\n| --- | --- | --- |\n| 规则执行 | Ruleset Engine | 风险分层[^1] |\n\n[^1]: 规则原文' }] });
+    const region = container.querySelector<HTMLElement>('[aria-label="回答表格，可横向滚动"]')!;
+    expect(region.tabIndex).toBe(0);
+    expect(region.querySelectorAll('th')).toHaveLength(3);
+    expect(region.querySelectorAll('td')).toHaveLength(3);
+    expect(region.textContent).toContain('Cloudflare');
+    expect(region.querySelector('[data-citation-badge]')).not.toBeNull();
+  });
+
+  it('等待和输出期间都展示公共 SSE 阶段栏，停止可用', () => {
+    render({ isBusy: true, phaseMessage: '正在读取页面内容…', elapsedSeconds: 3 });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('正在读取页面内容… · 已等待 3 秒');
+    render({ isBusy: true, phaseMessage: '正在回答…', messages: [messages[0], { ...messages[1], content: '**要点', streaming: true }] });
+    expect(container.querySelector('strong')?.textContent).toContain('要点');
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('正在回答…');
+    act(() => button('停止回答').click());
+    expect(props.onCancel).toHaveBeenCalled();
   });
 });

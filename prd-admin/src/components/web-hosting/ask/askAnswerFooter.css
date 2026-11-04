@@ -17,3 +17,10 @@
   .ask-answer-toolbar button { width: 36px; height: 36px; }
   .ask-answer-followup { min-height: 44px; }
 }
+
+.ask-answer-rating { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; font-size: 11px; }
+.ask-answer-rating > div { display: flex; gap: 2px; }
+.ask-answer-rating button { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); border-radius: 6px; cursor: pointer; }
+.ask-answer-rating button:hover, .ask-answer-rating button.is-rated { color: var(--accent-primary); }
+.ask-rating-error { color: var(--semantic-danger-text); font-size: 11px; padding: 4px 0; }
+@media (pointer: coarse) { .ask-answer-rating button { width: 36px; height: 36px; } }

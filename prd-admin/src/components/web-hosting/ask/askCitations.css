@@ -60,3 +60,11 @@
 .ask-citation-card > button { margin-top: 6px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .ask-citation-popover button:hover { color: var(--text-primary); background: var(--bg-tertiary); }
 .ask-citation-popover button:focus-visible { outline: 1px solid var(--border-focus); outline-offset: 2px; }
+
+/* 与统一 MarkdownContent 一致的表格边框/间距，窄栏只让表格横向滚动。 */
+.ask-md { min-width: 0; max-width: 100%; }
+.ask-md-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--border-subtle); border-radius: 8px; }
+.ask-md-table-scroll table { width: 100%; min-width: 560px; border-collapse: collapse; table-layout: auto; font-size: 12px; line-height: 1.65; }
+.ask-md-table-scroll th, .ask-md-table-scroll td { padding: 9px 12px; min-width: 100px; border: 1px solid var(--border-subtle); vertical-align: top; text-align: left; word-break: normal; overflow-wrap: break-word; }
+.ask-md-table-scroll th { background: var(--nested-block-bg); color: var(--text-primary); font-weight: 600; }
+.ask-md-table-scroll td { color: var(--text-secondary); }

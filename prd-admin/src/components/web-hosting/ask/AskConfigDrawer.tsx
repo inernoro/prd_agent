@@ -147,11 +147,11 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved, e
         dailyLimit,
       });
       if (!res.success) { setError(res.error?.message ?? '保存失败'); return; }
-      await onSaved?.(res.data);
       setEnabled(res.data.enabled);
       setEnabledDirty(false);
       setRegenNote(null);
       setQuestionsDirty(false);
+      await onSaved?.(res.data);
       if (embedded) setSaved(true);
       else onClose();
     } catch (reason) {

@@ -2,6 +2,7 @@ import { useDeadline } from './useDeadline';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { api } from '@/services/api';
+import { apiRequest } from '@/services/real/apiClient';
 import { buildApiUrl } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import type { AskMessage, AskSource, AskStatus } from './askTypes';
@@ -219,7 +220,9 @@ export function useAskStream(source: AskSource) {
                 sawDone = true;
                 setMessages((prev) =>
                   prev.map((m) => (m.id === assistantId
-                    ? { ...m, content: typeof data.text === 'string' ? data.text : m.content, streaming: false }
+                    ? { ...m, content: typeof data.text === 'string' ? data.text : m.content, streaming: false,
+                        messageId: typeof data.messageId === 'string' ? data.messageId : undefined,
+                        ratingToken: typeof data.ratingToken === 'string' ? data.ratingToken : undefined }
                     : m)),
                 );
                 setStatus('done');
@@ -263,7 +266,18 @@ export function useAskStream(source: AskSource) {
     [abort, messages, source, status],
   );
 
+  const rate = useCallback(async (answerId: string, rating: number) => {
+    const answer = messages.find((message) => message.id === answerId);
+    if (!answer?.messageId || !answer.ratingToken) throw new Error('此回答暂时无法评价。');
+    const result = await apiRequest<{ rating: number }>(api.webPages.askRating(encodeURIComponent(answer.messageId)), {
+      method: 'PUT', auth: false, body: { rating, token: answer.ratingToken },
+    });
+    if (!result.success) throw new Error(result.error?.message ?? '评分未保存，请重试。');
+    setMessages((previous) => previous.map((message) => message.id === answerId ? { ...message, rating: result.data.rating } : message));
+  }, [messages]);
+
   return {
+    rate,
     messages,
     status,
     phaseMessage,
