@@ -9,7 +9,7 @@ export async function verifyLoadingRefresh(browser, base, out) {
   let projectGate, relationGate, projectRequested, relationRequested, releaseProject, releaseRelation, centerGate, centerRequested, releaseCenter, centerRequestSeen, failProject = false, failRelation = false;
   let projectCount = 0, relationCount = 0, projectRequestSeen, relationRequestSeen, savedProject;
   let healthGate, releaseHealth, healthRequestSeen, healthCount = 0, healthInterval = 45, failHealth = false;
-  let sectionGate, releaseSection, sectionRequestSeen, jobsCount = 0, runsCount = 0, changesCount = 0, sectionVersion = 1, failCenter = false, failRuns = false;
+  let sectionGate, releaseSection, sectionRequestSeen, jobsCount = 0, runsCount = 0, changesCount = 0, sectionVersion = 1, failCenter = false, failRuns = false, activePoll = false, heldCenterRequests = 0;
   const errors = [];
   await context.route('**/api/**', async route => {
     const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
@@ -51,7 +51,8 @@ export async function verifyLoadingRefresh(browser, base, out) {
       if (projectGate) await projectGate;
       if (failProject) return route.fulfill({ status: 400, json: { error: '合成：项目读取失败' } });
     }
-    if (p === '/api/releases/center' && centerGate) {centerRequestSeen?.(); await centerGate;}
+    if (p === '/api/releases/center' && activePoll) payload={...payload,rows:payload.rows.map(row=>({...row,latestRun:{releaseId:'fixture-active-run',projectId:'fixture-project',branchId:'fixture-branch-alpha',commitSha:'0'.repeat(40),targetId:row.target.id,status:'running',startedAt:'2026-11-04T00:00:00Z',artifact:{type:'image',commitSha:'0'.repeat(40)},logs:[]}}))};
+    if (p === '/api/releases/center' && centerGate) {heldCenterRequests++;centerRequestSeen?.(); await centerGate;}
     if (p === '/api/releases/center' && failCenter) return route.fulfill({status:500,json:{error:'合成：发布中心刷新失败'}});
     if (p.endsWith('/service-graph')) {
       relationCount++; relationRequestSeen?.();
@@ -156,8 +157,22 @@ export async function verifyLoadingRefresh(browser, base, out) {
     assert(await page.getByText(/合成配置记录 2/).isVisible());
     assert.equal(await page.getByRole('status',{name:'读取变更历史',exact:true}).count(),0);
     releaseSection(); sectionGate=null; await page.getByText(/合成配置记录 3/).waitFor();
+    // 模拟一个永不返回的静默轮询，手动刷新仍须可用且能取代它。
+    await page.clock.install(); activePoll=true;
+    await Promise.all([page.waitForResponse(r=>r.url().includes('/api/releases/center')),page.getByRole('button',{name:'刷新',exact:true}).first().click()]);
+    await page.getByRole('button',{name:'刷新',exact:true}).first().waitFor();
+    centerRequested=new Promise(r=>centerRequestSeen=r); centerGate=new Promise(r=>releaseCenter=r);
+    await page.clock.runFor(12_001); await requested(centerRequested);
+    const centerRefresh=page.getByRole('button',{name:'刷新',exact:true}).first();
+    assert(await centerRefresh.isEnabled(),'静默请求不能禁用手动刷新');
+    const heldBefore=heldCenterRequests;
+    const manualRequested=new Promise(r=>centerRequestSeen=r);
+    await centerRefresh.click(); await requested(manualRequested);
+    assert(heldCenterRequests>heldBefore,'手动刷新必须取代卡住的静默请求');
+    releaseCenter();centerGate=null;activePoll=false;
+    await page.waitForFunction(()=>!document.querySelector('button[title="刷新"][disabled]'));
     assert.deepEqual(errors, []);
-    return { projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
+    return { hungSilentPollCanBeReplaced: true, projectRefreshKeepsContent: true, unsavedInputAndFocusPreserved: true, savedNormalizationApplied: true, releaseCenterRefreshKeepsContent: true, releaseCenterRefreshFailureRetainsContent: true, releaseCenterHealthRefreshes: true, healthRefreshFailureRetainsContent: true, releaseRulesAndOpenRunsRefresh: true, releaseRuleDraftAndFocusPreserved: true, releaseEvidenceRefreshes: true, refreshFailureRetainsContent: true, retry: true, navigateAwayReopen: true, relationRefreshKeepsGraph: true, projectCount, relationCount, healthCount, jobsCount, runsCount, changesCount, errors };
   } catch(e) {
     await page.screenshot({path:path.join(out,'failure-refresh.jpg')});
     await fs.writeFile(path.join(out,'failure-refresh.html'),await page.content());

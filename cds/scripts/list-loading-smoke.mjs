@@ -11,6 +11,8 @@ const out = process.env.CDS_SKELETON_EVIDENCE || '/tmp/cds-list-loading';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 let delay = 1800, fail = false, member = false, chunkDelay = 1200;
+let dataGate, releaseData;
+const holdData = () => { dataGate = new Promise(resolve => { releaseData = () => { resolve(); dataGate = null; }; }); };
 const errors = [], unknown = new Set(), geometryResults = [];
 
 try {
@@ -35,8 +37,11 @@ try {
   await context.route('**/api/**', async route => {
     const pathname = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
     if (isEventStream(pathname)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
-    if (pathname === '/api/auth/status') await new Promise(r => setTimeout(r, 900));
-    if (pathname === '/api/projects' || pathname === '/api/projects/fixture-project') await new Promise(r => setTimeout(r, delay));
+    // 会话首载单独由连续性脚本验收；这里固定已确认身份，门控列表请求测量布局。
+    if (pathname === '/api/projects' || pathname === '/api/projects/fixture-project') {
+      if (dataGate) await dataGate;
+      else await new Promise(r => setTimeout(r, delay));
+    }
     if (fail && pathname === '/api/projects') return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'fixture: 请求失败，可刷新重试' }) });
     let body = resolveFixture(pathname);
     if (body === null) unknown.add(pathname);
@@ -97,11 +102,13 @@ try {
     }
     geometryResults.push({ label, before, after });
   };
+  holdData();
   await page.goto(base + '/project-list');
   await page.waitForSelector('[aria-label="加载项目列表"]');
   const projectBefore = await geometry('[aria-busy="true"] .cds-card-grid article');
   await filledPulse();
   await page.screenshot({ path: out + '/projects-skeleton.png' });
+  releaseData();
   await page.waitForSelector('article a[href="/branches/fixture-project"]');
   aligned('projects desktop', projectBefore, await geometry('[data-list-loading-boundary] article'));
   await noEffect();
@@ -110,12 +117,16 @@ try {
   assert.equal(await page.locator('article a[href="/branches/fixture-project"]').count(), 1);
   assert.equal(await page.locator('[aria-busy="true"] .cds-card-grid').count(), 0);
   await noEffect();
+  holdData();
   await page.locator('article a[href="/branches/fixture-project"]').click();
   await page.waitForSelector('[aria-busy="true"] .cds-branch-card-grid article');
   const branchBefore = await geometry('[aria-busy="true"] .cds-branch-card-grid article');
   await filledPulse();
   await page.screenshot({ path: out + '/branches-skeleton.png' });
+  releaseData();
   await page.waitForSelector('[data-branch-card-id]');
+  await page.screenshot({path:out+'/branches-real-diagnostic.png'});
+  await fs.writeFile(out+'/branches-real-diagnostic.html',await page.content());
   aligned('branches desktop with tags', branchBefore, await geometry('[data-branch-card-id]'));
   await noEffect();
   console.log('PASS project skeleton -> real project -> refresh retains content -> branch skeleton -> real branches; no effects');
@@ -126,20 +137,24 @@ try {
     ['/project-list', '[aria-busy="true"] .cds-card-grid article', '[data-list-loading-boundary] article', 'projects dark390'],
     ['/branches/fixture-project', '[aria-busy="true"] .cds-branch-card-grid article', '[data-branch-card-id]', 'branches dark390'],
   ]) {
+    holdData();
     await page.goto(base + route);
     await page.waitForSelector(pending);
     const before = await geometry(pending);
     await filledPulse();
     await page.screenshot({ path: out + '/' + label.replaceAll(' ', '-') + '-skeleton.png' });
+    releaseData();
     await page.waitForSelector(route === '/project-list' ? 'article a[href="/branches/fixture-project"]' : real);
     aligned(label, before, await geometry(real));
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await noEffect();
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  holdData();
   await page.goto(base + '/project-list');
   await page.waitForSelector('.cds-loading-skeleton-line');
   assert.equal(await page.locator('.cds-loading-skeleton-line').first().evaluate(el => getComputedStyle(el).animationName), 'none');
+  releaseData();
   await page.waitForSelector('article a[href="/branches/fixture-project"]');
   await noEffect();
   await page.emulateMedia({ reducedMotion: 'no-preference' });

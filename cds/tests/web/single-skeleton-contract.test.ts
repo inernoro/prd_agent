@@ -1,3 +1,4 @@
+import { mergeCleanSettings } from '../../web/src/components/project/ProjectSettingsRefresh.js';
 /**
  * 「一个界面一副骨架」守卫（2026-09-17）。
  *
@@ -231,5 +232,23 @@ describe('统一骨架：路由、数据和预览共用组件', () => {
     const monitor = markup(createElement(MonitorCenterSkeleton));
     expect(monitor).toContain('cds-loading-skeleton-line min-w-0 flex-1');
     expect(monitor).not.toContain('w-full shrink-0');
+  });
+});
+
+
+describe('项目设置刷新保留草稿并接收未编辑的服务器值', () => {
+  it('保留新建、编辑、删除三类草稿，同时更新干净字段', () => {
+    expect(mergeCleanSettings(
+      { edited: 'draft', clean: 'old', added: 'draft' },
+      { edited: 'old', clean: 'old', removed: 'old' },
+      { edited: 'remote', clean: 'new', removed: 'remote', remote: 'new' },
+    )).toEqual({ edited: 'draft', clean: 'new', added: 'draft', remote: 'new' });
+  });
+  it('数据库初始化对象未改动时跟随服务器，改过时保留本地值', () => {
+    expect(mergeCleanSettings(
+      { clean: { mode: 'empty' }, edited: { mode: 'clone', source: 'draft' } },
+      { clean: { mode: 'empty' }, edited: { mode: 'empty' } },
+      { clean: { mode: 'clone', source: 'remote' }, edited: { mode: 'empty' } },
+    )).toEqual({ clean: { mode: 'clone', source: 'remote' }, edited: { mode: 'clone', source: 'draft' } });
   });
 });

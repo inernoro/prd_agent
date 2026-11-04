@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { verifyPublicLoading } from './loading-public-smoke.mjs';
+import { verifySettingsRefresh } from './project-settings-refresh-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
@@ -123,6 +124,8 @@ try {
   if (!before && !only) {
     try {
       await verifyPublicLoading(browser, base, out);
+      const settings = await verifySettingsRefresh(browser, base, out);
+      await fs.writeFile(path.join(out, 'project-settings-refresh-result.json'), JSON.stringify(settings,null,2));
       const refresh = await verifyLoadingRefresh(browser, base, out);
       await fs.writeFile(path.join(out, 'refresh-result.json'), JSON.stringify(refresh,null,2));
       console.log('PASS refresh retains content/input/focus; failure/retry; navigate away and reopen');

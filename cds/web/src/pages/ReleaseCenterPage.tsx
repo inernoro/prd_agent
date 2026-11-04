@@ -188,7 +188,8 @@ export function ReleaseCenterPage(): JSX.Element {
     if (!opts?.silent) setState(previous => previous.status === 'ok' && loadedScope.current === projectId ? previous : { status: 'loading' });
     if (!opts?.silent) setSectionRefresh(value => value + 1);
     if (!opts?.silent) setRefreshError('');
-    setRefreshing(true);
+    // 后台轮询不能禁用手动刷新；用户可以取消卡住的静默请求。
+    if (!opts?.silent) setRefreshing(true);
     try {
       const [center, targets] = await Promise.all([
         apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`, {signal:controller.signal}),

@@ -16,6 +16,7 @@
 | 登录代码/会话/登录方式等待与真实登录卡 | `cds/web/src/components/skeletons/AuthPageSkeleton.tsx` | 实际登录页和等待共用 AuthPageFrame；账号模式确认前只有同一副表单骨架 |
 | 公开状态等待 | `cds/web/src/components/skeletons/PublicStatusSkeleton.tsx` | 代码与取数共用；首次失败退出骨架显示重试，不改变公开权限 |
 | 系统设置、项目设置的导航和表单轮廓 | `cds/web/src/components/skeletons/SettingsSkeleton.tsx` | `SettingsPageSkeleton` 放整页；`SettingsContentSkeleton` 放内容区；页签内通过 `SettingsLoadingContext` 复用 |
+| 项目设置刷新读请求与草稿保护 | `cds/web/src/components/project/ProjectSettingsRefresh.ts` | 子页登记只读加载；整页刷新不重挂载表单，保留编辑值并接收未编辑字段的新值 |
 | 发布控制台三栏轮廓和栏宽 | `cds/web/src/components/skeletons/ReleaseConsoleSkeleton.tsx` | 真实页与骨架共用布局常量；仅首次未取得项目/环境数据时使用整页骨架 |
 | 发布中心/拓扑/Agent 请求的导航与筛选占位 | `cds/web/src/components/skeletons/WorkspaceSkeletons.tsx` | 整段轮廓共用，避免页头在两阶段之间把内容向下推 |
 | 通用列表、表格、资源、日志占位 | `cds/web/src/components/skeletons/ContentLoading.tsx` | 根据真实内容选择 variant；慢等待提示预留高度 |

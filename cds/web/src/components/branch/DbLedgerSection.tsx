@@ -1,3 +1,4 @@
+import { useProjectSettingsRefresh, useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * DbLedgerSection — 数据台账（数据库隔离收敛 3）。
@@ -332,12 +333,21 @@ export function DbLedgerSection({ projectId, onToast, reloadToken = 0 }: { proje
     catch (err) { setWritingBack(null); onToast?.(err instanceof ApiError ? err.message : String(err)); }
   };
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
-    try { setState({ status: 'ok', view: await apiRequest<DbLedgerView>(base) }); }
-    catch (err) { setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) }); }
-  }, [base]);
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
+    try {
+      const view = await apiRequest<DbLedgerView>(base, { signal });
+      if (!signal.aborted) setState({ status: 'ok', view });
+    } catch (err) {
+      if (signal.aborted) return;
+      if (preserve) throw err;
+      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [base, beginRead]);
   useEffect(() => { void load(); }, [load, reloadToken]);
+  useProjectSettingsRefresh(() => load(true));
 
   const run = async (key: string, fn: () => Promise<{ message?: string }>): Promise<boolean> => {
     setBusy(key);

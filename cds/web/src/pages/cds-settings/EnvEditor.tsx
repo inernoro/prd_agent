@@ -1,3 +1,4 @@
+import { useProjectSettingsRefresh, useSettingsReadRequest } from '@/components/project/ProjectSettingsRefresh';
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { Copy, Eye, EyeOff, Loader2, Pencil, Plus, Save, Search, Trash2, Upload, X } from 'lucide-react';
 
@@ -143,15 +144,21 @@ export function EnvEditor({
   const [formError, setFormError] = useState('');
   const [bulkError, setBulkError] = useState('');
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const beginRead = useSettingsReadRequest();
+  const load = useCallback(async (preserve = false) => {
+    const signal = beginRead();
+    if (!preserve) setState({ status: 'loading' });
     try {
-      const data = await apiRequest<EnvResponse>(`/api/env?${queryForScope(scope)}`);
+      const data = await apiRequest<EnvResponse>(`/api/env?${queryForScope(scope)}`, { signal });
+      if (signal.aborted) return;
       setState({ status: 'ok', data });
     } catch (err) {
+      if (signal.aborted) return;
+      if (preserve) throw err;
       setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [scope]);
+  }, [scope, beginRead]);
+  useProjectSettingsRefresh(() => load(true));
 
   useEffect(() => {
     void load();
