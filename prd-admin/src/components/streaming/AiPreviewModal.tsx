@@ -105,7 +105,7 @@ export function AiPreviewModal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        style={{ height: '80dvh', maxHeight: 'calc(100dvh - 24px)', width: 'min(720px, 92vw)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}
+        style={{ height: '80dvh', maxHeight: 'calc(100dvh - 24px)', width: 'min(720px, 92vw)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
       >
         {/* Header */}
         <div className="shrink-0 flex items-start gap-3 px-5 py-4 border-b border-token-subtle" >
