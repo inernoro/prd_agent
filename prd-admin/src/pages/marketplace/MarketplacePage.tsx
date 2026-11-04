@@ -23,20 +23,20 @@ import {
   type MarketplaceItemBase,
 } from '@/lib/marketplaceTypes';
 import { toast } from '@/lib/toast';
-import { getMarketplaceSkillTags } from '@/services';
+import { getMarketplaceSkillTags, listMarketplaceSkills } from '@/services';
 import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { SkillUploadDialog } from './SkillUploadDialog';
 import { SkillOpenApiDialog } from './SkillOpenApiDialog';
 import { fetchOfficialSkillRoleLabels, type OfficialSkillRoleLabels } from './skillOpenApi/downloadOfficialSkill';
 import { useAuthStore } from '@/stores/authStore';
-import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
+import type { MarketplaceSkillDto, MarketplaceSkillScope } from '@/services/contracts/marketplaceSkills';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
 import { MarketplaceFilters } from './MarketplaceFilters';
 import { MarketplaceDisplayOptions } from './MarketplaceDisplayOptions';
-import { MARKETPLACE_CARD_SIZES, type MarketplaceCardSize } from './marketplaceLayout';
+import { MARKETPLACE_CARD_SIZES, MARKETPLACE_VIEWS, type MarketplaceCardSize } from './marketplaceLayout';
 import './marketplace.css';
 
 type SortMode = 'hot' | 'new';
@@ -136,6 +136,8 @@ export const MarketplacePage: React.FC = () => {
   const location = useLocation();
 
   const typeFromUrl = searchParams.get('type') || 'skill';
+  const scopeParam = searchParams.get('scope');
+  const scope: MarketplaceSkillScope = typeFromUrl === 'skill' && (scopeParam === 'favorites' || scopeParam === 'mine') ? scopeParam : 'all';
   const sourceApp = searchParams.get('source') || '';
   const cardDemoEnabled = searchParams.get('demo') === 'cards' || location.pathname === '/_dev/marketplace-card-demo';
   const currentUserId = useAuthStore((s) => s.user?.userId);
@@ -144,6 +146,9 @@ export const MarketplacePage: React.FC = () => {
   const [sortBy, setSortBy] = useState<SortMode>('hot');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadedScope, setLoadedScope] = useState<MarketplaceSkillScope | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const loadRequestRef = useRef(0);
   const [dataByType, setDataByType] = useState<Record<string, MarketplaceItemBase[]>>({});
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string>('');
@@ -212,36 +217,68 @@ export const MarketplacePage: React.FC = () => {
     const newParams = new URLSearchParams(searchParams);
     if (type === 'skill') newParams.delete('type');
     else newParams.set('type', type);
+    if (type !== 'skill') newParams.delete('scope');
     // 筛选切换用 replace：不堆 history，浏览器/手势返回直接回上一页而非上一个筛选态
     setSearchParams(newParams, { replace: true });
   };
 
+  const updateScope = (view: MarketplaceSkillScope) => {
+    const next = new URLSearchParams(searchParams);
+    if (view === 'all') next.delete('scope');
+    else { next.set('scope', view); next.delete('type'); setCategoryFilter('skill'); }
+    setSearchKeyword(''); setTagFilter(''); setRoleFilter('');
+    setToolbarPanel(null); setQuickConnectOpen(false);
+    setSearchParams(next, { replace: true });
+  };
+
   const loadAllData = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
+    setLoadError('');
     if (cardDemoEnabled) {
-      setDataByType({ skill: CARD_DEMO_SKILLS });
+      setDataByType({ skill: CARD_DEMO_SKILLS.filter(item => scope === 'all' || (scope === 'mine' ? item.ownerUserId === currentUserId : item.isFavoritedByCurrentUser)) });
+      setLoadedScope(scope);
       setLoading(false);
       return;
     }
     try {
       const results: Record<string, MarketplaceItemBase[]> = {};
+      let personalError = '';
       await Promise.all(
         Object.entries(CONFIG_TYPE_REGISTRY).map(async ([typeKey, typeDef]) => {
+          if (scope !== 'all' && typeKey !== 'skill') return;
           try {
-            const res = await typeDef.api.listMarketplace({ keyword: '', sort: sortBy });
+            const res = scope === 'all'
+              ? await typeDef.api.listMarketplace({ keyword: '', sort: sortBy })
+              : await listMarketplaceSkills({ sort: sortBy, scope });
             if (res.success && res.data?.items) results[typeKey] = res.data.items;
+            else if (scope !== 'all') personalError = res.error?.message || '个人技能加载失败，请重试';
           } catch (err) {
             console.error(`Failed to load ${typeKey}:`, err);
+            if (scope !== 'all') personalError = '个人技能加载失败，请重试';
           }
         })
       );
-      setDataByType(results);
+      if (requestId === loadRequestRef.current) {
+        setDataByType(results);
+        setLoadedScope(scope);
+        setLoadError(personalError);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
-  }, [cardDemoEnabled, sortBy]);
+  }, [cardDemoEnabled, sortBy, scope, currentUserId]);
 
   useEffect(() => { loadAllData(); }, [loadAllData]);
+
+  const handleFavoriteChange = (updated: MarketplaceSkillDto) => {
+    setDataByType(previous => ({ ...previous, skill: (previous.skill || []).flatMap<MarketplaceItemBase>(item =>
+      item.id !== updated.id ? [item] : scope === 'favorites' && !updated.isFavoritedByCurrentUser ? [] : [{
+        ...item, favoriteCount: updated.favoriteCount, isFavoritedByCurrentUser: updated.isFavoritedByCurrentUser,
+      }]) }));
+  };
+
+  const viewLoading = loading || loadedScope !== scope;
 
   const handleFork = async (typeKey: string, id: string, customName?: string) => {
     const typeDef = CONFIG_TYPE_REGISTRY[typeKey];
@@ -285,14 +322,24 @@ export const MarketplacePage: React.FC = () => {
     return list;
   }, [searchFiltered, tagFilter, roleFilter]);
 
-  const roleEntries = useMemo(() => Object.entries(roleLabels), [roleLabels]);
+  const roleEntries = useMemo(() => Object.entries(roleLabels).filter(([key]) =>
+    scope === 'all' || ((dataByType.skill || []) as MarketplaceSkillDto[]).some(item => item.roles?.includes(key))),
+  [roleLabels, scope, dataByType.skill]);
   const categoryLabel = CONFIG_TYPE_REGISTRY[categoryFilter]?.label ?? '配置';
   const hasFilters = Boolean(searchKeyword || (categoryFilter === 'skill' && (tagFilter || roleFilter)));
   const filterCount = (categoryFilter === 'skill' ? Number(Boolean(tagFilter)) + Number(Boolean(roleFilter)) : 1);
+  const viewTags = useMemo(() => {
+    if (scope === 'all') return skillTags;
+    const counts = new Map<string, number>();
+    for (const item of (dataByType.skill || []) as MarketplaceSkillDto[]) {
+      for (const tag of new Set(item.tags || [])) counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+    return [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  }, [scope, skillTags, dataByType.skill]);
   const filters = (
     <MarketplaceFilters category={categoryFilter} onCategoryChange={updateTypeFilter}
       roles={roleEntries} role={roleFilter} onRoleChange={setRoleFilter}
-      tags={skillTags} tag={tagFilter} onTagChange={setTagFilter} />
+      tags={viewTags} tag={tagFilter} onTagChange={setTagFilter} />
   );
 
   // 搜索框（桌面在工具条内、手机独占一行），只渲染其中一处，tour 锚点不重复
@@ -324,6 +371,12 @@ export const MarketplacePage: React.FC = () => {
         </div>
         <TipsEntryButton compact />
       </header>
+      <nav className="marketplace-scope-tabs" aria-label="市场范围">
+        {(Object.keys(MARKETPLACE_VIEWS) as MarketplaceSkillScope[]).map(view => (
+          <button key={view} type="button" aria-current={scope === view ? 'page' : undefined} data-active={scope === view}
+            onClick={() => updateScope(view)}>{MARKETPLACE_VIEWS[view].label}</button>
+        ))}
+      </nav>
       <div className="marketplace-workspace-body">
         {!isMobile && <aside className="marketplace-filter-rail" aria-label="筛选技能与配置">{filters}</aside>}
         <section className="marketplace-results" aria-label="市场内容">
@@ -358,8 +411,8 @@ export const MarketplacePage: React.FC = () => {
           </div>
           <div className="marketplace-results-scroll" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             <div className="marketplace-results-heading">
-              <h2>{hasFilters ? `筛选${categoryLabel}` : `全部${categoryLabel}`}</h2>
-              <span role="status">{loading ? '正在加载…' : `${filtered.length} 项`}</span>
+              <h2>{scope !== 'all' ? MARKETPLACE_VIEWS[scope].label : hasFilters ? `筛选${categoryLabel}` : `全部${categoryLabel}`}</h2>
+              <span role="status">{viewLoading ? '正在加载…' : loadError ? '加载失败' : `${filtered.length} 项`}</span>
               {hasFilters && (
                 <button type="button" className="marketplace-clear-filters" onClick={() => { setSearchKeyword(''); setTagFilter(''); setRoleFilter(''); }}>
                   清空筛选
@@ -367,12 +420,14 @@ export const MarketplacePage: React.FC = () => {
               )}
             </div>
             <div data-tour-id="marketplace-list">
-              {loading ? <MapSectionLoader /> : filtered.length === 0 ? (
+              {viewLoading ? <MapSectionLoader /> : loadError ? (
+                <div className="marketplace-empty" role="alert"><p>{loadError}</p><Button size="sm" onClick={() => void loadAllData()}>重试</Button></div>
+              ) : filtered.length === 0 ? (
                 <div className="marketplace-empty">
                   <Store size={40} strokeWidth={1.5} />
                   <p>{searchKeyword ? '没有找到匹配的配置' : categoryFilter === 'skill' && roleFilter ? `还没有面向「${roleLabels[roleFilter] ?? roleFilter}」的技能`
-                    : categoryFilter === 'skill' && tagFilter ? `没有带 #${tagFilter} 的配置` : categoryFilter === 'skill' ? '还没有人上传技能，第一个就是你' : '暂无公开配置'}</p>
-                  {categoryFilter === 'skill' && <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
+                    : categoryFilter === 'skill' && tagFilter ? `没有带 #${tagFilter} 的配置` : scope !== 'all' ? MARKETPLACE_VIEWS[scope].empty : categoryFilter === 'skill' ? '还没有人上传技能，第一个就是你' : '暂无公开配置'}</p>
+                  {categoryFilter === 'skill' && scope !== 'favorites' && <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
                     <UploadCloud size={14} />上传第一个技能包
                   </Button>}
                 </div>
@@ -381,7 +436,7 @@ export const MarketplacePage: React.FC = () => {
                   {filtered.map(item => (
                     <MarketplaceCard key={`${item.type}-${item.data.id}`} item={item} onFork={handleFork}
                       onEdit={selected => { if (selected.type === 'skill') setEditingSkill(selected.data as MarketplaceSkillDto); }}
-                      currentUserId={currentUserId} forking={forkingId === item.data.id} density="tile" />
+                      currentUserId={currentUserId} forking={forkingId === item.data.id} density="tile" onFavoriteChange={handleFavoriteChange} />
                   ))}
                 </div>
               )}

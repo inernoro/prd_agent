@@ -67,3 +67,52 @@ test('手机筛选和接入浮层：小屏不横溢出，生成结果与 Esc 关
   await expect(page.locator('.marketplace-quick-connect')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
 });
+
+test('个人技能范围：收藏即时移除、分类联动及上传元信息准确', async ({ page }) => {
+  await installMarketplaceFixture(page);
+  await page.goto('/marketplace?scope=favorites');
+  await expect(page.locator('.mkt-card')).toHaveCount(3, { timeout: 30_000 });
+  await expect(page.locator('.mkt-card-uploaded-at').first()).toHaveText('上传于 2026-10-01');
+  await expect(page.locator('.mkt-card-uploaded-at').first()).toHaveAttribute('datetime', '2026-10-01T00:00:00Z');
+  await expect(page.locator('.mkt-card-version').first()).toHaveText('v1.0.0');
+  await page.locator('[data-tour-id="marketplace-tag-filters"]').getByRole('button', { name: '工具 2', exact: true }).click();
+  await expect(page.locator('.mkt-card')).toHaveCount(2);
+  await page.locator('.mkt-card').filter({ hasText: 'dev-starter · 开发入门套装 · 进阶' }).getByTitle('取消收藏', { exact: true }).click();
+  await expect(page.locator('.mkt-card')).toHaveCount(1);
+  await page.getByRole('button', { name: '我的技能', exact: true }).click();
+  await expect(page).toHaveURL(/scope=mine/);
+  await expect(page.locator('.mkt-card')).toHaveCount(4);
+  await expect(page.locator('.mkt-card').getByTitle('编辑', { exact: true })).toHaveCount(4);
+  await expect(page.locator('[data-tour-id="marketplace-tag-filters"]').getByRole('button', { name: '工具 4', exact: true })).toBeVisible();
+  await page.getByPlaceholder('搜索名称、描述').fill('html-ppt');
+  await expect(page.locator('.mkt-card')).toHaveCount(2);
+  await page.getByRole('button', { name: '我的收藏', exact: true }).click();
+  await expect(page.locator('.mkt-card')).toHaveCount(2);
+  await expect(page.getByPlaceholder('搜索名称、描述')).toHaveValue('');
+  await page.getByRole('button', { name: '全部内容', exact: true }).click();
+  await expect(page.locator('.mkt-card')).toHaveCount(24);
+  await expect(page.locator('.mkt-card').filter({ has: page.getByTitle('monthly-report', { exact: true }) }).locator('.mkt-card-version')).toHaveCount(0);
+  await page.getByPlaceholder('搜索名称、描述').fill('goal-pipeline-board');
+  await expect(page.locator('.mkt-card').filter({ has: page.getByTitle('goal-pipeline-board', { exact: true }) }).locator('.mkt-card-version')).toHaveText('v2.0.0');
+});
+
+test('个人列表请求失败可重试，取消收藏失败保留列表与状态', async ({ page }) => {
+  await installMarketplaceFixture(page);
+  await page.route('**/api/marketplace/skills?*scope=favorites*', route => route.fulfill({
+    status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, error: { code: 'TEMPORARY', message: '暂时不可用' } }),
+  }));
+  await page.goto('/marketplace?scope=favorites');
+  await expect(page.getByRole('alert')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.mkt-card')).toHaveCount(0);
+  await page.unroute('**/api/marketplace/skills?*scope=favorites*');
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.locator('.mkt-card')).toHaveCount(3);
+  await page.route('**/api/marketplace/skills/*/unfavorite', route => route.fulfill({
+    status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, error: { message: '暂时不可用' } }),
+  }));
+  const favorite = page.locator('.mkt-card-favorite').first();
+  await favorite.click();
+  await expect(favorite).toBeEnabled();
+  await expect(favorite).toHaveAttribute('data-active', 'true');
+  await expect(page.locator('.mkt-card')).toHaveCount(3);
+});

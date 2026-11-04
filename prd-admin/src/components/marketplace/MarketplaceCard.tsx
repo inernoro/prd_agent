@@ -10,7 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
-import { formatDistanceToNow } from '@/lib/dateUtils';
+import { formatDate, formatDistanceToNow } from '@/lib/dateUtils';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -33,6 +33,7 @@ export interface MarketplaceCardProps {
   currentUserId?: string;
   forking?: boolean;
   density?: 'classic' | 'short' | 'micro' | 'tile';
+  onFavoriteChange?: (item: MarketplaceSkill) => void;
 }
 
 const CARD_DENSITIES = {
@@ -94,7 +95,7 @@ function ra(rgba: string, newA: number): string {
 
 // ── skill favourite toggle ─────────────────────────────────────────────────
 
-function SkillFavorite({ item }: { item: MarketplaceSkill }) {
+function SkillFavorite({ item, onChange }: { item: MarketplaceSkill; onChange?: (item: MarketplaceSkill) => void }) {
   const [favorited, setFavorited] = useState(item.isFavoritedByCurrentUser);
   const [count, setCount] = useState(item.favoriteCount);
   const [pending, setPending] = useState(false);
@@ -118,6 +119,7 @@ function SkillFavorite({ item }: { item: MarketplaceSkill }) {
         // 官方虚拟行等后端 no-op 场景：以服务端返回的实际状态为准
         setFavorited(res.data.item.isFavoritedByCurrentUser);
         setCount(res.data.item.favoriteCount);
+        onChange?.(res.data.item);
       }
     } catch {
       setFavorited(!next);
@@ -151,6 +153,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   currentUserId,
   forking = false,
   density = 'classic',
+  onFavoriteChange,
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
   const [localForking, setLocalForking] = useState(false);
@@ -185,6 +188,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   const coverUrl = getCoverImageUrl(item);
   const previewLink = getPreviewLink(item);
   const updatedTime = item.data.updatedAt || item.data.createdAt;
+  const version = item.type === 'skill' ? (item.data as MarketplaceSkill).version?.trim() : undefined;
   const shareCount = getShareCount(item);
   const downloadCount = getDownloadCount(item);
   const isOfficial = item.data.ownerUserId === 'official';
@@ -305,6 +309,19 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           </div>
         )}
 
+        {density === 'tile' && (
+          <div className="mkt-card-release-meta">
+            {version && (
+              <span className="mkt-card-version" title="版本号">{version.replace(/^v?/i, 'v')}</span>
+            )}
+            {item.data.createdAt && (
+              <time className="mkt-card-uploaded-at" dateTime={item.data.createdAt} title={`上传时间：${formatDate(item.data.createdAt)}`}>
+                上传于 {formatDate(item.data.createdAt, 'YYYY-MM-DD')}
+              </time>
+            )}
+          </div>
+        )}
+
         {/* Footer inside glass */}
         <div className="mkt-card-glass-footer">
           {/* Left: author */}
@@ -336,7 +353,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             )}
             <div className="mkt-card-actions flex items-center gap-1.5 flex-shrink-0">
               {item.type === 'skill' && (
-                <SkillFavorite item={item.data as MarketplaceSkill} />
+                <SkillFavorite item={item.data as MarketplaceSkill} onChange={onFavoriteChange} />
               )}
               {item.type === 'skill' && (
                 <Button

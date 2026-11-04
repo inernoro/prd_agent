@@ -90,14 +90,23 @@ public class MarketplaceSkillsController : ControllerBase
         [FromQuery] string? keyword,
         [FromQuery] string? sort,
         [FromQuery] string? tag,
+        [FromQuery] string? scope,
         CancellationToken ct)
     {
-        // 匿名可读：userId 只用于 isFavoritedByCurrentUser 这类「跟我有关」的字段，
-        // 未登录时为空串，这些字段恒为 false。查询本身恒带 IsPublic 过滤。
+        // 公开范围匿名可读；个人范围要求身份，并只读取当前用户上传或收藏的技能。
+        // 所有范围恒带 IsPublic 过滤，匿名公开响应的个人收藏标记恒为 false。
         var userId = this.GetUserIdOrNull() ?? string.Empty;
+        var view = string.IsNullOrWhiteSpace(scope) ? "all" : scope.Trim().ToLowerInvariant();
+        if (view is not ("all" or "mine" or "favorites"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPE", "不支持的技能范围"));
+        if (view != "all" && string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "请先登录后查看个人技能"));
 
         var builder = Builders<MarketplaceSkill>.Filter;
         var filter = builder.Eq(x => x.IsPublic, true);
+        // 在条数裁切之前按当前身份筛选，个人列表不依赖广场前 200 条。
+        if (view == "mine") filter &= builder.Eq(x => x.OwnerUserId, userId);
+        if (view == "favorites") filter &= builder.AnyEq(x => x.FavoritedByUserIds, userId);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -122,7 +131,9 @@ public class MarketplaceSkillsController : ControllerBase
 
         // 官方条目（findmapskills + 目录技能，按 keyword/tag 过滤）永远置顶
         // Web：无搜索词也展示全部官方（前端归到「官方推荐」独立行，不挤社区瀑布流）
-        var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: true);
+        var officialDtos = view == "all"
+            ? OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: true)
+            : new List<object>();
         // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限。
         // 官方条目自身也要裁：只减 DB 条数的话，官方条目一旦超过 200 总长就会破上限。
         // 现在离 200 还远，但按构造正确比靠「现在还不到」可靠。

@@ -19,6 +19,10 @@
 }
 
 .marketplace-workspace-body { display: flex; flex: 1; min-height: 0; }
+.marketplace-scope-tabs { display: flex; flex-shrink: 0; gap: 22px; padding: 0 18px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-elevated); }
+.marketplace-scope-tabs button { min-height: 40px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 400; cursor: pointer; }
+.marketplace-scope-tabs button:hover { color: var(--text-primary); }
+.marketplace-scope-tabs button[data-active="true"] { border-bottom-color: var(--selection-text); color: var(--selection-text); font-weight: 500; }
 .marketplace-filter-rail {
   flex: 0 0 212px;
   min-height: 0;
@@ -109,7 +113,7 @@
 .marketplace-quick-connect .mkt-qc-panel { border: 0; }
 
 /* 平铺继续使用 MarketplaceCard 的详情、收藏、分享、下载和编辑行为。 */
-.mkt-card-density-tile { display: flex; flex-direction: column; height: 100%; min-height: 196px; border-radius: 11px; background-color: var(--bg-site-card); }
+.mkt-card-density-tile { display: flex; flex-direction: column; height: 100%; min-height: 218px; border-radius: 11px; background-color: var(--bg-site-card); }
 .mkt-card-density-tile .mkt-card-bg-img,
 .mkt-card-density-tile .mkt-card-glyph-banner,
 .mkt-card-density-tile .mkt-card-icon-zone {
@@ -148,6 +152,9 @@
 .mkt-card-density-tile .mkt-card-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-height: 40px; white-space: normal; overflow-wrap: anywhere; }
 .mkt-card-density-tile .mkt-card-desc { min-height: 36px; margin-top: 8px; font-size: 12px; line-height: 18px; -webkit-line-clamp: 2; }
 .mkt-card-density-tile .mkt-card-tags { min-height: 16px; margin: 8px 0 10px; }
+.mkt-card-release-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 8px; color: var(--text-secondary); font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; }
+.mkt-card-version { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mkt-card-uploaded-at { white-space: nowrap; }
 .mkt-card-density-tile .mkt-card-glass-footer { min-height: 38px; margin-top: auto; padding: 5px 0; border-color: var(--border-subtle); }
 .mkt-card-density-tile .mkt-card-meta { min-width: 0; }
 .mkt-card-density-tile .mkt-card-owner-name { min-width: 0; max-width: 100%; }
@@ -165,6 +172,7 @@
 }
 @media (max-width: 767px) {
   .marketplace-module-header { height: 44px; padding: 0 8px; }
+  .marketplace-scope-tabs { gap: 18px; padding: 0 10px; }
   .marketplace-module-header .marketplace-source-badge { display: none; }
   .marketplace-workspace-toolbar { flex-wrap: wrap; gap: 6px; padding: 8px; }
   .marketplace-workspace-search { order: 2; flex: 1 0 100%; }

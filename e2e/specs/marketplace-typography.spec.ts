@@ -46,7 +46,7 @@ for (const scale of [1, 0.75]) {
             }
             const overlaps = await card.evaluate(el => {
               const footer = el.querySelector('.mkt-card-glass-footer')!.getBoundingClientRect();
-              return Array.from(el.querySelectorAll('.mkt-card-title, .mkt-card-desc, .mkt-card-tag'))
+              return Array.from(el.querySelectorAll('.mkt-card-title, .mkt-card-desc, .mkt-card-tag, .mkt-card-release-meta'))
                 .filter(node => node.getBoundingClientRect().height > 0)
                 .filter(node => node.getBoundingClientRect().bottom > footer.top + 1)
                 .map(node => node.className);
