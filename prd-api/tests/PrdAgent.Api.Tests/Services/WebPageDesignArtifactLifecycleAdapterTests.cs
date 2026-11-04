@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -14,6 +16,157 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class WebPageDesignArtifactLifecycleAdapterTests
 {
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PresentationResultWithoutProducedIdentity_MustResumeSavingBeforeReportingDone()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var setup = await StartedAdapterAsync(fixture, DesignArtifactOperations.Generate, DesignArtifactTypes.HtmlPpt);
+        var html = HostedSiteRevisionRules.HardenVerifiedPackageHtml(Html, Files().Select(file => file.Path).ToArray());
+        var files = Files().Select(file => file.Path == "index.html"
+            ? File(file.Path, Encoding.UTF8.GetBytes(html), file.MediaType) : file).ToArray();
+        await StoreBrokerFactsAsync(fixture.Db, setup.Run.Id);
+        await setup.Adapter.CommitManifestAsync(setup.Run.Id, files, ActiveLease(setup.Run));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == setup.Run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.LeaseExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
+        await fixture.Db.MdToPptRuns.InsertOneAsync(new MdToPptRun
+        { Id = setup.Run.Id, UserId = setup.Run.UserId, Status = "running", Op = "convert" });
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(item => item.ReadResultAsync(setup.Run.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ParsedDesignWorkspaceResult(html, files));
+        var events = new InMemoryRunEventStore();
+        var lifecycle = new DesignArtifactLifecycleService(fixture.Db, events);
+        var adapter = new WebPageDesignArtifactLifecycleAdapter(fixture.Db, lifecycle, broker.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<WebPageDesignArtifactLifecycleAdapter>.Instance);
+        var queue = new InMemoryRunQueue();
+
+        await adapter.RecoverPendingAsync();
+        var compatibility = await fixture.Db.MdToPptRuns.Find(item => item.Id == setup.Run.Id).SingleAsync();
+        Assert.Equal("running", compatibility.Status);
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(fixture.Db, queue, events, DateTime.UtcNow,
+            CancellationToken.None, publicLifecycle: adapter, lifecycle: lifecycle);
+        var recovered = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == setup.Run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Queued, recovered.Status);
+        Assert.Null(recovered.ProducedArtifactSiteId);
+        Assert.Null(recovered.ProducedArtifactRevisionId);
+        Assert.Equal(setup.Run.Id, await queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
+        Assert.Equal(0, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var baseline = DateTime.UtcNow;
+        var site = new HostedSite { Id = "recovered-ppt", OwnerUserId = setup.Run.UserId,
+            SourceRef = setup.Run.Id, SourceType = "design-agent", ContentVersion = baseline };
+        sites.Setup(item => item.PrepareTrustedPresentationHtmlForHosting(It.IsAny<byte[]>(), "index.html"))
+            .Returns((byte[] bytes, string _) => bytes);
+        sites.Setup(item => item.PrepareHtmlForHosting(It.IsAny<byte[]>(), "index.html"))
+            .Returns((byte[] bytes, string _) => bytes);
+        sites.Setup(item => item.CreateFromVerifiedFilesAsync(setup.Run.UserId, It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), "design-agent", setup.Run.Id, It.IsAny<List<string>?>(), null,
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, IReadOnlyList<HostedSiteVerifiedFile> files, string? _, string? _, string _, string _,
+                List<string>? _, string? _, string _, CancellationToken _) =>
+            {
+                site.Files = files.Select(file => new HostedSiteFile { Path = file.Path, CosKey = "synthetic/" + file.Path }).ToList();
+                await fixture.Db.HostedSites.InsertOneAsync(site);
+                return site;
+            });
+        sites.Setup(item => item.GetEditableEntryHtmlAsync(site.Id, setup.Run.UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, html, baseline));
+        revisions.Setup(item => item.EnsureGeneratedVerifiedSnapshotAsync(site.Id, setup.Run.UserId,
+                It.IsAny<HostedSiteEditableEntry>(), It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(),
+                DesignArtifactRuntimes.OpenDesign, setup.Run.Id, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string _, HostedSiteEditableEntry _, IReadOnlyList<HostedSiteVerifiedFile> files,
+                string _, string _, IReadOnlyCollection<string> _, CancellationToken _) =>
+            {
+                var revision = new HostedSiteRevision { Id = "recovered-ppt-revision", SiteId = site.Id,
+                    CreatedByUserId = setup.Run.UserId, SourceRunId = setup.Run.Id, Runtime = DesignArtifactRuntimes.OpenDesign,
+                    Status = HostedSiteRevisionStatuses.Published, Html = html, PublishedContentVersion = baseline,
+                    VerifiedFiles = files.Select(file => new HostedSiteRevisionFile { Path = file.Path, Content = file.Content,
+                        Sha256 = file.Sha256, MimeType = file.MimeType }).ToList() };
+                await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+                return revision;
+            });
+        var http = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var executor = new OpenDesignServiceArtifactExecutor(http.Object, broker.Object,
+            Mock.Of<IDesignArtifactGatewayGrantService>(MockBehavior.Strict), new ConfigurationBuilder().Build(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<OpenDesignServiceArtifactExecutor>.Instance);
+        using var services = new ServiceCollection().AddSingleton(fixture.Db).AddSingleton(sites.Object)
+            .AddSingleton(revisions.Object).AddSingleton<IDesignArtifactLifecycleService>(lifecycle)
+            .AddSingleton<IWebPageDesignArtifactLifecycleAdapter>(adapter)
+            .AddSingleton(Mock.Of<IDesignKnowledgeSnapshotResolver>()).AddSingleton(Mock.Of<IActivityActionRecorder>())
+            .AddSingleton<IDesignArtifactExecutor>(executor).BuildServiceProvider();
+        var logger = new Mock<Microsoft.Extensions.Logging.ILogger<HostedSiteEditRunWorker>>();
+        using var worker = new HostedSiteEditRunWorker(services.GetRequiredService<IServiceScopeFactory>(), queue, events, logger.Object);
+        await worker.ProcessAsync(setup.Run.Id, CancellationToken.None);
+        var done = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == setup.Run.Id).SingleAsync();
+        Assert.True(WebPageDesignArtifactLifecycleAdapter.IsCompletedPresentation(done), $"status={done.Status};error={done.Error};failure={done.LifecycleFailureCode};produced={done.ProducedArtifactSiteId}/{done.ProducedArtifactRevisionId};diagnostic={string.Join(" | ", logger.Invocations.Select(call => call.Arguments.Count > 3 ? call.Arguments[3]?.ToString() : null))}");
+        Assert.Equal("recovered-ppt-revision", done.ProducedArtifactRevisionId);
+        Assert.Equal("done", (await fixture.Db.MdToPptRuns.Find(item => item.Id == setup.Run.Id).SingleAsync()).Status);
+        Assert.Equal(Files().Count, (await fixture.Db.HostedSiteRevisions.Find(item => item.Id == done.ProducedArtifactRevisionId).SingleAsync()).VerifiedFiles.Count);
+        Assert.Equal(0, await adapter.RecoverPendingAsync());
+        Assert.Equal(1, await fixture.Db.HostedSites.CountDocumentsAsync(_ => true));
+        http.VerifyNoOtherCalls(); // 已提交包的恢复路径没有任何 HTTP/模型发送。
+    }
+
+    [Theory]
+    [InlineData("complete")]
+    [InlineData("bind")]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PresentationCompletionFailure_KeepsCompatibilityPendingAndRecoversTheSameWholePackage(string failingStage)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var setup = await StartedAdapterAsync(fixture, DesignArtifactOperations.Generate, DesignArtifactTypes.HtmlPpt);
+        await StoreBrokerFactsAsync(fixture.Db, setup.Run.Id);
+        await setup.Adapter.CommitManifestAsync(setup.Run.Id, Files(), ActiveLease(setup.Run));
+        var baseline = new DateTime(2026, 11, 4, 1, 2, 3, DateTimeKind.Utc);
+        var artifact = new PersistedDesignArtifact("ppt-site", "ppt-revision", HostedSiteRevisionStatuses.Published, null, "Deck");
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == setup.Run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.ProducedArtifactSiteId, artifact.SiteId)
+                .Set(item => item.ProducedArtifactRevisionId, artifact.RevisionId));
+        // 两边各有超过批次上限的不合格记录：不能先截任一集合再做另一侧判定。
+        await fixture.Db.MdToPptRuns.InsertManyAsync(Enumerable.Range(0, 100).Select(index => new MdToPptRun
+        { Id = $"unmanaged-{index}", UserId = setup.Run.UserId, Runtime = DesignArtifactRuntimes.OpenDesign, Status = "running" }));
+        await fixture.Db.DesignArtifactRuns.InsertManyAsync(Enumerable.Range(0, 100).Select(index => new DesignArtifactRun
+        { Id = $"settled-{index}", UserId = setup.Run.UserId, DeploymentSlug = DeploymentScope.Current,
+            Runtime = DesignArtifactRuntimes.OpenDesign, ArtifactType = DesignArtifactTypes.HtmlPpt, Status = RunStatuses.Done,
+            UpdatedAt = DateTime.UtcNow.AddDays(-1) }));
+        await fixture.Db.MdToPptRuns.InsertManyAsync(Enumerable.Range(0, 100).Select(index => new MdToPptRun
+        { Id = $"settled-{index}", UserId = setup.Run.UserId, Runtime = DesignArtifactRuntimes.OpenDesign, Status = "done" }));
+        await fixture.Db.MdToPptRuns.InsertOneAsync(new MdToPptRun
+        { Id = setup.Run.Id, UserId = setup.Run.UserId, Runtime = DesignArtifactRuntimes.OpenDesign, Status = "running", Op = "convert" });
+        await fixture.Db.HostedSites.InsertOneAsync(new HostedSite
+        { Id = artifact.SiteId, OwnerUserId = setup.Run.UserId, SourceRef = setup.Run.Id, ContentVersion = baseline });
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = artifact.RevisionId, SiteId = artifact.SiteId, CreatedByUserId = setup.Run.UserId,
+            SourceRunId = setup.Run.Id, Runtime = DesignArtifactRuntimes.OpenDesign,
+            Status = HostedSiteRevisionStatuses.Published, PublishedContentVersion = baseline,
+            Html = Html, VerifiedFiles = Files().Select(ToRevisionFile).ToList(),
+        });
+        var failing = new Mock<IWebPageDesignArtifactLifecycleAdapter>(MockBehavior.Strict);
+        failing.Setup(item => item.CompleteAsync(setup.Run.Id, It.IsAny<DesignArtifactLifecycleLeaseAuthority>(), It.IsAny<CancellationToken>()))
+            .Returns((string id, DesignArtifactLifecycleLeaseAuthority lease, CancellationToken ct) =>
+                failingStage == "complete" ? Task.FromException(new IOException("synthetic completion failure")) : setup.Adapter.CompleteAsync(id, lease, ct));
+        failing.Setup(item => item.BindPublishedAsync(setup.Run.Id, artifact.SiteId, artifact.RevisionId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("synthetic binding failure"));
+
+        await Assert.ThrowsAsync<DesignArtifactRunLeaseLostException>(() => HostedSiteEditRunWorker.CompletePresentationRecordAsync(
+            fixture.Db, setup.Run, ActiveLease(setup.Run), failing.Object, Html, artifact, CancellationToken.None));
+        Assert.Equal("running", (await fixture.Db.MdToPptRuns.Find(item => item.Id == setup.Run.Id).SingleAsync()).Status);
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == setup.Run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.LeaseExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
+        Assert.Equal(1, await setup.Adapter.RecoverPendingAsync());
+        var completed = await fixture.Db.MdToPptRuns.Find(item => item.Id == setup.Run.Id).SingleAsync();
+        var publicRun = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == setup.Run.Id).SingleAsync();
+        Assert.Equal("done", completed.Status);
+        Assert.Equal(Html, completed.Html);
+        Assert.Equal(artifact.RevisionId, completed.PublishedVersionId);
+        Assert.True(WebPageDesignArtifactLifecycleAdapter.IsCompletedPresentation(publicRun));
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await setup.Adapter.RecoverPendingAsync());
+    }
+
     [Fact]
     public void InitializeNewRun_ShouldFreezeRemoteCapabilityAndCreateAuthoritativeEvent()
     {
@@ -247,9 +400,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapterTests
 
     private static async Task<(DesignArtifactRun Run, WebPageDesignArtifactLifecycleAdapter Adapter)> StartedAdapterAsync(
         Fixture fixture,
-        string operation)
+        string operation,
+        string artifactType = DesignArtifactTypes.WebPage)
     {
         var run = NewRun(operation);
+        run.ArtifactType = artifactType;
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(
             run,
             Capability(),
