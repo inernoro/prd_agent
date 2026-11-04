@@ -92,7 +92,7 @@ export function AiPreviewModal({
 
   const modal = (
     <div
-      className="fixed inset-0 z-[110] flex items-center justify-center"
+      className="fixed inset-0 z-[210] flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
       onClick={(event) => {
         // 打开按钮的连续第二击可能落到新出现的遮罩，不能把它当作主动取消。

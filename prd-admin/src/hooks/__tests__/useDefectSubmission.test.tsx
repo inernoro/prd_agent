@@ -1,14 +1,21 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { Simulate } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ok, fail } from '@/types/api';
 import type { DefectAttachment, DefectReport } from '@/services/contracts/defectAgent';
 import { useDefectSubmission } from '../useDefectSubmission';
+import { DefectSubmitPanel } from '@/pages/defect-agent/components/DefectSubmitPanel';
+import { useDefectStore } from '@/stores/defectStore';
 
 const calls = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), upload: vi.fn(), remove: vi.fn(), submit: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn() }));
 vi.mock('@/services', () => ({ createDefect: calls.create, updateDefect: calls.update, addDefectAttachment: calls.upload, deleteDefectAttachment: calls.remove, submitDefect: calls.submit }));
 vi.mock('@/lib/toast', () => ({ toast: { success: calls.success, error: calls.error, dismiss: calls.dismiss } }));
+vi.mock('@/components/design/GlassCard', () => ({ GlassCard: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
+vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: () => null }));
+vi.mock('@/hooks/useBreakpoint', () => ({ useIsMobile: () => false }));
+vi.mock('@/lib/useAiPreviewStream', () => ({ useAiPreviewStream: () => ({ open: false }) }));
 
 describe('缺陷提交的失败恢复与传输幂等身份', () => {
   let root: Root;
@@ -16,11 +23,12 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
   let current: ReturnType<typeof useDefectSubmission>;
   const onCreated = vi.fn();
   const onSubmitted = vi.fn();
+  const onRecovered = vi.fn();
   let draft: DefectReport;
   const input = { content: '原始问题描述', title: '原始问题', assigneeUserId: 'self', severity: 'minor' };
 
   function Harness() {
-    current = useDefectSubmission({ onCreated, onSubmitted });
+    current = useDefectSubmission({ onCreated, onSubmitted, onRecovered });
     return null;
   }
 
@@ -95,6 +103,89 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     expect(calls.upload).toHaveBeenCalledTimes(1);
     expect(calls.submit).toHaveBeenCalledTimes(2);
     expect(onSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['content', 'metadata', 'add-file', 'remove-file'] as const)('已提交恢复时保留未应用的当前修改（%s），不误报成功或关闭', async (change) => {
+    const file = new File(['old'], 'original.txt');
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return fail('NETWORK_ERROR', '连接中断');
+    });
+    await act(async () => { expect(await current.submit(input, [{ file }])).toBe(false); });
+    const edited = { ...input, ...(change === 'content' ? { content: '重试前新增的复现步骤' } : {}),
+      ...(change === 'metadata' ? { assigneeUserId: 'new-assignee', severity: 'major', projectId: 'new-project' } : {}) };
+    const attachments = change === 'remove-file' ? [] : [{ file }, ...(change === 'add-file' ? [{ file: new File(['new'], 'new.txt') }] : [])];
+    await act(async () => { expect(await current.submit(edited, attachments)).toBe(false); });
+    expect(current.unappliedChanges).toBe(true);
+    expect(current.confirmationPending).toBe(false);
+    expect(current.savedDefect?.status).toBe('submitted');
+    expect(current.error).toContain('当前修改尚未保存');
+    expect(calls.success).not.toHaveBeenCalled();
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(onRecovered).toHaveBeenCalledWith(expect.objectContaining({ id: 'draft-1', status: 'submitted' }));
+    expect(calls.update).toHaveBeenCalledTimes(1);
+    expect(calls.upload).toHaveBeenCalledTimes(1);
+    expect(calls.submit).toHaveBeenCalledTimes(1);
+    expect(edited.content).toBe(change === 'content' ? '重试前新增的复现步骤' : input.content);
+    expect(attachments).toHaveLength(change === 'add-file' ? 2 : change === 'remove-file' ? 0 : 1);
+  });
+
+  it('待确认但服务端仍是草稿时，允许修正确定性拒绝后继续提交', async () => {
+    calls.submit.mockResolvedValueOnce(fail('INVALID_FORMAT', '请补充复现步骤'));
+    await act(async () => { expect(await current.submit(input, [])).toBe(false); });
+    const edited = { ...input, content: '已补充复现步骤' };
+    await act(async () => { expect(await current.submit(edited, [])).toBe(true); });
+    expect(current.unappliedChanges).toBe(false);
+    expect(calls.update).toHaveBeenLastCalledWith(expect.objectContaining(edited));
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('保护未保存修改后，只有明确开始新提交才生成新身份，原缓冲仍可继续使用', async () => {
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return fail('NETWORK_ERROR', '连接中断');
+    });
+    await act(async () => { await current.submit(input, []); });
+    const edited = { ...input, content: '待另存的当前编辑' };
+    const attachments = [{ file: new File(['new'], 'retained.txt') }];
+    await act(async () => { expect(await current.submit(edited, attachments)).toBe(false); });
+    const identity = calls.create.mock.calls[0][0].clientRequestId;
+    await act(async () => current.reset());
+    draft = { ...draft, id: 'new-draft', status: 'draft' };
+    await act(async () => { expect(await current.submit(edited, attachments)).toBe(true); });
+    expect(current.unappliedChanges).toBe(false);
+    expect(calls.create.mock.calls[2][0].clientRequestId).not.toBe(identity);
+    expect(calls.update).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'new-draft', content: edited.content }));
+    expect(calls.upload).toHaveBeenLastCalledWith(expect.objectContaining({ file: attachments[0].file }));
+  });
+
+  it('相同内容的字段顺序、空可选字段和首尾空白不造成未保存修改误报', async () => {
+    const file = new File(['same'], 'same.txt');
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return fail('NETWORK_ERROR', '连接中断');
+    });
+    await act(async () => { await current.submit(input, [{ file, description: '  证据说明  ' }]); });
+    const reordered = { severity: input.severity, assigneeUserId: input.assigneeUserId, content: ` ${input.content} `,
+      title: input.title, templateId: '', projectId: '', teamId: '' };
+    await act(async () => { expect(await current.submit(reordered, [{ file, description: '证据说明' }])).toBe(true); });
+    expect(current.unappliedChanges).toBe(false);
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('实际页面回调和Store在一次成功提交后只保留唯一ID及最终状态', async () => {
+    sessionStorage.setItem('defect-agent-last-assignee', 'self');
+    useDefectStore.setState({ defects: [], templates: [], users: [], projects: [], showSubmitPanel: true });
+    await act(async () => root.render(<DefectSubmitPanel />));
+    const textarea = document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')!;
+    await act(async () => Simulate.change(textarea, { target: { value: input.content } } as never));
+    const button = document.querySelector<HTMLButtonElement>('[data-tour-id="defect-submit"]')!;
+    await act(async () => { button.click(); });
+    const rows = useDefectStore.getState().defects;
+    expect(rows.map((row) => row.id)).toEqual(['draft-1']);
+    expect(rows[0].status).toBe('submitted');
+    expect(useDefectStore.getState().showSubmitPanel).toBe(false);
+    sessionStorage.removeItem('defect-agent-last-assignee');
   });
 
   it('上传响应丢失后用户移除文件，先删除本会话的已上传附件再提交', async () => {

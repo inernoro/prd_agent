@@ -531,11 +531,12 @@ export function GlobalDefectSubmitDialog() {
         {submission.error && (
           <div role="alert" className="shrink-0 px-3 py-2 text-[12px] text-token-error">
             {submission.error}
-            {submission.savedDefect && (
+            {submission.savedDefect && !submission.unappliedChanges && (
               <div>{submission.confirmationPending
                 ? `缺陷 ${submission.savedDefect.defectNo} 已保存，提交结果待确认；重试会核对服务端结果。`
                 : `草稿 ${submission.savedDefect.defectNo} 已保存，尚未提交；重试会继续此草稿。`}</div>
             )}
+            {submission.unappliedChanges && <Button variant="ghost" size="sm" onClick={submission.reset}>保留当前内容并开始新提交</Button>}
           </div>
         )}
         {/* Selectors */}
