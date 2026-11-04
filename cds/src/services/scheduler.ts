@@ -41,6 +41,7 @@ export interface PreviewActivityTransition {
   status: 'ready' | 'unknown';
   reason?: PreviewActivityUnknownReason;
   observedAt: string;
+  lastUnknownAt?: string;
 }
 
 export interface SchedulerSnapshot {
@@ -136,7 +137,7 @@ export class SchedulerService {
       const previousStatus = this.activityLastObservedStatus;
       this.activityLastObservedStatus = status;
       if ((status !== previousStatus || this.activityReason !== previousReason) && (previousStatus !== undefined || status === 'unknown')) {
-        try { this.activityTransition?.({ status, reason: this.activityReason, observedAt: this.activityObservedAt }); }
+        try { this.activityTransition?.({ status, reason: this.activityReason, observedAt: this.activityObservedAt, lastUnknownAt: this.activityLastUnknownAt }); }
         catch { console.warn('[scheduler] 预览活动状态事件未写入，请检查诊断存储'); }
       }
       if (!this.activityUnknown) return true;

@@ -136,14 +136,21 @@ export function wireSchedulerPreviewActivitySelfCheck(scheduler: SchedulerServic
     ts: event.observedAt, category: 'system', severity: event.status === 'unknown' && event.reason !== 'historical-marker' ? 'warn' : 'info',
     source: 'scheduler-preview-activity', action: event.reason === 'historical-marker' ? 'historical-marker' : event.status === 'unknown' ? 'unknown' : 'recovered',
     message: event.reason === 'historical-marker' ? '重启后正在结算历史探针观察，恢复期间暂停自动停机' : event.status === 'unknown' ? '预览活跃状态无法确认，请检查转发器连接' : '预览活跃状态观察已恢复',
-    details: { status: event.status, reason: event.reason, observedAt: event.observedAt },
+    details: { status: event.status, reason: event.reason, observedAt: event.observedAt, lastUnknownAt: event.lastUnknownAt },
   }));
   return async sinceMs => {
     const current = await scheduler.readPreviewActivityStatus();
     let recentUnknownCount: number | null = null;
     if (isEventStoreReadable() && events?.findRecent) {
       const rows = await events.findRecent({ source: 'scheduler-preview-activity', action: 'unknown', since: new Date(sinceMs), limit: 1 });
-      if (Array.isArray(rows)) recentUnknownCount = rows.length;
+      if (Array.isArray(rows)) {
+        recentUnknownCount = rows.length;
+        if (recentUnknownCount === 0) {
+          const recovered = await events.findRecent({ source: 'scheduler-preview-activity', action: 'recovered', since: new Date(sinceMs), limit: 1000 });
+          recentUnknownCount = Array.isArray(recovered)
+            ? Number(recovered.some(row => Date.parse(String(row.details?.lastUnknownAt ?? '')) >= sinceMs)) : null;
+        }
+      }
     }
     return { current, schedulerEnabled: scheduler.isEnabled(), recentUnknownCount };
   };

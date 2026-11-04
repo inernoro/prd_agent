@@ -92,12 +92,13 @@ describe('真实Scheduler事件到常设自检的有限闭环', () => {
     expect(scheduler.getSnapshot().previewActivity?.status).toBe(enabled === '1' ? 'unknown' : undefined);
   });
 
-  it('实际unknown只记一次，短暂恢复尚未落库也不能假绿；持久历史跨新实例保留6h', async () => {
+  it.each([0, 7 * 3600_000])('实际unknown只记一次，持续%s毫秒后恢复的持久历史跨新实例保留6h', async outageMs => {
     const f = await fixture(); const first = f.create();
     await first.scheduler.tick(); await first.scheduler.tick();
     expect(f.pending.map(event => event.action)).toEqual(['unknown']);
     expect(JSON.stringify(f.pending)).not.toContain('不得写入事件的原始异常');
     expect((await first.doc()).checks['scheduler.preview-activity']).toMatchObject({ status: 'fail', observedValue: 1 });
+    f.advance(outageMs); await first.scheduler.tick();
     f.setAvailable(true); f.advance(1000); await first.scheduler.tick();
     expect(f.pending.map(event => event.action)).toEqual(['unknown', 'recovered']);
     expect((await first.doc()).checks['scheduler.preview-activity']).toMatchObject({ status: 'fail', observedValue: 1 });
