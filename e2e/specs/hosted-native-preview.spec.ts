@@ -55,7 +55,7 @@ test.afterAll(async () => { if (directory) await rm(directory, { recursive: true
 test.use({ trace: 'off', video: 'off' });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
@@ -65,7 +65,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     id: 'qa-native', title: '临时预览测试', siteUrl: siteEntry, entryFile: 'index.html',
     contentShape: options.shape, wrappedAssetType: options.wrapper,
     pdfFilePaths: options.pdfFilePaths, requiresPreviewBridge: options.requiresPreviewBridge,
-    totalSize: 3000, entrySize: 600, fileCount: 10, viewerCanEdit: false,
+    totalSize: 3000, entrySize: 600, fileCount: 10, viewerCanEdit: !!options.inlineHistory,
     ownerUserId: 'qa-preview-user', files: [], tags: [], folder: '', sourceType: 'upload',
     createdAt: '2026-11-03T00:00:00Z', updatedAt: '2026-11-03T00:00:00Z', askEnabled: false,
   };
@@ -81,6 +81,12 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   });
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/annotation-runtime.js')) {
+      await route.fulfill({ contentType: 'text/javascript', body: await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') });
+      return;
+    }
+    const currentVersion = { id: 'current', siteId: site.id, versionLabel: 'V2', contentVersionKey: '20000', isCurrent: true, canPreview: true, siteUrl: siteEntry, entryFile: 'index.html', contentShape: 'self-contained-html' };
+    const inlineVersion = { ...currentVersion, id: 'inline-history', versionLabel: 'V1', contentVersionKey: '10000', isCurrent: false, siteUrl: null };
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
     if (path.endsWith('/shares/view/qa-native')) {
       data = { title: '临时预览测试', shareType: 'single', createdAt: '2026-11-03T00:00:00Z', sites: [site] };
@@ -100,19 +106,23 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       contentRequests++;
       data = { html: options.html ?? files['index.html'] };
     } else if (path.endsWith('/comments')) {
-      data = { comments: [] };
+      data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: [] };
     } else if (path.endsWith('/revisions')) {
-      data = [];
+      data = options.inlineHistory ? [currentVersion, inlineVersion] : [];
+    } else if (path.endsWith('/revisions/inline-history/preview')) {
+      data = { revision: inlineVersion, siteUrl: null, html: '<!doctype html><html><head><meta charset="utf-8"></head><body><h1 id="old-heading">仅保留 HTML 的旧版正文</h1><p>这是旧版，不能替换为当前版或后台页面。</p></body></html>' };
     }
     await route.fulfill({ json: { success: true, data, error: null } });
   });
-  if (options.modal) {
+  if (options.modal || options.inlineHistory) {
     await page.addInitScript(() => localStorage.setItem('prd-admin-auth', JSON.stringify({
       state: { isAuthenticated: true, user: { userId: 'qa-preview-user', username: 'qa-preview-user', displayName: '预览验收用户', role: 'ADMIN' },
         token: 'qa-preview-token', refreshToken: 'qa-preview-refresh', sessionKey: 'qa-preview-session',
         permissions: ['access', 'web-pages.read'], permissionsLoaded: true, isRoot: false,
         menuCatalog: [], menuCatalogLoaded: true, cdnBaseUrl: '', permFingerprint: 'qa-preview' }, version: 0,
     })));
+  }
+  if (options.modal) {
     await page.goto('/web-pages');
     const card = page.locator('[data-tour-id="webpages-card"]').filter({ hasText: site.title });
     await expect(card).toBeVisible();
@@ -127,12 +137,32 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   }
   const preview = options.modal ? page.getByRole('dialog').locator('iframe') : page.locator('iframe[title="临时预览测试"]');
   await expect(preview).toBeVisible();
-  return { requests, contentRequests: () => contentRequests, listRequests: () => listRequests, frame: preview.contentFrame() };
+  return { requests, contentRequests: () => contentRequests, listRequests: () => listRequests, frame: preview.contentFrame(), preview };
 }
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
   test.describe(`托管对抗样本 ${viewport.width}px`, () => {
     test.use({ viewport });
+
+    for (const modal of [false, true]) {
+      test(`${modal ? '站内' : '分享'}的无直链历史正文保持内联预览并可绑定批注`, async ({ page }) => {
+        const { frame, preview } = await serve(page, { modal, inlineHistory: true, shape: 'self-contained-html', html: '<h1>当前版正文</h1>' });
+        if (modal) await page.clock.resume();
+        await page.getByRole('button', { name: '网页版本：V2', exact: true }).click();
+        await page.getByRole('option', { name: /V1/ }).click();
+        await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+        await expect(preview).not.toHaveAttribute('src', '');
+        await expect.poll(() => frame.locator('base').getAttribute('href')).toBe(new URL('.', entry).href);
+        const bind = page.getByRole('button', { name: '绑定页面元素 / 选中文字', exact: true });
+        if (!await bind.isVisible()) await page.getByRole('button', { name: '批注与讨论', exact: true }).click();
+        await expect(bind).toBeEnabled();
+        await bind.click();
+        await frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' }).click();
+        await expect(page.getByText('已选中标题', { exact: true })).toBeVisible();
+        await expect(frame.getByRole('heading', { name: '仅保留 HTML 的旧版正文' })).toBeVisible();
+        await expect(preview).toHaveAttribute('srcdoc', /仅保留 HTML 的旧版正文/);
+      });
+    }
 
     test('讨论打开时进入全屏仍铺满视口，退出后恢复工具栏', async ({ page }) => {
       await serve(page, { shape: 'multi-file' });

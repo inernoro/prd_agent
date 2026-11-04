@@ -14,6 +14,106 @@ namespace PrdAgent.Infrastructure.Services;
 
 public class HostedSiteService : IHostedSiteService
 {
+    public async Task PrepareReviewHistoryAssetsAsync(string siteId, string userId, CancellationToken ct = default)
+    {
+        var site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
+        if (!await CanEditSiteAsync(site, userId, ct)) throw new UnauthorizedAccessException("无权整理站点历史资源");
+        var prefix = _storage.BuildSiteKey(siteId, "index.html")[..^"index.html".Length];
+        bool VersionDirectory(string path) => path.StartsWith(".versions/", StringComparison.Ordinal)
+            && path.Length > 42 && path[42] == '/'
+            && Guid.TryParseExact(path.Substring(10, 32), "N", out _);
+        string? LogicalPath(string key)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal)) return null;
+            var path = key[prefix.Length..];
+            if (VersionDirectory(path))
+            {
+                var end = path.IndexOf('/', ".versions/".Length);
+                return end < 0 ? null : path[(end + 1)..];
+            }
+            return path;
+        }
+        bool Predictable(string key) => key.StartsWith(prefix, StringComparison.Ordinal)
+            && !VersionDirectory(key[prefix.Length..]);
+        var versions = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId
+            && r.Status == HostedSiteRevisionStatuses.Published).ToListAsync(ct);
+        foreach (var revision in versions)
+        {
+            var keys = revision.PublishedAssetKeys.Append(revision.PublishedEntryCosKey ?? "")
+                .Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
+            var canonicalEntry = revision.PublishedEntryCosKey == _storage.BuildSiteKey(siteId, revision.PublishedEntryFile ?? "index.html");
+            if (!canonicalEntry && !keys.Any(Predictable)) continue;
+            var root = ".versions/" + Guid.NewGuid().ToString("N");
+            string? ArchivePath(string key) => canonicalEntry && key.StartsWith(prefix, StringComparison.Ordinal)
+                ? key[prefix.Length..] : LogicalPath(key);
+            var mapping = keys.Where(k => ArchivePath(k) != null).ToDictionary(k => k,
+                k => _storage.BuildSiteKey(siteId, root + "/" + ArchivePath(k)), StringComparer.Ordinal);
+            var archiveKeys = mapping.Values.ToArray();
+            await ReservePublishKeysAsync(siteId, EffectiveContentVersion(site), archiveKeys, DateTime.UtcNow);
+            var retainedCopy = false;
+            try
+            {
+                foreach (var (oldKey, newKey) in mapping)
+                {
+                    var bytes = await _storage.TryDownloadBytesAsync(oldKey, ct)
+                        ?? throw new InvalidOperationException("旧版资源读取失败，暂不能对外分享或覆盖网页");
+                    await _storage.UploadToKeyAsync(newKey, bytes, GetMimeType(Path.GetExtension(LogicalPath(oldKey)!)), ct, SiteCacheControl);
+                }
+                var oldEntry = revision.PublishedEntryCosKey;
+                var newEntry = oldEntry != null && mapping.TryGetValue(oldEntry, out var mappedEntry) ? mappedEntry : oldEntry;
+                var changed = await _db.HostedSiteRevisions.UpdateOneAsync(r => r.Id == revision.Id
+                    && r.SiteId == siteId && r.PublishedEntryCosKey == oldEntry,
+                    Builders<HostedSiteRevision>.Update.Set(r => r.PublishedAssetKeys, keys.Select(k => mapping.GetValueOrDefault(k, k)).ToList())
+                        .Set(r => r.PublishedEntryCosKey, newEntry), cancellationToken: ct);
+                retainedCopy = changed.ModifiedCount == 1;
+            }
+            finally
+            {
+                // The existing durable ledger handles failures and ambiguous writes; referenced copies are protected.
+                await ReleasePublishKeysAsync(siteId, archiveKeys, keepPending: !retainedCopy);
+            }
+        }
+        // Move an active legacy entry to the identical retained copy before permitting a replacement.
+        // The business version and publication time stay unchanged; a failed cleanup leaves V1 readable.
+        site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
+        if (site.Files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
+        {
+            var version = EffectiveContentVersion(site);
+            var snapshot = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId
+                && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
+                .FirstOrDefaultAsync(ct);
+            if (snapshot != null)
+            {
+                var byPath = snapshot.PublishedAssetKeys.Where(k => LogicalPath(k) != null)
+                    .GroupBy(k => LogicalPath(k)!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+                var files = site.Files.Select(f => new HostedSiteFile { Path = f.Path, Size = f.Size, MimeType = f.MimeType,
+                    CosKey = byPath.GetValueOrDefault(f.Path, f.CosKey) }).ToList();
+                if (files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
+                    throw new InvalidOperationException("当前版本尚未完整归档，请稍后重试");
+                var entryKey = files.Single(f => f.Path == site.EntryFile).CosKey;
+                var moved = await _db.HostedSites.UpdateOneAsync(BuildExpectedContentVersionFilter(siteId, version)
+                    & Builders<HostedSite>.Filter.Eq(s => s.Files, site.Files),
+                    Builders<HostedSite>.Update.Set(s => s.Files, files).Set(s => s.SiteUrl,
+                        AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(entryKey), version), site.SlideNavCompatVersion)), cancellationToken: ct);
+                if (moved.ModifiedCount != 1) throw new InvalidOperationException("站点在归档期间发生变化，请刷新后重试");
+                site.Files = files;
+            }
+        }
+        // Reconstruct aliases from the retained paths too, so a crash after a reference update is recoverable.
+        var retained = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId)
+            .Project(r => r.PublishedAssetKeys).ToListAsync(ct);
+        var active = site.Files.Select(f => f.CosKey).ToHashSet(StringComparer.Ordinal);
+        var aliases = retained.SelectMany(keys => keys).Select(LogicalPath).Where(p => !string.IsNullOrEmpty(p))
+            .Select(p => _storage.BuildSiteKey(siteId, p!)).Where(k => !active.Contains(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (aliases.Count == 0) return;
+        await _db.HostedSites.UpdateOneAsync(s => s.Id == siteId,
+            Builders<HostedSite>.Update.AddToSetEach(s => s.PendingAssetCleanupKeys, aliases)
+                .Set(s => s.AssetCleanupNextAttemptAt, DateTime.UtcNow), cancellationToken: ct);
+        await TryRunHostedSiteAssetCleanupAsync(siteId, DateTime.UtcNow, ignoreSchedule: true, ct);
+        if (await _db.HostedSites.Find(s => s.Id == siteId && s.PendingAssetCleanupKeys.Any(k => aliases.Contains(k))).AnyAsync(ct))
+            throw new InvalidOperationException("旧版公开地址尚未完成清理，请稍后重试分享");
+    }
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _storage;
     private readonly IShortLinkService _shortLinks;
@@ -2413,6 +2513,7 @@ public class HostedSiteService : IHostedSiteService
 
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null || !CanSetVisibility(site, userId)) return null;
+        if (normalized == "public" && site.Visibility != "public") await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
 
         var now = DateTime.UtcNow;
         var update = Builders<HostedSite>.Update
@@ -2557,6 +2658,8 @@ public class HostedSiteService : IHostedSiteService
         // 所有目标站点都必须有 CreateShare 权限，否则整笔拒绝（与原「全部可访问才放行」一致）。
         if (!await CanCreateShareAsync(allIds, userId, ct))
             throw new UnauthorizedAccessException(NoSharePermissionMessage);
+        if (normalizedVisibility != "owner-only")
+            foreach (var target in allIds) await PrepareReviewHistoryAssetsAsync(target, userId, ct);
 
         // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
         // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；
@@ -3655,6 +3758,9 @@ public class HostedSiteService : IHostedSiteService
 
         var ups = new List<UpdateDefinition<WebPageShareLink>>();
         var effVisibility = normalizedVisibility ?? share.Visibility;
+        if ((effVisibility == "public" && share.Visibility != "public")
+            || (effVisibility == "logged-in" && share.Visibility == "owner-only"))
+            foreach (var target in share.TargetSiteIds()) await PrepareReviewHistoryAssetsAsync(target, userId, ct);
         var effExpiresAt = share.ExpiresAt;
 
         if (normalizedVisibility != null && normalizedVisibility != share.Visibility)

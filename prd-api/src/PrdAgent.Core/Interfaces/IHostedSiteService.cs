@@ -8,6 +8,8 @@ namespace PrdAgent.Core.Interfaces;
 /// </summary>
 public interface IHostedSiteService
 {
+    /// <summary>归档可推算地址上的历史资源，并在对外分享前确认旧地址完成源站清理。</summary>
+    Task PrepareReviewHistoryAssetsAsync(string siteId, string userId, CancellationToken ct = default);
     // ── 创建 ──
 
     /// <summary>从 HTML 文件字节创建站点</summary>

@@ -60,6 +60,7 @@ public partial class WebPagesController
         if (!await _siteService.CanEditSiteAsync(site, GetUserId(), CancellationToken.None))
             throw new KeyNotFoundException("站点不存在");
         await EnsureReviewSnapshotAsync(site, GetUserId());
+        await _siteService.PrepareReviewHistoryAssetsAsync(siteId, GetUserId(), CancellationToken.None);
     }
 
     private async Task EnsureReviewSnapshotAsync(HostedSite site, string actorUserId)

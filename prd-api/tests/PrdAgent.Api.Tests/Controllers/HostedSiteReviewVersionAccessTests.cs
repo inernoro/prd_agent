@@ -19,6 +19,77 @@ public class HostedSiteReviewVersionAccessTests
 {
     [Theory]
     [Trait("Category", "Integration")]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task RetainedHistory_MovesGuessableAssetsAndBlocksSharingWhenCleanupFails(bool failDelete, bool relocateCurrent)
+    {
+        await WithReviewDb(async db =>
+        {
+            const string prefix = "web-hosting/sites/site/";
+            var site = ReviewSite();
+            site.Files[0].CosKey = relocateCurrent ? prefix + "index.html" : prefix + ".versions/11111111111141118111111111111111/index.html";
+            var legacyEntry = prefix + (relocateCurrent ? "v1/index.html" : "index.html");
+            var legacyStyle = prefix + (relocateCurrent ? "v1/style.css" : "style.css");
+            await db.HostedSites.InsertOneAsync(site);
+            var old = ReviewRevision("old", site.ContentVersion.AddDays(-1));
+            old.PublishedEntryCosKey = legacyEntry;
+            old.PublishedEntryFile = relocateCurrent ? "v1/index.html" : "index.html";
+            old.PublishedAssetKeys = new() { legacyEntry, legacyStyle };
+            old.CapturedContentShape = HostedSiteContentShapes.MultiFile;
+            await db.HostedSiteRevisions.InsertOneAsync(old);
+            var current = ReviewRevision("current", site.ContentVersion);
+            current.PublishedEntryCosKey = site.Files[0].CosKey;
+            current.PublishedAssetKeys = new() { site.Files[0].CosKey };
+            await db.HostedSiteRevisions.InsertOneAsync(current);
+            var objects = new Dictionary<string, byte[]> {
+                [legacyEntry] = System.Text.Encoding.UTF8.GetBytes("<link rel='stylesheet' href='style.css'><h1>private V1</h1>"),
+                [legacyStyle] = System.Text.Encoding.UTF8.GetBytes("h1{color:red}"),
+                [site.Files[0].CosKey] = System.Text.Encoding.UTF8.GetBytes("<h1>public V2</h1>"),
+            };
+            var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+            storage.Setup(x => x.BuildSiteKey("site", It.IsAny<string>())).Returns((string _, string path) => prefix + path);
+            storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example/" + key);
+            storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string key, CancellationToken _) => objects.GetValueOrDefault(key));
+            storage.Setup(x => x.UploadToKeyAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string>()))
+                .Returns((string key, byte[] bytes, string _, CancellationToken __, string ___) => { objects[key] = bytes; return Task.CompletedTask; });
+            storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns((string key, CancellationToken _) => {
+                    if (failDelete && key == legacyEntry) throw new IOException("cleanup offline");
+                    objects.Remove(key); return Task.CompletedTask;
+                });
+            var teams = new Mock<ITeamService>();
+            teams.Setup(x => x.GetMyTeamIdsAsync("owner", It.IsAny<CancellationToken>())).ReturnsAsync(new List<string>());
+            var sites = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
+            if (failDelete)
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() => sites.CreateShareWithReuseInfoAsync(
+                    "owner", "Owner", "site", null, "single", null, null, null, 7, visibility: "public", forceNew: true));
+                Assert.Equal(0, await db.WebPageShareLinks.CountDocumentsAsync(_ => true));
+            }
+            else await sites.PrepareReviewHistoryAssetsAsync("site", "owner");
+            var archived = await db.HostedSiteRevisions.Find(r => r.Id == "old").FirstAsync();
+            Assert.StartsWith(prefix + ".versions/", archived.PublishedEntryCosKey);
+            Assert.All(archived.PublishedAssetKeys, key => Assert.StartsWith(prefix + ".versions/", key));
+            Assert.Contains("private V1", System.Text.Encoding.UTF8.GetString(objects[archived.PublishedEntryCosKey!]));
+            Assert.Contains(archived.PublishedAssetKeys, key => key.EndsWith("/style.css") && objects.ContainsKey(key));
+            Assert.Equal(failDelete, objects.ContainsKey(legacyEntry));
+            var live = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+            Assert.Contains("public V2", System.Text.Encoding.UTF8.GetString(objects[live.Files[0].CosKey]));
+            Assert.Equal(site.ContentVersion, live.ContentVersion);
+            Assert.StartsWith(prefix + ".versions/", live.Files[0].CosKey);
+            if (relocateCurrent) Assert.False(objects.ContainsKey(prefix + "index.html"));
+            if (failDelete)
+            {
+                var pending = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+                Assert.Contains(legacyEntry, pending.PendingAssetCleanupKeys);
+            }
+        });
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
     [InlineData("viewer", false)]
     [InlineData("editor", true)]
     public async Task TeamMember_CannotBypassHistoryScopeThroughSiteRoutes(string role, bool editor)

@@ -48,17 +48,28 @@ describe('versioned webpage review', () => {
     expect(upload).not.toHaveBeenCalled();
   });
   it('never substitutes the live URL when a historical snapshot has no direct URL', async () => {
-    const inline = { ...previous, siteUrl: null };
+    const inline = { ...previous, siteUrl: null, contentShape: 'self-contained-html' };
     list.mockResolvedValue({ success: true, data: [current, inline] });
     preview.mockResolvedValue({ success: true, data: { revision: inline, html: '<h1>只有旧版正文</h1>', siteUrl: null } });
     await mount();
     await act(async () => review.selectVersion('v1'));
     expect(review.historical).toBe(true);
     expect(review.site?.siteUrl).toBe('');
+    expect(review.previewBaseUrl).toBe(site.siteUrl);
     expect(review.preview?.html).toContain('只有旧版正文');
   });
+  it('rejects an HTML-only multi-file snapshot whose old resources cannot be recovered', async () => {
+    const incomplete = { ...previous, siteUrl: null, contentShape: 'multi-file' };
+    list.mockResolvedValue({ success: true, data: [current, incomplete] });
+    preview.mockResolvedValue({ success: true, data: { revision: incomplete, html: '<img src="./changed.svg">', siteUrl: null } });
+    await mount();
+    await act(async () => review.selectVersion('v1'));
+    expect(review.historical).toBe(false);
+    expect(review.error).toContain('历史版本未保留可用的预览');
+    expect(review.preview).toBeNull();
+  });
   it('reports an unavailable module snapshot instead of presenting the live page as history', async () => {
-    const inline = { ...previous, siteUrl: null };
+    const inline = { ...previous, siteUrl: null, contentShape: 'self-contained-html' };
     list.mockResolvedValue({ success: true, data: [current, inline] });
     preview.mockResolvedValue({ success: true, data: { revision: inline, html: '<script type="module" src="./app.js"></script>', siteUrl: null } });
     await mount();

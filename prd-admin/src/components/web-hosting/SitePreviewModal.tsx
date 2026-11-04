@@ -113,7 +113,7 @@ export default function SitePreviewModal({
   );
   const historyHtml = review.preview?.html;
   const srcDoc = review.historical
-    ? (historyHtml && canUseSrcDocPreview(historyHtml) ? withPreviewBase(historyHtml, new URL(site.siteUrl, window.location.href).href) : null)
+    ? (historyHtml && canUseSrcDocPreview(historyHtml) ? withPreviewBase(historyHtml, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
     : currentSrcDoc;
   const htmlLoading = review.historical ? review.loading : currentHtmlLoading;
   /**
@@ -125,11 +125,11 @@ export default function SitePreviewModal({
    */
   const [renderMode, setRenderMode] = useState<'waiting' | 'srcdoc' | 'direct'>('waiting');
   useEffect(() => {
-    if (renderMode !== 'waiting') return;
+    if (review.historical || renderMode !== 'waiting') return;
     if (srcDoc) { setRenderMode('srcdoc'); return; }
     if (!htmlLoading) setRenderMode('direct');
-  }, [renderMode, srcDoc, htmlLoading]);
-  const useSrcDoc = renderMode === 'srcdoc';
+  }, [renderMode, srcDoc, htmlLoading, review.historical]);
+  const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc';
 
   // 发布新版本后 siteUrl 的版本指纹会变化。预览组件不卸载，因此必须显式重开
   // srcDoc/direct 的一次性判定，否则 iframe 会继续停在发布前的旧内容。
@@ -138,9 +138,10 @@ export default function SitePreviewModal({
     setLoading(true);
     setErrored(false);
     setSlow(false);
+    if (review.historical) return;
     const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [site.siteUrl, review.loading]);
+  }, [site.siteUrl, review.selected?.id, review.historical]);
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
@@ -361,7 +362,7 @@ export default function SitePreviewModal({
               ref={iframeRef}
               // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
               key={`${review.historical ? review.selected?.id : 'live'}:${useSrcDoc ? 'srcdoc' : 'direct'}`}
-              src={review.loading || useSrcDoc ? undefined : previewSource.src}
+              src={review.loading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src}
               srcDoc={!review.loading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined}
               className="w-full h-full"
               tabIndex={-1}

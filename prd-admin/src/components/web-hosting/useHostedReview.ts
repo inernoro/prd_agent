@@ -41,7 +41,10 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
   const displaySite = liveSite ? { ...liveSite, siteUrl: selectedUrl || '',
     entryFile: historical ? selected.entryFile : liveSite.entryFile,
     contentShape: historical ? selected.contentShape : liveSite.contentShape } : null;
-  const annotations = useHostedAnnotations(frameRef, displaySite, onOpen, selected?.contentVersionKey);
+  // A logical hosted address anchors inline snapshots; it is never used as their navigation fallback.
+  const previewBaseUrl = historical ? selectedUrl || liveSite?.siteUrl : liveSite?.siteUrl;
+  const annotationSite = displaySite && previewBaseUrl ? { ...displaySite, siteUrl: previewBaseUrl } : null;
+  const annotations = useHostedAnnotations(frameRef, annotationSite, onOpen, selected?.contentVersionKey);
   const annotationsRef = useRef(annotations); annotationsRef.current = annotations;
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -74,7 +77,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
       const result = await previewHostedReviewVersion(sourceRef.current, id);
       if (!mounted.current || request !== selectionSequence.current) return;
       if (result.success) {
-        if (!result.data.siteUrl && (!result.data.html || !canUseSrcDocPreview(result.data.html))) {
+        if (!result.data.siteUrl && (!result.data.html || result.data.revision.contentShape !== 'self-contained-html' || !canUseSrcDocPreview(result.data.html))) {
           setError('这份历史版本未保留可用的预览，已返回当前版本'); setSelectedId(null); setPendingFocus(null);
         } else setPreview(result.data);
       }
@@ -102,7 +105,7 @@ export function useHostedReview(frameRef: RefObject<HTMLIFrameElement>, live: Re
     finally { if (mounted.current && operation === identityRef.current) setUploading(false); }
   }, [live, uploading, identity, refresh]);
 
-  return { versions, selected, historical, preview, site: displaySite, liveSite, annotations,
+  return { versions, selected, historical, preview, previewBaseUrl, site: displaySite, liveSite, annotations,
     loading, uploading, error, selectVersion, upload, refresh };
 }
 export type HostedReview = ReturnType<typeof useHostedReview>;
