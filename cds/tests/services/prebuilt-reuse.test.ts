@@ -10,15 +10,49 @@
  *  - 组件变了 / 判不出来 → 必须重编，不许复用（宁可慢也不能静默发旧代码）。
  */
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { ShellExecutor } from '../../src/services/shell-executor.js';
+import type { IShellExecutor } from '../../src/types.js';
 import {
   shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage, targetShaOf,
-  normalizeBuildScope, normalizeImageRevision, proveFallbackImage, latestCommitImage,
+  normalizeBuildScope, normalizeImageRevision, proveFallbackImage, latestCommitImage, componentInputComparator,
 } from '../../src/services/prebuilt-reuse.js';
 
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
 const SHA_C = 'c'.repeat(40);
 const REPO = 'ghcr.io/inernoro/prd_agent/prdagent-admin';
+
+describe('可信项目仓库的真实构建输入比较', () => {
+  it('固定A/B提交逐路径比较：无关改动可复用，组件变化/未知历史/缺隔离读取不可复用', async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-artifact-git-'));
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    try {
+      git('init', '--initial-branch=main');
+      fs.mkdirSync(path.join(repo, 'prd-api'));
+      fs.writeFileSync(path.join(repo, 'prd-api', 'app.txt'), 'A');
+      const commit = () => { git('add', '.'); git('-c', 'user.name=artifact-test', '-c', 'user.email=artifact@example.invalid', 'commit', '-m', '测试夹具'); return git('rev-parse', 'HEAD'); };
+      const A = commit();
+      fs.writeFileSync(path.join(repo, 'unrelated.txt'), 'B'); const B = commit();
+      fs.writeFileSync(path.join(repo, 'prd-api', 'app.txt'), 'C'); const C = commit();
+      const real = new ShellExecutor(); const commands: string[] = [];
+      const shell: IShellExecutor = { exec: real.exec.bind(real), execBackgroundObservation: async (command, options) => {
+        commands.push(command); return real.exec(command, options);
+      } };
+      const compare = componentInputComparator(shell, repo);
+      await expect(compare(A, B, ['prd-api/**'])).resolves.toBe(true);
+      await expect(compare(A, C, ['prd-api/**'])).resolves.toBe(false);
+      await expect(compare('f'.repeat(40), B, ['prd-api/**'])).resolves.toBe(false);
+      await expect(componentInputComparator(real, repo)(A, B, ['prd-api/**'])).resolves.toBe(false);
+      expect(commands).toHaveLength(3);
+      expect(commands.every(command => command.includes(`'-C' '${repo}' 'diff' '--no-ext-diff' '--quiet'`))).toBe(true);
+      expect(commands.some(command => /fetch|worktree|checkout/.test(command))).toBe(false);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  });
+});
 
 describe('镜像引用解析', () => {
   it('per-SHA tag 取得出 sha', () => {
