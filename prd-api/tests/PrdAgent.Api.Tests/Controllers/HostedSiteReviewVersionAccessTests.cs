@@ -12,11 +12,47 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace PrdAgent.Api.Tests.Controllers;
 
 public class HostedSiteReviewVersionAccessTests
 {
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RelatedDocuments_PreserveSavedOrderAndAppendAutomaticReferences()
+    {
+        await WithReviewDb(async db =>
+        {
+            var documents = new[] { ReviewSite(), ReviewSite(), ReviewSite() };
+            documents[1].Id = "second"; documents[2].Id = "automatic";
+            await db.HostedSites.InsertManyAsync(documents);
+            await db.HostedDocumentGroups.InsertOneAsync(new HostedDocumentGroup {
+                OwnerUserId = "owner", SiteIds = new() { "second", "site" }, MainSiteId = "site",
+            });
+            await db.HostedSiteComments.InsertOneAsync(new HostedSiteComment {
+                SiteId = "second", AuthorUserId = "owner", AuthorName = "作者",
+                Content = "/web-pages?openSite=site /web-pages?openSite=automatic",
+                ContentVersion = HostedSiteCommentRules.VersionKey(documents[1].ContentVersion),
+            });
+            var service = new Mock<IHostedSiteService>(MockBehavior.Strict);
+            service.Setup(s => s.GetByIdAsync(It.IsAny<string>(), "owner", It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string id, string _, CancellationToken __) => documents.FirstOrDefault(site => site.Id == id));
+            service.Setup(s => s.CanEditSiteAsync(It.IsAny<HostedSite>(), "owner", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            using var provider = new ServiceCollection().AddSingleton<IConfiguration>(new ConfigurationBuilder().Build()).BuildServiceProvider();
+            var controller = ReviewController(service.Object, db, new Mock<IAssetStorage>(MockBehavior.Strict).Object, "owner");
+            controller.HttpContext.RequestServices = provider;
+            controller.HttpContext.Request.Host = new HostString("map.example.test");
+            var response = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await controller.GetRelatedDocuments("site")).Value);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(response.Data));
+            var items = json.RootElement.GetProperty("items").EnumerateArray().ToList();
+            Assert.Equal(new[] { "second", "site", "automatic" }, items.Select(x => x.GetProperty("Id").GetString()));
+            Assert.Equal("site", json.RootElement.GetProperty("mainSiteId").GetString());
+            Assert.False(items[2].GetProperty("isManual").GetBoolean());
+        });
+    }
+
     [Fact]
     [Trait("Category", "Integration")]
     public async Task CollectionDiscussionResolution_UsesSelectedMemberAndPreservesShareBoundary()

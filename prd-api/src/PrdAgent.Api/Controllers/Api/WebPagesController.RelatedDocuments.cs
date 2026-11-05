@@ -58,7 +58,8 @@ public partial class WebPagesController
         }
         var manualSites = visible.ToList();
         var mentions = await RelatedCommentMentionsAsync(current, visible, userId, sharedIds);
-        var ordered = visible.OrderBy(x => x.Id == group?.MainSiteId ? 0 : mentions.ContainsKey(x.Id) ? 1 : 2).ToList();
+        // 手动成员沿用作者保存的顺序；评论自动发现的文档由上一步附加在末尾。
+        var ordered = visible;
         return Ok(ApiResponse<object>.Ok(new
         {
             version = canManage ? group?.Version ?? 0 : 0,

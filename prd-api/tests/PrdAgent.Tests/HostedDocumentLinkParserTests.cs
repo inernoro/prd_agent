@@ -7,6 +7,18 @@ public class HostedDocumentLinkParserTests
 {
     private static readonly string[] Origins = { "https://map.example.test", "http://localhost:8000" };
     [Theory]
+    [InlineData("%")]
+    [InlineData("%GG")]
+    [InlineData("%E0%A4%A")]
+    [InlineData("%ED%A0%80")]
+    [InlineData("%FF")]
+    public void MalformedEscapes_DoNotHideOtherRecognizedReferences(string value)
+    {
+        var links = HostedDocumentLinkParser.Extract($"/web-pages?openSite=doc-b&{value}={value} /s/wp/abc123", Origins);
+        Assert.Contains(new HostedDocumentLink("site", "doc-b"), links);
+        Assert.Contains(new HostedDocumentLink("token", "abc123"), links);
+    }
+    [Theory]
     [InlineData("https://map.example.test/s/wp/abc123", "token", "abc123", null)]
     [InlineData("/s/wp/abc123?siteId=doc-b", "token", "abc123", "doc-b")]
     [InlineData("https://map.example.test/s/1234", "sequence", "1234", null)]
