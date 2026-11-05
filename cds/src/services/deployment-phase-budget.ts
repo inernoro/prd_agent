@@ -226,6 +226,7 @@ export function restoreDeploymentMemoryReservations(branches: readonly BranchEnt
   for (const branch of branches) {
     const hints = new Map(profiles(branch).map(profile => [profile.id, profile.resources?.memoryMB || 512]));
     for (const service of Object.values(branch.services)) for (const runtime of serviceRuntimeRefs(service)) {
+      if (runtime.staticWeb || runtime.runtimeKind === 'static') continue;
       // 已发布的旧服务在候选部署时也会被聚合标成building；它的实际占用已在宿主采样内，
       // 不能再次恢复成启动期预约。仅匹配已落盘的不可变发布身份，未知候选仍须保留。
       const serving = service.servingRuntime;

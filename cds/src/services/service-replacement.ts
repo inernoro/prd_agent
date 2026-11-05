@@ -7,23 +7,28 @@ import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuring
 
 export function reserveServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; portStart: number; operationId?: string;
+  staticProfileIds?: readonly string[];
 }): void {
   const { entry, state, profileIds } = options;
   if (!profileIds.some(id => entry.services[id]?.servingRuntime)) return;
   const generation = options.operationId || randomUUID().replaceAll('-', '');
+  const staticIds = new Set(options.staticProfileIds);
   if (entry.replacementOperationId !== generation) {
     entry.replacementOperationId = generation;
-    entry.replacementNetwork = `${branchAppNetworkName(entry.id).slice(0, 27)}-r-${randomUUID().replaceAll('-', '')}`;
-    entry.replacementNetworks = [...new Set([...(entry.replacementNetworks || []), entry.replacementNetwork])];
+    entry.replacementNetwork = profileIds.some(id => !staticIds.has(id))
+      ? `${branchAppNetworkName(entry.id).slice(0, 27)}-r-${randomUUID().replaceAll('-', '')}` : undefined;
+    if (entry.replacementNetwork) entry.replacementNetworks = [...new Set([...(entry.replacementNetworks || []), entry.replacementNetwork])];
   }
   for (const id of profileIds) {
     const service = entry.services[id];
     if (!service) continue;
-    if (!service.servingRuntime) { service.networkName = entry.replacementNetwork; continue; }
-    if (service.pendingRuntime && service.pendingRuntime.networkName === entry.replacementNetwork && !service.pendingRuntime.creationIssued) continue;
+    const isStatic = staticIds.has(id);
+    if (!service.servingRuntime) { service.networkName = isStatic ? undefined : entry.replacementNetwork; service.runtimeKind = isStatic ? 'static' : undefined; continue; }
+    if (service.pendingRuntime && (service.pendingRuntime.runtimeKind === 'static') === isStatic
+      && service.pendingRuntime.networkName === (isStatic ? undefined : entry.replacementNetwork) && !service.pendingRuntime.creationIssued) continue;
     if (service.pendingRuntime) service.retainedRuntimes = [...(service.retainedRuntimes || []), runtimeRef(service.pendingRuntime)];
     service.pendingRuntime = { containerName: `${service.containerName.slice(0, 92)}-r-${randomUUID().replaceAll('-', '')}`,
-      hostPort: state.allocatePort(options.portStart), networkName: entry.replacementNetwork };
+      hostPort: state.allocatePort(options.portStart), networkName: isStatic ? undefined : entry.replacementNetwork, runtimeKind: isStatic ? 'static' : undefined };
   }
   state.save([{ kind: 'branches', id: entry.id }]);
 }
@@ -31,7 +36,7 @@ export function reserveServiceReplacements(options: {
 /** 容器环境解析使用本轮已预约身份，入口仍从原Entry的servingRuntime读取。 */
 export function replacementLaunchEntry(entry: BranchEntry): BranchEntry {
   return { ...entry, services: Object.fromEntries(Object.entries(entry.services).map(([id, service]) =>
-    [id, service.pendingRuntime && service.pendingRuntime.networkName === entry.replacementNetwork
+    [id, service.pendingRuntime && (service.pendingRuntime.runtimeKind === 'static' || service.pendingRuntime.networkName === entry.replacementNetwork)
       ? { ...service, ...service.pendingRuntime } : service])) };
 }
 
@@ -53,12 +58,21 @@ export async function prepareServiceReplacement(options: {
     if (!service.pendingRuntime) return service;
   }
   service.servingRuntime = actual || undefined;
-  const reserved = service.pendingRuntime && service.pendingRuntime.networkName === entry.replacementNetwork && !service.pendingRuntime.creationIssued
+  const reserved = service.pendingRuntime && (service.pendingRuntime.runtimeKind === 'static') === Boolean(profile.staticWeb)
+    && (profile.staticWeb || service.pendingRuntime.networkName === entry.replacementNetwork) && !service.pendingRuntime.creationIssued
     ? service.pendingRuntime : undefined;
   if (!reserved && service.pendingRuntime && service.pendingRuntime.containerName !== service.containerName) {
     service.retainedRuntimes = [...(service.retainedRuntimes || []), runtimeRef(service.pendingRuntime)];
   }
   if (!actual || service.containerName !== actual.containerName) service.retainedRuntimes = [...(service.retainedRuntimes || []), runtimeRef(service)];
+  if (profile.staticWeb) {
+    const candidate: ServiceState = { profileId: profile.id,
+      containerName: reserved?.containerName || `${service.containerName.slice(0, 92)}-r-${randomUUID().replaceAll('-', '')}`,
+      hostPort: reserved?.hostPort ?? state.allocatePort(options.portStart), status: 'building', runtimeKind: 'static' };
+    service.pendingRuntime = runtimeRef(candidate);
+    state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+    return candidate;
+  }
   const generation = options.operationId || entry.replacementOperationId || randomUUID().replaceAll('-', '');
   const network = entry.replacementOperationId === generation && entry.replacementNetwork
     ? entry.replacementNetwork : `${branchAppNetworkName(entry.id).slice(0, 27)}-r-${randomUUID().replaceAll('-', '')}`;
@@ -100,12 +114,13 @@ export async function abortUnpublishedServiceReplacements(options: {
   assertCurrent?: (step: string) => void;
 }): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
-  if (!entry.replacementNetwork) return;
+  if (!entry.replacementNetwork && !profileIds.some(id => entry.services[id]?.runtimeKind === 'static' || entry.services[id]?.pendingRuntime?.runtimeKind === 'static')) return;
   for (const id of profileIds) {
     const service = entry.services[id], active = service?.servingRuntime;
     if (!service || !active) continue;
     const candidates = serviceRuntimeRefs(service).filter(runtime => runtime.containerName !== active.containerName
-      && runtime.networkName === entry.replacementNetwork && (runtime.creationIssued || runtime.containerId));
+      && ((runtime.staticWeb && (runtime === service || runtime === service.pendingRuntime))
+        || (entry.replacementNetwork && runtime.networkName === entry.replacementNetwork)) && (runtime.creationIssued || runtime.containerId));
     if (!candidates.length) continue;
     assertCurrent?.('before failed replacement old identity');
     const confirmedActive = await container.inspectOwnedRuntime(entry, id, active);
@@ -115,7 +130,7 @@ export async function abortUnpublishedServiceReplacements(options: {
       // 名称不同也可能仍携带旧CID；当前实际入口身份绝不能作为失败候选删除。
       if (candidate.containerId && candidate.containerId === confirmedActive.containerId) continue;
       // 同网段已有发布角色可能仍消费它；没有发布任何角色时才整体撤销候选。
-      if (Object.values(entry.services).some(peer => peer !== service
+      if (candidate.networkName && Object.values(entry.services).some(peer => peer !== service
         && servingRuntime(peer)?.networkName === candidate.networkName)) continue;
       await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
         operationId: options.operationId, operationGeneration: options.operationGeneration,
@@ -159,7 +174,7 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
     ref.containerName === runtime.containerName || Boolean(ref.containerId && ref.containerId === runtime.containerId));
   for (const [id, service] of Object.entries(entry.services)) {
     const active = published.get(id);
-    if (!active || !active.aliasNetworks?.length) continue;
+    if (!active || (!active.staticWeb && !active.aliasNetworks?.length)) continue;
     for (const old of [...(service.retainedRuntimes || [])]) {
       if (isProtected(old)) continue;
       const confirmed = await container.inspectOwnedRuntime(entry, id, active);
@@ -167,9 +182,9 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
       if (!confirmed || confirmed.containerId !== active.containerId) continue;
       const actual = await container.inspectOwnedRuntime(entry, id, old, false);
       check('after retirement retained identity');
-      if (actual && (isProtected(actual) || !actual.aliasNetworks?.length)) continue;
-      const referenced = actual && [...published].some(([peerId, peer]) => {
-        if (peerId === id) return false;
+      if (actual && (isProtected(actual) || (!actual.staticWeb && !actual.aliasNetworks?.length))) continue;
+      const referenced = actual && !actual.staticWeb && [...published].some(([peerId, peer]) => {
+        if (peerId === id || peer?.staticWeb) return false;
         if (!peer) return true; // 当前消费者未确认运行时，保留其可能依赖的旧版本。
         const networks = [peer.networkName, ...(peer.connectedNetworks || [])];
         return networks.some(network => actual.aliasNetworks!.includes(network!))

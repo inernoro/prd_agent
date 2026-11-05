@@ -108,3 +108,18 @@ describe('computeResourceSnapshot', () => {
     expect(p1.cpuPercent).toBe(0);
   });
 });
+
+describe('静态站资源归属', () => {
+  it('静态候选与已发布站点不占容器额度，尚未退役的旧容器仍计入', () => {
+    const entry = branch('static-project', [{ status: 'running', containerName: 'static-web' }]);
+    const service = entry.services.svc0;
+    service.runtimeKind = 'static';
+    service.pendingRuntime = { containerName: 'next-static', hostPort: 1234, runtimeKind: 'static' };
+    service.retainedRuntimes = [{ containerName: 'old-nginx', hostPort: 1235, containerId: 'a'.repeat(64) }];
+    expect(countReservedContainers([entry])).toBe(1);
+    const snapshot = computeResourceSnapshot([entry], new Map(), new Map(), Date.now(), 1000, new Set(['old-nginx']));
+    expect(snapshot.totals.runningContainers).toBe(1);
+    service.retainedRuntimes = [];
+    expect(countReservedContainers([entry])).toBe(0);
+  });
+});

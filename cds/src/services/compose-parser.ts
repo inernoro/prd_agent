@@ -14,13 +14,30 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, CacheMount, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole, StorageBinding } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, CacheMount, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole, StorageBinding, StaticWebConfig } from '../types.js';
 import { SERVICE_ROLES } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
 import { parseWebEntryLabels } from './web-entry.js';
 import { isProbePrefix } from './topology-lint.js';
 import { normalizeBuildScope } from './prebuilt-reuse.js';
 import { isReservedPersistentTarget, UnsafeDeploymentStorageError } from './deployment-storage-boundary.js';
+
+/** Invalid static declarations fail closed instead of silently starting an application container. */
+export function parseStaticWeb(value: unknown): StaticWebConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('staticWeb 必须声明静态产物目录');
+  const input = value as Record<string, unknown>;
+  if (typeof input.imagePath !== 'string' || !input.imagePath.startsWith('/') || input.imagePath.includes('..')
+    || /[\x00\r\n]/.test(input.imagePath)) throw new Error('staticWeb.imagePath 必须是镜像内绝对目录');
+  if (input.basePath !== undefined && (typeof input.basePath !== 'string' || !/^\/(?:[a-z0-9_~.-]+\/)*[a-z0-9_~.-]*$/i.test(input.basePath)
+    || input.basePath.includes('..'))) throw new Error('staticWeb.basePath 无效');
+  if (input.runtimeConfig !== undefined && typeof input.runtimeConfig !== 'boolean') throw new Error('staticWeb.runtimeConfig 必须为布尔值');
+  if (input.proxyRules !== undefined && (!Array.isArray(input.proxyRules) || input.proxyRules.some(rule =>
+    !rule || typeof rule.pathPrefix !== 'string' || !/^\/(?:[a-z0-9_~.-]+\/)*[a-z0-9_~.-]*$/i.test(rule.pathPrefix) || rule.pathPrefix.includes('..')
+    || typeof rule.profileId !== 'string' || !/^[\w.-]+$/.test(rule.profileId)))) throw new Error('staticWeb.proxyRules 无效');
+  return { imagePath: input.imagePath, ...(input.basePath !== undefined ? { basePath: input.basePath as string } : {}),
+    ...(input.runtimeConfig !== undefined ? { runtimeConfig: input.runtimeConfig as boolean } : {}),
+    ...(input.proxyRules !== undefined ? { proxyRules: input.proxyRules as StaticWebConfig['proxyRules'] } : {}) };
+}
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -85,6 +102,7 @@ interface ComposeFile {
    * Keys are service IDs, values are mode maps: { modeId: { label, command?, image?, env? } }
    */
   'x-cds-deploy-modes'?: Record<string, Record<string, {
+    staticWeb?: StaticWebConfig;
     label?: string;
     command?: string;
     image?: string;
@@ -663,6 +681,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           command: mode.command,
           dockerImage: mode.image,
           env: mode.env,
+          ...(mode.staticWeb !== undefined ? { staticWeb: parseStaticWeb(mode.staticWeb) } : {}),
           ...(mode.prebuilt !== undefined ? { prebuilt: mode.prebuilt === true || (mode.prebuilt as unknown) === 'true' } : {}),
           ...(mode.containerPort !== undefined ? { containerPort: Number(mode.containerPort) } : {}),
           ...(mode.fallbackImage ? { fallbackImage: mode.fallbackImage } : {}),
@@ -900,7 +919,7 @@ export function toCdsCompose(
   }
 
   // Optional x-cds-deploy-modes
-  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number; fallbackImage?: string | string[] };
+  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number; fallbackImage?: string | string[]; staticWeb?: StaticWebConfig };
   const deployModesOut: Record<string, Record<string, DeployModeYaml>> = {};
   for (const p of profiles) {
     if (p.deployModes && Object.keys(p.deployModes).length > 0) {
@@ -908,6 +927,7 @@ export function toCdsCompose(
       for (const [modeId, mode] of Object.entries(p.deployModes)) {
         modes[modeId] = {
           label: mode.label,
+          ...(mode.staticWeb ? { staticWeb: mode.staticWeb } : {}),
           ...(mode.command ? { command: mode.command } : {}),
           ...(mode.dockerImage ? { image: mode.dockerImage } : {}),
           ...(mode.env ? { env: mode.env } : {}),

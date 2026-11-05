@@ -34,7 +34,7 @@ import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
-import { ContainerService } from './services/container.js';
+import { ContainerService, computeProfileAliases } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv, resolveBranchPublishedEntrypoints } from './services/preview-entrypoints.js';
 import { parseCdsRefs, resolveCdsRef, cdsRefResolverDepsFromState } from './services/cross-project-refs.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
@@ -118,7 +118,7 @@ import { AsyncStuckDeployReconciler } from './services/async-stuck-deploy-reconc
 import { createReleaseGitRunner } from './services/release-git-reader.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
-import { serviceRuntimeRefs } from './services/service-runtime.js';
+import { serviceRuntimeRefs, servingRuntime } from './services/service-runtime.js';
 import { stopServiceForCooling } from './services/scheduler-service-stop.js';
 import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
 import { isRemoteExecutorOwned } from './services/executor-ownership.js';
@@ -2564,6 +2564,14 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  getServiceRuntime: (branchId, profileId) => {
+    const branch = stateService.getBranch(branchId);
+    if (!branch) return undefined;
+    const project = branch.projectId ? stateService.getProject(branch.projectId) : undefined;
+    const markers = [branch.projectId, project?.slug].filter((value): value is string => Boolean(value));
+    const ids = Object.keys(branch.services).filter(id => id === profileId || computeProfileAliases(id, markers).includes(profileId));
+    return ids.length === 1 ? servingRuntime(branch.services[ids[0]]) || undefined : undefined;
+  },
   storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
   resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
   getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
@@ -2594,6 +2602,7 @@ const containerService = new ContainerService(shell, config, {
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
 }, activeServerEventLogStore, startupStreams, userLogHub);
 
+await containerService.restoreStaticWebRuntimes(stateService.getAllBranches());
 // 对外受理部署前恢复并核对历史预约；只读 Docker 实况，未知结果保留，绝不停止或删除容器。
 const localMemoryBranches = stateService.getAllBranches().filter(branch =>
   config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
@@ -2846,6 +2855,7 @@ if (config.mode !== 'executor' && !isPreviewInstance()) {
 // SIGTERM/self-update 触发 master 退出前,drain SSE / abort worker run / flush mongo。
 const gracefulShutdownController = createGracefulShutdownController();
 const resourceShutdownTasks = new Set<() => Promise<void>>();
+resourceShutdownTasks.add(() => containerService.closeStaticWebRuntimes());
 let dashboardHttpServer: http.Server | null = null;
 let workerHttpServer: http.Server | null = null;
 let shutdownInProgress = false;

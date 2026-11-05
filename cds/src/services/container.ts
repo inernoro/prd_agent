@@ -7,6 +7,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { serviceRuntimeRefs, runtimeRef } from './service-runtime.js';
+import { StaticWebService } from './static-web.js';
 import { deploymentPhaseBudget, type DeploymentPhaseOwner } from './deployment-phase-budget.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -60,6 +61,7 @@ import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from 
  * config.dockerNetwork 共享网络,保持 backward compat。
  */
 export interface ProjectNetworkResolver {
+  getServiceRuntime?(branchId: string, profileId: string): import('../types.js').ServiceRuntimeRef | undefined;
   /** 当前受管容器身份；保留的历史运行不能覆盖它的巡检结果。 */
   getAppContainerName?(branchId: string, profileId: string): string | undefined;
   /** 返回该项目的 dockerNetwork,缺失则返回 undefined（调用方走 config 兜底）。 */
@@ -245,6 +247,7 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
       // 自带 ENTRYPOINT/CMD 启动。
       command: override.command ?? (willBePrebuilt ? '' : profile.command),
       dockerImage: override.dockerImage ?? profile.dockerImage,
+      staticWeb: override.staticWeb ?? profile.staticWeb,
       env: override.env
         ? { ...profile.env, ...override.env }
         : profile.env,
@@ -381,6 +384,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
   if (!override) return baseline;
   return {
     ...baseline,
+    ...(override.staticWeb !== undefined ? { staticWeb: override.staticWeb } : {}),
     ...(override.dockerImage !== undefined ? { dockerImage: override.dockerImage } : {}),
     ...(override.command !== undefined ? { command: override.command } : {}),
     ...(override.containerWorkDir !== undefined ? { containerWorkDir: override.containerWorkDir } : {}),
@@ -702,6 +706,67 @@ export class ContainerStopUnconfirmedError extends Error {
 
 export class ContainerService {
   private recoveredMemoryAfterKey?: string;
+  private staticSites?: StaticWebService;
+  private readonly stoppedStaticSites = new Map<string, { runtime: import('../types.js').StaticWebRuntime; port: number }>();
+
+  private staticWebService(): StaticWebService {
+    return this.staticSites ??= new StaticWebService({
+      rootDirectory: path.join(this.config.repoRoot, '.cds-static-previews'),
+      resolveUpstream: (identity, profileId) => {
+        const active = this.networkResolver?.getServiceRuntime?.(identity.branchId, profileId);
+        return active && active.hostPort > 0 ? { host: '127.0.0.1', port: active.hostPort } : undefined;
+      },
+      exportFiles: async (image, imagePath, destination, check, identity) => {
+        const shell = this.qualifiedShell(check);
+        const name = `cds-static-export-${randomBytes(12).toString('hex')}`;
+        // No source, data or anonymous image volume may be attached to this stopped exporter.
+        const plan = profileStoragePlan({ id: identity.branchId, projectId: identity.projectId, worktreePath: this.config.repoRoot },
+          { id: name, name, projectId: identity.projectId, dockerImage: image, workDir: '.', containerPort: 80, prebuiltImage: true, cacheMounts: [] }, this.config);
+        const fixed = await resolveStorageImage(shell, image, plan, true);
+        let id: string | undefined;
+        try {
+          check();
+          const result = await shell.exec(`docker create --read-only --network none --name ${this.shellQuote(name)} ${this.appLabels(identity.projectId, identity.branchId, identity.profileId, 'static-export')} ${this.shellQuote(fixed)}`);
+          if (result.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(result.stdout.trim())) throw new Error('静态产物导出身份未确认');
+          id = result.stdout.trim();
+          await this.inspectCreatedStorageContainer(shell, id, name, fixed, plan);
+          check();
+          const copied = await shell.exec(`docker cp ${this.shellQuote(`${id}:${imagePath.replace(/\/$/, '')}/.`)} ${this.shellQuote(destination)}`, { timeout: 60_000 });
+          if (copied.exitCode !== 0) throw new Error('静态产物读取失败，请检查镜像中的前端目录');
+          check();
+        } finally {
+          if (id) await this.cleanupTemporaryContainer(id, { id: identity.branchId, projectId: identity.projectId } as BranchEntry, identity.profileId);
+        }
+      },
+    });
+  }
+
+  async restoreStaticWebRuntimes(branches: readonly BranchEntry[]): Promise<void> {
+    const restored = new Set<string>();
+    for (const branch of branches) for (const service of Object.values(branch.services)) {
+      if (branch.executorId && this.config.mode !== 'executor') continue;
+      if (['idle', 'stopped', 'stopping'].includes(service.status)) continue;
+      for (const runtime of serviceRuntimeRefs(service).filter(runtime => runtime === service || runtime === service.servingRuntime)) {
+        if (!runtime.staticWeb || restored.has(runtime.staticWeb.id)) continue;
+        try {
+          if (runtime.staticWeb.branchId !== branch.id || runtime.staticWeb.projectId !== branch.projectId
+            || runtime.staticWeb.profileId !== service.profileId || runtime.containerId !== runtime.staticWeb.id) throw new Error('静态预览恢复归属不一致');
+          await this.staticWebService().start(runtime.staticWeb, runtime.hostPort);
+          restored.add(runtime.staticWeb.id);
+        } catch (error) {
+          if (runtime.containerName === service.containerName) {
+            service.status = 'error'; service.errorMessage = '静态预览恢复失败，请重新部署该服务';
+          }
+          this.recordContainerEvent({ severity: 'error', source: 'static-web', action: 'static.restore.failed',
+            projectId: branch.projectId, branchId: branch.id, profileId: service.profileId,
+            message: '静态预览恢复失败，该站点需要重新部署', error: { message: (error as Error).message } });
+        }
+      }
+    }
+  }
+
+  async closeStaticWebRuntimes(): Promise<void> { await this.staticSites?.close(); }
+
   private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
 
   /** 冷恢复与已确认结束的创建共用同一真实盘点；未知或在途创建不能仅凭缺席快照释放。 */
@@ -758,6 +823,13 @@ export class ContainerService {
   private readonly admittedProfileStorage = new WeakMap<BuildProfile, { planDigest: string; imageId: string; imageReference: string; checkBindMounts: () => void }>();
   private readonly admittedInfraStorage = new WeakMap<InfraService, { planDigest: string; imageId: string; imageReference: string; originalContainerId?: string }>();
   async inspectOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, requireRunning = true): Promise<import('../types.js').ServiceRuntimeRef | null> {
+    if (runtime.staticWeb) {
+      if (runtime.staticWeb.projectId !== entry.projectId || runtime.staticWeb.branchId !== entry.id || runtime.staticWeb.profileId !== profileId
+        || runtime.containerId !== runtime.staticWeb.id) throw new Error('静态预览运行归属不一致');
+      const active = this.staticSites?.inspect(runtime.containerId);
+      if (requireRunning && !active) return null;
+      return { ...runtimeRef(runtime), aliasNetworks: [], connectedNetworks: [], networkName: undefined };
+    }
     const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}},"networks":{{json .NetworkSettings.Networks}}}';
     const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`, { timeout: 5000, executionLane: 'observation' });
     if (result.exitCode !== 0) {
@@ -778,6 +850,14 @@ export class ContainerService {
   }
   async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
     context: ContainerRemoveContext = {}): Promise<void> {
+    if (runtime.staticWeb) {
+      await this.inspectOwnedRuntime(entry, profileId, runtime, false);
+      context.assertCurrent?.('before static runtime retirement');
+      await this.staticWebService().stop(runtime.staticWeb.id);
+      context.assertCurrent?.('after static runtime stop');
+      await this.staticWebService().discard(runtime.staticWeb);
+      return;
+    }
     const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(runtime.containerName);
     const owned = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
     context.assertCurrent?.('after runtime retirement identity');
@@ -797,6 +877,7 @@ export class ContainerService {
     entry: BranchEntry, profile: BuildProfile, service: ServiceState, network: string,
     assertCurrent?: (step: string) => void,
   ): Promise<void> {
+    if (service.staticWeb) return;
     const shell = this.qualifiedShell(assertCurrent);
     assertCurrent?.('before replacement peer network');
     await this.ensureReplacementNetwork(entry, network, assertCurrent);
@@ -1615,6 +1696,44 @@ export class ContainerService {
     entry = {...entry};
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
+    if (profile.staticWeb) {
+      if (!profile.prebuiltImage || profile.managedBuild) throw new Error('静态文件模式只接收 CI 预构建前端产物');
+      if (entry.executorId || this.config.mode === 'executor') throw new Error('静态文件预览目前仅支持 CDS 主机部署，请选择主机执行');
+      const target = context.artifactCommitSha || entry.pinnedCommit || entry.ciTargetSha || entry.githubCommitSha;
+      if (!target) throw new Error('静态文件部署缺少目标提交');
+      const check = () => context.assertCurrent?.(`static web deployment ${profile.id}`);
+      onOutput?.('── 核验静态前端产物，不启动前端应用容器 ──\n');
+      const admitted = await this.inspectDeploymentArtifacts([profile], target, check,
+        { inspectLocalArtifacts: profile.localArtifact, isComponentUnchangedSince: context.isComponentUnchangedSince });
+      if (admitted.state !== 'ready' || admitted.artifacts.length !== 1) throw new Error('静态前端 CI 产物尚未核验就绪');
+      const artifact = admitted.artifacts[0];
+      check();
+      const runtime = await this.staticWebService().prepare({
+        identity: { projectId: entry.projectId!, branchId: entry.id, profileId: profile.id },
+        serviceName: service.containerName, image: artifact.image, revision: artifact.revision, config: profile.staticWeb,
+        env: this.resolveProfileRuntimeEnv(entry, profile, customEnv), check,
+      });
+      check();
+      service.runtimeKind = 'static'; service.staticWeb = runtime; service.containerId = runtime.id; service.creationIssued = true;
+      service.deployedImage = artifact.image; service.deployedMode = profile.activeDeployMode;
+      service.networkName = undefined; service.aliasNetworks = []; service.connectedNetworks = [];
+      try {
+        await context.onRuntimeCreated?.(service);
+        check();
+        service.hostPort = await this.staticWebService().start(runtime, service.hostPort);
+        check();
+      } catch (error) {
+        await this.staticWebService().stop(runtime.id);
+        await this.staticWebService().discard(runtime);
+        throw error;
+      }
+      this.recordContainerEvent({ severity: 'info', source: 'static-web', action: 'static.start.ready',
+        projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId,
+        message: '静态文件预览已就绪，无独立前端容器', details: { image: artifact.image, revision: artifact.revision, runtimeId: runtime.id } });
+      onOutput?.('── 静态文件入口已就绪，复用 CDS 进程 ──\n');
+      return;
+    }
+    service.staticWeb = undefined; service.runtimeKind = undefined;
     let shell = this.qualifiedShell(context.assertCurrent);
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId, operationGeneration: context.operationGeneration };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
@@ -2818,6 +2937,19 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason' | 'assertCurrent'> = {},
   ): Promise<boolean> {
+    const activeStatic = this.staticSites?.inspect(containerName);
+    const stoppedStatic = [...this.stoppedStaticSites.values()].find(site => site.runtime.id === containerName || site.runtime.serviceName === containerName);
+    const staticSite = activeStatic || stoppedStatic;
+    if (staticSite) {
+      context.assertCurrent?.('before static preview restart');
+      await this.staticWebService().stop(staticSite.runtime.id);
+      context.assertCurrent?.('after static preview stop');
+      await this.staticWebService().start(staticSite.runtime, staticSite.port);
+      try { context.assertCurrent?.('after static preview restart'); }
+      catch (error) { await this.staticWebService().stop(staticSite.runtime.id); throw error; }
+      this.stoppedStaticSites.delete(staticSite.runtime.id);
+      return true;
+    }
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before restart identity');
     const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
@@ -2992,6 +3124,13 @@ export class ContainerService {
   private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
     const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName);
     const requestedAt = Date.now();
+    const staticSite = this.staticSites?.inspect(containerName);
+    if (staticSite) {
+      this.stoppedStaticSites.set(staticSite.runtime.id, { runtime: staticSite.runtime, port: staticSite.port });
+      await this.staticSites!.stop(staticSite.runtime.id);
+      return;
+    }
+    if (containerName.startsWith('static:') || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return;
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
@@ -3074,6 +3213,17 @@ export class ContainerService {
    * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
    */
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
+    if (this.staticSites?.has(containerName) || containerName.startsWith('static:')
+      || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) {
+      context.assertCurrent?.('before static site removal');
+      const runtime = this.staticSites?.inspect(containerName)?.runtime
+        || [...this.stoppedStaticSites.values()].find(site => site.runtime.id === containerName || site.runtime.serviceName === containerName)?.runtime;
+      await this.staticSites?.stop(containerName);
+      context.assertCurrent?.('after static site stop');
+      if (runtime) await this.staticWebService().discard(runtime);
+      for (const [id, site] of this.stoppedStaticSites) if (id === containerName || site.runtime.serviceName === containerName) this.stoppedStaticSites.delete(id);
+      return;
+    }
     const terminal = ['branch-delete', 'executor-delete-branch', 'build-profile-delete', 'cleanup-stopped'].includes(context.operation || '');
     return deploymentPhaseBudget.run(terminal ? 'terminal' : 'cleanup', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
       profileId: context.profileId || undefined, operationId: context.operationId, operationGeneration: context.operationGeneration },
@@ -3149,6 +3299,8 @@ export class ContainerService {
   }
 
   async isRunning(containerName: string): Promise<boolean> {
+    if (this.staticSites?.has(containerName)) return true;
+    if (containerName.startsWith('static:') || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return false;
     const result = await this.shell.exec(
       `docker inspect --format="{{.State.Running}}" ${containerName}`,
       { timeout: 5000, executionLane: 'observation' },
@@ -3170,6 +3322,13 @@ export class ContainerService {
    */
   async getRunningContainerNames(): Promise<Set<string>> {
     return (await this.getRunningContainerNamesSnapshot()) ?? new Set<string>();
+  }
+
+  /** Application liveness includes static listeners; physical container accounting remains Docker-only. */
+  async getRunningServiceNames(): Promise<Set<string>> {
+    const names = await this.getRunningContainerNames();
+    for (const name of this.staticSites?.names() || []) names.add(name);
+    return names;
   }
 
   /**
@@ -3210,7 +3369,8 @@ export class ContainerService {
     // 的名字一定不是合法容器名 → 直接拒绝(reject 比 escape 更安全:不需要
     // 信任任何 escape 函数实现的正确性)。
     const validName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
-    const safeNames = containerNames.filter((n) => validName.test(n));
+    const safeNames = containerNames.filter((n) => validName.test(n) && !this.staticSites?.has(n)
+      && ![...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === n));
     if (safeNames.length === 0) return out;
     // \t 分隔字段,后续 JS split('\t') 解析。每行一条容器。
     // 字段顺序固定不能改 — 解析按 index 取值。
@@ -3255,6 +3415,10 @@ export class ContainerService {
   }
 
   async getLogs(containerName: string, tail = 500): Promise<string> {
+    const staticSite = this.staticSites?.inspect(containerName);
+    if (staticSite) return `静态文件预览运行中；产物提交 ${staticSite.runtime.revision}，无独立前端容器。`;
+    if ([...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return '静态文件预览当前未运行。';
+    if (containerName.startsWith('static:')) return '静态文件预览当前未运行。';
     const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`, { timeout: 7000, executionLane: 'observation' });
     return combinedOutput(result);
   }
