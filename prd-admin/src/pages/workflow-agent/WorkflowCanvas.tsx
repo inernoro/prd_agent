@@ -616,6 +616,7 @@ function CanvasInner({
     stopPolling();
     const version = observerVersion.current;
     let inFlight = false;
+    let observing = false;
     setDesignProgress([]);
     pollFailCount.current = 0;
     pollingRef.current = setInterval(async () => {
@@ -673,17 +674,21 @@ function CanvasInner({
             setDesignProgress([]);
             return;
           }
-          const observations = await Promise.all(exec.nodeExecutions.filter(ne => ne.status === 'running' && ne.designRunId).map(async ne => {
-            const observed: CanvasDesignProgress = { nodeName: ne.nodeName, runId: ne.designRunId! };
-            try {
-              const result = await getDesignArtifactRun(observed.runId);
-              if (result.success && result.data.runId === observed.runId) {
-                return { ...observed, phase: result.data.phase, progress: result.data.progress, status: result.data.status };
-              }
-            } catch { /* 阶段读取失败不改变工作流权威状态。 */ }
-            return observed;
-          }));
-          if (version === observerVersion.current) setDesignProgress(observations);
+          if (!observing) {
+            observing = true;
+            void Promise.all(exec.nodeExecutions.filter(ne => ne.status === 'running' && ne.designRunId).map(async ne => {
+              const observed: CanvasDesignProgress = { nodeName: ne.nodeName, runId: ne.designRunId! };
+              try {
+                const result = await getDesignArtifactRun(observed.runId);
+                if (result.success && result.data.runId === observed.runId) {
+                  return { ...observed, phase: result.data.phase, progress: result.data.progress, status: result.data.status };
+                }
+              } catch { /* 阶段读取失败不改变工作流权威状态。 */ }
+              return observed;
+            })).then(observations => {
+              if (version === observerVersion.current) setDesignProgress(observations);
+            }).finally(() => { observing = false; });
+          }
         }
       } catch {
         if (version !== observerVersion.current) return;
@@ -692,6 +697,7 @@ function CanvasInner({
         if (pollFailCount.current >= 5) {
           addLog('warn', '轮询超时，请检查网络后刷新页面');
           stopPolling();
+          setDesignProgress([]);
         }
       } finally {
         inFlight = false;
