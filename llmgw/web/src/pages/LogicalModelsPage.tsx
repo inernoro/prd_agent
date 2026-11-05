@@ -502,7 +502,7 @@ export function LogicalModelsPage() {
           <>
             <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
             <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
-            {usage ? <span>近 30 天 Gateway 估算 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
+            {usage ? <span>近 30 天 Gateway 估算 <strong>{formatUsageCost(monthlyCostUsd, unpricedCalls)}</strong></span> : null}
             {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
             <span>已设默认 <strong>{items.filter((x) => x.isDefaultForType).length}</strong> 个用途</span>
           </>
@@ -540,6 +540,7 @@ export function LogicalModelsPage() {
                     <option value="generation">generation</option>
                     <option value="vision">vision</option>
                     <option value="chat">chat</option>
+                    <option value="code">code</option>
                     <option value="video-gen">video-gen</option>
                   </select>
                 </label>
@@ -633,8 +634,8 @@ export function LogicalModelsPage() {
                         <>
                           <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
                           <span style={{ display: 'flex', flexDirection: 'column' }}>
-                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsd(stat.totalCostUsd)}</span>
-                            <span style={HINT_TEXT}>Gateway 估算 · {formatCount(stat.totalCalls)} 次</span>
+                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsageCost(stat.totalCostUsd, stat.unpricedCalls)}</span>
+                            <span style={HINT_TEXT}>Gateway 估算 · {formatCount(stat.totalCalls)} 次{stat.unpricedCalls > 0 ? ` · ${formatCount(stat.unpricedCalls)} 次未计价` : ''}</span>
                           </span>
                         </>
                       ) : <span style={HINT_TEXT}>暂无</span>}
@@ -849,6 +850,12 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
   }
   if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
   return { text: '正常', dot: 'var(--ok)', tone: 'ok' };
+}
+
+/** 合计只包含已计价部分；有缺价调用时不能把零合计展示成完整费用。 */
+function formatUsageCost(value: number, unpricedCalls: number): string {
+  if (unpricedCalls > 0) return value > 0 ? `已计价部分 ${formatUsd(value)}` : '费用未知';
+  return formatUsd(value);
 }
 
 function formatUsd(value: number): string {
