@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef } from '../types.js';
+import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef, OperationLogContainerSnapshot } from '../types.js';
 import type { StateService } from './state.js';
-import type { ContainerService } from './container.js';
+import { ContainerRemovalPrerequisiteError, type ContainerService } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
 import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
+import { archiveBranchContainerLogs } from './container-log-archiver.js';
 
 export function reserveServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; portStart: number; operationId?: string;
@@ -92,6 +93,61 @@ export function preserveReplacementNames(entry: BranchEntry, candidate: ServiceS
     .filter(runtime => runtime.containerName !== candidate.containerName).map(runtime => runtime.containerName);
 }
 
+class OldServingRuntimeUnavailable extends Error {}
+
+/** 本轮整体失败后收回未发布候选；已确认旧入口、其他轮次及已发布依赖保持。 */
+export async function abortUnpublishedServiceReplacements(options: {
+  entry: BranchEntry; profileIds: readonly string[]; state: StateService;
+  container: Pick<ContainerService, 'inspectOwnedRuntime' | 'removeOwnedRuntime'>;
+  operationId?: string; operationGeneration?: number;
+  assertCurrent?: (step: string) => void;
+}): Promise<void> {
+  const { entry, profileIds, state, container, assertCurrent } = options;
+  if (!entry.replacementNetwork) return;
+  for (const id of profileIds) {
+    const service = entry.services[id], active = service?.servingRuntime;
+    if (!service || !active) continue;
+    const candidates = serviceRuntimeRefs(service).filter(runtime => runtime.containerName !== active.containerName
+      && runtime.networkName === entry.replacementNetwork && Boolean(runtime.containerId));
+    if (!candidates.length) continue;
+    assertCurrent?.('before failed replacement old identity');
+    const confirmedActive = await container.inspectOwnedRuntime(entry, id, active);
+    assertCurrent?.('after failed replacement old identity');
+    if (!confirmedActive) continue;
+    for (const candidate of candidates) {
+      // 名称不同也可能仍携带旧CID；当前实际入口身份绝不能作为失败候选删除。
+      if (candidate.containerId && candidate.containerId === confirmedActive.containerId) continue;
+      // 同网段已有发布角色可能仍消费它；没有发布任何角色时才整体撤销候选。
+      if (Object.values(entry.services).some(peer => peer !== service
+        && servingRuntime(peer)?.networkName === candidate.networkName)) continue;
+      try {
+        await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
+          operationId: options.operationId, operationGeneration: options.operationGeneration,
+          profileId: id, operation: 'failed-unpublished-runtime', source: 'service-replacement',
+          requiredRunningContainerId: confirmedActive.containerId,
+          beforeRemove: async () => {
+            const current = await container.inspectOwnedRuntime(entry, id, active);
+            assertCurrent?.('after failed replacement old liveness');
+            if (!current || current.containerId !== confirmedActive.containerId || service.servingRuntime !== active) {
+              throw new OldServingRuntimeUnavailable('旧入口已失效或身份变化，保留未发布候选');
+            }
+          },
+          assertCurrent: () => assertCurrent?.('failed replacement cleanup command') });
+      } catch (error) {
+        assertCurrent?.('after failed replacement cleanup guard');
+        if (error instanceof OldServingRuntimeUnavailable || error instanceof ContainerRemovalPrerequisiteError) continue;
+        throw error;
+      }
+      assertCurrent?.('after failed replacement cleanup');
+      if (service.containerName === candidate.containerName) Object.assign(service, runtimeRef(active));
+      if (service.pendingRuntime?.containerName === candidate.containerName) service.pendingRuntime = undefined;
+      service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== candidate.containerName);
+      state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+      assertCurrent?.('after failed replacement cleanup persistence');
+    }
+  }
+}
+
 function publicationIdentity(entry: BranchEntry): string {
   return JSON.stringify(Object.entries(entry.services).map(([id, service]) =>
     [id, service.status, runtimeRef(service), service.servingRuntime, service.pendingRuntime]));
@@ -152,13 +208,25 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
 
 /** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
 export async function commitServiceReplacements(options: {
-  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
+  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs'>;
   operationId?: string; operationGeneration?: number;
   assertCurrent?: (step: string) => void;
+  onFailureDiagnostics?: (snapshots: OperationLogContainerSnapshot[]) => void;
 }): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
   const selected = profileIds.map(id => entry.services[id]).filter((service): service is ServiceState => Boolean(service));
-  if (selected.some(service => service.status !== 'running')) return;
+  if (selected.some(service => service.status !== 'running')) {
+    if (selected.some(service => service.status === 'error')) {
+      const archived = await archiveBranchContainerLogs({ stateService: state, containerService: container,
+        branch: entry, source: 'deploy-error', profileIds: new Set(profileIds), assertCurrent });
+      assertCurrent?.('before failed replacement archive persistence');
+      options.onFailureDiagnostics?.(archived.map(snapshot => ({ ...snapshot, source: 'deploy-error', tailLines: 500 })));
+      state.save(); await state.flush();
+      assertCurrent?.('after failed replacement archive persistence');
+      await abortUnpublishedServiceReplacements(options);
+    }
+    return;
+  }
   const changed = selected.filter(service => service.servingRuntime && service.servingRuntime.containerName !== service.containerName);
   if (!changed.length && !selected.some(service => service.retainedRuntimes?.length)) return;
   assertCurrent?.('before runtime cutover persistence');
