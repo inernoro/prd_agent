@@ -106,7 +106,14 @@ function NotificationEditor({ task, onClose, onSaved }: {
   onClose: () => void;
   onSaved: (task: ScheduledNotification) => void;
 }) {
-  const [frequency, setFrequency] = useState<NotificationFrequency>(task?.frequency ?? 'daily');
+  const [frequency, setFrequency] = useState<NotificationFrequency>(task?.frequency ?? 'once');
+  const [creationDate] = useState(() => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date());
+    const datePart = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+    return `${datePart('year')}-${datePart('month')}-${datePart('day')}`;
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -121,7 +128,7 @@ function NotificationEditor({ task, onClose, onSaved }: {
       time: String(data.get('time') ?? ''),
       date: frequency === 'once' ? String(data.get('date') ?? '') : null,
       day: frequency === 'weekly' || frequency === 'monthly' ? Number(data.get('day')) : null,
-      enabled: data.has('enabled'),
+      enabled: true,
       webhookUrl: String(data.get('webhook') ?? '').trim() || undefined,
       revision: task?.revision,
     };
@@ -150,8 +157,8 @@ function NotificationEditor({ task, onClose, onSaved }: {
             <label>发送周期<select className={field} value={frequency} onChange={(event) => setFrequency(event.target.value as NotificationFrequency)}>
               {Object.entries(frequencyLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select></label>
-            <label>发送时间（北京时间）<input className={field} name="time" type="time" required defaultValue={task?.time ?? '09:00'} /></label>
-            {frequency === 'once' && <label>发送日期<input className={field} name="date" type="date" required defaultValue={task?.date ?? ''} /></label>}
+            <label>发送时间（北京时间）<input className={field} name="time" type="time" required defaultValue={task?.time ?? '18:30'} /></label>
+            {frequency === 'once' && <label>发送日期<input className={field} name="date" type="date" required defaultValue={task?.date ?? creationDate} /></label>}
             {frequency === 'weekly' && <label>发送星期<select className={field} name="day" defaultValue={task?.frequency === 'weekly' ? task.day ?? 1 : 1}>
               {weekdays.map((day, index) => <option key={day} value={index}>{day}</option>)}
             </select></label>}
@@ -164,7 +171,6 @@ function NotificationEditor({ task, onClose, onSaved }: {
             <input className={field} name="webhook" type="password" autoComplete="new-password" required={!task} maxLength={512}
               placeholder={task ? '留空保留原链接，输入新链接即可替换' : '粘贴企业微信机器人链接'} />
           </label>
-          <label className="flex items-center gap-2"><input name="enabled" type="checkbox" defaultChecked={task?.enabled ?? true} />启用定时发送</label>
           {error && <p role="alert" className="text-semantic-danger">{error}</p>}
         </form>
       }
