@@ -4,11 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionDetailPanel } from './ExecutionDetailPanel';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
+import { getExecution } from '@/services';
 import type { ExecutionArtifact } from '@/services/contracts/workflowAgent';
 
 const state = vi.hoisted(() => ({
   selectedExecution: { id: 'existing-execution', workflowId: 'workflow', workflowName: '已有报告', status: 'running',
-    nodeExecutions: [], nodeSnapshot: [], edgeSnapshot: [], finalArtifacts: [], variables: {},
+    nodeExecutions: [], nodeSnapshot: [], edgeSnapshot: [], finalArtifacts: [], variables: {}, shareLinkIds: [], lastSeq: 0,
     createdAt: '2026-11-05T00:00:00Z', triggerType: 'manual', triggeredBy: 'owner' },
   setViewMode: vi.fn(), setSelectedExecution: vi.fn(), loadExecution: vi.fn(),
 }));
@@ -66,14 +67,27 @@ describe('工作流设计进度与完整版本预览', () => {
     }) }));
     expect(designPanel.querySelector('.animate-pulse')).toBeNull();
     await act(async () => calls.emit?.({ id: '8', event: 'execution-completed', data: JSON.stringify({
-      status: 'completed', completedNodes: 1, failedNodes: 0, skippedNodes: 0,
+      status: 'cancelled', completedNodes: 1, failedNodes: 0, skippedNodes: 0,
     }) }));
-    expect(Array.from(container.querySelectorAll('span')).some(span => span.textContent === '执行完成')).toBe(true);
+    expect(Array.from(container.querySelectorAll('span')).some(span => span.textContent === '执行取消')).toBe(true);
     const elapsed = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('已有报告 · OpenDesign'))!;
     expect(elapsed.textContent).toContain('13.0s');
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
     expect(elapsed.textContent).toContain('13.0s');
     expect(calls.urls).toHaveLength(2);
+    expect(calls.business).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain('执行失败');
+    expect(container.textContent).not.toContain('undefined');
+    await act(async () => root.unmount()); root = createRoot(container); calls.urls.length = 0;
+    vi.mocked(getExecution).mockResolvedValueOnce({ success: true, error: null, data: { execution: { ...state.selectedExecution,
+      status: 'cancelled', completedAt: '2026-11-05T00:00:13Z' } } });
+    await act(async () => root.render(<ExecutionDetailPanel />));
+    expect(state.setSelectedExecution).toHaveBeenCalledWith(expect.objectContaining({ status: 'cancelled' }));
+    const restoredPanel = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('已有报告 · OpenDesign'))!.parentElement!;
+    expect(restoredPanel.querySelector('.animate-pulse')).toBeNull();
+    expect(container.textContent).not.toContain('正在恢复同一任务的进度');
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1100)); });
+    expect(calls.urls).toHaveLength(1);
     expect(calls.business).not.toHaveBeenCalled();
   });
 

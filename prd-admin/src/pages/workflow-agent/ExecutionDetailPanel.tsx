@@ -228,17 +228,17 @@ export function ExecutionDetailPanel() {
       useWorkflowStore.getState().loadExecution(execId);
     } else if (eventName === 'execution-completed') {
       setLlmStreamActive(false);
-      const status = payload.status as string;
+      const status = String(payload.status).toLowerCase();
+      const finalStatus = FINAL_STATUS_LOG[status] ?? { level: 'error' as const, label: '失败' };
       const completed = payload.completedNodes as number;
       const failed = payload.failedNodes as number;
       const skipped = payload.skippedNodes as number;
-      addLog(
-        status === 'completed' ? 'success' : 'error',
-        `执行${status === 'completed' ? '完成' : '失败'} — 成功: ${completed}, 失败: ${failed}, 跳过: ${skipped}`
-      );
+      const counts = [completed, failed, skipped].every(value => typeof value === 'number')
+        ? ` — 成功: ${completed}, 失败: ${failed}, 跳过: ${skipped}` : '';
+      addLog(finalStatus.level, `执行${finalStatus.label}${counts}`);
       stopLogSse();
       setSsePhase('done');
-      setSsePhaseMessage(status === 'completed' ? '执行完成' : '执行失败');
+      setSsePhaseMessage(`执行${finalStatus.label}`);
       useWorkflowStore.getState().loadExecution(execId);
     }
   }, []);
@@ -276,6 +276,18 @@ export function ExecutionDetailPanel() {
           },
         });
         if (ac.signal.aborted) return;
+        // 断流只恢复观察；事件已过期或终态事件未送达时，以同任务落库状态收口。
+        const latest = await getExecution(execId);
+        if (ac.signal.aborted) return;
+        if (latest.success && latest.data && FINAL_STATUS_LOG[latest.data.execution.status]) {
+          setSelectedExecution(latest.data.execution);
+          setLlmStreamActive(false);
+          stopLogSse();
+          setSsePhase('done');
+          setSsePhaseMessage(`执行${FINAL_STATUS_LOG[latest.data.execution.status].label}`);
+          void loadHistoricalLogs(latest.data.execution);
+          return;
+        }
         if (!result.success && !['NETWORK_ERROR', 'SERVER_UNAVAILABLE'].includes(result.errorCode || '')) {
           addLog('warn', `SSE 连接失败 (${result.errorMessage})，使用轮询模式`);
           fallbackPolling(execId);
@@ -297,6 +309,7 @@ export function ExecutionDetailPanel() {
           setSelectedExecution(res.data.execution);
           if (['completed', 'failed', 'cancelled', 'paused', 'waiting_approval', 'timed_out'].includes(res.data.execution.status)) {
             clearInterval(iv);
+            setLlmStreamActive(false);
             setSsePhase('done');
             setSsePhaseMessage('执行结束');
             loadHistoricalLogs(res.data.execution);

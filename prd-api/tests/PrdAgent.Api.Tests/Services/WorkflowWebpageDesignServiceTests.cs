@@ -45,6 +45,7 @@ public sealed class WorkflowWebpageDesignServiceTests
     public async Task HtmlNodeUsesOriginalRouteAndSharedWorkerPreservesWholeDelivery(string type, string modelType)
     {
         await using var f = await Fixture.CreateAsync(type);
+        var staleNodes = (await f.Db.WorkflowExecutions.Find(_ => true).SingleAsync()).NodeExecutions;
         var signals = new List<string>();
         var result = await CapsuleExecutor.ExecuteAsync(f.Provider, NullLogger.Instance, f.Node, new(), f.Inputs,
             (name, _) => { signals.Add(name); return Task.CompletedTask; }, f.Invocation).WaitAsync(TimeSpan.FromSeconds(15));
@@ -72,6 +73,9 @@ public sealed class WorkflowWebpageDesignServiceTests
         Assert.Equal(output.ArtifactId, repeated.Artifacts[0].ArtifactId);
         Assert.Equal(1, f.Executor.Calls);
         Assert.Equal(1, await f.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
+        var bulk = typeof(WorkflowRunWorker).GetMethod("BulkUpdateNodeExecutionsAsync", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        await (Task)bulk.Invoke(null, [f.Db, "workflow-execution", staleNodes])!;
+        Assert.Equal(run.Id, (await f.Db.WorkflowExecutions.Find(_ => true).SingleAsync()).NodeExecutions[0].DesignRunId);
         await f.Db.WorkflowExecutions.UpdateOneAsync(item => item.Id == "workflow-execution",
             Builders<WorkflowExecution>.Update.Set("NodeExecutions.0.OutputArtifacts", result.Artifacts)
                 .Set("NodeExecutions.0.Status", NodeExecutionStatus.Completed).Set("NodeExecutions.0.InputArtifacts", f.Inputs));
@@ -102,6 +106,18 @@ public sealed class WorkflowWebpageDesignServiceTests
         }
         Assert.Equal("WORKFLOW_DESIGN_FORBIDDEN", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
             f.Service.DownloadPackageAsync(delivery.RunId, "other-owner"))).Code);
+        var legacy = new ExecutionArtifact { ArtifactId = "legacy-html", Name = "先选中的报告.html", MimeType = "text/html",
+            InlineContent = "<!doctype html><html><body>先选中的旧报告</body></html>" };
+        var siteBoundary = Mock.Get(f.Provider.GetRequiredService<IHostedSiteService>());
+        siteBoundary.Setup(item => item.CreateFromContentAsync("workflow-owner", legacy.InlineContent, It.IsAny<string?>(),
+                It.IsAny<string?>(), "workflow", It.IsAny<string?>(), It.IsAny<List<string>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new HostedSite { Id = "legacy-selected", SiteUrl = "https://assets.example.test/legacy/index.html" });
+        var mixed = await CapsuleExecutor.ExecuteSitePublisherAsync(f.Provider,
+            new WorkflowNode { NodeId = "publish", NodeType = CapsuleTypes.SitePublisher }, new(), [legacy, output], f.Invocation with { NodeId = "publish" });
+        Assert.Contains("legacy-selected", mixed.Artifacts[0].InlineContent);
+        siteBoundary.Verify(item => item.CreateFromContentAsync("workflow-owner", legacy.InlineContent, It.IsAny<string?>(),
+            It.IsAny<string?>(), "workflow", It.IsAny<string?>(), It.IsAny<List<string>?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), null), Times.Once);
+        Assert.Equal(revision.VerifiedFiles.Count, (await f.Db.HostedSiteRevisions.Find(item => item.Id == delivery.RevisionId).SingleAsync()).VerifiedFiles.Count);
         await f.Db.WorkflowExecutions.UpdateOneAsync(item => item.Id == resumedExecution.Id,
             Builders<WorkflowExecution>.Update.Unset(item => item.ResumedFromExecutionId));
         await Assert.ThrowsAsync<WorkflowDesignException>(() => f.Service.ResolveDeliveryAsync(output,
@@ -120,7 +136,14 @@ public sealed class WorkflowWebpageDesignServiceTests
         await CancelledBeforeWorkerClaimDoesNotStartAsync();
         await using var f = await Fixture.CreateAsync(CapsuleTypes.WebpageGenerator);
         f.Executor.Block = true;
-        var waiting = f.Service.ExecuteAsync(f.Node, new(), f.Inputs, f.Invocation);
+        var sourceNode = new WorkflowNode { NodeId = "saved-source", NodeType = CapsuleTypes.ReportGenerator };
+        await f.Db.WorkflowExecutions.UpdateOneAsync(_ => true, Builders<WorkflowExecution>.Update
+            .Push(item => item.NodeSnapshot, sourceNode).Push(item => item.NodeExecutions, new NodeExecution
+            { NodeId = sourceNode.NodeId, Status = NodeExecutionStatus.Completed, OutputArtifacts = f.Inputs })
+            .Push(item => item.EdgeSnapshot, new WorkflowEdge { SourceNodeId = sourceNode.NodeId, TargetNodeId = "report" }));
+        var worker = new WorkflowRunWorker(f.Provider.GetRequiredService<IServiceScopeFactory>(), f.Queue.Object, f.Events, NullLogger<WorkflowRunWorker>.Instance);
+        var process = typeof(WorkflowRunWorker).GetMethod("ProcessExecutionAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var waiting = (Task)process.Invoke(worker, ["workflow-execution"])!;
         await f.Executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var run = await f.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
         // 服务器在同一业务身份上恢复等待；独立前端代表另证断流只重连 GET。
@@ -143,7 +166,15 @@ public sealed class WorkflowWebpageDesignServiceTests
         Assert.Equal("legacy-hosting", selected.GetProperty("runId").GetString());
         await f.Db.DesignArtifactRuns.DeleteOneAsync(item => item.Id == "legacy-hosting");
         Assert.IsType<OkObjectResult>(await ownerApi.CancelExecution("workflow-execution"));
-        Assert.Equal("WORKFLOW_DESIGN_CANCELLED", (await Assert.ThrowsAsync<WorkflowDesignException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(10)))).Code);
+        await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        var complete = Assert.Single(await f.Events.GetEventsAsync(RunKinds.Workflow, "workflow-execution", 0, 100),
+            item => item.EventName == "execution-completed");
+        using var terminal = JsonDocument.Parse(complete.PayloadJson);
+        var stored = await f.Db.WorkflowExecutions.Find(_ => true).SingleAsync();
+        Assert.Equal(WorkflowExecutionStatus.Cancelled, terminal.RootElement.GetProperty("status").GetString());
+        Assert.Equal(stored.NodeExecutions.Count(item => item.Status == NodeExecutionStatus.Completed), terminal.RootElement.GetProperty("completedNodes").GetInt32());
+        Assert.Equal(stored.NodeExecutions.Count(item => item.Status == NodeExecutionStatus.Failed), terminal.RootElement.GetProperty("failedNodes").GetInt32());
+        Assert.Equal(stored.NodeExecutions.Count(item => item.Status == NodeExecutionStatus.Skipped), terminal.RootElement.GetProperty("skippedNodes").GetInt32());
         Assert.Equal("WORKFLOW_DESIGN_CANCELLED", (await Assert.ThrowsAsync<WorkflowDesignException>(() => resumed.WaitAsync(TimeSpan.FromSeconds(10)))).Code);
         var cancelled = await f.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
         Assert.Equal(RunStatuses.Cancelled, cancelled.Status);
@@ -215,6 +246,12 @@ public sealed class WorkflowWebpageDesignServiceTests
         Assert.Equal(0, f.Executor.Calls);
         Assert.Equal(0, await f.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
         Assert.DoesNotContain(await f.Events.GetEventsAsync(RunKinds.Workflow, "workflow-execution", 0, 100), item => item.EventName == "execution-started");
+        var observer = OwnerApi(f); observer.Response.Body = new MemoryStream();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        await observer.StreamExecution("workflow-execution", cancellationToken: deadline.Token);
+        var streamText = Encoding.UTF8.GetString(((MemoryStream)observer.Response.Body).ToArray());
+        Assert.Contains("event: execution-completed", streamText);
+        Assert.Contains("\"status\":\"cancelled\"", streamText);
     }
 
     private sealed class Fixture : IAsyncDisposable

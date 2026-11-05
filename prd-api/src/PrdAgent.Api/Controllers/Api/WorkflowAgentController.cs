@@ -2364,8 +2364,27 @@ public class WorkflowAgentController : ControllerBase
             }
             else
             {
-                try { await Task.Delay(400, cancellationToken); }
-                catch { break; }
+                // 取消可能先于worker认领/批次推进；持续心跳的空事件流也须观察落库终态。
+                var terminal = await _db.WorkflowExecutions.Find(e => e.Id == executionId)
+                    .Project(e => new { e.Status, e.DurationMs, e.ErrorMessage,
+                        CompletedNodes = e.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Completed),
+                        FailedNodes = e.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Failed),
+                        SkippedNodes = e.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Skipped) })
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (terminal?.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed
+                    or WorkflowExecutionStatus.Cancelled or WorkflowExecutionStatus.TimedOut)
+                {
+                    await WriteSseEvent("execution-completed", new { executionId, status = terminal.Status,
+                        durationMs = terminal.DurationMs, completedNodes = terminal.CompletedNodes,
+                        failedNodes = terminal.FailedNodes, skippedNodes = terminal.SkippedNodes,
+                        errorMessage = terminal.ErrorMessage });
+                    isTerminal = true;
+                }
+                else
+                {
+                    try { await Task.Delay(400, cancellationToken); }
+                    catch { break; }
+                }
             }
         }
     }

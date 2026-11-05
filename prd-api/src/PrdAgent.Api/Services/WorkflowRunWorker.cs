@@ -358,7 +358,12 @@ public sealed class WorkflowRunWorker : BackgroundService
             {
                 foreach (var result in batchResults.Values)
                     await UpdateNodeExecutionAsync(db, executionId, result.nodeExec);
-                await EmitEventAsync(executionId, "execution-completed", new { executionId, status = WorkflowExecutionStatus.Cancelled });
+                sw.Stop();
+                await EmitEventAsync(executionId, "execution-completed", new { executionId, status = WorkflowExecutionStatus.Cancelled,
+                    durationMs = sw.ElapsedMilliseconds,
+                    completedNodes = execution.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Completed),
+                    failedNodes = execution.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Failed),
+                    skippedNodes = execution.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Skipped) });
                 return;
             }
 
@@ -675,10 +680,9 @@ public sealed class WorkflowRunWorker : BackgroundService
 
     private static async Task BulkUpdateNodeExecutionsAsync(MongoDbContext db, string executionId, List<NodeExecution> nodeExecutions)
     {
-        await db.WorkflowExecutions.UpdateOneAsync(
-            e => e.Id == executionId,
-            Builders<WorkflowExecution>.Update.Set(e => e.NodeExecutions, nodeExecutions),
-            cancellationToken: CancellationToken.None);
+        // 只写worker拥有的节点字段，保留设计服务独立持久化的DesignRunId。
+        foreach (var node in nodeExecutions)
+            await UpdateNodeExecutionAsync(db, executionId, node);
     }
 
     /// <summary>推送 SSE 事件到 IRunEventStore（前端可通过 stream 端点消费）</summary>

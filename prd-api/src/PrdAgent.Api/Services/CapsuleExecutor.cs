@@ -3974,6 +3974,7 @@ public static class CapsuleExecutor
 
         // 1. 从上游产物中提取 HTML 内容
         var htmlContent = "";
+        ExecutionArtifact? selectedArtifact = null;
         foreach (var input in inputArtifacts)
         {
             var content = input.InlineContent ?? "";
@@ -3983,6 +3984,7 @@ public static class CapsuleExecutor
                                                || content.Contains("<html", StringComparison.OrdinalIgnoreCase))
             {
                 htmlContent = content;
+                selectedArtifact = input;
                 sb.AppendLine($"[输入] 使用产物 '{input.Name}' ({input.SizeBytes} bytes) 作为 HTML 源");
                 break;
             }
@@ -3995,6 +3997,7 @@ public static class CapsuleExecutor
                 .FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.InlineContent));
             if (firstContent != null)
             {
+                selectedArtifact = firstContent;
                 htmlContent = $"<!DOCTYPE html><html><head><meta charset='utf-8'><title>Auto Generated</title></head><body><pre>{System.Net.WebUtility.HtmlEncode(firstContent.InlineContent!)}</pre></body></html>";
                 sb.AppendLine($"[输入] 无 HTML 产物，将 '{firstContent.Name}' 包装为纯文本 HTML");
             }
@@ -4029,9 +4032,8 @@ public static class CapsuleExecutor
         logger.LogInformation("SitePublisher: Publishing HTML ({Length} chars) for user {UserId}",
             htmlContent.Length, userId);
 
-        var designArtifact = inputArtifacts.FirstOrDefault(item => item.DesignDelivery != null);
-        var retained = designArtifact == null ? null : await sp.GetRequiredService<IWorkflowWebpageDesignService>()
-            .ResolveDeliveryAsync(designArtifact, designInvocation);
+        var retained = selectedArtifact?.DesignDelivery == null ? null : await sp.GetRequiredService<IWorkflowWebpageDesignService>()
+            .ResolveDeliveryAsync(selectedArtifact, designInvocation);
         var site = retained != null
             ? await siteService.UpdateAsync(retained.Id, userId, title,
                 string.IsNullOrWhiteSpace(description) ? null : description, tags,
