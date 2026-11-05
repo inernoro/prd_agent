@@ -99,6 +99,27 @@ public class ShortVideoMaterialController : ControllerBase
         return Ok(ApiResponse<ShortVideoMaterialRun>.Ok(run));
     }
 
+    /// <summary>清理本人已结束的运行记录；已入库素材仍由知识库管理。</summary>
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(string runId)
+    {
+        var userId = GetUserId();
+        var run = await _db.ShortVideoMaterialRuns
+            .Find(r => r.Id == runId && r.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
+        if (run.Status is not ("done" or "failed"))
+            return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_STILL_RUNNING", "素材仍在处理中，请等待处理结束后再删除运行记录。"));
+
+        var deleted = await _db.ShortVideoMaterialRuns.DeleteOneAsync(
+            r => r.Id == runId && r.UserId == userId && (r.Status == "done" || r.Status == "failed"),
+            CancellationToken.None);
+        return deleted.DeletedCount == 1
+            ? Ok(ApiResponse<object>.Ok(new { deleted = true }))
+            : Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_STATE_CHANGED", "任务状态已变化，请刷新后重试删除运行记录。"));
+    }
+
     private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)
     {
         if (!string.IsNullOrWhiteSpace(storeId))
