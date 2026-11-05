@@ -348,6 +348,7 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     expect(instance.finish(ticket)).toBe(true);
   });
 
+  // 多轮真实Git、编译和子进程恢复使用独立的测试总时限；执行器及取消预算保持原值。
   it.each([false, true])('source serve切到没有维护程序的旧版后，真实检查点仍恢复文件与Git（defer=%s）', async deferArtifacts => {
     seedFiles();
     const managedSource = path.join(root, 'cds/src'), source = fileURLToPath(new URL('../../src/', import.meta.url));
@@ -489,7 +490,7 @@ process.stdout.write(JSON.stringify(report));
     expect.soft(recovery?.command).not.toContain('--import tsx');
     expect.soft(recovery?.assignment).toMatchObject({ lane: 'operation' });
     expect.soft(recovery?.result.exitCode).toBe(0);
-  });
+  }, 15_000);
 
   it.each(['restore', 'discard'] as const)('native dist换代移走新worker后，%s仍用同票完成且不借Master模块缓存', async action => {
     seedFiles();

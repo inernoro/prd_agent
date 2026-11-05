@@ -17,6 +17,7 @@ import { normalizeProjectProfileDependencies } from '../services/project-profile
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { prepareServiceReplacement, reserveServiceReplacements, replacementLaunchEntry, preserveReplacementNames, commitServiceReplacements } from '../services/service-replacement.js';
 import { applyDeployReadinessFloor, resolveDeployReadinessFloorSeconds } from '../services/container.js';
+import { executorDeploymentOwners, remoteIdentity, type RemoteExecutionReceipt } from '../services/remote-deployment-owner.js';
 
 export interface ExecutorRouterDeps {
   stateService: StateService;
@@ -30,6 +31,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
   const { stateService, worktreeService, containerService, shell, config } = deps;
   const router = Router();
   const preparations = new BranchOperationCoordinator();
+  const remoteOwners = executorDeploymentOwners(stateService);
 
   // ── Auth middleware: verify executor token ──
   router.use((req, res, next) => {
@@ -118,6 +120,15 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
   });
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
+  router.post('/deployment-owner', (req, res) => {
+    const owner = remoteIdentity(req.body);
+    if (!owner || !['claim', 'renew', 'revoke'].includes(req.body.action)) { res.status(400).json({ error: '远端原代次身份无效' }); return; }
+    try {
+      if (req.body.action === 'revoke') res.json({ qualified: remoteOwners.revoke(owner) });
+      else res.json({ qualified: true, admissionId: remoteOwners.claim(owner).admissionId });
+    } catch { res.status(409).json({ qualified: false, error: '远端原代次已结束，请查看最新部署' }); }
+  });
+
   router.post('/deploy', async (req, res) => {
     const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger, commitSha, artifactCommitSha } = req.body as {
       branchId: string;
@@ -148,6 +159,12 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     // 调用可能省略 profiles 字段,profilesData.map / .length 直接 throw → 把一次合法的「空清单 teardown」
     // 变成不透明的部署错误。归一为 []，让下方孤儿收敛 + 空清单落 idle 的路径正常走。
     let profilesData = Array.isArray(profilesRaw) ? profilesRaw : [];
+    const remoteOwner = remoteIdentity(req.body);
+    let remoteExecution: { assertCurrent: () => void; receipt: () => RemoteExecutionReceipt } | undefined;
+    try {
+      if (remoteOwner) remoteExecution = remoteOwners.begin(remoteOwner, req.body.admissionId);
+      else if (remoteOwners.protected(branchId) || req.body.operationGeneration !== undefined) throw new Error('缺少有效远端原代次身份');
+    } catch { res.status(409).json({ error: '远端原代次已结束或重复受理，请查看最新部署' }); return; }
 
     // SSE response
     res.writeHead(200, {
@@ -158,6 +175,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     });
 
     const sendEvent = (event: string, data: unknown) => {
+      if (res.writableEnded || res.destroyed) return;
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* */ }
     };
 
@@ -168,10 +186,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     let expectedProject = currentEntry?.projectId, expectedBranch = currentEntry?.branch;
     const target = artifactCommitSha ?? commitSha;
     const assertCurrent = () => {
+      remoteExecution?.assertCurrent();
       preparation?.assertCurrent();
       if (stateService.getBranch(branchId) !== currentEntry
         || (currentEntry && (currentEntry.projectId !== expectedProject || currentEntry.branch !== expectedBranch))) throw new BranchOperationSupersededError('', branchId, 'executor-owner');
     };
+    const reportWait = () => { try { if (remoteExecution) sendEvent('phase-wait', remoteExecution.receipt()); } catch { /* 原资格检查会阻止后续副作用，不伪造完成。 */ } };
+    const waitTimer = remoteExecution ? setInterval(reportWait, 10_000) : undefined;
+    waitTimer?.unref(); reportWait();
     try {
       // Ensure worktree exists.
       // P4 Part 18 (G1.2): executor routes stay on the single
@@ -273,6 +295,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             services: {},
             status: 'building',
             createdAt: new Date().toISOString(),
+            ...(remoteOwner ? { remoteDeployment: { ...remoteOwner, revoked: false } } : {}),
           };
           assertCurrent();
           stateService.addBranch(entry); currentEntry = entry; expectedProject = entry.projectId; expectedBranch = entry.branch;
@@ -304,6 +327,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             profileId: sid,
             requestId: requestId || null,
             operationId: operationId || null,
+            operationGeneration: remoteOwner?.operationGeneration,
             actor: actor || 'executor',
             trigger: trigger || 'executor-deploy',
             operation: 'executor-deploy-remove-orphan-service',
@@ -444,6 +468,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             }, mergedEnv, {
               requestId: requestId || null,
               operationId: operationId || null,
+              operationGeneration: remoteOwner?.operationGeneration,
               assertCurrent,
               artifactCommitSha: admission?.targetCommitSha,
               isComponentUnchangedSince: componentInputComparator(shell, config.repoRoot, assertCurrent),
@@ -493,7 +518,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // Update overall status
       assertCurrent();
       await commitServiceReplacements({ entry, profileIds: profilesData.map(profile => profile.id), state: stateService,
-        container: containerService, assertCurrent });
+        container: containerService, operationId: operationId || undefined, operationGeneration: remoteOwner?.operationGeneration, assertCurrent });
+      assertCurrent();
       const statuses = Object.values(entry.services).map(s => s.status);
       // 无服务(期望清单为空 / 已全部收敛拆除) → idle，与 master 端空清单清理一致（Bugbot Medium）：
       // 否则空 services 会落到 'error'，心跳同步把一次成功的「清空」误标为失败。
@@ -540,6 +566,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         ...(failedEntry ? { services: failedEntry.services } : {}),
       });
     } finally {
+      if (waitTimer) clearInterval(waitTimer);
       preparation?.release();
       res.end();
     }

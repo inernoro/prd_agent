@@ -126,6 +126,9 @@ public sealed class GatewayRuntimeGrantRecord
     public string UserId { get; set; } = string.Empty;
     public string AppCallerCode { get; set; } = string.Empty;
     public string Environment { get; set; } = string.Empty;
+    /// <summary>受信业务用途。缺失的旧设计grant仍为chat，不消费客户端自报类型。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? ModelType { get; set; }
     public string Model { get; set; } = string.Empty;
     public string? ModelPoolId { get; set; }
     public string? PinnedPlatformId { get; set; }

@@ -1750,6 +1750,8 @@ function NodeEditPanel({
         mimeType: a.mimeType,
         sizeBytes: a.sizeBytes,
         inlineContent: a.inlineContent,
+        cosUrl: a.cosUrl,
+        designDelivery: a.designDelivery,
       })));
     }
     return list;

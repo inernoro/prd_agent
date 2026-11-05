@@ -2,6 +2,7 @@
 
 import type { SealedSecret } from './infra/secret-seal.js';
 import type { BranchOperationRequest } from './services/branch-operation-coordinator.js';
+import type { RemoteDeploymentOwner } from './services/remote-deployment-owner.js';
 
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
@@ -961,6 +962,8 @@ export interface BranchEntry {
   errorMessage?: string;
   /** 最近一次分支部署事实记录。旧分支无该字段时按现有状态降级。 */
   lastDeploymentRunId?: string;
+  /** 远端原操作资格；取消或较新代次后拒绝旧执行器心跳。 */
+  remoteDeployment?: RemoteDeploymentOwner;
   /** 当前运行态对应的不可变部署版本。DeploymentVersion 落地前保持为空。 */
   currentVersionId?: string;
   createdAt: string;
