@@ -5,6 +5,7 @@
 import os from 'node:os';
 import type { ExecutorNode, ClusterCapacity } from '../types.js';
 import type { StateService } from '../services/state.js';
+import { sameRemoteOwner, remoteIdentity, type RemoteDeploymentOwner } from '../services/remote-deployment-owner.js';
 
 const HEARTBEAT_TIMEOUT_MS = 45_000; // 3 missed heartbeats (15s × 3)
 
@@ -259,7 +260,7 @@ export class ExecutorRegistry {
    */
   heartbeat(executorId: string, data: {
     load: { memoryUsedMB: number; cpuPercent: number };
-    branches: Record<string, { status: string; services: Record<string, unknown> }>;
+    branches: Record<string, { status: string; services: Record<string, unknown>; remoteDeployment?: RemoteDeploymentOwner }>;
   }): boolean {
     const node = this.stateService.getExecutor(executorId);
     if (!node) return false;
@@ -297,6 +298,12 @@ export class ExecutorRegistry {
     // e.g. local branches on a node that later joined the cluster).
     for (const [branchId, bStatus] of Object.entries(data.branches)) {
       const existing = this.stateService.getBranch(branchId);
+      // 宿主容量仍按真实盘点；运行态只能由当前项目、分支、执行器和原代次更新。
+      if (existing?.remoteDeployment && (existing.remoteDeployment.revoked || existing.executorId !== executorId
+        || (existing.projectId || 'default') !== existing.remoteDeployment.projectId
+        || branchId !== existing.remoteDeployment.branchId || executorId !== existing.remoteDeployment.executorId
+        || bStatus.remoteDeployment?.revoked || !sameRemoteOwner(existing.remoteDeployment, remoteIdentity(bStatus.remoteDeployment)))) continue;
+      if (!existing && bStatus.remoteDeployment) continue;
       if (!existing) {
         // Stub entry: minimal metadata so the UI can list + navigate. The
         // executor remains the source of truth for the runtime details.

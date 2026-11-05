@@ -50,7 +50,8 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         string endpoint,
         string? apiKey,
         JsonObject requestBody,
-        bool enablePromptCache = false)
+        bool enablePromptCache = false,
+        bool includeThinking = false)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
 
@@ -69,6 +70,16 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
             {
                 ["include_usage"] = true
             };
+        }
+
+        // OpenRouter 扩展不能泄漏到严格原生 OpenAI 或其他兼容供应商。
+        // 业务只声明 IncludeThinking；在确定实际发送目标之后才编码供应商参数。
+        if (includeThinking && OpenRouterAttribution.IsOpenRouterEndpoint(endpoint))
+        {
+            requestBody["include_reasoning"] = true;
+            var reasoning = requestBody["reasoning"] as JsonObject ?? new JsonObject();
+            reasoning["exclude"] = false;
+            requestBody["reasoning"] = reasoning;
         }
 
         var json = requestBody.ToJsonString();

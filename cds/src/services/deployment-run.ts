@@ -13,6 +13,7 @@ import { cancelsBranchDeployments } from './branch-operation-coordinator.js';
 import { captureDeploymentIntent, readDeploymentIntent, type DeploymentExecutionInput } from './deployment-intent.js';
 import { isLocallyOwned } from './executor-ownership.js';
 import { isSealedSecret } from '../infra/secret-seal.js';
+import { remoteIdentity, RemoteExecutionWaits, sameRemoteOwner, type RemoteDeploymentIdentity } from './remote-deployment-owner.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -73,6 +74,7 @@ export class DeploymentRunService {
   private readonly acceptanceWrites = new Map<string, Promise<void>>();
   private readonly acceptedQueuedIntents = new Map<string, string>();
   private readonly boundCoordinators = new Set<BranchOperationCoordinator>();
+  private readonly remoteWaits = new RemoteExecutionWaits();
 
   constructor(
     private readonly stateService: StateService,
@@ -157,10 +159,32 @@ export class DeploymentRunService {
         && (active.request.profileId || undefined) === run.profileId));
   }
 
+  private remoteOwner(run: DeploymentRun): RemoteDeploymentIdentity | undefined {
+    const branch = this.stateService.getBranch(run.branchId), owner = branch?.remoteDeployment;
+    if (!owner || owner.revoked || owner.deploymentRunId !== run.id || owner.executorId !== run.executorId
+      || branch?.executorId !== run.executorId || owner.projectId !== run.projectId || owner.branchId !== run.branchId
+      || owner.operationId !== run.operationId || owner.operationGeneration !== run.operationGeneration
+      || (branch.projectId || 'default') !== run.projectId || ![...this.boundCoordinators].some(coordinator =>
+        coordinator.getActiveOperations(run.branchId).some(active => active.operationId === owner.operationId && active.generation === owner.operationGeneration
+          && !active.cancelled && (active.request.projectId || 'default') === run.projectId && (active.request.profileId || undefined) === run.profileId))) return;
+    return owner;
+  }
+
+  observeRemoteExecutionWait(owner: RemoteDeploymentIdentity, input: unknown): boolean {
+    const run = this.get(owner.deploymentRunId);
+    if (!run || TERMINAL_STATUSES.has(run.status) || !sameRemoteOwner(this.remoteOwner(run), owner)) return false;
+    return this.remoteWaits.observe(owner, input, this.now().getTime());
+  }
+
+  clearRemoteExecutionWait(id: string): void { this.remoteWaits.clear(id); }
+
   /** 排空和收割共用当前账本、原节点/作用域租约及有界阶段等待，不续写心跳。 */
   hasQualifiedExecutionWait(id: string, now = this.now()): boolean {
     const run = this.get(id);
-    if (!run || TERMINAL_STATUSES.has(run.status) || !this.hasLocalExecution(run)) return false;
+    if (!run || TERMINAL_STATUSES.has(run.status)) return false;
+    const remote = this.remoteOwner(run);
+    if (remote) return this.remoteWaits.waiting(remote, now.getTime());
+    if (!this.hasLocalExecution(run)) return false;
     try { return this.isExecutionWaiting(run, now); } catch { return false; }
   }
 
@@ -203,6 +227,11 @@ export class DeploymentRunService {
     this.bindOperationCoordinator(coordinator);
     const runs = this.list();
     for (const run of runs) if (run.operationGeneration !== undefined) coordinator.seedGeneration(run.branchId, run.operationGeneration);
+    for (const branch of this.stateService.getAllBranches()) {
+      const owner = remoteIdentity(branch.remoteDeployment);
+      if (owner && owner.branchId === branch.id && owner.projectId === (branch.projectId || 'default')
+        && owner.executorId === branch.executorId) coordinator.seedGeneration(branch.id, owner.operationGeneration);
+    }
     const restored: DeploymentRun[] = [];
     const intents = this.stateService.getDeploymentIntents().sort((a, b) => a.admissionGeneration - b.admissionGeneration);
     for (const intent of intents) {
@@ -420,7 +449,7 @@ export class DeploymentRunService {
       if (TERMINAL_STATUSES.has(run.status)) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || now.getTime() - heartbeat < staleAfterMs) continue;
-      const localExecution = this.hasLocalExecution(run);
+      const localExecution = this.hasLocalExecution(run) || !!this.remoteOwner(run);
       if (this.hasQualifiedExecutionWait(run.id, now)) continue;
       reconciled.push(this.fail(run.id, {
         code: 'cds.run.interrupted',

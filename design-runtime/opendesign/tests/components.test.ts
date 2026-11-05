@@ -20,9 +20,6 @@ import {
 } from '../src/engine/presentation-skill.js';
 import { listDesignSystems } from '../src/engine/self-check.js';
 import {
-  findTemplateAssertionFailure,
-  patchWebPrototypeLayouts,
-  patchWebPrototypeTemplate,
   prepareWebPrototypeResources,
 } from '../src/engine/web-prototype.js';
 import { OPEN_DESIGN_CODEX_VERSION, buildOpenDesignCodexConfig } from '../src/prompts.js';
@@ -357,26 +354,7 @@ describe('model egress relay', () => {
 describe('web-prototype template preparation', () => {
   const read = (relative: string) => fs.readFileSync(path.join(FIXTURES, 'web-prototype', relative), 'utf8');
 
-  it('patches the starter template into a gate-passing shape and proves it', () => {
-    const original = read('assets/template.html');
-    expect(findTemplateAssertionFailure(original)).toBe('template still contains an empty link or a bare button');
-    const patched = patchWebPrototypeTemplate(original);
-    expect(findTemplateAssertionFailure(patched)).toBeUndefined();
-    expect(patched).toContain('<a href="#hero">[REPLACE] Link 1</a>');
-    expect(patched).toContain('<section class="section hero" id="hero" data-od-id="hero">');
-    expect(patched).toContain('<a class="btn btn-primary" href="#content">[REPLACE] CTA</a>');
-    expect(patched).toContain('[REPLACE] tagline · [REPLACE] contact');
-    expect(patchWebPrototypeLayouts(read('references/layouts.md'))).toContain('href="#content"');
-  });
-
-  it('does not accept data-od-id as a fragment target, nor placeholder emails and dates', () => {
-    expect(findTemplateAssertionFailure('<a href="#hero">x</a><section data-od-id="hero"></section>')).toBe('template anchor #hero has no matching id');
-    expect(findTemplateAssertionFailure('<p>contact@example.com</p>')).toBe('template still contains a placeholder email or date');
-    expect(findTemplateAssertionFailure('<p>2026-09</p>')).toBe('template still contains a placeholder email or date');
-    expect(findTemplateAssertionFailure('<main id="content"><a href="#content">x</a></main>')).toBeUndefined();
-  });
-
-  it('copies both skill copies, patches them, and fails closed when a resource is missing', () => {
+  it('copies both native skill copies byte-for-byte and fails closed when a resource is missing', () => {
     const root = tempDir('design-runtime-template-');
     const workspaceDir = path.join(root, 'workspace');
     fs.mkdirSync(workspaceDir);
@@ -385,7 +363,7 @@ describe('web-prototype template preparation', () => {
       () => undefined,
     );
     for (const copy of [path.join(root, 'templates/web-prototype'), path.join(workspaceDir, '.od-skills/web-prototype')]) {
-      expect(findTemplateAssertionFailure(fs.readFileSync(path.join(copy, 'assets/template.html'), 'utf8'))).toBeUndefined();
+      expect(fs.readFileSync(path.join(copy, 'assets/template.html'), 'utf8')).toBe(read('assets/template.html'));
     }
     // 新建页面不种 index.html。
     expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);

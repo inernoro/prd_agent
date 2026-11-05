@@ -189,7 +189,7 @@ export default function App() {
         role: res.data.role as UserRole,
         systemRoleKey: res.data.systemRoleKey,
       });
-      if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
+      setCdnBaseUrl(res.data.cdnBaseUrl || '', res.data.legacyCdnBaseUrl);
       if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
       lastSyncedUserIdRef.current = res.data.userId;
     })().finally(() => {
