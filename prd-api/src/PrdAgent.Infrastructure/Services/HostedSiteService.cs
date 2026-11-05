@@ -2360,11 +2360,11 @@ public class HostedSiteService : IHostedSiteService
         return requested.Where(t => !HasTeamPublishRole(roles, t)).ToList();
     }
 
-    public Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
-        => SetSharedTeamsCoreAsync(siteId, userId, teamIds, false, null, ct);
+    public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
+        => AttachDerivedFields(await SetSharedTeamsCoreAsync(siteId, userId, teamIds, false, null, ct));
 
-    public Task<HostedSite?> SetSharedTeamsAndGroupAsync(string siteId, string userId, List<string> teamIds, string? groupId, CancellationToken ct = default)
-        => SetSharedTeamsCoreAsync(siteId, userId, teamIds, true, groupId, ct);
+    public async Task<HostedSite?> SetSharedTeamsAndGroupAsync(string siteId, string userId, List<string> teamIds, string? groupId, CancellationToken ct = default)
+        => AttachDerivedFields(await SetSharedTeamsCoreAsync(siteId, userId, teamIds, true, groupId, ct));
 
     private async Task<HostedSite?> SetSharedTeamsCoreAsync(string siteId, string userId, List<string> teamIds,
         bool updateGroup, string? groupId, CancellationToken ct)
@@ -2438,7 +2438,7 @@ public class HostedSiteService : IHostedSiteService
 
         site.SharedTeamIds = sanitized;
         if (updateGroup) site.GroupId = groupId;
-        return AttachDerivedFields(site);
+        return site;
     }
 
     public async Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct)
