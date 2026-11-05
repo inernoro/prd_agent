@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
 import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord, PersistedDeploymentIntent } from '../../src/types.js';
 import { StateService } from '../../src/services/state.js';
+import { SchedulerService } from '../../src/services/scheduler.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
@@ -138,6 +139,49 @@ function makeActivityLog(projectId: string, seq: number, at: string): ProjectAct
 }
 
 describe('MongoSplitStateBackingStore', () => {
+  it.each(['touch-only', 'pending-global-hint', 'pending-full'] as const)('scheduler access persists only its branch while preserving %s work', async mode => {
+    const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+    const seed = emptyState();
+    seed.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD' } as Project];
+    seed.branches.b = { id: 'b', projectId: 'prd-agent', branch: 'feature/touch', worktreePath: '/unused',
+      status: 'running', createdAt: '2026-07-21T00:00:00.000Z', services: {} };
+    seed.branches.other = { ...seed.branches.b, id: 'other', branch: 'feature/other' };
+    seed.deploymentRuns = Object.fromEntries(Array.from({ length: 20 }, (_, i) => {
+      const run = makeRun(`unrelated-${i}`, 'other'); run.events[0].message = 'history'.repeat(1024); return [run.id, run];
+    }));
+    seed.githubWebhookDeliveries = Array.from({ length: 20 }, (_, i) => makeDelivery(`delivery-${i}`, '2026-07-21T00:00:01.000Z'));
+    store.save(seed); await store.flush();
+    const state = new StateService('/tmp/cds-touch-unused/state.json', undefined, store);
+    state.load(); await state.flush();
+    const observedAt = Date.parse('2026-07-21T00:01:00.000Z');
+    const scheduler = new SchedulerService(state, { enabled: true, maxHotBranches: 3,
+      idleTTLSeconds: 900, tickIntervalSeconds: 60, pinnedBranches: [] }, { now: () => observedAt });
+    const clones = vi.spyOn(globalThis, 'structuredClone');
+    try {
+      if (mode !== 'touch-only') {
+        state.allocatePort(10000);
+        state.save(mode === 'pending-global-hint' ? [{ kind: 'global' }] : undefined);
+      }
+      scheduler.touch('b'); await state.flush();
+      // A real complete state copy also includes unrelated large run/webhook history.
+      // A pending full save keeps its original broad durability obligation.
+      expect(clones.mock.calls.filter(([value]) => value === state.getState()))
+        .toHaveLength(mode === 'pending-full' ? 1 : 0);
+      clones.mockRestore();
+      const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+      try {
+        const durable = reopened.load()!;
+        expect(durable.branches.b.lastAccessedAt).toBe(new Date(observedAt).toISOString());
+        expect(durable.branches.other.lastAccessedAt).toBeUndefined();
+        expect(durable.nextPortIndex).toBe(mode === 'touch-only' ? 0 : 1);
+        expect(Object.keys(durable.deploymentRuns || {})).toHaveLength(20);
+        expect(durable.deploymentRuns?.['unrelated-0']?.events[0].message).toBe('history'.repeat(1024));
+        expect(durable.githubWebhookDeliveries).toHaveLength(20);
+      } finally { await reopened.close(); }
+    } finally { clones.mockRestore(); scheduler.stop(); await store.close(); }
+  });
+
   async function acceptedRunFixture() {
     const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle); await store.init();
     const seed = emptyState(); seed.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD' } as Project];
