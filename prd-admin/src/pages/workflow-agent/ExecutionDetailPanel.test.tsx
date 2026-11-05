@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
     createdAt: '2026-11-05T00:00:00Z', triggerType: 'manual', triggeredBy: 'owner' },
   setViewMode: vi.fn(), setSelectedExecution: vi.fn(), loadExecution: vi.fn(),
 }));
-const calls = vi.hoisted(() => ({ urls: [] as string[], business: vi.fn(), emit: undefined as undefined | ((event: { id: string; event: string; data: string }) => void) }));
+const calls = vi.hoisted(() => ({ urls: [] as string[], business: vi.fn(), download: vi.fn(async () => ({ blob: new Blob(['zip']), fileName: '报告.zip' })), emit: undefined as undefined | ((event: { id: string; event: string; data: string }) => void) }));
 vi.mock('@/stores/workflowStore', () => ({ useWorkflowStore: Object.assign(() => state, { getState: () => state }) }));
 vi.mock('@/services', () => ({
   getExecution: vi.fn(async () => ({ success: true, data: { execution: state.selectedExecution } })),
@@ -32,6 +32,7 @@ vi.mock('@/lib/useSseStream', () => ({ connectSse: vi.fn(async (options: {
   await new Promise<void>((resolve) => options.signal.addEventListener('abort', () => resolve(), { once: true }));
   return { success: true };
 }) }));
+vi.mock('@/services/real/apiClient', () => ({ apiDownload: calls.download }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span aria-label="处理中" /> }));
 
 let root: Root;
@@ -39,10 +40,13 @@ let container: HTMLDivElement;
 beforeEach(() => {
   Reflect.set(globalThis, 'IS_REACT_ACT_ENVIRONMENT', true);
   Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
-  calls.urls.length = 0; calls.business.mockClear(); calls.emit = undefined;
+  calls.urls.length = 0; calls.business.mockClear(); calls.download.mockClear(); calls.emit = undefined;
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:test-download') });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 
 describe('工作流设计进度与完整版本预览', () => {
   it('只重连带序号的同一观察流，显示真实设计阶段而不重发业务', async () => {
@@ -78,11 +82,15 @@ describe('工作流设计进度与完整版本预览', () => {
       inlineContent: '<!doctype html><html><body>已有报告</body></html>',
       designDelivery: { runId: 'same-design-run', siteId: 'site', revisionId: 'revision',
         url: 'https://assets.example.test/site/.versions/version/index.html?v=1', packageHash: 'a'.repeat(64), fileCount: 4 } };
+    Object.assign(artifact.designDelivery!, { downloadPath: '/api/workflow-agent/artifacts/same-design-run/package' });
     await act(async () => root.render(<ArtifactPreviewModal artifact={artifact} onClose={() => undefined} />));
     const frame = container.querySelector('iframe');
     expect(frame?.getAttribute('src')).toBe(artifact.designDelivery?.url);
     expect(frame?.hasAttribute('srcdoc')).toBe(false);
     expect(frame?.getAttribute('sandbox')).toBe('');
+    await act(async () => container.querySelector<HTMLButtonElement>('button[title="下载文件"]')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(calls.download).toHaveBeenCalledWith('/api/workflow-agent/artifacts/same-design-run/package', '报告.zip');
     await act(async () => root.render(<ArtifactPreviewModal artifact={{ ...artifact, designDelivery: undefined }} onClose={() => undefined} />));
     expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toBe(artifact.inlineContent);
     expect(container.querySelector('iframe')?.getAttribute('sandbox')).toBe('');

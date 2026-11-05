@@ -73,13 +73,44 @@ public sealed class WorkflowWebpageDesignServiceTests
         Assert.Equal(1, f.Executor.Calls);
         Assert.Equal(1, await f.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
         await f.Db.WorkflowExecutions.UpdateOneAsync(item => item.Id == "workflow-execution",
-            Builders<WorkflowExecution>.Update.Set("NodeExecutions.0.OutputArtifacts", result.Artifacts));
+            Builders<WorkflowExecution>.Update.Set("NodeExecutions.0.OutputArtifacts", result.Artifacts)
+                .Set("NodeExecutions.0.Status", NodeExecutionStatus.Completed).Set("NodeExecutions.0.InputArtifacts", f.Inputs));
         var published = await CapsuleExecutor.ExecuteSitePublisherAsync(f.Provider,
             new WorkflowNode { NodeId = "publish", NodeType = CapsuleTypes.SitePublisher, Config = new() { ["title"] = "保留整包" } },
             new(), result.Artifacts, f.Invocation with { NodeId = "publish" });
         Assert.Contains(delivery.SiteId, published.Artifacts[0].InlineContent);
+        Assert.IsType<OkObjectResult>(await OwnerApi(f).ResumeFromNode("workflow-execution", "publish"));
+        var resumedExecution = await f.Db.WorkflowExecutions.Find(item => item.Id != "workflow-execution").SingleAsync();
+        var resumedPublish = await CapsuleExecutor.ExecuteSitePublisherAsync(f.Provider,
+            new WorkflowNode { NodeId = "publish", NodeType = CapsuleTypes.SitePublisher, Config = new() { ["title"] = "继承整包" } },
+            new(), result.Artifacts, new("workflow-owner", resumedExecution.Id, "publish", resumedExecution.Id, "workflow-owner"));
+        Assert.Contains(delivery.SiteId, resumedPublish.Artifacts[0].InlineContent);
+        Assert.Equal(1, f.Executor.Calls);
+
         Assert.Equal(1, await f.Db.HostedSites.CountDocumentsAsync(_ => true));
         Assert.Equal(revision.VerifiedFiles.Count, (await f.Db.HostedSiteRevisions.Find(item => item.Id == delivery.RevisionId).SingleAsync()).VerifiedFiles.Count);
+        var package = Assert.IsType<FileContentResult>(await OwnerApi(f).DownloadDesignPackage(delivery.RunId));
+        using (var zip = new System.IO.Compression.ZipArchive(new MemoryStream(package.FileContents)))
+        {
+            Assert.Equal(revision.VerifiedFiles.Count, zip.Entries.Count);
+            foreach (var file in revision.VerifiedFiles)
+            {
+                using var stream = zip.GetEntry(file.Path)!.Open();
+                using var bytes = new MemoryStream(); await stream.CopyToAsync(bytes);
+                Assert.Equal(file.Content, bytes.ToArray());
+            }
+        }
+        Assert.Equal("WORKFLOW_DESIGN_FORBIDDEN", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
+            f.Service.DownloadPackageAsync(delivery.RunId, "other-owner"))).Code);
+        await f.Db.WorkflowExecutions.UpdateOneAsync(item => item.Id == resumedExecution.Id,
+            Builders<WorkflowExecution>.Update.Unset(item => item.ResumedFromExecutionId));
+        await Assert.ThrowsAsync<WorkflowDesignException>(() => f.Service.ResolveDeliveryAsync(output,
+            new("workflow-owner", resumedExecution.Id, "publish", resumedExecution.Id, "workflow-owner")));
+        var replay = Assert.IsType<OkObjectResult>(await OwnerApi(f).ReplayNode("workflow-execution", "report"));
+        var dto = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(replay.Value).Data,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("result").GetProperty("artifacts")[0];
+        Assert.False(string.IsNullOrWhiteSpace(dto.GetProperty("cosUrl").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(dto.GetProperty("designDelivery").GetProperty("downloadPath").GetString()));
     }
 
     [Fact]

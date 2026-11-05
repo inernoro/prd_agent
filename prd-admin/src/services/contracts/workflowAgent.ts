@@ -110,7 +110,7 @@ export interface ExecutionArtifact {
   inlineContent?: string;
   cosKey?: string;
   cosUrl?: string;
-  designDelivery?: { runId: string; siteId: string; revisionId: string; url: string; packageHash: string; fileCount: number };
+  designDelivery?: { runId: string; siteId: string; revisionId: string; url: string; downloadPath?: string; packageHash: string; fileCount: number };
   sizeBytes: number;
   tags?: string[];
 }
@@ -372,6 +372,8 @@ export interface CapsuleTestRunResult {
     mimeType: string;
     sizeBytes: number;
     inlineContent?: string;
+    cosUrl?: string;
+    designDelivery?: ExecutionArtifact['designDelivery'];
   }[];
   errorMessage?: string;
 }

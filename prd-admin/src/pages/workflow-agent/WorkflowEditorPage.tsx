@@ -1,3 +1,4 @@
+import { apiDownload } from '@/services/real/apiClient';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { connectSse } from '@/lib/useSseStream';
 import { useEffect, useRef, useState } from 'react';
@@ -101,22 +102,28 @@ function ensureExtension(name: string, mimeType?: string): string {
 
 /** 通用产物操作按钮：预览 + 下载 */
 function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
-  artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string };
+  artifact: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string; designDelivery?: ExecutionArtifact['designDelivery'] };
   onPreview?: (art: ExecutionArtifact) => void;
   size?: 'sm' | 'md';
 }) {
   const iconSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
   const padding = size === 'sm' ? 'p-1' : 'p-1.5';
   const downloadName = ensureExtension(artifact.name, artifact.mimeType);
+  const [downloadError, setDownloadError] = useState('');
   const hasContent = !!(artifact.inlineContent || artifact.cosUrl);
 
   /** 下载：inlineContent 直接 blob，COS URL fetch 后转 blob（跨域 <a download> 不生效） */
   async function handleDownload(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
+    setDownloadError('');
     try {
       let blob: Blob;
-      if (artifact.inlineContent) {
+      let fileName = downloadName;
+      if (artifact.designDelivery?.downloadPath) {
+        const file = await apiDownload(artifact.designDelivery.downloadPath, `${downloadName.replace(/\.[^.]+$/, '')}.zip`);
+        blob = file.blob; fileName = file.fileName;
+      } else if (artifact.inlineContent) {
         blob = new Blob([artifact.inlineContent], { type: artifact.mimeType || 'text/plain' });
       } else if (artifact.cosUrl) {
         const resp = await fetch(artifact.cosUrl);
@@ -125,16 +132,18 @@ function ArtifactActionButtons({ artifact, onPreview, size = 'sm' }: {
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.download = downloadName;
+      link.download = fileName;
       link.click();
       URL.revokeObjectURL(blobUrl);
     } catch {
-      if (artifact.cosUrl) window.open(artifact.cosUrl, '_blank');
+      if (artifact.designDelivery) setDownloadError('下载未完成，原报告仍可预览。');
+      else if (artifact.cosUrl) window.open(artifact.cosUrl, '_blank');
     }
   }
 
   return (
     <>
+      {downloadError && <span role="alert" className="text-xs text-token-error">{downloadError}</span>}
       {hasContent && onPreview && (
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(artifact as ExecutionArtifact); }}
@@ -717,6 +726,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
           sizeBytes: a.sizeBytes,
           inlineContent: a.inlineContent,
           cosUrl: a.cosUrl,
+          designDelivery: a.designDelivery,
           artifactId: a.artifactId,
         })),
         errorMessage: nodeExec.errorMessage,
@@ -1186,7 +1196,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
     status: string;
     durationMs?: number;
     logs?: string;
-    artifacts?: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string; artifactId?: string }[];
+    artifacts?: { name: string; mimeType: string; sizeBytes: number; inlineContent?: string; cosUrl?: string; designDelivery?: ExecutionArtifact['designDelivery']; artifactId?: string }[];
     errorMessage?: string;
   };
   source: 'test' | 'exec';

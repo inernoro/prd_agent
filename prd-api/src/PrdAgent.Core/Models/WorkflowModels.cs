@@ -184,6 +184,11 @@ public class WorkflowExecution
     public string? TriggeredBy { get; set; }
     public string? TriggeredByName { get; set; }
 
+    /// <summary>仅服务器恢复操作写入，用于验证继承产物的来源链。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ResumedFromExecutionId { get; set; }
+
     // 运行时变量（本次执行的实际值）
     public Dictionary<string, string> Variables { get; set; } = new();
 
@@ -602,6 +607,7 @@ public sealed class WorkflowDesignDelivery
     public string SiteId { get; set; } = string.Empty;
     public string RevisionId { get; set; } = string.Empty;
     public string Url { get; set; } = string.Empty;
+    public string? DownloadPath { get; set; }
     public string PackageHash { get; set; } = string.Empty;
     public int FileCount { get; set; }
 }

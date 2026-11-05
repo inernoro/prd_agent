@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -21,11 +22,14 @@ public sealed class WorkflowDesignException(string code, string message) : Inval
     public string Code { get; } = code;
 }
 
+public sealed record WorkflowDesignPackage(byte[] Content, string FileName);
+
 public interface IWorkflowWebpageDesignService
 {
     Task<CapsuleExecutor.CapsuleResult> ExecuteAsync(WorkflowNode node, Dictionary<string, string> variables,
         List<ExecutionArtifact> inputs, WorkflowDesignInvocation invocation, CapsuleExecutor.EmitEventDelegate? emit = null);
     Task CancelExecutionAsync(string executionId);
+    Task<WorkflowDesignPackage> DownloadPackageAsync(string runId, string userId);
     Task<HostedSite> ResolveDeliveryAsync(ExecutionArtifact artifact, WorkflowDesignInvocation? invocation);
 }
 
@@ -176,7 +180,7 @@ public sealed class WorkflowWebpageDesignService(
         artifact.ArtifactId = run.Id;
         artifact.CosUrl = url;
         artifact.DesignDelivery = new WorkflowDesignDelivery { RunId = run.Id, SiteId = site.Id, RevisionId = revision.Id,
-            Url = url, PackageHash = run.VersionBoundary?.PackageHash ?? "", FileCount = revision.VerifiedFiles.Count };
+            Url = url, DownloadPath = $"/api/workflow-agent/artifacts/{Uri.EscapeDataString(run.Id)}/package", PackageHash = run.VersionBoundary?.PackageHash ?? "", FileCount = revision.VerifiedFiles.Count };
         return new([artifact], $"网页报告已由 OpenDesign 完成并安全保存。设计任务：{run.Id}；完整文件：{revision.VerifiedFiles.Count}。模型：{run.ResolvedModel ?? "未报告"}。");
     }
 
@@ -214,15 +218,64 @@ public sealed class WorkflowWebpageDesignService(
             .SelectMany(item => item.OutputArtifacts).SingleOrDefault(item => item.ArtifactId == artifact.ArtifactId);
         var run = await db.DesignArtifactRuns.Find(item => item.Id == delivery.RunId && item.UserId == invocation.UserId)
             .FirstOrDefaultAsync(CancellationToken.None);
-        if (source?.DesignDelivery?.RunId != delivery.RunId || run?.WorkflowSource?.ExecutionId != invocation.ExecutionId
-            || run.WorkflowSource.OperationId != invocation.ExecutionId || run.Status != RunStatuses.Done
+        if (!SameDelivery(source?.DesignDelivery, delivery) || run?.WorkflowSource == null
+            || !sourceIds.Contains(run.WorkflowSource.NodeId) || run.Status != RunStatuses.Done
             || run.ArtifactSiteId != delivery.SiteId || run.ArtifactRevisionId != delivery.RevisionId
             || run.VersionBoundary?.PackageHash != delivery.PackageHash)
             throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告来源或完整版本不匹配，未发布内容");
+        var origin = execution;
+        for (var depth = 0; origin.Id != run.WorkflowSource.ExecutionId && depth < 16; depth++)
+        {
+            if (origin.TriggerType != "resume" || string.IsNullOrWhiteSpace(origin.ResumedFromExecutionId))
+                throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告缺少可信的续跑来源，未发布内容");
+            var parent = await db.WorkflowExecutions.Find(item => item.Id == origin.ResumedFromExecutionId
+                && item.TriggeredBy == invocation.ExecutionOwnerUserId).FirstOrDefaultAsync(CancellationToken.None);
+            var inherited = parent?.NodeExecutions.Where(item => item.NodeId == run.WorkflowSource.NodeId
+                && item.Status == NodeExecutionStatus.Completed).SelectMany(item => item.OutputArtifacts)
+                .SingleOrDefault(item => item.ArtifactId == artifact.ArtifactId);
+            if (parent == null || parent.WorkflowId != origin.WorkflowId || !SameDelivery(inherited?.DesignDelivery, delivery))
+                throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告继承的完整版本不匹配，未发布内容");
+            origin = parent;
+        }
+        if (origin.Id != run.WorkflowSource.ExecutionId || run.WorkflowSource.OperationId != origin.Id)
+            throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告来源任务不匹配，未发布内容");
         var site = await sites.GetByIdAsync(delivery.SiteId, invocation.UserId, CancellationToken.None);
         if (site == null || site.PublishedRevisionId != delivery.RevisionId || site.SourceRef != run.Id)
             throw Error("WORKFLOW_DESIGN_CONFLICT", "报告线上版本已变化，未覆盖当前内容");
         return site;
+    }
+
+    private static bool SameDelivery(WorkflowDesignDelivery? left, WorkflowDesignDelivery right) =>
+        left != null && left.RunId == right.RunId && left.SiteId == right.SiteId
+        && left.RevisionId == right.RevisionId && left.PackageHash == right.PackageHash && left.FileCount == right.FileCount;
+
+    public async Task<WorkflowDesignPackage> DownloadPackageAsync(string runId, string userId)
+    {
+        var run = await db.DesignArtifactRuns.Find(item => item.Id == runId && item.UserId == userId
+            && item.SourceSurface == DesignArtifactSourceSurfaces.Workflow).FirstOrDefaultAsync(CancellationToken.None);
+        if (run?.WorkflowSource == null) throw Error("WORKFLOW_DESIGN_FORBIDDEN", "无权下载该报告");
+        if (run.Status != RunStatuses.Done || run.ManifestValidation == null || run.VersionBoundary == null
+            || run.ArtifactSiteId != run.ProducedArtifactSiteId || run.ArtifactRevisionId != run.ProducedArtifactRevisionId
+            || string.IsNullOrEmpty(run.ArtifactSiteId) || string.IsNullOrEmpty(run.ArtifactRevisionId))
+            throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告完整版本尚未就绪，原报告仍保留");
+        var revision = await revisions.GetAsync(run.ArtifactSiteId, run.ArtifactRevisionId, userId, CancellationToken.None);
+        if (revision?.SourceRunId != run.Id || revision.Status != HostedSiteRevisionStatuses.Published)
+            throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告来源版本不匹配，未下载内容");
+        try { _ = HostedSitePreviewAccessService.ComputePackageFingerprint(revision.VerifiedFiles); }
+        catch (InvalidOperationException) { throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告资源校验未通过，未下载内容"); }
+        var hash = DesignArtifactWorkspaceContract.ComputePublicArtifactRevision(revision.VerifiedFiles.Select(file =>
+            new DesignArtifactManifestFile(file.Path, file.Sha256, file.Content.LongLength, file.MimeType)));
+        if (hash != run.VersionBoundary.PackageHash)
+            throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告完整包身份不匹配，未下载内容");
+        using var output = new MemoryStream();
+        using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+            foreach (var file in revision.VerifiedFiles)
+            {
+                DesignArtifactPublicPath.TryNormalize(file.Path, out var path);
+                using var entry = zip.CreateEntry(path, CompressionLevel.Fastest).Open();
+                await entry.WriteAsync(file.Content, CancellationToken.None);
+            }
+        return new(output.ToArray(), $"report-{run.Id}.zip");
     }
 
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

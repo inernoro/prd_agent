@@ -166,6 +166,8 @@ public class WorkflowAgentController : ControllerBase
                 Logs = execResult.Logs,
                 Artifacts = execResult.Artifacts.Select(a => new TestRunArtifact
                 {
+                    CosUrl = a.CosUrl,
+                    DesignDelivery = a.DesignDelivery,
                     Name = a.Name,
                     MimeType = a.MimeType,
                     SizeBytes = a.SizeBytes,
@@ -769,6 +771,7 @@ public class WorkflowAgentController : ControllerBase
             WorkflowId = original.WorkflowId,
             WorkflowName = original.WorkflowName,
             TriggerType = "resume",
+            ResumedFromExecutionId = original.Id,
             TriggeredBy = GetUserId(),
             TriggeredByName = GetUsername(),
             Variables = original.Variables,
@@ -1121,6 +1124,24 @@ public class WorkflowAgentController : ControllerBase
         }));
     }
 
+    [HttpGet("artifacts/{runId}/package")]
+    public async Task<IActionResult> DownloadDesignPackage(string runId)
+    {
+        try
+        {
+            var package = await HttpContext.RequestServices.GetRequiredService<IWorkflowWebpageDesignService>()
+                .DownloadPackageAsync(runId, GetUserId());
+            Response.Headers.CacheControl = "private, no-store";
+            Response.Headers.XContentTypeOptions = "nosniff";
+            return File(package.Content, "application/zip", package.FileName);
+        }
+        catch (WorkflowDesignException ex)
+        {
+            return StatusCode(ex.Code == "WORKFLOW_DESIGN_FORBIDDEN" ? 403 : 409,
+                ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
+    }
+
     /// <summary>回放单舱：使用历史执行中记录的真实上游输入重新执行该舱</summary>
     [HttpPost("executions/{executionId}/nodes/{nodeId}/replay")]
     public async Task<IActionResult> ReplayNode(
@@ -1169,6 +1190,8 @@ public class WorkflowAgentController : ControllerBase
                     Logs = result.Logs,
                     Artifacts = result.Artifacts.Select(a => new TestRunArtifact
                     {
+                        CosUrl = a.CosUrl,
+                        DesignDelivery = a.DesignDelivery,
                         Name = a.Name,
                         MimeType = a.MimeType,
                         SizeBytes = a.SizeBytes,
@@ -2431,6 +2454,8 @@ public class CapsuleTestRunResult
 
 public class TestRunArtifact
 {
+    public string? CosUrl { get; set; }
+    public WorkflowDesignDelivery? DesignDelivery { get; set; }
     public string Name { get; set; } = string.Empty;
     public string MimeType { get; set; } = string.Empty;
     public long SizeBytes { get; set; }
