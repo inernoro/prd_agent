@@ -26,6 +26,16 @@ public sealed class AuthorizationFailureContractTests
         Assert.DoesNotContain("token", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(AuthorizationFailureContract.AiKeyInvalid)]
+    [InlineData(AuthorizationFailureContract.AgentKeyInvalid)]
+    public void MachineCredentialFailure_MessageItselfIncludesRecoveryAction(string code)
+    {
+        var failure = AuthorizationFailureContract.Resolve(code);
+        Assert.Contains("重试", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("请", failure.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task WriteChallengeAsync_WritesOnlyOnceWhenMultipleSchemesChallenge()
     {

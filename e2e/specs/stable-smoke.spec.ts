@@ -1870,7 +1870,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     ).toEqual([]);
   });
 
-  test('[CORE-002][CORE-003] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[CORE-002][CORE-003][CORE-009][COMMON-002] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
     const adminToken = await loginAndReadToken(page, request, '/');
     const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(adminToken) });
     expect(allowed.ok()).toBe(true);
@@ -1887,7 +1887,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const username = `stsmk_noauth_${Date.now().toString(36)}`;
     const password = `StsmkOnly_${Date.now()}_A9`;
     let restrictedUserId = '';
+    let restrictedToken = '';
+    let ownerStoreId = '';
     try {
+      const privateStore = await readEnvelope<{ id: string }>(await request.post('/api/document-store/stores', {
+        headers: authHeaders(adminToken), data: { name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-owner-isolation`, isPublic: false },
+      }));
+      ownerStoreId = privateStore.id;
       const created = await readEnvelope<{
         userId: string;
         username: string;
@@ -1914,7 +1920,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: authHeaders(adminToken),
         data: {
           systemRoleKey: 'none',
-          permAllow: ['access'],
+          permAllow: ['access', 'document-store.read', 'document-store.write'],
           permDeny: ['users.read', 'users.write'],
         },
       }));
@@ -1953,7 +1959,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(renewed.refreshToken).toBe(login.refreshToken);
       expect(renewed.sessionKey).toBe(login.sessionKey);
       expect(renewed.user).toMatchObject({ userId: restrictedUserId, username });
-      const restrictedToken = renewed.accessToken;
+      restrictedToken = renewed.accessToken;
       const restrictedMe = await readEnvelope<{
         effectivePermissions: string[];
         isRoot: boolean;
@@ -1989,6 +1995,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto('/', { waitUntil: 'domcontentloaded' });
       await expect(page.locator('a[href="/users"]')).toHaveCount(0);
 
+      const foreignStore = await request.get(`/api/document-store/stores/${ownerStoreId}`, { headers: authHeaders(restrictedToken) });
+      expect(foreignStore.status(), '有文档权限的另一用户也不能回读巡检者私有知识库').toBe(404);
+      const ownList = await readEnvelope<{ items: Array<{ id: string }> }>(await request.get('/api/document-store/stores', { headers: authHeaders(restrictedToken) }));
+      expect(ownList.items.some(item => item.id === ownerStoreId)).toBe(false);
       const directApi = await request.get('/api/users', { headers: authHeaders(restrictedToken) });
       expect(directApi.status()).toBe(403);
       await page.goto('/users', { waitUntil: 'domcontentloaded' });
@@ -2002,6 +2012,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           data: { targets: ['admin', 'desktop'] },
         });
         expect(expired.ok(), '受限用户会话回收失败').toBe(true);
+        const revokedSession = await request.get('/api/authz/me', { headers: authHeaders(restrictedToken) });
+        expect(revokedSession.status()).toBe(401);
+        expect(revokedSession.headers()['x-auth-diagnosis']).toBe('AUTH_SESSION_REVOKED');
+        expect((await request.get('/api/authz/me', { headers: authHeaders(adminToken) })).ok()).toBe(true);
+
         const deleted = await page.request.post('/api/users/bulk-delete', {
           headers: authHeaders(adminToken),
           data: { userIds: [restrictedUserId] },
@@ -2010,6 +2025,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect((await page.request.get(`/api/users/${restrictedUserId}`, {
           headers: authHeaders(adminToken),
         })).status()).toBe(404);
+      }
+      if (ownerStoreId) {
+        await readEnvelope(await request.delete(`/api/document-store/stores/${ownerStoreId}`, { headers: authHeaders(adminToken) }));
+        expect((await request.get(`/api/document-store/stores/${ownerStoreId}`, { headers: authHeaders(adminToken) })).status()).toBe(404);
       }
     }
   });
@@ -2592,8 +2611,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(body.error?.message || '');
   });
 
-  test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-010][REG-video-001][REG-video-recovery-selector-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }) => {
-    test.setTimeout(420_000);
+  test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-009][VIDEO-010][REG-video-001][REG-video-recovery-selector-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }) => {
+    // 异步视频队列可能超过六分钟；保持一次提交，留足轮询和清理时间，禁止付费自动重试。
+    test.setTimeout(960_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
       id: string;
@@ -2645,9 +2665,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const visibleStages = new Set<string>();
       const visibleProgress = new Set<string>();
+      // 刷新复验同一任务，不能用重新创建任务代替恢复。
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.getByTestId('video-generation-stage')).toBeVisible({ timeout: 20_000 });
+      const restoredRun = await readEnvelope<{ id: string; projectId: string }>(await page.request.get(
+        `/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) },
+      ));
+      expect(restoredRun.id).toBe(runId);
+      projectId = restoredRun.projectId || projectId;
       const startedAt = Date.now();
       let videoUrl = '';
-      while (Date.now() - startedAt < 360_000) {
+      while (Date.now() - startedAt < 900_000) {
         const status = await readEnvelope<{
           status: string;
           videoAssetUrl?: string;
@@ -2800,7 +2828,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-003][REC-007][REC-012] 页面选择音频、显示阶段、真实转写、回读与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[REC-003][REC-007][REC-011][REC-012] 页面选择音频、显示阶段、真实转写、回读与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-audio`;
@@ -2884,6 +2912,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(run.status).toBe('done');
       expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
       expect(run.outputEntryId).toBe(entryId);
+      const rawTranscript = run.transcriptText;
+      const restyled = await readEnvelope<{ runId: string }>(await page.request.post(`/api/document-store/agent-runs/${runId}/restyle`, {
+        headers: authHeaders(token), data: { styleKey: 'custom', customPrompt: '用一句话简短整理这段录音，保留全部原文。' },
+      }));
+      expect(restyled.runId).not.toBe(runId);
+      await expect.poll(async () => (await readEnvelope<{ status: string }>(await page.request.get(
+        `/api/document-store/agent-runs/${restyled.runId}`, { headers: authHeaders(token) },
+      ))).status, { timeout: 120_000, intervals: [500, 1000, 2000] }).toBe('done');
+      const originalAgain = await readEnvelope<{ transcriptText?: string }>(await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) }));
+      expect(originalAgain.transcriptText).toBe(rawTranscript);
+      const organizedContent = await readEnvelope<{ content?: string }>(await page.request.get(`/api/document-store/entries/${entryId}/content`, { headers: authHeaders(token) }));
+      expect(organizedContent.content).toContain(rawTranscript!);
       const persisted = await readEnvelope<{ items: Array<{ id: string }> }>(
         await page.request.get(`/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) }),
       );
@@ -4020,7 +4060,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   for (const module of modules) {
-    test(`${module.label}可通过短时测试会话打开`, async ({ page, request }, testInfo) => {
+    test(`[REG-avatar-asset-001] ${module.label}可通过短时测试会话打开`, async ({ page, request }, testInfo) => {
       await openModule(page, request, module, testInfo);
     });
   }
@@ -4110,7 +4150,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001][REG-visual-progress-002][REG-visual-model-contract-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     // 生产生图 HTTP 契约允许最长 600 秒。测试总时限额外保留页面验证、审计查询与清理余量，
     // 避免上游仍在合法执行时先由 Playwright 误杀，再把取消/删除冲突误报成模型故障。
     test.setTimeout(720_000);
@@ -5092,4 +5132,71 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
     }
   });
+  test('[REG-auth-health-entry-001] 桌面搜索和真实手机导航均可进入授权健康中心', async ({ browser, request }, testInfo) => {
+    for (const mobile of [false, true]) {
+      const context = await browser.newContext(mobile ? { ...devices['iPhone 13'] } : { viewport: { width: 1440, height: 900 } });
+      try {
+        const target = await context.newPage();
+        await loginAndReadToken(target, request, '/');
+        await dismissBlockingTutorial(target);
+        await dismissCdsPreviewWidget(target);
+        if (mobile) {
+          await target.getByRole('button', { name: '打开导航菜单', exact: true }).click();
+          await target.locator('[data-mobile-drawer-utility="/authorization-health"]').click();
+        } else {
+          await target.getByRole('searchbox', { name: '搜索智能体、工具或平台能力' }).fill('授权健康');
+          await target.getByRole('button', { name: /^授权健康中心 / }).click();
+        }
+        await expect(target).toHaveURL(/\/authorization-health$/);
+        await expect(target.getByRole('heading', { name: '授权健康中心', exact: true })).toBeVisible();
+        await expect(target.getByRole('heading', { name: 'MAP 用户会话', exact: true })).toBeVisible();
+        await testInfo.attach(`authorization-health-${mobile ? 'touch-mobile' : 'desktop'}`, {
+          body: await target.screenshot(), contentType: 'image/png',
+        });
+      } finally { await context.close(); }
+    }
+  });
+
+  test('[CORE-009][REG-auth-diagnosis-001] 错误机器凭据有诊断证据且不清空当前用户会话', async ({ page, request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不主动注入凭据故障；安全变体由入口与会话旅程核验');
+    const token = await loginAndReadToken(page, request, '/');
+    const failures = [];
+    const credentialProbes: Array<{ code: string; headers: Record<string, string> }> = [
+      { code: 'AUTH_AI_KEY_INVALID', headers: { 'X-AI-Access-Key': 'stable-smoke-invalid-key', 'X-AI-Impersonate': requiredEnv('STABLE_SMOKE_USER') } },
+      { code: 'AUTH_AGENT_KEY_INVALID', headers: { Authorization: 'Bearer sk-ak-stable-smoke-expired-key' } },
+    ];
+    for (const probe of credentialProbes) {
+      const response = await request.get('/api/authz/me', { headers: probe.headers });
+      expect(response.status()).toBe(401);
+      const body = await response.json() as ApiEnvelope<never>;
+      expect(body.error?.code).toBe(probe.code);
+      expect(response.headers()['x-auth-diagnosis']).toBe(probe.code);
+      expect(decodeURIComponent(response.headers()['x-auth-recovery'] || '')).not.toBe('');
+      expectUserReadable(body.error?.message || '');
+      failures.push({ code: probe.code, body, headers: response.headers() });
+    }
+    const before = await readStableAuthSnapshot(page);
+    const probe = failures[0];
+    await page.route('**/api/authorization-health', route => route.fulfill({
+      status: 401, contentType: 'application/json', body: JSON.stringify(probe.body),
+      headers: { 'X-Auth-Diagnosis': probe.code, 'X-Auth-Recovery': probe.headers['x-auth-recovery'] || '' },
+    }));
+    await page.getByRole('searchbox', { name: '搜索智能体、工具或平台能力' }).fill('授权健康');
+    await page.getByRole('button', { name: /^授权健康中心 / }).click();
+    await expect(page.getByText(probe.body.error!.message || '', { exact: true })).toBeVisible();
+    expect((await readStableAuthSnapshot(page)) === before, '机器凭据失败不得退出当前用户').toBe(true);
+    await page.unroute('**/api/authorization-health');
+    await page.getByRole('button', { name: '重新检查', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'MAP 用户会话', exact: true })).toBeVisible();
+    const health = await readEnvelope<{ recentFailures: Array<{ code: string; requestId: string; action: string }> }>(
+      await page.request.get('/api/authorization-health', { headers: authHeaders(token) }),
+    );
+    for (const failure of failures) {
+      const audit = health.recentFailures.find(item => item.code === failure.code);
+      expect(audit, `诊断 ${failure.code} 必须有管理员可回读证据`).toBeTruthy();
+      expect(audit!.requestId).toBeTruthy();
+      expect(audit!.action).toBeTruthy();
+    }
+  });
+
 });
