@@ -6717,7 +6717,7 @@ const BranchCard = memo(function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="cds-branch-name min-h-14 min-w-0 flex-1 break-words text-base font-semibold leading-7 line-clamp-2"
+                className="cds-branch-name min-w-0 flex-1 truncate text-base font-semibold leading-7"
                 title={branch.branch}
               >
                 {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
