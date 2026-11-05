@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -144,6 +145,8 @@ describe('browser observation availability boundary', () => {
     harness = await startHarness({ overrides: { browserQualityRunner: { run: async () => {
       const afterDeadline = Date.now() + 1_000_000;
       vi.spyOn(Date, 'now').mockReturnValue(afterDeadline);
+      // 终态写入尚未完成时先允许一次 HTTP 观察，复现 CI 的异步调度。
+      await new Promise((resolve) => setTimeout(resolve, 20));
       throw new AgentWorkspaceRuntimeError('browser_quality_runtime_unavailable', 'synthetic process unavailable');
     } } } });
     const pkg = buildPackage([]);
@@ -845,10 +848,14 @@ async function runToEnd(
   map = await startFakeMap(pkg);
   const submitted = await harness!.request('POST', '/v1/tasks', mutate(taskRequest(map, pkg)), auth);
   expect(submitted.status, JSON.stringify(submitted.body)).toBe(202);
-  return waitFor(async () => {
+  // 截止代表会前移业务墙钟；观察任务自身仍使用相同的真实等待上限。
+  const waitingSince = performance.now();
+  for (;;) {
     const response = await harness!.request('GET', `/v1/tasks/${pkg.runId}`, undefined, auth);
-    return response.body.task?.state !== 'running' ? response.body.task : undefined;
-  }, 'task to finish', timeoutMs);
+    if (response.body.task?.state !== 'running') return response.body.task;
+    if (performance.now() - waitingSince > timeoutMs) throw new Error('timed out waiting for task to finish');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 async function statusReasons(taskId: string): Promise<string[]> {
