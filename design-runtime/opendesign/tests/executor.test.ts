@@ -13,6 +13,7 @@ import {
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
 import { hardenSelfContainedHtml } from '../src/quality/gate.js';
+import { iterateHtmlTags, readHtmlAttribute } from '../src/quality/html.js';
 import { runBrowserWorker } from '../src/quality/browser-worker.js';
 import type { BrowserQualityIssue } from '../src/quality/browser-contract.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
@@ -65,6 +66,52 @@ afterEach(async () => {
 });
 
 describe('presentation source context', () => {
+  it('keeps current saved wording and pages authoritative in both edit and native review instructions', async () => {
+    const fixturePath = process.env.OPENDESIGN_EXISTING_PPT_FIXTURE_PATH;
+    const parentHtml = fixturePath ? fs.readFileSync(fixturePath, 'utf8')
+      : '<!doctype html><html><body><main><section class="slide"><h1>既有内容</h1><p>用户手动保存的结语。</p></section></main></body></html>';
+    // 已发布夹具带运行时CSP。替身模拟上游重新写交付文件，安全元信息仍由原校验重建；冻结基稿不动。
+    const authoredHtml = [...iterateHtmlTags(parentHtml)].reverse().reduce((html, tag) =>
+      !tag.isClosing && tag.name.toLowerCase() === 'meta'
+        && readHtmlAttribute(tag.attributes, 'http-equiv')?.toLowerCase() === 'content-security-policy'
+        ? html.slice(0, tag.start) + html.slice(tag.end) : html, parentHtml);
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async (job) => passingBrowserResult(job) },
+    } });
+    const pkg = buildPackage([
+      { path: 'current/index.html', content: parentHtml, mediaType: 'text/html' },
+    ], {
+      taskExtras: {
+        instruction: '只换视觉风格，内容与页数保持不变。',
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'tech-dark',
+          requiredSlideIndexes: [1],
+        },
+      },
+    });
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      expect(fs.readFileSync(path.join(workspaceDir, 'current', 'index.html'), 'utf8')).toBe(parentHtml);
+      // 零模型替身只保留同一真实基稿。MAP 不比较正文、不回填或阻断上游内容。
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), authoredHtml);
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg);
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.imports[0].skillId).toBe('magazine-web-ppt');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    for (const instruction of [harness.daemon.runBodies[0].systemPrompt, harness.daemon.runBodies[1].message]) {
+      expect(String(instruction)).toContain('Preserve its exact visible wording, including user-saved edits');
+      expect(String(instruction)).toContain('slide count, order, and slide-to-content assignment');
+      expect(String(instruction)).toContain('A theme or template change is a visual-only edit');
+      expect(String(instruction)).not.toContain('allowing the deck skill to choose the final content structure');
+    }
+    expect(String(harness.daemon.runBodies[0].systemPrompt)).not.toContain('Its grouping and count are reference context only');
+    expect(map!.commits).toHaveLength(1);
+  });
+
   it('passes the frozen source to OpenDesign without imposing a platform source-slot scaffold', async () => {
     harness = await startHarness({ overrides: {
       browserQualityRunner: { run: async (job) => passingBrowserResult(job) },
