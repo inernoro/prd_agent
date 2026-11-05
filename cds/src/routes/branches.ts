@@ -156,6 +156,7 @@ import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { installSelfUpdateEventProjector } from '../services/self-update-event-projector.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
+import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
@@ -22411,7 +22412,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         if (!fs.existsSync(skillDir)) continue;
         const targetSkillDir = path.join(packDir, 'skills', skillName);
         await fs.promises.mkdir(targetSkillDir, { recursive: true });
-        await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
+        await copyCdsSkillSource(skillDir, targetSkillDir);
         copiedCount++;
       }
 
@@ -22494,12 +22495,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
       await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
-      const skillManifest = {
+      const skillManifest = useLegacy ? {
         format: 'agent-skills',
         version: readBundledCdsCliVersion(config.repoRoot) || 'unknown',
         skills: skillsToCopy,
         generatedAt: new Date().toISOString(),
-      };
+      } : await buildCdsSkillManifest(skillsRoot);
       const skillManifestJson = JSON.stringify(skillManifest, null, 2) + '\n';
       await fs.promises.writeFile(path.join(packDir, 'manifest.json'), skillManifestJson, 'utf-8');
       if (!useLegacy) {

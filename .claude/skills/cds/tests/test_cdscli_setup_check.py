@@ -1,0 +1,396 @@
+"""Exercise the shipped CLI over real HTTP with isolated workspace credentials."""
+import json
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+CLI = Path(__file__).resolve().parents[1] / "cli" / "cdscli.py"
+SECRET = "cdsp_setup_test_secret_never_print"
+SKILLS = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+
+
+class SetupCheckTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / ".git").mkdir()
+        self.cli = self.root / ".agents/skills/cds/cli/cdscli.py"
+        self.cli.parent.mkdir(parents=True)
+        shutil.copyfile(CLI, self.cli)
+        for skill in SKILLS:
+            folder = self.root / ".agents/skills" / skill
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: test\n---\n")
+        self.requests = []
+        self.redirects = {}
+        self.status = "active"
+        self.kind = "project"
+        self.global_projects = "all"
+        self.version = re.search(r'^VERSION = "([^"]+)"', self.cli.read_text(), re.MULTILINE)[1]
+        self.minimum_version = self.version
+        self.bundle_manifest = self.cli.with_name("cds-skill-manifest.json")
+        self.write_bundle_manifest()
+        self.project_status = 200
+        self.returned_project = "proj-a"
+        test = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                test.requests.append((self.path, self.headers.get("X-AI-Access-Key")))
+                if self.path in test.redirects:
+                    self.send_response(302)
+                    self.send_header("Location", test.redirects[self.path])
+                    self.end_headers()
+                    return
+                status = 200
+                if self.path == "/api/agent/setup.json":
+                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version,
+                            "minCliVersion": test.minimum_version}
+                elif self.path == "/api/credentials/self-check":
+                    body = {"kind": test.kind, "status": test.status}
+                    if test.kind == "global":
+                        body["keyId"] = "global-current"
+                    if test.kind == "project":
+                        body["projectId"] = "proj-a"
+                elif self.path == "/api/projects/proj-a":
+                    status = test.project_status
+                    body = {"project": {"id": test.returned_project}, "secret": SECRET}
+                elif self.path == "/api/global-agent-keys":
+                    body = {"keys": [{"id": "global-current", "access": {"projects": test.global_projects}}], "secret": SECRET}
+                elif self.path == "/api/config":
+                    body = {"secret": SECRET}
+                else:
+                    status, body = 404, {"secret": SECRET}
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode())
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.host = f"http://127.0.0.1:{self.server.server_port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.credentials = self.root / ".cds/credentials.json"
+        self.credentials.parent.mkdir()
+        self.credentials.write_text(json.dumps({"host": self.host, "projectId": "proj-a", "projectKey": SECRET}))
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.tmp.cleanup()
+
+    def write_bundle_manifest(self):
+        skills_root = self.cli.parents[2]
+        files = {p.relative_to(skills_root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                 for key in SKILLS for p in (skills_root / key).rglob('*')
+                 if p.is_file() and p != self.bundle_manifest}
+        self.bundle_manifest.write_text(json.dumps({
+            "format": "agent-skills", "version": self.version, "skills": list(SKILLS), "files": files,
+        }))
+
+    def run_cli(self, *args, credential_env=None):
+        env = {key: value for key, value in os.environ.items()
+               if key not in ("CDS_HOST", "CDS_PROJECT_ID", "CDS_PROJECT_KEY", "AI_ACCESS_KEY")}
+        env.update(credential_env or {})
+        result = subprocess.run([sys.executable, str(self.cli), *args],
+                                cwd=self.root, env=env, capture_output=True, text=True, timeout=15)
+        self.assertNotIn(SECRET, result.stdout + result.stderr)
+        return result, json.loads(result.stdout)
+
+    def run_check(self, *target, host=None, credential_env=None):
+        return self.run_cli("setup-check", "--host", host or self.host,
+                            *(target or ("--project", "proj-a")), "--skills", "cds-deploy-pipeline",
+                            credential_env=credential_env)
+
+    def assert_failure(self, reason, *target, host=None):
+        result, payload = self.run_check(*target, host=host)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["data"]["connected"])
+        self.assertEqual(payload["data"]["checks"][-1]["reason"], reason)
+
+    def test_existing_credentials_are_reused_and_target_is_really_read(self):
+        before = self.credentials.read_bytes()
+        result, payload = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(payload["data"]["projectId"], "proj-a")
+        self.assertEqual([path for path, _ in self.requests], [
+            "/api/agent/setup.json", "/api/credentials/self-check", "/api/projects/proj-a"])
+        self.assertTrue(all(key == SECRET for _, key in self.requests))
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertFalse((self.root / ".git/info/exclude").exists())
+
+    def test_repository_bundle_passes_without_installing_or_updating(self):
+        self.cli = CLI
+        result, payload = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(payload["data"]["checks"][1]["stage"], "skills")
+
+    def test_host_mismatch_sends_no_credentials(self):
+        self.assert_failure("host_mismatch", host="https://other.example")
+        self.assertEqual(self.requests, [])
+
+    def test_non_http_host_cannot_read_a_local_file_through_health(self):
+        local_secret = "local_file_content_must_not_be_printed"
+        local = self.root / "local-host"
+        local.mkdir()
+        (local / "healthz").write_text(local_secret)
+        result, payload = self.run_cli("health", credential_env={"CDS_HOST": local.as_uri()})
+        self.assertNotIn(local_secret, result.stdout + result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(self.requests, [])
+
+    def test_invalid_host_schemes_authority_and_ports_stop_before_network(self):
+        for host in (
+            f"ftp://127.0.0.1:{self.server.server_port}",
+            f"gopher://127.0.0.1:{self.server.server_port}",
+            f"httpx://127.0.0.1:{self.server.server_port}",
+            f"http://user:password@127.0.0.1:{self.server.server_port}",
+            "http://127.0.0.1:bad", "http://127.0.0.1:65536", "http://",
+        ):
+            with self.subTest(host=host):
+                result, payload = self.run_cli("health", credential_env={"CDS_HOST": host})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(payload["ok"])
+                self.assertIn("HTTP/HTTPS", payload["error"])
+        self.assertEqual(self.requests, [])
+
+    def test_redirects_at_any_check_stage_never_forward_credentials_or_claim_connected(self):
+        forwarded = []
+        test = self
+
+        class Receiver(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                forwarded.append((self.path, self.headers.get("X-AI-Access-Key") == SECRET))
+                if self.path.endswith("setup.json"):
+                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version,
+                            "minCliVersion": test.minimum_version}
+                elif self.path.endswith("self-check"):
+                    body = {"kind": "project", "status": "active", "projectId": "proj-a"}
+                else:
+                    body = {"project": {"id": "proj-a"}}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode())
+
+        receiver = ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
+        thread = threading.Thread(target=receiver.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for stage, route in enumerate(("/api/agent/setup.json", "/api/credentials/self-check", "/api/projects/proj-a"), 1):
+                with self.subTest(route=route):
+                    self.requests.clear()
+                    forwarded.clear()
+                    self.redirects = {route: f"http://127.0.0.1:{receiver.server_port}{route}"}
+                    result, payload = self.run_check()
+                    self.assertEqual(forwarded, [])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(payload["data"]["connected"])
+                    self.assertEqual(payload["data"]["checks"][-1]["reason"], "unexpected_redirect")
+                    self.assertEqual(len(self.requests), stage)
+        finally:
+            receiver.shutdown()
+            receiver.server_close()
+            thread.join()
+
+    def test_equivalent_source_origins_do_not_block_setup_or_strict_inspect(self):
+        for local, explicit in (
+            ("https://cds.example", "https://CDS.EXAMPLE:443"),
+            ("https://cds.example", "HTTPS://CDS.EXAMPLE:443/"),
+            ("http://localhost", "http://LOCALHOST:80/"),
+            ("http://[::1]", "http://[::1]:80"),
+            ("https://cds.example:8443", "https://CDS.EXAMPLE:8443/"),
+            ("cds.example", "https://CDS.EXAMPLE:443"),
+        ):
+            with self.subTest(local=local, explicit=explicit):
+                self.credentials.write_text(json.dumps({"host": local, "projectId": "proj-a", "projectKey": SECRET}))
+                env = {"CDS_HOST": explicit}
+                result, payload = self.run_cli("auth", "inspect", "--strict", credential_env=env)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(payload["data"]["conflicts"], [])
+                result, payload = self.run_check(host="https://other.example", credential_env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(payload["data"]["checks"][-1]["reason"], "host_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_different_source_origins_still_stop_before_network(self):
+        self.credentials.write_text(json.dumps({"host": "https://cds.example", "projectId": "proj-a", "projectKey": SECRET}))
+        for explicit in ("http://cds.example", "https://cds.example:8443", "https://other.example"):
+            with self.subTest(explicit=explicit):
+                env = {"CDS_HOST": explicit}
+                result, payload = self.run_cli("auth", "inspect", "--strict", credential_env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("host", payload["credentialSummary"]["conflicts"])
+                result, payload = self.run_check(host=explicit, credential_env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(payload["data"]["checks"][-1]["reason"], "credential_conflict")
+        self.assertEqual(self.requests, [])
+
+    def test_equivalent_source_hosts_reuse_credentials_over_real_http(self):
+        host = f"http://localhost:{self.server.server_port}"
+        self.credentials.write_text(json.dumps({"host": host, "projectId": "proj-a", "projectKey": SECRET}))
+        result, payload = self.run_check(host=host, credential_env={"CDS_HOST": host.replace("http://localhost", "HTTP://LOCALHOST")})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(len(self.requests), 3)
+        self.assertTrue(all(key == SECRET for _, key in self.requests))
+
+    def test_project_mismatch_stops_before_network(self):
+        self.assert_failure("project_mismatch", "--project", "proj-b")
+        self.assertEqual(self.requests, [])
+
+    def test_empty_project_does_not_fall_back_to_system_access(self):
+        self.assert_failure("invalid_project", "--project", "")
+        self.assertEqual(self.requests, [])
+
+    def test_missing_credentials_does_not_start_authorization(self):
+        self.credentials.unlink()
+        self.assert_failure("missing_credentials")
+        self.assertEqual(self.requests, [])
+
+    def test_revoked_credentials_do_not_read_project(self):
+        self.status = "revoked"
+        self.assert_failure("revoked")
+        self.assertEqual(len(self.requests), 2)
+
+    def test_disabled_identity_does_not_recommend_repeated_authorization(self):
+        self.status = "principal-disabled"
+        result, payload = self.run_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("恢复账号", payload["data"]["checks"][-1]["nextStep"])
+        self.assertEqual(len(self.requests), 2)
+
+    def test_uncheckable_identity_distinguishes_service_support_from_expired_key(self):
+        self.status = "not-checkable"
+        result, payload = self.run_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("服务版本", payload["data"]["checks"][-1]["nextStep"])
+
+    def test_stale_cli_cannot_claim_connected(self):
+        self.version = "99.0.0"
+        self.assert_failure("stale_cli")
+        self.assertEqual(len(self.requests), 1)
+
+    def test_minimum_version_is_enforced_independently_of_resolved_bundle(self):
+        self.minimum_version = "99.0.0"
+        self.assert_failure("stale_cli")
+        self.assertEqual(len(self.requests), 1)
+
+    def test_unavailable_minimum_version_cannot_claim_connected(self):
+        for minimum in (None, "invalid"):
+            with self.subTest(minimum=minimum):
+                self.minimum_version = minimum
+                self.assert_failure("version_unavailable")
+        self.assertTrue(all(path == "/api/agent/setup.json" for path, _ in self.requests))
+
+    def test_missing_bundle_is_distinct_from_authorization(self):
+        (self.root / ".agents/skills/preview-url/SKILL.md").unlink()
+        self.assert_failure("incomplete_bundle")
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_is_required_and_parseable(self):
+        for content in (None, "{broken"):
+            with self.subTest(content=content):
+                if content is None:
+                    self.bundle_manifest.unlink()
+                else:
+                    self.bundle_manifest.write_text(content)
+                self.assert_failure("bundle_manifest_unavailable")
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_version_and_coverage_are_required(self):
+        original = json.loads(self.bundle_manifest.read_text())
+        for update, reason in (({"version": "0.1.0"}, "stale_bundle"),
+                               ({"skills": ["cds"]}, "invalid_bundle_manifest"),
+                               ({"files": {}}, "invalid_bundle_manifest")):
+            with self.subTest(update=update):
+                self.bundle_manifest.write_text(json.dumps({**original, **update}))
+                self.assert_failure(reason)
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_detects_mixed_companion_content(self):
+        (self.cli.parents[2] / "cds-release/SKILL.md").write_text("obsolete release instructions")
+        self.assert_failure("bundle_content_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_checks_references_too(self):
+        reference = self.cli.parents[2] / "cds-deploy-pipeline/reference.md"
+        reference.write_text("current deployment contract")
+        self.write_bundle_manifest()
+        reference.write_text("obsolete deployment contract")
+        self.assert_failure("bundle_content_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_cannot_reference_paths_outside_skills(self):
+        manifest = json.loads(self.bundle_manifest.read_text())
+        manifest["files"]["../../outside"] = "0" * 64
+        self.bundle_manifest.write_text(json.dumps(manifest))
+        self.assert_failure("invalid_bundle_manifest")
+        self.assertEqual(self.requests, [])
+
+    def test_custom_files_outside_bundle_manifest_remain_usable(self):
+        extra = self.cli.parents[2] / "cds/local-notes.md"
+        extra.write_text("user custom notes")
+        result, payload = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(extra.read_text(), "user custom notes")
+
+    def test_active_credential_without_real_project_access_fails(self):
+        self.project_status = 403
+        self.assert_failure("access_denied")
+
+    def test_wrong_project_response_is_rejected_even_with_http_200(self):
+        self.returned_project = "proj-b"
+        self.assert_failure("target_mismatch")
+
+    def test_system_task_cannot_reuse_project_key_as_system_permission(self):
+        self.assert_failure("system_scope_required", "--system")
+        self.assertFalse(any(path == "/api/config" for path, _ in self.requests))
+
+    def test_system_check_rejects_create_only_and_project_scoped_global_keys(self):
+        self.kind = "global"
+        for scope in ([], ["proj-a"]):
+            with self.subTest(scope=scope):
+                self.global_projects = scope
+                self.requests.clear()
+                self.assert_failure("system_scope_required", "--system")
+                self.assertFalse(any(path == "/api/config" for path, _ in self.requests))
+
+    def test_system_check_accepts_only_confirmed_all_project_global_access(self):
+        self.kind = "global"
+        result, payload = self.run_check("--system")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertIn("/api/global-agent-keys", [path for path, _ in self.requests])
+        self.assertEqual(self.requests[-1][0], "/api/config")
+
+    def test_system_read_only_check_does_not_invent_project(self):
+        self.kind = "static"
+        result, payload = self.run_check("--system")
+        self.assertEqual(result.returncode, 0)
+        self.assertIsNone(payload["data"]["projectId"])
+        self.assertEqual(payload["data"]["scope"], "system-read")
+        self.assertEqual(self.requests[-1][0], "/api/config")
+
+
+if __name__ == "__main__":
+    unittest.main()

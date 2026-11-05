@@ -1,3 +1,4 @@
+import { copyCdsSkillSource } from '../services/cds-skill-manifest.js';
 /**
  * 项目初始化（Project Bootstrap）路由。
  *
@@ -137,7 +138,7 @@ async function buildCdsSkillPack(skillsRoot: string): Promise<Buffer | null> {
     const stageDir = path.join(tmpDir, 'skills');
     await fs.promises.mkdir(stageDir, { recursive: true });
     for (const key of present) {
-      await fs.promises.cp(path.join(skillsRoot, key), path.join(stageDir, key), { recursive: true });
+      await copyCdsSkillSource(path.join(skillsRoot, key), path.join(stageDir, key));
     }
     const outFile = path.join(tmpDir, 'cds-skills.tar.gz');
     await execFileAsync('tar', ['-czf', outFile, '-C', tmpDir, 'skills']);
