@@ -786,8 +786,10 @@ export class ContainerService {
 
   async stopRuntimeGroup(service: ServiceState, reason?: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
     const failures: unknown[] = [];
-    for (const runtime of serviceRuntimeRefs(service)) {
-      try { await this.stop(runtime.containerId || runtime.containerName, reason, context); }
+    const runtimes = serviceRuntimeRefs(service).map(runtime => ({ runtime,
+      releaseMemory: deploymentPhaseBudget.captureMemoryRelease(runtime.containerName) }));
+    for (const { runtime, releaseMemory } of runtimes) {
+      try { await this.stop(runtime.containerId || runtime.containerName, reason, context, releaseMemory); }
       catch (error) { failures.push(error); }
     }
     if (failures.length === 1) throw failures[0];
@@ -2879,10 +2881,12 @@ export class ContainerService {
     // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
     // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
     context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+    // 同组调用在第一个异步操作前冻结全部原预约；普通停止在入队前冻结。
+    releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName),
   ): Promise<void> {
     return deploymentPhaseBudget.run('terminal', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
       profileId: context.profileId || undefined, operationId: context.operationId },
-      () => this.stopUnbudgeted(containerName, reason, context));
+      async () => { await this.stopUnbudgeted(containerName, reason, context); releaseMemory(); });
   }
 
   private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
@@ -2955,7 +2959,6 @@ export class ContainerService {
       },
     });
     if (!confirmed) throw new ContainerStopUnconfirmedError(typeof state?.running === 'boolean' ? state.running : undefined);
-    deploymentPhaseBudget.releaseMemory(containerName);
   }
 
   /**
