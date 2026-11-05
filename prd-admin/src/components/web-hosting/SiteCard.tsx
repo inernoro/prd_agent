@@ -535,7 +535,7 @@ export function SiteCard({
             </p>
           )}
 
-          <div className="flex min-w-0 items-center gap-2" style={{ fontFamily: 'var(--font-code)', fontSize: 10, lineHeight: '16px', color: 'var(--text-tertiary)' }}>
+          <div data-site-card-meta className="flex min-w-0 items-center gap-2" style={{ fontFamily: 'var(--font-code)', fontSize: 10, lineHeight: '16px', color: 'var(--text-tertiary)' }}>
             <span className="shrink-0" title={fmtSize(site.totalSize)}>{fmtSize(site.totalSize)}</span>
             {shared && <span data-site-shared-badge aria-label="已分享" className="inline-flex shrink-0 items-center gap-1"
               title={linkCount > 0 ? `已分享 ${linkCount} 条有效链接` : '已分享'} style={{ color: 'var(--semantic-success-text)' }}>

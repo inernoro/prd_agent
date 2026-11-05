@@ -43,6 +43,7 @@ for (const width of [390, 1440]) {
           let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
+          else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: 3, mainTitle: titles[0], isMain: i === 0, titles: titles.filter(title => title !== site.title) }])) };
           else if (path === '/api/web-pages/tags') data = { tags: tagNames.map((tag, index) => ({ tag, count: tagCounts[index] })) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
           else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
@@ -55,6 +56,7 @@ for (const width of [390, 1440]) {
         const cards = page.locator('[data-tour-id="webpages-card"]');
         await expect(cards).toHaveCount(4);
         await expect(page.getByLabel('已编辑 987654321 次', { exact: true })).toBeAttached();
+        await expect(cards.locator('.related-variant-badge')).toHaveCount(4);
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await page.evaluate(() => document.fonts.ready);
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
@@ -64,18 +66,21 @@ for (const width of [390, 1440]) {
           const editBounds = card.querySelector('[data-site-edit-badge]')?.getBoundingClientRect();
           const thumbBounds = card.querySelector('[data-site-card-thumbnail]')!.getBoundingClientRect();
           const sharedBounds = card.querySelector('[data-site-shared-badge]')?.getBoundingClientRect();
+          const selectBounds = card.querySelector('[data-site-select]')!.getBoundingClientRect();
+          const meta = card.querySelector<HTMLElement>('[data-site-card-meta]')!;
+          const columns = getComputedStyle(stats).gridTemplateColumns.split(/\s+/).length;
           const titleBounds = card.querySelector('h3')!.getBoundingClientRect();
           const badge = card.querySelector('[aria-label="新创建，尚未打开"]');
           const badgeBounds = badge?.getBoundingClientRect();
           const slots = Array.from(stats.children).map(child => child.getBoundingClientRect()).filter(rect => rect.height > 0);
           return {
             title: card.querySelector('h3')!.textContent, cardHeight: bounds.height,
-            statsHeight: statsBounds.height,
-            editInThumbnail: !editBounds || (editBounds.top >= thumbBounds.top && editBounds.bottom <= thumbBounds.bottom && editBounds.right <= thumbBounds.right),
-            editBottom: editBounds ? thumbBounds.bottom - editBounds.bottom : null,
-            editRight: editBounds ? thumbBounds.right - editBounds.right : null,
-            shareGap: editBounds && sharedBounds ? editBounds.left - sharedBounds.right : null,
-            metaFits: card.querySelector('[data-site-thumbnail-meta]')!.scrollWidth <= card.querySelector('[data-site-thumbnail-meta]')!.clientWidth,
+            statsHeight: statsBounds.height, columns, metricCount: slots.length,
+            editInFooter: !!editBounds && editBounds.top >= statsBounds.top && editBounds.bottom <= statsBounds.bottom && editBounds.top >= thumbBounds.bottom,
+            shareInBody: !sharedBounds || sharedBounds.top >= thumbBounds.bottom,
+            selectionAtTop: selectBounds.top <= thumbBounds.top + 2 && selectBounds.bottom <= thumbBounds.top + 44,
+            noThumbnailStrip: !card.querySelector('[data-site-thumbnail-meta]'),
+            metaFits: meta.scrollWidth <= meta.clientWidth,
             overflow: slots.some(rect => rect.left < bounds.left || rect.right > bounds.right),
             wrapped: slots.some(rect => rect.height > 16.5),
             badgeGap: badgeBounds ? badgeBounds.left - titleBounds.right : null,
@@ -86,12 +91,13 @@ for (const width of [390, 1440]) {
         for (const metric of metrics) {
           expect(metric.overflow, JSON.stringify(metric)).toBe(false);
           expect(metric.wrapped, JSON.stringify(metric)).toBe(false);
-          expect(metric.statsHeight).toBeCloseTo(16, 0);
-          expect(metric.editInThumbnail).toBe(true);
+          expect(metric.metricCount).toBe(4);
+          expect(metric.statsHeight).toBeCloseTo(metric.columns === 4 ? 16 : 36, 0);
+          expect(metric.editInFooter).toBe(true);
+          expect(metric.shareInBody).toBe(true);
+          expect(metric.selectionAtTop).toBe(true);
+          expect(metric.noThumbnailStrip).toBe(true);
           expect(metric.metaFits, JSON.stringify(metric)).toBe(true);
-          if (metric.editRight !== null) expect(metric.editRight).toBeCloseTo(8, 0);
-          if (metric.editBottom !== null) expect(metric.editBottom).toBeGreaterThanOrEqual(8);
-          if (metric.shareGap !== null) expect(metric.shareGap).toBeCloseTo(4, 0);
           expect(metric.badgeInCard).toBe(true);
           expect(metric.titleLineHeight).toBeCloseTo(20, 0);
           if (metric.badgeGap !== null) {
@@ -123,9 +129,9 @@ for (const width of [390, 1440]) {
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
         // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
         if (size === 'large') {
-          const lastAccess = cards.nth(3).getByText('最近访问', { exact: true }).locator('..');
+          const lastAccess = cards.nth(3).locator('[title^="最近访问"]');
           await expect(lastAccess).toContainText('刚刚');
-          await expect(cards.nth(3).getByText('有效链接', { exact: true }).locator('..')).toContainText('0');
+          await expect(cards.nth(3).getByLabel('有效分享链接', { exact: true })).toContainText('0');
         }
         const visited: string[] = [];
         page.on('request', request => { if (request.url().includes('/record-view')) visited.push(request.url()); });

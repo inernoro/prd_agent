@@ -136,7 +136,7 @@
 .related-variant-toolbar,.related-variant-badge { display:inline-flex; padding:0; border:0; background:transparent; gap:0; flex-shrink:0; }
 .related-variant-toolbar .related-trigger { min-height:30px; font-size:11px; gap:5px; padding:5px 8px; }
 .related-variant-badge .related-trigger { min-height:20px; max-width:150px; padding:1px 5px; gap:3px; border:1px solid var(--semantic-info-border); background:var(--semantic-info-soft); color:var(--accent-fg-blue); font-size:10px; }
-.related-variant-badge .related-count { background:transparent; padding:0; }
+.related-variant-badge .related-count { background:transparent; padding:0; line-height:16px; }
 .related-variant-badge .related-trigger>svg:last-child { display:none; }
 .related-badge-name { display:none; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @container (min-width:330px) { .related-badge-name { display:inline; max-width:90px; } }
