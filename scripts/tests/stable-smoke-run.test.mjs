@@ -1118,6 +1118,7 @@ test('CDS 版本冻结识别摘要锁定镜像，仍拒绝错误提交和无效�
       deployedImage: `registry/api:sha-${commit}@sha256:${'b'.repeat(64)}` } },
   };
   assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  assert.equal(deployedRuntimeCommit(branch), commit);
   branch.services.api.deployedImage = `registry/api:sha-${'c'.repeat(40)}@sha256:${'b'.repeat(64)}`;
   assert.equal(evaluateCdsReadiness(branch, commit).ready, false);
   branch.services.api.deployedImage = `registry/api:sha-${commit}@sha256:bad`;

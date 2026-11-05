@@ -527,8 +527,8 @@ export function isValidationOnlyPath(path) {
 
 export function deployedRuntimeCommit(branch) {
   const commits = new Set(Object.values(branch?.services || {}).flatMap((service) => {
-    const match = String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i);
-    return match ? [match[1]] : [];
+    const commit = deployedImageCommit(service);
+    return commit ? [commit] : [];
   }));
   return commits.size === 1 ? [...commits][0] : '';
 }

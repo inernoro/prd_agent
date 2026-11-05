@@ -544,7 +544,8 @@ jobs:
     # 如果上一轮某个模块构建失败,后续只改其他模块会导致失败模块永久 skipped。
     # PR/develop 仍按路径过滤节省资源。
     if: needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # Playwright 1.59 的系统依赖尚不支持 ubuntu-latest 正在迁移的 Ubuntu 26。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: prd-admin
