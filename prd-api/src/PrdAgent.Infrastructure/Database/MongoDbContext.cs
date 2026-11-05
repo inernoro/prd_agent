@@ -539,6 +539,7 @@ public class MongoDbContext
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
     public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
     public IMongoCollection<ProductAgentSettings> ProductAgentSettings => _database.GetCollection<ProductAgentSettings>("product_agent_settings");
+    public IMongoCollection<ProductScheduledNotification> ProductScheduledNotifications => _database.GetCollection<ProductScheduledNotification>("product_scheduled_notifications");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
