@@ -1870,7 +1870,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     ).toEqual([]);
   });
 
-  test('[CORE-002][CORE-003][CORE-009][COMMON-002] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[CORE-002][CORE-003][COMMON-002] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
     const adminToken = await loginAndReadToken(page, request, '/');
     const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(adminToken) });
     expect(allowed.ok()).toBe(true);
@@ -5174,6 +5174,34 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(decodeURIComponent(response.headers()['x-auth-recovery'] || '')).not.toBe('');
       expectUserReadable(body.error?.message || '');
       failures.push({ code: probe.code, body, headers: response.headers() });
+    }
+    // 撤销只作用于本用例临时身份，不回收共享的巡检账号会话。
+    let revokedUserId = '';
+    const username = `stsmk_diag_${Date.now().toString(36)}`;
+    const password = `StsmkDiag_${Date.now()}_A9`;
+    try {
+      const created = await readEnvelope<{ userId: string }>(await request.post('/api/users', {
+        headers: authHeaders(token), data: { username, password, displayName: '稳定冒烟授权诊断', role: 'DEV' },
+      }));
+      revokedUserId = created.userId;
+      const login = await readEnvelope<{ accessToken: string }>(await request.post('/api/v1/auth/login', {
+        data: { username, password, clientType: 'admin' },
+      }));
+      await readEnvelope(await request.post(`/api/users/${revokedUserId}/force-expire`, {
+        headers: authHeaders(token), data: { targets: ['admin', 'desktop'] },
+      }));
+      const expired = await request.get('/api/authz/me', { headers: authHeaders(login.accessToken) });
+      expect(expired.status()).toBe(401);
+      expect(expired.headers()['x-auth-diagnosis']).toBe('AUTH_SESSION_REVOKED');
+      expect(decodeURIComponent(expired.headers()['x-auth-recovery'] || '')).toContain('重新登录');
+    } finally {
+      if (revokedUserId) {
+        const deleted = await readEnvelope<{ deletedCount: number }>(await request.post('/api/users/bulk-delete', {
+          headers: authHeaders(token), data: { userIds: [revokedUserId] },
+        }));
+        expect(deleted.deletedCount).toBe(1);
+        expect((await request.get(`/api/users/${revokedUserId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
     }
     const before = await readStableAuthSnapshot(page);
     const probe = failures[0];
