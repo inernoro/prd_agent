@@ -1421,7 +1421,7 @@ public sealed class AdminPushNotificationServiceTests
                 "1"));
         }
 
-        return new NotificationsController(db, push, events, TestConfiguration)
+        return new NotificationsController(db, push, events, TestConfiguration, new Moq.Mock<IAdminPermissionService>().Object)
         {
             ControllerContext = new ControllerContext
             {
