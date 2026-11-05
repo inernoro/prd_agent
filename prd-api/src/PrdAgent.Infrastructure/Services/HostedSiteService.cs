@@ -14,6 +14,120 @@ namespace PrdAgent.Infrastructure.Services;
 
 public class HostedSiteService : IHostedSiteService
 {
+    public async Task PrepareReviewHistoryAssetsAsync(string siteId, string userId, CancellationToken ct = default, bool relocateCurrent = false)
+    {
+        var site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
+        if (!await CanEditSiteAsync(site, userId, ct)) throw new UnauthorizedAccessException("无权整理站点历史资源");
+        var prefix = _storage.BuildSiteKey(siteId, "index.html")[..^"index.html".Length];
+        bool VersionDirectory(string path) => path.StartsWith(".versions/", StringComparison.Ordinal)
+            && path.Length > 42 && path[42] == '/'
+            && Guid.TryParseExact(path.Substring(10, 32), "N", out _);
+        string? LogicalPath(string key)
+        {
+            if (!key.StartsWith(prefix, StringComparison.Ordinal)) return null;
+            var path = key[prefix.Length..];
+            if (VersionDirectory(path))
+            {
+                var end = path.IndexOf('/', ".versions/".Length);
+                return end < 0 ? null : path[(end + 1)..];
+            }
+            return path;
+        }
+        bool Predictable(string key) => key.StartsWith(prefix, StringComparison.Ordinal)
+            && !VersionDirectory(key[prefix.Length..]);
+        var versions = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId
+            && r.Status == HostedSiteRevisionStatuses.Published)
+            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles)).ToListAsync(ct);
+        foreach (var revision in versions)
+        {
+            var capturedEntry = revision.PublishedEntryCosKey;
+            if (capturedEntry == null && revision.PublishedContentVersion == EffectiveContentVersion(site))
+            {
+                var liveEntry = site.Files.FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+                if (liveEntry != null && revision.PublishedAssetKeys.Contains(liveEntry)) capturedEntry = liveEntry;
+            }
+            var keys = revision.PublishedAssetKeys.Append(capturedEntry ?? "")
+                .Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.Ordinal).ToList();
+            var canonicalEntry = capturedEntry == _storage.BuildSiteKey(siteId, revision.PublishedEntryFile ?? "index.html");
+            if (!canonicalEntry && !keys.Any(Predictable)) continue;
+            var root = ".versions/" + Guid.NewGuid().ToString("N");
+            string? ArchivePath(string key) => canonicalEntry && key.StartsWith(prefix, StringComparison.Ordinal)
+                ? key[prefix.Length..] : LogicalPath(key);
+            var mapping = keys.Where(k => ArchivePath(k) != null).ToDictionary(k => k,
+                k => _storage.BuildSiteKey(siteId, root + "/" + ArchivePath(k)), StringComparer.Ordinal);
+            var archiveKeys = mapping.Values.ToArray();
+            await ReservePublishKeysAsync(siteId, EffectiveContentVersion(site), archiveKeys, DateTime.UtcNow);
+            var retainedCopy = false;
+            try
+            {
+                foreach (var (oldKey, newKey) in mapping)
+                {
+                    var bytes = await _storage.TryDownloadBytesAsync(oldKey, ct)
+                        ?? throw new InvalidOperationException("旧版资源读取失败，暂不能对外分享或覆盖网页");
+                    var mimeType = GetMimeType(Path.GetExtension(LogicalPath(oldKey)!));
+                    if (mimeType == "text/html") mimeType = "text/html; charset=utf-8";
+                    await _storage.UploadToKeyAsync(newKey, bytes, mimeType, ct, SiteCacheControl);
+                }
+                var oldEntry = revision.PublishedEntryCosKey;
+                var newEntry = capturedEntry != null && mapping.TryGetValue(capturedEntry, out var mappedEntry) ? mappedEntry : capturedEntry;
+                var changed = await _db.HostedSiteRevisions.UpdateOneAsync(r => r.Id == revision.Id
+                    && r.SiteId == siteId && r.PublishedEntryCosKey == oldEntry,
+                    Builders<HostedSiteRevision>.Update.Set(r => r.PublishedAssetKeys, keys.Select(k => mapping.GetValueOrDefault(k, k)).ToList())
+                        .Set(r => r.PublishedEntryCosKey, newEntry)
+                        .Set(r => r.PublishedEntryFile, revision.PublishedEntryFile ?? (revision.PublishedContentVersion == EffectiveContentVersion(site) ? site.EntryFile : null)), cancellationToken: ct);
+                retainedCopy = changed.ModifiedCount == 1;
+            }
+            finally
+            {
+                // The existing durable ledger handles failures and ambiguous writes; referenced copies are protected.
+                await ReleasePublishKeysAsync(siteId, archiveKeys, keepPending: !retainedCopy);
+            }
+        }
+        // Move an active legacy entry to the identical retained copy before permitting a replacement.
+        // The business version and publication time stay unchanged; a failed cleanup leaves V1 readable.
+        site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
+        if (relocateCurrent && site.Files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
+        {
+            var version = EffectiveContentVersion(site);
+            var snapshot = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId
+                && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == version)
+                .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection.Exclude(r => r.Html).Exclude(r => r.VerifiedFiles))
+                .FirstOrDefaultAsync(ct);
+            if (snapshot == null) throw new InvalidOperationException("当前版本尚未完成归档，原网页未覆盖");
+            {
+                var byPath = snapshot.PublishedAssetKeys.Where(k => LogicalPath(k) != null)
+                    .GroupBy(k => LogicalPath(k)!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+                var retainedEntry = snapshot.PublishedEntryCosKey
+                    ?? throw new InvalidOperationException("当前版本入口尚未归档，请稍后重试");
+                var files = site.Files.Select(f => new HostedSiteFile { Path = f.Path, Size = f.Size, MimeType = f.MimeType,
+                    CosKey = string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)
+                        ? retainedEntry : byPath.GetValueOrDefault(f.Path, f.CosKey) }).ToList();
+                if (files.Any(f => f.CosKey == _storage.BuildSiteKey(siteId, f.Path)))
+                    throw new InvalidOperationException("当前版本尚未完整归档，请稍后重试");
+                var entryKey = files.Single(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)).CosKey;
+                var moved = await _db.HostedSites.UpdateOneAsync(BuildExpectedContentVersionFilter(siteId, version)
+                    & Builders<HostedSite>.Filter.Eq(s => s.Files, site.Files),
+                    Builders<HostedSite>.Update.Set(s => s.Files, files).Set(s => s.SiteUrl,
+                        AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(entryKey), version), site.SlideNavCompatVersion)), cancellationToken: ct);
+                if (moved.ModifiedCount != 1) throw new InvalidOperationException("站点在归档期间发生变化，请刷新后重试");
+                site.Files = files;
+            }
+        }
+        // Reconstruct aliases from the retained paths too, so a crash after a reference update is recoverable.
+        var retained = await _db.HostedSiteRevisions.Find(r => r.SiteId == siteId)
+            .Project(r => r.PublishedAssetKeys).ToListAsync(ct);
+        var active = site.Files.Select(f => f.CosKey).ToHashSet(StringComparer.Ordinal);
+        var aliases = retained.SelectMany(keys => keys).Select(LogicalPath).Where(p => !string.IsNullOrEmpty(p))
+            .Select(p => _storage.BuildSiteKey(siteId, p!)).Where(k => !active.Contains(k)).Distinct(StringComparer.Ordinal).ToList();
+        if (aliases.Count == 0) return;
+        await _db.HostedSites.UpdateOneAsync(s => s.Id == siteId,
+            Builders<HostedSite>.Update.AddToSetEach(s => s.PendingAssetCleanupKeys, aliases)
+                .Set(s => s.AssetCleanupNextAttemptAt, DateTime.UtcNow), cancellationToken: ct);
+        await TryRunHostedSiteAssetCleanupAsync(siteId, DateTime.UtcNow, ignoreSchedule: true, ct);
+        if (await _db.HostedSites.Find(s => s.Id == siteId && s.PendingAssetCleanupKeys.Any(k => aliases.Contains(k))).AnyAsync(ct))
+            throw new InvalidOperationException("旧版公开地址尚未完成清理，请稍后重试分享");
+    }
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _storage;
     private readonly IShortLinkService _shortLinks;
@@ -44,11 +158,21 @@ public class HostedSiteService : IHostedSiteService
     // 给入口 URL 追加版本指纹。version 取站点的 ContentVersion：只在创建 / 重新上传
     // （内容真正变化）时改变；改标题、改可见性等元数据操作不动它。因此"没更新"的站点
     // URL 恒定可缓存，符合用户要求"没更新还要缓存"。
-    internal static string AppendVersion(string url, DateTime version)
+    public static string AppendVersion(string url, DateTime version)
     {
         if (string.IsNullOrWhiteSpace(url)) return url;
         var sep = url.Contains('?') ? '&' : '?';
         return $"{url}{sep}v={version.Ticks}";
+    }
+
+    public static string AppendBridgeVersion(string url, int bridgeVersion)
+    {
+        if (bridgeVersion <= 0 || string.IsNullOrWhiteSpace(url)) return url;
+        var hashIndex = url.IndexOf('#');
+        var hash = hashIndex >= 0 ? url[hashIndex..] : string.Empty;
+        var head = hashIndex >= 0 ? url[..hashIndex] : url;
+        head = Regex.Replace(head, @"([?&])_map_bridge=[^&#]*&?", "$1").TrimEnd('?', '&');
+        return head + (head.Contains('?') ? "&" : "?") + "_map_bridge=" + bridgeVersion + hash;
     }
 
     private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -765,6 +889,15 @@ public class HostedSiteService : IHostedSiteService
         if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
             throw new KeyNotFoundException("站点不存在"); // 不可见/无编辑权一并按不存在处理，不泄露存在性
 
+        var acceptedVersion = EffectiveContentVersion(site);
+        // Open API and optimization also call this common path without opening the review UI.
+        await HostedSiteRevisionService.CaptureReviewSnapshotAsync(_db, _storage,
+            new HostedSiteRevisionService(_db, this, _storage), site, userId, ct);
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct, relocateCurrent: true);
+        site = await GetByIdAsync(siteId, userId, ct) ?? throw new KeyNotFoundException("站点不存在");
+        if (EffectiveContentVersion(site) != acceptedVersion)
+            throw new InvalidOperationException("站点在归档期间发生变化，请刷新后重试");
+
         // 先在内存里完整校验（ZIP 元数据校验 / HTML 直接可用）。校验通过后写入不可变版本目录，
         // 最后用 ContentVersion CAS 原子切换站点指针；旧版本在切换后进入持久清理账本。
         var oldFiles = site.Files ?? new List<HostedSiteFile>();
@@ -997,6 +1130,11 @@ public class HostedSiteService : IHostedSiteService
         if (expectedContentVersion.HasValue && current.ContentVersion != expectedContentVersion.Value)
             throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
 
+        var acceptedVersion = current.ContentVersion;
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct, relocateCurrent: true);
+        current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (current.ContentVersion != acceptedVersion)
+            throw new InvalidOperationException("站点在归档期间已经发布过其他内容，请刷新后重试");
         var site = current.Site;
         var bytes = System.Text.Encoding.UTF8.GetBytes(html);
         if (bytes.Length > MaxEditableEntryBytes)
@@ -1005,40 +1143,35 @@ public class HostedSiteService : IHostedSiteService
         var entry = site.Files.First(x => string.Equals(x.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
         var rewritten = RewritePublishedEntryHtml(bytes, site.EntryFile);
         var isSlideDeck = DetectSlideDeck(rewritten);
-        // 不覆盖当前线上对象：先写同目录下的新入口，再通过 Mongo 条件更新原子切换指针。
-        // 若并发发布输掉 CAS，只留下一个未引用对象，不会把赢家的线上正文反向覆盖。
+        // Each publication gets its own directory; a current URL must not reveal the old archive directory.
         var now = DateTime.UtcNow;
-        var nextEntryKey = BuildVersionedEntryKey(entry.CosKey, site.EntryFile);
-        await ReservePublishKeysAsync(siteId, current.ContentVersion, [nextEntryKey], now);
+        var root = ".versions/" + Guid.NewGuid().ToString("N");
+        var removeGeneratedSidecars = HostedSiteContentShapeRules.IsSelfContainedHtml(site) && site.Files.Count > 1;
+        var sources = removeGeneratedSidecars ? new List<HostedSiteFile> { entry } : site.Files;
+        var updatedFiles = sources.Select(file => new HostedSiteFile { Path = file.Path,
+            CosKey = _storage.BuildSiteKey(siteId, root + "/" + file.Path), Size = file.Size, MimeType = file.MimeType }).ToList();
+        var nextEntry = updatedFiles.Single(file => string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        var nextEntryKey = nextEntry.CosKey;
+        var newKeys = updatedFiles.Select(file => file.CosKey).ToArray();
+        await ReservePublishKeysAsync(siteId, current.ContentVersion, newKeys, now);
         try
         {
-            await _storage.UploadToKeyAsync(
-                nextEntryKey,
-                rewritten,
-                "text/html; charset=utf-8",
-                CancellationToken.None,
-                SiteCacheControl);
+            foreach (var file in updatedFiles)
+            {
+                var isEntry = ReferenceEquals(file, nextEntry);
+                var content = isEntry ? rewritten : await _storage.TryDownloadBytesAsync(
+                    sources.Single(source => source.Path == file.Path).CosKey, ct)
+                    ?? throw new InvalidOperationException("网页资源读取失败，原版本未覆盖");
+                file.Size = content.LongLength;
+                if (isEntry) file.MimeType = "text/html; charset=utf-8";
+                await _storage.UploadToKeyAsync(file.CosKey, content, file.MimeType, CancellationToken.None, SiteCacheControl);
+            }
         }
         catch
         {
-            await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: true);
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
             throw;
         }
-        var nextEntry = new HostedSiteFile
-        {
-            Path = site.EntryFile,
-            CosKey = nextEntryKey,
-            Size = rewritten.LongLength,
-            MimeType = "text/html",
-        };
-        var removeGeneratedSidecars = HostedSiteContentShapeRules.IsSelfContainedHtml(site)
-                                      && site.Files.Count > 1;
-        var updatedFiles = removeGeneratedSidecars
-            ? new List<HostedSiteFile> { nextEntry }
-            : site.Files.Select(file =>
-                string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)
-                    ? nextEntry
-                    : file).ToList();
         var obsoleteKeys = ComputeObsoleteAssetKeys(site.Files, updatedFiles);
         var totalSize = updatedFiles.Sum(file => file.Size);
         var siteUrl = AppendVersion(_storage.BuildUrlForKey(nextEntryKey), now);
@@ -1074,10 +1207,10 @@ public class HostedSiteService : IHostedSiteService
         var result = await _db.HostedSites.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (result.ModifiedCount == 0)
         {
-            await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: true);
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
             throw new InvalidOperationException("站点在发布时已经发生变化，请刷新后重试");
         }
-        await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: false);
+        await ReleasePublishKeysAsync(siteId, newKeys, keepPending: false);
 
         if (obsoleteKeys.Count > 0)
         {
@@ -1109,6 +1242,10 @@ public class HostedSiteService : IHostedSiteService
         if (current.ContentVersion != expectedContentVersion)
             throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
         var ordered = ValidateVerifiedGeneratedFiles(files);
+        await PrepareReviewHistoryAssetsAsync(siteId, userId, ct, relocateCurrent: true);
+        current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (current.ContentVersion != expectedContentVersion)
+            throw new InvalidOperationException("站点在归档期间已经发布过其他内容，请刷新后重试");
         var indexFile = ordered.Single(file => file.Path == "index.html");
         if (!string.IsNullOrWhiteSpace(current.Site.PublishedRevisionId))
         {
@@ -1363,16 +1500,6 @@ public class HostedSiteService : IHostedSiteService
             .Where(key => !string.IsNullOrWhiteSpace(key) && !retained.Contains(key))
             .Distinct(StringComparer.Ordinal)
             .ToList();
-    }
-
-    private static string BuildVersionedEntryKey(string currentKey, string entryFile)
-    {
-        var slash = currentKey.LastIndexOf('/');
-        var directory = slash >= 0 ? currentKey[..(slash + 1)] : string.Empty;
-        var fileName = Path.GetFileName(entryFile);
-        var extension = Path.GetExtension(fileName);
-        var stem = Path.GetFileNameWithoutExtension(fileName);
-        return $"{directory}{stem}.v{Guid.NewGuid():N}{extension}";
     }
 
     // ─────────────────────────────────────────────
@@ -2403,6 +2530,7 @@ public class HostedSiteService : IHostedSiteService
 
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null || !CanSetVisibility(site, userId)) return null;
+        if (normalized == "public" && site.Visibility != "public") await PrepareReviewHistoryAssetsAsync(siteId, userId, ct);
 
         var now = DateTime.UtcNow;
         var update = Builders<HostedSite>.Update
@@ -2547,6 +2675,8 @@ public class HostedSiteService : IHostedSiteService
         // 所有目标站点都必须有 CreateShare 权限，否则整笔拒绝（与原「全部可访问才放行」一致）。
         if (!await CanCreateShareAsync(allIds, userId, ct))
             throw new UnauthorizedAccessException(NoSharePermissionMessage);
+        if (normalizedVisibility != "owner-only")
+            foreach (var target in allIds) await PrepareReviewHistoryAssetsAsync(target, userId, ct);
 
         // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
         // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；
@@ -3245,11 +3375,14 @@ public class HostedSiteService : IHostedSiteService
         site.PdfFilePaths = HostedSitePdfFiles.Paths(site);
         site.ContentShape = HostedSiteContentShapeRules.Resolve(site);
         var version = EffectiveContentVersion(site);
+        var entryFile = (site.Files ?? []).FirstOrDefault(f => string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        if (entryFile != null && !string.IsNullOrWhiteSpace(entryFile.CosKey))
+            site.SiteUrl = AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(entryFile.CosKey), version), site.SlideNavCompatVersion);
         foreach (var file in site.Files ?? new List<HostedSiteFile>())
         {
             file.Url = string.IsNullOrWhiteSpace(file.CosKey)
                 ? null
-                : AppendVersion(_storage.BuildUrlForKey(file.CosKey), version);
+                : AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(file.CosKey), version), site.SlideNavCompatVersion);
         }
         return site;
     }
@@ -3268,7 +3401,7 @@ public class HostedSiteService : IHostedSiteService
     // 计算缓存指纹用的内容版本：老文档无 ContentVersion（default）时回退到 CreatedAt
     // （创建后恒定不变）→ 保证 ?v 稳定、缓存命中。禁止回退到 UpdatedAt，那会被
     // 改标题 / 改可见性等元数据操作顶变，导致没改内容却击穿缓存。
-    internal static DateTime EffectiveContentVersion(HostedSite site)
+    public static DateTime EffectiveContentVersion(HostedSite site)
         => site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
 
     internal static bool IsVisitShare(WebPageShareLink share)
@@ -3452,15 +3585,13 @@ public class HostedSiteService : IHostedSiteService
                     var reinjected = InjectSlideNavCompat(sharedBytes);
                     if (reinjected.Length != sharedBytes.Length || !reinjected.SequenceEqual(sharedBytes))
                         continue; // 共享对象尚未被原站升级到当前版 → defer，等原站先升级，下次再刷副本
-                    // 已确认共享对象含当前版 shim → 安全刷 ?v= 击穿缓存 + 标版本。URL 取入口真实 CosKey（指向原站对象），
+                    // 已确认共享对象含当前版 shim → 安全刷独立垫片缓存键。URL 取入口真实 CosKey（指向原站对象），
                     // 不动 UpdatedAt 以免被动回填重排用户收藏列表。
-                    var savedNow = DateTime.UtcNow;
-                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
+                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id && x.ContentVersion == site.ContentVersion
+                            && x.PublishedRevisionId == site.PublishedRevisionId,
                         Builders<HostedSite>.Update
                             .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
-                            .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
-                            .Set(x => x.ContentVersion, savedNow)
-                            .Set(x => x.PublishedRevisionId, null),
+                            .Set(x => x.SiteUrl, AppendBridgeVersion(AppendVersion(_storage.BuildUrlForKey(savedEntryKey), EffectiveContentVersion(site)), SlideNavVersion)),
                         cancellationToken: ct);
                     continue;
                 }
@@ -3490,25 +3621,17 @@ public class HostedSiteService : IHostedSiteService
                 // 下载存在失败：保持旧版本号，下次启动重试，避免把「未真正处理」的站点永久排除在回填之外
                 if (deferred) continue;
 
-                // 升级版本号；内容有变则同时 bump ContentVersion + SiteUrl（?v 击穿 CDN/浏览器缓存）
-                var now = DateTime.UtcNow;
+                // 垫片升级只更新独立缓存键，不改变业务版本、发布时间与发布版本指针。
                 var update = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
-                if (anyChanged)
-                {
-                    // URL 一律取入口 HTML 的真实 CosKey 构造，绝不依据 site.Id 推断 key（saved-share 上面已 return）
-                    var entryKey = entryHtml?.CosKey
-                        ?? (string.IsNullOrEmpty(site.EntryFile) ? null : _storage.BuildSiteKey(site.Id, site.EntryFile));
-                    if (!string.IsNullOrEmpty(entryKey))
-                    {
-                        var newUrl = AppendVersion(_storage.BuildUrlForKey(entryKey), now);
-                        update = update.Set(x => x.SiteUrl, newUrl)
-                                       .Set(x => x.ContentVersion, now)
-                                       .Set(x => x.PublishedRevisionId, null)
-                                       .Set(x => x.UpdatedAt, now);
-                    }
-                    injectedSites++;
-                }
-                await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id, update, cancellationToken: ct);
+                // 即使另一实例已先写入相同脚本，旧桥接缓存键仍须升级。
+                var entryKey = entryHtml?.CosKey ?? site.Files?.FirstOrDefault(f =>
+                    string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+                if (!string.IsNullOrEmpty(entryKey))
+                    update = update.Set(x => x.SiteUrl, AppendBridgeVersion(
+                        AppendVersion(_storage.BuildUrlForKey(entryKey), EffectiveContentVersion(site)), SlideNavVersion));
+                if (anyChanged) injectedSites++;
+                await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id && x.ContentVersion == site.ContentVersion
+                    && x.PublishedRevisionId == site.PublishedRevisionId, update, cancellationToken: ct);
             }
             catch (Exception ex)
             {
@@ -3652,6 +3775,9 @@ public class HostedSiteService : IHostedSiteService
 
         var ups = new List<UpdateDefinition<WebPageShareLink>>();
         var effVisibility = normalizedVisibility ?? share.Visibility;
+        if ((effVisibility == "public" && share.Visibility != "public")
+            || (effVisibility == "logged-in" && share.Visibility == "owner-only"))
+            foreach (var target in share.TargetSiteIds()) await PrepareReviewHistoryAssetsAsync(target, userId, ct);
         var effExpiresAt = share.ExpiresAt;
 
         if (normalizedVisibility != null && normalizedVisibility != share.Visibility)
@@ -4718,7 +4844,7 @@ public class HostedSiteService : IHostedSiteService
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
     // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
     // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
-    private const int SlideNavVersion = 7;
+    private const int SlideNavVersion = 12;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -4810,7 +4936,7 @@ public class HostedSiteService : IHostedSiteService
         // 即使浏览器不执行，也会破坏“产物不含可执行内容”的可审计合同。
         // 先剥离历史垫片再返回，保证曾被旧版本污染的页面下一次发布也能恢复干净。
         if (HasDeclarativeOnlyPolicy(html))
-            return System.Text.Encoding.UTF8.GetBytes(html);
+            return System.Text.Encoding.UTF8.GetBytes(HostedSiteAnnotationRuntime.Strip(html));
 
         // 2) 插入当前版本注入块（剥离后重新定位锚点）
         var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
@@ -4821,10 +4947,10 @@ public class HostedSiteService : IHostedSiteService
             : (htmlIdx >= 0 ? html[..htmlIdx] + compatScript + html[htmlIdx..]
                             : html + compatScript);
 
-        return System.Text.Encoding.UTF8.GetBytes(injected);
+        return System.Text.Encoding.UTF8.GetBytes(HostedSiteAnnotationRuntime.Inject(injected));
     }
 
-    internal static bool HasDeclarativeOnlyPolicy(string html)
+    public static bool HasDeclarativeOnlyPolicy(string html)
     {
         if (Regex.IsMatch(
                 html,
@@ -5275,19 +5401,21 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
-        string content, CancellationToken ct = default)
+        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null)
     {
         var site = await GetByIdAsync(siteId, authorUserId, ct);
         if (site == null)
             return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct);
+        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct, anchor, parentId, revisionId, expectedContentVersion);
     }
 
     public async Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
-        string content, string? ipAddress, CancellationToken ct = default)
+        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null)
     {
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
@@ -5298,7 +5426,47 @@ public class HostedSiteService : IHostedSiteService
         if (sites.Count == 0)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct);
+        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion);
+    }
+
+    public async Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
+        bool resolved, CancellationToken ct = default)
+    {
+        var site = await GetByIdAsync(siteId, userId, ct);
+        if (site == null)
+            return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
+        return await SetCommentResolvedAsync(site, commentId, userId, resolved, ct);
+    }
+
+    public async Task<AddCommentResult> SetCommentResolvedByShareAsync(string token, string? password,
+        string commentId, string userId, bool resolved, CancellationToken ct = default)
+    {
+        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, userId, ct);
+        if (err != null)
+            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus,
+                ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
+        if (sites.Count == 0)
+            return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
+        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true);
+    }
+
+    private async Task<AddCommentResult> SetCommentResolvedAsync(HostedSite site, string commentId, string userId,
+        bool resolved, CancellationToken ct, bool maskUserId = false)
+    {
+        if (!site.CommentsEnabled)
+            return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
+        var comment = await _db.HostedSiteComments
+            .Find(c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted).FirstOrDefaultAsync(ct);
+        if (comment == null || !HostedSiteCommentRules.CanResolve(comment, site, userId)
+            || !HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(comment), EffectiveContentVersion(site), await CanEditSiteAsync(site, userId, ct)))
+            return new AddCommentResult { Error = "讨论不存在或无权修改", HttpStatus = 404, ErrorCode = "not_found" };
+        var update = Builders<HostedSiteComment>.Update.Set(c => c.IsResolved, resolved).Set(c => c.UpdatedAt, DateTime.UtcNow);
+        var changed = await _db.HostedSiteComments.UpdateOneAsync(
+            c => c.Id == commentId && c.SiteId == site.Id && !c.IsDeleted, update, cancellationToken: CancellationToken.None);
+        if (changed.MatchedCount == 0)
+            return new AddCommentResult { Error = "讨论已删除", HttpStatus = 404, ErrorCode = "not_found" };
+        comment.IsResolved = resolved;
+        return new AddCommentResult { Comment = ToCommentDto(comment, site, userId, maskUserId) };
     }
 
     public async Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default)
@@ -5306,21 +5474,15 @@ public class HostedSiteService : IHostedSiteService
         var comment = await _db.HostedSiteComments.Find(c => c.Id == commentId && !c.IsDeleted).FirstOrDefaultAsync(ct);
         if (comment == null) return false;
 
-        // 作者本人，或被评论站点的 owner，可删除
-        bool canDelete = comment.AuthorUserId == userId;
-        if (!canDelete)
-        {
-            var site = await _db.HostedSites.Find(s => s.Id == comment.SiteId).FirstOrDefaultAsync(ct);
-            canDelete = site != null && site.OwnerUserId == userId;
-        }
-        if (!canDelete) return false;
-
+        var site = await _db.HostedSites.Find(s => s.Id == comment.SiteId).FirstOrDefaultAsync(ct);
+        if (site == null || (comment.AuthorUserId != userId && site.OwnerUserId != userId)) return false;
+        var deletion = Builders<HostedSiteComment>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow);
+        // 先关闭根讨论，再清理回复。回复落库后也会复查根讨论，覆盖两次写入之间的并发窗口。
         await _db.HostedSiteComments.UpdateOneAsync(
-            c => c.Id == commentId,
-            Builders<HostedSiteComment>.Update
-                .Set(c => c.IsDeleted, true)
-                .Set(c => c.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+            c => c.Id == commentId && c.SiteId == comment.SiteId, deletion, cancellationToken: CancellationToken.None);
+        if (string.IsNullOrEmpty(comment.ParentId))
+            await _db.HostedSiteComments.UpdateManyAsync(
+                c => c.ParentId == commentId && c.SiteId == comment.SiteId, deletion, cancellationToken: CancellationToken.None);
         return true;
     }
 
@@ -5328,7 +5490,7 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<AddCommentResult> InsertCommentAsync(
         HostedSite site, string authorUserId, string authorName, string? avatarFileName,
-        string content, string? shareToken, string? ipAddress, CancellationToken ct)
+        string content, string? shareToken, string? ipAddress, CancellationToken ct, HostedSiteCommentAnchor? anchor, string? parentId, string? revisionId, string? expectedContentVersion)
     {
         if (!site.CommentsEnabled)
             return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
@@ -5339,8 +5501,56 @@ public class HostedSiteService : IHostedSiteService
         if (trimmed.Length > 2000)
             return new AddCommentResult { Error = "评论内容不能超过 2000 字", HttpStatus = 400, ErrorCode = "invalid" };
 
+        if (!HostedSiteCommentRules.IsValidAnchor(anchor))
+            return new AddCommentResult { Error = "批注定位信息无效或过长", HttpStatus = 400, ErrorCode = "invalid" };
+        string? contentVersion = HostedSiteCommentRules.VersionKey(EffectiveContentVersion(site));
+        string? commentRevisionId = site.PublishedRevisionId;
+        if (parentId != null)
+        {
+            if (string.IsNullOrWhiteSpace(parentId) || parentId.Length > 80 || anchor != null)
+                return new AddCommentResult { Error = "回复必须关联有效讨论且不能另设批注位置", HttpStatus = 400, ErrorCode = "invalid" };
+            var parent = await _db.HostedSiteComments.Find(c => c.Id == parentId && c.SiteId == site.Id).FirstOrDefaultAsync(ct);
+            if (!HostedSiteCommentRules.CanReplyTo(parent, site.Id))
+                return new AddCommentResult { Error = "原讨论不存在或已删除", HttpStatus = 404, ErrorCode = "not_found" };
+            contentVersion = HostedSiteCommentRules.StoredVersion(parent!);
+            commentRevisionId = parent!.RevisionId;
+        }
+        else
+        {
+            HostedSiteRevision? revision;
+            if (revisionId != null)
+            {
+                if (string.IsNullOrWhiteSpace(revisionId) || revisionId.Length > 200)
+                    return new AddCommentResult { Error = "版本不存在", HttpStatus = 404, ErrorCode = "not_found" };
+                revision = await _db.HostedSiteRevisions.Find(r => r.Id == revisionId && r.SiteId == site.Id)
+                    .FirstOrDefaultAsync(ct);
+                if (!HostedSiteCommentRules.IsPublishedVersion(revision, site.Id))
+                    return new AddCommentResult { Error = "版本不存在或尚未发布", HttpStatus = 404, ErrorCode = "not_found" };
+                contentVersion = HostedSiteCommentRules.VersionKey(revision!.PublishedContentVersion!.Value);
+                commentRevisionId = revision.Id;
+            }
+            else
+            {
+                var activeVersion = EffectiveContentVersion(site);
+                revision = await _db.HostedSiteRevisions.Find(r => r.SiteId == site.Id
+                    && r.Status == HostedSiteRevisionStatuses.Published && r.PublishedContentVersion == activeVersion)
+                    .FirstOrDefaultAsync(ct);
+                commentRevisionId = revision?.Id;
+            }
+            if (!HostedSiteCommentRules.MatchesExpectedVersion(expectedContentVersion, contentVersion))
+                return new AddCommentResult { Error = "正在查看的版本已变化，请刷新或重新选择版本后发表", HttpStatus = 409, ErrorCode = "CONTENT_VERSION_CHANGED" };
+        }
+
+        if (!HostedSiteCommentRules.CanViewReviewVersion(contentVersion, EffectiveContentVersion(site),
+            await CanEditSiteAsync(site, authorUserId, ct)))
+            return new AddCommentResult { Error = "当前权限不提供历史讨论", HttpStatus = 404, ErrorCode = "not_found" };
+
         var comment = new HostedSiteComment
         {
+            Anchor = anchor,
+            ParentId = parentId,
+            ContentVersion = contentVersion,
+            RevisionId = commentRevisionId,
             SiteId = site.Id,
             ShareToken = shareToken,
             AuthorUserId = authorUserId,
@@ -5349,7 +5559,18 @@ public class HostedSiteService : IHostedSiteService
             Content = trimmed,
             IpAddress = ipAddress,
         };
-        await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: ct);
+        await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: CancellationToken.None);
+        if (parentId != null)
+        {
+            var parentStillExists = await _db.HostedSiteComments.Find(c => c.Id == parentId
+                && c.SiteId == site.Id && !c.IsDeleted && c.ParentId == null).AnyAsync(CancellationToken.None);
+            if (!parentStillExists)
+            {
+                await _db.HostedSiteComments.UpdateOneAsync(c => c.Id == comment.Id,
+                    Builders<HostedSiteComment>.Update.Set(c => c.IsDeleted, true), cancellationToken: CancellationToken.None);
+                return new AddCommentResult { Error = "原讨论已删除，回复未发表", HttpStatus = 404, ErrorCode = "not_found" };
+            }
+        }
 
         // 通知站点 owner：有人评论了你的站点。自评不通知；Key 幂等保证每条评论只产生一条系统通知（用户要求「1 次」）。
         // best-effort + CancellationToken.None：通知失败不得影响评论本身，也不随客户端断开取消（server-authority）。
@@ -5379,19 +5600,29 @@ public class HostedSiteService : IHostedSiteService
 
         return new AddCommentResult
         {
-            Comment = new HostedSiteCommentDto
-            {
-                Id = comment.Id,
-                SiteId = comment.SiteId,
-                Content = comment.Content,
-                AuthorUserId = comment.AuthorUserId,
-                AuthorName = comment.AuthorName,
-                AuthorAvatarFileName = comment.AuthorAvatarFileName,
-                CreatedAt = comment.CreatedAt,
-                CanDelete = true,
-            },
+            Comment = ToCommentDto(comment, site, authorUserId, maskUserId: shareToken != null),
         };
     }
+
+    private static HostedSiteCommentDto ToCommentDto(HostedSiteComment comment, HostedSite site,
+        string? viewerUserId, bool maskUserId = false) => new()
+    {
+        Id = comment.Id,
+        SiteId = comment.SiteId,
+        Content = comment.Content,
+        Anchor = comment.Anchor,
+        ParentId = comment.ParentId,
+        ContentVersion = HostedSiteCommentRules.StoredVersion(comment),
+        RevisionId = comment.RevisionId,
+        IsResolved = comment.IsResolved,
+        CanResolve = site.CommentsEnabled && HostedSiteCommentRules.CanResolve(comment, site, viewerUserId),
+        AuthorUserId = maskUserId ? string.Empty : comment.AuthorUserId,
+        AuthorName = comment.AuthorName,
+        AuthorAvatarFileName = comment.AuthorAvatarFileName,
+        CreatedAt = comment.CreatedAt,
+        CanDelete = !string.IsNullOrWhiteSpace(viewerUserId)
+            && (site.OwnerUserId == viewerUserId || comment.AuthorUserId == viewerUserId),
+    };
 
     private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false)
     {
@@ -5401,19 +5632,22 @@ public class HostedSiteService : IHostedSiteService
             .Limit(500)
             .ToListAsync(ct);
 
-        bool viewerIsOwner = !string.IsNullOrWhiteSpace(viewerUserId) && site.OwnerUserId == viewerUserId;
-        return comments.Select(c => new HostedSiteCommentDto
+        // 最近 500 条里可能只有旧讨论的新回复，补齐其根讨论，避免用户看到无主回复。
+        var present = comments.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        var missingParents = comments.Where(c => !string.IsNullOrEmpty(c.ParentId) && !present.Contains(c.ParentId))
+            .Select(c => c.ParentId!).Distinct().ToList();
+        if (missingParents.Count > 0)
         {
-            Id = c.Id,
-            SiteId = c.SiteId,
-            Content = c.Content,
-            // 公开分享读取路径下抹掉内部 UserId，避免向匿名访客泄露账号标识（Codex P2）；CanDelete 已由服务端算好
-            AuthorUserId = maskUserId ? string.Empty : c.AuthorUserId,
-            AuthorName = c.AuthorName,
-            AuthorAvatarFileName = c.AuthorAvatarFileName,
-            CreatedAt = c.CreatedAt,
-            CanDelete = viewerIsOwner || (!string.IsNullOrWhiteSpace(viewerUserId) && c.AuthorUserId == viewerUserId),
-        }).ToList();
+            var roots = await _db.HostedSiteComments.Find(c => c.SiteId == site.Id && !c.IsDeleted
+                && missingParents.Contains(c.Id) && c.ParentId == null).ToListAsync(ct);
+            comments.AddRange(roots);
+        }
+        var canViewHistory = !string.IsNullOrEmpty(viewerUserId) && await CanEditSiteAsync(site, viewerUserId, ct);
+        if (!canViewHistory) comments = comments.Where(c => HostedSiteCommentRules.CanViewReviewVersion(
+            HostedSiteCommentRules.StoredVersion(c), EffectiveContentVersion(site), false)).ToList();
+        var rootIds = comments.Where(c => string.IsNullOrEmpty(c.ParentId)).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        return comments.Where(c => string.IsNullOrEmpty(c.ParentId) || rootIds.Contains(c.ParentId))
+            .Select(c => ToCommentDto(c, site, viewerUserId, maskUserId)).ToList();
     }
 
     /// <summary>

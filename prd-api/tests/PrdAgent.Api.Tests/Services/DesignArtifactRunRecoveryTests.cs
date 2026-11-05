@@ -2079,6 +2079,17 @@ public sealed class DesignArtifactRunRecoveryTests
             ],
         };
         await fixture.Db.HostedSites.InsertOneAsync(site);
+        // 此用例只验证上传阶段 CAS 失败，提供已归档的当前基线，避免归档上传先触发竞争。
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = "baseline-reupload-cas-loser", SiteId = site.Id,
+            Status = HostedSiteRevisionStatuses.Published, PublishedContentVersion = now,
+            PublishedEntryCosKey = "web-hosting/sites/" + site.Id + "/.versions/" + new string('a', 32) + "/index.html",
+            PublishedAssetKeys = ["web-hosting/sites/" + site.Id + "/.versions/" + new string('a', 32) + "/index.html"],
+            PublishedEntryFile = "index.html", CapturedContentShape = HostedSiteContentShapes.SelfContainedHtml,
+        });
+        site.Files[0].CosKey = "web-hosting/sites/" + site.Id + "/.versions/" + new string('a', 32) + "/index.html";
+        await fixture.Db.HostedSites.ReplaceOneAsync(x => x.Id == site.Id, site);
         string? uploadedKey = null;
         var deleted = new List<string>();
         var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
@@ -2114,7 +2125,8 @@ public sealed class DesignArtifactRunRecoveryTests
         Assert.Contains(uploadedKey, afterFailure.PendingAssetCleanupKeys);
         Assert.Empty(afterFailure.AssetPublishInProgressKeys);
         Assert.True(await service.ResumeNextPendingAssetCleanupAsync(now.AddMinutes(10), CancellationToken.None));
-        Assert.Equal([uploadedKey!], deleted);
+        Assert.Equal(["web-hosting/sites/" + site.Id + "/index.html", uploadedKey!], deleted);
+        Assert.DoesNotContain(site.Files[0].CosKey, deleted);
         storage.VerifyAll();
     }
 

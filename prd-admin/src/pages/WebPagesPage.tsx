@@ -2258,6 +2258,10 @@ export default function WebPagesPage() {
       {commentSite && (
         <SitePreviewModal
           site={commentSite}
+          onSiteVersionChanged={(updated) => {
+            setCommentSite(updated);
+            setSites(current => current.map(item => item.id === updated.id ? updated : item));
+          }}
           onEditInWorkbench={() => openSiteEditor(commentSite)}
           onClose={() => setCommentSite(null)}
           canToggleComments={siteCaps(commentSite).canEdit}

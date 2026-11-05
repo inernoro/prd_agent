@@ -48,7 +48,8 @@ export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null
 }
 
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
-export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null }
+export const DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS = 20 * 60_000;
+export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null; operationGeneration?: number }
 interface Request {
   owner: DeploymentPhaseOwner; check?: () => void; signal?: AbortSignal;
   resolve: (release: () => void) => void; reject: (error: Error) => void;
@@ -78,11 +79,34 @@ export class DeploymentPhaseBudget {
     }]));
   }
 
+  /** 只观测真实、有界且资格仍有效的排队，不把执行中或已过期任务伪装成等待。 */
+  waitingOperation(operationId: string, generation: number): { phase: DeploymentPhase; enqueuedAt: number; deadlineAt: number } | undefined {
+    if (!operationId || !Number.isSafeInteger(generation) || generation < 1) return undefined;
+    for (const [phase, queue] of this.waiting) for (const request of queue) {
+      if (request.owner.operationId !== operationId || request.owner.operationGeneration !== generation
+        || !request.check || request.signal?.aborted || Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) continue;
+      try { request.check?.(); } catch { continue; }
+      return { phase, enqueuedAt: request.enqueuedAt, deadlineAt: request.enqueuedAt + DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS };
+    }
+    return undefined;
+  }
+
   releaseMemory(key: string): void { this.memoryReservations.delete(key); this.pump(); }
   reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64): void {
     this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, value]) => ({ key, ...value })); }
+  /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
+  captureMemoryRelease(key: string, owner?: DeploymentPhaseOwner): () => boolean {
+    const reservation = this.memoryReservations.get(key);
+    const owned = !owner || reservation && (['projectId', 'branchId', 'profileId', 'operationId', 'operationGeneration'] as const)
+      .every(field => reservation.owner[field] === owner[field]);
+    return () => {
+      if (!owned || !reservation || this.memoryReservations.get(key) !== reservation) return false;
+      this.releaseMemory(key); return true;
+    };
+  }
+
   private memoryAllows(memoryMB: number, key?: string): boolean {
     const available = this.availableMemoryMB();
     const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
@@ -126,7 +150,7 @@ export class DeploymentPhaseBudget {
       for (let index = queue.length - 1; index >= 0; index--) {
         const request = queue[index];
         try { request.check?.(); if (request.signal?.aborted) throw new Error('部署阶段等待已取消');
-          if (Date.now() - request.enqueuedAt > 1200000) throw new Error('部署阶段等待超时，旧服务保持可用');
+          if (Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new Error('部署阶段等待超时，旧服务保持可用');
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
       while (active.size < this.limits[phase] && queue.length) {

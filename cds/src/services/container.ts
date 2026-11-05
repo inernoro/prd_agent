@@ -97,6 +97,7 @@ export interface ProjectNetworkResolver {
 
 export interface ContainerRemoveContext {
   assertCurrent?: (step: string) => void;
+  onProgress?: (step: 'admitted' | 'diagnostics-returned' | 'stop' | 'stop-returned' | 'rm' | 'rm-returned') => void;
   kind?: ContainerLifecycleIntentKind;
   reason?: string;
   projectId?: string | null;
@@ -105,6 +106,7 @@ export interface ContainerRemoveContext {
   serviceId?: string | null;
   requestId?: string | null;
   operationId?: string | null;
+  operationGeneration?: number;
   actor?: string | null;
   trigger?: string | null;
   operation?: string | null;
@@ -725,11 +727,12 @@ export class ContainerService {
   }
   async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
     context: ContainerRemoveContext = {}): Promise<void> {
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(runtime.containerName);
     const owned = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
     context.assertCurrent?.('after runtime retirement identity');
     if (!owned) {
       if (!runtime.containerId && runtime.creationIssued) throw new Error('迟到创建身份未确认，保留回收责任');
-      deploymentPhaseBudget.releaseMemory(runtime.containerName);
+      releaseMemory();
       return;
     }
     await this.remove(owned.containerId!, context);
@@ -737,7 +740,7 @@ export class ContainerService {
     const after = await this.shell.exec(`docker inspect --format ${this.shellQuote('{{.Id}}')} ${this.shellQuote(owned.containerId!)}`,
       { timeout: 5000, executionLane: 'observation' });
     if (after.exitCode === 0 || !/No such (?:container|object):/i.test(combinedOutput(after))) throw new Error('旧运行身份回收未确认，保留责任及容量占用');
-    deploymentPhaseBudget.releaseMemory(runtime.containerName);
+    releaseMemory();
   }
   async connectReplacementPeer(
     entry: BranchEntry, profile: BuildProfile, service: ServiceState, network: string,
@@ -1478,6 +1481,7 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
+      operationGeneration?: number;
       assertCurrent?: (step: string) => void;
       preserveContainerNames?: readonly string[];
       onRuntimeCreated?: (service: ServiceState) => Promise<void>;
@@ -1520,7 +1524,7 @@ export class ContainerService {
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
     let shell = this.qualifiedShell(context.assertCurrent);
-    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
+    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId, operationGeneration: context.operationGeneration };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
@@ -2696,6 +2700,7 @@ export class ContainerService {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before restart identity');
     const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    context.assertCurrent?.('after restart identity');
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
       this.recordContainerEvent({
@@ -2738,6 +2743,7 @@ export class ContainerService {
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
+      context.assertCurrent?.('after restart failure diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',
@@ -2765,7 +2771,9 @@ export class ContainerService {
     }
     try {
       await this.waitForContainerAlive(containerName, onOutput);
+      context.assertCurrent?.('after restart liveness');
       const diagnostics = await this.captureContainerDiagnostics(containerName, 80);
+      context.assertCurrent?.('after restart diagnostics');
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',
@@ -2790,8 +2798,10 @@ export class ContainerService {
       });
       return true;
     } catch (err) {
+      context.assertCurrent?.('after restart liveness failure');
       onOutput?.(`── 重启后容器未存活: ${(err as Error).message} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 300);
+      context.assertCurrent?.('after restart early-exit diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',
@@ -2957,17 +2967,19 @@ export class ContainerService {
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
     const terminal = ['branch-delete', 'executor-delete-branch', 'build-profile-delete', 'cleanup-stopped'].includes(context.operation || '');
     return deploymentPhaseBudget.run(terminal ? 'terminal' : 'cleanup', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
-      profileId: context.profileId || undefined, operationId: context.operationId },
+      profileId: context.profileId || undefined, operationId: context.operationId, operationGeneration: context.operationGeneration },
       () => this.removeUnbudgeted(containerName, context), { check: () => context.assertCurrent?.('cleanup phase admission') });
   }
 
   private async removeUnbudgeted(containerName: string, context: ContainerRemoveContext): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
+    context.onProgress?.('admitted');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
     const kind = context.kind || 'cds-remove';
     const before = await this.captureContainerDiagnostics(containerName, 300);
     context.assertCurrent?.('after-remove-diagnostics');
+    context.onProgress?.('diagnostics-returned');
     this.recordContainerEvent({
       severity: 'warn',
       source: 'cds-container-service',
@@ -2993,8 +3005,16 @@ export class ContainerService {
       },
     });
     this.noteLifecycleIntent(containerName, kind, reason, context);
-    const stopResult = await shell.exec(`docker stop ${containerName}`);
-    const rmResult = await shell.exec(`docker rm ${containerName}`);
+    const dispatch = (step: 'stop' | 'rm') => shell.exec(`docker ${step} ${containerName}`, {
+      executionLane: 'operation', executionPurpose: 'temporary-cleanup', beforeStart: () => {
+        context.assertCurrent?.(`cleanup ${step} dispatch`);
+        context.onProgress?.(step);
+      },
+    });
+    const stopResult = await dispatch('stop');
+    context.assertCurrent?.('after cleanup stop return');
+    context.onProgress?.('stop-returned');
+    const rmResult = await dispatch('rm');
     const completion = classifyRemoveCompletion(rmResult);
     if (completion.severity !== 'error') deploymentPhaseBudget.releaseMemory(containerName);
     this.recordContainerEvent({
@@ -3026,6 +3046,8 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    context.assertCurrent?.('after cleanup rm return');
+    context.onProgress?.('rm-returned');
   }
 
   async isRunning(containerName: string): Promise<boolean> {
@@ -3957,7 +3979,8 @@ export class ContainerService {
       const refs = Object.values(entry.services).flatMap(service => serviceRuntimeRefs(service).map(runtime => ({ service, runtime })));
       if (refs.some(({ runtime }) => runtime.networkName === network)) continue;
       const shell = this.qualifiedShell(context.assertCurrent);
-      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id }, async () => {
+      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id,
+        operationId: context.operationId, operationGeneration: context.operationGeneration }, async () => {
         const networkView = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(network)}`,
           { timeout: 5000, executionLane: 'observation' });
         context.assertCurrent?.('after unused replacement network ownership');

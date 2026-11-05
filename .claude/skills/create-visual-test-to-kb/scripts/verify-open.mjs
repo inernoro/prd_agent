@@ -11,6 +11,7 @@
 //   例：node verify-open.mjs https://<cds-host>/r/<report-id> "SaaS空间模型" 4
 // 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
 import { createRequire } from 'module';
+import { isConfiguredCdsTargetHost } from './report-view.mjs';
 const require = createRequire(import.meta.url);
 const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
 const { chromium } = require(PW);
@@ -45,16 +46,16 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, 
 const cdsAccessKey = (process.env.CDS_PROJECT_KEY || process.env.AI_ACCESS_KEY || '').trim();
 let targetHost = '';
 try { targetHost = new URL(url).host; } catch {}
-const isCdsHost = (host) => /(^|\.)cds\.miduo\.org$/i.test(host || '');
+const trustedTargetHost = isConfiguredCdsTargetHost(targetHost, process.env.CDS_HOST || '');
 // 关键：ctx.setExtraHTTPHeaders 会给 context 内「所有」请求带上 header，
 // 报告页里的外链图片 / iframe / 三方子资源都会被附上密钥，造成密钥泄漏到非 CDS host。
-// 改用 route 逐请求判定：仅当该请求的 host 是目标 CDS host 时才注入密钥头。
-if (cdsAccessKey && isCdsHost(targetHost)) {
+// 逐请求判定：只有目标与已配置 CDS_HOST 精确同主机，且子请求仍为该主机才注入密钥头。
+if (cdsAccessKey && trustedTargetHost) {
   await ctx.route('**/*', async (route) => {
     const req = route.request();
     let reqHost = '';
     try { reqHost = new URL(req.url()).host; } catch {}
-    if (isCdsHost(reqHost)) {
+    if (reqHost.toLowerCase() === targetHost.toLowerCase()) {
       const headers = { ...req.headers(), 'x-ai-access-key': cdsAccessKey };
       await route.continue({ headers });
     } else {
