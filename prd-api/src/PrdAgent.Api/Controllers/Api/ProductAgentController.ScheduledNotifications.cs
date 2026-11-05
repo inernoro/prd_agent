@@ -11,7 +11,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public partial class ProductAgentController
 {
     public sealed record ScheduledNotificationRequest(string? Name, string? Message, string? Frequency,
-        string? Time, string? Date, int? Day, bool Enabled, string? WebhookUrl, string? Revision);
+        string? Time, string? Date, int? Day, bool Enabled, string? WebhookUrl, string? Revision, bool? MentionAll = null);
 
     [HttpGet("settings/scheduled-notifications")]
     public async Task<IActionResult> ListScheduledNotifications([FromServices] IConfiguration configuration)
@@ -62,6 +62,7 @@ public partial class ProductAgentController
         {
             Name = name,
             Message = message,
+            MentionAll = request.MentionAll ?? true,
             Frequency = request.Frequency!,
             Time = request.Time!,
             Date = request.Frequency == "once" ? request.Date : null,
@@ -85,6 +86,7 @@ public partial class ProductAgentController
             .Set(x => x.Enabled, task.Enabled).Set(x => x.NextRunAt, task.NextRunAt)
             .Set(x => x.UpdatedAt, task.UpdatedAt).Set(x => x.Revision, task.Revision);
         if (task.ProtectedWebhook.Length > 0) update = update.Set(x => x.ProtectedWebhook, task.ProtectedWebhook);
+        if (request.MentionAll.HasValue) update = update.Set(x => x.MentionAll, request.MentionAll.Value);
         var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision);
         var saved = await _db.ProductScheduledNotifications.FindOneAndUpdateAsync(
             filter, update,
@@ -97,7 +99,7 @@ public partial class ProductAgentController
     private static object ScheduledNotificationView(ProductScheduledNotification task) => new
     {
         task.Id, task.Revision, task.Name, task.Message, task.Frequency, task.Time, task.Date, task.Day,
-        task.Enabled, task.NextRunAt, task.LastRunAt, task.LastResult,
+        task.Enabled, task.MentionAll, task.NextRunAt, task.LastRunAt, task.LastResult,
         webhookMasked = ProductScheduledNotificationTiming.MaskedWebhook,
     };
 }

@@ -1,10 +1,35 @@
+using System.Text.Json;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using PrdAgent.Api.Services.ProductAgent;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
 public class ProductScheduledNotificationTimingTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ScheduledNotificationPayloadRespectsMentionAll(bool mentionAll)
+    {
+        using var payload = JsonDocument.Parse(ProductClaimWebhookPayload.Build("通知<@all>", null, mentionAll));
+        var text = payload.RootElement.GetProperty("text");
+        Assert.Equal("通知", text.GetProperty("content").GetString());
+        Assert.Equal(mentionAll, text.TryGetProperty("mentioned_list", out var mentions));
+        if (mentionAll)
+            Assert.Equal("@all", Assert.Single(mentions.EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public void ExistingNotificationsKeepTheirPreviousMentionBehavior()
+    {
+        var previous = BsonSerializer.Deserialize<ProductScheduledNotification>(
+            new BsonDocument("_id", "existing-task"));
+        Assert.False(previous.MentionAll);
+    }
+
     private static readonly DateTime Now = new(2026, 11, 5, 1, 0, 0, DateTimeKind.Utc);
 
     [Theory]

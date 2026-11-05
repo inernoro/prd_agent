@@ -6,6 +6,7 @@ public sealed class ProductScheduledNotification
     public string Revision { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "";
     public string Message { get; set; } = "";
+    public bool MentionAll { get; set; }
     public string Frequency { get; set; } = "";
     public string Time { get; set; } = "";
     public string? Date { get; set; }

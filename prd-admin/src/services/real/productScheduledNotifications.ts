@@ -10,6 +10,7 @@ export type ScheduledNotificationInput = {
   date: string | null;
   day: number | null;
   enabled: boolean;
+  mentionAll: boolean;
   webhookUrl?: string;
   revision?: string;
 };

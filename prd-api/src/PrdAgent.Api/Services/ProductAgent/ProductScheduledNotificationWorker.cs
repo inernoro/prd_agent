@@ -63,7 +63,7 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
         {
             var url = protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose).Unprotect(task.ProtectedWebhook);
             if (!ProductClaimWebhookPayload.IsValidWebhook(url)) return "failed";
-            var payload = ProductClaimWebhookPayload.Build(task.Message, null);
+            var payload = ProductClaimWebhookPayload.Build(task.Message, null, task.MentionAll);
             var client = clients.CreateClient("product-claim-webhook");
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
             started = true;

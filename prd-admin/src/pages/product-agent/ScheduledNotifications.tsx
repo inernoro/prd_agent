@@ -129,6 +129,7 @@ function NotificationEditor({ task, onClose, onSaved }: {
       date: frequency === 'once' ? String(data.get('date') ?? '') : null,
       day: frequency === 'weekly' || frequency === 'monthly' ? Number(data.get('day')) : null,
       enabled: true,
+      mentionAll: data.has('mentionAll'),
       webhookUrl: String(data.get('webhook') ?? '').trim() || undefined,
       revision: task?.revision,
     };
@@ -171,6 +172,7 @@ function NotificationEditor({ task, onClose, onSaved }: {
             <input className={field} name="webhook" type="password" autoComplete="new-password" required={!task} maxLength={512}
               placeholder={task ? '留空保留原链接，输入新链接即可替换' : '粘贴企业微信机器人链接'} />
           </label>
+          <label className="flex items-center gap-2"><input name="mentionAll" type="checkbox" defaultChecked={task?.mentionAll ?? true} />@全部人</label>
           {error && <p role="alert" className="text-semantic-danger">{error}</p>}
         </form>
       }
