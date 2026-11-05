@@ -87,6 +87,7 @@ export function LogicalModelsPage() {
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [claimDraft, setClaimDraft] = useState<{ id: string; value: string } | null>(null);
+  const [allowlistDraft, setAllowlistDraft] = useState<{ id: string; value: string } | null>(null);
   const [draft, setDraft] = useState<CreateLogicalModelRequest>({
     publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(),
     allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100,
@@ -224,6 +225,17 @@ export function LogicalModelsPage() {
     okNotice(codes.length === 0
       ? `已取消「${item.name}」的全部认领；这些调用方不点名时会回落到 ${item.modelType} 用途的默认`
       : `${codes.length} 个调用方不点名时，从现在起走「${item.name}」`);
+  }
+
+  async function saveAllowlist(item: LogicalModelItem, raw: string) {
+    const codes = raw.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
+    setBusy(`allowlist:${item.id}`);
+    const res = await updateLogicalModel(item.id, { allowedAppCallerCodes: codes });
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '保存允许调用方失败'); return; }
+    setItems((prev) => prev?.map((x) => x.id === item.id ? res.data : x) || null);
+    setAllowlistDraft(null);
+    okNotice(`${item.name} 允许调用方已更新：${describeScope(res.data.allowedAppCallerCodes)}`);
   }
 
   async function toggleDefault(item: LogicalModelItem) {
@@ -554,6 +566,16 @@ export function LogicalModelsPage() {
                             >
                               指定调用方
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-expanded={allowlistDraft?.id === item.id}
+                              onClick={() => setAllowlistDraft((x) => (x?.id === item.id
+                                ? null
+                                : { id: item.id, value: item.allowedAppCallerCodes.join(', ') }))}
+                            >
+                              允许调用方
+                            </Button>
                             <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
@@ -582,6 +604,24 @@ export function LogicalModelsPage() {
                               保存
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => setClaimDraft(null)}>取消</Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {allowlistDraft?.id === item.id && canWrite ? (
+                        <div data-testid="logical-model-allowlist" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                          <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
+                            这些调用方可以使用此模型，不改变默认调用方。逗号或空格分隔；留空表示当前租户全部调用方可用。
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                            <input
+                              aria-label={`${item.name} 允许的调用方`}
+                              value={allowlistDraft.value}
+                              onChange={(e) => setAllowlistDraft({ id: item.id, value: e.target.value })}
+                              style={{ ...inputStyle, flex: 1, minWidth: 260 }}
+                            />
+                            <Button size="sm" disabled={busy === `allowlist:${item.id}`} onClick={() => void saveAllowlist(item, allowlistDraft.value)}>保存</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setAllowlistDraft(null)}>取消</Button>
                           </div>
                         </div>
                       ) : null}

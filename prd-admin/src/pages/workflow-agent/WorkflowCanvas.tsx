@@ -38,7 +38,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Dialog } from '@/components/ui/Dialog';
 import { listCapsuleTypes, updateWorkflow, executeWorkflow, getExecution, cancelExecution, testRunCapsule } from '@/services';
 import { replayNode } from '@/services/real/workflowAgent';
-import { useAuthStore } from '@/stores/authStore';
+import { getDesignArtifactRun } from '@/services/real/webPages';
 import { Badge } from '@/components/design/Badge';
 import { autoLayoutNodes } from './autoLayout';
 import { useCanvasHistory } from './useCanvasHistory';
@@ -235,8 +235,9 @@ function CanvasInner({
   const [isExecuting, setIsExecuting] = useState(false);
   const [showLogPanel, setShowLogPanel] = useState(false);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [designProgress, setDesignProgress] = useState<CanvasDesignProgress[]>([]);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const sseAbortRef = useRef<AbortController | null>(null);
+  const observerVersion = useRef(0);
   const prevNodeStatusRef = useRef<Record<string, string>>({});
   const logIdCounter = useRef(0);
   const pollFailCount = useRef(0);
@@ -417,7 +418,7 @@ function CanvasInner({
   // ─── 连线 "+" 按钮插入节点的回调 → 注入每条边 ───
   const handleAddNodeOnEdge = useCallback((edgeId: string, position: { x: number; y: number }) => {
     // 找到这条边
-    const edge = edges.find((e) => e.id === edgeId);
+    const edge = reactFlowInstance.getEdges().find((e) => e.id === edgeId);
     if (!edge) return;
 
     // 在边的中点位置放置一个待选菜单
@@ -435,17 +436,17 @@ function CanvasInner({
         targetHandle: edge.targetHandle ?? null,
       },
     });
-  }, [edges, reactFlowInstance]);
+  }, [reactFlowInstance]);
 
   // 注入 onAddNode 到所有边
   useEffect(() => {
     setEdges((prev) =>
-      prev.map((e) => ({
+      prev.every((e) => e.data?.onAddNode === handleAddNodeOnEdge) ? prev : prev.map((e) => ({
         ...e,
         data: { ...e.data, onAddNode: handleAddNodeOnEdge },
       })),
     );
-  }, [handleAddNodeOnEdge, setEdges]);
+  }, [edges, handleAddNodeOnEdge, setEdges]);
 
   // ─── 从弹出菜单中选择节点类型后创建节点 ───
   const handlePickNodeFromMenu = useCallback((meta: CapsuleTypeMeta) => {
@@ -515,6 +516,7 @@ function CanvasInner({
 
   // 获取编辑中的节点
   const editingNode = editingNodeId ? nodes.find((n) => n.id === editingNodeId) : null;
+  const logPanelVisible = showLogPanel && !editingNode;
   const editingMeta = editingNode ? capsuleTypes.find((t) => t.typeKey === editingNode.data.capsuleType) : null;
 
   // ─── 更新节点名称 ───
@@ -606,16 +608,23 @@ function CanvasInner({
   }
 
   function stopPolling() {
+    observerVersion.current++;
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
-    if (sseAbortRef.current) { sseAbortRef.current.abort(); sseAbortRef.current = null; }
   }
 
   function startPolling(execId: string) {
     stopPolling();
+    const version = observerVersion.current;
+    let inFlight = false;
+    let observing = false;
+    setDesignProgress([]);
     pollFailCount.current = 0;
     pollingRef.current = setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const res = await getExecution(execId);
+        if (version !== observerVersion.current) return;
         pollFailCount.current = 0;
         if (res.success && res.data) {
           const exec = res.data.execution;
@@ -662,47 +671,43 @@ function CanvasInner({
             else
               addLog('warn', '工作流已取消');
             stopPolling();
+            setDesignProgress([]);
+            return;
+          }
+          if (!observing) {
+            observing = true;
+            void Promise.all(exec.nodeExecutions.filter(ne => ne.status === 'running' && ne.designRunId).map(async ne => {
+              const observed: CanvasDesignProgress = { nodeName: ne.nodeName, runId: ne.designRunId! };
+              try {
+                const result = await getDesignArtifactRun(observed.runId);
+                if (result.success && result.data.runId === observed.runId) {
+                  return { ...observed, phase: result.data.phase, progress: result.data.progress, status: result.data.status };
+                }
+              } catch { /* 阶段读取失败不改变工作流权威状态。 */ }
+              return observed;
+            })).then(observations => {
+              if (version === observerVersion.current) setDesignProgress(observations);
+            }).finally(() => { observing = false; });
           }
         }
       } catch {
+        if (version !== observerVersion.current) return;
         // 网络闪断时保持轮询，不中断
         pollFailCount.current++;
         if (pollFailCount.current >= 5) {
           addLog('warn', '轮询超时，请检查网络后刷新页面');
           stopPolling();
+          setDesignProgress([]);
         }
+      } finally {
+        inFlight = false;
       }
     }, 2500);
   }
 
-  function startSseStream(execId: string) {
-    if (sseAbortRef.current) sseAbortRef.current.abort();
-    const abort = new AbortController();
-    sseAbortRef.current = abort;
-
-    const token = useAuthStore.getState().token;
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string || '').replace(/\/+$/, '');
-    const url = `${baseUrl}/api/workflow-agent/executions/${execId}/stream`;
-
-    (async () => {
-      try {
-        const headers: Record<string, string> = { Accept: 'text/event-stream' };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        const resp = await fetch(url, { headers, signal: abort.signal });
-        if (!resp.ok || !resp.body) return;
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const parts = buf.split('\n\n');
-          buf = parts.pop() || '';
-          // SSE events parsed but LLM streaming not needed in canvas view
-        }
-      } catch { /* ignore abort */ }
-    })();
+  function openLogs() {
+    setEditingNodeId(null);
+    setShowLogPanel(true);
   }
 
   function handleExecuteClick() {
@@ -719,7 +724,7 @@ function CanvasInner({
     for (const v of varDefs) {
       if (v.required && !variables[v.key]) {
         addLog('error', `请填写「${v.label}」`);
-        setShowLogPanel(true);
+        openLogs();
         return;
       }
     }
@@ -729,7 +734,7 @@ function CanvasInner({
       await handleSave();
       if (dirty) {
         addLog('error', '保存失败，无法执行');
-        setShowLogPanel(true);
+        openLogs();
         return;
       }
     }
@@ -738,7 +743,7 @@ function CanvasInner({
     setLogEntries([]);
     prevNodeStatusRef.current = {};
     addLog('info', '提交执行请求...');
-    setShowLogPanel(true);
+    openLogs();
 
     // 清除之前的执行状态
     setNodes(prev => prev.map(n => ({ ...n, data: { ...n.data, execStatus: undefined, durationMs: undefined } })));
@@ -750,7 +755,6 @@ function CanvasInner({
         const exec = res.data.execution;
         setLatestExec(exec);
         addLog('info', `工作流已入队，共 ${exec.nodeExecutions.length} 个节点`);
-        startSseStream(exec.id);
         startPolling(exec.id);
       } else {
         addLog('error', '执行失败: ' + (res.error?.message || '未知错误'));
@@ -766,6 +770,7 @@ function CanvasInner({
     if (!latestExec) return;
     await cancelExecution(latestExec.id);
     stopPolling();
+    setDesignProgress([]);
     try {
       const res = await getExecution(latestExec.id);
       if (res.success && res.data) setLatestExec(res.data.execution);
@@ -869,7 +874,6 @@ function CanvasInner({
   // 如果加载时有正在运行的执行，自动开始轮询
   useEffect(() => {
     if (latestExec && ['queued', 'running'].includes(latestExec.status)) {
-      startSseStream(latestExec.id);
       startPolling(latestExec.id);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1062,9 +1066,10 @@ function CanvasInner({
               AI
             </Button>
             <Button
-              variant={showLogPanel ? 'primary' : 'secondary'}
+              variant={logPanelVisible ? 'primary' : 'secondary'}
               size="xs"
-              onClick={() => setShowLogPanel(v => !v)}
+              aria-pressed={logPanelVisible}
+              onClick={() => logPanelVisible ? setShowLogPanel(false) : openLogs()}
             >
               <Terminal className="w-3.5 h-3.5" />
               日志{logEntries.length > 0 ? ` (${logEntries.length})` : ''}
@@ -1253,8 +1258,8 @@ function CanvasInner({
         )}
 
         {/* 右侧执行日志面板 */}
-        {showLogPanel && !editingNode && (
-          <CanvasLogPanel entries={logEntries} onClear={() => setLogEntries([])} onClose={() => setShowLogPanel(false)} />
+        {logPanelVisible && (
+          <CanvasLogPanel entries={logEntries} designProgress={designProgress} onClear={() => setLogEntries([])} onClose={() => setShowLogPanel(false)} />
         )}
 
         {/* 右侧 AI 助手面板 */}
@@ -1306,6 +1311,14 @@ interface LogEntry {
   message: string;
 }
 
+interface CanvasDesignProgress {
+  nodeName: string;
+  runId: string;
+  phase?: string;
+  progress?: number;
+  status?: string;
+}
+
 const LOG_LEVEL_COLORS: Record<string, string> = {
   info: 'rgba(99,102,241,0.9)',
   success: 'rgba(34,197,94,0.9)',
@@ -1313,7 +1326,7 @@ const LOG_LEVEL_COLORS: Record<string, string> = {
   warn: 'rgba(234,179,8,0.9)',
 };
 
-function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; onClear: () => void; onClose: () => void }) {
+function CanvasLogPanel({ entries, designProgress, onClear, onClose }: { entries: LogEntry[]; designProgress: CanvasDesignProgress[]; onClear: () => void; onClose: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -1355,6 +1368,12 @@ function CanvasLogPanel({ entries, onClear, onClose }: { entries: LogEntry[]; on
         </button>
       </div>
 
+      {designProgress.map(run => (
+        <div key={run.runId} role="status" className="flex items-center gap-2 border-b px-3 py-2 text-xs text-token-secondary">
+          {!['done', 'error', 'cancelled'].includes(run.status?.toLowerCase() ?? '') && <MapSpinner size={14} />}
+          <span>{run.nodeName} · {run.phase || '阶段暂不可读'}{run.progress !== undefined ? ` · ${run.progress}%` : ''}</span>
+        </div>
+      ))}
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5"
