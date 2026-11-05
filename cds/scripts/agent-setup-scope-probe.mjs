@@ -135,7 +135,8 @@ try {
       })]);
     } finally { clearTimeout(requestTimer); }
     assert.equal(await copy.isEnabled(), false);
-    assert.equal(await dialog.locator('pre').innerText(), '正在读取当前项目范围，随后生成接入口令。');
+    assert.equal(await dialog.locator('pre').count(), 0);
+    await dialog.getByRole('status', { name: '读取项目接入说明', exact: true }).waitFor();
     projectMode = 'ok';
     assert(releaseProjects.length > 0);
     for (const release of releaseProjects.splice(0)) release();
