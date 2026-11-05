@@ -19,6 +19,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import { commitServiceReplacements } from '../../src/services/service-replacement.js';
 import { branchAppNetworkName } from '../../src/services/branch-network.js';
@@ -6822,6 +6823,61 @@ describe('Branch Routes', () => {
         expect(response.status).toBe(409); expect(runtime()).toBe(before); expect(actions).toEqual(['claim', 'revoke']);
         expect(branchOperationCoordinator.getActiveOperations(id)).toHaveLength(0);
       } finally { remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve())); }
+    });
+
+    it.each(['remote-error', 'post-complete-flush', 'missing-terminal'] as const)('远端终态与本机保存边界%s保留真实执行原因和心跳资格', async mode => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const id = `remote-terminal-${mode}`, now = new Date().toISOString(), controls: string[] = [];
+      stateService.addBranch({ id, projectId: 'default', branch: `feature/${id}`, worktreePath: path.join(tmpDir, id), createdAt: now, status: 'idle', services: {} });
+      const entry = stateService.getBranch(id)!, originalFlush = stateService.flush.bind(stateService);
+      let payload: any, flushRejected = false;
+      const flush = vi.spyOn(stateService, 'flush').mockImplementation(async () => {
+        if (mode === 'post-complete-flush' && !flushRejected && entry.services.api?.containerName === 'remote-final-api') {
+          flushRejected = true; throw new Error('synthetic persistence failure after real completion');
+        }
+        await originalFlush();
+      });
+      const remote = http.createServer((req, res) => {
+        let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+          const value = JSON.parse(raw);
+          if (req.url === '/exec/deployment-owner') {
+            controls.push(value.action); res.setHeader('Content-Type', 'application/json'); res.end('{"qualified":true,"admissionId":"native-terminal-admission"}');
+          } else {
+            payload = value; res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+            res.end(mode === 'remote-error'
+              ? 'event: error\ndata: {"message":"真实执行器git失败","services":{}}\n\n'
+              : mode === 'missing-terminal'
+                ? 'event: step\ndata: {"step":"building","status":"running"}\n\n'
+                : 'event: complete\ndata: {"ok":true,"services":{"api":{"profileId":"api","containerName":"remote-final-api","hostPort":10001,"status":"running"}}}\n\n');
+          }
+        });
+      });
+      await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+      registryNodes.push({ id: 'exec-terminal', host: '127.0.0.1', port: (remote.address() as { port: number }).port,
+        status: 'online', role: 'remote', labels: [], branches: [], capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-terminal' });
+        expect(response.status).toBe(200); expect(deploymentRunService.get(payload.deploymentRunId)?.status).toBe('failed');
+        if (mode === 'remote-error') {
+          expect(entry.errorMessage).toBe('真实执行器git失败'); expect(String(response.body)).not.toContain('没有返回完整部署回执');
+          expect(entry.remoteDeployment?.revoked).toBe(true); expect(controls).toEqual(['claim', 'revoke']);
+        } else if (mode === 'missing-terminal') {
+          expect(entry.errorMessage).toContain('没有返回完整部署回执'); expect(entry.status).toBe('error');
+          expect(entry.remoteDeployment?.revoked).toBe(true); expect(controls).toEqual(['claim', 'revoke']);
+        } else {
+          expect(flushRejected).toBe(true); expect(entry.errorMessage).toMatch(/保存|持久|确认/);
+          expect(entry.remoteDeployment?.revoked).toBe(false); expect(entry.status).toBe('running'); expect(controls).toEqual(['claim']);
+          const registry = new ExecutorRegistry(stateService);
+          registry.register({ id: 'exec-terminal', host: '127.0.0.1', port: 9901, capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 } });
+          registry.heartbeat('exec-terminal', { load: { memoryUsedMB: 0, cpuPercent: 0 }, branches: {
+            [id]: { status: 'running', remoteDeployment: { ...payload, revoked: false }, services: {
+              api: { profileId: 'api', containerName: 'remote-final-api', hostPort: 10002, status: 'running' },
+            } } as any,
+          } });
+          expect(entry.services.api.hostPort).toBe(10002);
+        }
+      } finally { flush.mockRestore(); remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve())); }
     });
 
     it('真实Master静默远端流取消独立撤销原代次，旧finally不能覆盖继任者', async () => {

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { createArtifactQualityGate, knowledgeEvidenceOf } from '../../src/services/agent-workspace-session-runtime';
 import { createArtifactQualityGate as createRuntimeGate, knowledgeEvidenceOf as runtimeEvidenceOf } from '../../../design-runtime/opendesign/src/quality/gate';
@@ -8,24 +9,42 @@ import { createArtifactQualityGate as createRuntimeGate, knowledgeEvidenceOf as 
  * 同一页面在执行器的质量闸里通过、到 MAP 发布闸才被拒，用户白等一整轮——根因是两道闸的证据口径分裂：
  * MAP（HostedSiteEditRunWorker.BuildQualityEvidence）明确不把用户写的标题与要求当证据，
  * 执行器这边却算进去了（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
- * 两份执行器（CDS 会话运行时、独立设计执行服务）都只许用「不含标题与要求」的证据。
+ * CDS 旧会话继续只用正文证据；独立设计服务按主干合同仅保留隔离交付与完整包校验。
  */
-const RUNTIMES = [
-  path.join(process.cwd(), 'src/services/agent-workspace-session-runtime.ts'),
-  path.join(process.cwd(), '../design-runtime/opendesign/src/executor.ts'),
-];
+describe('执行器沿用各自发布合同', () => {
+  it('CDS 旧会话只用不含标题与要求的证据', () => {
+    const file = path.join(process.cwd(), 'src/services/agent-workspace-session-runtime.ts');
+    const source = fs.readFileSync(file, 'utf8');
+    // 调用点一律显式传 false；单参数调用（默认把标题与要求算进证据）不许再出现。
+    const calls = (source.match(/collectArtifactQualityEvidence\([^)]*\)/g) ?? [])
+      .filter((call) => !call.includes(':')); // 去掉函数定义本身（带类型标注的形参）
+    expect(calls.length, '找不到证据收集调用，结构可能被挪走了').toBeGreaterThan(0);
+    expect(calls.filter((call) => !/,\s*false\)$/.test(call))).toEqual([]);
+  });
 
-describe('执行器质量闸与 MAP 发布闸同一证据口径', () => {
-  for (const file of RUNTIMES) {
-    it(`${path.basename(file)} 只用不含标题与要求的证据`, () => {
-      const source = fs.readFileSync(file, 'utf8');
-      // 调用点一律显式传 false；单参数调用（默认把标题与要求算进证据）不许再出现。
-      const calls = (source.match(/collectArtifactQualityEvidence\([^)]*\)/g) ?? [])
-        .filter((call) => !call.includes(':')); // 去掉函数定义本身（带类型标注的形参）
-      expect(calls.length, '找不到证据收集调用，结构可能被挪走了').toBeGreaterThan(0);
-      expect(calls.filter((call) => !/,\s*false\)$/.test(call))).toEqual([]);
-    });
-  }
+  it('独立设计服务实际绑定不以正文拒绝交付，仍拒绝不安全或不完整包', () => {
+    const file = path.join(process.cwd(), '../design-runtime/opendesign/src/executor.ts');
+    const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    const initializers: ts.CallExpression[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'checkArtifactQuality'
+        && node.initializer && ts.isCallExpression(node.initializer)) initializers.push(node.initializer);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(initializers).toHaveLength(1);
+    const initializer = initializers[0];
+    expect(initializer.expression.getText(source)).toBe('createArtifactQualityGate');
+    // 执行当前产品的实际初始化表达式，避免只测一个脱离调用端的默认 gate。
+    const gate = new Function('createArtifactQualityGate', `return (${initializer.getText(source)});`)(createRuntimeGate) as ReturnType<typeof createRuntimeGate>;
+    const html = (body: string) => `<!doctype html><html><head><title>t</title></head><body>${body}</body></html>`;
+    expect(gate(html('<main>计划 2026-10-01 上线。</main>'))).toContain('Content-Security-Policy');
+    expect(() => gate('<main>没有文档根</main>')).toThrow(/html root/);
+    expect(() => gate(html('<iframe srcdoc="x"></iframe>'), ['index.html'])).toThrow();
+    expect(() => gate(html('<script src="https://outside.invalid/app.js"></script>'), ['index.html'])).toThrow();
+    expect(() => gate(html('<script src="assets/missing.js"></script>'), ['index.html'])).toThrow();
+    expect(gate(html('<script src="assets/app.js"></script>'), ['index.html', 'assets/app.js'])).toContain('Content-Security-Policy');
+  });
 
   it('只出现在用户要求里的日期，页面引用它会被闸拒收并进入修复回路', () => {
     const gate = createArtifactQualityGate('知识库正文：本次改造分三步推进，负责人是平台组。');

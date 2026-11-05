@@ -4302,7 +4302,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const frame of drained.frames) ingestFrame(frame);
         if (drained.tail.trim()) ingestFrame(drained.tail);
       }
-      if (!remoteCompleted) throw new Error('执行器没有返回完整部署回执，请查看运行记录后重新部署');
+      if (!remoteCompleted && !proxyHasError) throw new Error('执行器没有返回完整部署回执，请查看运行记录后重新部署');
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
@@ -4358,6 +4358,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
       stateService.save();
     } finally {
+      // 本机保存失败仍须失败收尾，但不能撤销已成功完成的远端执行与后续心跳资格。
+      const remoteExecutionFailed = proxyHasError || !remoteCompleted;
       try {
       ownerGuard.assertCurrent();
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
@@ -4445,7 +4447,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       } finally {
         deploymentRunService?.clearRemoteExecutionWait(owner.deploymentRunId);
-        await ownerGuard.close(proxyHasError);
+        await ownerGuard.close(remoteExecutionFailed);
         try { res.end(); } catch { /* ignore */ }
       }
     }
