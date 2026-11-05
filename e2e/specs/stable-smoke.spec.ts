@@ -5211,10 +5211,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }));
     await page.getByRole('searchbox', { name: '搜索智能体、工具或平台能力' }).fill('授权健康');
     await page.getByRole('button', { name: /^授权健康中心 / }).click();
-    await expect(page.getByText(probe.body.error!.message || '', { exact: true })).toBeVisible();
+    await expect(page.getByText('自动化访问凭据与当前环境不一致，请从权威配置重新同步后重试。', { exact: true })).toBeVisible();
     expect((await readStableAuthSnapshot(page)) === before, '机器凭据失败不得退出当前用户').toBe(true);
     await page.unroute('**/api/authorization-health');
-    await page.getByRole('button', { name: '重新检查', exact: true }).click();
+    await page.getByRole('button', { name: '重新检查', exact: true }).first().click();
     await expect(page.getByRole('heading', { name: 'MAP 用户会话', exact: true })).toBeVisible();
     const health = await readEnvelope<{ recentFailures: Array<{ code: string; requestId: string; action: string }> }>(
       await page.request.get('/api/authorization-health', { headers: authHeaders(token) }),
