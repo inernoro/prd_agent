@@ -98,7 +98,7 @@ it('真实Canvas打开日志保留配置草稿，只观察同一设计任务并�
   expect(api.cancel).toHaveBeenCalledWith('existing-execution');
   api.execution = structuredClone(execution); api.defer = false;
   await act(async () => root.unmount()); root = createRoot(container); await render(); await click(button('日志')); await tick();
-  api.get.mockRejectedValue(new Error('本机断连夹具'));
+  api.get.mockResolvedValue({ success: false, error: { code: 'DISCONNECTED', message: '本机断连夹具' }, data: null });
   for (let attempt = 0; attempt < 5; attempt++) await tick();
   expect(container.querySelector('.workflow-log-panel')?.textContent).toContain('轮询超时');
   expect(container.querySelector('.workflow-log-panel [role="status"]')).toBeNull();

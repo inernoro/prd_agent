@@ -626,6 +626,7 @@ function CanvasInner({
       try {
         const res = await getExecution(execId);
         if (version !== observerVersion.current) return;
+        if (!res.success || !res.data) throw new Error('execution_observation_unavailable');
         pollFailCount.current = 0;
         if (res.success && res.data) {
           const exec = res.data.execution;
