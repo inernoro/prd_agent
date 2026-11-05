@@ -9,6 +9,8 @@ public class ProductAgentSettings
     public List<string> AdminIds { get; set; } = new();
     [System.Text.Json.Serialization.JsonIgnore]
     public ProductClaimWebhookConfig ClaimWebhook { get; set; } = new();
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ScheduledNotificationDebugWebhook { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string UpdatedBy { get; set; } = string.Empty;
 }
