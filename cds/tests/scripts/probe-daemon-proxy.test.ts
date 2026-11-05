@@ -38,6 +38,22 @@ async function attach(socketPath: string) {
 }
 
 describe('owned Docker probe proxy wire conformance', () => {
+  it('保留首段与末段有界请求证据，长流程后仍能看到原删除回执', async () => {
+    const f = await fixture(); f.proxy.enableTrace();
+    const send = (method: string, url: string) => new Promise<void>((resolve, reject) => {
+      const request = http.request({ socketPath: f.proxyPath, method, path: url }, response => {
+        response.resume(); response.once('end', resolve);
+      }); request.once('error', reject); request.end();
+    });
+    try {
+      for (let i = 0; i < 400; i++) await send('GET', `/v1.53/containers/${'a'.repeat(64)}/json`);
+      await send('DELETE', `/v1.53/containers/${'b'.repeat(64)}`);
+      expect(f.proxy.requestTimeline).toHaveLength(1024); expect(f.proxy.traceOverflow()).toBeGreaterThan(0);
+      expect(f.proxy.requestTimeline[0]).toMatchObject({ requestId: 1, phase: 'received' });
+      expect(f.proxy.requestTimeline).toContainEqual(expect.objectContaining({ kind: 'container-remove',
+        containerId: 'b'.repeat(64), phase: 'response-headers', status: 200 }));
+    } finally { await f.close(); }
+  });
   it('lets the driver process exit after an already settled create instead of retaining its deadline', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-settle-exit-'));
     const moduleUrl = new URL('../../scripts/application-docker-inner-drill.ts', import.meta.url).href;
@@ -142,10 +158,10 @@ describe('owned Docker probe proxy wire conformance', () => {
     } finally { await proxy.close(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
   }, 10_000);
-  it.each(['release', 'deadline', 'close'] as const)('binds an original app create ID to only its start response until %s', async mode => {
+  it.each((['release', 'deadline', 'close'] as const).flatMap(mode => ['portable', 'image-id'].map(identity => ({ mode, identity }))))('binds an original app create ID to only its start response until $mode ($identity)', async ({ mode, identity }) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-app-start-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
-    const id = 'c'.repeat(64), otherId = 'd'.repeat(64), imageReference = `127.0.0.1:43210/owned-api@sha256:${'e'.repeat(64)}`;
+    const id = 'c'.repeat(64), otherId = 'd'.repeat(64), imageReference = identity === 'image-id' ? `sha256:${'e'.repeat(64)}` : `127.0.0.1:43210/owned-api@sha256:${'e'.repeat(64)}`;
     const target = { projectId: 'owned-project', branchId: 'owned-project-branch', profileId: 'api-owned', imageReference };
     const labels = { 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': target.projectId,
       'cds.branch.id': target.branchId, 'cds.profile.id': target.profileId };

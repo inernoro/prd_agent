@@ -9,6 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { BranchEntry, BuildProfile, CdsConfig } from '../src/types.js';
 import type { ArtifactAdmission } from '../src/services/artifact-admission.js';
+import { assertPinnedArtifactRuntime } from './native-artifact-identity.js';
 
 const value = (name: string): string => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] || '' : ''; };
 const modules = async () => ({
@@ -305,7 +306,11 @@ async function main(): Promise<void> {
     assert.equal(localPeerService.deployedImage, repositoryDigest);
     const localPeerId = docker(['inspect', '--format', '{{.Id}}', localPeerService.containerName]);
     const localPeerRuntime = ownedView(localPeerId); assert.notEqual(localPeerId, peerId);
-    assert.equal(localPeerRuntime.Config.Image, repositoryDigest);
+    const expectedWeb = admitted.artifactAdmission.artifacts.find(artifact => artifact.profileIds.includes('web'))!;
+    const expectedLocalImage = JSON.parse(docker(['image', 'inspect', repositoryDigest]))[0];
+    assertPinnedArtifactRuntime(localPeerRuntime, expectedLocalImage, {
+      manifest: expectedWeb.image, revision: head, platform: expectedWeb.platform, owner,
+    });
     assert.equal(localPeerRuntime.Config.Labels['org.opencontainers.image.revision'], head);
     assert.equal(docker(['ps', '-aq', '--no-trunc', '--filter', `id=${peerId}`]), '');
     ownedIds.splice(ownedIds.indexOf(peerId), 1); ownedIds.push(localPeerId);
@@ -479,7 +484,11 @@ async function main(): Promise<void> {
       secondary(['rm', '-f', secondaryRuntime]); assert.equal(secondary(['ps', '-aq']), ''); report.secondaryRuntimeRemoved = true;
     } catch (error) { cleanupErrors.push(String(error)); report.secondaryRuntimeRemoved = false; } }
     await shell.close().catch(error => cleanupErrors.push(String(error)));
-    for (const id of ownedIds.reverse()) { try { ownedView(id); docker(['rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
+    for (const id of ownedIds.reverse()) { try {
+      assert.match(id, /^[a-f0-9]{64}$/);
+      if (docker(['ps', '-aq', '--no-trunc', '--filter', `id=${id}`]) === '') continue;
+      ownedView(id); docker(['rm', '-f', id]);
+    } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedContainersRemoved = cleanupErrors.length === 0;
     if (secondaryDaemon) { try { report.secondaryDaemonRemoved = docker(['ps', '-aq', '--no-trunc', '--filter', `id=${secondaryDaemon}`]) === ''; assert.equal(report.secondaryDaemonRemoved, true); } catch (error) { cleanupErrors.push(String(error)); } }
     for (const volume of ownedVolumes.reverse()) { try {
