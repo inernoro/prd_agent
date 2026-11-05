@@ -286,7 +286,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   }, []);
 
   const review = useHostedReview(reviewFrameRef, data?.sites.length === 1 ? data.sites[0] : null,
-    token && data?.sites.length === 1 && !data.sites[0].wrappedAssetType ? { mode: 'share', token, password: password || undefined } : null,
+    token && data?.sites.length === 1 && !data.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
     () => setShowComments(true), handleOwnerSitePublished);
   const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
     token ? { token, password: password || undefined } : undefined, reviewFrameRef);
@@ -460,7 +460,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   useEffect(() => {
     if (!token || !data || data.sites.length !== 1) return;
     let alive = true;
-    listShareComments(token, password || undefined)
+    listShareComments(token, password || undefined, data.sites[0].id)
       .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.filter(c => !c.parentId).length); })
       .catch(() => {});
     return () => { alive = false; };
@@ -1167,7 +1167,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 </button>
               </div>
               <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                <CommentsSection key={`${token}:${password}`} mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
+                <CommentsSection key={`${token}:${password}:${liveSite.id}`} mode="share" siteId={liveSite.id} token={token} password={password || undefined} onCountChange={setCommentCount} annotations={annotations} review={liveSite.wrappedAssetType ? undefined : review} onPickElement={() => setShowComments(false)} onLogin={loginToReview} />
               </div>
             </aside>
           </>

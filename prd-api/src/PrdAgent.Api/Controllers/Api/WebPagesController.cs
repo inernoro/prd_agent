@@ -2029,10 +2029,10 @@ public partial class WebPagesController : ControllerBase
     /// <summary>经分享链接列出评论（公开访问，无需登录即可读）</summary>
     [HttpGet("shares/view/{token}/comments")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListShareComments(string token, [FromQuery] string? password)
+    public async Task<IActionResult> ListShareComments(string token, [FromQuery] string? password, [FromQuery] string? siteId = null)
     {
         var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
-        var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId);
+        var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId, siteId: siteId);
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
         return Ok(ApiResponse<object>.Ok(result));
@@ -2046,7 +2046,7 @@ public partial class WebPagesController : ControllerBase
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
             token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
-            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId);
         return MapAddCommentResult(result);
     }
 
@@ -2287,6 +2287,7 @@ public class SetCommentResolvedRequest
 
 public class AddSiteCommentRequest
 {
+    public string? SiteId { get; set; }
     public string? RevisionId { get; set; }
     public string? ExpectedContentVersion { get; set; }
     public HostedSiteCommentAnchor? Anchor { get; set; }

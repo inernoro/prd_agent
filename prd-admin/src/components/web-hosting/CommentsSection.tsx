@@ -13,7 +13,7 @@ const ELEMENT_LABELS: Record<string, string> = { button: '按钮', a: '链接', 
 const elementLabel = (tag: string) => ELEMENT_LABELS[tag] ?? '页面元素';
 
 type Props = (
-  | { mode: 'share'; token: string; password?: string; siteId?: never }
+  | { mode: 'share'; token: string; password?: string; siteId?: string }
   | { mode: 'site'; siteId: string; token?: never; password?: never }
 ) & {
   onStateLoaded?: (commentsEnabled: boolean) => void;
@@ -63,7 +63,7 @@ export default function CommentsSection(props: Props) {
       ? '此页面暂未连接批注层，仍可发表整页评论。' : '正在连接页面批注层…';
     return '先在网页上选择位置，意见就会留在那里。';
   })();
-  const identity = `${mode}:${token ?? siteId}:${password ?? ''}`;
+  const identity = `${mode}:${token ?? ''}:${siteId ?? ''}:${password ?? ''}`;
   const confirmedDraftVersion = useRef({ identity, versionKey });
   const identityRef = useRef(identity); identityRef.current = identity;
   const draftScope = `${identity}:${review?.selected?.id ?? ''}:${versionKey ?? ''}`;
@@ -98,7 +98,7 @@ export default function CommentsSection(props: Props) {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const res = mode === 'share' ? await listShareComments(token!, password) : await listSiteComments(siteId!);
+      const res = mode === 'share' ? await listShareComments(token!, password, siteId) : await listSiteComments(siteId!);
       if (!mounted.current || request !== fetchId.current) return;
       if (res.success && res.data) {
         setComments(res.data.comments); setCommentsEnabled(res.data.commentsEnabled); setCanComment(res.data.canComment);
@@ -128,7 +128,7 @@ export default function CommentsSection(props: Props) {
       revisionId: review?.historical ? review.selected?.id : undefined, expectedContentVersion: versionKey };
     setSubmitting(true); setError(null);
     try {
-      const res = mode === 'share' ? await addShareComment(token!, draft.trim(), password, options)
+      const res = mode === 'share' ? await addShareComment(token!, draft.trim(), password, { ...options, siteId })
         : await addSiteComment(siteId!, draft.trim(), options);
       if (!mounted.current || operationIdentity !== identityRef.current) return;
       if (res.success && res.data) {

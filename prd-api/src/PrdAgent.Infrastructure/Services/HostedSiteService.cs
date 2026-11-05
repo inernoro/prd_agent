@@ -5379,15 +5379,15 @@ public class HostedSiteService : IHostedSiteService
         };
     }
 
-    public async Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default)
+    public async Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default, string? siteId = null)
     {
-        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
-        if (err != null)
-            return new SiteCommentsResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
-        if (sites.Count == 0)
+        var access = await ResolveShareSiteAsync(token, siteId, password, viewerUserId, ct);
+        if (access.Error != null)
+            return new SiteCommentsResult { Error = access.Error, HttpStatus = access.HttpStatus, ErrorCode = access.ErrorCode, RetryAfterSeconds = access.RetryAfterSeconds };
+        var site = access.Site;
+        if (site == null)
             return new SiteCommentsResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        var site = sites[0];
         var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true);
         return new SiteCommentsResult
         {
@@ -5415,18 +5415,18 @@ public class HostedSiteService : IHostedSiteService
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
         string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null)
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null)
     {
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
 
-        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, authorUserId, ct);
-        if (err != null)
-            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
-        if (sites.Count == 0)
+        var access = await ResolveShareSiteAsync(token, siteId, password, authorUserId, ct);
+        if (access.Error != null)
+            return new AddCommentResult { Error = access.Error, HttpStatus = access.HttpStatus, ErrorCode = access.ErrorCode, RetryAfterSeconds = access.RetryAfterSeconds };
+        if (access.Site == null)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion);
+        return await InsertCommentAsync(access.Site, authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion);
     }
 
     public async Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,

@@ -1442,11 +1442,14 @@ export interface HostedReviewVersion {
 }
 
 export type HostedReviewSource = { mode: 'site'; siteId: string }
-  | { mode: 'share'; token: string; password?: string };
+  | { mode: 'share'; token: string; password?: string; siteId?: string };
 
 async function readHostedReview<T>(source: HostedReviewSource, suffix: string): Promise<ApiResponse<T>> {
   if (source.mode === 'site') return apiRequest(`/api/web-pages/${encodeURIComponent(source.siteId)}/revisions${suffix}`);
-  const query = source.password ? `?password=${encodeURIComponent(source.password)}` : '';
+  const params = new URLSearchParams();
+  if (source.password) params.set('password', source.password);
+  if (source.siteId) params.set('siteId', source.siteId);
+  const query = params.size ? `?${params}` : '';
   const headers: Record<string, string> = { Accept: 'application/json' };
   const token = useAuthStore.getState().token;
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -1479,6 +1482,7 @@ export interface HostedSiteCommentAnchor {
 }
 
 export interface HostedSiteCommentOptions {
+  siteId?: string;
   revisionId?: string;
   expectedContentVersion?: string;
   anchor?: HostedSiteCommentAnchor;
@@ -1533,8 +1537,11 @@ export async function addSiteComment(siteId: string, content: string, options?: 
 }
 
 /** 经分享链接列出评论（无需登录即可读）。走 raw fetch（公开端点 + 可选携带 token 识别身份） */
-export async function listShareComments(token: string, password?: string): Promise<ApiResponse<SiteCommentsResult>> {
-  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+export async function listShareComments(token: string, password?: string, siteId?: string): Promise<ApiResponse<SiteCommentsResult>> {
+  const params = new URLSearchParams();
+  if (password) params.set('password', password);
+  if (siteId) params.set('siteId', siteId);
+  const q = params.size ? `?${params}` : '';
   const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`);
   const headers: Record<string, string> = { Accept: 'application/json' };
   const authToken = useAuthStore.getState().token;

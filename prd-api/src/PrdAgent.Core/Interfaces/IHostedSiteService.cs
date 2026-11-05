@@ -413,9 +413,9 @@ public interface IHostedSiteService
 
     /// <summary>
     /// 经分享链接列出评论（公开访问路径）。校验分享访问门（撤销 / 过期 / 可见性 / 密码）。
-    /// 通过后返回分享首个站点的评论；门禁不过时 Result.Error 非空。
+    /// 通过后返回所选站点的评论（未指定则取首站点）；站点必须属于该分享。
     /// </summary>
-    Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
+    Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default, string? siteId = null);
 
     /// <summary>直连 siteId 发表评论（需 viewer 对站点有访问权）。站点不存在 / 无权 / 评论关闭时 Error 非空。</summary>
     Task<AddCommentResult> AddCommentBySiteAsync(
@@ -428,7 +428,7 @@ public interface IHostedSiteService
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
         string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null);
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null);
 
     Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
         bool resolved, CancellationToken ct = default);
