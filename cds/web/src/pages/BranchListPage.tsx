@@ -1,6 +1,7 @@
 import { projectUnavailable } from '../lib/project-availability.js';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import * as ResourceMenu from '@radix-ui/react-dropdown-menu';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -6210,6 +6211,7 @@ const BranchCard = memo(function BranchCard({
   const appResources = portedResources.filter((resource) => resource.source !== 'infra');
   const infraResources = portedResources.filter((resource) => resource.source === 'infra');
   const [portsPopoverOpen, setPortsPopoverOpen] = useState(false);
+  const portsMenuRef = useRef<HTMLDivElement>(null);
   /* 复制集标识与端口 chip 挤在同一条单行槽里。它占一格，端口就少露一个，否则最窄卡宽下
      排在后面的端口与「+N」会被卡片的 overflow-hidden 裁掉、点不到（Codex P2，PR #1646）。 */
   const replicaEntries = Object.entries((branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {})
@@ -6229,8 +6231,7 @@ const BranchCard = memo(function BranchCard({
     : 0;
   // 端口 chip 单行封顶:超过阈值只展示前 N 个,其余收进「+N」的悬浮浮层
   // (见下方 portsPopover)——保证端口行恒为单行、卡片高度稳定。展开走浮层
-  // (position:absolute,浮在本卡之上)而非原地撑开,不推高本卡、不影响整行,
-  // 复用 commitMenuOpen 的浮层模式(卡片 overflow-visible + 提 z)。
+  // 浮层经 Portal 渲染并按视口定位、限高滚动，不推高本卡、不影响整行。
   const visibleAppResources = foldedAppCount > 0
     ? appResources.slice(0, appChipBudget)
     : appResources;
@@ -7132,107 +7133,84 @@ const BranchCard = memo(function BranchCard({
               );
             })}
             {foldedAppCount + infraResources.length > 0 ? (
-              // 「+N」折叠气泡（2026-09-29 起 N 含基础设施：托盘从卡面挪到页头汇总，
-              // 这里保留逐分支直达资源面板 / 数据库工作台的入口，不丢能力）:悬浮 / 点击 / 键盘弹出浮层展开全部端口。浮层
-              // position:absolute 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度。
-              // 交互契约(2026-07-14,修 Codex P2 键盘/触摸可达性):
-              //  - 点击/回车/触摸 = 打开(set true,不 toggle):触摸端 mouseenter+click 会
-              //    连发两次,toggle 会一开一关净关闭 → 改为幂等打开,任何模态都能开。
-              //  - onBlur 挂在 wrapper 上并判 relatedTarget 是否仍在 wrapper 内:
-              //    Tab 进入菜单项时焦点仍在 wrapper 内 → 不关闭,菜单项可被 Tab 逐个聚焦
-              //    (原来 onBlur 挂 button 上,Tab 一离开 button 就 unmount,菜单永远够不到)。
-              //  - 关闭走:鼠标移出 / 焦点离开 wrapper / Esc / 点中某个端口。
-              <span
-                className="relative inline-flex shrink-0"
-                onMouseEnter={() => setPortsPopoverOpen(true)}
-                onMouseLeave={() => setPortsPopoverOpen(false)}
-                onBlur={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                    setPortsPopoverOpen(false);
-                  }
-                }}
-                onKeyDown={(event) => {
-                  // 拦掉浮层内的键盘事件,别冒泡到卡片根的 onKeyDown——那里 Enter/Space 会
-                  // preventDefault + 导航到详情,会抢掉「+N」/菜单项的原生 click 激活。
-                  // 只 stopPropagation、不 preventDefault:让原生 button click 照常触发
-                  // onClick(打开浮层 / 打开端口面板)。Esc 关闭浮层。
-                  if (event.key === 'Escape') {
-                    setPortsPopoverOpen(false);
-                  }
-                  event.stopPropagation();
-                }}
-              >
-                <button
-                  type="button"
-                  className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                  title={`还有 ${foldedAppCount} 个服务端口${infraResources.length > 0 ? `、${infraResources.length} 个基础设施` : ''}，点击或悬浮展开`}
-                  aria-haspopup="menu"
-                  aria-expanded={portsPopoverOpen}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setPortsPopoverOpen(true);
+              <ResourceMenu.Root open={portsPopoverOpen} onOpenChange={setPortsPopoverOpen} modal={false}>
+                <span
+                  className="inline-flex shrink-0"
+                  onMouseEnter={() => setPortsPopoverOpen(true)}
+                  onMouseLeave={(event) => {
+                    if (!(event.relatedTarget instanceof Node) || !portsMenuRef.current?.contains(event.relatedTarget)) setPortsPopoverOpen(false);
                   }}
+                  onKeyDown={(event) => event.stopPropagation()}
                 >
-                  +{foldedAppCount + infraResources.length}
-                </button>
-                {portsPopoverOpen ? (
-                  // 外层从 +N 底边(top-full,0 间距)起,用透明 pt-1.5 把可见面板往下推 6px:
-                  // 视觉上仍有 6px 间隙,但这 6px 属于 wrapper 子树、被 hover 覆盖 —— 鼠标从
-                  // +N 移到端口时不再跨越「空隙」触发 wrapper 的 onMouseLeave(Codex P2 悬停桥)。
-                  <div
-                    className="absolute left-0 top-full z-[140] pt-1.5"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div
-                      className="flex max-w-[min(20rem,calc(100vw-3rem))] flex-wrap gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
-                      role="menu"
-                      aria-label="全部服务端口"
+                  <ResourceMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 px-2 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                      title={`查看本分支 ${appResources.length} 个服务和 ${infraResources.length} 个共享基础设施`}
+                      onPointerDown={(event) => {
+                        // Hover may already have opened the menu; touch/click
+                        // must open idempotently instead of toggling it shut.
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setPortsPopoverOpen(true);
+                      }}
+                      onClick={(event) => { event.stopPropagation(); setPortsPopoverOpen(true); }}
                     >
-                      {appResources.map((resource) => (
-                        <button
-                          key={resource.id}
-                          type="button"
-                          role="menuitem"
-                          className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                          title={`${resource.displayName}${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setPortsPopoverOpen(false);
-                            onResourcePanel?.(resource);
-                          }}
-                        >
-                          <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
-                          {typeof resource.port === 'number' ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
-                        </button>
-                      ))}
-                      {infraResources.length > 0 ? (
-                        <>
-                          <span className="basis-full pt-1 text-[0.625rem] font-semibold tracking-wider text-muted-foreground/75">基础设施 · 项目共享</span>
-                          {infraResources.map((resource) => (
-                            <button
-                              key={resource.id}
-                              type="button"
-                              role="menuitem"
-                              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-foreground/80 transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                              title={`${resource.displayName}（基础设施 · 项目共享）${typeof resource.port === 'number' ? `\n端口 :${resource.port}` : ''}\n点击打开资源面板`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setPortsPopoverOpen(false);
-                                onResourcePanel?.(resource);
-                              }}
-                            >
-                              {resource.status === 'error' ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden /> : null}
-                              <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
-                              <span className="font-semibold">{infraShortName(resource.runtime)}</span>
-                              {typeof resource.port === 'number' ? <span className="font-mono text-foreground/70">:{resource.port}</span> : null}
-                            </button>
-                          ))}
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-              </span>
+                      +{foldedAppCount + infraResources.length}
+                    </button>
+                  </ResourceMenu.Trigger>
+                </span>
+                <ResourceMenu.Portal>
+                  <ResourceMenu.Content
+                    ref={portsMenuRef}
+                    align="start"
+                    sideOffset={0}
+                    collisionPadding={8}
+                    className="z-[300] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-lg border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-1.5 shadow-2xl"
+                    style={{ maxHeight: 'min(24rem, var(--radix-dropdown-menu-content-available-height))' }}
+                    aria-label="分支服务与共享基础设施"
+                    onMouseLeave={() => setPortsPopoverOpen(false)}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
+                    <ResourceMenu.Label className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                      分支服务 · {appResources.length}
+                    </ResourceMenu.Label>
+                    {appResources.map((resource) => (
+                      <ResourceMenu.Item
+                        key={resource.id}
+                        className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-xs text-foreground/85 outline-none data-[highlighted]:bg-[hsl(var(--surface-sunken))] data-[highlighted]:text-foreground"
+                        title={`${resource.serviceName}${typeof resource.port === 'number' ? ` · :${resource.port}` : ''}`}
+                        onSelect={() => onResourcePanel?.(resource)}
+                      >
+                        <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
+                        <span className="min-w-0 flex-1 truncate">{resource.serviceName}</span>
+                        {typeof resource.port === 'number' ? <span className="shrink-0 font-mono text-muted-foreground">:{resource.port}</span> : null}
+                      </ResourceMenu.Item>
+                    ))}
+                    {infraResources.length > 0 ? (
+                      <>
+                        <ResourceMenu.Separator className="mx-2 my-1 h-px bg-[hsl(var(--hairline))]" />
+                        <ResourceMenu.Label className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                          共享基础设施 · {infraResources.length}
+                        </ResourceMenu.Label>
+                        {infraResources.map((resource) => (
+                          <ResourceMenu.Item
+                            key={resource.id}
+                            className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-xs text-foreground/85 outline-none data-[highlighted]:bg-[hsl(var(--surface-sunken))] data-[highlighted]:text-foreground"
+                            title={resource.displayName}
+                            onSelect={() => onResourcePanel?.(resource)}
+                          >
+                            <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85" />
+                            <span className="min-w-0 flex-1 truncate">{resource.serviceName}</span>
+                            {typeof resource.port === 'number' ? <span className="shrink-0 font-mono text-muted-foreground">:{resource.port}</span> : null}
+                          </ResourceMenu.Item>
+                        ))}
+                      </>
+                    ) : null}
+                  </ResourceMenu.Content>
+                </ResourceMenu.Portal>
+              </ResourceMenu.Root>
             ) : null}
             {infraErrorChip ? (
               <span

@@ -55,7 +55,7 @@ jobs:
 
       - name: Verify deployment lifecycle before publishing
         run: |
-          pnpm -C cds exec vitest run tests/services/deployment-memory-lifecycle.test.ts tests/services/deployment-phase-budget.test.ts tests/services/static-web.test.ts tests/services/container-static.test.ts tests/services/service-replacement.test.ts tests/services/compose-parser.test.ts tests/services/resource-usage-sampler.test.ts
+          pnpm -C cds exec vitest run tests/services/deployment-memory-lifecycle.test.ts tests/services/deployment-phase-budget.test.ts tests/services/static-web.test.ts tests/services/container-static.test.ts tests/services/service-replacement.test.ts tests/services/compose-parser.test.ts tests/services/resource-usage-sampler.test.ts tests/routes/pending-import.test.ts tests/routes/pending-import-lint.test.ts
 
       - name: Build backend (esbuild → cds/dist)
         run: |

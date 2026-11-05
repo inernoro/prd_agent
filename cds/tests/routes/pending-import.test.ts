@@ -16,6 +16,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import yaml from 'js-yaml';
 import { createPendingImportRouter } from '../../src/routes/pending-import.js';
 import { StateService } from '../../src/services/state.js';
 
@@ -231,6 +232,74 @@ describe('Pending-import router', () => {
   });
 
   describe('POST /api/pending-imports/:id/approve', () => {
+    const fullSource = `services:
+  api:
+    image: example/api:1
+    ports: ["8080"]
+    labels: {cds.prebuilt-image: "true", cds.role: api}
+    environment: {TOKEN: original-private-fixture}
+  web:
+    image: example/web:1
+    ports: ["80"]
+    labels: {cds.prebuilt-image: "true", cds.role: web, cds.path-prefix: /}
+x-cds-env: {JWT_SECRET: original-project-fixture}
+x-cds-deploy-modes:
+  web:
+    express: {image: example/web:1, prebuilt: true}
+`;
+    const partialSource = `services:
+  web:
+    image: example/web:1
+    ports: ["80"]
+    labels: {cds.prebuilt-image: "true", cds.role: web, cds.path-prefix: /}
+x-cds-deploy-modes:
+  web:
+    static-files:
+      image: example/web:1
+      prebuilt: true
+      staticWeb: {imagePath: /usr/share/nginx/html, browserOnly: true}
+`;
+
+    it('merges a partial approval into the complete source without applying other services or env', async () => {
+      const version = stateService.setProjectCompose(projectId, fullSource, 'manual-edit');
+      stateService.setCustomEnvVar('JWT_SECRET', 'runtime-secret-fixture', projectId);
+      stateService.addBuildProfile({ id: 'api-sample', projectId, name: 'api', dockerImage: 'example/api:1',
+        workDir: '.', containerPort: 8080, env: { TOKEN: 'runtime-private-fixture' } });
+      const apiBefore = structuredClone(stateService.getBuildProfile('api-sample'));
+      const submitted = await request(server, 'POST', `/api/projects/${projectId}/pending-import`,
+        { agentName: 'A', composeYaml: partialSource });
+      const result = await request(server, 'POST', `/api/pending-imports/${submitted.body.importId}/approve`,
+        { mergeSource: true, expectedComposeVersion: version });
+      expect(result.status).toBe(200);
+      expect(result.body.appliedProfiles).toEqual(['web-sample']);
+      expect(result.body.appliedEnvKeys).toEqual([]);
+      expect(stateService.getBuildProfile('api-sample')).toEqual(apiBefore);
+      expect(stateService.getCustomEnv(projectId).JWT_SECRET).toBe('runtime-secret-fixture');
+      const merged = yaml.load(stateService.getProject(projectId)!.composeYaml!) as any;
+      const original = yaml.load(fullSource) as any;
+      expect(merged.services.api).toEqual(original.services.api);
+      expect(merged['x-cds-env']).toEqual(original['x-cds-env']);
+      expect(Object.keys(merged['x-cds-deploy-modes'].web)).toEqual(['express', 'static-files']);
+      expect(result.body.composeVersion).toBe(version + 1);
+    });
+
+    it.each(['stale-version', 'missing-version', 'missing-source', 'global-env', 'unknown-service'])
+      ('refuses unsafe partial source merging before any state mutation: %s', async kind => {
+        const version = stateService.setProjectCompose(projectId, fullSource, 'manual-edit');
+        const source = kind === 'global-env' ? `${partialSource}\nx-cds-env: {ADDED: value}\n`
+          : kind === 'unknown-service' ? partialSource.replaceAll('web:', 'other:') : partialSource;
+        const submitted = await request(server, 'POST', `/api/projects/${projectId}/pending-import`,
+          { agentName: 'A', composeYaml: source });
+        expect(submitted.status).toBe(201);
+        if (kind === 'missing-source') stateService.updateProject(projectId, { composeYaml: undefined });
+        const before = JSON.stringify(stateService.getState());
+        const result = await request(server, 'POST', `/api/pending-imports/${submitted.body.importId}/approve`,
+          { mergeSource: true, ...(kind === 'missing-version' ? {} : { expectedComposeVersion: kind === 'stale-version' ? version - 1 : version }) });
+        expect(result.status).toBe(409);
+        expect(JSON.stringify(stateService.getState())).toBe(before);
+        expect(stateService.getPendingImport(submitted.body.importId)?.status).toBe('pending');
+      });
+
     it('stateful compose approval remains pending and publishes no config before explicit new-only allocation',async()=>{
       const created=await request(server,'POST',`/api/projects/${projectId}/pending-import`,{agentName:'A',composeYaml:SAMPLE_YAML});
       const before=JSON.stringify(stateService.getState());
