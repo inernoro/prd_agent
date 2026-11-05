@@ -42,7 +42,9 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
         var due = await tasks.Find(x => x.Enabled && x.NextRunAt != null && x.NextRunAt <= now && x.LeaseId == null)
             .SortBy(x => x.NextRunAt).FirstOrDefaultAsync(stoppingToken);
         if (due == null) return;
-        ProductScheduledNotificationTiming.TryGetNext(due.Frequency, due.Time, due.Date, due.Day, now, out var next);
+        DateTime? next = null;
+        if (due.Frequency != "once")
+            ProductScheduledNotificationTiming.TryGetNext(due.Frequency, due.Time, due.Date, due.Day, now, out next);
         var lease = Guid.NewGuid().ToString("N");
         var claimed = await tasks.UpdateOneAsync(
             x => x.Id == due.Id && x.Revision == due.Revision && x.NextRunAt == due.NextRunAt && x.LeaseId == null,
