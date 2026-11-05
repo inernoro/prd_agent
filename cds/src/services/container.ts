@@ -727,11 +727,12 @@ export class ContainerService {
   }
   async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
     context: ContainerRemoveContext = {}): Promise<void> {
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(runtime.containerName);
     const owned = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
     context.assertCurrent?.('after runtime retirement identity');
     if (!owned) {
       if (!runtime.containerId && runtime.creationIssued) throw new Error('迟到创建身份未确认，保留回收责任');
-      deploymentPhaseBudget.releaseMemory(runtime.containerName);
+      releaseMemory();
       return;
     }
     await this.remove(owned.containerId!, context);
@@ -739,7 +740,7 @@ export class ContainerService {
     const after = await this.shell.exec(`docker inspect --format ${this.shellQuote('{{.Id}}')} ${this.shellQuote(owned.containerId!)}`,
       { timeout: 5000, executionLane: 'observation' });
     if (after.exitCode === 0 || !/No such (?:container|object):/i.test(combinedOutput(after))) throw new Error('旧运行身份回收未确认，保留责任及容量占用');
-    deploymentPhaseBudget.releaseMemory(runtime.containerName);
+    releaseMemory();
   }
   async connectReplacementPeer(
     entry: BranchEntry, profile: BuildProfile, service: ServiceState, network: string,

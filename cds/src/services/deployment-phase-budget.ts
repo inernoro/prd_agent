@@ -96,6 +96,17 @@ export class DeploymentPhaseBudget {
     this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, value]) => ({ key, ...value })); }
+  /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
+  captureMemoryRelease(key: string, owner?: DeploymentPhaseOwner): () => boolean {
+    const reservation = this.memoryReservations.get(key);
+    const owned = !owner || reservation && (['projectId', 'branchId', 'profileId', 'operationId', 'operationGeneration'] as const)
+      .every(field => reservation.owner[field] === owner[field]);
+    return () => {
+      if (!owned || !reservation || this.memoryReservations.get(key) !== reservation) return false;
+      this.releaseMemory(key); return true;
+    };
+  }
+
   private memoryAllows(memoryMB: number, key?: string): boolean {
     const available = this.availableMemoryMB();
     const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
