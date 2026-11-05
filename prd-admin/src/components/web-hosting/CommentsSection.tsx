@@ -133,6 +133,7 @@ export default function CommentsSection(props: Props) {
       if (!mounted.current || operationIdentity !== identityRef.current) return;
       if (res.success && res.data) {
         const created = res.data;
+        window.dispatchEvent(new Event('hosted-comments-changed'));
         setComments(prev => prev.some(c => c.id === created.id) ? prev : [created, ...prev]);
         if (operationDraftScope === draftScopeRef.current) {
           setDraft(''); setReplyTo(null); annotations?.clearDraft(); if (!replyTo) setFilter('open');
@@ -149,7 +150,7 @@ export default function CommentsSection(props: Props) {
     try {
       const res = await deleteSiteComment(id);
       if (!mounted.current || operationIdentity !== identityRef.current) return;
-      if (res.success) { setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id)); if (replyTo === id) setReplyTo(null); }
+      if (res.success) { window.dispatchEvent(new Event('hosted-comments-changed')); setComments(prev => prev.filter(c => c.id !== id && c.parentId !== id)); if (replyTo === id) setReplyTo(null); }
       else setError(res.error?.message || '删除失败');
     } catch { if (mounted.current && operationIdentity === identityRef.current) setError('网络错误，删除失败'); }
     finally { if (mounted.current && operationIdentity === identityRef.current) { setBusyId(null); setConfirmDelete(null); } }

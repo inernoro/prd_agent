@@ -1756,6 +1756,10 @@ public class MongoDbContext
             Builders<HostedDocumentGroup>.IndexKeys.Ascending(x => x.SiteIds),
             new CreateIndexOptions { Unique = true, Name = "ux_hosted_document_groups_member" }));
 
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.ReferencedSiteIds).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_comments_references" }));
+
         // ========== Hosted Sites 网页托管索引 ==========
 
         // HostedSites：按用户 + 创建时间查询

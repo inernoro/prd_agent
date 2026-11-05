@@ -3,9 +3,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
+import { updateSite } from '@/services/real/webPages';
 import { getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedDocuments, type RelatedPermissionPreview } from '@/services/real/relatedDocuments';
 
+vi.mock('@/services/real/webPages', () => ({ updateSite: vi.fn() }));
+vi.mock('@/components/SitePreview', () => ({ SitePreview: ({ url }: { url: string }) => <div data-page-preview={url} /> }));
 vi.mock('@/services/real/relatedDocuments', () => ({ getRelatedCandidates: vi.fn(), getRelatedDocuments: vi.fn(), previewRelatedPermissions: vi.fn(), saveRelatedDocuments: vi.fn(), syncRelatedPermissions: vi.fn() }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (value: { token: string }) => unknown) => selector({ token: 'session' }) }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>正在加载</span> }));
@@ -37,6 +40,7 @@ const open = async () => { await act(async () => container.querySelector<HTMLBut
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.clearAllMocks();
+  localStorage.clear();
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data, error: null });
   vi.mocked(getRelatedCandidates).mockResolvedValue({ success: true, data: { items: [...data.items, { id: 'c', title: '测试方案' }] }, error: null });
@@ -45,6 +49,41 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+
+  it('真实页面预览接入，并支持列表与卡片视图切换和记忆', async () => {
+    const previewItem = { ...data.items[1], preview: { id: 'b', siteUrl: 'https://assets.test/b.html', entryFile: 'index.html', useShareAccess: false } };
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [previewItem] }, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="b" />)); await open();
+    expect(document.querySelector('[data-page-preview="https://assets.test/b.html"]')).not.toBeNull();
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="列表视图"]')!.click());
+    expect(document.querySelector('.related-document-grid')?.classList.contains('is-list')).toBe(true);
+    expect(localStorage.getItem('hosted-related-view')).toBe('list');
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="卡片视图"]')!.click());
+    expect(document.querySelector('.related-document-grid')?.classList.contains('is-list')).toBe(false);
+  });
+  it('评论来源与自定义标签可见，自动引用不会被管理面板当作手动关联保存', async () => {
+    const automatic = { id: 'c', title: '评论提到的方案', isManual: false, tags: ['设计'], mentions: [{ commentId: 'comment-1', authorName: '小林', sourceSiteId: 'a', sourceTitle: '总体方案', label: '评论区小林提到' }] };
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [...data.items, automatic] }, error: null });
+    vi.mocked(saveRelatedDocuments).mockResolvedValue({ success: true, data, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" />));await open();
+    expect(document.body.textContent).toContain('评论区小林提到');
+    await clickText('设计');
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(1);
+    await clickText('管理关联');await clickText('保存关联');
+    expect(saveRelatedDocuments).toHaveBeenCalledWith('a', { siteIds: ['a', 'b'], mainSiteId: 'a', version: 3 });
+  });
+  it('文档标签通过现有文档接口保存，并在评论变化后重新读取关联列表', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, items: [{ ...data.items[0], canEditTags: true, tags: ['原标签'] }] }, error: null });
+    vi.mocked(updateSite).mockResolvedValue({ success: true, data: {} as never, error: null });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" />)); await open();
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="编辑标签：总体方案"]')!.click());
+    await clickText('保存标签');
+    expect(updateSite).toHaveBeenCalledWith('a', { tags: ['原标签'] });
+    const before = vi.mocked(getRelatedDocuments).mock.calls.length;
+    await act(async () => window.dispatchEvent(new Event('hosted-comments-changed')));
+    expect(vi.mocked(getRelatedDocuments).mock.calls.length).toBeGreaterThan(before);
+  });
+
   it('展开服务端可见列表，跳转回调使用目标文档并标记当前页', async () => {
     const navigate = vi.fn();
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" onNavigate={navigate} />));

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FolderPlus, Grid2X2, Link2, Search, ShieldAlert, ShieldCheck, Star, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, FileText, FolderPlus, Grid2X2, List, Tags, Plus, Link2, Search, ShieldAlert, ShieldCheck, Star, X } from 'lucide-react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
@@ -7,6 +7,8 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
+import { SitePreview } from '@/components/SitePreview';
+import { updateSite } from '@/services/real/webPages';
 import './RelatedDocumentsBar.css';
 
 export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
@@ -21,6 +23,14 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [page, setPage] = useState(0);
+  const [view, setView] = useState<'cards' | 'list'>(() => {
+    try { return localStorage.getItem('hosted-related-view') === 'list' ? 'list' : 'cards'; } catch { return 'cards'; }
+  });
+  const [tagFilter, setTagFilter] = useState('');
+  const [tagTarget, setTagTarget] = useState<RelatedDocument | null>(null);
+  const changeView = (next: 'cards' | 'list') => {
+    setView(next); try { localStorage.setItem('hosted-related-view', next); } catch { /* 私密浏览仍可切换。 */ }
+  };
   const anchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -39,7 +49,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
     else { setData(null); setError(result.error?.message || '关联文档加载失败'); }
   }, [siteId, token, password]);
   useLayoutEffect(() => {
-    setData(null); setLoading(true); setPage(0); close();
+    setData(null); setLoading(true); setPage(0); setTagFilter(''); close();
   }, [siteId, token, password, authToken, close]);
   useEffect(() => {
     void refresh();
@@ -48,8 +58,9 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
   useEffect(() => {
     const revalidate = () => { if (document.visibilityState === 'visible') void refresh(); };
     window.addEventListener('focus', revalidate);
+    window.addEventListener('hosted-comments-changed', revalidate);
     document.addEventListener('visibilitychange', revalidate);
-    return () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); };
+    return () => { window.removeEventListener('focus', revalidate); window.removeEventListener('hosted-comments-changed', revalidate); document.removeEventListener('visibilitychange', revalidate); };
   }, [refresh]);
   const keepOpen = () => clearTimeout(closeTimer.current);
   const leave = () => {
@@ -59,7 +70,9 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
   const [manage, setManage] = useState(false);
   const [permissions, setPermissions] = useState(false);
   const main = data?.items.find(item => item.isMain);
-  const pages = Math.max(1, Math.ceil((data?.items.length ?? 0) / 9));
+  const availableTags = [...new Set(data?.items.flatMap(item => item.tags ?? []) ?? [])];
+  const displayed = data?.items.filter(item => !tagFilter || item.tags?.includes(tagFilter)) ?? [];
+  const pages = Math.max(1, Math.ceil(displayed.length / 9));
   const currentPage = Math.min(page, pages - 1);
   const openManager = () => { close(); setManage(true); };
   const openPermissions = () => { close(); setPermissions(true); };
@@ -80,33 +93,51 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
       <span>{data.hasPermissionDifferences ? '权限不一致' : '权限与分享'}</span>
     </button>}
     <AnchoredMenu open={open} onClose={close} anchorRef={anchor} align="left" gap={6} minWidth={280}
-      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: 'min(720px, calc(100vw - 24px))', maxHeight: 'min(720px, calc(100dvh - 80px))', padding: 0 }}>
+      className={`related-popover ${token ? 'surface-tone-dark' : ''}`} style={{ width: 'min(720px, calc(100vw - 24px))', maxHeight: 'calc(100dvh - 40px)', padding: 0 }}>
       <div id={menuId} ref={panel} role="dialog" aria-label="关联文档" onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
         <div className="related-panel-heading"><div><strong>关联文档</strong><span>在同一组文件间快速切换</span></div>
-          {data?.canManage && <button className="related-text-button" type="button" onClick={openManager}><FolderPlus size={14} />管理关联</button>}
+          <div className="related-heading-actions"><div className="related-view-switch" aria-label="关联文档展示方式">
+            <button type="button" aria-label="卡片视图" aria-pressed={view === 'cards'} onClick={() => changeView('cards')}><Grid2X2 size={14} /></button>
+            <button type="button" aria-label="列表视图" aria-pressed={view === 'list'} onClick={() => changeView('list')}><List size={15} /></button>
+          </div>{data?.canManage && <button className="related-text-button" type="button" onClick={openManager}><FolderPlus size={14} />管理关联</button>}</div>
         </div>
-        <div style={{ minHeight: 0, overflowY: 'auto', maxHeight: 'calc(100dvh - 245px)', overscrollBehavior: 'contain' }}>
+        {availableTags.length > 0 && <div className="related-tag-filters" aria-label="按标签筛选">
+          <button type="button" aria-pressed={!tagFilter} onClick={() => { setTagFilter(''); setPage(0); }}>全部</button>
+          {availableTags.map(tag => <button key={tag} type="button" aria-pressed={tagFilter === tag} onClick={() => { setTagFilter(tag); setPage(0); }}>{tag}</button>)}
+        </div>}
+        <div style={{ minHeight: 0, overflowY: 'auto', maxHeight: 'calc(100dvh - 220px)', overscrollBehavior: 'contain' }}>
           {error ? <div className="related-empty" role="alert">{error}<Button size="sm" onClick={() => { setLoading(true); void refresh(); }}>重新加载</Button></div>
             : loading ? <div className="related-empty"><MapSpinner size={20} />正在加载关联文档…</div>
-              : <div className="related-document-grid">
-                {data?.items.slice(currentPage * 9, currentPage * 9 + 9).map((item, index) => <a key={item.id} href={item.href}
-                  className={`related-document-card ${item.id === siteId ? 'is-current' : ''}`} aria-current={item.id === siteId ? 'page' : undefined}
-                  onClick={event => {
-                    if (item.id === siteId) { event.preventDefault(); close(); return; }
-                    if (onNavigate && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); onNavigate(item); }
-                    close();
-                  }}>
-                  <div className="related-card-preview" aria-hidden="true"><span className="related-preview-index">{String(currentPage * 9 + index + 1).padStart(2, '0')}</span>
-                    <div className="related-paper"><FileText size={18} /><i /><i /><i /></div>
-                    {item.isMain && <span className="related-main-badge"><Star size={10} />主文档</span>}
-                    <ArrowUpRight size={14} className="related-card-arrow" />
-                  </div>
-                  <div className="related-card-content"><strong title={item.title}>{item.title}</strong><p>{item.description || '打开查看文档内容'}</p>
-                    <span className="related-card-status">{item.id === siteId ? <><span className="related-current-dot" />当前文档</> : item.isMain ? '文档组的主要入口' : '关联文档'}</span>
-                  </div>
-                </a>)}
+              : <div className={`related-document-grid ${view === 'list' ? 'is-list' : ''}`}>
+                {displayed.slice(currentPage * 9, currentPage * 9 + 9).map((item, index) => <div key={item.id} className="related-item">
+                  <a href={item.href} className={`related-document-card ${item.id === siteId ? 'is-current' : ''}`} aria-current={item.id === siteId ? 'page' : undefined}
+                    onClick={event => {
+                      if (item.id === siteId) { event.preventDefault(); close(); return; }
+                      if (onNavigate && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); onNavigate(item); }
+                      close();
+                    }}>
+                    <div className="related-card-preview">
+                      {item.preview ? <SitePreview url={item.preview.siteUrl} site={{ ...item.preview,
+                        shareAccess: item.preview.useShareAccess && token ? { token, password } : undefined }} className="related-live-preview" />
+                        : <span className="related-no-preview">暂无预览</span>}
+                      <span className="related-preview-index">{String(currentPage * 9 + index + 1).padStart(2, '0')}</span>
+                      {item.isMain && <span className="related-main-badge"><Star size={10} />主文档</span>}
+                      <ArrowUpRight size={14} className="related-card-arrow" />
+                    </div>
+                    <div className="related-card-content"><strong title={item.title}>{item.title}</strong><p>{item.description || '打开查看文档内容'}</p>
+                      <div className="related-tag-list">{item.tags?.map(tag => <span className="related-custom-tag" key={tag}>{tag}</span>)}
+                        {item.mentions?.slice(0, 2).map(mention => <span key={mention.commentId} className="related-mention-tag" title={`${mention.sourceTitle} · ${mention.label}`}>{mention.label}</span>)}
+                      </div>
+                      <span className="related-card-status">{item.id === siteId ? <><span className="related-current-dot" />当前文档</> : item.isMain ? '文档组的主要入口' : item.isManual === false ? '评论引用' : '关联文档'}</span>
+                    </div>
+                  </a>
+                  {item.canEditTags && <button type="button" className="related-tag-edit" aria-label={`编辑标签：${item.title}`} title="编辑文档标签"
+                    onClick={() => { close(); setTagTarget(item); }}><Tags size={13} /></button>}
+                </div>)}
+                {!displayed.length && <p className="related-small-note">没有符合该标签的关联文档。</p>}
               </div>}
+
         </div>
         <div className="related-panel-footer"><span><Link2 size={13} />每份文档独立授权</span>
           {pages > 1 ? <div className="related-pagination"><button aria-label="上一页" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={15} /></button>
@@ -117,6 +148,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
       </div>
     </AnchoredMenu>
     {manage && data?.canManage && <RelatedDocumentsManager key={siteId} siteId={siteId} data={data} onClose={() => setManage(false)} onSaved={next => { setData(next); setManage(false); }} />}
+    {tagTarget && <RelatedTagsDialog item={tagTarget} onClose={() => setTagTarget(null)} onSaved={async () => { await refresh(); setTagTarget(null); }} />}
     {permissions && data?.canManage && <RelatedPermissionsDialog siteId={siteId} onClose={() => { setPermissions(false); void refresh(); }} />}
   </div>;
 }
@@ -124,7 +156,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate }: {
 function RelatedDocumentsManager({ siteId, data, onClose, onSaved }: {
   siteId: string; data: RelatedDocuments; onClose: () => void; onSaved: (data: RelatedDocuments) => void;
 }) {
-  const [draft, setDraft] = useState(data.items);
+  const [draft, setDraft] = useState(data.items.filter(item => item.isManual !== false));
   const [main, setMain] = useState(data.mainSiteId || siteId);
   const [candidates, setCandidates] = useState<RelatedDocument[]>([]);
   const [search, setSearch] = useState('');
@@ -201,7 +233,7 @@ function RelatedPermissionsDialog({ siteId, onClose }: { siteId: string; onClose
     finally { setBusy(false); }
   };
   return <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }} title="关联文档权限" maxWidth={680} zIndex={1000}
-    description="以主文档为准，一次同步团队、团队分组和公开页可见性。以后单独修改时会重新提醒。"
+    description="以主文档为准，同步手动关联文档的团队、分组和公开页可见性。评论引用保留独立权限。"
     content={<div className="related-manager">
       {!preview && !error && <div className="related-empty"><MapSpinner size={20} />正在核对访问范围…</div>}
       {preview && <><div className="related-source"><Star size={16} /><div><span>权限来源 · 主文档</span><strong>{preview.sourceTitle}</strong></div></div>
@@ -226,4 +258,31 @@ function RelatedPermissionsDialog({ siteId, onClose }: { siteId: string; onClose
     actions={<><Button disabled={busy} onClick={onClose}>{result ? '完成' : '取消'}</Button>
       {error && <Button disabled={busy} onClick={() => void load()}>刷新差异</Button>}
       <Button variant="primary" disabled={!preview || !preview.canSync || busy || preview.items.length < 2} onClick={() => void sync()}>{busy ? <MapSpinner size={14} /> : <ShieldCheck size={14} />}应用统一权限</Button></>} />;
+}
+
+function RelatedTagsDialog({ item, onClose, onSaved }: { item: RelatedDocument; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [tags, setTags] = useState(item.tags ?? []);
+  const [input, setInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const add = () => {
+    const value = input.trim();
+    if (!value) return;
+    if (value.length > 24 || tags.length >= 20) { setError('每个标签最多 24 字，最多添加 20 个标签'); return; }
+    setTags(current => current.includes(value) ? current : [...current, value]); setInput(''); setError('');
+  };
+  const save = async () => {
+    setSaving(true); setError('');
+    try {
+      const extra = input.trim();
+      if (extra.length > 24 || (extra && !tags.includes(extra) && tags.length >= 20)) { setError('每个标签最多 24 字，最多添加 20 个标签'); return; }
+      const result = await updateSite(item.id, { tags: extra && !tags.includes(extra) ? [...tags, extra] : tags });
+      if (result.success) await onSaved(); else setError(result.error?.message || '标签保存失败');
+    } catch { setError('标签保存失败，请重试'); } finally { setSaving(false); }
+  };
+  return <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }} title="编辑文档标签" description={item.title} zIndex={1000}
+    content={<div className="related-manager"><div className="related-edit-tags">{tags.map(tag => <span key={tag}>{tag}<button type="button" aria-label={`删除标签：${tag}`} disabled={saving} onClick={() => setTags(current => current.filter(t => t !== tag))}><X size={12} /></button></span>)}</div>
+      <form className="related-add-tag" onSubmit={event => { event.preventDefault(); add(); }}><input aria-label="新标签" placeholder="输入标签，按回车添加" value={input} maxLength={24} disabled={saving} onChange={event => setInput(event.target.value)} /><Button type="submit" size="sm" disabled={saving || !input.trim()}><Plus size={13} />添加</Button></form>
+      <p className="related-small-note">标签保存在这份文档上，可用于筛选关联文件。</p>{error && <p role="alert" className="related-error">{error}</p>}</div>}
+    actions={<><Button disabled={saving} onClick={onClose}>取消</Button><Button variant="primary" disabled={saving} onClick={() => void save()}>{saving && <MapSpinner size={14} />}保存标签</Button></>} />;
 }

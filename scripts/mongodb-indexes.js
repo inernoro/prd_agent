@@ -2082,3 +2082,6 @@ db.hosted_document_groups.createIndex(
   { unique: true, name: "ux_hosted_document_groups_member" }
 );
 // end collection: hosted_document_groups
+
+// 评论反向引用查询；原评论授权仍独立校验。
+db.hosted_site_comments.createIndex({ ReferencedSiteIds: 1, CreatedAt: -1 }, { name: "idx_hosted_comments_references" });

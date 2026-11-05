@@ -9,6 +9,11 @@ export interface RelatedDocument {
   updatedAt?: string;
   isMain?: boolean;
   href?: string;
+  isManual?: boolean;
+  canEditTags?: boolean;
+  tags?: string[];
+  mentions?: Array<{ commentId: string; authorName: string; sourceSiteId: string; sourceTitle: string; label: string }>;
+  preview?: { id: string; siteUrl: string; entryFile: string; wrappedAssetType?: string; contentShape?: 'self-contained-html' | 'multi-file'; requiresPreviewBridge?: boolean; useShareAccess: boolean };
 }
 export interface RelatedDocuments {
   version: number;

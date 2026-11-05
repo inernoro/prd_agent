@@ -56,16 +56,24 @@ public partial class WebPagesController
             var existing = await _db.HostedSites.Find(x => group.SiteIds.Contains(x.Id)).ToListAsync();
             canManage = existing.All(x => x.OwnerUserId == userId);
         }
-        var ordered = visible.OrderBy(x => x.Id == group?.MainSiteId ? 0 : 1).ToList();
+        var manualSites = visible.ToList();
+        var mentions = await RelatedCommentMentionsAsync(current, visible, userId, sharedIds);
+        var ordered = visible.OrderBy(x => x.Id == group?.MainSiteId ? 0 : mentions.ContainsKey(x.Id) ? 1 : 2).ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
             version = canManage ? group?.Version ?? 0 : 0,
             mainSiteId = visible.Any(x => x.Id == group?.MainSiteId) ? group!.MainSiteId : null,
             canManage,
-            hasPermissionDifferences = canManage && visible.Any(x => !HostedDocumentPermissionPolicy.SamePageAccess(visible[0], x)),
+            hasPermissionDifferences = canManage && manualSites.Any(x => !HostedDocumentPermissionPolicy.SamePageAccess(current, x)),
             items = ordered.Select(x => new
             {
-                x.Id, x.Title, x.Description, x.UpdatedAt,
+                x.Id, x.Title, x.Description, x.UpdatedAt, x.Tags,
+                isManual = ids.Contains(x.Id),
+                canEditTags = userId != null && x.OwnerUserId == userId,
+                mentions = mentions.GetValueOrDefault(x.Id) ?? new(),
+                preview = new { x.Id, x.SiteUrl, x.EntryFile, x.WrappedAssetType,
+                    contentShape = HostedSiteContentShapeRules.Resolve(x), x.RequiresPreviewBridge,
+                    useShareAccess = shareToken != null && sharedIds.Contains(x.Id) },
                 isMain = x.Id == group?.MainSiteId,
                 // 不创建公开便捷链，不向其它页面传播当前分享凭证。
                 href = shareToken != null && sharedIds.Contains(x.Id)
