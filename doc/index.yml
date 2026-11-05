@@ -280,6 +280,8 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.defect-agent.reliability-closure: "缺陷可靠性后续闭环 · 计划"
+  plan.defect-agent.submit-reliability: "缺陷提交与 AI 润色可靠性排查 · 计划"
   plan.doc.readability.rollout: "文档说人话标准推广 · 计划"
   plan.ai-toolbox.text-assist: "AI 百宝箱文本辅助 · 计划"
   plan.cds.agent.official-sdk-migration: "CDS Agent 官方 SDK 商业闭环 · 计划"
@@ -326,6 +328,7 @@ docs:
   plan.visual-agent.optimization-backlog: "视觉创作 优化清单 · 计划"
 
   # 六、技术债务台账
+  debt.defect-agent.submit-reliability: "缺陷提交可靠性 · 债务台账"
   debt.acceptance-center-cds: "CDS 验收中心 · 债务台账"
   debt.acceptance.daily-anchors: "每日验收的锚点契约 · 债务台账"
   debt.acceptance.system: "功能验收体系 · 债务台账"

@@ -279,7 +279,7 @@ export default function LoginPage() {
       return;
     }
     setPermissions(authz.data.effectivePermissions || []);
-    if (authz.data.cdnBaseUrl) setCdnBaseUrl(authz.data.cdnBaseUrl);
+    setCdnBaseUrl(authz.data.cdnBaseUrl || '', authz.data.legacyCdnBaseUrl);
     setPermissionsLoaded(true);
     // 保留登录完成标志，供主应用背景动效衔接使用
     try {

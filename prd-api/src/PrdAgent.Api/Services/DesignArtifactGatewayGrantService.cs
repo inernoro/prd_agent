@@ -91,6 +91,7 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
             RunId = run.Id,
             UserId = run.UserId,
             AppCallerCode = caller,
+            ModelType = run.WorkflowSource == null ? null : WorkflowWebpageDesignService.RouteFor(run.WorkflowSource.NodeType).ModelType,
             Environment = NormalizeEnvironment(_environment.EnvironmentName),
             Model = model,
             ModelPoolId = selection.ModelPoolId,
@@ -479,6 +480,15 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
 
     internal static string CallerFor(DesignArtifactRun run)
     {
+        if (run.WorkflowSource != null && run.SourceSurface != DesignArtifactSourceSurfaces.Workflow)
+            throw new InvalidOperationException("工作流来源与设计任务类型不一致，未发送模型请求");
+        if (run.SourceSurface == DesignArtifactSourceSurfaces.Workflow)
+        {
+            if (run.WorkflowSource == null || run.ArtifactType != DesignArtifactTypes.WebPage
+                || run.Operation != DesignArtifactOperations.Generate)
+                throw new InvalidOperationException("工作流设计来源身份不完整，未发送模型请求");
+            return WorkflowWebpageDesignService.RouteFor(run.WorkflowSource.NodeType).Caller;
+        }
         if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
             return run.Operation == DesignArtifactOperations.Edit
                 ? AppCallerRegistry.MdToPptAgent.Generation.Patch

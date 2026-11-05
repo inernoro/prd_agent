@@ -451,7 +451,12 @@ public static class GatewayHttpEndpoints
                 nativeBody.Remove("provider");
             }
             // 图片属于输入能力，不改变已冻结的业务调用方类型；核心能力门会单独校验视觉支持。
-            var requestType = ModelTypes.Chat;
+            var requestType = runtimeGrant?.ModelType ?? ModelTypes.Chat;
+            if (requestType is not (ModelTypes.Chat or ModelTypes.Code))
+            {
+                await WriteCompatErrorAsync(http, "设计授权的模型用途无效", "invalid_request_error", "RUNTIME_GRANT_MODEL_TYPE_INVALID", 400);
+                return;
+            }
             var ingress = new GatewayIngressRequest
             {
                 RequestId = requestId,

@@ -91,6 +91,10 @@ public class DesignArtifactRun
 
     public string SourceSurface { get; set; } = DesignArtifactSourceSurfaces.WebHosting;
 
+    /// <summary>仅工作流服务器创建的原调用身份；不从用户变量或远端请求推断。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public WorkflowDesignSource? WorkflowSource { get; set; }
+
     public string Runtime { get; set; } = DesignArtifactRuntimes.MapGateway;
 
     /// <summary>
@@ -506,6 +510,7 @@ public static class DesignArtifactSourceSurfaces
 {
     public const string WebHosting = "web-hosting";
     public const string KnowledgeBase = "knowledge-base";
+    public const string Workflow = "workflow";
     public const string HtmlPpt = "html-ppt";
 }
 
@@ -566,4 +571,14 @@ public sealed class HtmlPptEditContext
     public DateTime BaseContentVersion { get; set; }
     public string BaseHtmlHash { get; set; } = string.Empty;
     public string BaseFilesFingerprint { get; set; } = string.Empty;
+}
+
+/// <summary>一个工作流节点操作的稳定来源。自动重投复用 OperationId，不伪造新执行。</summary>
+public sealed class WorkflowDesignSource
+{
+    public string OperationId { get; set; } = string.Empty;
+    public string? ExecutionId { get; set; }
+    public string NodeId { get; set; } = string.Empty;
+    public string NodeType { get; set; } = string.Empty;
+    public string InputFingerprint { get; set; } = string.Empty;
 }

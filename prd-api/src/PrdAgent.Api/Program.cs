@@ -419,6 +419,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog,
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
+builder.Services.AddScoped<PrdAgent.Api.Services.IWorkflowWebpageDesignService,
+    PrdAgent.Api.Services.WorkflowWebpageDesignService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 // 工作流结构校验 + 自动接线 + 缺项扫描（纯函数，无状态）
@@ -1498,6 +1500,14 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
     PrdAgent.Infrastructure.Services.Authorization.YuqueAuthHandler>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
     PrdAgent.Infrastructure.Services.Authorization.GitHubAuthHandler>();
+
+// 历史资源只探测配置的可信源，不跟随跳转；保留系统代理与 TLS 验证。
+builder.Services.AddSingleton(sp => new PrdAgent.Api.Services.HistoricalAssetUrlResolver(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<ILogger<PrdAgent.Api.Services.HistoricalAssetUrlResolver>>(),
+    sp.GetRequiredService<MongoDbContext>().ApiRequestLogs, sp.GetRequiredService<IHttpContextAccessor>()));
+builder.Services.AddHttpClient(nameof(PrdAgent.Api.Services.HistoricalAssetUrlResolver))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
 // 注册 Webhook 通知服务。Webhook URL 由用户配置，禁用自动重定向防止绕过首跳 SSRF 校验。
 builder.Services.AddHttpClient("WebhookClient")

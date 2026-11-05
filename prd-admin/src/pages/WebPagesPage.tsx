@@ -6,7 +6,7 @@ import { Button } from '@/components/design/Button';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
 import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
-import type { RelatedSummary } from '@/services/real/relatedDocuments';
+import { HOSTED_SITE_PERMISSIONS_CHANGED, type RelatedSummary } from '@/services/real/relatedDocuments';
 import { Badge } from '@/components/design/Badge';
 import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
@@ -688,6 +688,17 @@ export default function WebPagesPage() {
   useEffect(() => { loadMeta(); }, [loadMeta]);
   useEffect(() => { loadShares(); }, [loadShares]);
   useEffect(() => { void loadTeams(); }, [loadTeams]);
+
+  useEffect(() => {
+    const refreshPermissions = () => {
+      void load();
+      void loadShares();
+      void loadMeta();
+      void loadGroups();
+    };
+    window.addEventListener(HOSTED_SITE_PERMISSIONS_CHANGED, refreshPermissions);
+    return () => window.removeEventListener(HOSTED_SITE_PERMISSIONS_CHANGED, refreshPermissions);
+  }, [load, loadShares, loadMeta, loadGroups]);
 
   // 把刚上传成功的站点 ID 加入 freshIds，1.3s 后自动移除（与 CSS 动画时长匹配）。
   // 仅在用户主动创建时触发；筛选/排序导致的 sites 重组不动它。

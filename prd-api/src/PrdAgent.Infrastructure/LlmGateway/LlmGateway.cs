@@ -607,7 +607,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endpoint = string.IsNullOrWhiteSpace(activeResolution.OfferingEndpointPath)
                     ? activeAdapter.BuildEndpoint(activeResolution.ApiUrl!, request.ModelType)
                     : BuildOfferingEndpoint(activeResolution.ApiUrl!, activeResolution.OfferingEndpointPath);
-                var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache);
+                var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache,
+                    IsThinkingEffective(request.IncludeThinking, request.ModelType));
                 ApplyOpenRouterAttribution(httpRequest, activeResolution.ApiUrl, request.AppCallerCode);
 
                 if (logId == null)
@@ -841,6 +842,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpResponseMessage? rawResponse = null;
             IGatewayAdapter? adapter = null;
             string? terminalError = null;
+            string? terminalErrorCode = null;
             int? terminalStatusCode = null;
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
@@ -851,6 +853,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (adapter == null)
                 {
                     terminalError = $"不支持的平台类型: {resolution.PlatformType}";
+                    terminalErrorCode = "UNSUPPORTED_PLATFORM";
                     terminalStatusCode = 400;
                     if (attemptIndex == 0)
                         CompleteLastSendAttempt(providerAttempts, 400, 0, terminalError);
@@ -879,6 +882,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError))
                 {
                     terminalError = capabilityError!.ErrorMessage ?? "模型能力不匹配";
+                    terminalErrorCode = capabilityError.ErrorCode;
                     terminalStatusCode = capabilityError.StatusCode;
                     CompleteLastSendAttempt(providerAttempts, capabilityError.StatusCode, 0, terminalError);
                     if (attemptIndex < retryResolutions.Count - 1)
@@ -893,6 +897,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (!concurrency.Allowed)
                 {
                     terminalError = ProviderAdmissionMessage(concurrency.ErrorCode);
+                    terminalErrorCode = concurrency.ErrorCode;
                     terminalStatusCode = 429;
                     CompleteLastSendAttempt(providerAttempts, 429, 0, terminalError);
                     if (attemptIndex < retryResolutions.Count - 1)
@@ -908,7 +913,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endpoint = string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath)
                     ? adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
                     : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
-                var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+                var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache,
+                    IsThinkingEffective(request.IncludeThinking, request.ModelType));
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
                 if (admit is not null)
@@ -979,6 +985,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
                     terminalError = sendMsg;
+                    terminalErrorCode = sendCode switch
+                    {
+                        499 => "CANCELLED",
+                        504 => "TIMEOUT",
+                        502 => "NETWORK_ERROR",
+                        _ => "GATEWAY_ERROR"
+                    };
                     terminalStatusCode = sendCode;
                     _logger.LogWarning(sendException,
                         "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
@@ -1009,6 +1022,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var errorBody = await rawResponse.Content.ReadAsStringAsync(ct);
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)rawResponse.StatusCode}";
                 terminalError = errorMsg;
+                terminalErrorCode = "LLM_ERROR";
                 terminalStatusCode = (int)rawResponse.StatusCode;
                 CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, errorMsg);
                 if (HasTrackedHealthRoute(resolution))
@@ -1047,7 +1061,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         resolution.ToGatewayResolution());
                     yield break;
                 }
-                yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败");
+                yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败", terminalErrorCode ?? "LLM_ERROR",
+                    resolution.ToGatewayResolution());
                 yield break;
             }
 

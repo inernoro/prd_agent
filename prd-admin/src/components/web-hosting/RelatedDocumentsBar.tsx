@@ -5,7 +5,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
-import { getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
+import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
 import { SitePreview } from '@/components/SitePreview';
 import { updateSite } from '@/services/real/webPages';
@@ -256,7 +256,12 @@ function RelatedPermissionsDialog({ siteId, onClose }: { siteId: string; onClose
     setBusy(true); setError('');
     try {
       const response = await syncRelatedPermissions(siteId, preview.fingerprint, revoke);
-      if (response.success) { setResult(response.data); await load(); }
+      if (response.success) {
+        setResult(response.data);
+        // 同步可能只完成部分文档；列表和独立分享入口都应重新读取服务端实际状态。
+        window.dispatchEvent(new Event(HOSTED_SITE_PERMISSIONS_CHANGED));
+        await load();
+      }
       else { setError(response.error?.message || '统一权限失败'); await load(); }
     } catch { setError('请求失败，请重新加载权限差异后核对实际结果'); }
     finally { setBusy(false); }

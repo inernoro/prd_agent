@@ -4,12 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { updateSite } from '@/services/real/webPages';
-import { getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
+import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedDocuments, type RelatedPermissionPreview } from '@/services/real/relatedDocuments';
 
 vi.mock('@/services/real/webPages', () => ({ updateSite: vi.fn() }));
 vi.mock('@/components/SitePreview', () => ({ SitePreview: ({ url }: { url: string }) => <div data-page-preview={url} /> }));
-vi.mock('@/services/real/relatedDocuments', () => ({ getRelatedCandidates: vi.fn(), getRelatedDocuments: vi.fn(), previewRelatedPermissions: vi.fn(), saveRelatedDocuments: vi.fn(), syncRelatedPermissions: vi.fn() }));
+vi.mock('@/services/real/relatedDocuments', async importOriginal => ({ ...await importOriginal<typeof import('@/services/real/relatedDocuments')>(), getRelatedCandidates: vi.fn(), getRelatedDocuments: vi.fn(), previewRelatedPermissions: vi.fn(), saveRelatedDocuments: vi.fn(), syncRelatedPermissions: vi.fn() }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (value: { token: string }) => unknown) => selector({ token: 'session' }) }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>正在加载</span> }));
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ open, title, content, actions }: { open: boolean; title: string; content: React.ReactNode; actions: React.ReactNode }) => open ? <section role="dialog" aria-label={title}>{content}{actions}</section> : null }));
@@ -165,6 +165,26 @@ describe('顶部关联文档', () => {
     await clickText('权限不一致'); await clickText('应用统一权限');
     expect(syncRelatedPermissions).toHaveBeenCalledWith('a', 'checked-version', false);
     expect(document.body.textContent).toContain('技术设计：页面权限已同步');
+  });
+  it('权限同步含部分成功时通知列表重读实际权限，取消和失败不发布成功通知', async () => {
+    const changed = vi.fn();
+    window.addEventListener(HOSTED_SITE_PERMISSIONS_CHANGED, changed);
+    try {
+      await act(async () => root.render(<RelatedDocumentsBar siteId="a" />));
+      await clickText('权限不一致'); await clickText('取消');
+      expect(changed).not.toHaveBeenCalled();
+      vi.mocked(syncRelatedPermissions).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'CONFLICT', message: '权限已变化' } });
+      await clickText('权限不一致'); await clickText('应用统一权限');
+      expect(changed).not.toHaveBeenCalled();
+      vi.mocked(syncRelatedPermissions).mockResolvedValueOnce({ success: true, data: { results: [
+        { id: 'b', title: '技术设计', success: true, message: '页面权限已同步' },
+        { id: 'c', title: '测试方案', success: false, message: '已无权限' },
+      ], sharesRevoked: 1 }, error: null });
+      await clickText('应用统一权限');
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(document.body.textContent).toContain('技术设计：页面权限已同步');
+      expect(document.body.textContent).toContain('测试方案：已无权限');
+    } finally { window.removeEventListener(HOSTED_SITE_PERMISSIONS_CHANGED, changed); }
   });
   it('超过九份分页，切页后卡片仍保留真实地址', async () => {
     const items = Array.from({ length: 12 }, (_, index) => ({ id: `doc-${index}`, title: `文档 ${index}`, href: `/web-pages?openSite=doc-${index}` }));

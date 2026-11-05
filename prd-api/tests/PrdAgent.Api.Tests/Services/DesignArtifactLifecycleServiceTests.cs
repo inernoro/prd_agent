@@ -119,6 +119,7 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.NotNull(savedDraft);
         Assert.Equal(HostedSiteRevisionStatuses.Draft, savedDraft.Status);
         Assert.Contains("#12665a", savedDraft.Html, StringComparison.Ordinal);
+        Assert.Contains("TODO: 999个项目", savedDraft.Html, StringComparison.Ordinal);
         Assert.Single(System.Text.RegularExpressions.Regex.Matches(
                 savedDraft.Html,
                 "Content-Security-Policy",
@@ -267,7 +268,8 @@ public sealed class DesignArtifactLifecycleServiceTests
             InputHtml = currentHtml;
             yield return new DesignArtifactExecutorChunk(
                 "delta",
-                (currentHtml ?? string.Empty).Replace("#334155", "#12665a", StringComparison.Ordinal));
+                (currentHtml ?? string.Empty).Replace("#334155", "#12665a", StringComparison.Ordinal)
+                    .Replace("</main>", "<p>TODO: 999个项目</p></main>", StringComparison.Ordinal));
         }
     }
 

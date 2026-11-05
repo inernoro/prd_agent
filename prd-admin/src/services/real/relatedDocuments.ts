@@ -2,6 +2,8 @@ import { apiRequest, resolveApiUrl } from './apiClient';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 
+export const HOSTED_SITE_PERMISSIONS_CHANGED = 'hosted-site-permissions-changed';
+
 export interface RelatedDocument {
   id: string;
   title: string;

@@ -80,12 +80,6 @@ public sealed class PrSummaryService
                 // 摘要任务要求相对稳定、不发散，温度略低
                 ["temperature"] = 0.15,
                 ["max_tokens"] = 2048,
-                // OpenRouter: 必须显式要求上游流式推送 reasoning 内容。
-                // 不加这两个字段时，OpenRouter 仍会生成 reasoning tokens（计费照收），
-                // 但不会在流中下发，导致用户看到 40~60s 空白等待。
-                // 详见 rule.platform.llm-gateway 的"OpenRouter Reasoning"一节。
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
         };
 
