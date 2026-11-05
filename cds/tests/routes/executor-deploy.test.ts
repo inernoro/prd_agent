@@ -140,6 +140,7 @@ describe('Executor /exec/deploy', () => {
   let server: http.Server;
   let mock: MockShellExecutor;
   let config: CdsConfig;
+  let containerService: ContainerService;
   let containerEvents: Array<{ action: string; operationId?: string | null; requestId?: string | null; details?: Record<string, unknown> }>;
 
   beforeEach(async () => {
@@ -198,7 +199,7 @@ describe('Executor /exec/deploy', () => {
         });
       },
     };
-    const containerService = new ContainerService(mock, config, undefined, eventSink, undefined, undefined, unitBindMountInspector);
+    containerService = new ContainerService(mock, config, undefined, eventSink, undefined, undefined, unitBindMountInspector);
     (containerService as any).waitForContainerAlive = async () => undefined;
     (containerService as any).waitForReadiness = async () => true;
 
@@ -230,6 +231,53 @@ describe('Executor /exec/deploy', () => {
       }); req.on('error', reject); req.end(data);
     });
   }
+
+  it('远端代次控制沿用原执行器认证，未认证请求不触发Docker或新增分支', async () => {
+    config.executorToken = 'owned-executor-token';
+    const result = await postJson(server, '/exec/deployment-owner', { action: 'claim', projectId: 'default', branchId: 'owned', executorId: 'exec-a',
+      deploymentRunId: 'run-owned', operationId: 'op-owned', operationGeneration: 1 });
+    expect(result.status).toBe(401); expect(mock.commands).toEqual([]); expect(stateService.getAllBranches()).toEqual([]);
+  });
+
+  it('没有本执行器原生准入回执的迟到远端部署必须在工作树和容器操作前拒绝', async () => {
+    const result = await postSse(server, '/exec/deploy', { branchId: 'owned', branchName: 'feature/owned', projectId: 'default', profiles: [],
+      operationId: 'op-owned', operationGeneration: 1, executorId: 'exec-a', deploymentRunId: 'run-owned', admissionId: 'old-process-receipt' });
+    expect(result.status).toBe(409); expect(mock.commands).toEqual([]); expect(stateService.getAllBranches()).toEqual([]);
+  });
+
+  it('原远端代次撤销不依赖下一帧，旧清理回执不能覆盖同提交的新代次', async () => {
+    const id = 'remote-original-generation';
+    const entry: BranchEntry = { id, projectId: 'default', branch: 'feature/remote-owner', worktreePath: tmpDir,
+      createdAt: new Date().toISOString(), status: 'running', services: {
+        old: { profileId: 'old', containerName: 'cds-old-owned', hostPort: 10001, status: 'running' },
+      } };
+    stateService.addBranch(entry);
+    let returned!: () => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const receipt = new Promise<void>(resolve => { returned = resolve; });
+    const remove = vi.spyOn(containerService, 'removeRuntimeGroup').mockImplementationOnce(async () => { entered(); await receipt; })
+      .mockResolvedValue(undefined);
+    const owner = { branchId: id, projectId: 'default', executorId: 'exec-owned', deploymentRunId: 'run-old',
+      operationId: 'operation-old', operationGeneration: 1 };
+    const body = { ...owner, branchName: entry.branch, profiles: [], commitSha: 'a'.repeat(40) };
+    const admission = await postJson(server, '/exec/deployment-owner', { ...owner, action: 'claim' });
+    const first = postSse(server, '/exec/deploy', { ...body, admissionId: admission.body.admissionId });
+    await started;
+    let revoked: { status: number; body: any }, late: Awaited<ReturnType<typeof postSse>>;
+    try {
+      revoked = await postJson(server, '/exec/deployment-owner', { ...owner, action: 'revoke' });
+      const next = { ...body, operationId: 'operation-new', operationGeneration: 2, deploymentRunId: 'run-new' };
+      const nextAdmission = await postJson(server, '/exec/deployment-owner', { ...next, action: 'claim' });
+      await postSse(server, '/exec/deploy', { ...next, admissionId: nextAdmission.body.admissionId });
+      entry.services = { current: { profileId: 'current', containerName: 'cds-current-owned', hostPort: 10002, status: 'running' } };
+      entry.status = 'running';
+      const expected = JSON.stringify(entry);
+      returned(); late = await first;
+      expect(revoked.status).toBe(200);
+      expect(JSON.stringify(entry)).toBe(expected);
+      expect(late.events.some(event => event.event === 'error')).toBe(true);
+    } finally { returned(); await first; remove.mockRestore(); }
+  });
 
   it('远端产物预检继承执行器认证，拒绝请求不调用Docker或创建分支', async () => {
     config.executorToken = 'artifact-test-token';
