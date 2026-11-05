@@ -70,6 +70,8 @@ import {
 } from './services/external-port-audit.js';
 import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
+import { readForwarderPreviewActivity } from './forwarder/preview-activity.js';
+import { isTrustedProbeFingerprint } from './services/probe-marker.js';
 import { JanitorService, defaultDiskUsage, createJanitorDockerAdapters } from './services/janitor.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
@@ -115,7 +117,9 @@ import { hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
 import { AsyncStuckDeployReconciler } from './services/async-stuck-deploy-reconciler.js';
 import { createReleaseGitRunner } from './services/release-git-reader.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
-import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
+import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
+import { serviceRuntimeRefs } from './services/service-runtime.js';
+import { stopServiceForCooling } from './services/scheduler-service-stop.js';
 import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
@@ -163,7 +167,7 @@ import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-r
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
-import { buildSelfCheck, readSelfCheckRuntimeStatus, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { buildSelfCheck, readSelfCheckRuntimeStatus, wireSchedulerPreviewActivitySelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
 import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from './services/self-status-cache.js';
 import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
@@ -2129,9 +2133,11 @@ if (activeHttpLogStore) {
   }
 }
 const localServerEventLogStore = serverEventLogStoreFromEnv();
+let localServerEventLogReady = false;
 if (localServerEventLogStore) {
   try {
     await localServerEventLogStore.init();
+    localServerEventLogReady = true;
     console.log('  [server-event-log] persistent diagnostics enabled (collection=cds_server_events)');
   } catch (err) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
@@ -2870,6 +2876,15 @@ let shutdownInProgress = false;
   }
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
+schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
+schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
+  .some(operation => operation.request.kind !== 'scheduler-cooling'));
+let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
+if (process.env.CDS_USE_FORWARDER === '1') {
+  const diagnosticsPort = Number.parseInt(process.env.CDS_FORWARDER_PORT || '9090', 10);
+  schedulerService.setPreviewActivitySource(() => readForwarderPreviewActivity(diagnosticsPort), isTrustedProbeFingerprint);
+  previewActivitySelfCheck = wireSchedulerPreviewActivitySelfCheck(schedulerService, activeServerEventLogStore, () => localServerEventLogReady);
+}
 // coolFn: stop all containers of a branch but keep the branch entry in state.
 // A later explicit deploy/webhook/cdscli action can bring it back to HOT;
 // passive preview requests must only show state and must not start containers.
@@ -2890,14 +2905,14 @@ schedulerService.setCoolFn(async (slug: string) => {
   stateService.save();
   for (const svc of Object.values(branch.services)) {
     branchOperationLease?.assertCurrent(`scheduler cooling before ${svc.profileId}`);
-    if (svc.status === 'running' || svc.status === 'starting') {
-      // 先把 svc.status 翻成 stopping 再 await stop()。stop() 重构后容器
-      // 停止仍保留(exited)，若此处仍是 running，30s auto-restart tick 命中
-      // 这段 await 窗口会把"正在主动降温"的容器误判为 crash、bump stopCount、
-      // 还 docker start 抢跑（Cursor Bugbot High）。与手动 /stop 处理一致。
-      svc.status = 'stopping';
+    const observed = getObservedRunningContainerNames();
+    const resident = serviceRuntimeRefs(svc).some(runtime => observed?.has(runtime.containerName));
+    if (resident || ['running', 'starting', 'restarting'].includes(svc.status)) {
       try {
-        await containerService.stopRuntimeGroup(svc, '调度器降温（保留容器，可秒级唤醒）', {
+        await stopServiceForCooling({ service: svc, container: containerService,
+          assertCurrent: () => branchOperationLease?.assertCurrent(`scheduler cooling after ${svc.profileId}`),
+          confirmedStopped: forgetConfirmedStoppedContainers,
+          context: {
           kind: 'cds-stop-idle',
           projectId: branch.projectId,
           branchId: branch.id,
@@ -2907,11 +2922,14 @@ schedulerService.setCoolFn(async (slug: string) => {
           trigger: 'scheduler',
           operation: 'scheduler-cooling',
           source: 'schedulerService.setCoolFn',
+          },
         });
       } catch (err) {
-        console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
+        branchOperationLease?.assertCurrent('scheduler cooling failure persistence');
+        branch.status = 'error';
+        stateService.save([{ kind: 'branches', id: branch.id }]);
+        throw err;
       }
-      svc.status = 'stopped';
     }
   }
   // 复制集成员级联降温（Codex P1 连带修复，2026-07-26）：成员容器不在
@@ -2936,13 +2954,16 @@ schedulerService.setCoolFn(async (slug: string) => {
             source: 'schedulerService.setCoolFn',
           });
         } catch (err) {
-          console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+          branchOperationLease?.assertCurrent('scheduler replica cooling failure persistence');
+          branch.status = 'error';
+          stateService.save([{ kind: 'branches', id: branch.id }]);
+          throw err;
         }
       }
       // 停止必须核实再落状态（Codex 第三十五轮 P1 点名的三处循环之一，
       // 判定见 services/replica-stop.ts）。无容器的 provisioning 成员照旧标 stopped，
       // 物化栅栏按状态放弃，防止降温后后台任务把副本容器起出来。
-      await settleMemberAfterStop(member, {
+      const settled = await settleMemberAfterStop(member, {
         isRunning: (name) => containerService.isRunning(name),
         interruptedMessage: '物化被调度器降温中断，可在画布删除后重建',
         onStillRunning: (containerName) => {
@@ -2958,6 +2979,13 @@ schedulerService.setCoolFn(async (slug: string) => {
           });
         },
       });
+      branchOperationLease?.assertCurrent('scheduler cooling after replica confirmation');
+      if (settled !== 'stopped') {
+        branch.status = 'error';
+        stateService.save([{ kind: 'branches', id: branch.id }]);
+        throw new Error('副本停止未确认，分支保持驻留并等待降温重试');
+      }
+      if (member.containerName) forgetConfirmedStoppedContainers([member.containerName]);
     }
   }
   await archiveBranchContainerLogs({
@@ -3179,6 +3207,8 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       throw err;
     }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const previousWake = { status: branch.status, lastDeployStartedAt: branch.lastDeployStartedAt,
+      services: services.map(svc => ({ svc, status: svc.status })) };
 
     try {
       // Synchronous prefix (runs before the first await): flip to a loading
@@ -3213,6 +3243,15 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       try {
         await schedulerService.evictLruIfOverCapacity(slug);
       } catch (evictErr) {
+        if (schedulerService.getSnapshot().previewActivity?.status === 'unknown') {
+          lease?.assertCurrent('auto-wake capacity deferred');
+          branchOperationFinalStatus = 'cancelled';
+          branch.status = previousWake.status;
+          branch.lastDeployStartedAt = previousWake.lastDeployStartedAt;
+          for (const entry of previousWake.services) entry.svc.status = entry.status;
+          stateService.save();
+          return;
+        }
         console.warn(`[auto-wake] capacity eviction skipped for "${slug}": ${(evictErr as Error).message}`);
       }
 
@@ -6280,6 +6319,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    */
   const selfCheckDeps: SelfCheckDeps = {
     now: () => Date.now(),
+    ...(previewActivitySelfCheck ? { previewActivity: previewActivitySelfCheck } : {}),
     deploymentRuns: () => stateService.getDeploymentRuns(),
     unresolvedWebhookDispatches: () => unresolvedWebhookDispatches(stateService.getAllBranches()),
     webhookDeliveries: (limit) => stateService.getGithubWebhookDeliveries(limit),

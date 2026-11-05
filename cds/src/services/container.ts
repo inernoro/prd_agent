@@ -727,11 +727,12 @@ export class ContainerService {
   }
   async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
     context: ContainerRemoveContext = {}): Promise<void> {
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(runtime.containerName);
     const owned = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
     context.assertCurrent?.('after runtime retirement identity');
     if (!owned) {
       if (!runtime.containerId && runtime.creationIssued) throw new Error('迟到创建身份未确认，保留回收责任');
-      deploymentPhaseBudget.releaseMemory(runtime.containerName);
+      releaseMemory();
       return;
     }
     await this.remove(owned.containerId!, context);
@@ -739,7 +740,7 @@ export class ContainerService {
     const after = await this.shell.exec(`docker inspect --format ${this.shellQuote('{{.Id}}')} ${this.shellQuote(owned.containerId!)}`,
       { timeout: 5000, executionLane: 'observation' });
     if (after.exitCode === 0 || !/No such (?:container|object):/i.test(combinedOutput(after))) throw new Error('旧运行身份回收未确认，保留责任及容量占用');
-    deploymentPhaseBudget.releaseMemory(runtime.containerName);
+    releaseMemory();
   }
   async connectReplacementPeer(
     entry: BranchEntry, profile: BuildProfile, service: ServiceState, network: string,
@@ -2699,6 +2700,7 @@ export class ContainerService {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before restart identity');
     const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    context.assertCurrent?.('after restart identity');
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
       this.recordContainerEvent({
@@ -2741,6 +2743,7 @@ export class ContainerService {
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
+      context.assertCurrent?.('after restart failure diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',
@@ -2768,7 +2771,9 @@ export class ContainerService {
     }
     try {
       await this.waitForContainerAlive(containerName, onOutput);
+      context.assertCurrent?.('after restart liveness');
       const diagnostics = await this.captureContainerDiagnostics(containerName, 80);
+      context.assertCurrent?.('after restart diagnostics');
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',
@@ -2793,8 +2798,10 @@ export class ContainerService {
       });
       return true;
     } catch (err) {
+      context.assertCurrent?.('after restart liveness failure');
       onOutput?.(`── 重启后容器未存活: ${(err as Error).message} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 300);
+      context.assertCurrent?.('after restart early-exit diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',

@@ -2,15 +2,21 @@ import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDow
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
+import { X, ExternalLink, FileWarning, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
+import { withAnnotationRuntime } from './useHostedAnnotations';
+import { AnnotationModeBar } from './AnnotationModeBar';
+import { useHostedReview } from './useHostedReview';
+import { ReviewToolbarControls } from './ReviewToolbarControls';
+import { AnnotationBubble } from './AnnotationBubble';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
-import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
+import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
@@ -25,6 +31,7 @@ const SRCDOC_WAIT_MS = 1500;
 interface Props {
   site: HostedSite;
   onClose: () => void;
+  onSiteVersionChanged?: (site: HostedSite) => void;
   /** 评论开关变更后回传给父组件，避免关闭再打开时从 stale site.commentsEnabled 重新初始化 */
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
   /** 提问开关同理：只改弹窗内的 state，关掉再打开会从 stale site.askEnabled 退回旧值 */
@@ -43,13 +50,22 @@ interface Props {
  * 遵循 frontend-modal.md 三硬约束: inline style 高度 + createPortal + min-h-0
  */
 export default function SitePreviewModal({
-  site,
+  site: originalSite,
   onClose,
   onCommentsEnabledChange,
   onAskEnabledChange,
   canToggleComments = true,
   onEditInWorkbench,
+  onSiteVersionChanged,
 }: Props) {
+  const isMobile = useIsMobile();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const review = useHostedReview(iframeRef, originalSite,
+    originalSite.wrappedAssetType ? null : { mode: 'site', siteId: originalSite.id },
+    () => setRightPanel('comments'), onSiteVersionChanged);
+  const pdfDownload = useHostedPdfDownload(review.historical ? null : { ...originalSite, ...review.liveSite }, undefined, iframeRef);
+  const site = { ...originalSite, ...review.site };
+  const annotations = review.annotations;
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -75,9 +91,6 @@ export default function SitePreviewModal({
   const [askEnabled, setAskEnabled] = useState(site.askEnabled === true);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
-  const pdfDownload = useHostedPdfDownload({ id: site.id, siteUrl: site.siteUrl, entryFile: site.entryFile,
-    pdfFilePaths: site.pdfFilePaths });
-  const iframeRef = pdfDownload.iframeRef;
 
   useEffect(() => {
     if (site.askEnabled != null) return;
@@ -94,10 +107,17 @@ export default function SitePreviewModal({
   // 直链 iframe 在 Chrome 里存在「只绘制空白」的已知形态，可靠路径是服务端代理取回正文走 srcDoc
   // （分享页 PR #1356 已这么修）。取不回就如实退回直链，见 useSitePreviewHtml。
   // PDF 直连路径不参与：那是交给浏览器原生阅读器的静态资源，没有 HTML 正文可取。
-  const { srcDoc, loading: htmlLoading } = useSitePreviewHtml(
-    previewSource.usingNativePdfViewer ? null : site,
+  const { srcDoc: currentSrcDoc, loading: currentHtmlLoading } = useSitePreviewHtml(
+    previewSource.usingNativePdfViewer ? null : { ...originalSite, ...review.liveSite },
     true,
   );
+  const historicalLoading = review.historical && review.loading;
+  const historicalRevisionId = review.historical ? review.selected?.id : null;
+  const historyHtml = review.preview?.html;
+  const srcDoc = review.historical
+    ? (historyHtml && site.contentShape === 'self-contained-html' && shouldFetchPreviewHtml(site) && canUseSrcDocPreview(historyHtml) ? withPreviewBase(historyHtml, new URL(review.previewBaseUrl || site.siteUrl, window.location.href).href) : null)
+    : currentSrcDoc;
+  const htmlLoading = review.historical ? review.loading : currentHtmlLoading;
   /**
    * 渲染路径**只决定一次**，定了就不再变。
    *
@@ -107,11 +127,11 @@ export default function SitePreviewModal({
    */
   const [renderMode, setRenderMode] = useState<'waiting' | 'srcdoc' | 'direct'>('waiting');
   useEffect(() => {
-    if (renderMode !== 'waiting') return;
+    if (review.historical || renderMode !== 'waiting') return;
     if (srcDoc) { setRenderMode('srcdoc'); return; }
     if (!htmlLoading) setRenderMode('direct');
-  }, [renderMode, srcDoc, htmlLoading]);
-  const useSrcDoc = renderMode === 'srcdoc';
+  }, [renderMode, srcDoc, htmlLoading, review.historical]);
+  const useSrcDoc = review.historical ? !!srcDoc : renderMode === 'srcdoc';
 
   // 发布新版本后 siteUrl 的版本指纹会变化。预览组件不卸载，因此必须显式重开
   // srcDoc/direct 的一次性判定，否则 iframe 会继续停在发布前的旧内容。
@@ -120,17 +140,22 @@ export default function SitePreviewModal({
     setLoading(true);
     setErrored(false);
     setSlow(false);
+    if (review.historical) return;
     const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
     return () => window.clearTimeout(timer);
-  }, [site.siteUrl]);
+  }, [site.siteUrl, historicalRevisionId, review.historical]);
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
     if (!frame) return;
     // PPT/幻灯片类托管页的快捷键通常绑在 iframe 内部 window 上。
-    // 弹窗打开后焦点仍可能停在后台按钮/关闭按钮上，需要把键盘焦点交给预览内容。
-    requestAnimationFrame(() => frame.focus());
-    window.setTimeout(() => frame.focus(), 80);
+    // 仅在用户尚未操作工具栏时交给预览，迟到的加载不能抢走菜单或输入框焦点。
+    const focusIfIdle = () => {
+      const active = document.activeElement;
+      if (active === document.body || active === dialogRef.current || active === frame) frame.focus();
+    };
+    requestAnimationFrame(focusIfIdle);
+    window.setTimeout(focusIfIdle, 80);
   };
 
   useEffect(() => {
@@ -191,11 +216,11 @@ export default function SitePreviewModal({
   useEffect(() => {
     const timer = setTimeout(() => setSlow(true), SLOW_HINT_MS);
     return () => clearTimeout(timer);
-  }, [site.siteUrl]);
+  }, [site.siteUrl, review.loading]);
 
   const handleOpenExternal = () => {
     // 与 iframe 同源同 URL：PDF 站在新窗口里也直接给原始 PDF，和 ShareViewPage 顶栏一致
-    window.open(previewSource.src, '_blank');
+    if (previewSource.src) window.open(previewSource.src, '_blank');
   };
 
   const handleToggleCommentsEnabled = async () => {
@@ -223,7 +248,7 @@ export default function SitePreviewModal({
         aria-labelledby="site-preview-dialog-title"
         tabIndex={-1}
         className="relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
-        style={{ width: '90vw', height: '90vh', maxWidth: '1400px' }}
+        style={{ width: '90vw', height: '90vh', maxWidth: '1400px', background: 'var(--bg-elevated)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
@@ -244,17 +269,8 @@ export default function SitePreviewModal({
             </button>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
-            <button
-              type="button"
-              onClick={() => setShowComments((v) => !v)}
-              className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                showComments ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
-              }`}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              评论
-            </button>
-            {askEnabled && (
+            <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} onBubbleMode={() => { if (isMobile) setShowComments(false); }} />
+            {askEnabled && !review.historical && (
               <button
                 type="button"
                 onClick={() => {
@@ -273,7 +289,8 @@ export default function SitePreviewModal({
               <button
                 type="button"
                 onClick={onEditInWorkbench}
-                title="在工作台里说想改哪里，先出草稿再发布；历史版本也在那里"
+                disabled={review.historical || review.loading}
+                title={review.historical ? '历史版本只读；请切回当前发布版修改' : '在工作台里说想改哪里，先出草稿再发布；历史版本也在那里'}
                 className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <WandSparkles className="w-3.5 h-3.5" />
@@ -294,6 +311,8 @@ export default function SitePreviewModal({
             <button
               type="button"
               onClick={handleOpenExternal}
+              disabled={!previewSource.src}
+              title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
               className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <ExternalLink className="w-3.5 h-3.5" />
@@ -312,12 +331,12 @@ export default function SitePreviewModal({
         </div>
 
         {/* 主体：iframe + 可选评论面板 */}
-        <div className="relative flex-1 min-h-0 flex overflow-hidden">
+        <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
-          <div className="flex-1 min-w-0 relative bg-token-nested">
+          <div className="flex-1 min-w-0 min-h-0 relative bg-token-nested" style={{ flex: isMobile && showComments ? '0 0 30%' : undefined }}>
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
-            {loading && !slow && (
+            {(historicalLoading || (loading && !slow)) && (
               <div className="absolute inset-0 flex items-center justify-center bg-token-nested">
                 <MapSectionLoader text="正在加载站点…" />
               </div>
@@ -329,6 +348,8 @@ export default function SitePreviewModal({
                 <p className="text-sm text-token-secondary">站点加载失败</p>
                 <button
                   onClick={handleOpenExternal}
+                  disabled={!previewSource.src}
+                  title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'}
                   className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm"
                 >
                   在新窗口打开
@@ -340,22 +361,24 @@ export default function SitePreviewModal({
               <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg border border-token-subtle bg-token-card px-3 py-1.5 text-[12px] text-token-secondary shadow-lg backdrop-blur-sm">
                 <MapSpinner size={14} />
                 <span>加载较慢，内容可能仍在陆续显示</span>
-                <button onClick={handleOpenExternal} className="text-blue-400 hover:text-blue-300">
+                <button onClick={handleOpenExternal} disabled={!previewSource.src} title={previewSource.src ? '新窗口打开' : '该历史快照仅支持页内预览'} className="text-blue-400 hover:text-blue-300">
                   新窗口打开
                 </button>
               </div>
             )}
+            <AnnotationModeBar annotations={annotations} onCancel={() => setRightPanel('comments')} />
             <HostedPdfDownloadStatus status={pdfDownload.status} />
             <iframe
               ref={iframeRef}
               // waiting 与 direct 都已加载同一个原地址，结束等待不能重建文档、清空用户输入。
-              key={useSrcDoc ? 'srcdoc' : 'direct'}
-              src={useSrcDoc ? undefined : previewSource.src}
-              srcDoc={useSrcDoc && srcDoc ? pdfDownload.decorateHtml(srcDoc) : undefined}
+              key={`${review.historical ? review.selected?.id : 'live'}:${useSrcDoc ? 'srcdoc' : 'direct'}`}
+              src={historicalLoading || useSrcDoc || (review.historical && !site.siteUrl) ? undefined : previewSource.src}
+              srcDoc={!historicalLoading && useSrcDoc && srcDoc ? pdfDownload.decorateHtml(withAnnotationRuntime(srcDoc)) : undefined}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {
                 pdfDownload.notifyFrame();
+                annotations.notifyFrame();
                 // iframe 成功加载：清 loading 同时清 errored
                 // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
                 setLoading(false);
@@ -374,44 +397,35 @@ export default function SitePreviewModal({
                 : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(previewSource.src)} allow-modals`}
               title={site.title}
             />
+            <AnnotationBubble annotations={annotations} hidden={isMobile && showComments} />
           </div>
 
           {/* 评论面板 */}
-          {showComments && (
+          {(
             <aside
+              style={{ display: showComments ? 'flex' : 'none', background: 'var(--bg-elevated)', ...(isMobile ? { top: 'auto', height: '70%', borderTop: '1px solid var(--border-subtle)' } : {}) }}
               className="absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:static sm:inset-auto sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-token-subtle"
             >
-              {/* 允许评论开关：仅 owner/editor 显示（viewer 无权改，显示了点不动反而困惑） */}
-              {canToggleComments && (
-              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-token-subtle shrink-0">
-                <span className="text-xs text-token-secondary">允许访客评论</span>
-                <button
-                  onClick={handleToggleCommentsEnabled}
-                  disabled={togglingComments}
-                  role="switch"
-                  aria-checked={commentsEnabled}
-                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                    commentsEnabled ? 'bg-blue-600' : 'bg-token-card'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      commentsEnabled ? 'translate-x-4' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
+              <div className="review-sidebar-heading">
+                <span className="text-token-primary">批注与讨论</span>
+                {canToggleComments && <button type="button" role="switch" aria-label="允许访客评论" aria-checked={commentsEnabled}
+                  onClick={handleToggleCommentsEnabled} disabled={togglingComments} className="review-permission-switch" title="允许访客评论与批注">
+                  <span>允许评论</span><i aria-hidden="true" /></button>}
+                <button type="button" onClick={() => setRightPanel('none')} aria-label="收起批注面板" className="p-1 text-token-muted hover:text-token-primary"><X size={16} /></button>
               </div>
-              )}
               <div
-                className="flex-1 min-h-0 overflow-y-auto p-3"
+                className="flex-1 min-h-0 overflow-hidden"
                 style={{ overscrollBehavior: 'contain' }}
               >
                 {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态；
                     onStateLoaded 用服务端权威值回填开关，消除"开关 ON 但面板显示已关闭"的 stale 偏差（Cursor medium） */}
                 <CommentsSection
-                  key={String(commentsEnabled)}
+                  key={`${site.id}:${commentsEnabled}`}
                   mode="site"
                   siteId={site.id}
+                  annotations={annotations}
+                  review={originalSite.wrappedAssetType ? undefined : review}
+                  onPickElement={() => setRightPanel('none')}
                   onStateLoaded={(serverEnabled) => {
                     if (serverEnabled !== commentsEnabled) {
                       setCommentsEnabled(serverEnabled);
@@ -432,7 +446,7 @@ export default function SitePreviewModal({
               className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[380px] sm:shrink-0 sm:border-l sm:border-token-subtle"
               style={{
                 background: 'var(--bg-elevated)',
-                display: rightPanel === 'ask' ? 'flex' : 'none',
+                display: rightPanel === 'ask' && !review.historical ? 'flex' : 'none',
               }}
             >
               <AskPanelInline siteId={site.id} title={site.title} />
