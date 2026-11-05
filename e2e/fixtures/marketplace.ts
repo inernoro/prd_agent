@@ -15,7 +15,7 @@ export async function installMarketplaceFixture(page: Page) {
     roles: i % 3 === 0 ? ['pm'] : ['dev'], forkCount: i, downloadCount: i, shareCount: 0,
     favoriteCount: i % 5 === 0 && i % 3 !== 0 ? 1 : 0, isFavoritedByCurrentUser: i % 5 === 0 && i % 3 !== 0, hasSkillMd: true,
     zipUrl: '', zipSizeBytes: 0, originalFileName: 'fixture.zip',
-    createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-11-03T00:00:00Z',
+    createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-11-03T00:00:00Z', contentUpdatedAt: '2026-11-03T00:00:00Z' as string | null,
   }));
   await page.addInitScript(() => localStorage.setItem('prd-admin-auth', JSON.stringify({
     state: { isAuthenticated: true, user: { userId: 'fixture-viewer', username: 'fixture-viewer', role: 'ADMIN' },

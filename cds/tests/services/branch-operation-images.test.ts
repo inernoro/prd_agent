@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { captureDeploymentInput, deploymentInputBranch } from '../../src/services/deployment-input.js';
 import { resolveEffectiveProfile } from '../../src/services/container.js';
+import { computeImageRetentionPlan } from '../../src/services/image-retention.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
 
 function provider(coordinator: BranchOperationCoordinator, branch: BranchEntry): () => string[] {
@@ -21,22 +22,29 @@ function provider(coordinator: BranchOperationCoordinator, branch: BranchEntry):
 }
 
 describe('真实Janitor装配读取原部署代次输入', () => {
-  it.each([false, true])('执行/产物等待期间保留原目标和已选回退，终态解除；waiting=%s', waiting => {
+  it.each([false, true, 'mutable'] as const)('执行/产物等待期间保留原目标和已选回退，终态解除；waiting=%s', waiting => {
     const target = '2'.repeat(40), old = '1'.repeat(40);
     const branch = { id: 'owned-branch', projectId: 'owned', branch: 'feature', services: {}, status: 'running', githubCommitSha: old,
       createdAt: '2026-11-01T00:00:00Z', profileOverrides: { web: { dockerImage: 'ghcr.io/owned/web:sha-${CDS_COMMIT_SHA}' } } } as BranchEntry;
     const profile = { id: 'web', name: 'web', dockerImage: 'ghcr.io/other/base:latest', containerPort: 80 } as BuildProfile;
     const input = captureDeploymentInput(branch, [profile], { PRIVATE_CANARY: 'never-return-env' }, null, target);
+    const selected = waiting === 'mutable' ? 'ghcr.io/owned/web:branch-main' : 'ghcr.io/owned/web:sha-' + old;
     input.artifactAdmission = { state: 'ready', targetCommitSha: target, checkedAt: '2026-11-01T00:00:00Z', artifacts: [{ profileIds: ['web'], requestedImage: 'ghcr.io/owned/web:sha-' + target,
-      selectedImage: 'ghcr.io/owned/web:sha-' + old, image: 'ghcr.io/owned/web@sha256:' + 'a'.repeat(64), revision: old, platform: 'linux/amd64', proof: { kind: 'component-unchanged', buildScope: ['web'] } }] };
+      selectedImage: selected, image: 'ghcr.io/owned/web@sha256:' + 'a'.repeat(64), revision: old, platform: 'linux/amd64', proof: { kind: 'component-unchanged', buildScope: ['web'] } }] };
     const coordinator = new BranchOperationCoordinator();
-    const decision = coordinator.begin({ projectId: 'owned', branchId: branch.id, kind: 'deploy', trigger: 'manual', commitSha: target, commitPinned: true }, { waitForArtifacts: waiting });
+    const decision = coordinator.begin({ projectId: 'owned', branchId: branch.id, kind: 'deploy', trigger: 'manual', commitSha: target, commitPinned: true }, { waitForArtifacts: waiting !== false });
     coordinator.rememberDeploymentInput(decision.operationId, decision.generation, input);
     branch.githubCommitSha = 'f'.repeat(40); branch.profileOverrides = { web: { dockerImage: 'ghcr.io/foreign/new:latest' } };
     const read = provider(coordinator, branch);
-    expect(read().sort()).toEqual(['ghcr.io/owned/web:sha-' + old, 'ghcr.io/owned/web:sha-' + target].sort());
+    expect(read().sort()).toEqual([selected, 'ghcr.io/owned/web:sha-' + target,
+      'ghcr.io/owned/web@sha256:' + 'a'.repeat(64)].sort());
+    const admittedOldTag = 'ghcr.io/owned/web:sha-' + '0'.repeat(40);
+    const plan = () => computeImageRetentionPlan({ ledger: [{ image: 'ghcr.io/owned/web:sha-' + target, branchId: branch.id,
+      profileId: 'web', createdAt: '2026-11-01T00:00:00Z' }], hostImages: [admittedOldTag], inUseImages: read(), keepGenerations: 1 });
+    expect(plan().remove).not.toContain(admittedOldTag);
     expect(JSON.stringify(read())).not.toContain('never-return-env');
     if (decision.lease) coordinator.complete(decision.lease, 'completed'); else coordinator.cancelBranch(branch.id, 'owned cancellation');
     expect(read()).toEqual([]);
+    expect(plan().remove).toContain(admittedOldTag);
   });
 });

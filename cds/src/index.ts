@@ -3528,7 +3528,7 @@ const janitorService = new JanitorService(
     const captured = deploymentInputBranch(input, branch);
     return [...input.profiles.filter(profile => !request.profileId || profile.id === request.profileId)
       .map(profile => resolveEffectiveProfile(profile, captured).dockerImage),
-      ...(input.artifactAdmission?.artifacts || []).map(artifact => artifact.selectedImage || artifact.requestedImage)]
+      ...(input.artifactAdmission?.artifacts || []).flatMap(artifact => [artifact.selectedImage || artifact.requestedImage, artifact.image])]
       .filter((image): image is string => Boolean(image));
   }),
 );
