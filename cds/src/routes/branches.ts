@@ -2,7 +2,7 @@ import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
 import { createPreviewAddressRouter } from './preview-address.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
-import { buildCdsSkillManifest } from '../services/cds-skill-manifest.js';
+import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
@@ -22050,7 +22050,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (!fs.existsSync(skillDir)) continue;
         const targetSkillDir = path.join(packDir, 'skills', skillName);
         await fs.promises.mkdir(targetSkillDir, { recursive: true });
-        await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
+        await copyCdsSkillSource(skillDir, targetSkillDir);
         copiedCount++;
       }
 

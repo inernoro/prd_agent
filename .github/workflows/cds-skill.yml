@@ -1,0 +1,65 @@
+name: CDS Skill
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".claude/skills/cds/**"
+      - ".claude/skills/cds-deploy-pipeline/**"
+      - "cds-instances.json"
+      - ".github/workflows/cds-skill.yml"
+  pull_request:
+    paths:
+      - ".claude/skills/cds/**"
+      - ".claude/skills/cds-deploy-pipeline/**"
+      - "cds-instances.json"
+      - ".github/workflows/cds-skill.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli-tests:
+    name: CDS CLI tests and host isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependency
+        run: python -m pip install pytest pyyaml
+      - name: Verify CLI including real HTTP host isolation
+        env:
+          CDS_HOST: cds.test.example
+          AI_ACCESS_KEY: fixture-key-not-real
+        run: python -m pytest .claude/skills/cds/tests -q -p no:cacheprovider
+      - name: Verify bundled public catalog matches repository source
+        run: |
+          python - <<'PYCODE'
+          import json
+          from pathlib import Path
+          source = json.loads(Path('cds-instances.json').read_text())
+          bundled = json.loads(Path('.claude/skills/cds/reference/instance-catalog.json').read_text())
+          assert bundled == source, 'Regenerate the public bundled catalog from cds-instances.json'
+          assert all(set(item) == {'id', 'name', 'role', 'url'} for item in bundled['instances'])
+          PYCODE
+      - name: Verify complete bundle receipt
+        run: |
+          python - <<'PYCODE'
+          import hashlib, json
+          from pathlib import Path
+          root = Path('.claude/skills')
+          receipt = root / 'cds/cli/cds-skill-manifest.json'
+          manifest = json.loads(receipt.read_text())
+          actual = {}
+          for skill in manifest['skills']:
+              for file in (root / skill).rglob('*'):
+                  if file == receipt or '__pycache__' in file.parts or file.name == '.DS_Store' or file.suffix == '.pyc':
+                      continue
+                  assert not file.is_symlink()
+                  if file.is_file():
+                      actual[file.relative_to(root).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
+          assert manifest['files'] == actual, 'Run the skill receipt refresh script'
+          PYCODE

@@ -6,20 +6,7 @@
 
 ## 从哪里改
 
-| 要修改的内容 | 唯一入口 | 更新规则 |
-|---|---|---|
-| 暖灰填色、轻呼吸、浅深主题、减少动效 | `cds/web/src/index.css` 的 `.cds-loading-skeleton-*` | 修改共享样式；不要在页面另写动画或颜色 |
-| 控制台路由对应的加载轮廓、外壳尺寸 | `cds/web/src/components/skeletons/loading-scenes.json` | 控制台及有独立骨架的公共路由必须登记；实际外壳与目录共同读取 |
-| 项目/分支列表轮廓 | `cds/web/src/components/skeletons/PageSkeletons.tsx` | 页面等待与路由等待引用同一个导出 |
-| 登录代码/会话/登录方式等待与真实登录卡 | `cds/web/src/components/skeletons/AuthPageSkeleton.tsx` | 实际登录页和等待共用 AuthPageFrame；账号模式确认前只有同一副表单骨架 |
-| 公开状态等待 | `cds/web/src/components/skeletons/PublicStatusSkeleton.tsx` | 代码与取数共用；首次失败退出骨架显示重试，不改变公开权限 |
-| 系统设置、项目设置的导航和表单轮廓 | `cds/web/src/components/skeletons/SettingsSkeleton.tsx` | `SettingsPageSkeleton` 放整页；`SettingsContentSkeleton` 放内容区；页签内通过 `SettingsLoadingContext` 复用 |
-| 发布控制台三栏轮廓和栏宽 | `cds/web/src/components/skeletons/ReleaseConsoleSkeleton.tsx` | 真实页与骨架共用布局常量；仅首次未取得项目/环境数据时使用整页骨架 |
-| 发布中心/拓扑/Agent 请求的导航与筛选占位 | `cds/web/src/components/skeletons/WorkspaceSkeletons.tsx` | 整段轮廓共用，避免页头在两阶段之间把内容向下推 |
-| 通用列表、表格、资源、日志占位 | `cds/web/src/components/skeletons/ContentLoading.tsx` | 根据真实内容选择 variant；慢等待提示预留高度 |
-| 分支详情抽屉 | `cds/web/src/components/branch/BranchDrawerSkeleton.tsx` | 与总览共用关系/指标部件；不复制一套近似布局 |
-| 指标、关系、监控等专业轮廓 | 下方命令生成的“定义位置” | 保留真实内容几何，共用暖灰样式 |
-| 人工抽检预览 | 系统设置 → 加载页预览 | 展示真实导出组件；预览区域退出设置页骨架作用域 |
+共享样式统一控制填色、主题与动效；各类页面由相应的共享骨架组件维护。路由登记与实际外壳共同读取配置，代码等待与数据等待必须复用同一轮廓。具体维护入口和逐项更新规则集中在文末“实现来源”。
 
 ## 查页面、触发点和实际代码位置
 
@@ -58,3 +45,21 @@ CDS Prebuilt CI 在发布产物前运行真实 Chromium 连续性与相邻场景
 ## 本轮边界
 
 2026-11-04：同时修复登录三阶段轮廓、基础登录卡就绪高度与公开状态首载失败重试；补齐发布控制台、项目设置、发布中心、拓扑、Agent 请求的两阶段整段轮廓，并对齐监控高度；保留项目设置和关系图刷新内容并取消旧请求；通用慢等待提示预留空间。详细运行结果、截图与部署 SHA 随本次交付留存，不把本说明当作全部页面已逐权限实测的结论。
+
+
+## 实现来源
+
+| 要修改的内容 | 唯一入口 | 更新规则 |
+|---|---|---|
+| 暖灰填色、轻呼吸、浅深主题、减少动效 | `cds/web/src/index.css` 的 `.cds-loading-skeleton-*` | 修改共享样式；不要在页面另写动画或颜色 |
+| 控制台路由对应的加载轮廓、外壳尺寸 | `cds/web/src/components/skeletons/loading-scenes.json` | 控制台及有独立骨架的公共路由必须登记；实际外壳与目录共同读取 |
+| 项目/分支列表轮廓 | `cds/web/src/components/skeletons/PageSkeletons.tsx` | 页面等待与路由等待引用同一个导出 |
+| 登录代码/会话/登录方式等待与真实登录卡 | `cds/web/src/components/skeletons/AuthPageSkeleton.tsx` | 实际登录页和等待共用 AuthPageFrame；账号模式确认前只有同一副表单骨架 |
+| 公开状态等待 | `cds/web/src/components/skeletons/PublicStatusSkeleton.tsx` | 代码与取数共用；首次失败退出骨架显示重试，不改变公开权限 |
+| 系统设置、项目设置的导航和表单轮廓 | `cds/web/src/components/skeletons/SettingsSkeleton.tsx` | `SettingsPageSkeleton` 放整页；`SettingsContentSkeleton` 放内容区；页签内通过 `SettingsLoadingContext` 复用 |
+| 发布控制台三栏轮廓和栏宽 | `cds/web/src/components/skeletons/ReleaseConsoleSkeleton.tsx` | 真实页与骨架共用布局常量；仅首次未取得项目/环境数据时使用整页骨架 |
+| 发布中心/拓扑/Agent 请求的导航与筛选占位 | `cds/web/src/components/skeletons/WorkspaceSkeletons.tsx` | 整段轮廓共用，避免页头在两阶段之间把内容向下推 |
+| 通用列表、表格、资源、日志占位 | `cds/web/src/components/skeletons/ContentLoading.tsx` | 根据真实内容选择 variant；慢等待提示预留高度 |
+| 分支详情抽屉 | `cds/web/src/components/branch/BranchDrawerSkeleton.tsx` | 与总览共用关系/指标部件；不复制一套近似布局 |
+| 指标、关系、监控等专业轮廓 | 下方命令生成的“定义位置” | 保留真实内容几何，共用暖灰样式 |
+| 人工抽检预览 | 系统设置 → 加载页预览 | 展示真实导出组件；预览区域退出设置页骨架作用域 |
