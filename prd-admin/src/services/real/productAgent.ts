@@ -1295,6 +1295,7 @@ export interface VersionDebugClearPreview {
   kind: VersionDebugClearKind;
   kindLabel: string;
   recordCount: number;
+  legacyRecordCount: number;
   confirmPhrase: string;
   token: string;
 }
@@ -1303,6 +1304,8 @@ export interface VersionDebugClearResult {
   clearedCount: number;
   skippedCount: number;
   backupId: string | null;
+  legacyBackupId: string | null;
+  remainingCount: number;
 }
 export function previewVersionDebugClear(kind: VersionDebugClearKind) {
   return apiRequest<VersionDebugClearPreview>(`/api/product/settings/debug/version-records?kind=${kind}`);

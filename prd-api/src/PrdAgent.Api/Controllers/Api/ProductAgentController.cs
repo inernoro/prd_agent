@@ -363,8 +363,8 @@ public partial class ProductAgentController : ControllerBase
             var result = await ProductVersionDebugClear.ClearAsync(_db, request.Kind, request.Token, GetUserId());
             if (result == null)
                 return Conflict(ApiResponse<object>.Fail("VERSION_CLEAR_STALE", "版本记录已变化，未执行本次清理。请关闭弹窗后重新预览并确认。"));
-            _logger.LogWarning("版本调试清理：用户 {UserId} 类型 {Kind} 清理 {Count} 跳过 {Skipped} 备份 {BackupId}",
-                GetUserId(), result.Kind, result.ClearedCount, result.SkippedCount, result.BackupId);
+            _logger.LogWarning("版本调试清理：用户 {UserId} 类型 {Kind} 清理 {Count} 跳过 {Skipped} 剩余 {Remaining} 备份 {BackupId} 旧登记备份 {LegacyBackupId}",
+                GetUserId(), result.Kind, result.ClearedCount, result.SkippedCount, result.RemainingCount, result.BackupId, result.LegacyBackupId);
             return Ok(ApiResponse<object>.Ok(result));
         }
         catch (Exception ex)
@@ -1713,6 +1713,9 @@ public partial class ProductAgentController : ControllerBase
             : scope == "all" && legacyCanViewAll ? Builders<VersionRegistrationSnapshot>.Filter.Empty
                 : Builders<VersionRegistrationSnapshot>.Filter.Eq(x => x.CreatedBy, userId);
         var productItems = await _db.ProductVersionWorkflowSnapshots.Find(productFilter).SortByDescending(x => x.CreatedAt).ToListAsync();
+        // 全局清理备份含其他用户的旧登记，须具备原有的全局登记读取权限。
+        if (!legacyCanViewAll)
+            legacyFilter &= Builders<VersionRegistrationSnapshot>.Filter.Ne(x => x.SourceType, VersionRegistrationSnapshotSourceType.DebugClear);
         var legacyItems = await _db.VersionRegistrationSnapshots.Find(legacyFilter).SortByDescending(x => x.CreatedAt).ToListAsync();
         var items = productItems.Select(x => new
         {
@@ -1744,7 +1747,8 @@ public partial class ProductAgentController : ControllerBase
         if ((!HasPermission(AdminPermissionCatalog.ReviewAgentUse)
                 && !HasPermission(AdminPermissionCatalog.ProductAgentVersionApply)
                 && !HasPermission(AdminPermissionCatalog.ProductAgentUse))
-            || (!HasPermission(AdminPermissionCatalog.ReviewAgentManage) && legacySnapshot.CreatedBy != userId))
+            || (!HasPermission(AdminPermissionCatalog.ReviewAgentManage)
+                && (legacySnapshot.CreatedBy != userId || legacySnapshot.SourceType == VersionRegistrationSnapshotSourceType.DebugClear)))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权查看这份存档"));
         return Ok(ApiResponse<object>.Ok(new { snapshot = legacySnapshot, registry = true }));
     }

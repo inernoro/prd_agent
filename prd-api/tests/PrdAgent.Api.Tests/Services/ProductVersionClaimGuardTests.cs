@@ -632,7 +632,11 @@ public class ProductVersionClaimGuardTests
         var action = Assert.IsType<OkObjectResult>(await controller.OverviewReleases(workflow: true));
         var items = Assert.IsType<ProductVersionListResult<ProductRelease>>(Assert.IsType<ApiResponse<object>>(action.Value).Data).Items;
         var token = Assert.IsType<string>(items.Single(x => x.Record.Id == original.Id).ExportFields!.ReleaseOrigin);
-        await fixture.Db.ProductReleases.DeleteOneAsync(x => x.Id == original.Id);
+        var preview = await ProductVersionDebugClear.PreviewAsync(fixture.Db, "formal");
+        var clear = Assert.IsType<ProductVersionClearResult>(await ProductVersionDebugClear.ClearAsync(fixture.Db, "formal", preview.Token, "me"));
+        Assert.Equal(0, clear.RemainingCount);
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.VersionRegistrations.CountDocumentsAsync(x => x.Kind == VersionRegistrationKind.Formal));
         var row = new ImportVersionWorkflowRow
         {
             AppName = "测试应用", Code = original.VCode, TCode = original.TCode,
@@ -1818,15 +1822,32 @@ public class ProductVersionClaimGuardTests
             Id = "v", ProductId = "product", InitiationId = "t", VCode = "V1.2.3", TCode = "T1.2.3",
         });
         await fixture.Db.Requirements.InsertOneAsync(new Requirement { Id = "req", VersionIds = new() { "t", "v" } });
-        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration { Kind = kind, Code = "T9.0.0" });
+        var internalVersion = kind == "internal";
+        var legacyCode = internalVersion ? "T9.0.0" : "V9.0.0";
+        var otherKind = internalVersion ? VersionRegistrationKind.Formal : VersionRegistrationKind.Internal;
+        await fixture.Db.VersionRegistrations.InsertManyAsync(new[] {
+            new VersionRegistration { Id = "legacy-target", Kind = kind, Code = legacyCode, ApplicationName = "测试应用", CreatedBy = "me" },
+            new VersionRegistration { Id = "legacy-other", Kind = otherKind, Code = internalVersion ? "V8.0.0" : "T8.0.0", ApplicationName = "测试应用", CreatedBy = "me" },
+        });
+        await fixture.Db.ReviewSubmissions.InsertOneAsync(new ReviewSubmission { Id = "review" });
+        await fixture.Db.ProductVersionWorkflowSnapshots.InsertOneAsync(new ProductVersionWorkflowSnapshot { Id = "existing-workflow-snapshot" });
+        await fixture.Db.VersionRegistrationSnapshots.InsertOneAsync(new VersionRegistrationSnapshot { Id = "existing-registry-snapshot" });
         await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, "workflow-code:T:T1.2.3", "initiation:t");
         var preview = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.PreviewAsync(fixture.Db, kind);
-        Assert.Equal(kind == "internal" ? 2 : 1, preview.RecordCount);
-        Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
-        var result = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, kind, preview.Token, "me");
-        Assert.NotNull(result);
+        Assert.Equal(internalVersion ? 3 : 2, preview.RecordCount);
+        Assert.Equal(1, preview.LegacyRecordCount);
+        Assert.Equal(1, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+        var controller = fixture.Controller(admin: true);
+        var response = Assert.IsType<OkObjectResult>(await controller.ClearVersionDebugRecords(new ProductVersionDebugClearRequest {
+            Kind = kind, ConfirmPhrase = preview.ConfirmPhrase, Token = preview.Token,
+        }));
+        var result = Assert.IsType<ProductVersionClearResult>(Assert.IsType<ApiResponse<object>>(response.Value).Data);
         Assert.Equal(preview.RecordCount, result.ClearedCount);
         Assert.Equal(0, result.SkippedCount);
+        Assert.Equal(0, result.RemainingCount);
+        var legacyBackup = await fixture.Db.VersionRegistrationSnapshots.Find(x => x.Id == result.LegacyBackupId).SingleAsync();
+        Assert.Equal("legacy-target", Assert.Single(legacyBackup.Records).Id);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await controller.GetProductVersionSnapshot(legacyBackup.Id)).StatusCode);
         var backup = await fixture.Db.ProductVersionWorkflowSnapshots.Find(x => x.Id == result.BackupId).SingleAsync();
         Assert.Equal("me", backup.CreatedBy);
         Assert.Equal("debug_clear_" + kind, backup.SourceType);
@@ -1840,10 +1861,61 @@ public class ProductVersionClaimGuardTests
         Assert.Equal(kind == "formal" ? 0 : 1, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
         Assert.Equal(new[] { "t", "v" }, (await fixture.Db.Requirements.Find(x => x.Id == "req").SingleAsync()).VersionIds);
         Assert.Equal(1, await fixture.Db.Products.CountDocumentsAsync(_ => true));
-        Assert.Equal(1, await fixture.Db.VersionRegistrations.CountDocumentsAsync(_ => true));
+        Assert.Equal("legacy-other", (await fixture.Db.VersionRegistrations.Find(_ => true).SingleAsync()).Id);
+        Assert.True(await fixture.Db.ReviewSubmissions.Find(x => x.Id == "review").AnyAsync());
+        Assert.True(await fixture.Db.ProductVersionWorkflowSnapshots.Find(x => x.Id == "existing-workflow-snapshot").AnyAsync());
+        Assert.True(await fixture.Db.VersionRegistrationSnapshots.Find(x => x.Id == "existing-registry-snapshot").AnyAsync());
         Assert.Equal(kind == "internal" ? 0 : 1, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:"))));
         Assert.Null(await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, kind, preview.Token, "me"));
-        Assert.Equal(1, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+        Assert.Equal(2, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+        Assert.Equal(2, await fixture.Db.VersionRegistrationSnapshots.CountDocumentsAsync(_ => true));
+
+        async Task<int> ListCount(string versionKind)
+        {
+            var action = versionKind == "internal" ? await controller.OverviewInitiations(workflow: true) : await controller.OverviewReleases(workflow: true);
+            var data = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(action).Value).Data;
+            return versionKind == "internal"
+                ? Assert.IsType<ProductVersionListResult<ProductInitiation>>(data).Items.Count
+                : Assert.IsType<ProductVersionListResult<ProductRelease>>(data).Items.Count;
+        }
+
+        Assert.Equal(0, await ListCount(kind));
+        var otherCount = await ListCount(otherKind);
+        var request = new ImportVersionWorkflowRequest {
+            Kind = internalVersion ? "initiation" : "release",
+            Rows = new() { new ImportVersionWorkflowRow {
+                AppName = "测试应用", Code = legacyCode, PlanName = "重导旧登记同号记录",
+            }, new ImportVersionWorkflowRow {
+                AppName = "测试应用", Code = internalVersion ? "T1.2.3" : "V1.2.3", PlanName = "重导产品工作流同号记录",
+            } },
+        };
+        var imported = Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(request));
+        var importResult = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(imported.Value).Data);
+        Assert.Equal(2, importResult.GetProperty("created").GetInt32());
+        Assert.Equal(2, await ListCount(kind));
+        Assert.Equal(otherCount, await ListCount(otherKind));
+    }
+
+    [Fact]
+    public async Task DebugClearRechecksAndClearsLegacyOnlyRecords()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration {
+            Id = "legacy-only", Kind = VersionRegistrationKind.Formal, Code = "V1.2.3",
+        });
+        var preview = await ProductVersionDebugClear.PreviewAsync(fixture.Db, "formal");
+        Assert.Equal(1, preview.RecordCount);
+        await fixture.Db.VersionRegistrations.UpdateOneAsync(x => x.Id == "legacy-only",
+            Builders<VersionRegistration>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow.AddMinutes(1)));
+        Assert.Null(await ProductVersionDebugClear.ClearAsync(fixture.Db, "formal", preview.Token, "me"));
+        Assert.Equal(0, await fixture.Db.VersionRegistrationSnapshots.CountDocumentsAsync(_ => true));
+        preview = await ProductVersionDebugClear.PreviewAsync(fixture.Db, "formal");
+        var result = Assert.IsType<ProductVersionClearResult>(await ProductVersionDebugClear.ClearAsync(fixture.Db, "formal", preview.Token, "me"));
+        Assert.Equal(1, result.ClearedCount);
+        Assert.Equal(0, result.RemainingCount);
+        Assert.Null(result.BackupId);
+        Assert.NotNull(result.LegacyBackupId);
+        Assert.Equal(0, await fixture.Db.VersionRegistrations.CountDocumentsAsync(_ => true));
     }
 
     [Fact]

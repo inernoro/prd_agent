@@ -223,6 +223,7 @@ public static class VersionRegistrationSnapshotSourceType
 {
     public const string HistoryImport = "history_import";
     public const string CurrentRegistry = "current_registry";
+    public const string DebugClear = "debug_clear";
 }
 
 public static class VersionRegistrationStatus
