@@ -262,7 +262,12 @@ public class NodeExecution
     /// </summary>
     public string? LogsCosUrl { get; set; }
 
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DesignRunId { get; set; }
+
     public int AttemptCount { get; set; }
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
 
     public DateTime? StartedAt { get; set; }
@@ -317,6 +322,9 @@ public class ExecutionArtifact
     /// 标签（auto-generated = 自动透传产物，供前端区分显示）
     /// </summary>
     public List<string>? Tags { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public WorkflowDesignDelivery? DesignDelivery { get; set; }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -585,4 +593,15 @@ public class WorkflowChatValidationIssue
 {
     public string Target { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>既有完整托管版本的交付引用；不携带物理key或文件正文。</summary>
+public sealed class WorkflowDesignDelivery
+{
+    public string RunId { get; set; } = string.Empty;
+    public string SiteId { get; set; } = string.Empty;
+    public string RevisionId { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string PackageHash { get; set; } = string.Empty;
+    public int FileCount { get; set; }
 }

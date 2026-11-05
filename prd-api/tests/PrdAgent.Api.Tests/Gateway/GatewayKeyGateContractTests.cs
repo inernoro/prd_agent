@@ -46,8 +46,10 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// </summary>
 public class GatewayKeyGateContractTests
 {
-    [Fact]
-    public async Task NativeResponses_RuntimeGrantOverridesCallerRoutingIdentityAndModelPolicy()
+    [Theory]
+    [InlineData(null, ModelTypes.Chat)]
+    [InlineData(ModelTypes.Code, ModelTypes.Code)]
+    public async Task NativeResponses_RuntimeGrantOverridesCallerRoutingIdentityAndModelPolicy(string? grantModelType, string expectedType)
     {
         JsonObject? forwarded = null;
         var handler = new NativeResponsesHandler(async (request, ct) =>
@@ -88,6 +90,13 @@ public class GatewayKeyGateContractTests
             ExpiresAt = DateTime.UtcNow.AddMinutes(10),
             CreatedAt = DateTime.UtcNow,
         };
+        if (grantModelType != null)
+        {
+            grant.AppCallerCode = AppCallerRegistry.WorkflowAgent.WebpageGenerator.Code;
+            var persisted = grant.ToBsonDocument();
+            persisted["ModelType"] = grantModelType;
+            grant = MongoDB.Bson.Serialization.BsonSerializer.Deserialize<GatewayRuntimeGrantRecord>(persisted);
+        }
         var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
         var callCounter = new CapturingRuntimeGrantCallCounter();
         await using var app = BuildHostWithGateway(
@@ -118,14 +127,15 @@ public class GatewayKeyGateContractTests
             request.Headers.Add("X-Gateway-Run-Id", "attacker-run-header");
             request.Headers.Remove("X-Gateway-User-Id");
             request.Headers.Add("X-Gateway-User-Id", "attacker-user-header");
+            request.Headers.TryAddWithoutValidation("X-Gateway-Request-Type", "client-cannot-override");
 
             using var response = await app.GetTestClient().SendAsync(request);
 
             response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
             authorizer.RequestPath.ShouldBe("/gw/v1/responses");
             resolver.Verify(x => x.ResolveAsync(
-                AppCallerRegistry.Admin.WebHosting.GenerateHtml,
-                ModelTypes.Chat,
+                grant.AppCallerCode,
+                expectedType,
                 "default-chat-curated",
                 "native-platform",
                 "gpt-5.6-sol",
@@ -133,7 +143,7 @@ public class GatewayKeyGateContractTests
             var started = starts.ShouldHaveSingleItem();
             started.RunId.ShouldBe("trusted-run");
             started.UserId.ShouldBe("trusted-user");
-            started.AppCallerCode.ShouldBe(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+            started.AppCallerCode.ShouldBe(grant.AppCallerCode);
             started.SourceSystem.ShouldBe("map");
             forwarded.ShouldNotBeNull();
             forwarded!["model"]!.GetValue<string>().ShouldBe("gpt-5.6-sol");

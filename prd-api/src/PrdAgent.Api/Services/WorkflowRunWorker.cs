@@ -113,13 +113,14 @@ public sealed class WorkflowRunWorker : BackgroundService
 
         // 2. 标记为运行中 + 推送 SSE 事件
         var sw = Stopwatch.StartNew();
-        await db.WorkflowExecutions.UpdateOneAsync(
-            e => e.Id == executionId,
+        var claimed = await db.WorkflowExecutions.UpdateOneAsync(
+            e => e.Id == executionId && (e.Status == WorkflowExecutionStatus.Queued || e.Status == WorkflowExecutionStatus.Running),
             Builders<WorkflowExecution>.Update
                 .Set(e => e.Status, WorkflowExecutionStatus.Running)
                 .Set(e => e.TraceId, execution.TraceId)
                 .Set(e => e.StartedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (claimed.MatchedCount == 0) return;
 
         await EmitEventAsync(executionId, "execution-started", new
         {
@@ -225,8 +226,9 @@ public sealed class WorkflowRunWorker : BackgroundService
                 {
                     // 持久化实际收到的上游输入（用于调试和回放）
                     nodeExec.InputArtifacts = inputArtifacts;
+                    await UpdateNodeExecutionAsync(db, executionId, nodeExec);
 
-                    var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts, executionId);
+                    var result = await ExecuteCapsuleAsync(scope.ServiceProvider, nodeDef, execution.Variables, inputArtifacts, executionId, execution.TriggeredBy ?? "");
 
                     nodeSw.Stop();
                     nodeExec.Status = NodeExecutionStatus.Completed;
@@ -314,7 +316,9 @@ public sealed class WorkflowRunWorker : BackgroundService
 
                     // 重试逻辑
                     var maxAttempts = nodeDef.Retry?.MaxAttempts ?? 1;
-                    if (nodeExec.AttemptCount < maxAttempts)
+                    var isDesignHtml = nodeDef.NodeType == CapsuleTypes.WebpageGenerator
+                        || nodeDef.NodeType == CapsuleTypes.ReportGenerator && CapsuleExecutor.GetConfigString(nodeDef, "format") == "html";
+                    if (!isDesignHtml && nodeExec.AttemptCount < maxAttempts)
                     {
                         var delay = nodeDef.Retry?.DelaySeconds ?? 5;
                         _logger.LogInformation("Retrying node {NodeId} (attempt {Attempt}/{Max}) in {Delay}s",
@@ -329,6 +333,7 @@ public sealed class WorkflowRunWorker : BackgroundService
                     nodeExec.Status = NodeExecutionStatus.Failed;
                     nodeExec.CompletedAt = DateTime.UtcNow;
                     nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
+                    nodeExec.ErrorCode = (ex as WorkflowDesignException)?.Code;
                     nodeExec.ErrorMessage = ex.Message;
                     nodeExec.Logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}");
 
@@ -338,6 +343,7 @@ public sealed class WorkflowRunWorker : BackgroundService
                         nodeName = nodeExec.NodeName,
                         nodeType = nodeExec.NodeType,
                         errorMessage = ex.Message,
+                        errorCode = nodeExec.ErrorCode,
                         durationMs = nodeExec.DurationMs,
                         logs = CapsuleExecutor.TruncateLogs($"[ERROR] {ex.Message}\n{ex.StackTrace}", 4096),
                     });
@@ -347,6 +353,14 @@ public sealed class WorkflowRunWorker : BackgroundService
             });
 
             await Task.WhenAll(tasks);
+            if (await db.WorkflowExecutions.Find(item => item.Id == executionId
+                    && item.Status == WorkflowExecutionStatus.Cancelled).AnyAsync(CancellationToken.None))
+            {
+                foreach (var result in batchResults.Values)
+                    await UpdateNodeExecutionAsync(db, executionId, result.nodeExec);
+                await EmitEventAsync(executionId, "execution-completed", new { executionId, status = WorkflowExecutionStatus.Cancelled });
+                return;
+            }
 
             // ── 批次完成后：顺序处理结果、更新 DAG 状态 ──
             // 此段在单线程中执行，无竞态问题
@@ -491,8 +505,8 @@ public sealed class WorkflowRunWorker : BackgroundService
         // 8. 标记执行完成
         sw.Stop();
         var finalStatus = failedAny ? WorkflowExecutionStatus.Failed : WorkflowExecutionStatus.Completed;
-        await db.WorkflowExecutions.UpdateOneAsync(
-            e => e.Id == executionId,
+        var completed = await db.WorkflowExecutions.UpdateOneAsync(
+            e => e.Id == executionId && e.Status != WorkflowExecutionStatus.Cancelled,
             Builders<WorkflowExecution>.Update
                 .Set(e => e.Status, finalStatus)
                 .Set(e => e.CompletedAt, DateTime.UtcNow)
@@ -501,6 +515,7 @@ public sealed class WorkflowRunWorker : BackgroundService
                 .Set(e => e.ErrorMessage, errorMsg),
             cancellationToken: CancellationToken.None);
 
+        if (completed.MatchedCount == 0) finalStatus = WorkflowExecutionStatus.Cancelled;
         await EmitEventAsync(executionId, "execution-completed", new
         {
             executionId,
@@ -579,7 +594,8 @@ public sealed class WorkflowRunWorker : BackgroundService
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        string executionId)
+        string executionId,
+        string ownerUserId)
     {
         // 长任务舱开启 emitEvent 流式推进度事件给 SSE 订阅者：
         // - LlmAnalyzer / ReportGenerator / WebpageGenerator 的 LLM 流式 token
@@ -599,7 +615,8 @@ public sealed class WorkflowRunWorker : BackgroundService
         // （定位过 CDS 部分部署时 worker 旧代码 / 控制器新代码的 split-brain，加这行强制 CDS 重新打包 worker）
         _logger.LogDebug("Worker dispatching capsule: nodeType={NodeType} executionId={ExecutionId}",
             node.NodeType, executionId);
-        return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts, emitEvent);
+        return await CapsuleExecutor.ExecuteAsync(sp, _logger, node, variables, inputArtifacts, emitEvent,
+            new WorkflowDesignInvocation(ownerUserId, executionId, node.NodeId, executionId, ownerUserId));
     }
 
     private static void SkipDownstream(string failedNodeId, Dictionary<string, List<string>> downstream, List<NodeExecution> nodeExecutions)
@@ -648,6 +665,7 @@ public sealed class WorkflowRunWorker : BackgroundService
             .Set("NodeExecutions.$.CompletedAt", nodeExec.CompletedAt)
             .Set("NodeExecutions.$.DurationMs", nodeExec.DurationMs)
             .Set("NodeExecutions.$.ErrorMessage", nodeExec.ErrorMessage)
+            .Set("NodeExecutions.$.ErrorCode", nodeExec.ErrorCode)
             .Set("NodeExecutions.$.Logs", nodeExec.Logs)
             .Set("NodeExecutions.$.InputArtifacts", nodeExec.InputArtifacts)
             .Set("NodeExecutions.$.OutputArtifacts", nodeExec.OutputArtifacts);
@@ -718,7 +736,7 @@ public sealed class WorkflowRunWorker : BackgroundService
 
         foreach (var artifact in artifacts)
         {
-            if (string.IsNullOrEmpty(artifact.InlineContent)) continue;
+            if (artifact.DesignDelivery != null || string.IsNullOrEmpty(artifact.InlineContent)) continue;
 
             try
             {

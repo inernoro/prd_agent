@@ -83,6 +83,7 @@ export function ExecutionDetailPanel() {
   const [llmStreamNodeName, setLlmStreamNodeName] = useState('');
   const [llmStreamModel, setLlmStreamModel] = useState('');
   const [llmStreamActive, setLlmStreamActive] = useState(false);
+  const [designProgress, setDesignProgress] = useState(false);
   const [llmStreamExpanded, setLlmStreamExpanded] = useState(true);
   const [llmStreamStartTime, setLlmStreamStartTime] = useState<number | null>(null);
   const [llmStreamElapsed, setLlmStreamElapsed] = useState(0);
@@ -172,7 +173,18 @@ export function ExecutionDetailPanel() {
           ),
         });
       }
+    } else if (eventName === 'node-design-progress') {
+      setDesignProgress(true);
+      setLlmStreamNodeName(`${nodeName || '网页报告'} · OpenDesign`);
+      setLlmStreamContent(`${String(payload.phase || '正在准备设计')} · ${Number(payload.progress || 0)}%`);
+      setLlmStreamModel([payload.model, payload.platform].filter(Boolean).join(' · '));
+      const elapsed = Number(payload.elapsedSeconds || 0) * 1000;
+      setLlmStreamStartTime(Date.now() - elapsed);
+      setLlmStreamElapsed(elapsed);
+      setLlmStreamActive(!['done', 'error', 'cancelled'].includes(String(payload.status).toLowerCase()));
+      setLlmStreamExpanded(true);
     } else if (eventName === 'llm-stream-start') {
+      setDesignProgress(false);
       const model = (payload.model as string) || '';
       if (model) {
         setLlmStreamModel(model);
@@ -215,6 +227,7 @@ export function ExecutionDetailPanel() {
       setSsePhaseMessage('等待人工审批');
       useWorkflowStore.getState().loadExecution(execId);
     } else if (eventName === 'execution-completed') {
+      setLlmStreamActive(false);
       const status = payload.status as string;
       const completed = payload.completedNodes as number;
       const failed = payload.failedNodes as number;
@@ -243,26 +256,34 @@ export function ExecutionDetailPanel() {
     setSsePhaseMessage('连接执行事件流…');
 
     (async () => {
-      const result = await connectSse({
-        url,
-        signal: ac.signal,
-        onEvent: (evt) => {
-          if (!evt.data || !evt.event) return;
-          try {
-            const payload = JSON.parse(evt.data) as Record<string, unknown>;
-            handleLogSseEvent(evt.event, payload, execId);
-            // Update phase on first real event
-            setSsePhase('streaming');
-            setSsePhaseMessage('实时监控中');
-          } catch { /* ignore */ }
-        },
-      });
-
-      if (!result.success && !ac.signal.aborted) {
-        addLog('warn', `SSE 连接失败 (${result.errorMessage})，使用轮询模式`);
-        setSsePhase('error');
-        setSsePhaseMessage(result.errorMessage || '连接失败');
-        fallbackPolling(execId);
+      let afterSeq = 0;
+      while (!ac.signal.aborted) {
+        const result = await connectSse({
+          url: `${url}?afterSeq=${afterSeq}`,
+          signal: ac.signal,
+          onEvent: (evt) => {
+            if (!evt.data || !evt.event) return;
+            try {
+              const payload = JSON.parse(evt.data) as Record<string, unknown>;
+              handleLogSseEvent(evt.event, payload, execId);
+              const seq = Number(evt.id);
+              if (Number.isSafeInteger(seq) && seq > afterSeq) afterSeq = seq;
+              if (!ac.signal.aborted) {
+                setSsePhase('streaming');
+                setSsePhaseMessage('实时监控中');
+              }
+            } catch { /* ignore invalid event */ }
+          },
+        });
+        if (ac.signal.aborted) return;
+        if (!result.success && !['NETWORK_ERROR', 'SERVER_UNAVAILABLE'].includes(result.errorCode || '')) {
+          addLog('warn', `SSE 连接失败 (${result.errorMessage})，使用轮询模式`);
+          fallbackPolling(execId);
+          return;
+        }
+        setSsePhase('connecting');
+        setSsePhaseMessage('正在恢复同一任务的进度…');
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -674,7 +695,7 @@ export function ExecutionDetailPanel() {
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
                     {llmStreamElapsed > 0 ? `${(llmStreamElapsed / 1000).toFixed(1)}s` : ''}
-                    {llmStreamContent ? ` · ${llmStreamContent.length} chars` : ''}
+                    {designProgress ? ' · 设计阶段' : llmStreamContent ? ` · ${llmStreamContent.length} chars` : ''}
                   </span>
                   {llmStreamExpanded
                     ? <ChevronDown className="w-3 h-3 text-muted-foreground" />

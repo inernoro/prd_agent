@@ -1,4 +1,5 @@
 import { useSmartBack } from '@/hooks/useSmartBack';
+import { connectSse } from '@/lib/useSseStream';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
@@ -1535,61 +1536,34 @@ export function WorkflowEditorPage() {
     sseAbortRef.current = abort;
     setStreamingTexts({});
 
-    const token = useAuthStore.getState().token;
     const baseUrl = (import.meta.env.VITE_API_BASE_URL as string || '').replace(/\/+$/, '');
     const url = `${baseUrl}/api/workflow-agent/executions/${execId}/stream`;
-
     (async () => {
-      try {
-        const headers: Record<string, string> = { Accept: 'text/event-stream' };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        const resp = await fetch(url, { headers, signal: abort.signal });
-        if (!resp.ok || !resp.body) {
-          console.warn('[SSE] Stream failed:', resp.status, resp.statusText);
-          return;
-        }
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-
-          // 解析 SSE：按 \n\n 分割事件
-          const parts = buf.split('\n\n');
-          buf = parts.pop() || '';
-
-          for (const part of parts) {
-            if (!part.trim()) continue;
-            let eventName = '';
-            let data = '';
-            for (const line of part.split('\n')) {
-              if (line.startsWith('event: ')) eventName = line.slice(7);
-              else if (line.startsWith('data: ')) data = line.slice(6);
-            }
-            if (!eventName || !data) continue;
-
+      let afterSeq = 0;
+      let terminal = false;
+      while (!abort.signal.aborted && !terminal) {
+        const result = await connectSse({
+          url: `${url}?afterSeq=${afterSeq}`, signal: abort.signal,
+          onEvent: (event) => {
+            if (!event.data) return;
             try {
-              const payload = JSON.parse(data);
-              if (eventName === 'llm-chunk' && payload.nodeId && payload.content) {
-                setStreamingTexts(prev => ({
-                  ...prev,
-                  [payload.nodeId]: (prev[payload.nodeId] || '') + payload.content,
-                }));
-              } else if (eventName === 'llm-stream-start' && payload.nodeId) {
-                console.log('[SSE] llm-stream-start:', payload.nodeId, payload.nodeName);
+              const payload = JSON.parse(event.data);
+              const seq = Number(event.id);
+              if (Number.isSafeInteger(seq) && seq > afterSeq) afterSeq = seq;
+              if (event.event === 'node-design-progress' && payload.nodeId) {
+                const text = `${payload.phase || '正在准备设计'} · ${payload.progress || 0}% · 已用 ${payload.elapsedSeconds || 0} 秒`
+                  + (payload.model ? ` · ${payload.model}` : '');
+                setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: text }));
+              } else if (event.event === 'llm-chunk' && payload.nodeId && payload.content) {
+                setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: (prev[payload.nodeId] || '') + payload.content }));
+              } else if (event.event === 'llm-stream-start' && payload.nodeId) {
                 setStreamingTexts(prev => ({ ...prev, [payload.nodeId]: '' }));
-              } else if (eventName === 'llm-stream-end' && payload.nodeId) {
-                console.log('[SSE] llm-stream-end:', payload.nodeId, 'totalLength:', payload.totalLength);
-                // 流结束，保留文本直到轮询获取最终结果后自然被替代
-              }
-            } catch { /* ignore parse errors */ }
-          }
-        }
-      } catch {
-        // fetch aborted or network error — ignore
+              } else if (event.event === 'execution-completed') terminal = true;
+            } catch { /* ignore invalid event */ }
+          },
+        });
+        if (!result.success && !['NETWORK_ERROR', 'SERVER_UNAVAILABLE'].includes(result.errorCode || '')) return;
+        if (!abort.signal.aborted && !terminal) await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     })();
   }

@@ -379,7 +379,8 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                     </button>
                   </div>
                   <iframe
-                    srcDoc={content}
+                    src={artifact.designDelivery?.url}
+                    srcDoc={artifact.designDelivery ? undefined : content}
                     sandbox=""
                     className="w-full h-full rounded-xl border border-token-subtle"
                     style={{ background: 'transparent' }}
