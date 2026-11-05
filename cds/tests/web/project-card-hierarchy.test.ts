@@ -20,7 +20,7 @@ const base: ProjectSummary = {
 
 function render(patch: Partial<ProjectSummary> = {}, canManageProjects = false): string {
   return renderToStaticMarkup(createElement(ProjectCard, {
-    project: { ...base, ...patch }, canManageProjects,
+    project: { ...base, ...patch }, canManageProjects, environments: ['production'],
     onClone: () => {}, onAgentKeys: () => {}, onAgentSessions: () => {}, onDelete: () => {}, onTogglePause: () => {},
   }));
 }
@@ -66,6 +66,29 @@ describe('项目卡片保留运维信号与真实服务组成', () => {
     const repo = render({ appServices: [], infraServices: [], githubRepoFullName: 'team/repo' });
     expect(repo).toContain('team/repo');
     expect(repo).toContain('已关联仓库');
+  });
+
+  it('显式为零的应用服务数不会用分支数补齐，单服务展示真实数量与职责', () => {
+    const html = render({ appServiceCount: 0, runningServiceCount: 0, appServices: [],
+      infraServiceCount: 1, runningInfraServiceCount: 1, infraServices: [{ id: 'mysql', dockerImage: 'mysql:8', status: 'running' }], gitDefaultBranch: 'main' });
+    expect(html).toContain('关系数据库');
+    expect(html).toContain('<b>1</b> 服务');
+    expect(html).toContain('/1');
+    expect(html).not.toContain('/4');
+    expect(html).toContain('main');
+    expect(html).toContain('3 分支');
+  });
+
+  it('环境尚未读取时不猜测 production，多个环境保留完整提示', () => {
+    const props = { project: base, canManageProjects: false, onClone: () => {}, onAgentKeys: () => {}, onAgentSessions: () => {}, onDelete: () => {}, onTogglePause: () => {} };
+    const unknown = renderToStaticMarkup(createElement(ProjectCard, props));
+    expect(unknown).toContain('环境 —');
+    expect(unknown).not.toContain('production');
+    const empty = renderToStaticMarkup(createElement(ProjectCard, { ...props, environments: [] }));
+    expect(empty).toContain('未配置发布环境');
+    const multiple = renderToStaticMarkup(createElement(ProjectCard, { ...props, environments: ['production', 'staging'] }));
+    expect(multiple).toContain('production +1');
+    expect(multiple).toContain('production、staging');
   });
 
   it('克隆失败保留错误与未就绪语义；只读用户不出现管理操作', () => {
