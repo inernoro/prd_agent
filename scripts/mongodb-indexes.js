@@ -2074,3 +2074,11 @@ if (tightenedUniqueIndexMigrationFailures.length > 0) {
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
   )
 }
+
+// collection: hosted_document_groups
+// 一份文档只允许归属一个关联组，防止并发创建重复导航。
+db.hosted_document_groups.createIndex(
+  { SiteIds: 1 },
+  { unique: true, name: "ux_hosted_document_groups_member" }
+);
+// end collection: hosted_document_groups

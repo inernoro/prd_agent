@@ -1,3 +1,4 @@
+import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
@@ -31,6 +32,7 @@ const SRCDOC_WAIT_MS = 1500;
 interface Props {
   site: HostedSite;
   onClose: () => void;
+  onNavigateRelated?: (id: string) => void;
   onSiteVersionChanged?: (site: HostedSite) => void;
   /** 评论开关变更后回传给父组件，避免关闭再打开时从 stale site.commentsEnabled 重新初始化 */
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
@@ -52,6 +54,7 @@ interface Props {
 export default function SitePreviewModal({
   site: originalSite,
   onClose,
+  onNavigateRelated,
   onCommentsEnabledChange,
   onAskEnabledChange,
   canToggleComments = true,
@@ -330,6 +333,8 @@ export default function SitePreviewModal({
           </div>
         </div>
 
+        <RelatedDocumentsBar siteId={originalSite.id}
+          onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
         {/* 主体：iframe + 可选评论面板 */}
         <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}

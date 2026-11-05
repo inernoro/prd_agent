@@ -525,6 +525,20 @@ export default function WebPagesPage() {
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
+  const relatedOpenId = new URLSearchParams(location.search).get('openSite');
+  const [relatedOpenError, setRelatedOpenError] = useState('');
+  useEffect(() => {
+    if (!relatedOpenId) return;
+    let alive = true;
+    setRelatedOpenError('');
+    void getSite(relatedOpenId).then(result => {
+      if (!alive) return;
+      if (result.success) setCommentSite(result.data);
+      else setRelatedOpenError(result.error?.message || '文档不存在或无权访问');
+    }).catch(() => { if (alive) setRelatedOpenError('打开关联文档失败，请重试'); });
+    return () => { alive = false; };
+  }, [relatedOpenId]);
+
   // 「帮我修改」进生成工作台：对话里就是每一轮修改，右边在线上版与草稿之间切换，版本记录也在那里。
   const openSiteEditor = (site: HostedSite) => {
     setCommentSite(null);
@@ -2341,10 +2355,15 @@ export default function WebPagesPage() {
         />
       )}
 
+      <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }} title="无法打开关联文档"
+        content={<p className="p-5 text-sm text-token-secondary" role="alert">{relatedOpenError}</p>}
+        actions={<Button onClick={() => setRelatedOpenError('')}>关闭</Button>} />
       {/* 评论管理：站点预览 iframe + 评论面板 + 允许评论开关 */}
       {commentSite && (
         <SitePreviewModal
+          key={commentSite.id}
           site={commentSite}
+          onNavigateRelated={(id) => navigate(`/web-pages?openSite=${encodeURIComponent(id)}`)}
           onSiteVersionChanged={(updated) => {
             setCommentSite(updated);
             setSites(current => current.map(item => item.id === updated.id ? updated : item));

@@ -1,3 +1,4 @@
+import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
@@ -180,6 +181,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
+  const requestedRelatedSiteId = searchParams.get('siteId');
   const openedSiteId = data?.sites.length === 1 ? data.sites[0].id : undefined;
   useEffect(() => {
     if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
@@ -389,7 +391,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     const res = await viewSiteShare(token, pwd?.trim());
     setLoading(false);
     if (res.success) {
-      setData(res.data);
+      const selectedId = searchParams.get('siteId');
+      const selected = selectedId ? res.data.sites.find(item => item.id === selectedId) : undefined;
+      if (selectedId && !selected) {
+        setData(null);
+        setError({ code: 'NOT_FOUND', message: '文档不存在或无权访问' });
+        return;
+      }
+      setData(selected ? { ...res.data, sites: [selected] } : res.data);
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);
@@ -413,9 +422,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   };
 
   useEffect(() => {
-    fetchShare();
+    void fetchShare(password || undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, requestedRelatedSiteId]);
 
   // 全屏演示：优先请求浏览器原生全屏。iPhone WebKit 不支持普通元素 requestFullscreen，
   // 此时降级为页面级沉浸模式：固定铺满可视视口并隐藏 MAP 顶栏，同时提供退出按钮。
@@ -917,7 +926,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 if (!token) return;
                 const result = await viewSiteShare(token, password || undefined);
                 if (!result.success) throw new Error('refresh failed');
-                setData(result.data);
+                const selectedId = searchParams.get('siteId');
+                const selected = selectedId ? result.data.sites.find(item => item.id === selectedId) : undefined;
+                setData(selected ? { ...result.data, sites: [selected] } : result.data);
               }} />
               {/* 下载源文件：登录用户可见。
                   为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、
@@ -989,6 +1000,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               </ShareMoreMenu>
 
             </div>
+          </div>
+          <div className="surface-tone-dark">
+            <RelatedDocumentsBar siteId={liveSite.id} source={{ token, password: password || undefined }}
+              onNavigate={item => { if (item.href) navigate(item.href); }} />
           </div>
           {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
           {visibleNote && (
