@@ -83,9 +83,6 @@ public sealed class PrAlignmentService
                 },
                 ["temperature"] = 0.2,
                 ["max_tokens"] = 4096,
-                // OpenRouter: 详见 rule.platform.llm-gateway 的"OpenRouter Reasoning"一节
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
         };
 

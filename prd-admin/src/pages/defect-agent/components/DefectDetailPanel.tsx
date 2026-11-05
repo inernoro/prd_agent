@@ -47,7 +47,7 @@ import {
   MessageCircle,
   Bot,
 } from 'lucide-react';
-import { resolveAvatarUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 const statusLabels: Record<string, string> = {
@@ -801,14 +801,10 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
                 }}
                 title={defect.reporterName || '未知'}
               >
-                <img
+                <UserAvatar
                   src={resolveAvatarUrl({ avatarFileName: defect.reporterAvatarFileName ?? undefined })}
                   alt={defect.reporterName || '未知'}
                   className="h-4 w-4 rounded-full object-cover"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = resolveNoHeadAvatarUrl();
-                  }}
                 />
                 <span className="truncate max-w-[60px]">{defect.reporterName || '未知'}</span>
               </div>
@@ -825,14 +821,10 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
                 }}
                 title={defect.assigneeName || '未指派'}
               >
-                <img
+                <UserAvatar
                   src={resolveAvatarUrl({ avatarFileName: defect.assigneeAvatarFileName ?? undefined })}
                   alt={defect.assigneeName || '未指派'}
                   className="h-4 w-4 rounded-full object-cover"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.src = resolveNoHeadAvatarUrl();
-                  }}
                 />
                 <span className="truncate max-w-[60px]">{defect.assigneeName || '未指派'}</span>
               </div>
