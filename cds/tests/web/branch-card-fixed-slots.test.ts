@@ -453,7 +453,7 @@ describe('构建页脚：阶段条接线', () => {
 
   // 复制集标识与端口 chip 同在一条单行槽：它占一格，端口就少露一个，否则最窄卡宽下「+N」被裁掉。
   const replicaInChipBudget = (source: string) => {
-    expect(source).toContain('const portRowMarkers = [replicaEntries.length > 0, ciFailedChip, infraErrorChip, driftChip].filter(Boolean).length;');
+    expect(source).toContain('const portRowMarkers = [replicaEntries.length > 0, ciFailedChip, infraErrorChip].filter(Boolean).length;');
     expect(source).toContain('const appChipBudget = Math.max(0, APP_CHIP_FOLD_THRESHOLD - portRowMarkers);');
     // 「CI 失败」只是一个短标记，不再是一整串文字加两个按钮
     expect(source).not.toContain('>切回源码编译</button>');
@@ -461,7 +461,7 @@ describe('构建页脚：阶段条接线', () => {
     expect(source).not.toContain('const shown = entries.slice(0, 4);');
   };
 
-  it('端口行所有附加标记（复制集 / CI 失败 / 基础设施异常 / 配置漂移）都计入折叠预算', () => {
+  it('端口行附加标记计入预算，漂移提示使用独立状态行', () => {
     replicaInChipBudget(page);
   });
 

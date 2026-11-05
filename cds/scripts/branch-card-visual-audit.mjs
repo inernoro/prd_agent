@@ -307,6 +307,20 @@ async function main() {
               && inside(card.querySelector('[data-drift-chip]')),
           };
         });
+        // 按钮本身在卡内仍可能是假的安全：其不可收缩的子文字能溢出按钮，
+        // 用户实际看到「重新部署」被卡边裁掉。检查内容宽度与状态行分离。
+        const warnings = await page.$$eval('[data-branch-card-id] [data-drift-chip]', (buttons) => buttons.map((button) => {
+          const card = button.closest('[data-branch-card-id]');
+          const bounds = card.getBoundingClientRect();
+          const resourceRow = card.querySelector('[data-branch-resource-row]');
+          return {
+            id: card.getAttribute('data-branch-card-id'),
+            fits: button.scrollWidth <= button.clientWidth + 1 && [...button.children].every((child) => child.getBoundingClientRect().right <= bounds.right - 8),
+            separate: button.getBoundingClientRect().top >= resourceRow.getBoundingClientRect().bottom,
+          };
+        }));
+        check(warnings.length > 0 && warnings.every((warning) => warning.fits && warning.separate),
+          `[${theme}] 视口 ${vw}px 异常提示独占状态行，重新部署文字不溢出：${JSON.stringify(warnings)}`);
         if (vw === 1000) await shotCard(page, 'b-test', `port-row-markers-${theme}-${vw}.png`);
         check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 / CI 失败 / 基础设施异常 / 漂移四种标记都在时，它们与「+N」都完整落在卡内`);
       }

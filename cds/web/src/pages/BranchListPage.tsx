@@ -141,11 +141,9 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
   return next.icon || next.name || next.port ? next : DEFAULT_RESOURCE_CHIP_DISPLAY;
 }
 
-/* 应用 chips 超过该数才折叠为「+N」;基础容器托盘不参与折叠(通常 1-3 个)。
-   2026-07-14 从 8 降到 3:让端口行恒为单行(3 个端口 + 「+N」+ 基础托盘在常见
-   3-4 列宽度下不换行),配合卡片固定行高(min-h)消除卡与卡之间的巨大空洞。
-   超出的端口收进「+N」的悬浮浮层(见 portsPopover),不再原地撑开推高整行。 */
-const APP_CHIP_FOLD_THRESHOLD = 3;
+/* 最窄卡宽展示两枚应用端口，其他服务与共享基础设施在「+N」菜单完整列出。
+   状态告警使用独立信息槽，端口行只为复制集、CI 与基础设施标记预留位置。 */
+const APP_CHIP_FOLD_THRESHOLD = 2;
 
 /* 前端已发起、服务端状态还没跟上时，页脚单段「处理中」的文案（见 lib/branchCardPhase）。 */
 const PENDING_ACTION_LABELS: Record<string, string> = {
@@ -6212,19 +6210,18 @@ const BranchCard = memo(function BranchCard({
   const infraResources = portedResources.filter((resource) => resource.source === 'infra');
   const [portsPopoverOpen, setPortsPopoverOpen] = useState(false);
   const portsMenuRef = useRef<HTMLDivElement>(null);
-  /* 复制集标识与端口 chip 挤在同一条单行槽里。它占一格，端口就少露一个，否则最窄卡宽下
+  /* 复制集标识与端口 chip 挤在同一条单行资源槽里。它占一格，端口就少露一个，否则最窄卡宽下
      排在后面的端口与「+N」会被卡片的 overflow-hidden 裁掉、点不到（Codex P2，PR #1646）。 */
   const replicaEntries = Object.entries((branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {})
     .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
     .sort(([a], [b]) => a.localeCompare(b));
-  // 端口行上所有「有时出现」的附加标记都要占名额：复制集、CI 失败、基础设施异常、配置漂移。
+  // 端口行上所有「有时出现」的附加标记都要占名额：复制集、CI 失败、基础设施异常。配置漂移独占下方状态槽，操作不与端口挤占。
   // 每多一个，端口就少露一个（全收进「+N」也可以）；只减其中几个，剩下的在最窄卡宽下照样把
   // 后面的控件挤出卡片（Codex P2 三连，PR #1646）。标记本身也都可收缩、文字截断（完整说明在 title），
   // 只有「+N」保持原宽——同时出现几个标记最多显示成省略号，不会被裁出卡片。
   const ciFailedChip = branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false;
   const infraErrorChip = infraResources.some((resource) => resource.status === 'error');
-  const driftChip = Boolean(branch.deployRuntime?.drift?.hasDrift);
-  const portRowMarkers = [replicaEntries.length > 0, ciFailedChip, infraErrorChip, driftChip].filter(Boolean).length;
+  const portRowMarkers = [replicaEntries.length > 0, ciFailedChip, infraErrorChip].filter(Boolean).length;
   const appChipBudget = Math.max(0, APP_CHIP_FOLD_THRESHOLD - portRowMarkers);
   const foldedAppCount = appResources.length > appChipBudget
     ? appResources.length - appChipBudget
@@ -6717,7 +6714,7 @@ const BranchCard = memo(function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="cds-branch-name min-w-0 flex-1 truncate text-[1.0625rem] font-semibold leading-7"
+                className="cds-branch-name min-h-14 min-w-0 flex-1 break-all text-[1.0625rem] font-semibold leading-7 line-clamp-2"
                 title={branch.branch}
               >
                 {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
@@ -6932,7 +6929,9 @@ const BranchCard = memo(function BranchCard({
           </div>
         </div>
       ) : (
-      <div className="relative mx-5 mt-3 flex h-7 min-w-0 flex-nowrap items-center gap-2">
+      <div
+        data-branch-resource-row
+        className="relative mx-5 mt-3 flex h-7 min-w-0 flex-nowrap items-center gap-2">
         {/* 复制集标识（2026-07-25 用户拍板三改）：项目级复制集已在右侧显形为独立派生卡，
             主卡只标「已复制」不再列 xN；容器级仍是每容器专属色 chip + xN。健康态不用红
             （红色专属出错——有副本 error 才转红）。 */}
@@ -7234,6 +7233,12 @@ const BranchCard = memo(function BranchCard({
             </span>
           ) : null
         )}
+
+
+          </>
+        )}
+      </div>
+      )}
         {/*
           P0 止血(2026-05-29):期望态 vs 实际态漂移徽标 + 一键收敛。
           病根:branch.services 是上次部署的快照,项目新增 build profile 后已部署
@@ -7243,7 +7248,9 @@ const BranchCard = memo(function BranchCard({
             - 点击 = onDeploy(走 /deploy 读全部 profile 补齐),而非 force-rebuild
               (后者只 rebuild 快照里已有的,补不回缺失服务,正是病根本身)
         */}
-        {branch.deployRuntime?.drift?.hasDrift ? (() => {
+      {!showsIssue || failedPhase ? (
+        <div data-branch-status-row className="mx-5 mt-1 flex h-6 min-w-0 items-center justify-between gap-2 text-xs leading-4 text-muted-foreground">
+        {!failedPhase && branch.deployRuntime?.drift?.hasDrift ? (() => {
           const drift = branch.deployRuntime!.drift!;
           const missing = drift.missingProfileIds;
           const unhealthy = drift.unhealthyProfileIds;
@@ -7264,23 +7271,18 @@ const BranchCard = memo(function BranchCard({
                 onDeploy();
               }}
               disabled={busy || isInterim}
-              className="inline-flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs font-medium text-warn transition-colors hover:bg-warn-soft disabled:opacity-50"
+              className="inline-flex h-6 w-full min-w-0 items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs font-medium text-warn transition-colors hover:bg-warn-soft disabled:opacity-50"
               title={detailLines.join('\n')}
               aria-label={`${parts.join('，')}，点击重新部署`}
               data-drift-chip
             >
               <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
-              <span className="min-w-0 truncate">{parts.join(' · ')}</span>
-              <span className="shrink-0 text-warn/70">重新部署</span>
+              <span className="min-w-0 flex-1 truncate text-left">{missing.length && unhealthy.length ? `缺 ${missing.length} · 异常 ${unhealthy.length}` : parts.join(' · ')}</span>
+              <span className="shrink-0 whitespace-nowrap">重新部署</span>
             </button>
           );
-        })() : null}
-          </>
-        )}
-      </div>
-      )}
-      {!showsIssue || failedPhase ? (
-        <div className="mx-5 mt-2.5 flex h-[1.125rem] min-w-0 items-center justify-between gap-3 text-xs leading-[1.125rem] text-muted-foreground">
+        })() : (
+          <>
           {failedPhase ? (
             <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch, projectProfileIds)}>
               {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
@@ -7299,6 +7301,8 @@ const BranchCard = memo(function BranchCard({
               {metaBadge.label ? `${metaBadge.label} ` : ''}{metaBadge.text}
             </span>
           ) : null}
+          </>
+          )}
         </div>
       ) : null}
 
