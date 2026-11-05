@@ -53,13 +53,14 @@ export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; p
 interface Request {
   owner: DeploymentPhaseOwner; check?: () => void; signal?: AbortSignal;
   resolve: (release: () => void) => void; reject: (error: Error) => void;
-  abort?: () => void; memoryMB: number; enqueuedAt: number;
+  abort?: () => void; memoryMB: number; enqueuedAt: number; waitId: string;
   reservationKey?: string;
   pids: number;
 }
 
 /** 阶段互不占槽；旧服务的物理占用已在可用内存内，新启动额外预留控制面余量。 */
 export class DeploymentPhaseBudget {
+  private nextWaitId = 0;
   private readonly active = new Map<DeploymentPhase, Set<Request>>();
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
   private readonly lastProject = new Map<DeploymentPhase, string>();
@@ -80,13 +81,13 @@ export class DeploymentPhaseBudget {
   }
 
   /** 只观测真实、有界且资格仍有效的排队，不把执行中或已过期任务伪装成等待。 */
-  waitingOperation(operationId: string, generation: number): { phase: DeploymentPhase; enqueuedAt: number; deadlineAt: number } | undefined {
+  waitingOperation(operationId: string, generation: number): { phase: DeploymentPhase; enqueuedAt: number; deadlineAt: number; waitId: string } | undefined {
     if (!operationId || !Number.isSafeInteger(generation) || generation < 1) return undefined;
     for (const [phase, queue] of this.waiting) for (const request of queue) {
       if (request.owner.operationId !== operationId || request.owner.operationGeneration !== generation
         || !request.check || request.signal?.aborted || Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) continue;
       try { request.check?.(); } catch { continue; }
-      return { phase, enqueuedAt: request.enqueuedAt, deadlineAt: request.enqueuedAt + DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS };
+      return { phase, enqueuedAt: request.enqueuedAt, deadlineAt: request.enqueuedAt + DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS, waitId: request.waitId };
     }
     return undefined;
   }
@@ -130,7 +131,7 @@ export class DeploymentPhaseBudget {
     return new Promise((resolve, reject) => {
       const request: Request = { owner, check: options.check, signal: options.signal, resolve, reject,
         memoryMB: phase === 'start' ? Math.max(1, options.memoryMB || 512) : 0, pids: phase === 'start' ? Math.max(1, options.pids || 64) : 0,
-        enqueuedAt: Date.now(), reservationKey: options.reservationKey };
+        enqueuedAt: Date.now(), reservationKey: options.reservationKey, waitId: String(++this.nextWaitId) };
       request.abort = () => {
         const index = waiting.indexOf(request);
         if (index >= 0) { waiting.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!);
