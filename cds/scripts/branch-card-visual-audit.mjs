@@ -250,6 +250,12 @@ async function main() {
           && heading.title === heading.textContent.trim();
       }));
       check(names.length > 0 && names.every(Boolean), `[${theme}] 分支名保持单行省略，完整名称保留在提示中`);
+      const titleSpace = await page.$$eval('[data-branch-card-id] header', (headers) => headers.map((header) => {
+        const headingRow = header.querySelector('h3').parentElement.getBoundingClientRect();
+        const menu = header.querySelector('button[aria-label="更多操作"]').getBoundingClientRect();
+        return !header.querySelector('button[aria-label="删除分支"]') && menu.left - headingRow.right <= 10;
+      }));
+      check(titleSpace.length > 0 && titleSpace.every(Boolean), `[${theme}] 标题用满更多按钮前空间，不为隐藏删除按钮预留空白`);
       // 复制集卡：与分支卡同高，成员区真的溢出并可在卡内滚动，底部按钮没被挤出卡片
       const replica = await page.evaluate(() => {
         const members = document.querySelector('[data-replica-members]');

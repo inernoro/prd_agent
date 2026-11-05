@@ -6692,8 +6692,8 @@ const BranchCard = memo(function BranchCard({
           - 时间和 ··· 不可挡住分支名 → 时间下沉到 chip 行右侧 / commit 行,
             顶行只保留 dot + 分支名 + ···(右上角缩到 6×6 容器,不挤标题)
           - 分支名给最大宽度,truncate(必要时 hover 显示完整) */}
-      <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+      <header className="flex min-w-0 items-start justify-between gap-2 px-5 pt-5">
+        <div className="flex min-w-0 flex-1 items-start gap-2">
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
             {runtime && (runtime.prebuilt || branch.deployRuntime?.prebuiltCoverage === 'partial') ? (
               <PrebuiltRuntimeIcon
@@ -7782,25 +7782,26 @@ function BranchMoreMenu({
   currentGroupId: string | null;
   pinned: boolean;
 }): JSX.Element {
+  const [deleteOpen, setDeleteOpen] = useState(false);
   return (
     <>
-      <ConfirmAction
-        title={`删除分支 ${branch.branch}？`}
-        description={`将停止 ${Object.keys(branch.services || {}).length} 个服务,删除该分支工作区与构建产物 — 此操作不可撤销。git 历史不受影响(仅 CDS 端忘记这个分支),分支可重新部署但 CDS 内的部署历史/日志/指标会丢失。`}
-        confirmLabel="确认删除(不可恢复)"
-        disabled={deleteDisabled}
-        onConfirm={onDelete}
-        trigger={(
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100"
-            aria-label="删除分支"
-            title="删除分支"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        )}
-      />
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent style={{ width: 'min(28rem, calc(100vw - 2rem))' }}>
+          <DialogHeader>
+            <DialogTitle className="break-all">删除分支 {branch.branch}？</DialogTitle>
+            <DialogDescription>
+              将停止 {Object.keys(branch.services || {}).length} 个服务，删除该分支工作区与构建产物。此操作不可撤销，CDS 内的部署历史、日志和指标会丢失；git 历史不受影响，分支可以重新部署。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setDeleteOpen(false)}>取消</Button>
+            <Button type="button" variant="destructive" disabled={deleteDisabled} onClick={() => {
+              setDeleteOpen(false);
+              onDelete();
+            }}>确认删除(不可恢复)</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <DropdownMenu
         width={200}
         trigger={
@@ -7885,6 +7886,11 @@ function BranchMoreMenu({
             打开 PR #{branch.githubPrNumber}
           </DropdownItem>
         ) : null}
+        <DropdownDivider />
+        <DropdownItem onSelect={() => setDeleteOpen(true)} disabled={deleteDisabled} destructive>
+          <Trash2 className="h-4 w-4 shrink-0" />
+          删除分支
+        </DropdownItem>
       </DropdownMenu>
     </>
   );
