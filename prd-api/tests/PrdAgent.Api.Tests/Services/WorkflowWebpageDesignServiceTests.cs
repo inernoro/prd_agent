@@ -62,6 +62,8 @@ public sealed class WorkflowWebpageDesignServiceTests
         Assert.NotNull(run.PublishBindingOperationId);
         Assert.Equal(run.ProducedArtifactRevisionId, delivery.RevisionId);
         var revision = await f.Db.HostedSiteRevisions.Find(item => item.Id == delivery.RevisionId).SingleAsync();
+        Assert.Equal(HostedSiteRevisionSources.Baseline, revision.Source);
+        Assert.Null((await f.Db.HostedSites.Find(item => item.Id == delivery.SiteId).SingleAsync()).PublishedRevisionId);
         Assert.Contains(revision.VerifiedFiles, file => file.Path == "assets/theme.css" && Encoding.UTF8.GetString(file.Content) == "body{color:#123}");
         Assert.Equal(revision.VerifiedFiles.Count, delivery.FileCount);
         Assert.Contains(".versions/", delivery.Url);
@@ -89,6 +91,10 @@ public sealed class WorkflowWebpageDesignServiceTests
             new WorkflowNode { NodeId = "publish", NodeType = CapsuleTypes.SitePublisher, Config = new() { ["title"] = "继承整包" } },
             new(), result.Artifacts, new("workflow-owner", resumedExecution.Id, "publish", resumedExecution.Id, "workflow-owner"));
         Assert.Contains(delivery.SiteId, resumedPublish.Artifacts[0].InlineContent);
+        Assert.Equal(1, f.Executor.Calls);
+        await f.Db.WorkflowExecutions.UpdateOneAsync(item => item.Id == "workflow-execution",
+            Builders<WorkflowExecution>.Update.Set("NodeExecutions.1.InputArtifacts", result.Artifacts));
+        Assert.IsType<OkObjectResult>(await OwnerApi(f).ReplayNode("workflow-execution", "publish"));
         Assert.Equal(1, f.Executor.Calls);
 
         Assert.Equal(1, await f.Db.HostedSites.CountDocumentsAsync(_ => true));
@@ -127,6 +133,18 @@ public sealed class WorkflowWebpageDesignServiceTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("result").GetProperty("artifacts")[0];
         Assert.False(string.IsNullOrWhiteSpace(dto.GetProperty("cosUrl").GetString()));
         Assert.False(string.IsNullOrWhiteSpace(dto.GetProperty("designDelivery").GetProperty("downloadPath").GetString()));
+        var snapshotCount = await f.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true);
+        await f.Db.HostedSites.UpdateOneAsync(item => item.Id == delivery.SiteId,
+            Builders<HostedSite>.Update.Set(item => item.CreatedAt, revision.PublishedContentVersion!.Value)
+                .Set(item => item.ContentVersion, default(DateTime)));
+        Assert.Equal(delivery.SiteId, (await f.Service.ResolveDeliveryAsync(output, f.Invocation with { NodeId = "publish" })).Id);
+        Assert.Equal(snapshotCount, await f.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        await f.Db.HostedSites.UpdateOneAsync(item => item.Id == delivery.SiteId,
+            Builders<HostedSite>.Update.Set(item => item.ContentVersion, revision.PublishedContentVersion!.Value.AddSeconds(1)));
+        Assert.Equal("WORKFLOW_DESIGN_CONFLICT", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
+            f.Service.ResolveDeliveryAsync(output, f.Invocation with { NodeId = "publish" }))).Code);
+        Assert.Equal(snapshotCount, await f.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        Assert.Null((await f.Db.HostedSites.Find(item => item.Id == delivery.SiteId).SingleAsync()).PublishedRevisionId);
     }
 
     [Fact]
@@ -297,7 +315,9 @@ public sealed class WorkflowWebpageDesignServiceTests
                 .ReturnsAsync(new DesignArtifactProviderCapability(DesignArtifactRuntimes.OpenDesign, "OpenDesign", DesignArtifactAdapterKinds.RemoteAgent,
                     DesignArtifactExecutionOwners.CdsRemoteAgent, DesignArtifactIsolationModes.SessionContainer, [DesignArtifactTypes.WebPage],
                     [DesignArtifactOperations.Generate], [DesignArtifactSourceSurfaces.Workflow], true, true, true, null, null));
-            var sites = new Mock<IHostedSiteService>(); var revisions = new Mock<IHostedSiteRevisionService>();
+            var sites = new Mock<IHostedSiteService>();
+            var storage = new Mock<IAssetStorage>(); storage.Setup(item => item.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example.test/" + key);
+            var revisions = new HostedSiteRevisionService(f.Db, sites.Object, storage.Object);
             sites.Setup(item => item.PrepareHtmlForHosting(It.IsAny<byte[]>(), "index.html")).Returns((byte[] bytes, string _) => bytes);
             sites.Setup(item => item.CreateFromVerifiedFilesAsync("workflow-owner", It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(), It.IsAny<string?>(), It.IsAny<string?>(),
                 "design-agent", It.IsAny<string>(), It.IsAny<List<string>?>(), null, It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -306,38 +326,21 @@ public sealed class WorkflowWebpageDesignServiceTests
                 {
                     var site = new HostedSite { Id = "site-" + sourceRun, OwnerUserId = owner, Title = title ?? "", SourceRef = sourceRun,
                         SourceType = "design-agent", ContentVersion = DateTime.UtcNow, SiteUrl = "https://assets.example.test/site/index.html",
-                        Files = files.Select(file => new HostedSiteFile { Path = file.Path, CosKey = "test/" + file.Path, Size = file.Content.Length, MimeType = file.MimeType }).ToList() };
+                        Files = files.Select(file => new HostedSiteFile { Path = file.Path, CosKey = "sites/site-" + sourceRun + "/.versions/first/" + file.Path, Size = file.Content.Length, MimeType = file.MimeType }).ToList() };
                     await f.Db.HostedSites.InsertOneAsync(site); return site;
                 });
             sites.Setup(item => item.GetEditableEntryHtmlAsync(It.IsAny<string>(), "workflow-owner", It.IsAny<CancellationToken>()))
-                .Returns(async (string id, string _, CancellationToken _) => { var site = await f.Db.HostedSites.Find(item => item.Id == id).SingleAsync(); return new HostedSiteEditableEntry(site, StubOpenDesign.Html, site.ContentVersion); });
+                .Returns(async (string id, string _, CancellationToken _) => { var site = await f.Db.HostedSites.Find(item => item.Id == id).SingleAsync(); return new HostedSiteEditableEntry(site, StubOpenDesign.Html, site.ContentVersion == default ? site.CreatedAt : site.ContentVersion); });
             sites.Setup(item => item.GetByIdAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Returns(async (string id, string owner, CancellationToken _) => (HostedSite?)await f.Db.HostedSites.Find(item => item.Id == id && item.OwnerUserId == owner).FirstOrDefaultAsync());
             sites.Setup(item => item.UpdateAsync(It.IsAny<string>(), "workflow-owner", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<List<string>?>(), It.IsAny<string?>(), null, It.IsAny<CancellationToken>()))
                 .Returns(async (string id, string _, string? _, string? _, List<string>? _, string? _, string? _, CancellationToken _) => (HostedSite?)await f.Db.HostedSites.Find(item => item.Id == id).FirstOrDefaultAsync());
-            revisions.Setup(item => item.EnsureGeneratedVerifiedSnapshotAsync(It.IsAny<string>(), "workflow-owner", It.IsAny<HostedSiteEditableEntry>(),
-                    It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(), DesignArtifactRuntimes.OpenDesign, It.IsAny<string>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
-                .Returns(async (string siteId, string owner, HostedSiteEditableEntry entry, IReadOnlyList<HostedSiteVerifiedFile> files,
-                    string runtime, string runId, IReadOnlyCollection<string> _, CancellationToken _) =>
-                {
-                    var revision = new HostedSiteRevision { Id = "revision-" + runId, SiteId = siteId, CreatedByUserId = owner,
-                        SourceRunId = runId, Runtime = runtime, Status = HostedSiteRevisionStatuses.Published, Html = entry.Html,
-                        BasedOnContentVersion = entry.ContentVersion, PublishedContentVersion = entry.ContentVersion,
-                        PublishedEntryCosKey = "sites/" + siteId + "/.versions/first/index.html",
-                        VerifiedFiles = files.Select(file => new HostedSiteRevisionFile { Path = file.Path, Content = file.Content, Sha256 = file.Sha256, MimeType = file.MimeType }).ToList() };
-                    await f.Db.HostedSiteRevisions.InsertOneAsync(revision);
-                    await f.Db.HostedSites.UpdateOneAsync(item => item.Id == siteId, Builders<HostedSite>.Update.Set(item => item.PublishedRevisionId, revision.Id));
-                    return revision;
-                });
-            revisions.Setup(item => item.GetAsync(It.IsAny<string>(), It.IsAny<string>(), "workflow-owner", It.IsAny<CancellationToken>()))
-                .Returns(async (string site, string id, string owner, CancellationToken _) => (HostedSiteRevision?)await f.Db.HostedSiteRevisions.Find(item => item.Id == id && item.SiteId == site && item.CreatedByUserId == owner).FirstOrDefaultAsync());
             var lifecycle = new DesignArtifactLifecycleService(f.Db, f.Events);
             var adapter = new WebPageDesignArtifactLifecycleAdapter(f.Db, lifecycle, Mock.Of<IDesignArtifactWorkspaceBroker>(), NullLogger<WebPageDesignArtifactLifecycleAdapter>.Instance);
             f.cancellation = new DesignArtifactCancellationCoordinator(f.Db, lifecycle, f.Events);
-            var storage = new Mock<IAssetStorage>(); storage.Setup(item => item.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example.test/" + key);
-            f.Service = new WorkflowWebpageDesignService(f.Db, f.Queue.Object, f.Events, f.Catalog.Object, f.Gateway.Object, sites.Object, revisions.Object, storage.Object,
+            f.Service = new WorkflowWebpageDesignService(f.Db, f.Queue.Object, f.Events, f.Catalog.Object, f.Gateway.Object, sites.Object, revisions, storage.Object,
                 f.cancellation, NullLogger<WorkflowWebpageDesignService>.Instance);
-            f.Provider = new ServiceCollection().AddSingleton(f.Db).AddSingleton(sites.Object).AddSingleton(revisions.Object)
+            f.Provider = new ServiceCollection().AddSingleton(f.Db).AddSingleton(sites.Object).AddSingleton<IHostedSiteRevisionService>(revisions)
                 .AddSingleton<IDesignArtifactLifecycleService>(lifecycle).AddSingleton<IWebPageDesignArtifactLifecycleAdapter>(adapter)
                 .AddSingleton(Mock.Of<IDesignKnowledgeSnapshotResolver>()).AddSingleton(Mock.Of<IActivityActionRecorder>())
                 .AddSingleton<IDesignArtifactExecutor>(f.Executor).AddSingleton(f.Gateway.Object).AddSingleton<IWorkflowWebpageDesignService>(f.Service).AddHttpClient().BuildServiceProvider();
