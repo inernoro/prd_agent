@@ -900,6 +900,19 @@ export function buildAffectedNotificationTargets({ rows, plan, runId, verdict, v
   return targets;
 }
 
+export function buildRunNotificationTarget(targets, runId) {
+  if (!targets.length) return null;
+  const environments = [...new Set(targets.map(t => t.environment))];
+  const modules = [...new Set(targets.map(t => t.module))];
+  return {
+    environment: environments.join('、'),
+    module: `${modules.length} 个业务范围`,
+    caseId: 'RUN-SUMMARY',
+    requestId: runId,
+    recovery: `本轮有 ${targets.length} 项异常、未完成或需要复核的检查。请打开项目总览，逐项查看结果、证据与处理建议。`,
+  };
+}
+
 export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 'full' }) {
   const expectedEnvironments = [...environments].sort();
   const actualEnvironments = Array.isArray(plan?.environments) ? [...plan.environments].sort() : [];
@@ -2064,7 +2077,9 @@ async function main() {
         verdict: summary.verdict,
         visualResult,
       });
-      const notificationResults = notificationTargets.map((target) => {
+      // 每项问题仍在报告中逐项保留，向同一接收人只发一条整轮汇总。
+      const runNotification = buildRunNotificationTarget(notificationTargets, runId);
+      const notificationResults = (runNotification ? [runNotification] : []).map((target) => {
         const delivery = command('node', [
           'scripts/stable-smoke-notify.mjs',
           '--verdict', summary.verdict,
@@ -2074,7 +2089,7 @@ async function main() {
           '--case-id', target.caseId,
           '--request-id', target.requestId,
           '--recovery', target.recovery,
-          '--report-url', reportUrl,
+          '--report-url', values.STABLE_SMOKE_OVERVIEW_URL || reportUrl,
         ], {
           env: {
             ...process.env,
