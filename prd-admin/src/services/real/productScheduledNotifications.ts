@@ -13,6 +13,7 @@ export type ScheduledNotificationInput = {
   mentionAll: boolean;
   webhookUrl?: string;
   revision?: string;
+  sourceTaskId?: string;
 };
 
 export type ScheduledNotification = Omit<ScheduledNotificationInput, 'webhookUrl' | 'revision'> & {
@@ -22,6 +23,10 @@ export type ScheduledNotification = Omit<ScheduledNotificationInput, 'webhookUrl
   lastRunAt: string | null;
   lastResult: 'sending' | 'sent' | 'failed' | 'unknown' | null;
   webhookMasked: string;
+  webhookConfigured: boolean;
+  canEdit: boolean;
+  debugLastResult: 'sending' | 'sent' | 'failed' | 'unknown' | null;
+  debugLastRunAt: string | null;
 };
 
 const endpoint = '/api/product/settings/scheduled-notifications';
@@ -33,4 +38,14 @@ export const saveScheduledNotification = (input: ScheduledNotificationInput, id?
   apiRequest<ScheduledNotification>(id ? `${endpoint}/${encodeURIComponent(id)}` : endpoint, {
     method: id ? 'PUT' : 'POST',
     body: input,
+  });
+
+export type NotificationDebugSettings = { configured: boolean; webhookMasked: string | null; canManage: boolean };
+export const getNotificationDebugSettings = (signal?: AbortSignal) =>
+  apiRequest<NotificationDebugSettings>(`${endpoint}/debug-settings`, { signal });
+export const saveNotificationDebugSettings = (webhookUrl: string) =>
+  apiRequest<{ configured: boolean }>(`${endpoint}/debug-settings`, { method: 'PUT', body: { webhookUrl } });
+export const debugScheduledNotification = (id: string, requestId: string) =>
+  apiRequest<{ status: ScheduledNotification['debugLastResult'] }>(`${endpoint}/${encodeURIComponent(id)}/debug`, {
+    method: 'POST', body: { requestId },
   });

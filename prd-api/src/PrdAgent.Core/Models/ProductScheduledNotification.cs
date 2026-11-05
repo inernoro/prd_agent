@@ -19,4 +19,16 @@ public sealed class ProductScheduledNotification
     public DateTime? LeaseUntil { get; set; }
     public string? LeaseId { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public ProductNotificationDebugRun? DebugRun { get; set; }
+
+    public bool HasCompletedOneTimeSchedule() =>
+        Frequency == "once" && LastRunAt != null && NextRunAt == null;
+}
+
+public sealed class ProductNotificationDebugRun
+{
+    public string Id { get; set; } = "";
+    public string Status { get; set; } = "sending";
+    public DateTime RequestedAt { get; set; }
+    public DateTime LeaseUntil { get; set; }
 }

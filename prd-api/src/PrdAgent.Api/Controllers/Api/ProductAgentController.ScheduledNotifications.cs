@@ -11,7 +11,8 @@ namespace PrdAgent.Api.Controllers.Api;
 public partial class ProductAgentController
 {
     public sealed record ScheduledNotificationRequest(string? Name, string? Message, string? Frequency,
-        string? Time, string? Date, int? Day, bool Enabled, string? WebhookUrl, string? Revision, bool? MentionAll = null);
+        string? Time, string? Date, int? Day, bool Enabled, string? WebhookUrl, string? Revision,
+        bool? MentionAll = null, string? SourceTaskId = null);
 
     [HttpGet("settings/scheduled-notifications")]
     public async Task<IActionResult> ListScheduledNotifications([FromServices] IConfiguration configuration)
@@ -44,6 +45,15 @@ public partial class ProductAgentController
         if (!ProductScheduledNotificationWorker.CanManage(configuration))
             return Conflict(ApiResponse<object>.Fail("NOTIFICATION_PRODUCTION_ONLY", "请在正式环境管理定时通知。"));
 
+        if (id != null)
+        {
+            var current = await _db.ProductScheduledNotifications.Find(x => x.Id == id).FirstOrDefaultAsync();
+            if (current == null)
+                return NotFound(ApiResponse<object>.Fail("NOTIFICATION_NOT_FOUND", "任务不存在，请刷新列表。"));
+            if (current.HasCompletedOneTimeSchedule())
+                return Conflict(ApiResponse<object>.Fail("ONE_TIME_NOTIFICATION_LOCKED", "这条单次通知已执行，请复制为新任务。"));
+        }
+
         var now = DateTime.UtcNow;
         var name = request.Name?.Trim() ?? "";
         var message = request.Message?.Trim() ?? "";
@@ -54,7 +64,15 @@ public partial class ProductAgentController
             return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_SCHEDULE", "请填写有效的北京时间与周期，启用单次通知时请选择未来时间。"));
 
         var webhook = request.WebhookUrl?.Trim();
-        if ((id == null || !string.IsNullOrEmpty(webhook)) &&
+        string? inheritedWebhook = null;
+        if (id == null && string.IsNullOrEmpty(webhook) && !string.IsNullOrEmpty(request.SourceTaskId))
+        {
+            var source = await _db.ProductScheduledNotifications.Find(x => x.Id == request.SourceTaskId).FirstOrDefaultAsync();
+            if (source == null || string.IsNullOrEmpty(source.ProtectedWebhook))
+                return BadRequest(ApiResponse<object>.Fail("NOTIFICATION_WEBHOOK_UNAVAILABLE", "原任务的 Webhook 不可用，请填写新的链接。"));
+            inheritedWebhook = source.ProtectedWebhook;
+        }
+        if (((id == null && inheritedWebhook == null) || !string.IsNullOrEmpty(webhook)) &&
             (webhook is not { Length: <= 512 } || !ProductClaimWebhookPayload.IsValidWebhook(webhook)))
             return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_WEBHOOK", "请输入有效的企业微信群机器人 Webhook 地址。"));
 
@@ -63,6 +81,7 @@ public partial class ProductAgentController
             Name = name,
             Message = message,
             MentionAll = request.MentionAll ?? true,
+            ProtectedWebhook = inheritedWebhook ?? "",
             Frequency = request.Frequency!,
             Time = request.Time!,
             Date = request.Frequency == "once" ? request.Date : null,
@@ -87,12 +106,13 @@ public partial class ProductAgentController
             .Set(x => x.UpdatedAt, task.UpdatedAt).Set(x => x.Revision, task.Revision);
         if (task.ProtectedWebhook.Length > 0) update = update.Set(x => x.ProtectedWebhook, task.ProtectedWebhook);
         if (request.MentionAll.HasValue) update = update.Set(x => x.MentionAll, request.MentionAll.Value);
-        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision);
+        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision
+            && (x.Frequency != "once" || x.LastRunAt == null || x.NextRunAt != null));
         var saved = await _db.ProductScheduledNotifications.FindOneAndUpdateAsync(
             filter, update,
             new FindOneAndUpdateOptions<ProductScheduledNotification> { ReturnDocument = ReturnDocument.After });
         return saved == null
-            ? Conflict(ApiResponse<object>.Fail("NOTIFICATION_CHANGED", "任务已变更，请刷新列表后重新编辑。"))
+            ? Conflict(ApiResponse<object>.Fail("NOTIFICATION_CHANGED", "任务已执行或发生变更，请刷新列表后重新编辑。"))
             : Ok(ApiResponse<object>.Ok(ScheduledNotificationView(saved)));
     }
 
@@ -100,6 +120,10 @@ public partial class ProductAgentController
     {
         task.Id, task.Revision, task.Name, task.Message, task.Frequency, task.Time, task.Date, task.Day,
         task.Enabled, task.MentionAll, task.NextRunAt, task.LastRunAt, task.LastResult,
+        canEdit = !task.HasCompletedOneTimeSchedule(),
+        webhookConfigured = !string.IsNullOrEmpty(task.ProtectedWebhook),
+        debugLastResult = task.DebugRun?.Status,
+        debugLastRunAt = task.DebugRun?.RequestedAt,
         webhookMasked = ProductScheduledNotificationTiming.MaskedWebhook,
     };
 }

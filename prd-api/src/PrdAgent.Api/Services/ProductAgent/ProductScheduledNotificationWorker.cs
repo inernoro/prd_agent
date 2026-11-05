@@ -23,19 +23,21 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
         {
             try { await ProcessNextAsync(stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-            catch (Exception) { logger.LogWarning("定时通知任务处理失败，将继续检查持久化任务。"); }
+            catch (Exception ex) { logger.LogWarning("定时通知任务处理失败，将继续检查持久化任务。错误类型 {ErrorType}", ex.GetType().Name); }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    private async Task ProcessNextAsync(CancellationToken stoppingToken)
+    internal async Task ProcessNextAsync(CancellationToken stoppingToken)
     {
         var now = DateTime.UtcNow;
         var tasks = db.ProductScheduledNotifications;
         var updates = Builders<ProductScheduledNotification>.Update;
         await tasks.UpdateManyAsync(x => x.LeaseUntil != null && x.LeaseUntil <= now,
             updates.Set(x => x.LastResult, "unknown").Set(x => x.LeaseUntil, null).Set(x => x.LeaseId, null),
-            cancellationToken: stoppingToken);
+            cancellationToken: CancellationToken.None);
+        await tasks.UpdateManyAsync(x => x.DebugRun != null && x.DebugRun.Status == "sending" && x.DebugRun.LeaseUntil <= now,
+            updates.Set(x => x.DebugRun!.Status, "unknown"), cancellationToken: CancellationToken.None);
 
         var due = await tasks.Find(x => x.Enabled && x.NextRunAt != null && x.NextRunAt <= now && x.LeaseId == null)
             .SortBy(x => x.NextRunAt).FirstOrDefaultAsync(stoppingToken);
@@ -47,21 +49,22 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
             updates.Set(x => x.LeaseId, lease).Set(x => x.LeaseUntil, now.AddMinutes(2))
                 .Set(x => x.LastRunAt, now).Set(x => x.LastResult, "sending").Set(x => x.Revision, lease)
                 .Set(x => x.Enabled, next != null).Set(x => x.NextRunAt, next),
-            cancellationToken: stoppingToken);
+            cancellationToken: CancellationToken.None);
         if (claimed.ModifiedCount == 0) return;
 
-        var result = await DeliverAsync(due, stoppingToken);
+        var result = await DeliverAsync(due, due.ProtectedWebhook, protection, clients, stoppingToken);
         await tasks.UpdateOneAsync(x => x.Id == due.Id && x.LeaseId == lease,
             updates.Set(x => x.LastResult, result).Set(x => x.LeaseUntil, null).Set(x => x.LeaseId, null),
             cancellationToken: CancellationToken.None);
     }
 
-    private async Task<string> DeliverAsync(ProductScheduledNotification task, CancellationToken stoppingToken)
+    internal static async Task<string> DeliverAsync(ProductScheduledNotification task, string protectedWebhook,
+        IDataProtectionProvider protection, IHttpClientFactory clients, CancellationToken stoppingToken)
     {
         var started = false;
         try
         {
-            var url = protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose).Unprotect(task.ProtectedWebhook);
+            var url = protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose).Unprotect(protectedWebhook);
             if (!ProductClaimWebhookPayload.IsValidWebhook(url)) return "failed";
             var payload = ProductClaimWebhookPayload.Build(task.Message, null, task.MentionAll);
             var client = clients.CreateClient("product-claim-webhook");
