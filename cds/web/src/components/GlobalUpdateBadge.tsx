@@ -1,3 +1,4 @@
+import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
@@ -519,6 +520,7 @@ export function GlobalUpdateBadge({
             <span className="truncate pr-1 text-xs font-medium">{visual.label}</span>
           ) : null}
         </button>
+        {expanded && state.kind === 'unreachable' ? <InstanceSwitcher above /> : null}
         {expanded && state.kind === 'updateAvailable' ? (
           <button
             type="button"

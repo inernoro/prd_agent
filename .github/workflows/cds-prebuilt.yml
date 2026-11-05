@@ -12,6 +12,7 @@ on:
     branches: ["**"]
     paths:
       - "cds/**"
+      - "cds-instances.json"
       - ".github/workflows/cds-prebuilt.yml"
   workflow_dispatch:
 

@@ -28,6 +28,7 @@ jobs:
           filters: |
             cds:
               - 'cds/**'
+              - 'cds-instances.json'
               - '.github/workflows/cds.yml'
               # cds/tests 里有守卫在断言这份巡检工作流的接线（豁免开关挂没挂满四步、
               # 触发路径覆没覆盖登记与解析器）。不把被守文件登记进来，只改它的 PR
