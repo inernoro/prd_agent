@@ -170,6 +170,7 @@ export const MarketplacePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const loadRequestRef = useRef(0);
+  const activeLoadRef = useRef<{ requestId: number; kind: 'full' | 'skills' } | null>(null);
   const latestLoadRef = useRef<{ viewerId: string | undefined; hasSkillSnapshot: boolean; load: (background?: boolean) => Promise<void> } | null>(null);
   const [snapshot, setSnapshot] = useState<MarketplaceSnapshot>({ scope: null, viewerId: currentUserId, byType: {} });
   const snapshotMatches = snapshot.scope === scope && snapshot.viewerId === currentUserId;
@@ -257,12 +258,16 @@ export const MarketplacePage: React.FC = () => {
   };
 
   const loadAllData = useCallback(async (background = false) => {
+    // 收藏刷新可以接替已发起的全量查询，但不能把它降级成仅技能而丢掉其他类型。
+    const skillsOnly = background && activeLoadRef.current?.kind !== 'full';
     const requestId = ++loadRequestRef.current;
-    if (!background) setLoading(true);
+    activeLoadRef.current = { requestId, kind: skillsOnly ? 'skills' : 'full' };
+    if (!skillsOnly) setLoading(true);
     setLoadError('');
     if (cardDemoEnabled) {
       setSnapshot({ scope, viewerId: currentUserId, byType: { skill: CARD_DEMO_SKILLS.filter(item => scope === 'all' || (scope === 'mine' ? item.ownerUserId === currentUserId : item.isFavoritedByCurrentUser)) } });
       setLoading(false);
+      activeLoadRef.current = null;
       return;
     }
     try {
@@ -271,7 +276,7 @@ export const MarketplacePage: React.FC = () => {
       let requestFailed = false;
       await Promise.all(
         Object.entries(CONFIG_TYPE_REGISTRY).map(async ([typeKey, typeDef]) => {
-          if ((scope !== 'all' || background) && typeKey !== 'skill') return;
+          if ((scope !== 'all' || skillsOnly) && typeKey !== 'skill') return;
           try {
             const res = scope === 'all'
               ? await typeDef.api.listMarketplace({ keyword: '', sort: sortBy })
@@ -291,14 +296,15 @@ export const MarketplacePage: React.FC = () => {
       if (requestId === loadRequestRef.current) {
         setSnapshot(previous => ({
           scope, viewerId: currentUserId,
-          byType: background && previous.scope === scope && previous.viewerId === currentUserId
+          byType: skillsOnly && previous.scope === scope && previous.viewerId === currentUserId
             ? { ...previous.byType, ...results } : results,
         }));
-        setLoadError(background ? '' : personalError);
-        if (background && requestFailed) toast.error('列表刷新失败', '收藏已更新，已保留当前内容，请稍后刷新页面');
+        setLoadError(skillsOnly ? '' : personalError);
+        if (skillsOnly && requestFailed) toast.error('列表刷新失败', '收藏已更新，已保留当前内容，请稍后刷新页面');
       }
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);
+      if (activeLoadRef.current?.requestId === requestId) activeLoadRef.current = null;
     }
   }, [cardDemoEnabled, sortBy, scope, currentUserId]);
 

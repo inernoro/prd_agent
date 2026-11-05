@@ -96,41 +96,38 @@ function ra(rgba: string, newA: number): string {
 // ── skill favourite toggle ─────────────────────────────────────────────────
 
 function SkillFavorite({ item, onChange }: { item: MarketplaceSkill; onChange?: (item: MarketplaceSkill) => void }) {
-  const [favorited, setFavorited] = useState(item.isFavoritedByCurrentUser);
-  const [count, setCount] = useState(item.favoriteCount);
-  const [pending, setPending] = useState(false);
+  const { isFavoritedByCurrentUser: serverFavorited, favoriteCount: serverCount } = item;
+  const [confirmed, setConfirmed] = useState({ favorited: serverFavorited, count: serverCount });
+  const [pendingTarget, setPendingTarget] = useState<boolean | null>(null);
+  const pending = pendingTarget !== null;
+  const favorited = pendingTarget ?? confirmed.favorited;
+  // 在最新服务端快照上投影当前意图；刷新和失败回滚都不再叠加增减量。
+  const count = Math.max(0, confirmed.count + Number(favorited) - Number(confirmed.favorited));
 
   useEffect(() => {
-    setFavorited(item.isFavoritedByCurrentUser);
-    setCount(item.favoriteCount);
-  }, [item.id, item.isFavoritedByCurrentUser, item.favoriteCount]);
+    setConfirmed(previous => previous.favorited === serverFavorited && previous.count === serverCount
+      ? previous : { favorited: serverFavorited, count: serverCount });
+  }, [item.id, serverFavorited, serverCount]);
 
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     if (pending) return;
-    setPending(true);
     const next = !favorited;
-    setFavorited(next);
-    setCount((c) => (next ? c + 1 : Math.max(0, c - 1)));
+    setPendingTarget(next);
     try {
       const res = next
         ? await favoriteMarketplaceSkill({ id: item.id })
         : await unfavoriteMarketplaceSkill({ id: item.id });
-      if (!res.success) {
-        setFavorited(!next);
-        setCount((c) => (next ? Math.max(0, c - 1) : c + 1));
-      } else if (res.data?.item) {
+      if (res.success && res.data?.item) {
         // 官方虚拟行等后端 no-op 场景：以服务端返回的实际状态为准
-        setFavorited(res.data.item.isFavoritedByCurrentUser);
-        setCount(res.data.item.favoriteCount);
+        setConfirmed({ favorited: res.data.item.isFavoritedByCurrentUser, count: res.data.item.favoriteCount });
         onChange?.(res.data.item);
       }
     } catch {
-      setFavorited(!next);
-      setCount((c) => (next ? Math.max(0, c - 1) : c + 1));
+      // 失败时撤掉意图，保留期间收到的最新服务端计数。
     } finally {
-      setPending(false);
+      setPendingTarget(null);
     }
   };
 
