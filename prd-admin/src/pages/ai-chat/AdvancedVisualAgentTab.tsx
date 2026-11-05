@@ -2032,10 +2032,32 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [_busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
   const [defectFlash, setDefectFlash] = useState(false);
-  const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
-  const autoSubmitEnabledRef = useRef(true);
-  useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
+  const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
+  const [booting, setBooting] = useState(true);
+  const workspaceReady = !booting && workspace?.id === workspaceId;
+  const autoSubmitEnabled = workspace?.id === workspaceId && !workspace.suppressAutoSubmit;
+  const autoSubmitEnabledRef = useRef(false);
+  autoSubmitEnabledRef.current = autoSubmitEnabled;
+  const [savingAutoSubmit, setSavingAutoSubmit] = useState(false);
   const [manualSubmitting, setManualSubmitting] = useState(false);
+
+  const handleToggleAutoSubmit = useCallback(async () => {
+    if (!workspaceReady || savingAutoSubmit) return;
+    setSavingAutoSubmit(true);
+    try {
+      const res = await updateVisualAgentWorkspace({ id: workspaceId, suppressAutoSubmit: autoSubmitEnabled });
+      if (!res.success) {
+        toast.error(res.error?.message || '投稿设置保存失败，请重试');
+        return;
+      }
+      if (workspaceIdRef.current === workspaceId) setWorkspace(res.data.workspace);
+      toast.success(res.data.workspace.suppressAutoSubmit ? '已关闭自动投稿，并从作品广场撤回本工作区作品' : '已开启自动投稿');
+    } catch {
+      toast.error('投稿设置保存失败，请重试');
+    } finally {
+      setSavingAutoSubmit(false);
+    }
+  }, [autoSubmitEnabled, savingAutoSubmit, workspaceId, workspaceReady]);
 
   // 手动投稿：将当前画布上所有已生成的图片一次性投稿到作品广场
   const handleManualSubmit = useCallback(async () => {
@@ -2048,7 +2070,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     setManualSubmitting(true);
     try {
-      const res = await autoSubmitImages(assetIds);
+      const res = await autoSubmitImages(assetIds, 'manual');
       if (res.success) {
         const count = res.data.submitted;
         if (count > 0) {
@@ -2056,6 +2078,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         } else {
           toast.info('所有图片均已投稿过');
         }
+      } else {
+        toast.error(res.error?.message || '投稿失败，请重试');
       }
     } catch {
       toast.error('投稿失败，请重试');
@@ -2064,9 +2088,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, []);
 
-  const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
-  const [booting, setBooting] = useState(true);
-  const workspaceReady = !booting && workspace?.id === workspaceId;
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
 
   // 触发缺陷提交按钮闪烁（生图失败时调用，持续闪烁直到用户点击）
@@ -9102,10 +9123,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAutoSubmitEnabled((v) => !v)}
+                  onClick={() => void handleToggleAutoSubmit()}
+                  disabled={!workspaceReady || savingAutoSubmit}
                   className={`h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover-bg-soft ${autoSubmitEnabled ? 'surface-action-success' : 'text-token-muted'}`}
                   aria-label={autoSubmitEnabled ? '投稿已开启（点击关闭）' : '投稿已关闭（点击开启）'}
-                  title={autoSubmitEnabled ? '投稿已开启 — 生成的图片会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
+                  title={autoSubmitEnabled ? '关闭自动投稿，并从作品广场撤回本工作区已投稿作品' : '投稿已关闭 — 点击开启后，仅新生成的图片会自动投稿'}
                 >
                   <Send size={14} />
                 </button>

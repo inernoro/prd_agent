@@ -381,6 +381,11 @@ public class ImageMasterController : ControllerBase
             if (sp.Length > 500) sp = sp[..500];
             update = update.Set(x => x.StylePrompt, string.IsNullOrEmpty(sp) ? null : sp);
         }
+        if (request?.SuppressAutoSubmit is { } suppressAutoSubmit)
+        {
+            update = update.Set(x => x.SuppressAutoSubmit, suppressAutoSubmit);
+            if (suppressAutoSubmit) update = update.Set(x => x.IsPublic, false);
+        }
 
         // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、旧流程进历史、清标记；旧图不删，进历史配图）。
         // 判据与写入都与文学页 PUT 共用 LiteraryIllustrationArchive：清空也算换稿，写入以读到的方案版本为条件。
@@ -396,6 +401,14 @@ public class ImageMasterController : ControllerBase
         else
         {
             await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+        }
+        if (request?.SuppressAutoSubmit == true)
+        {
+            // 先保存关闭意图，再撤回已有投稿；刷新和随后完成的自动投稿都读取同一份意图。
+            await _db.Submissions.UpdateManyAsync(
+                x => x.WorkspaceId == wid && x.OwnerUserId == adminId && x.ContentType == "visual" && x.IsPublic,
+                Builders<Submission>.Update.Set(x => x.IsPublic, false).Set(x => x.UpdatedAt, now),
+                cancellationToken: CancellationToken.None);
         }
         var next = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
         var payload = new { workspace = next };
@@ -3245,6 +3258,8 @@ public class CreateWorkspaceRequest
 
 public class UpdateWorkspaceRequest
 {
+    /// <summary>关闭自动投稿时同时撤回本工作区已有的视觉投稿。</summary>
+    public bool? SuppressAutoSubmit { get; set; }
     public string? Title { get; set; }
     public List<string>? MemberUserIds { get; set; }
     public string? CoverAssetId { get; set; }
