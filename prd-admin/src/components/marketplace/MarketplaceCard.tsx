@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import {
   Download,
@@ -10,7 +10,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
-import { formatDistanceToNow } from '@/lib/dateUtils';
+import { formatDate, formatDistanceToNow } from '@/lib/dateUtils';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -32,8 +32,16 @@ export interface MarketplaceCardProps {
   onEdit?: (item: MixedMarketplaceItem) => void;
   currentUserId?: string;
   forking?: boolean;
-  density?: 'classic' | 'short' | 'micro';
+  density?: 'classic' | 'short' | 'micro' | 'tile';
+  onFavoriteChange?: (item: MarketplaceSkill) => void;
 }
+
+const CARD_DENSITIES = {
+  classic: { className: 'mkt-card-density-classic', heightClass: '!h-[210px]' },
+  short: { className: 'mkt-card-density-short', heightClass: '!h-[112px]' },
+  micro: { className: 'mkt-card-density-micro', heightClass: '!h-[96px]' },
+  tile: { className: 'mkt-card-density-tile', heightClass: '!h-full' },
+} as const;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -87,36 +95,39 @@ function ra(rgba: string, newA: number): string {
 
 // ── skill favourite toggle ─────────────────────────────────────────────────
 
-function SkillFavorite({ item }: { item: MarketplaceSkill }) {
-  const [favorited, setFavorited] = useState(item.isFavoritedByCurrentUser);
-  const [count, setCount] = useState(item.favoriteCount);
-  const [pending, setPending] = useState(false);
+function SkillFavorite({ item, onChange }: { item: MarketplaceSkill; onChange?: (item: MarketplaceSkill) => void }) {
+  const { isFavoritedByCurrentUser: serverFavorited, favoriteCount: serverCount } = item;
+  const [confirmed, setConfirmed] = useState({ favorited: serverFavorited, count: serverCount });
+  const [pendingTarget, setPendingTarget] = useState<boolean | null>(null);
+  const pending = pendingTarget !== null;
+  const favorited = pendingTarget ?? confirmed.favorited;
+  // 在最新服务端快照上投影当前意图；刷新和失败回滚都不再叠加增减量。
+  const count = Math.max(0, confirmed.count + Number(favorited) - Number(confirmed.favorited));
+
+  useEffect(() => {
+    setConfirmed(previous => previous.favorited === serverFavorited && previous.count === serverCount
+      ? previous : { favorited: serverFavorited, count: serverCount });
+  }, [item.id, serverFavorited, serverCount]);
 
   const toggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     if (pending) return;
-    setPending(true);
     const next = !favorited;
-    setFavorited(next);
-    setCount((c) => (next ? c + 1 : Math.max(0, c - 1)));
+    setPendingTarget(next);
     try {
       const res = next
         ? await favoriteMarketplaceSkill({ id: item.id })
         : await unfavoriteMarketplaceSkill({ id: item.id });
-      if (!res.success) {
-        setFavorited(!next);
-        setCount((c) => (next ? Math.max(0, c - 1) : c + 1));
-      } else if (res.data?.item) {
+      if (res.success && res.data?.item) {
         // 官方虚拟行等后端 no-op 场景：以服务端返回的实际状态为准
-        setFavorited(res.data.item.isFavoritedByCurrentUser);
-        setCount(res.data.item.favoriteCount);
+        setConfirmed({ favorited: res.data.item.isFavoritedByCurrentUser, count: res.data.item.favoriteCount });
+        onChange?.(res.data.item);
       }
     } catch {
-      setFavorited(!next);
-      setCount((c) => (next ? Math.max(0, c - 1) : c + 1));
+      // 失败时撤掉意图，保留期间收到的最新服务端计数。
     } finally {
-      setPending(false);
+      setPendingTarget(null);
     }
   };
 
@@ -144,6 +155,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   currentUserId,
   forking = false,
   density = 'classic',
+  onFavoriteChange,
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
   const [localForking, setLocalForking] = useState(false);
@@ -178,28 +190,18 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   const coverUrl = getCoverImageUrl(item);
   const previewLink = getPreviewLink(item);
   const updatedTime = item.data.updatedAt || item.data.createdAt;
+  const version = item.type === 'skill' ? (item.data as MarketplaceSkill).version?.trim() : undefined;
   const shareCount = getShareCount(item);
   const downloadCount = getDownloadCount(item);
   const isOfficial = item.data.ownerUserId === 'official';
-  const densityClass =
-    density === 'short'
-      ? 'mkt-card-density-short'
-      : density === 'micro'
-        ? 'mkt-card-density-micro'
-        : 'mkt-card-density-classic';
-  const spotlightHeightClass =
-    density === 'short'
-      ? '!h-[112px]'
-      : density === 'micro'
-        ? '!h-[96px]'
-        : '!h-[210px]';
+  const { className: densityClass, heightClass: spotlightHeightClass } = CARD_DENSITIES[density];
   const canEdit =
     item.type === 'skill' &&
     !!onEdit &&
     !!currentUserId &&
     item.data.ownerUserId === currentUserId;
 
-  const cardGradient = coverUrl
+  const cardGradient = coverUrl || item.type === 'skill' || density === 'tile'
     ? undefined
     : `linear-gradient(145deg, ${ra(color.bg, 0.55)} 0%, ${ra(color.bg, 0.30)} 45%, ${ra(color.bg, 0.12)} 100%)`;
 
@@ -251,8 +253,8 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
         <div
           className="mkt-card-icon-zone"
           style={{
-            color: color.iconColor,
-            filter: `drop-shadow(0 0 16px ${ra(color.bg, 0.55)}) drop-shadow(0 0 5px ${ra(color.bg, 0.35)})`,
+            color: density === 'tile' ? 'var(--skill-glyph-ink)' : color.iconColor,
+            filter: density === 'tile' ? undefined : `drop-shadow(0 0 16px ${ra(color.bg, 0.55)}) drop-shadow(0 0 5px ${ra(color.bg, 0.35)})`,
           }}
         >
           <TypeIcon size={54} />
@@ -309,6 +311,19 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           </div>
         )}
 
+        {density === 'tile' && (
+          <div className="mkt-card-release-meta">
+            {version && (
+              <span className="mkt-card-version" title="版本号">{version.replace(/^v?/i, 'v')}</span>
+            )}
+            {item.data.createdAt && (
+              <time className="mkt-card-uploaded-at" dateTime={item.data.createdAt} title={`上传时间：${formatDate(item.data.createdAt)}`}>
+                上传于 {formatDate(item.data.createdAt, 'YYYY-MM-DD')}
+              </time>
+            )}
+          </div>
+        )}
+
         {/* Footer inside glass */}
         <div className="mkt-card-glass-footer">
           {/* Left: author */}
@@ -340,7 +355,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             )}
             <div className="mkt-card-actions flex items-center gap-1.5 flex-shrink-0">
               {item.type === 'skill' && (
-                <SkillFavorite item={item.data as MarketplaceSkill} />
+                <SkillFavorite item={item.data as MarketplaceSkill} onChange={onFavoriteChange} />
               )}
               {item.type === 'skill' && (
                 <Button
@@ -432,7 +447,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     >
       <div
         ref={cardRef}
-        className={`mkt-card ${densityClass}${coverUrl ? ' has-cover' : ''}`}
+        className={`mkt-card ${densityClass}${coverUrl ? ' has-cover' : item.type === 'skill' ? ' mkt-card-skill-glyph' : ''}`}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleCardClick}
