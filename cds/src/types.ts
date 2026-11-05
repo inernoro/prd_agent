@@ -1,3 +1,4 @@
+import type { ProjectInspection } from './services/project-inspections.js';
 // ── Cloud Development Suite (CDS) — Core Types ──
 
 import type { SealedSecret } from './infra/secret-seal.js';
@@ -3830,6 +3831,8 @@ export interface PreviewAddressAudit {
 }
 
 export interface Project {
+  /** 定期实测的执行方回填，不能冒充 CDS 主动探测或已验证的通知送达。 */
+  monitoringInspections?: ProjectInspection[];
   /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */
   previewAddresses?: Record<string, PreviewAddressOverride>;
   /** Append-only address/verification audit. Never accepted from request bodies. */

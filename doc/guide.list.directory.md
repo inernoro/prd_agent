@@ -49,6 +49,8 @@
 
 ### 二、设计文档
 
+- [CDS 项目检查与通知总览](./design.cds.project-status.md) `design.cds.project-status`
+
 - [验收报告知识库 · 设计](./design.acceptance.kb.md) `design.acceptance.kb`
 - [MAP 自动化验收知识库治理 · 设计](./design.acceptance.knowledge-governance.md) `design.acceptance.knowledge-governance`
 - [功能验收体系 · 设计](./design.acceptance.system.md) `design.acceptance.system`

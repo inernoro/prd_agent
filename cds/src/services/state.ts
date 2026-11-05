@@ -2679,6 +2679,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         | 'aliasName'
         | 'previewAddresses'
         | 'previewAddressAudit'
+        | 'monitoringInspections'
         | 'slug'
         | 'description'
         | 'deliveryMode'

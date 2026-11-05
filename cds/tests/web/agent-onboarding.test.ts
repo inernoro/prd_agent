@@ -302,7 +302,7 @@ describe('CDS Agent 接入口令', () => {
     //    + cds-system-diagnostics（主线程诊断与按需 CPU 采样，只读观测，2026-10-08）
     //    + identity-connections（原账号与原项目的批准式设备交接，2026-10-15）
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(60);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(61);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'instance-catalog'))
       .toMatchObject({ risk: 'read-only', agentUse: 'direct', cliFamily: 'instance' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'preview-address'))
