@@ -609,7 +609,8 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
   if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到目标提交');
   if (!runtimeEquivalent && branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
   if (!runtimeEquivalent && branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
-  if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
+  const observedRuntimeCommit = branch?.runningCommitSha || branch?.lastDeployDispatchCommitSha;
+  if (observedRuntimeCommit !== runtimeCommit) reasons.push('CDS 尚未运行目标提交');
   if (branch?.deployRuntime?.drift?.hasDrift) reasons.push('CDS 服务存在版本漂移');
   if (services.length === 0) reasons.push('CDS 未返回任何业务服务');
   for (const [serviceKey, service] of Object.entries(branch?.services || {})) {
