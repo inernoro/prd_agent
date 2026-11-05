@@ -309,3 +309,7 @@ MAP 负责输入、进度、权限、预算、文件、版本和发布，必要�
 - [OpenDesign 接入债务台账](./debt.platform.open-design.md)
 - [网页托管债务台账](./debt.web-hosting.md)
 - [网关协议保真债务台账](./debt.platform.llm-gateway.protocol-fidelity.md)
+
+### 2026-11-05：工作流网页报告接线
+
+工作流的网页报告与HTML格式报告统一交给OpenDesign，沿原节点获准的网关用途与模型池执行；Markdown报告仍按原流程。MAP只连接既有设计任务、展示阶段、保管完整文件与版本，并传播用户明确取消。设计服务不可用时保留输入和旧报告，不退回模型一次性直出HTML。实现正在完成免费回归，尚未签署正式业务验收；原节点历史资料可回放，但不把缓存当作新执行。

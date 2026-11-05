@@ -1,3 +1,4 @@
+import { apiDownload } from '@/services/real/apiClient';
 import { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -89,6 +90,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview');
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
   const [iframeFullscreen, setIframeFullscreen] = useState(false);
 
   const content = artifact.inlineContent || '';
@@ -185,7 +187,17 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
     downloadBlob(mdContent, `${baseName}.md`, 'text/markdown');
   }
 
-  const handleDownloadDefault = () => {
+  const handleDownloadDefault = async () => {
+    if (artifact.designDelivery?.downloadPath) {
+      setDownloadError('');
+      try {
+        const file = await apiDownload(artifact.designDelivery.downloadPath, `${baseName}.zip`);
+        const url = URL.createObjectURL(file.blob);
+        const anchor = document.createElement('a'); anchor.href = url; anchor.download = file.fileName; anchor.click();
+        URL.revokeObjectURL(url);
+      } catch { setDownloadError('下载未完成，原报告仍可预览，请稍后重试。'); }
+      return;
+    }
     if (artifact.cosUrl) { window.open(artifact.cosUrl, '_blank'); return; }
     const fileName = `${baseName}${correctExt}`;
     downloadBlob(content, fileName, effectiveMime);
@@ -311,6 +323,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
 
         {/* Content - 智能渲染 */}
         <div className="flex-1 overflow-auto p-5">
+          {downloadError && <p role="alert" className="text-xs text-token-error">{downloadError}</p>}
           {!content && !artifact.cosUrl && (
             <div className="text-token-muted text-center py-12 text-[13px]">
               产物内容为空
@@ -379,7 +392,8 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                     </button>
                   </div>
                   <iframe
-                    srcDoc={content}
+                    src={artifact.designDelivery?.url}
+                    srcDoc={artifact.designDelivery ? undefined : content}
                     sandbox=""
                     className="w-full h-full rounded-xl border border-token-subtle"
                     style={{ background: 'transparent' }}
