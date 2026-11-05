@@ -6825,6 +6825,63 @@ describe('Branch Routes', () => {
       } finally { remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve())); }
     });
 
+    it.each([false, true])('真实Master非成功正文读取后复核原代次，已换代=%s', async superseded => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const id = `remote-nonok-${superseded}`, now = new Date().toISOString();
+      stateService.addBranch({ id, projectId: 'default', branch: `feature/${id}`, worktreePath: path.join(tmpDir, id), createdAt: now, status: 'idle', services: {} });
+      const entry = stateService.getBranch(id)!, originalFetch = globalThis.fetch;
+      let payload: any, bodyRead = false, expected: string | undefined;
+      let next: ReturnType<BranchOperationCoordinator['begin']> | undefined;
+      const remote = http.createServer((req, res) => {
+        let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+          const value = JSON.parse(raw);
+          if (req.url === '/exec/deployment-owner') {
+            res.setHeader('Content-Type', 'application/json'); res.end('{"qualified":true,"admissionId":"native-nonok-admission"}');
+          } else { payload = value; res.writeHead(503, { 'Content-Type': 'text/plain' }); res.end('owned upstream rejection'); }
+        });
+      });
+      await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+      const port = (remote.address() as { port: number }).port;
+      registryNodes.push({ id: 'exec-nonok', host: '127.0.0.1', port, status: 'online', role: 'remote', labels: [], branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      globalThis.fetch = async (input, init) => {
+        const response = await originalFetch(input, init);
+        if (String(input) === `http://127.0.0.1:${port}/exec/deploy`) {
+          const read = response.text.bind(response);
+          response.text = async () => {
+            const text = await read(); bodyRead = true;
+            // 真正HTTP正文已结算；在Master继续执行前交给真实协调器换代。
+            if (superseded) {
+              branchOperationCoordinator.cancelBranch(id, '原错误正文已收到时接受继任者');
+              next = branchOperationCoordinator.begin({ projectId: 'default', branchId: id, kind: 'deploy', trigger: 'manual' });
+              Object.assign(entry, { status: 'starting', errorMessage: '继任者诊断', services: {
+                current: { profileId: 'current', containerName: 'successor-api', hostPort: 10002, status: 'starting' },
+              }, remoteDeployment: { ...entry.remoteDeployment!, operationId: next.operationId,
+                operationGeneration: next.generation, deploymentRunId: 'successor-nonok-run', revoked: false } });
+              expected = JSON.stringify(entry);
+            }
+            return text;
+          };
+        }
+        return response;
+      };
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-nonok' });
+        expect(response.status).toBe(200); expect(bodyRead).toBe(true);
+        if (superseded) {
+          expect(JSON.stringify(entry)).toBe(expected); expect(next!.lease!.isCurrent()).toBe(true);
+          expect(deploymentRunService.get(payload.deploymentRunId)?.status).toBe('cancelled');
+        } else {
+          expect(entry.status).toBe('error'); expect(entry.errorMessage).toContain('HTTP 503');
+          expect(entry.errorMessage).toContain('owned upstream rejection'); expect(deploymentRunService.get(payload.deploymentRunId)?.status).toBe('failed');
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        if (next?.lease) branchOperationCoordinator.complete(next.lease, 'cancelled');
+        remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve()));
+      }
+    });
+
     it.each(['remote-error', 'post-complete-flush', 'missing-terminal'] as const)('远端终态与本机保存边界%s保留真实执行原因和心跳资格', async mode => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
       const id = `remote-terminal-${mode}`, now = new Date().toISOString(), controls: string[] = [];

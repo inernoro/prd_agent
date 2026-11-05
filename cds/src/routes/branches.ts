@@ -4088,6 +4088,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (!upstream.ok || !upstream.body) {
         const errText = await (upstream.text ? upstream.text() : Promise.resolve('(no body)'));
+        ownerGuard.assertCurrent();
         const errEvent = {
           message: `执行器拒绝部署请求 (HTTP ${upstream.status}): ${errText.slice(0, 200)}`,
         };
