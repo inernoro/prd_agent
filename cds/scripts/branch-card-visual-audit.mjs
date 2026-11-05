@@ -71,6 +71,7 @@ function makeBranches() {
       status: 'idle', services: { ...services(22000, 'stopped'), 'legacy-gw': { profileId: 'legacy-gw', containerName: 'fixture-legacy-gw', hostPort: 22999, status: 'error', errorMessage: '构建配置已删除' } },
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-18 * 60 * MIN),
       lastDeployAt: iso(-20 * 60 * MIN),
+      deployRuntime: { kind: 'source', drift: { hasDrift: true, expectedCount: 13, healthyCount: 0, missingProfileIds: [], unhealthyProfileIds: PROFILES } },
     }),
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
@@ -277,6 +278,7 @@ async function main() {
       const erroredInitial = Number((headline.match(/(\d+)\s*个出错需要处理/) || [])[1] || 0);
       check(erroredInitial === 1, `[${theme}] 僵尸服务不计入「出错需要处理」（实际 ${erroredInitial}，「${headline.trim()}」）`);
       const mainRedeploy = await page.$$eval('[data-branch-card-id="b-main"] button[aria-label^="重新部署"]', (els) => els.length).catch(() => 0);
+      check(await page.locator('[data-branch-card-id="b-main"] [data-drift-chip]').count() === 0, `[${theme}] 已停止分支保留停止说明，不把漂移统计显示成服务异常`);
       check(phases['b-main'] !== 'failed' && mainRedeploy === 0, `[${theme}] 带僵尸 error 条目的分支卡不进出错态（phase=${phases['b-main']}，重新部署按钮 ${mainRedeploy} 个）`);
       const metaTimes = await page.$$eval('[data-branch-card-id="b-pack"], [data-branch-card-id="b-ident"]', (els) => els.map((el) => el.textContent || ''));
       check(metaTimes.every((t) => /最近推送/.test(t)), `[${theme}] 构建中卡片右侧有「最近推送」时间`);

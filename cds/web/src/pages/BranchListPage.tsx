@@ -6502,6 +6502,9 @@ const BranchCard = memo(function BranchCard({
     && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
   // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。
   const shouldShowStopReason = !isRunning && !isInterim && !isCiWaiting && !isCiFailed && !isNeverDeployed;
+  // 状态槽换行不改变原端口槽的显示条件：停止、待部署、等 CI 时仍显示原状态。
+  const showServiceDrift = !failedPhase && !isCiWaiting && !isCiFailed && !isNeverDeployed
+    && !shouldShowStopReason && Boolean(branch.deployRuntime?.drift?.hasDrift);
   const ciWaitSinceText = branch.ciWaitingSince
     ? formatRelativeTime(branch.ciWaitingSince)
     : (branch.lastPushAt ? formatRelativeTime(branch.lastPushAt) : '');
@@ -6714,7 +6717,7 @@ const BranchCard = memo(function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="cds-branch-name min-h-14 min-w-0 flex-1 break-all text-[1.0625rem] font-semibold leading-7 line-clamp-2"
+                className="cds-branch-name min-h-14 min-w-0 flex-1 break-words text-base font-semibold leading-7 line-clamp-2"
                 title={branch.branch}
               >
                 {/* AI 活跃时标题不再扫光：环境光 + 进度轨 + 徽章环已经承担了
@@ -7250,7 +7253,7 @@ const BranchCard = memo(function BranchCard({
         */}
       {!showsIssue || failedPhase ? (
         <div data-branch-status-row className="mx-5 mt-1 flex h-6 min-w-0 items-center justify-between gap-2 text-xs leading-4 text-muted-foreground">
-        {!failedPhase && branch.deployRuntime?.drift?.hasDrift ? (() => {
+        {showServiceDrift ? (() => {
           const drift = branch.deployRuntime!.drift!;
           const missing = drift.missingProfileIds;
           const unhealthy = drift.unhealthyProfileIds;
