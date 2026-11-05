@@ -1,3 +1,4 @@
+import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -1142,6 +1143,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             : null}
         </div>
       ) : null}
+      <InstanceSwitcher />
       <div id="cds-information-center-host" className="relative shrink-0" />
     </header>
   );

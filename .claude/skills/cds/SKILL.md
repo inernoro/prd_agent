@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.17.6
+  version: 0.18.0
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.17.6 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
+> **版本**：v0.18.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -39,6 +39,31 @@ CDS 这边您想做什么？
 | `cdscli self update` 切分支 + 重启 CDS | |
 | 预览 URL 真实入口查询（必须调用 `preview-url`） | |
 | cdscli 命令总览 / 安装位置 / init 向导 | |
+
+## 主备 CDS：先发现、独立接入、明确选择
+
+用户说“用备用 CDS 继续部署”时，先离线运行 `cdscli instance list`，读取仓库根目录
+`cds-instances.json`；没有目录且主站可用时可运行 `cdscli instance sync` 同步公共地址。
+主站故障时不能依赖它重新下发备用地址；目录应提前随项目保存。
+
+- `cdscli instance connect standby --project <目标项目ID> --agent Codex`：申请目标项目独立授权，保留原实例授权。
+- 目标还没有项目：使用 `instance connect standby --new-project --create-project <名称> --git-url <仓库地址>`，然后走冷路径完成项目接入。
+- `cdscli instance check standby`：校验目标项目授权、项目 ID 和仓库绑定；失败不选择、不部署。
+- `cdscli instance use standby`：校验后保存当前仓库的默认实例；用 `instance use primary` 切回。
+- `cdscli --instance standby <原有命令>`：仅本次使用目标实例，覆盖继承的主用环境凭据并先校验目标项目，不改变默认选择。
+
+实例目录只包含公开名称、角色和站点根地址，不能放 Key。独立授权保存在本地
+`.cds/instance-credentials.json`；默认选择保存在 `.cds/active-instance.json`，均排除 Git、权限 0600。
+旧 `.cds/credentials.json` 在未选择实例时继续兼容。检查证据按次保存到本地
+`.cds/instance-checks/`，只保留受控项目身份字段和判定，不保存环境变量或密钥。
+
+选择备用后，重新读取该实例的项目、profile、分支和预览地址；不要复用主用的分支 ID。
+确认目标的环境变量、外部依赖和 CI 预构建模式，再走 `cds-deploy-pipeline` 发起新部署。
+遇到超时不自动向另一实例重放写请求，先确认原任务是否已被接受。
+这一版不迁移数据库、不接管流量、不承诺后台 Worker 能安全双跑。
+
+用户入口：控制台顶部“主备 CDS”；断线提示展开后也能打开入口。网页切换进入目标项目列表，
+需要独立登录。可提前“下载备用入口”保存地址；标签页目录快照仅用于故障导航，不代表健康状态。
 
 ## cdscli — 唯一 CLI 入口（其他两个技能也走它）
 

@@ -48,7 +48,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.18.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -150,6 +150,9 @@ def _save_local_credentials(*, host: str, project_id: str | None = None,
         payload["bootstrapKey"] = bootstrap_key
         if bootstrap_source:
             payload["bootstrapSource"] = bootstrap_source
+    # Preserve both the old and new host authorizations before replacing the legacy pointer.
+    _archive_instance_credentials(_read_local_credentials_file())
+    _archive_instance_credentials(payload)
     tmp_path = target + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -9540,6 +9543,253 @@ def cmd_schedule_delete(args: argparse.Namespace) -> None:
     ok(data, note="任务已删除")
 
 
+
+# ── Host-scoped instance selection (public catalog + private authorizations) ──
+
+def _instance_origin(raw: str) -> str:
+    url = urllib.parse.urlsplit(raw if "://" in raw else "https://" + raw)
+    local = url.hostname in ("localhost", "127.0.0.1", "::1")
+    if (not url.hostname or (url.scheme != "https" and not (local and url.scheme == "http"))
+            or url.username or url.password or url.query or url.fragment or url.path not in ("", "/")):
+        raise ValueError("实例地址必须为 HTTPS 根地址，不能包含凭据或页面路径")
+    return f"{url.scheme}://{url.netloc.lower()}".rstrip("/")
+
+
+def _instance_catalog(value: Any = None) -> dict[str, Any]:
+    file = Path(_workspace_root()) / "cds-instances.json"
+    if value is None and not file.exists():
+        return {"version": 1, "instances": []}
+    try:
+        data = value if value is not None else json.loads(file.read_text(encoding="utf-8"))
+        if data.get("version") != 1 or not isinstance(data.get("instances"), list) or len(data["instances"]) > 20:
+            raise ValueError("格式错误")
+        entries = []
+        ids, hosts = set(), set()
+        for entry in data["instances"]:
+            ident, name = entry.get("id", ""), entry.get("name", "")
+            host = _instance_origin(entry["url"])
+            if (not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", ident)
+                    or not isinstance(name, str) or not name.strip() or len(name) > 60
+                    or entry.get("role") not in ("primary", "standby") or ident in ids or host in hosts):
+                raise ValueError("实例定义无效或重复")
+            ids.add(ident)
+            hosts.add(host)
+            entries.append({"id": ident, "name": name.strip(), "role": entry["role"], "url": host})
+        return {"version": 1, "instances": entries}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        die("cds-instances.json 无效，请检查实例标识、名称和 HTTPS 根地址", code=1)
+        return {}
+
+
+def _instance_entry(ident: str) -> dict[str, Any]:
+    for entry in _instance_catalog()["instances"]:
+        if entry["id"] == ident:
+            return entry
+    die(f"未登记 CDS 实例：{ident}。请检查 cds-instances.json", code=1)
+    return {}
+
+
+def _private_instance_file(name: str) -> Path:
+    return Path(_workspace_root()) / ".cds" / name
+
+
+def _read_instance_private(name: str, default: dict[str, Any]) -> dict[str, Any]:
+    file = _private_instance_file(name)
+    if not file.exists():
+        return default
+    try:
+        result = json.loads(file.read_text(encoding="utf-8"))
+        if not isinstance(result, dict):
+            raise ValueError("invalid")
+        return result
+    except (ValueError, OSError):
+        die(f"本地 {name} 无法读取，未更改实例或凭据；请恢复该文件后重试", code=1)
+        return {}
+
+
+def _write_instance_private(name: str, payload: dict[str, Any]) -> None:
+    target = _private_instance_file(name)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temp = target.with_name(target.name + "." + secrets.token_hex(6) + ".tmp")
+    try:
+        with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as out:
+            json.dump(payload, out, ensure_ascii=False, indent=2)
+            out.write("\n")
+        os.replace(temp, target)
+    finally:
+        temp.unlink(missing_ok=True)
+    marker = name.split("/", 1)[0] + "/" if "/" in name else name
+    _exclude_local_path(_workspace_root(), f"/.cds/{marker}")
+
+
+def _credential_origin(raw: str) -> str:
+    url = urllib.parse.urlsplit(raw if "://" in raw else "https://" + raw)
+    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
+        raise ValueError("凭据主机格式无效")
+    return f"{url.scheme}://{url.netloc.lower()}"
+
+
+def _archive_instance_credentials(payload: dict[str, Any]) -> None:
+    if not payload.get("host"):
+        return
+    host = _credential_origin(payload["host"])
+    store = _read_instance_private("instance-credentials.json", {"version": 1, "hosts": {}})
+    if not isinstance(store.get("hosts"), dict):
+        die("实例凭据格式无效，未覆盖原有授权", code=1)
+    store["hosts"][host] = payload
+    _write_instance_private("instance-credentials.json", store)
+
+
+def _instance_credentials(entry: dict[str, Any]) -> dict[str, Any] | None:
+    store = _read_instance_private("instance-credentials.json", {"hosts": {}})
+    current = _read_local_credentials_file()
+    # Legacy credential remains usable until the next successful connect archives it.
+    hosts = store.get("hosts", {})
+    if not isinstance(hosts, dict):
+        die("本地实例凭据格式无效，请恢复 instance-credentials.json", code=1)
+    candidate = hosts.get(entry["url"])
+    if current.get("host") and _credential_origin(current["host"]) == entry["url"]:
+        candidate = current
+    if not isinstance(candidate, dict) or not candidate.get("host"):
+        return None
+    if _credential_origin(candidate["host"]) != entry["url"]:
+        die("实例与凭据地址不匹配，已停止；请重新接入目标实例", code=1)
+    return candidate
+
+
+def _apply_instance(entry: dict[str, Any], *, require_project: bool = True) -> dict[str, Any]:
+    credentials = _instance_credentials(entry)
+    if not credentials or (require_project and not (credentials.get("projectId") and credentials.get("projectKey"))):
+        die(f"{entry['name']} 尚未接入当前项目。运行 instance connect {entry['id']} --project <目标项目ID>，"
+            "或使用 --new-project --create-project <名称> 创建后再部署。原实例授权未改变。", code=1)
+    # Selection is explicit: never forward the previous host's key, including inherited env keys.
+    for key in _EXPLICIT_CREDENTIAL_ENV:
+        os.environ.pop(key, None)
+    os.environ["CDS_HOST"] = entry["url"]
+    for field, key in (("projectId", "CDS_PROJECT_ID"), ("projectKey", "CDS_PROJECT_KEY"), ("bootstrapKey", "AI_ACCESS_KEY")):
+        if credentials.get(field):
+            os.environ[key] = credentials[field]
+    return credentials
+
+
+def _check_instance(entry: dict[str, Any]) -> dict[str, Any]:
+    previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
+    try:
+        creds = _apply_instance(entry)
+        project_id = str(creds["projectId"])
+        started = time.time()
+        status, body, headers = _request("GET", f"/api/projects/{urllib.parse.quote(project_id, safe='')}",
+                                         timeout=15, fatal_network_errors=False, follow_redirects=False)
+        project = body.get("project", body) if isinstance(body, dict) else {}
+        if not isinstance(project, dict):
+            project = {}
+        repo = _git_repo_full_name(_workspace_root()).lower()
+        remote_repo = str(project.get("githubRepoFullName") or "").lower()
+        if not remote_repo and project.get("gitRepoUrl"):
+            remote_repo = str(project["gitRepoUrl"]).removesuffix(".git").rstrip("/").rsplit(":", 1)[-1]
+            remote_repo = "/".join(remote_repo.split("/")[-2:]).lower()
+        matched = bool(repo and remote_repo and repo == remote_repo)
+        ready = 200 <= status < 300 and project.get("id") == project_id and matched
+        result = {"instance": entry["id"], "host": entry["url"], "projectId": project_id,
+                  "status": status, "repositoryMatched": matched, "ready": ready,
+                  "checkedAt": time.time(), "trace": _TRACE_ID}
+        # Persist bounded, allowlisted response evidence. Never store project envs/keys or raw errors.
+        headers = {key.lower(): value for key, value in headers.items()}
+        evidence = {**result, "operation": "instance-check", "startedAt": started,
+                    "durationMs": round((time.time() - started) * 1000),
+                    "upstreamRequestId": headers.get("x-cds-request-id"), "responseReceived": status != 0,
+                    "upstream": {"id": project.get("id") if project.get("id") == project_id else None,
+                                 "repositoryFieldPresent": bool(remote_repo),
+                                 "projectFieldPresent": bool(project.get("id")),
+                                 "contentType": headers.get("content-type")},
+                    "snapshotPolicy": "project identity fields only; other fields omitted to protect secrets"}
+        code = body.get("error") if isinstance(body, dict) else None
+        evidence["upstream"]["errorCode"] = code if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,60}", code) else None
+        _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", evidence)
+        if not ready:
+            die("目标实例项目校验未通过，未切换或发起部署。请确认授权、目标项目和仓库绑定后重试。",
+                code=2, extra=result)
+        return result
+    finally:
+        _restore_auth_env(previous)
+
+
+def cmd_instance_sync(args: argparse.Namespace) -> None:
+    # Import only public addresses, retaining a per-attempt audit even on failure.
+    started = time.time()
+    status, body, headers = _request("GET", "/api/instance-catalog", timeout=15,
+                                     fatal_network_errors=False, follow_redirects=False)
+    evidence = {"operation": "instance-sync", "trace": _TRACE_ID, "host": _cds_base(),
+                "status": status, "responseReceived": status != 0, "startedAt": started,
+                "durationMs": round((time.time() - started) * 1000),
+                "responseType": type(body).__name__, "outcome": "rejected",
+                "snapshotPolicy": "validated public addresses only; unknown fields and raw errors omitted to protect secrets"}
+    try:
+        if not 200 <= status < 300:
+            die("无法同步实例目录，请检查当前 CDS 连接；本地目录未改变，可用 instance list 离线查看", code=2)
+        data = _instance_catalog(body)
+        evidence["response"] = data
+        evidence["outcome"] = "validated"
+        target = Path(_workspace_root()) / "cds-instances.json"
+        temp = target.with_name(target.name + "." + secrets.token_hex(6) + ".tmp")
+        try:
+            temp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+    finally:
+        _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", evidence)
+    ok(data, note="已同步主备地址到当前仓库；未复制授权或选择实例")
+
+
+def cmd_instance_list(args: argparse.Namespace) -> None:
+    active = _read_instance_private("active-instance.json", {}).get("id")
+    entries = [{**entry, "selected": active == entry["id"],
+                "connected": bool((_instance_credentials(entry) or {}).get("projectKey"))}
+               for entry in _instance_catalog()["instances"]]
+    ok({"instances": entries, "activeInstance": active}, note="本地实例目录，不代表目标服务或项目已就绪")
+
+
+def cmd_instance_check(args: argparse.Namespace) -> None:
+    ok(_check_instance(_instance_entry(args.id)), note="目标项目授权与仓库绑定校验通过")
+
+
+def cmd_instance_use(args: argparse.Namespace) -> None:
+    entry = _instance_entry(args.id)
+    result = _check_instance(entry)
+    _write_instance_private("active-instance.json", {"id": entry["id"]})
+    ok(result, note="已选择目标实例。后续命令使用该实例；未迁移数据或重试任何部署")
+
+
+def cmd_instance_connect(args: argparse.Namespace) -> None:
+    entry = _instance_entry(args.id)
+    previous = _read_local_credentials_file()
+    args.host = entry["url"]
+    try:
+        # Existing command exits through ok(); collect that result before checking/selection.
+        connect_code = 0
+        with _nested_call():
+            try:
+                cmd_connect(args)
+            except SystemExit as exc:
+                connect_code = exc.code or 0
+        outcome = _NESTED_PAYLOAD or {}
+        if connect_code:
+            die(outcome.get("error") or "目标实例接入未完成，原默认连接已保留", code=connect_code)
+        if not getattr(args, "new_project", False) or getattr(args, "create_project", None):
+            _check_instance(entry)
+        _write_instance_private("active-instance.json", {"id": entry["id"]})
+    except SystemExit:
+        # A valid authorization can still point at the wrong repository. Keep it archived,
+        # but never let failed connection validation replace the previous default.
+        if previous:
+            _write_instance_private("credentials.json", previous)
+        else:
+            _private_instance_file("credentials.json").unlink(missing_ok=True)
+        raise
+    ok(outcome.get("data"), note="目标实例接入并选择完成；其它实例授权已保留")
+
+
 # ── argparse wiring ────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -9547,7 +9797,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--human", action="store_true", help="人读输出")
     p.add_argument("--trace", help="链路 ID (默认随机 8 hex)")
     p.add_argument("--version", action="version", version=f"cdscli {VERSION}")
+    p.add_argument("--instance", help="仅本次命令使用指定 CDS 实例及其独立项目授权")
     sub = p.add_subparsers(dest="cmd", required=True)
+    instances = sub.add_parser("instance", help="主备实例发现、接入、检查与选择").add_subparsers(dest="instance_cmd", required=True)
+    instances.add_parser("sync", help="从当前已授权 CDS 同步公共实例目录").set_defaults(func=cmd_instance_sync)
+    instances.add_parser("list", help="离线列出已登记实例（不展示密钥）").set_defaults(func=cmd_instance_list)
+    for command, handler in (("check", cmd_instance_check), ("use", cmd_instance_use)):
+        item = instances.add_parser(command, help="校验目标项目" if command == "check" else "校验并选择后续命令使用的实例")
+        item.add_argument("id")
+        item.set_defaults(func=handler)
+    item = instances.add_parser("connect", help="在指定实例申请项目授权，保留其它实例授权")
+    item.add_argument("id")
+    target = item.add_mutually_exclusive_group(required=True)
+    target.add_argument("--project")
+    target.add_argument("--new-project", action="store_true")
+    item.add_argument("--create-project")
+    item.add_argument("--git-url")
+    item.add_argument("--slug")
+    item.add_argument("--agent", default="Agent")
+    item.add_argument("--timeout", type=int, default=300)
+    item.add_argument("--interval", type=int, default=2)
+    item.set_defaults(func=cmd_instance_connect)
 
     sub.add_parser("health", help="CDS /healthz").set_defaults(func=cmd_health)
 
@@ -10252,6 +10522,24 @@ def main(argv: list[str] | None = None) -> None:
     if func is None:
         parser.print_help()
         sys.exit(1)
+    # Discovery and connection must work even if the selected host is unavailable or unconfigured.
+    if args.cmd == "instance" and args.instance:
+        parser.error("instance 子命令请直接指定实例 ID，不与全局 --instance 混用")
+    if args.cmd == "instance" and args.instance_cmd == "sync":
+        selected = _read_instance_private("active-instance.json", {}).get("id")
+        if selected:
+            _apply_instance(_instance_entry(selected), require_project=False)
+    if args.cmd not in ("instance", "connect"):
+        selected = args.instance or _read_instance_private("active-instance.json", {}).get("id")
+        if selected:
+            entry = _instance_entry(selected)
+            _apply_instance(entry, require_project=False)
+            if args.instance:
+                # Scoped selection must prove project identity before any existing command can mutate.
+                _check_instance(entry)
+            # Auth inspection reflects the selected host, not a superseded inherited env.
+            for key in _EXPLICIT_CREDENTIAL_ENV:
+                _EXPLICIT_CREDENTIAL_ENV[key] = os.environ.get(key, "")
     func(args)
 
 

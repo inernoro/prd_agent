@@ -168,3 +168,11 @@ CLI 未封装的能力不得编造命令。需要 fallback 时先确认认证类
 现有通道的故障入口可用 `cdscli monitor incident-page --file` 更新。私有文件提供 channelId 与 incidentPageUrl；CLI 先读当前通道，再使用已有管理员 PUT 接口保留其他配置，地址限 HTTPS 且不得含登录凭据。
 
 管理员使用 `cdscli monitor identity` 读取，或 `--file` 从私有 JSON 文件更新。对应 `GET/PUT /api/cds-system/alarm-identity`，使用与通知通道相同的系统管理员权限；项目 Key 不可读写。配置含当前 instance 与可选 targets，名称与环境必填，自身稳定 ID 由服务端生成且改名不变。真实配置不得作为文档示例提交。
+
+
+## 主备实例目录
+
+`GET /api/instance-catalog`：通过现有 CDS 鉴权后读取仓库根目录 `cds-instances.json`，只返回
+`version` 与实例的 `id/name/role/url`。无配置返回空列表，无效配置返回 503，响应禁止缓存。
+CLI：`instance sync` 同步目录，`instance list` 离线发现；网页与 CLI 使用相同目录格式。
+不返回或复用任何实例 Key，不进行远端探测或写请求转发。

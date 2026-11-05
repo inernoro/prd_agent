@@ -14,6 +14,13 @@ description: Deploys code to an existing CDS branch, monitors readiness, runs la
 
 涉及 `exec_dep.sh`、`fast.sh`、nginx、静态产物或生产 workflow 时，必须先读 `doc/rule.platform.production-release-safety.md`。CDS 的 running/smoke 只证明灰度部署层，不能替代公网 HTML、入口资源和真人页面验收。
 
+## 主备实例选择
+
+部署前若用户选择备用 CDS，先执行 `instance list` → `instance check <实例ID>` →
+`instance use <实例ID>`。这些命令见 `cds` 核心技能。后续所有 CLI 命令读取所选实例独立授权。
+重新查询目标项目的 profile 与分支 ID，核对 CI 预构建模式、环境变量与外部依赖后再部署。
+不得把主用分支 ID、项目 Key 或旧预览地址带到备用；超时不自动跨实例重放部署请求。
+
 ## 本技能处理 / 不处理
 
 | 处理 | 不处理（去对应技能） |

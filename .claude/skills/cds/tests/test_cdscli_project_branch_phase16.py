@@ -621,10 +621,13 @@ def test_smoke_accepts_any_valid_l2_candidate(monkeypatch):
 
     code, out = call_main(["smoke", "proj-a-health-fallback"])
 
-    assert code == 0, out
-    payload = parse_ok(out)
+    # L2 可通过但缺 L3 凭据时，不得把局部通过误报成完整冒烟成功。
+    assert code == 3, out
+    payload = json.loads(out.strip().splitlines()[-1])
+    assert payload["ok"] is False
+    assert payload["data"]["coverageComplete"] is False
     assert payload["data"]["passed"] == "2/2"
-    assert payload["data"]["layers"] == [
+    assert payload["data"]["layers"][:2] == [
         {"layer": "L1", "pass": True},
         {"layer": "L2", "pass": True},
     ]
