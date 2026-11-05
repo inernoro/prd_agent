@@ -27,6 +27,8 @@ ALLOWED_ROOT_FILES = {
     "README.md",
     "SECURITY.md",
     "cds-compose.yml",
+    # Project-wide CDS discovery, consumed by the dashboard and every Agent host.
+    "cds-instances.json",
     "docker-compose.dev.yml",
     "docker-compose.local.yml",
     "docker-compose.yml",
