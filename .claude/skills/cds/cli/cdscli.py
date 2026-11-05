@@ -32,6 +32,7 @@ import contextlib
 import hashlib
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
+import math
 import os
 import re
 import secrets
@@ -48,7 +49,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.18.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.19.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -56,6 +57,7 @@ VERSION = "0.18.0"  # ← bundled cli 变更时 bump；服务端自动读这一�
 BOOTSTRAP_SOURCE_PAGE_APPROVAL = "page-approval"
 _TRACE_ID: str = ""
 _HUMAN: bool = False
+_LOAD_NOTICES: list[dict[str, Any]] = []
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
 _AGENT_SESSION_ID: str = os.environ.get("CDS_AGENT_SESSION_ID", "").strip() or f"cdscli_{secrets.token_hex(8)}"
 _GENERIC_WORKSPACE_SLUGS = {
@@ -622,6 +624,8 @@ def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None
     payload: dict[str, Any] = {"ok": False, "error": msg, "trace": _TRACE_ID}
     if extra:
         payload.update(extra)
+    if _LOAD_NOTICES:
+        payload["notices"] = _LOAD_NOTICES
     if _SUPPRESS_EMIT:
         global _NESTED_PAYLOAD
         _NESTED_PAYLOAD = payload
@@ -657,6 +661,8 @@ def ok(data: Any = None, *, note: str | None = None, code: int = 0) -> None:
             payload["note"] = note
         if data is not None:
             payload["data"] = data
+        if _LOAD_NOTICES:
+            payload["notices"] = _LOAD_NOTICES
         print(json.dumps(payload, ensure_ascii=False))
     sys.exit(code)
 
@@ -9880,6 +9886,91 @@ def cmd_instance_list(args: argparse.Namespace) -> None:
     ok({"instances": entries, "activeInstance": active}, note="本地实例目录，不代表目标服务或项目已就绪")
 
 
+# Reuse the server's load-high threshold: one-minute load / CPU cores >= 80%.
+# Memory usage alone includes OS cache and cannot prove CPU saturation.
+def _load_recommendation() -> dict[str, Any]:
+    host = _instance_origin(_cds_base())
+    entries = _instance_catalog()["instances"]
+    started = time.time()
+    try:
+        status, body, _ = _request("GET", "/api/host-stats", timeout=3,
+                                   fatal_network_errors=False, follow_redirects=False)
+    except (OSError, http.client.HTTPException):
+        status, body = 0, {"error": "response_read_failed"}
+    cpu = body.get("cpu") if isinstance(body, dict) else None
+    metrics = {}
+    if isinstance(cpu, dict):
+        for field in ("cores", "loadAvg1", "loadPercent"):
+            value = cpu.get(field)
+            if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+                metrics[field] = value
+    valid = (200 <= status < 300 and len(metrics) == 3 and metrics["cores"] >= 1)
+    state = "high" if valid and metrics["loadPercent"] >= 80 else "normal" if valid else "unknown"
+    alternatives = []
+    for entry in entries:
+        if entry["url"] == host:
+            continue
+        credentials = _instance_credentials(entry) or {}
+        # Presence only; no request to an alternative and no claim its key is valid.
+        authorized = bool(credentials.get("projectId") and credentials.get("projectKey"))
+        alternatives.append({**entry, "authorization": "stored-not-verified" if authorized else "required",
+                             "nextCommand": f"instance check {entry['id']}" if authorized else
+                                            f"instance connect {entry['id']} --project <目标项目ID>"})
+    result = {"host": host, "state": state, "cpu": metrics, "thresholdPercent": 80,
+              "status": status, "alternatives": alternatives, "switched": False,
+              "alternativeHealthChecked": False}
+    # Preserve bounded response evidence without upstream free text, headers or credentials.
+    snapshot = json.dumps(body, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    evidence = {"operation": "instance-load-check", "trace": _TRACE_ID, "host": host,
+                "endpoint": "/api/host-stats", "startedAt": started,
+                "durationMs": round((time.time() - started) * 1000), "status": status,
+                "responseReceived": status != 0, "responseType": type(body).__name__,
+                "responseSha256": hashlib.sha256(snapshot).hexdigest(),
+                "responseBytes": len(snapshot), "cpu": metrics, "state": state,
+                "snapshotPolicy": "finite public CPU numbers only; raw text and other fields omitted"}
+    name = f"instance-load-checks/{secrets.token_hex(12)}.json"
+    try:
+        _write_instance_private(name, evidence)
+        result["evidencePath"] = str(_private_instance_file(name))
+    except OSError:
+        result["evidenceSaved"] = False
+        print("[cdscli] 负载查询证据未能保存，请检查当前项目 .cds 目录写入权限。", file=sys.stderr)
+    return result
+
+
+def _notify_high_load(result: dict[str, Any]) -> None:
+    if result["state"] != "high":
+        return
+    options = "；".join(
+        f"{item['name']} {item['url']}（独立授权{'已保存，需校验' if item['authorization'] == 'stored-not-verified' else '尚未申请'}）"
+        for item in result["alternatives"])
+    message = (f"当前 CDS {result['host']} CPU 负载偏高（{result['cpu']['loadPercent']}%）。"
+               + (f"可选择备用站点：{options}。" if options else "当前项目未登记备用站点，请先补充实例目录。")
+               + "不同站点使用不同密钥，不能复用当前站点密钥。尚未自动切换或向备用重试；请告知用户并按其选择继续。")
+    _LOAD_NOTICES.append({"code": "cds-load-high", "message": message, **result})
+    print(f"[cdscli] {message}", file=sys.stderr)
+
+
+def cmd_instance_recommend(args: argparse.Namespace) -> None:
+    result = _load_recommendation()
+    _notify_high_load(result)
+    notes = {"normal": "当前站点负载未达到提示阈值；未检查备用站点健康状态",
+             "high": "请向用户说明备用选择及独立授权要求；尚未切换或部署",
+             "unknown": "无法确定当前负载，不据此认定过载；可用 instance list 查看已登记备用入口"}
+    ok(result, note=notes[result["state"]])
+
+
+def _deployment_load_preflight(handler: Any) -> None:
+    if handler not in (cmd_deploy, cmd_branch_create, cmd_branch_deploy,
+                       cmd_project_clone, cmd_deployment_version_deploy):
+        return
+    # Optional advice must not add requests when no matching local multi-site catalog exists.
+    entries = _instance_catalog()["instances"]
+    host = _instance_origin(_cds_base())
+    if len(entries) > 1 and any(entry["url"] == host for entry in entries):
+        _notify_high_load(_load_recommendation())
+
+
 def cmd_instance_check(args: argparse.Namespace) -> None:
     ok(_check_instance(_instance_entry(args.id)), note="目标项目授权与仓库绑定校验通过")
 
@@ -9931,6 +10022,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     instances = sub.add_parser("instance", help="主备实例发现、接入、检查与选择").add_subparsers(dest="instance_cmd", required=True)
     instances.add_parser("sync", help="从当前已授权 CDS 同步公共实例目录").set_defaults(func=cmd_instance_sync)
+    instances.add_parser("recommend", help="只读检查当前负载并提示备用站点及独立授权要求").set_defaults(func=cmd_instance_recommend)
     instances.add_parser("list", help="离线列出已登记实例（不展示密钥）").set_defaults(func=cmd_instance_list)
     for command, handler in (("check", cmd_instance_check), ("use", cmd_instance_use)):
         item = instances.add_parser(command, help="校验目标项目" if command == "check" else "校验并选择后续命令使用的实例")
@@ -10611,6 +10703,7 @@ def cmd_identity_heal(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     global _TRACE_ID, _HUMAN
+    _LOAD_NOTICES.clear()
     _load_local_credentials()
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -10623,7 +10716,7 @@ def main(argv: list[str] | None = None) -> None:
     # Discovery and connection must work even if the selected host is unavailable or unconfigured.
     if args.cmd == "instance" and args.instance:
         parser.error("instance 子命令请直接指定实例 ID，不与全局 --instance 混用")
-    if args.cmd == "instance" and args.instance_cmd == "sync":
+    if args.cmd == "instance" and args.instance_cmd in ("sync", "recommend"):
         selected = _read_instance_private("active-instance.json", {}).get("id")
         if selected:
             _apply_instance(_instance_entry(selected), require_project=False)
@@ -10638,6 +10731,7 @@ def main(argv: list[str] | None = None) -> None:
             # Auth inspection reflects the selected host, not a superseded inherited env.
             for key in _EXPLICIT_CREDENTIAL_ENV:
                 _EXPLICIT_CREDENTIAL_ENV[key] = os.environ.get(key, "")
+    _deployment_load_preflight(func)
     func(args)
 
 

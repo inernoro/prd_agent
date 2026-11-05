@@ -137,7 +137,8 @@ def test_real_http_target_receives_only_its_key_after_selection_and_process_rest
         def do_GET(self):
             calls.append((self.command, self.path, self.headers.get('X-CDS-Project-Key'), self.headers.get('X-AI-Access-Key')))
             self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
-            self.wfile.write(json.dumps({'id': 'b', 'githubRepoFullName': 'acme/app'}).encode())
+            body = {'cpu': {'cores': 4, 'loadAvg1': 1, 'loadPercent': 25}} if self.path == '/api/host-stats' else {'id': 'b', 'githubRepoFullName': 'acme/app'}
+            self.wfile.write(json.dumps(body).encode())
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers['content-length'])))
             calls.append((self.command, self.path, payload, self.headers.get('X-CDS-Project-Key')))
@@ -159,7 +160,8 @@ def test_real_http_target_receives_only_its_key_after_selection_and_process_rest
             assert completed.returncode == 0, completed.stdout + completed.stderr
             assert 'standby-secret' not in completed.stdout
         assert calls[0][0:2] == ('GET', '/api/projects/b')
-        assert calls[1][0:3] == ('POST', '/api/branches', {'projectId': 'b', 'branch': 'feature'})
+        assert calls[1][0:2] == ('GET', '/api/host-stats')
+        assert calls[2][0:3] == ('POST', '/api/branches', {'projectId': 'b', 'branch': 'feature'})
         assert 'primary-secret' not in repr(calls)
         assert 'standby-secret' in repr(calls)
     finally:

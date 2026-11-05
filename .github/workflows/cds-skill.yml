@@ -1,0 +1,32 @@
+name: CDS Skill
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".claude/skills/cds/**"
+      - ".claude/skills/cds-deploy-pipeline/**"
+      - ".github/workflows/cds-skill.yml"
+  pull_request:
+    paths:
+      - ".claude/skills/cds/**"
+      - ".claude/skills/cds-deploy-pipeline/**"
+      - ".github/workflows/cds-skill.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli-tests:
+    name: CDS CLI tests and host isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependency
+        run: python -m pip install pytest
+      - name: Verify CLI including real HTTP host isolation
+        run: python -m pytest .claude/skills/cds/tests -q -p no:cacheprovider

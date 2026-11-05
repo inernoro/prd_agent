@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.18.0
-description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
+  version: 0.19.0
+description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.18.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.19.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -41,6 +41,27 @@ CDS 这边您想做什么？
 | cdscli 命令总览 / 安装位置 / init 向导 | |
 
 ## 主备 CDS：先发现、独立接入、明确选择
+
+### 负载偏高时主动告知用户
+
+开始部署、拉取或创建分支前，先检查 `cdscli instance list`；目录为空且当前站点可访问时，
+执行 `cdscli instance sync` 同步公开备用地址，再执行 `cdscli instance recommend`。它只查询当前站点
+`/api/host-stats`：CPU 一分钟负载占核心数比例达到 80% 判为 `high`；未达到为 `normal`；
+超时、权限失败、维护 503、重定向或响应缺字段为 `unknown`，不能据此宣称过载。
+
+- 返回 `high` 时，**必须在对话里通知用户**当前站点负载偏高、备用名称和访问地址，并明确“不同站点密钥不同，备用需要独立授权”。仅在工具日志里留下提示不算通知。
+- 用户尚未选择时，先说明“可继续当前站点，也可使用备用站点”，等选择后再发起部署；已有明确站点选择则沿用，不重复索要确认。
+- 返回 `alternatives[].authorization=required` 时，在目标站点使用 `instance connect` 走页面批准；不让用户在对话中复制密钥，不把当前 Key、项目 ID 或分支 ID 填到备用。
+- `stored-not-verified` 仅表示本地有目标项目授权，仍需 `instance check` 校验。备用健康状态未被检查，不能说“备用已就绪”。
+- 用户选择备用后按下节的独立接入与选择流程执行；选择继续当前站点则保留原连接。
+- `unknown` 时说明负载未确认，可给出 `instance list` 中的备用入口，不把网络失败归因为负载。
+
+常用部署命令还会在已登记的多站点目录下自动检查一次，并在高负载时输出 stderr 提示和
+JSON `notices[code=cds-load-high]`。这是兜底提示，原命令仍在原站点执行；Agent 必须提前运行
+只读 `instance recommend` 才能在写操作前给用户选择。CLI 不自动切换，不跨站点重放请求。
+负载检查不访问备用站点，也不向它发送任何凭据；结果与脱敏响应证据按次保存到
+`.cds/instance-load-checks/`，正常与失败均可追溯。
+
 
 用户说“用备用 CDS 继续部署”时，先离线运行 `cdscli instance list`，读取仓库根目录
 `cds-instances.json`；没有目录且主站可用时可运行 `cdscli instance sync` 同步公共地址。
