@@ -62,7 +62,15 @@ const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const
 export function ProjectListSkeleton(): JSX.Element {
   return (
     <div aria-busy="true" aria-live="polite" aria-label="加载项目列表">
-      <div className="cds-card-grid">
+      <div className="cds-project-inventory-heading" aria-hidden>
+        <div><div className="cds-loading-skeleton-line h-6 w-20" /><div className="cds-loading-skeleton-line mt-3 h-3 w-52" /></div>
+        <div className="cds-loading-skeleton-panel h-8 w-44 rounded" />
+      </div>
+      <div className="cds-project-inventory-toolbar" aria-hidden>
+        <div className="cds-loading-skeleton-line h-4 w-72 max-w-full" />
+        <div className="cds-loading-skeleton-panel h-8 w-72 max-w-full rounded" />
+      </div>
+      <div className="cds-card-grid cds-project-inventory-grid">
         {SKELETON_CARD_WIDTHS.map((width, index) => (
           <article key={index} className="cds-project-card">
             <header className="cds-project-card-heading">

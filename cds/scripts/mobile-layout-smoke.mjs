@@ -437,6 +437,7 @@ async function runViewport(browser, project, viewport) {
     await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
     await page.waitForTimeout(500);
     await checkLayout(page, `${viewport.label}:${label}`, OFFLINE ? anchor : undefined);
+    if (OFFLINE && label === 'project-list') await checkProjectInventory(page, `${viewport.label}:${label}`);
   }
 
   await page.goto(`${baseUrl}/branches/${encodeURIComponent(projectId)}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -466,6 +467,32 @@ async function runViewport(browser, project, viewport) {
   assertOk(!themeVisibleWhileDrawerOpen, `${viewport.label}:branch-detail-drawer: theme toggle must hide while drawer is open`);
 
   await context.close();
+}
+
+async function checkProjectInventory(page, label) {
+  await page.getByRole('heading', { name: '项目', level: 1, exact: true }).waitFor();
+  await page.getByText('管理项目、分支环境与部署。', { exact: true }).waitFor();
+  const cards = page.locator('.cds-project-card[data-project-id]');
+  assertOk(await cards.count() === 1, `${label}: 项目页没有渲染真实样例卡片`);
+  const filters = page.getByRole('group', { name: '项目状态筛选', exact: true });
+  await filters.getByRole('button', { name: /^已暂停/ }).click();
+  await page.getByText('没有匹配的项目', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '清除筛选', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: '搜索项目或服务', exact: true });
+  await search.fill('没有这个样例项目');
+  await page.getByText('没有匹配的项目', { exact: true }).waitFor();
+  await search.fill('窄屏样例项目');
+  await cards.first().waitFor();
+  await search.fill('');
+  await page.getByRole('combobox', { name: '项目排序', exact: true }).selectOption('recent');
+  await page.getByRole('button', { name: '列表视图', exact: true }).click();
+  await page.locator('.cds-project-inventory--list').waitFor();
+  await page.getByRole('button', { name: '卡片视图', exact: true }).click();
+  await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Git 仓库 URL', exact: true }).waitFor();
+  await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+  assertOk(await page.getByRole('button', { name: '新建项目', exact: true }).isVisible(), `${label}: 项目页新建入口缺失`);
+  console.log(`PASS ${label}: 项目页头、筛选搜索、视图切换与导入入口`);
 }
 
 async function main() {
