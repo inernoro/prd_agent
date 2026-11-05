@@ -338,9 +338,15 @@ def _auth_headers() -> dict[str, str]:
     return h
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _request(method: str, path: str, body: Any = None, timeout: int = 15,
              extra_headers: dict[str, str] | None = None,
-             fatal_network_errors: bool = True) -> tuple[int, Any, dict[str, str]]:
+             fatal_network_errors: bool = True,
+             follow_redirects: bool = True) -> tuple[int, Any, dict[str, str]]:
     """Low-level HTTP: returns (status, parsed_json_or_text, headers).
 
     每个请求都带 X-CdsCli-Version 头，服务端如响应 X-Cds-Cli-Latest 就
@@ -361,7 +367,8 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, method=method, data=data, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        open_request = urllib.request.urlopen if follow_redirects else urllib.request.build_opener(_NoRedirectHandler()).open
+        with open_request(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             parsed: Any = raw
             try:

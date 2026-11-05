@@ -185,3 +185,32 @@ def test_connect_validates_repository_before_changing_default(workspace, monkeyp
     current = json.loads((root / '.cds/credentials.json').read_text())
     assert current['projectId'] == 'b' if matching else current == json.loads(old)
     assert json.loads((root / '.cds/active-instance.json').read_text()) == {'id': 'standby' if matching else 'primary'}
+
+
+def test_instance_check_refuses_redirect_without_forwarding_credentials(workspace):
+    root, catalog = workspace
+    paths = []
+    class Target(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+        def do_GET(self):
+            paths.append(self.path)
+            self.send_response(302)
+            self.send_header('Location', '/would-leak')
+            self.end_headers()
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Target)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    host = f'http://127.0.0.1:{server.server_port}'
+    catalog['instances'][1]['url'] = host
+    (root / 'cds-instances.json').write_text(json.dumps(catalog))
+    save('https://primary.example', 'a', 'primary-secret')
+    save(host, 'b', 'standby-secret')
+    cli._write_instance_private('active-instance.json', {'id': 'primary'})
+    try:
+        status, output = run('instance', 'use', 'standby')
+        assert status != 0
+        assert paths == ['/api/projects/b']
+        assert 'standby-secret' not in output
+        assert json.loads((root / '.cds/active-instance.json').read_text()) == {'id': 'primary'}
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
