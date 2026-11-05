@@ -85,8 +85,9 @@ public partial class ProductAgentController
             .Set(x => x.Enabled, task.Enabled).Set(x => x.NextRunAt, task.NextRunAt)
             .Set(x => x.UpdatedAt, task.UpdatedAt).Set(x => x.Revision, task.Revision);
         if (task.ProtectedWebhook.Length > 0) update = update.Set(x => x.ProtectedWebhook, task.ProtectedWebhook);
+        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision);
         var saved = await _db.ProductScheduledNotifications.FindOneAndUpdateAsync(
-            x => x.Id == id && x.Revision == request.Revision, update,
+            filter, update,
             new FindOneAndUpdateOptions<ProductScheduledNotification> { ReturnDocument = ReturnDocument.After });
         return saved == null
             ? Conflict(ApiResponse<object>.Fail("NOTIFICATION_CHANGED", "任务已变更，请刷新列表后重新编辑。"))
