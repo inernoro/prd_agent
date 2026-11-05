@@ -19,7 +19,7 @@ folders:
     name: 七、报告与周报
 
 docs:
-  plan.web-hosting.related-documents: "网页托管关联文档 · 实施计划"
+  plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
   guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格
   spec.cds.compose-contract: "cds-compose 契约 · SSOT · 规格"

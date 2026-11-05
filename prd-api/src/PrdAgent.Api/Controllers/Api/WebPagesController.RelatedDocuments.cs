@@ -254,10 +254,8 @@ public partial class WebPagesController
                 // 沿用历史资源与私有资料检查，不绕过现有公开发布保护。
                 var visibility = await _siteService.SetVisibilityAsync(target.Id, GetUserId(), source.Visibility);
                 if (visibility == null) { results.Add(new { id = target.Id, title = target.Title, success = false, message = "文档已变化" }); continue; }
-                var updated = await _siteService.SetSharedTeamsAsync(target.Id, GetUserId(), source.SharedTeamIds);
+                var updated = await _siteService.SetSharedTeamsAndGroupAsync(target.Id, GetUserId(), source.SharedTeamIds, source.GroupId);
                 if (updated == null) { results.Add(new { id = target.Id, title = target.Title, success = false, message = "文档已变化" }); continue; }
-                await _db.HostedSites.UpdateOneAsync(x => x.Id == target.Id && x.OwnerUserId == GetUserId(),
-                    Builders<HostedSite>.Update.Set(x => x.GroupId, source.GroupId).Set(x => x.UpdatedAt, DateTime.UtcNow));
                 results.Add(new { id = target.Id, title = target.Title, success = true, message = "页面权限已同步" });
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException or ArgumentException)

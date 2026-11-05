@@ -2360,7 +2360,14 @@ public class HostedSiteService : IHostedSiteService
         return requested.Where(t => !HasTeamPublishRole(roles, t)).ToList();
     }
 
-    public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
+    public Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
+        => SetSharedTeamsCoreAsync(siteId, userId, teamIds, false, null, ct);
+
+    public Task<HostedSite?> SetSharedTeamsAndGroupAsync(string siteId, string userId, List<string> teamIds, string? groupId, CancellationToken ct = default)
+        => SetSharedTeamsCoreAsync(siteId, userId, teamIds, true, groupId, ct);
+
+    private async Task<HostedSite?> SetSharedTeamsCoreAsync(string siteId, string userId, List<string> teamIds,
+        bool updateGroup, string? groupId, CancellationToken ct)
     {
         // 只有 owner 能改「分享到哪些团队」（分享出去是所有权动作）
         var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
@@ -2386,11 +2393,24 @@ public class HostedSiteService : IHostedSiteService
         var sanitized = requested;
         var added = sanitized.Except(site.SharedTeamIds).ToList();
 
+        if (updateGroup && groupId != null)
+        {
+            var group = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync(ct);
+            if (group == null || !sanitized.Contains(group.TeamId))
+                throw new ArgumentException("分组不存在或不属于目标团队");
+            if (WebPageGroupAccess.IsRestricted(group)
+                && (!roles.TryGetValue(group.TeamId, out var role) || role != WebHostingRoles.Owner))
+                throw new UnauthorizedAccessException("受限分组的权限同步需要团队所有者操作");
+        }
+
+        var update = Builders<HostedSite>.Update
+            .Set(x => x.SharedTeamIds, sanitized)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (updateGroup) update = update.Set(x => x.GroupId, groupId);
+
         await _db.HostedSites.UpdateOneAsync(
-            x => x.Id == siteId,
-            Builders<HostedSite>.Update
-                .Set(x => x.SharedTeamIds, sanitized)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            x => x.Id == siteId && x.OwnerUserId == userId,
+            update,
             cancellationToken: ct);
 
         if (added.Count > 0)
@@ -2417,6 +2437,7 @@ public class HostedSiteService : IHostedSiteService
         }
 
         site.SharedTeamIds = sanitized;
+        if (updateGroup) site.GroupId = groupId;
         return AttachDerivedFields(site);
     }
 

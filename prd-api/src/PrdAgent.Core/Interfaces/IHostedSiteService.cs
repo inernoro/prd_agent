@@ -165,6 +165,9 @@ public interface IHostedSiteService
     /// <summary>设置站点分享到的团队（「分享到团队」操作，仅 owner 可调）。返回更新后的站点，无权或不存在返回 null</summary>
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
 
+    /// <summary>同步关联访问范围时，将团队与分组限制作为同一份权限一次写入，避免中间态放宽访问。</summary>
+    Task<HostedSite?> SetSharedTeamsAndGroupAsync(string siteId, string userId, List<string> teamIds, string? groupId, CancellationToken ct = default);
+
     /// <summary>
     /// 这个用户能不能把网页放进这个团队空间（owner / editor）。与 SetSharedTeamsAsync 同一条判据，
     /// 供「发起生成时就冻结目标空间」在用户还在场的那一刻先量一次。

@@ -18,7 +18,7 @@
 
 ## 文档列表
 
-- [网页托管关联文档 · 实施计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
+- [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
 
 - [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`
 - [CDS 项目发布脚本 · 指南](./guide.cds.release-scripts.md) `guide.cds.release-scripts`

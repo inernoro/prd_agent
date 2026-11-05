@@ -21,6 +21,71 @@ public class HostedSiteReviewVersionAccessTests
 {
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task RelatedTeamAndGroupSync_NeverExposesRestrictedSiteWhileActivityIsPending()
+    {
+        await WithReviewDb(async db =>
+        {
+            var site = ReviewSite();
+            await db.HostedSites.InsertOneAsync(site);
+            await db.WebPageGroups.InsertOneAsync(new WebPageGroup {
+                Id = "restricted", TeamId = "team", Visibility = WebPageGroupVisibility.Restricted,
+            });
+            var teams = new Mock<ITeamService>(MockBehavior.Strict);
+            teams.Setup(t => t.GetMyTeamIdsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "team" });
+            teams.Setup(t => t.GetMyWebHostingTeamRolesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string user, CancellationToken _) => new Dictionary<string, string> { ["team"] = user == "owner" ? "owner" : "viewer" });
+            var logging = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var activity = new Mock<ITeamActivityService>(MockBehavior.Strict);
+            activity.Setup(a => a.LogForTeamsAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<string>(), "owner",
+                It.IsAny<string>(), "site", "site", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns(async () => { logging.TrySetResult(true); await release.Task; throw new IOException("activity unavailable"); });
+            var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+            storage.Setup(s => s.BuildUrlForKey("current.html")).Returns("https://assets.example/current.html");
+            var service = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, activity.Object, null!, null!, NullLogger<HostedSiteService>.Instance);
+            Assert.Null(await service.GetByIdAsync("site", "viewer", CancellationToken.None));
+            var syncing = service.SetSharedTeamsAndGroupAsync("site", "owner", new() { "team" }, "restricted");
+            try
+            {
+                await logging.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                var saved = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+                Assert.Equal(new[] { "team" }, saved.SharedTeamIds);
+                Assert.Equal("restricted", saved.GroupId);
+                Assert.Null(await service.GetByIdAsync("site", "viewer", CancellationToken.None));
+            }
+            finally { release.TrySetResult(true); }
+            var result = await syncing;
+            Assert.Equal("restricted", result!.GroupId);
+            Assert.Null(await service.GetByIdAsync("site", "viewer", CancellationToken.None));
+            var cleared = await service.SetSharedTeamsAndGroupAsync("site", "owner", new(), null);
+            Assert.Empty(cleared!.SharedTeamIds);
+            Assert.Null(cleared.GroupId);
+        });
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("editor")]
+    [InlineData("viewer")]
+    public async Task RelatedRestrictedGroupSync_RejectsNonOwnerBeforeAnyMembershipWrite(string role)
+    {
+        await WithReviewDb(async db =>
+        {
+            await db.HostedSites.InsertOneAsync(ReviewSite());
+            await db.WebPageGroups.InsertOneAsync(new WebPageGroup { Id = "restricted", TeamId = "team", Visibility = WebPageGroupVisibility.Restricted });
+            var teams = new Mock<ITeamService>(MockBehavior.Strict);
+            teams.Setup(t => t.GetMyWebHostingTeamRolesAsync("owner", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new Dictionary<string, string> { ["team"] = role });
+            var service = new HostedSiteService(db, null!, null!, null!, teams.Object, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.SetSharedTeamsAndGroupAsync("site", "owner", new() { "team" }, "restricted"));
+            var saved = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+            Assert.Empty(saved.SharedTeamIds);
+            Assert.Null(saved.GroupId);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task RelatedDocuments_PreserveSavedOrderAndAppendAutomaticReferences()
     {
         await WithReviewDb(async db =>
