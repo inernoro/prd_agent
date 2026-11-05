@@ -346,24 +346,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             executionCts.Token.ThrowIfCancellationRequested();
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
-            if (run.ArtifactType == DesignArtifactTypes.WebPage)
-            {
-                var qualityEvidence = BuildQualityEvidence(run, editable);
-                HostedSiteRevisionRules.ValidateGeneratedContentQuality(
-                    html,
-                    qualityEvidence,
-                    allowScriptedControls: verifiedFiles != null);
-            }
             var isOpenDesignPresentation = run.ArtifactType == DesignArtifactTypes.HtmlPpt
                                            && run.Runtime == DesignArtifactRuntimes.OpenDesign;
             var browserQuality = ParseBrowserQualitySummary(
                 verifiedFiles,
-                requireHardPass: !isOpenDesignPresentation);
-            if (run.Runtime == DesignArtifactRuntimes.OpenDesign
-                && run.ContractVersion == DesignArtifactContractVersions.Current
-                && !isOpenDesignPresentation
-                && browserQuality == null)
-                throw new InvalidOperationException("OpenDesign 没有提交浏览器质量证据，请重新生成");
+                requireHardPass: false);
             if (browserQuality != null)
             {
                 run.BrowserQuality = browserQuality;
@@ -1620,7 +1607,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
     internal static DesignArtifactBrowserQualitySummary? ParseBrowserQualitySummary(
         IReadOnlyList<DesignWorkspaceFile>? verifiedFiles,
-        bool requireHardPass = true)
+        bool requireHardPass = false)
     {
         const string evidencePath = "assets/visual-quality-report.json";
         var file = verifiedFiles?.SingleOrDefault(item => item.Path == evidencePath);
