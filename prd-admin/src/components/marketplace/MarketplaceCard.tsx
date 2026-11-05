@@ -10,7 +10,8 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
-import { formatDate, formatDistanceToNow } from '@/lib/dateUtils';
+import { formatDistanceToNow } from '@/lib/dateUtils';
+import { isNewMarketplaceUpload, marketplaceReleaseTime, MARKETPLACE_HOT_DOWNLOADS } from '@/lib/marketplaceActivity';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { systemDialog } from '@/lib/systemDialog';
 import {
@@ -190,6 +191,10 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   const coverUrl = getCoverImageUrl(item);
   const previewLink = getPreviewLink(item);
   const updatedTime = item.data.updatedAt || item.data.createdAt;
+  const releaseTime = marketplaceReleaseTime(item.data.createdAt,
+    item.type === 'skill' ? (item.data as MarketplaceSkill).contentUpdatedAt ?? undefined : item.data.updatedAt);
+  const isNew = isNewMarketplaceUpload(item.data.createdAt);
+  const isHot = item.data.forkCount >= MARKETPLACE_HOT_DOWNLOADS;
   const version = item.type === 'skill' ? (item.data as MarketplaceSkill).version?.trim() : undefined;
   const shareCount = getShareCount(item);
   const downloadCount = getDownloadCount(item);
@@ -290,6 +295,12 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           <span className="mkt-card-title" title={displayName}>
             {displayName}
           </span>
+          {density === 'tile' && (isNew || isHot) && (
+            <span className="mkt-card-activity">
+              {isNew && <span className="mkt-card-activity-badge mkt-card-activity-new" aria-label="七天内新上传" title="上传未满七天">新</span>}
+              {isHot && <span className="mkt-card-activity-badge mkt-card-activity-hot" aria-label="热门内容" title={`下载量达到 ${MARKETPLACE_HOT_DOWNLOADS} 次`}>热</span>}
+            </span>
+          )}
         </div>
 
         {/* Description */}
@@ -316,9 +327,9 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             {version && (
               <span className="mkt-card-version" title="版本号">{version.replace(/^v?/i, 'v')}</span>
             )}
-            {item.data.createdAt && (
-              <time className="mkt-card-uploaded-at" dateTime={item.data.createdAt} title={`上传时间：${formatDate(item.data.createdAt)}`}>
-                上传于 {formatDate(item.data.createdAt, 'YYYY-MM-DD')}
+            {releaseTime && (
+              <time className="mkt-card-release-time" dateTime={releaseTime.dateTime} title={releaseTime.title}>
+                {releaseTime.text}
               </time>
             )}
           </div>
