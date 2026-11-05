@@ -21,6 +21,7 @@ import {
   streamHostedSiteEditRun,
   type HostedSite,
   type HostedSiteRevision,
+  type DesignArtifactRunSummary,
   type DesignRuntimeCapability,
 } from '@/services/real/webPages';
 import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
@@ -343,9 +344,15 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     };
   }, [recoveryNotice?.action, runtimeRecoveryGate?.runtimeId]);
 
-  const openRevision = useCallback(async (revisionId: string, completedRunId?: string) => {
+  const openRevision = useCallback(async (revisionId: string, completedRunId?: string, completedRun?: DesignArtifactRunSummary) => {
     const requestId = ++previewRequestRef.current;
-    setPreviewDurationSeconds(null);
+    // 恢复已经读到同一任务与版本的持久化完成记录，不再读取一次后把已知用时丢掉。
+    const knownCompleted = completedRun
+      && completedRun.runId === completedRunId
+      && completedRun.status.toLowerCase() === 'done'
+      && completedRun.artifactRevisionId === revisionId
+      && completedRunDurationSeconds(completedRun) != null ? completedRun : null;
+    setPreviewDurationSeconds(knownCompleted ? completedRunDurationSeconds(knownCompleted) : null);
     setPreviewUrl(null);
     setPreviewExpiresAt(null);
     setPreviewHtml('');
@@ -355,7 +362,8 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     const [result, access, completed] = await Promise.all([
       previewHostedSiteRevision(site.id, revisionId),
       createHostedSiteRevisionPreviewAccess(site.id, revisionId),
-      completedRunId ? getHostedSiteEditRun(site.id, completedRunId) : Promise.resolve(null),
+      knownCompleted ? Promise.resolve({ success: true, data: knownCompleted, error: null })
+        : completedRunId ? getHostedSiteEditRun(site.id, completedRunId) : Promise.resolve(null),
     ]);
     if (!isLatestPreviewRequest(requestId, previewRequestRef.current)) return;
     if (!result.success) {
@@ -516,7 +524,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       if (status === 'done' && result.data.artifactRevisionId) {
         clearRecovery();
         setGenerating(false);
-        await openRevision(result.data.artifactRevisionId, result.data.runId);
+        await openRevision(result.data.artifactRevisionId, result.data.runId, result.data);
         await loadHistory();
         return;
       }
