@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
 import { randomUUID } from 'node:crypto';
 import { existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -526,8 +527,8 @@ export function isValidationOnlyPath(path) {
 
 export function deployedRuntimeCommit(branch) {
   const commits = new Set(Object.values(branch?.services || {}).flatMap((service) => {
-    const match = String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i);
-    return match ? [match[1]] : [];
+    const commit = deployedImageCommit(service);
+    return commit ? [commit] : [];
   }));
   return commits.size === 1 ? [...commits][0] : '';
 }
@@ -541,7 +542,7 @@ const serviceBuildScopes = [
 ];
 
 function deployedImageCommit(service) {
-  return String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i)?.[1] || '';
+  return String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})(?:@sha256:[0-9a-f]{64})?$/i)?.[1] || '';
 }
 
 function serviceNeedsCurrentCommit(serviceName, changedFiles) {
@@ -608,7 +609,8 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
   if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到目标提交');
   if (!runtimeEquivalent && branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
   if (!runtimeEquivalent && branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
-  if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
+  const observedRuntimeCommit = branch?.runningCommitSha || branch?.lastDeployDispatchCommitSha;
+  if (observedRuntimeCommit !== runtimeCommit) reasons.push('CDS 尚未运行目标提交');
   if (branch?.deployRuntime?.drift?.hasDrift) reasons.push('CDS 服务存在版本漂移');
   if (services.length === 0) reasons.push('CDS 未返回任何业务服务');
   for (const [serviceKey, service] of Object.entries(branch?.services || {})) {
@@ -616,7 +618,7 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
     if (service.status !== 'running') reasons.push(`${serviceName} 未运行`);
     const expectedServiceCommit = serviceRuntimeCommits[serviceKey] || runtimeCommit;
     const sourceMode = service.deployedMode && service.deployedMode !== 'express';
-    if (!sourceMode && !String(service.deployedImage || '').endsWith(`:sha-${expectedServiceCommit}`)) {
+    if (!sourceMode && deployedImageCommit(service) !== expectedServiceCommit) {
       reasons.push(`${serviceName} 尚未切换到运行时目标镜像`);
     }
   }
@@ -704,10 +706,14 @@ function runPlaywright(environment, values, runDir, grep = '') {
   };
   const args = [
     '--dir', 'e2e', 'exec', 'playwright', 'test', 'specs/stable-smoke.spec.ts',
+    '--retries=0',
   ];
   if (grep) args.push('--grep', grep);
   const result = command('pnpm', args, { env, stdio: 'inherit', encoding: undefined });
-  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
+  const sanitization = [resultPath, testResultPath]
+    .map(path => sanitizeStableSmokeArtifactTree(path))
+    .reduce((total, item) => ({ scanned: total.scanned + item.scanned, changed: total.changed + item.changed }), { scanned: 0, changed: 0 });
+  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath, sanitization };
 }
 
 const folderRegressionCaseIds = [
@@ -893,6 +899,19 @@ export function buildAffectedNotificationTargets({ rows, plan, runId, verdict, v
     });
   }
   return targets;
+}
+
+export function buildRunNotificationTarget(targets, runId) {
+  if (!targets.length) return null;
+  const environments = [...new Set(targets.map(t => t.environment))];
+  const modules = [...new Set(targets.map(t => t.module))];
+  return {
+    environment: environments.join('、'),
+    module: `${modules.length} 个业务范围`,
+    caseId: 'RUN-SUMMARY',
+    requestId: runId,
+    recovery: `本轮有 ${targets.length} 项异常、未完成或需要复核的检查。请打开项目总览，逐项查看结果、证据与处理建议。`,
+  };
 }
 
 export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 'full' }) {
@@ -2059,7 +2078,9 @@ async function main() {
         verdict: summary.verdict,
         visualResult,
       });
-      const notificationResults = notificationTargets.map((target) => {
+      // 每项问题仍在报告中逐项保留，向同一接收人只发一条整轮汇总。
+      const runNotification = buildRunNotificationTarget(notificationTargets, runId);
+      const notificationResults = (runNotification ? [runNotification] : []).map((target) => {
         const delivery = command('node', [
           'scripts/stable-smoke-notify.mjs',
           '--verdict', summary.verdict,
@@ -2069,7 +2090,7 @@ async function main() {
           '--case-id', target.caseId,
           '--request-id', target.requestId,
           '--recovery', target.recovery,
-          '--report-url', reportUrl,
+          '--report-url', values.STABLE_SMOKE_OVERVIEW_URL || reportUrl,
         ], {
           env: {
             ...process.env,

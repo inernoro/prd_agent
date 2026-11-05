@@ -9,6 +9,7 @@ function readArg(argv, name, fallback = '') {
 
 export function buildNotificationPayload(options) {
   const isTest = options.isTest === true;
+  const isRunSummary = options.caseId === 'RUN-SUMMARY';
   const source = options.source || 'stable-smoke';
   const title = isTest ? '稳定冒烟通知通道测试' : `稳定冒烟${options.verdict === 'fail' ? '失败' : '需要确认'}`;
   const detail = [
@@ -23,11 +24,13 @@ export function buildNotificationPayload(options) {
   return {
     source,
     title,
-    message: detail,
+    message: isRunSummary
+      ? `检查范围：${options.module}\n${options.recovery}\n结果和证据已归入项目总览。`
+      : detail,
     level: isTest ? 'info' : options.verdict === 'fail' ? 'error' : 'warning',
     targetUserId: options.targetUserId || undefined,
     targetUsername: options.targetUserId ? undefined : options.targetUsername,
-    actionLabel: options.actionLabel || '查看验收证据',
+    actionLabel: options.actionLabel || (isRunSummary ? '查看项目总览' : '查看验收证据'),
     actionUrl: options.reportUrl,
     actionKind: 'open-url',
     section: 'admin',

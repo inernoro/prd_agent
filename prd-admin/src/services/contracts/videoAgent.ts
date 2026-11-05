@@ -105,6 +105,7 @@ export interface VideoModelOption {
   id: string;
   name: string;
   healthStatus: 'Healthy' | 'Degraded' | 'Unavailable';
+  isRecoveryProbeAvailable?: boolean;
   supportsAudio: boolean;
   supportsFirstFrame: boolean;
   supportsLastFrame: boolean;

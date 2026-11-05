@@ -30,6 +30,8 @@ public static class StableSmokeIdentityPolicy
         AdminPermissionCatalog.UsersRead,
         AdminPermissionCatalog.UsersWrite,
         AdminPermissionCatalog.AuthzManage,
+        // 诊断回归需回读脱敏调用审计，不能只验证业务响应。
+        AdminPermissionCatalog.LogsRead,
         // 01 录音 / 02 文件解析 / 03 短视频：文档空间、录音分片、短视频素材都挂在 document-store 权限上
         AdminPermissionCatalog.DocumentStoreRead,
         AdminPermissionCatalog.DocumentStoreWrite,

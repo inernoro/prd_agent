@@ -11,6 +11,7 @@ import {
   buildEnvironmentGrep,
   buildDryRunSummary,
   buildAffectedNotificationTargets,
+  buildRunNotificationTarget,
   buildStableSmokeArchiveCommand,
   buildLockedRunSummary,
   buildUnhandledFailureSummary,
@@ -1109,8 +1110,43 @@ test('网关巡检用 MAP 签名换单次票据并完成短会话登录', async 
   });
 });
 
+test('CDS 版本冻结识别摘要锁定镜像，仍拒绝错误提交和无效摘要', () => {
+  const commit = 'a'.repeat(40);
+  const branch = {
+    status: 'running', commitSha: commit, ciTargetSha: commit, ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: commit,
+    services: { api: { profileId: 'api', status: 'running', deployedMode: 'express',
+      deployedImage: `registry/api:sha-${commit}@sha256:${'b'.repeat(64)}` } },
+  };
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  assert.equal(deployedRuntimeCommit(branch), commit);
+  // 手动受管发布有真实运行版本；它不一定经过 GitHub 自动部署调度器。
+  branch.runningCommitSha = commit;
+  delete branch.lastDeployDispatchCommitSha;
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  branch.runningCommitSha = 'd'.repeat(40);
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, false);
+  branch.runningCommitSha = commit;
+  branch.services.api.deployedImage = `registry/api:sha-${'c'.repeat(40)}@sha256:${'b'.repeat(64)}`;
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, false);
+  branch.services.api.deployedImage = `registry/api:sha-${commit}@sha256:bad`;
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, false);
+});
+
+test('整轮异常只生成一条可读汇总，逐项检查保留在报告', () => {
+  const target = buildRunNotificationTarget([
+    { environment: 'CDS 环境', module: '录音' },
+    { environment: '正式环境', module: '录音' },
+    { environment: '正式环境', module: '视觉创作' },
+  ], 'run-1');
+  assert.equal(target.caseId, 'RUN-SUMMARY');
+  assert.equal(target.module, '2 个业务范围');
+  assert.match(target.recovery, /3 项/);
+  assert.equal(buildRunNotificationTarget([], 'run-1'), null);
+});
+
 test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移', () => {
-  const commit = 'abc123';
+  const commit = 'abc1234';
   const branch = {
     status: 'running',
     commitSha: commit,

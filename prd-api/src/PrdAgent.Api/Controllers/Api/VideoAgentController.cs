@@ -78,10 +78,11 @@ public class VideoAgentController : ControllerBase
             .Where(pool => pool.Models.Count > 0)
             .GroupBy(pool => pool.Code, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
-            .Select(pool => BuildVideoModelOption(
-                pool.Code,
-                pool.Name,
-                pool.Models.OrderBy(item => item.Priority).First().HealthStatus))
+            .Select(pool =>
+            {
+                var model = pool.Models.OrderBy(item => item.Priority).First();
+                return BuildVideoModelOption(pool.Code, pool.Name, model.HealthStatus, model.IsRecoveryProbeAvailable);
+            })
             .ToList();
 
         return Ok(ApiResponse<List<VideoModelOption>>.Ok(result));
@@ -90,7 +91,8 @@ public class VideoAgentController : ControllerBase
     private static VideoModelOption BuildVideoModelOption(
         string id,
         string? displayName,
-        string healthStatus)
+        string healthStatus,
+        bool isRecoveryProbeAvailable)
     {
         var key = $"{id} {displayName}".ToLowerInvariant();
         var isSeedance25 = key.Contains("seedance-2.5");
@@ -104,6 +106,7 @@ public class VideoAgentController : ControllerBase
             Id = id,
             Name = string.IsNullOrWhiteSpace(displayName) ? id : displayName,
             HealthStatus = healthStatus,
+            IsRecoveryProbeAvailable = isRecoveryProbeAvailable,
             SupportsAudio = isSeedance15 || isSeedance2X || isVeo,
             SupportsFirstFrame = true,
             SupportsLastFrame = isSeedance || isWan,

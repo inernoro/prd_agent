@@ -1,3 +1,4 @@
+import { isModelAvailableForRequest } from '@/lib/modelAvailability';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
@@ -139,7 +140,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const [title, setTitle] = useState('');
   const [sourceMarkdown, setSourceMarkdown] = useState('');
   const [styleDescription, setStyleDescription] = useState('智能匹配');
-  const [model, setModel] = useState(() => models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '');
+  const [model, setModel] = useState(() => models.find(isModelAvailableForRequest)?.id ?? '');
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [resolution, setResolution] = useState('1080p');
   const [duration, setDuration] = useState(5);
@@ -166,7 +167,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     const savedModel = project?.defaultVideoModel;
     const nextModel = savedModel && models.some((item) => item.id === savedModel)
       ? savedModel
-      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
+      : models.find(isModelAvailableForRequest)?.id ?? '';
     setModel(nextModel);
     setAspectRatio(project?.defaultAspectRatio ?? '16:9');
     setResolution(project?.defaultResolution ?? '1080p');
@@ -380,7 +381,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
             <section className="video-create-options" aria-label="生成设置">
               <div className="video-create-options-heading"><div><Settings2 size={16} /><strong>生成设置</strong></div><span>所有镜头的默认值，拆镜后仍可逐镜调整</span></div>
               <div className="video-create-settings-grid">
-                <label><span>视频模型</span><select value={model} onChange={(event) => selectModel(event.target.value)} disabled={models.length === 0}><option value="">选择模型</option>{models.map((item) => <option key={item.id} value={item.id} disabled={item.healthStatus === 'Unavailable'}>{item.name}</option>)}</select></label>
+                <label><span>视频模型</span><select value={model} onChange={(event) => selectModel(event.target.value)} disabled={models.length === 0}><option value="">选择模型</option>{models.map((item) => <option key={item.id} value={item.id} disabled={!isModelAvailableForRequest(item)}>{item.name}{item.healthStatus === 'Unavailable' && item.isRecoveryProbeAvailable ? '（恢复试探）' : ''}</option>)}</select></label>
                 <label><span>画幅</span><select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value)}>{availableAspectRatios.map((value) => <option key={value}>{value}</option>)}</select></label>
                 <label><span>单镜时长</span><select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>{availableDurations.map((value) => <option key={value} value={value}>{value} 秒</option>)}</select></label>
                 <label><span>分辨率</span><select value={resolution} onChange={(event) => setResolution(event.target.value)}>{availableResolutions.map((value) => <option key={value}>{value}</option>)}</select></label>

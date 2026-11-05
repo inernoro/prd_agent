@@ -1,3 +1,4 @@
+import { isModelAvailableForRequest } from '@/lib/modelAvailability';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -933,7 +934,7 @@ const Inspector: React.FC<{
             onChange={(event) => onUpdate({ model: event.target.value })}
           >
             <option value="">模型池自动选择</option>
-            {models.map((model) => <option key={model.id} value={model.id} disabled={model.healthStatus === 'Unavailable'}>{model.name}{model.healthStatus === 'Degraded' ? '（降级）' : ''}</option>)}
+            {models.map((model) => <option key={model.id} value={model.id} disabled={!isModelAvailableForRequest(model)}>{model.name}{model.healthStatus === 'Unavailable' && model.isRecoveryProbeAvailable ? '（恢复试探）' : model.healthStatus === 'Degraded' ? '（降级）' : ''}</option>)}
           </select>
         </label>
 

@@ -437,6 +437,8 @@ public class VideoModelOption
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string HealthStatus { get; set; } = "Healthy";
+    /// <summary>允许一次恢复试探，不表示线路已经健康。</summary>
+    public bool IsRecoveryProbeAvailable { get; set; }
     public bool SupportsAudio { get; set; }
     public bool SupportsFirstFrame { get; set; }
     public bool SupportsLastFrame { get; set; }
