@@ -56,7 +56,11 @@ try {
     assert.equal(await page.locator('.t-gen').count(), 0);
   };
   const filledPulse = async () => {
-    const style = await page.locator('.cds-loading-skeleton-line').first().evaluate(el => {
+    const style = await page.evaluate(() => {
+      // The route skeleton can be replaced before a bound element callback runs.
+      // Select and sample the current document node within the same browser turn.
+      const el = document.querySelector('.cds-loading-skeleton-line');
+      if (!el) throw new Error('No current skeleton to inspect');
       const s = getComputedStyle(el);
       return { backgroundImage: s.backgroundImage, color: s.backgroundColor, shadow: s.boxShadow,
         border: s.borderTopColor, duration: s.animationDuration, animation: s.animationName, opacity: Number(s.opacity) };
