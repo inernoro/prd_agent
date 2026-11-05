@@ -95,6 +95,8 @@ export function AiPreviewModal({
       className="fixed inset-0 z-[210] flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
       onClick={(event) => {
+        // Portal 仍按 React 组件树冒泡，预览遮罩不能关闭底层表单。
+        event.stopPropagation();
         // 打开按钮的连续第二击可能落到新出现的遮罩，不能把它当作主动取消。
         if (event.detail < 2) onCancel();
       }}

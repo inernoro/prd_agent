@@ -116,6 +116,44 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     expect(document.body.textContent).toContain('润色结果');
   });
 
+  it.each([
+    ['panel', 1], ['panel', 2], ['global', 1], ['global', 2],
+  ] as const)('%s润色遮罩点击detail=%s不关闭失败草稿，重试保留正文、附件及身份', async (entry, detail) => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(
+      'event: typing\ndata: {"text":"预览结果"}\n\nevent: done\ndata: {}\n\n',
+      { headers: { 'content-type': 'text/event-stream' } },
+    )));
+    const ui = await openEntry(entry);
+    const file = new File(['附件证据'], 'proof.txt', { type: 'text/plain' });
+    await act(async () => Simulate.change(document.querySelector('input[type="file"]')!, {
+      target: { files: [file] },
+    } as never));
+    calls.upload.mockResolvedValueOnce(fail('NETWORK_ERROR', '附件上传失败'));
+    await act(async () => ui.submit().click());
+    expect(calls.submit).not.toHaveBeenCalled();
+    const draftIdentity = calls.create.mock.calls[0][0].clientRequestId;
+    const fileIdentity = calls.upload.mock.calls[0][0].clientRequestId;
+    const polish = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent?.trim() === 'AI 润色')!;
+    await act(async () => polish.click());
+    const preview = document.querySelector('[aria-label="AI 润色预览"]')!;
+    expect(preview).not.toBeNull();
+    await act(async () => preview.parentElement!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail })));
+    expect(ui.isOpen()).toBe(true);
+    expect(document.querySelector('[aria-label="AI 润色预览"]') !== null).toBe(detail === 2);
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')?.value).toBe(input.content);
+    expect(document.body.textContent).toContain(file.name);
+    if (detail === 2) {
+      await act(async () => preview.parentElement!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })));
+      expect(ui.isOpen()).toBe(true);
+    }
+    await act(async () => ui.submit().click());
+    expect(calls.create.mock.calls.map(([request]) => request.clientRequestId)).toEqual([draftIdentity, draftIdentity]);
+    expect(calls.upload.mock.calls.map(([request]) => request.clientRequestId)).toEqual([fileIdentity, fileIdentity]);
+    expect(calls.upload.mock.calls[1][0].file).toBe(file);
+    expect(calls.submit).toHaveBeenCalledTimes(1);
+  });
+
   it('结果待确认时reset不能丢弃同一提交身份', async () => {
     calls.submit.mockImplementationOnce(async () => {
       draft = { ...draft, status: 'submitted' };
