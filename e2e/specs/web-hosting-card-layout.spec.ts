@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 // 验证真实列表路由的生产组件；API 使用隔离测试数据，不操作用户站点。
 for (const width of [390, 1440]) {
@@ -293,6 +294,11 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
     await page.route('**/api/**', async route => {
       const url = new URL(route.request().url()), path = url.pathname;
       apiRequests.push(path);
+      if (path.endsWith('/annotation-runtime.js')) {
+        await route.fulfill({ contentType: 'text/javascript', body: await readFile(
+          new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') });
+        return;
+      }
       let data: unknown = { items: [], folders: [], tags: [], teams: [], total: 0 };
       if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
       else if (path === '/api/changelog/current-week') data = { weekStart: sites[0].createdAt, weekEnd: sites[0].createdAt, fetchedAt: sites[0].createdAt, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
