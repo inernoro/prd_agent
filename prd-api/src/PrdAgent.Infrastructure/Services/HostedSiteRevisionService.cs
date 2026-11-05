@@ -107,6 +107,8 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 .Distinct(StringComparer.Ordinal)
                 .ToList(),
             Html = entry.Html,
+            PublishedAssetKeys = entry.Site.Files.Select(file => file.CosKey).Where(key => !string.IsNullOrWhiteSpace(key)).Distinct(StringComparer.Ordinal).ToList(),
+            PublishedEntryCosKey = entry.Site.Files.FirstOrDefault(file => string.Equals(file.Path, entry.Site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey,
             VerifiedFiles = verifiedFiles.Select(file => new HostedSiteRevisionFile
             {
                 Path = file.Path,

@@ -419,6 +419,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog,
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
+builder.Services.AddScoped<PrdAgent.Api.Services.IWorkflowWebpageDesignService,
+    PrdAgent.Api.Services.WorkflowWebpageDesignService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 // 工作流结构校验 + 自动接线 + 缺项扫描（纯函数，无状态）

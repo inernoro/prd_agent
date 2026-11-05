@@ -44,7 +44,7 @@ public class HostedSiteService : IHostedSiteService
     // 给入口 URL 追加版本指纹。version 取站点的 ContentVersion：只在创建 / 重新上传
     // （内容真正变化）时改变；改标题、改可见性等元数据操作不动它。因此"没更新"的站点
     // URL 恒定可缓存，符合用户要求"没更新还要缓存"。
-    internal static string AppendVersion(string url, DateTime version)
+    public static string AppendVersion(string url, DateTime version)
     {
         if (string.IsNullOrWhiteSpace(url)) return url;
         var sep = url.Contains('?') ? '&' : '?';

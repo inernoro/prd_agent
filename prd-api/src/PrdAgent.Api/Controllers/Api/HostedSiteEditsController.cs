@@ -1020,6 +1020,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.CancelRequestedAt,
         run.CancelledAt,
         run.CreatedAt,
+        run.CompletedAt,
         styleId = run.DesignDirection?.StyleId,
         styleName = run.DesignDirection?.StyleName,
         promptFingerprint = run.DesignDirection?.PromptFingerprint,

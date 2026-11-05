@@ -54,6 +54,10 @@ public class HostedSiteRevision
     [JsonIgnore]
     public List<string> PublishedAssetKeys { get; set; } = new();
 
+    /// <summary>该版本快照登记的实际入口对象，由服务端发布数据确认。</summary>
+    [JsonIgnore]
+    public string? PublishedEntryCosKey { get; set; }
+
     /// <summary>
     /// 建这条版本时线上站点的内容形态（取值见 <see cref="HostedSiteContentShapes"/>）。
     ///
