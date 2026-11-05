@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { CdsConfig, ExecAssignment, IShellExecutor } from '../../src/types.js';
 import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../../src/services/self-update-handoff.js';
@@ -458,8 +458,11 @@ describe('CDS 可撤销重启交接', () => {
     } finally { fs.rmSync(unreadable, { force: true }); observe.mockRestore(); }
   });
 
+  describe('原仓库准备与恢复重试分开计时', () => {
+    let prepared: ReturnType<typeof gitFixture>;
+    beforeEach(() => { prepared = gitFixture(true); });
   it.each(['git', 'nginx'] as const)('真实%s恢复失败后仍观察同票，二次确认不重复替换已恢复目录', async failure => {
-    const { root, git, sha, oldFiles } = gitFixture(true);
+    const { root, git, sha, oldFiles } = prepared;
     const { runtime, dispatches } = realCheckpointRuntime(root);
     const owner = runtime.acquire({ source: 'self-force-sync', actor: 'fixture-retry-restore' })!;
     const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root);
@@ -506,5 +509,6 @@ describe('CDS 可撤销重启交接', () => {
     } finally {
       if (fs.existsSync(blocker)) fs.unlinkSync(blocker);
     }
+  });
   });
 });

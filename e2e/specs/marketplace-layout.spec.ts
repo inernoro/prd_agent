@@ -84,11 +84,13 @@ test('手机筛选和接入浮层：小屏不横溢出，生成结果与 Esc 关
 });
 
 test('个人技能范围：收藏即时移除、分类联动及上传元信息准确', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-11-06T12:00:00Z') });
   await installMarketplaceFixture(page);
   await page.goto('/marketplace?scope=favorites');
   await expect(page.locator('.mkt-card')).toHaveCount(3, { timeout: 30_000 });
-  await expect(page.locator('.mkt-card-uploaded-at').first()).toHaveText('上传于 2026-10-01');
-  await expect(page.locator('.mkt-card-uploaded-at').first()).toHaveAttribute('datetime', '2026-10-01T00:00:00Z');
+  await expect(page.locator('.mkt-card-release-time').first()).toHaveText('3 天前更新');
+  await expect(page.locator('.mkt-card-release-time').first()).toHaveAttribute('datetime', '2026-11-03T00:00:00Z');
+  await expect(page.locator('.mkt-card-release-time').first()).toHaveAttribute('title', /上传时间：2026-10-01.*更新时间：2026-11-03/);
   await expect(page.locator('.mkt-card-version').first()).toHaveText('v1.0.0');
   await page.locator('[data-tour-id="marketplace-tag-filters"]').getByRole('button', { name: '工具 2', exact: true }).click();
   await expect(page.locator('.mkt-card')).toHaveCount(2);
@@ -109,6 +111,49 @@ test('个人技能范围：收藏即时移除、分类联动及上传元信息�
   await expect(page.locator('.mkt-card').filter({ has: page.getByTitle('monthly-report', { exact: true }) }).locator('.mkt-card-version')).toHaveCount(0);
   await page.getByPlaceholder('搜索名称、描述').fill('goal-pipeline-board');
   await expect(page.locator('.mkt-card').filter({ has: page.getByTitle('goal-pipeline-board', { exact: true }) }).locator('.mkt-card-version')).toHaveText('v2.0.0');
+});
+
+test('新热标记与右下时间：七天边界准确，筛选不改变热标记，元信息位于作者栏上方', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-11-06T12:00:00Z') });
+  const items = await installMarketplaceFixture(page);
+  items[0].title = '七天边界与热门标记验收技能';
+  items[0].createdAt = '2026-11-06T11:00:00Z';
+  items[0].updatedAt = items[0].createdAt;
+  items[0].contentUpdatedAt = null;
+  items[0].forkCount = items[0].downloadCount = 10;
+  items[0].version = '1.' + '0'.repeat(62);
+  items[1].createdAt = '2026-10-30T12:00:00Z';
+  items[1].forkCount = items[1].downloadCount = 9;
+  items[2].contentUpdatedAt = null;
+  items[2].updatedAt = '2026-11-06T12:00:00Z'; // 下载/收藏刚活跃的历史技能仍显示上传日期。
+  await page.goto('/marketplace');
+  await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
+  const fresh = page.locator('.mkt-card').filter({ has: page.getByTitle(items[0].title, { exact: true }) });
+  const old = page.locator('.mkt-card').filter({ has: page.getByTitle(items[1].title, { exact: true }) });
+  await expect(fresh.getByLabel('七天内新上传')).toHaveText('新');
+  await expect(fresh.getByLabel('热门内容')).toHaveText('热');
+  await expect(old.locator('.mkt-card-activity-badge')).toHaveCount(0);
+  await expect(fresh.locator('time')).toHaveText('1 小时前上传');
+  await expect(page.locator('.mkt-card').filter({ has: page.getByTitle(items[2].title, { exact: true }) }).locator('time')).toHaveText('2026-10-01');
+  for (const width of [1600, 375]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const geometry = await fresh.evaluate(el => {
+      const box = (selector: string) => el.querySelector(selector)!.getBoundingClientRect();
+      const card = el.getBoundingClientRect();
+      return { cardRight: card.right, timeRight: box('time').right, versionRight: box('.mkt-card-version').right,
+        timeLeft: box('time').left, metaBottom: box('.mkt-card-release-meta').bottom,
+        footerTop: box('.mkt-card-glass-footer').top, titleRight: box('.mkt-card-title').right,
+        badgeLeft: box('.mkt-card-activity').left, contentRight: box('.mkt-card-glass-footer').right };
+    });
+    expect(geometry.timeRight).toBeCloseTo(geometry.contentRight, 0);
+    expect(geometry.timeRight).toBeLessThan(geometry.cardRight);
+    expect(geometry.versionRight).toBeLessThan(geometry.timeLeft);
+    expect(geometry.metaBottom).toBeLessThanOrEqual(geometry.footerTop);
+    expect(geometry.titleRight).toBeLessThan(geometry.badgeLeft);
+  }
+  await page.getByPlaceholder('搜索名称、描述').fill(items[0].title);
+  await expect(page.locator('.mkt-card')).toHaveCount(1);
+  await expect(fresh.getByLabel('热门内容')).toHaveText('热');
 });
 
 test('个人列表请求失败可重试，取消收藏失败保留列表与状态', async ({ page }) => {

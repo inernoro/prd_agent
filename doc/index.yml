@@ -352,6 +352,7 @@ docs:
   debt.frontend: "前端 · 债务台账"
   debt.knowledge-base: "知识库 · 债务台账"
   debt.md-to-ppt: "MD 转网页 PPT · 债务台账"
+  debt.marketplace.activity: "海鲜市场时间与热度展示边界 · 债务台账"
   debt.platform.active-tasks: "活动任务清单 · 债务台账"
   debt.platform.agent-rule-scope: "Agent 规则作用域 · 债务台账"
   debt.open-platform.open-api: "开放平台 Open API · 债务台账"

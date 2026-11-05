@@ -103,7 +103,7 @@ describe.skipIf(!TEST_IMAGE_OK)('ContainerService stop/remove against real docke
       const actual = JSON.parse(inspected.stdout)[0];
       expect(actual.Id).toBe(run.stdout.trim());
       expect(actual.State).toMatchObject({ Running: false, Pid: 0, OOMKilled: false });
-      console.info((process.env.GITHUB_ACTIONS === 'true' ? '::notice title=CDS native stop reservation::' : '') + JSON.stringify({ nativeStopReservation: { containerId: actual.Id, pid: actual.State.Pid,
+      console.info('::notice title=CDS native stop reservation::' + JSON.stringify({ nativeStopReservation: { containerId: actual.Id, pid: actual.State.Pid,
         exitCode: actual.State.ExitCode, oomKilled: actual.State.OOMKilled, successorPreserved: true } }));
       deploymentPhaseBudget.releaseMemory(name);
 
