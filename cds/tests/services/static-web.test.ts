@@ -110,3 +110,13 @@ describe('非容器静态预览实际HTTP行为', () => {
     } finally { await proxy.close(); await new Promise<void>(resolve => backend.close(() => resolve())); }
   });
 });
+
+it('首页引用的 CSS 缺失时在切换之前拒绝产物', async () => {
+  const broken = new StaticWebService({ rootDirectory: path.join(directory, 'missing-css'), resolveUpstream: () => undefined,
+    exportFiles: async (_i, _p, destination) => {
+      await bundle(destination);
+      await fs.appendFile(path.join(destination, 'index.html'), '<link rel="stylesheet" href="/assets/missing.css">');
+    } });
+  await expect(broken.prepare({ identity, serviceName: 'broken-css', image, revision,
+    config: { imagePath: '/dist' }, env: {}, check: () => {} })).rejects.toThrow('不存在');
+});

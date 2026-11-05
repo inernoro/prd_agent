@@ -2,8 +2,23 @@ import { randomUUID } from 'node:crypto';
 import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef } from '../types.js';
 import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
+import { computeProfileAliases, resolveEffectiveProfile } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
 import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
+
+/** Browser-only is an explicit deployment contract, never inferred from a shared network. */
+export function assertBrowserOnlyStaticConsumers(entry: BranchEntry, profileId: string, state: StateService): void {
+  const project = entry.projectId ? state.getProject(entry.projectId) : undefined;
+  const aliases = new Set(computeProfileAliases(profileId, [entry.projectId, project?.slug].filter((value): value is string => Boolean(value))));
+  for (const raw of state.getEffectiveProfilesForBranch(entry)) {
+    const peer = resolveEffectiveProfile(raw, entry);
+    if (peer.id === profileId) continue;
+    const references = [...(peer.calls || []), ...(peer.dependsOn || [])];
+    const internalUrl = Object.values(peer.env || {}).some(value => [...value.matchAll(/https?:\/\/([a-z0-9_.-]+)(?=[:/]|$)/gi)]
+      .some(match => aliases.has(match[1])));
+    if (internalUrl || references.some(target => aliases.has(target))) throw new Error(`服务 ${peer.id} 仍声明依赖该前端容器地址，请迁移依赖后再选择仅浏览器静态模式`);
+  }
+}
 
 export function reserveServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; portStart: number; operationId?: string;
@@ -46,6 +61,7 @@ export async function prepareServiceReplacement(options: {
   container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>; portStart: number; operationId?: string; assertCurrent?: (step: string) => void;
 }): Promise<ServiceState> {
   const { entry, service, state, container, profile, assertCurrent } = options;
+  if (profile.staticWeb?.browserOnly) assertBrowserOnlyStaticConsumers(entry, profile.id, state);
   if (!service.servingRuntime && !service.pendingRuntime) return service;
   assertCurrent?.('before candidate prepare');
   const approved = servingRuntime(service);
@@ -183,7 +199,8 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
       const actual = await container.inspectOwnedRuntime(entry, id, old, false);
       check('after retirement retained identity');
       if (actual && (isProtected(actual) || (!actual.staticWeb && !actual.aliasNetworks?.length))) continue;
-      const referenced = actual && !actual.staticWeb && [...published].some(([peerId, peer]) => {
+      if (confirmed.staticWeb?.browserOnly) assertBrowserOnlyStaticConsumers(entry, id, state);
+      const referenced = actual && !actual.staticWeb && !confirmed.staticWeb?.browserOnly && [...published].some(([peerId, peer]) => {
         if (peerId === id || peer?.staticWeb) return false;
         if (!peer) return true; // 当前消费者未确认运行时，保留其可能依赖的旧版本。
         const networks = [peer.networkName, ...(peer.connectedNetworks || [])];
