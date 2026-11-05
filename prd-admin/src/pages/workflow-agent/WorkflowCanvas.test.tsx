@@ -79,12 +79,13 @@ it('真实Canvas打开日志保留配置草稿，只观察同一设计任务并�
   api.defer = true; await tick();
   const pendingReads = api.get.mock.calls.length;
   const metadataReads = api.design.mock.calls.length;
-  api.execution = { ...api.execution!, status: 'completed' }; await tick();
-  expect(api.get).toHaveBeenCalledTimes(pendingReads + 1);
-  expect(api.design).toHaveBeenCalledTimes(metadataReads);
-  expect(container.querySelector('.workflow-log-panel')?.textContent).toContain('工作流执行完成');
+  api.execution = { ...api.execution!, nodeExecutions: api.execution!.nodeExecutions.map(n => ({ ...n, status: 'completed' })) }; await tick();
   await act(async () => { api.late?.(); await Promise.resolve(); });
   expect(container.querySelector('.workflow-log-panel')?.textContent).not.toContain('正在自查');
+  api.execution = { ...api.execution!, status: 'completed' }; await tick();
+  expect(api.get).toHaveBeenCalledTimes(pendingReads + 2);
+  expect(api.design).toHaveBeenCalledTimes(metadataReads);
+  expect(container.querySelector('.workflow-log-panel')?.textContent).toContain('工作流执行完成');
   api.execution = structuredClone(execution); api.defer = false;
   await act(async () => root.unmount()); root = createRoot(container); await render(); await click(button('日志')); await tick();
   api.defer = true; await tick(); await click(button('取消'));
