@@ -139,10 +139,10 @@ export async function createSubmission(body: {
   );
 }
 
-export async function autoSubmitImages(imageAssetIds: string[]) {
+export async function autoSubmitImages(imageAssetIds: string[], trigger: 'auto' | 'manual' = 'auto') {
   return apiRequest<{ submitted: number }>(
     api.submissions.autoSubmit(),
-    { method: 'POST', body: { imageAssetIds } },
+    { method: 'POST', body: { imageAssetIds, trigger } },
   );
 }
 

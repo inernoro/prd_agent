@@ -1804,7 +1804,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
-    private static GatewayRawRequest RebuildCanonicalImageRequest(
+    internal static GatewayRawRequest RebuildCanonicalImageRequest(
         GatewayRawRequest source,
         ModelResolutionResult resolution)
     {
@@ -1923,9 +1923,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         else
         {
+            // openai 是 wire 协议；火山仍有自己的 generations JSON 图片输入契约。
+            var adapterType = normalizedProtocol == "openai"
+                && (string.Equals(resolution.PlatformType, "volces", StringComparison.OrdinalIgnoreCase)
+                    || LLM.Adapters.ImageGenPlatformAdapterFactory.IsVolcesApi(resolution.ApiUrl))
+                    ? "volces" : normalizedProtocol;
             var adapter = LLM.Adapters.ImageGenPlatformAdapterFactory.GetAdapter(
-                resolution.ApiUrl, resolution.ActualModel, normalizedProtocol);
-            if (images.Count == 0)
+                resolution.ApiUrl, resolution.ActualModel, adapterType);
+            if (images.Count == 0 || adapter.PlatformType == "volces")
             {
                 var built = ImageGenRequestBuilder.BuildStandardGeneration(
                     resolution.ActualModel!,
@@ -1936,6 +1941,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     adapter,
                     applyAdaptiveSizePrompt: false);
                 body = JsonNode.Parse(adapter.SerializeRequest(built.RequestBody))?.AsObject() ?? new JsonObject();
+                // 方舟的参考图是 generations JSON 的 image 字段，不使用 OpenAI 的 edits multipart。
+                if (images.Count == 1) body["image"] = images[0];
+                else if (images.Count > 1)
+                {
+                    var references = new JsonArray();
+                    foreach (var image in images) references.Add(image);
+                    body["image"] = references;
+                }
                 endpointPath = "images/generations";
             }
             else
