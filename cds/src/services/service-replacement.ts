@@ -120,6 +120,13 @@ export async function abortUnpublishedServiceReplacements(options: {
       await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
         operationId: options.operationId, operationGeneration: options.operationGeneration,
         profileId: id, operation: 'failed-unpublished-runtime', source: 'service-replacement',
+        beforeRemove: async () => {
+          const current = await container.inspectOwnedRuntime(entry, id, active);
+          assertCurrent?.('after failed replacement old liveness');
+          if (!current || current.containerId !== confirmedActive.containerId || service.servingRuntime !== active) {
+            throw new Error('旧入口已失效或身份变化，保留未发布候选');
+          }
+        },
         assertCurrent: () => assertCurrent?.('failed replacement cleanup command') });
       assertCurrent?.('after failed replacement cleanup');
       if (service.containerName === candidate.containerName) Object.assign(service, runtimeRef(active));

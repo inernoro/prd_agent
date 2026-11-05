@@ -1532,6 +1532,7 @@ export async function buildCheckRunFailurePostmortem(
   // 已被删/改名残留的 zombie 服务(deploy 主路径用 activeServices 算 hasError,这里
   // 必须同口径),否则 check-run 会把旧 profile 的日志当成本次失败的根因误导 agent。
   activeProfileIds?: ReadonlySet<string>,
+  snapshots?: readonly OperationLogContainerSnapshot[],
 ): Promise<string> {
   const errorServices = Object.entries(entry.services || {}).filter(
     ([sid, svc]) => svc.status === 'error' && (!activeProfileIds || activeProfileIds.has(sid)),
@@ -1541,7 +1542,10 @@ export async function buildCheckRunFailurePostmortem(
   for (const [profileId, svc] of errorServices) {
     let logs = '';
     try {
-      logs = await containerService.getLogs(svc.containerName, 60);
+      // 已收回的候选只用收回前快照；快照失败时不借恢复后的旧入口日志。
+      logs = snapshots
+        ? (snapshots.find(snapshot => snapshot.profileId === profileId)?.logs || '').split('\n').slice(-60).join('\n')
+        : await containerService.getLogs(svc.containerName, 60);
     } catch {
       // 容器名不存在 / docker 拉不到 — 仍用 errorMessage 作为根因兜底
     }
@@ -3584,24 +3588,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const snapshots: OperationLogContainerSnapshot[] = [];
 
     for (const [profileId, svc] of services) {
+      const pending = svc.pendingRuntime;
+      const runtime = source === 'deploy-error' && pending && pending.networkName === entry.replacementNetwork
+        && (pending.creationIssued || pending.containerId) ? pending : svc;
+      const { containerName, hostPort } = runtime, status = svc.status;
       try {
-        const raw = await containerService.getLogs(svc.containerName, tailLines);
+        const raw = await containerService.getLogs(containerName, tailLines);
         const maskedLogs = maskSecretsText(raw, { mask: true });
         stateService.appendContainerLogArchive(entry.id, {
           projectId: entry.projectId,
           profileId,
-          containerName: svc.containerName,
-          hostPort: svc.hostPort,
-          status: svc.status,
+          containerName,
+          hostPort,
+          status,
           source,
           masked: true,
           logs: maskedLogs,
         });
         snapshots.push({
           profileId,
-          containerName: svc.containerName,
-          hostPort: svc.hostPort,
-          status: svc.status,
+          containerName,
+          hostPort,
+          status,
           capturedAt: new Date().toISOString(),
           tailLines,
           source,
@@ -3610,9 +3618,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch (err) {
         snapshots.push({
           profileId,
-          containerName: svc.containerName,
-          hostPort: svc.hostPort,
-          status: svc.status,
+          containerName,
+          hostPort,
+          status,
           capturedAt: new Date().toISOString(),
           tailLines,
           source,
@@ -14808,6 +14816,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
       }
+      if (entry.replacementNetwork && activeServices.some(([, service]) => service.status === 'error')) {
+        assertBranchOperationCurrent(branchOperationLease, 'before failed replacement log capture');
+        opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', activeProfileIds);
+        assertBranchOperationCurrent(branchOperationLease, 'after failed replacement log capture');
+      }
       await commitServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
         operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
         container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
@@ -14875,7 +14888,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           timestamp: runtimeReadyAt,
         });
       }
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(
         entry,
         hasError ? 'deploy-error' : 'deploy-finalize',
         activeProfileIds,
@@ -15051,7 +15064,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
       try {
         const failureDetail = finalConclusion === 'failure'
-          ? await buildCheckRunFailurePostmortem(entry, containerService, activeProfileIds)
+          ? await buildCheckRunFailurePostmortem(entry, containerService, activeProfileIds, opLog.containerLogSnapshots)
           : undefined;
         await checkRunRunner.finalize(entry, {
           conclusion: finalConclusion,
@@ -15148,7 +15161,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = errMsg;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error');
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(entry, 'deploy-error');
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${errMsg}`);
@@ -15178,7 +15191,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724
         // 声明,异常路径仍可见),与成功/失败 finalize 同口径,不让旧 profile 背锅。
         const failureDetail = await buildCheckRunFailurePostmortem(
-          entry, containerService, new Set(profiles.map((p) => p.id)),
+          entry, containerService, new Set(profiles.map((p) => p.id)), opLog.containerLogSnapshots,
         );
         await checkRunRunner.finalize(entry, {
           conclusion: 'failure',
@@ -15746,6 +15759,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         deployQueueTracker.dispose();
       }
 
+      if (entry.replacementNetwork && svc.status === 'error') {
+        assertBranchOperationCurrent(branchOperationLease, 'before failed profile replacement log capture');
+        opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
+        assertBranchOperationCurrent(branchOperationLease, 'after failed profile replacement log capture');
+      }
       await commitServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
         operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
         container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
@@ -15781,7 +15799,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           timestamp: runtimeReadyAt,
         });
       }
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(
         entry,
         svc.status === 'running' ? 'deploy-finalize' : 'deploy-error',
         new Set([profile.id]),
@@ -15904,7 +15922,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       failDeploymentRun(deploymentRun?.id, entry.errorMessage, 'deploy-profile');
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
-      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
+      opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
       stateService.appendLog(id, opLog);
       stateService.save();
       // 失败也要推一条：比如排构建槽时被取消，服务停在 building、分支已判 error，

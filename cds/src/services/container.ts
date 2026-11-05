@@ -96,6 +96,7 @@ export interface ProjectNetworkResolver {
 }
 
 export interface ContainerRemoveContext {
+  beforeRemove?: () => Promise<void>;
   assertCurrent?: (step: string) => void;
   onProgress?: (step: 'admitted' | 'diagnostics-returned' | 'stop' | 'stop-returned' | 'rm' | 'rm-returned') => void;
   kind?: ContainerLifecycleIntentKind;
@@ -2974,6 +2975,10 @@ export class ContainerService {
   private async removeUnbudgeted(containerName: string, context: ContainerRemoveContext): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
+    if (context.beforeRemove) {
+      await context.beforeRemove();
+      context.assertCurrent?.('after cleanup prerequisite');
+    }
     context.onProgress?.('admitted');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
     const kind = context.kind || 'cds-remove';
@@ -3005,12 +3010,18 @@ export class ContainerService {
       },
     });
     this.noteLifecycleIntent(containerName, kind, reason, context);
-    const dispatch = (step: 'stop' | 'rm') => shell.exec(`docker ${step} ${containerName}`, {
-      executionLane: 'operation', executionPurpose: 'temporary-cleanup', beforeStart: () => {
-        context.assertCurrent?.(`cleanup ${step} dispatch`);
-        context.onProgress?.(step);
-      },
-    });
+    const dispatch = async (step: 'stop' | 'rm') => {
+      if (context.beforeRemove) {
+        await context.beforeRemove();
+        context.assertCurrent?.(`cleanup ${step} prerequisite`);
+      }
+      return shell.exec(`docker ${step} ${containerName}`, {
+        executionLane: 'operation', executionPurpose: 'temporary-cleanup', beforeStart: () => {
+          context.assertCurrent?.(`cleanup ${step} dispatch`);
+          context.onProgress?.(step);
+        },
+      });
+    };
     const stopResult = await dispatch('stop');
     context.assertCurrent?.('after cleanup stop return');
     context.onProgress?.('stop-returned');
