@@ -1936,7 +1936,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("LLM Gateway post-deploy probe: not configured", script);
         Assert.Contains("${PRD_AGENT_PUBLIC_LLMGW_SERVING_BASE_PATH:-/llmgw/gw/v1}", script);
         Assert.Contains("$(config_value LLMGW_SERVE_KEY)", script);
-        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3 scripts/llmgw-serving-probe.py", script);
+        Assert.Contains("release_features=\"${LLMGW_RELEASE_FEATURES:-defect-agent}\"", script);
+        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" LLMGW_RELEASE_FEATURES=\"$release_features\" python3 scripts/llmgw-serving-probe.py", script);
         Assert.Contains("wait_for_llmgw_serving_readiness", script);
         Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
         Assert.Contains("LLMGW_POST_DEPLOY_GATE_BASE", script);

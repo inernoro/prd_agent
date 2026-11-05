@@ -54,6 +54,7 @@ public class DefectAgentController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.DefectAgent.DefectPolishService _polishService;
     private readonly AdminPushDispatchSignal _adminPushDispatchSignal;
+    private readonly HistoricalAssetUrlResolver _historicalAssets;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -69,7 +70,8 @@ public class DefectAgentController : ControllerBase
         IConfiguration config,
         IHttpClientFactory httpClientFactory,
         PrdAgent.Api.Services.DefectAgent.DefectPolishService polishService,
-        AdminPushDispatchSignal adminPushDispatchSignal)
+        AdminPushDispatchSignal adminPushDispatchSignal,
+        HistoricalAssetUrlResolver historicalAssets)
     {
         _db = db;
         _gateway = gateway;
@@ -84,6 +86,7 @@ public class DefectAgentController : ControllerBase
         _httpClientFactory = httpClientFactory;
         _polishService = polishService;
         _adminPushDispatchSignal = adminPushDispatchSignal;
+        _historicalAssets = historicalAssets;
     }
 
     private string GetUserId()
@@ -510,6 +513,7 @@ public class DefectAgentController : ControllerBase
             .Limit(effectivePageSize)
             .ToListAsync(ct);
 
+        await _historicalAssets.ResolveAttachmentsForReadAsync(items, ct);
         return Ok(ApiResponse<object>.Ok(new
         {
             items,
@@ -548,6 +552,7 @@ public class DefectAgentController : ControllerBase
             .SortBy(x => x.Seq)
             .ToListAsync(ct);
 
+        await _historicalAssets.ResolveAttachmentsForReadAsync(new[] { defect }, ct);
         return Ok(ApiResponse<object>.Ok(new { defect, messages }));
     }
 
@@ -558,6 +563,24 @@ public class DefectAgentController : ControllerBase
     public async Task<IActionResult> CreateDefect([FromBody] CreateDefectRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
+
+        var requestId = DefectSubmissionPersistence.RequestId("create", userId, request.ClientRequestId);
+        var fingerprint = DefectSubmissionPersistence.PayloadFingerprint(new
+        {
+            request.TemplateId, request.Title, request.Content, request.AssigneeUserId,
+            request.Severity, request.Priority, request.ProjectId, request.TeamId
+        });
+        if (requestId != null)
+        {
+            var recovered = await _db.DefectReports.Find(x => x.Id == requestId).FirstOrDefaultAsync(ct);
+            if (recovered != null)
+                return recovered.CreationFingerprint == fingerprint
+                    ? Ok(ApiResponse<object>.Ok(new { defect = recovered }))
+                    : Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次创建请求已用于另一份内容，请恢复原草稿后保存修改"));
+        }
+        if (request.Severity != null && !DefectSeverity.All.Contains(request.Severity)
+            || request.Priority != null && !DefectPriority.All.Contains(request.Priority))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "严重程度或优先级无效"));
 
         // 查询报告人信息
         var reporter = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
@@ -613,7 +636,8 @@ public class DefectAgentController : ControllerBase
 
         var defect = new DefectReport
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = requestId ?? Guid.NewGuid().ToString("N"),
+            CreationFingerprint = requestId == null ? null : fingerprint,
             DefectNo = defectNo,
             TemplateId = request.TemplateId,
             Title = title,
@@ -635,7 +659,9 @@ public class DefectAgentController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        await _db.DefectReports.InsertOneAsync(defect, cancellationToken: ct);
+        defect = await DefectSubmissionPersistence.CreateOrRecoverAsync(_db.DefectReports, defect, ct);
+        if (requestId != null && defect.CreationFingerprint != fingerprint)
+            return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次创建请求已用于另一份内容，请恢复原草稿后保存修改"));
 
         _logger.LogInformation("[{AppKey}] Defect created: {DefectNo} by {UserId}", AppKey, defectNo, userId);
 
@@ -663,14 +689,17 @@ public class DefectAgentController : ControllerBase
         if (defect.Status != DefectStatus.Draft && defect.Status != DefectStatus.Awaiting)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能编辑草稿或待补充状态的缺陷"));
 
-        // 保存当前版本到历史（如果有实质性修改）
-        var hasChanges = (!string.IsNullOrWhiteSpace(request.Title) && request.Title.Trim() != defect.Title)
-                      || (!string.IsNullOrWhiteSpace(request.Content) && request.Content.Trim() != defect.RawContent);
+        if (request.Severity != null && !DefectSeverity.All.Contains(request.Severity)
+            || request.Priority != null && !DefectPriority.All.Contains(request.Priority))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "严重程度或优先级无效"));
 
+        var update = Builders<DefectReport>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow)
+            .Inc(x => x.EditRevision, 1);
+        var hasChanges = request.Title != null && request.Title.Trim() != defect.Title
+            || request.Content != null && request.Content.Trim() != defect.RawContent;
         if (hasChanges)
         {
-            defect.Versions ??= new List<DefectVersion>();
-            defect.Versions.Add(new DefectVersion
+            update = update.Push(x => x.Versions, new DefectVersion
             {
                 Version = defect.Version,
                 Title = defect.Title,
@@ -680,20 +709,44 @@ public class DefectAgentController : ControllerBase
                 ModifiedByName = userName,
                 ModifiedAt = DateTime.UtcNow,
                 ChangeNote = request.ChangeNote
-            });
-            defect.Version++;
+            }).Inc(x => x.Version, 1);
         }
-
-        if (!string.IsNullOrWhiteSpace(request.Title))
-            defect.Title = DefectTitleNormalizer.NormalizeTitle(request.Title, request.Content ?? defect.RawContent);
-        if (!string.IsNullOrWhiteSpace(request.Content))
-            defect.RawContent = request.Content.Trim();
+        if (request.Title != null)
+            update = update.Set(x => x.Title, DefectTitleNormalizer.NormalizeTitle(request.Title, request.Content ?? defect.RawContent));
+        if (request.Content != null)
+            update = update.Set(x => x.RawContent, request.Content.Trim());
         if (request.StructuredData != null)
-            defect.StructuredData = request.StructuredData;
-
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+            update = update.Set(x => x.StructuredData, request.StructuredData);
+        if (request.TemplateId != null)
+            update = update.Set(x => x.TemplateId, string.IsNullOrWhiteSpace(request.TemplateId) ? null : request.TemplateId);
+        if (request.Severity != null)
+            update = update.Set(x => x.Severity, request.Severity);
+        if (request.Priority != null)
+            update = update.Set(x => x.Priority, request.Priority);
+        if (request.AssigneeUserId != null)
+        {
+            var assignee = string.IsNullOrWhiteSpace(request.AssigneeUserId) ? null
+                : await _db.Users.Find(x => x.UserId == request.AssigneeUserId).FirstOrDefaultAsync(ct);
+            update = update.Set(x => x.AssigneeId, assignee?.UserId)
+                .Set(x => x.AssigneeAvatarFileName, assignee?.AvatarFileName)
+                .Set(x => x.AssigneeName, assignee?.DisplayName ?? assignee?.Username);
+        }
+        if (request.ProjectId != null)
+        {
+            var project = string.IsNullOrWhiteSpace(request.ProjectId) ? null
+                : await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
+            update = update.Set(x => x.ProjectId, project?.Id).Set(x => x.ProjectName, project?.Name);
+        }
+        if (request.TeamId != null)
+        {
+            var team = string.IsNullOrWhiteSpace(request.TeamId) ? null
+                : await _db.ReportTeams.Find(x => x.Id == request.TeamId).FirstOrDefaultAsync(ct);
+            update = update.Set(x => x.TeamId, team?.Id).Set(x => x.TeamName, team?.Name);
+        }
+        var saved = await DefectSubmissionPersistence.UpdateDraftAsync(_db.DefectReports, defect, update, ct);
+        if (saved == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "草稿状态或内容已改变，请重新加载后保存"));
+        defect = saved;
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -721,7 +774,13 @@ public class DefectAgentController : ControllerBase
         defect.Severity = request.Severity;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateFieldsAsync(_db.DefectReports, defect.Id,
+            Builders<DefectReport>.Update.Set(x => x.Severity, defect.Severity)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt)
+            .Inc(x => x.EditRevision, 1), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -891,23 +950,32 @@ public class DefectAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限提交此缺陷"));
 
         if (defect.Status != DefectStatus.Draft && defect.Status != DefectStatus.Awaiting)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能提交草稿或待补充状态的缺陷"));
+            return defect.Status == DefectStatus.Submitted || defect.SubmittedAt != null
+                ? Ok(ApiResponse<object>.Ok(new { defect }))
+                : BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能提交草稿或待补充状态的缺陷"));
 
         if (string.IsNullOrWhiteSpace(defect.RawContent))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷描述不能为空"));
 
-        // 简化处理：直接设为已提交（后续可改为异步 AI 审核）
-        defect.Status = DefectStatus.Submitted;
-        defect.SubmittedAt = DateTime.UtcNow;
-        defect.ReporterUnread = false;
-        defect.AssigneeUnread = !string.IsNullOrEmpty(defect.AssigneeId);
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        // 自动采集用户 API 日志作为附件
+        // Mongo 原子认领提交；只有状态迁移赢家执行采集及通知，重放不回退后续状态。
+        var submitted = await DefectSubmissionPersistence.TrySubmitAsync(_db.DefectReports, defect, ct);
+        if (submitted == null)
+        {
+            var current = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+            if (current != null && (current.Status == DefectStatus.Submitted || current.SubmittedAt != null)
+                && current.Status != DefectStatus.Draft && current.Status != DefectStatus.Awaiting)
+                return Ok(ApiResponse<object>.Ok(new { defect = current }));
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "草稿已改变，请保存最新内容后重试提交"));
+        }
+        defect = submitted;
+        var existingAttachmentIds = defect.Attachments.Select(x => x.Id).ToHashSet();
         var clientId = await ResolveBoundClientIdAsync(ct);
         await CollectUserApiLogsAsync(defect, userId, clientId, ct);
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var collected = defect.Attachments.Where(x => !existingAttachmentIds.Contains(x.Id)).ToList();
+        if (collected.Count > 0)
+            await _db.DefectReports.UpdateOneAsync(x => x.Id == id,
+                Builders<DefectReport>.Update.PushEach(x => x.Attachments, collected), cancellationToken: ct);
+        defect = await _db.DefectReports.Find(x => x.Id == id).FirstOrDefaultAsync(ct) ?? defect;
 
         _logger.LogInformation("[{AppKey}] Defect submitted: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
@@ -975,6 +1043,7 @@ public class DefectAgentController : ControllerBase
         if (assignee == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "被指派人不存在"));
 
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.AssigneeId = request.AssigneeId;
         defect.AssigneeAvatarFileName = assignee.AvatarFileName;
         defect.AssigneeName = assignee.DisplayName ?? assignee.Username;
@@ -984,7 +1053,18 @@ public class DefectAgentController : ControllerBase
         defect.AssigneeUnread = true;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.AssigneeId, defect.AssigneeId)
+            .Set(x => x.AssigneeAvatarFileName, defect.AssigneeAvatarFileName)
+            .Set(x => x.AssigneeName, defect.AssigneeName)
+            .Set(x => x.Status, defect.Status)
+            .Set(x => x.AssignedAt, defect.AssignedAt)
+            .Set(x => x.ReporterUnread, defect.ReporterUnread)
+            .Set(x => x.AssigneeUnread, defect.AssigneeUnread)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         _logger.LogInformation("[{AppKey}] Defect assigned: {DefectNo} to {AssigneeId}", AppKey, defect.DefectNo, request.AssigneeId);
 
@@ -1012,10 +1092,16 @@ public class DefectAgentController : ControllerBase
         if (defect.Status != DefectStatus.Assigned)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能处理已指派状态的缺陷"));
 
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.Status = DefectStatus.Processing;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -1042,6 +1128,7 @@ public class DefectAgentController : ControllerBase
         var resolver = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var resolverName = resolver?.DisplayName ?? resolver?.Username ?? GetUsername() ?? "未知用户";
 
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.Status = DefectStatus.Verifying;
         defect.Resolution = request.Resolution?.Trim();
         defect.ResolvedById = userId;
@@ -1056,7 +1143,21 @@ public class DefectAgentController : ControllerBase
         defect.ReporterUnread = true;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == defect.Id, defect, cancellationToken: ct);
+        var stateUpdate = Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+            .Set(x => x.Resolution, defect.Resolution)
+            .Set(x => x.ResolvedById, defect.ResolvedById)
+            .Set(x => x.ResolvedByAvatarFileName, defect.ResolvedByAvatarFileName)
+            .Set(x => x.ResolvedByName, defect.ResolvedByName)
+            .Set(x => x.ResolvedAt, defect.ResolvedAt)
+            .Set(x => x.ReporterUnread, defect.ReporterUnread)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt);
+        if (IsAiAccessRequest())
+            stateUpdate = stateUpdate.Set(x => x.IsAiResolved, defect.IsAiResolved)
+                .Set(x => x.ResolvedByAgentName, defect.ResolvedByAgentName);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot, stateUpdate, ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         _logger.LogInformation("[{AppKey}] Defect resolved (verifying): {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
@@ -1123,6 +1224,7 @@ public class DefectAgentController : ControllerBase
         var verifier = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var verifierName = verifier?.DisplayName ?? verifier?.Username ?? GetUsername() ?? "未知用户";
 
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.Status = DefectStatus.Closed;
         defect.VerifiedById = userId;
         defect.VerifiedByName = verifierName;
@@ -1131,7 +1233,17 @@ public class DefectAgentController : ControllerBase
         defect.AssigneeUnread = true;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+            .Set(x => x.VerifiedById, defect.VerifiedById)
+            .Set(x => x.VerifiedByName, defect.VerifiedByName)
+            .Set(x => x.VerifiedAt, defect.VerifiedAt)
+            .Set(x => x.ClosedAt, defect.ClosedAt)
+            .Set(x => x.AssigneeUnread, defect.AssigneeUnread)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         _logger.LogInformation("[{AppKey}] Defect verify-pass: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
@@ -1158,6 +1270,7 @@ public class DefectAgentController : ControllerBase
         if (defect.Status != DefectStatus.Verifying)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能验收待验收状态的缺陷"));
 
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.Status = DefectStatus.Processing;
         defect.VerifyFailReason = request.Reason?.Trim();
         defect.AssigneeUnread = true;
@@ -1167,7 +1280,17 @@ public class DefectAgentController : ControllerBase
         defect.VerifiedByName = null;
         defect.VerifiedAt = null;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+            .Set(x => x.VerifyFailReason, defect.VerifyFailReason)
+            .Set(x => x.AssigneeUnread, defect.AssigneeUnread)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt)
+            .Set(x => x.VerifiedById, defect.VerifiedById)
+            .Set(x => x.VerifiedByName, defect.VerifiedByName)
+            .Set(x => x.VerifiedAt, defect.VerifiedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         _logger.LogInformation("[{AppKey}] Defect verify-fail: {DefectNo} by {UserId}", AppKey, defect.DefectNo, userId);
 
@@ -1203,6 +1326,7 @@ public class DefectAgentController : ControllerBase
         var rejector = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var rejectorName = rejector?.DisplayName ?? rejector?.Username ?? GetUsername() ?? "未知用户";
 
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.Status = DefectStatus.Rejected;
         defect.RejectReason = request.Reason.Trim();
         defect.RejectedById = userId;
@@ -1210,7 +1334,16 @@ public class DefectAgentController : ControllerBase
         defect.RejectedByName = rejectorName;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+            .Set(x => x.RejectReason, defect.RejectReason)
+            .Set(x => x.RejectedById, defect.RejectedById)
+            .Set(x => x.RejectedByAvatarFileName, defect.RejectedByAvatarFileName)
+            .Set(x => x.RejectedByName, defect.RejectedByName)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -1237,11 +1370,18 @@ public class DefectAgentController : ControllerBase
         if (!closableStatuses.Contains(defect.Status))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能关闭待验收/已解决/已拒绝状态的缺陷"));
 
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.Status = DefectStatus.Closed;
         defect.ClosedAt = DateTime.UtcNow;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+            .Set(x => x.ClosedAt, defect.ClosedAt)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         _ = _webhookService.NotifyAsync(defect, DefectEventType.Closed);
 
@@ -1270,6 +1410,7 @@ public class DefectAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能重新打开已拒绝/已解决/已关闭/待验收状态的缺陷"));
 
         // 如果有指派人，回到已指派状态；否则回到已提交状态
+        var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
         defect.Status = string.IsNullOrEmpty(defect.AssigneeId) ? DefectStatus.Submitted : DefectStatus.Assigned;
         defect.Resolution = null;
         defect.RejectReason = null;
@@ -1287,7 +1428,26 @@ public class DefectAgentController : ControllerBase
         defect.ClosedAt = null;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+            Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+            .Set(x => x.Resolution, defect.Resolution)
+            .Set(x => x.RejectReason, defect.RejectReason)
+            .Set(x => x.ResolvedAt, defect.ResolvedAt)
+            .Set(x => x.ResolvedById, defect.ResolvedById)
+            .Set(x => x.ResolvedByAvatarFileName, defect.ResolvedByAvatarFileName)
+            .Set(x => x.ResolvedByName, defect.ResolvedByName)
+            .Set(x => x.RejectedById, defect.RejectedById)
+            .Set(x => x.RejectedByAvatarFileName, defect.RejectedByAvatarFileName)
+            .Set(x => x.RejectedByName, defect.RejectedByName)
+            .Set(x => x.VerifiedById, defect.VerifiedById)
+            .Set(x => x.VerifiedByName, defect.VerifiedByName)
+            .Set(x => x.VerifiedAt, defect.VerifiedAt)
+            .Set(x => x.VerifyFailReason, defect.VerifyFailReason)
+            .Set(x => x.ClosedAt, defect.ClosedAt)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         return Ok(ApiResponse<object>.Ok(new { defect }));
     }
@@ -1322,21 +1482,19 @@ public class DefectAgentController : ControllerBase
             .SortBy(x => x.Seq)
             .ToListAsync(ct);
 
-        var shouldUpdateRead = false;
+        UpdateDefinition<DefectReport>? readUpdate = null;
         if (defect.ReporterId == userId && defect.ReporterUnread)
         {
-            defect.ReporterUnread = false;
-            shouldUpdateRead = true;
+            readUpdate = Builders<DefectReport>.Update.Set(x => x.ReporterUnread, false);
         }
         else if (defect.AssigneeId == userId && defect.AssigneeUnread)
         {
-            defect.AssigneeUnread = false;
-            shouldUpdateRead = true;
+            readUpdate = Builders<DefectReport>.Update.Set(x => x.AssigneeUnread, false);
         }
-        if (shouldUpdateRead)
+        if (readUpdate != null)
         {
-            defect.UpdatedAt = DateTime.UtcNow;
-            await _db.DefectReports.ReplaceOneAsync(x => x.Id == defect.Id, defect, cancellationToken: ct);
+            await DefectSubmissionPersistence.UpdateFieldsAsync(_db.DefectReports, defect.Id,
+                readUpdate.Set(x => x.UpdatedAt, DateTime.UtcNow), ct);
         }
 
         return Ok(ApiResponse<object>.Ok(new { messages }));
@@ -1420,7 +1578,14 @@ public class DefectAgentController : ControllerBase
         if (shouldUpdateDefect)
         {
             defect.UpdatedAt = DateTime.UtcNow;
-            await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+            var persisted = await DefectSubmissionPersistence.UpdateFieldsAsync(_db.DefectReports, defect.Id,
+                Builders<DefectReport>.Update.Set(x => x.ReporterUnread, defect.ReporterUnread)
+                .Set(x => x.AssigneeUnread, defect.AssigneeUnread)
+                .Set(x => x.LastCommentBy, defect.LastCommentBy)
+                .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+            if (persisted == null)
+                return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+            defect = persisted;
         }
 
         return Ok(ApiResponse<object>.Ok(new { message, defect }));
@@ -1437,9 +1602,13 @@ public class DefectAgentController : ControllerBase
     /// </summary>
     [HttpPost("defects/{id}/attachments")]
     [RequestSizeLimit(MaxAttachmentBytes)]
-    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, [FromForm] string? description, CancellationToken ct)
+    public async Task<IActionResult> AddAttachment(string id, [FromForm] IFormFile file, [FromForm] string? description, CancellationToken ct, [FromForm] string? clientRequestId = null)
     {
         var userId = GetUserId();
+        clientRequestId = string.IsNullOrWhiteSpace(clientRequestId) ? null : clientRequestId.Trim();
+        if (clientRequestId?.Length > 256)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "附件请求标识最长256个字符"));
+
 
         if (file == null || file.Length <= 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "文件不能为空"));
@@ -1463,13 +1632,38 @@ public class DefectAgentController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        // 上传到存储
+        var attachmentId = DefectSubmissionPersistence.RequestId($"attachment:{id}", userId, clientRequestId)
+            ?? Guid.NewGuid().ToString("N");
         var mime = file.ContentType ?? "application/octet-stream";
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainDefectAgent, type: "img");
+        var fingerprint = DefectSubmissionPersistence.PayloadFingerprint(new
+        {
+            file.FileName, MimeType = mime, Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
+            ContentHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))
+        });
+        var existing = defect.Attachments.FirstOrDefault(x => x.Id == attachmentId);
+        if (existing != null)
+            return existing.RequestFingerprint == fingerprint
+                ? Ok(ApiResponse<object>.Ok(new { attachment = existing, defect }))
+                : Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次附件请求已用于另一文件，请重新选择文件"));
 
+        StoredAsset stored;
+        try
+        {
+            stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainDefectAgent,
+                type: "img", fileName: file.FileName);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[{AppKey}] Attachment storage failed for defect {DefectId}", AppKey, id);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail("ATTACHMENT_STORAGE_FAILED", "附件暂时无法保存，已保留草稿，请重试"));
+        }
         var attachment = new DefectAttachment
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = attachmentId,
+            ClientRequestId = clientRequestId,
+            RequestFingerprint = fingerprint,
             FileName = file.FileName ?? "unknown",
             FileSize = file.Length,
             MimeType = mime,
@@ -1477,11 +1671,12 @@ public class DefectAgentController : ControllerBase
             Description = string.IsNullOrWhiteSpace(description) ? null : description.Trim(),
             UploadedAt = DateTime.UtcNow
         };
-
-        defect.Attachments.Add(attachment);
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        defect = await DefectSubmissionPersistence.AppendAttachmentAsync(_db.DefectReports, id, attachment, ct);
+        if (defect == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+        attachment = defect.Attachments.First(x => x.Id == attachmentId);
+        if (attachment.RequestFingerprint != fingerprint)
+            return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "本次附件请求已用于另一文件，请重新选择文件"));
 
         return Ok(ApiResponse<object>.Ok(new { attachment, defect }));
     }
@@ -1505,10 +1700,9 @@ public class DefectAgentController : ControllerBase
         if (attachment == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
 
-        defect.Attachments.Remove(attachment);
-        defect.UpdatedAt = DateTime.UtcNow;
-
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
+        await _db.DefectReports.UpdateOneAsync(x => x.Id == defectId,
+            Builders<DefectReport>.Update.PullFilter(x => x.Attachments, x => x.Id == attachmentId)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -1539,7 +1733,8 @@ public class DefectAgentController : ControllerBase
         {
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(15);
-            var stream = await client.GetStreamAsync(attachment.Url, ct);
+            var url = await _historicalAssets.ResolveAttachmentUrlAsync(attachment, ct);
+            var stream = await client.GetStreamAsync(url, ct);
             return File(stream, attachment.MimeType ?? "application/octet-stream", attachment.FileName);
         }
         catch (Exception ex)
@@ -2269,13 +2464,23 @@ public class DefectAgentController : ControllerBase
             defect = await _db.DefectReports.Find(x => x.Id == defectId).FirstOrDefaultAsync(ct);
             if (defect != null && defect.Status is not (DefectStatus.Closed or DefectStatus.Resolved))
             {
+                var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
                 defect.Status = DefectStatus.Resolved;
                 defect.Resolution = item.FixSuggestion;
                 defect.ResolvedById = userId;
                 defect.ResolvedByName = userName;
                 defect.ResolvedAt = DateTime.UtcNow;
                 defect.UpdatedAt = DateTime.UtcNow;
-                await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
+                var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+                    Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+                    .Set(x => x.Resolution, defect.Resolution)
+                    .Set(x => x.ResolvedById, defect.ResolvedById)
+                    .Set(x => x.ResolvedByName, defect.ResolvedByName)
+                    .Set(x => x.ResolvedAt, defect.ResolvedAt)
+                    .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+                if (persisted == null)
+                    return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+                defect = persisted;
 
                 _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
 
@@ -3517,11 +3722,19 @@ public class DefectAgentController : ControllerBase
 
         if (defect != null)
         {
+            var stateSnapshot = DefectSubmissionPersistence.StateSnapshot(defect);
             defect.Status = DefectStatus.Awaiting;
             defect.VerifyFailReason = request.FailureReason?.Trim();
             defect.ReporterUnread = true;
             defect.UpdatedAt = DateTime.UtcNow;
-            await _db.DefectReports.ReplaceOneAsync(x => x.Id == defect.Id, defect, cancellationToken: ct);
+            var persisted = await DefectSubmissionPersistence.UpdateStateAsync(_db.DefectReports, stateSnapshot,
+                Builders<DefectReport>.Update.Set(x => x.Status, defect.Status)
+                .Set(x => x.VerifyFailReason, defect.VerifyFailReason)
+                .Set(x => x.ReporterUnread, defect.ReporterUnread)
+                .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+            if (persisted == null)
+                return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+            defect = persisted;
         }
 
         MarkRunItemFailed(run, defect, defect?.Id ?? defectId, request.FailureReason, request.FailurePhase);
@@ -4092,6 +4305,7 @@ public class DefectAgentController : ControllerBase
             x => x.Id == defect.Id,
             Builders<DefectReport>.Update
                 .Set(x => x.StructuredData, structured)
+                .Inc(x => x.EditRevision, 1)
                 .Set(x => x.Resolution, string.IsNullOrWhiteSpace(request.Resolution) ? defect.Resolution : request.Resolution.Trim())
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
@@ -4164,6 +4378,7 @@ public class DefectAgentController : ControllerBase
         var resolution = request.Resolution?.Trim() ?? "AI Agent 自动修复，等待发布验收";
         var update = Builders<DefectReport>.Update
             .Set(x => x.Status, DefectStatus.Resolved)
+            .Inc(x => x.EditRevision, 1)
             .Set(x => x.Resolution, resolution)
             .Set(x => x.ResolvedAt, DateTime.UtcNow)
             .Set(x => x.IsAiResolved, true)
@@ -5390,6 +5605,7 @@ public class DefectAgentController : ControllerBase
             var resolvedByAgent = item.AgentName?.Trim() ?? appName ?? "AI Agent";
             var update = Builders<DefectReport>.Update
                 .Set(x => x.Status, DefectStatus.Resolved)
+                .Inc(x => x.EditRevision, 1)
                 .Set(x => x.Resolution, item.Resolution?.Trim() ?? "AI Agent 自动修复")
                 .Set(x => x.ResolvedAt, DateTime.UtcNow)
                 .Set(x => x.IsAiResolved, true)
@@ -5848,6 +6064,8 @@ public class DefectAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内容不能为空"));
 
+        var startedAt = System.Diagnostics.Stopwatch.StartNew();
+        var requestId = HttpContext.TraceIdentifier;
         try
         {
             // 获取模板信息（如果有）
@@ -5904,7 +6122,7 @@ public class DefectAgentController : ControllerBase
 
             // 获取 LLM 客户端（使用注册的 AppCallerCode）
             using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-                RequestId: Guid.NewGuid().ToString("N"),
+                RequestId: requestId,
                 GroupId: null, SessionId: null,
                 UserId: GetUserId(),
                 ViewRole: null, DocumentChars: null, DocumentHash: null,
@@ -5947,20 +6165,32 @@ public class DefectAgentController : ControllerBase
                 }
                 else if (chunk.Type == "error")
                 {
-                    _logger.LogWarning("[{AppKey}] AI polish error: {Error}", AppKey, chunk.ErrorMessage);
-                    return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, chunk.ErrorMessage ?? "AI 处理失败"));
+                    throw GatewayRouteFailureException.FromChunk(chunk, "AI 润色失败");
                 }
             }
 
             var polishedContent = resultBuilder.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(polishedContent))
+                return StatusCode(502, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR,
+                    "AI 润色未生成内容，请保留原文继续提交，或稍后重试。",
+                    requestId: requestId, source: "defect-polish", elapsedMs: startedAt.ElapsedMilliseconds));
             _logger.LogInformation("[{AppKey}] Defect polished successfully", AppKey);
 
             return Ok(ApiResponse<object>.Ok(new { content = polishedContent }));
         }
+        catch (GatewayRouteFailureException ex)
+        {
+            _logger.LogWarning(ex, "[{AppKey}] AI polish route failed: Code={Code}, RequestId={RequestId}",
+                AppKey, ex.FailureCode, requestId);
+            return StatusCode(503, ApiResponse<object>.Fail(ex.FailureCode ?? ErrorCodes.LLM_ERROR,
+                GatewayRouteFailure.UserMessage(ex.FailureCode),
+                requestId: requestId, source: "defect-polish", elapsedMs: startedAt.ElapsedMilliseconds));
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{AppKey}] Failed to polish defect", AppKey);
-            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色失败，请稍后重试"));
+            _logger.LogError(ex, "[{AppKey}] Failed to polish defect: RequestId={RequestId}", AppKey, requestId);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "AI 润色未完成，请保留原文继续提交，或稍后重试。",
+                requestId: requestId, source: "defect-polish", elapsedMs: startedAt.ElapsedMilliseconds));
         }
     }
 
@@ -5975,7 +6205,7 @@ public class DefectAgentController : ControllerBase
     public async Task PolishDefectStream([FromBody] PolishDefectRequest request)
     {
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
+            RequestId: HttpContext.TraceIdentifier,
             GroupId: null, SessionId: null,
             UserId: GetUserId(),
             ViewRole: null, DocumentChars: null, DocumentHash: null,
@@ -6236,7 +6466,12 @@ public class DefectAgentController : ControllerBase
         defect.FolderId = string.IsNullOrEmpty(request.FolderId) ? null : request.FolderId;
         defect.UpdatedAt = DateTime.UtcNow;
 
-        await _db.DefectReports.ReplaceOneAsync(x => x.Id == id, defect, cancellationToken: ct);
+        var persisted = await DefectSubmissionPersistence.UpdateFieldsAsync(_db.DefectReports, defect.Id,
+            Builders<DefectReport>.Update.Set(x => x.FolderId, defect.FolderId)
+            .Set(x => x.UpdatedAt, defect.UpdatedAt), ct);
+        if (persisted == null)
+            return Conflict(ApiResponse<object>.Fail("DEFECT_EDIT_CONFLICT", "缺陷状态或内容已改变，请重新加载后重试"));
+        defect = persisted;
 
         _logger.LogInformation("[{AppKey}] Defect {DefectNo} moved to folder {FolderId}", AppKey, defect.DefectNo, request.FolderId ?? "root");
 
@@ -6314,6 +6549,7 @@ public class UpdateTemplateRequest
 
 public class CreateDefectRequest
 {
+    public string? ClientRequestId { get; set; }
     public string? TemplateId { get; set; }
     public string? Title { get; set; }
     public string? Content { get; set; }
@@ -6326,6 +6562,12 @@ public class CreateDefectRequest
 
 public class UpdateDefectRequest
 {
+    public string? TemplateId { get; set; }
+    public string? AssigneeUserId { get; set; }
+    public string? Severity { get; set; }
+    public string? Priority { get; set; }
+    public string? ProjectId { get; set; }
+    public string? TeamId { get; set; }
     public string? Title { get; set; }
     public string? Content { get; set; }
     public Dictionary<string, string>? StructuredData { get; set; }

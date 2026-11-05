@@ -65,8 +65,6 @@ public sealed class DailyLogPolishService
                 },
                 ["temperature"] = 0.4,
                 ["max_tokens"] = 1024,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
         };
 
