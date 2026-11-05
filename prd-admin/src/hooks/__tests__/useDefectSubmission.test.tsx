@@ -24,7 +24,6 @@ vi.mock('@/components/design/GlassCard', () => ({ GlassCard: ({ children, onClic
 vi.mock('@/components/ui/SuccessConfettiButton', () => ({ SuccessConfettiButton: ({ onAction, readyText, disabled }: { onAction: () => Promise<unknown>; readyText: string; disabled?: boolean }) => <button data-tour-id="defect-submit-global" disabled={disabled} onClick={() => { void onAction(); }}>{readyText}</button> }));
 vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => <input aria-label="提交给" value={value} onChange={event => onChange(event.target.value)} /> }));
 vi.mock('@/hooks/useBreakpoint', () => ({ useIsMobile: () => false }));
-vi.mock('@/lib/useAiPreviewStream', () => ({ useAiPreviewStream: () => ({ open: false }) }));
 
 describe('缺陷提交的失败恢复与传输幂等身份', () => {
   let root: Root;
@@ -60,6 +59,8 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     await act(async () => root.unmount());
     container.remove();
     vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     sessionStorage.removeItem('defect-agent-last-assignee');
     useGlobalDefectStore.setState({ showDialog: false, prefill: null, onCreated: null });
   });
@@ -86,6 +87,34 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
       backdrop: () => document.querySelector<HTMLElement>('[role="dialog"]')!,
     };
   }
+
+  it.each([
+    ['global', 'https://api.example.test/platform/', 'https://api.example.test/platform'],
+    ['panel', 'https://api.example.test/platform/', 'https://api.example.test/platform'],
+    ['global', '/backend/', '/backend'],
+    ['panel', '/backend/', '/backend'],
+    ['global', '', ''],
+    ['panel', '', ''],
+  ] as const)('%s润色使用配置的API基址%s并保留原文直到应用', async (entry, base, expectedBase) => {
+    vi.stubEnv('VITE_API_BASE_URL', base);
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(
+      'event: typing\ndata: {"text":"润色结果"}\n\nevent: done\ndata: {}\n\n',
+      { headers: { 'content-type': 'text/event-stream' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    await openEntry(entry);
+    const polish = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent?.trim() === 'AI 润色')!;
+    expect(polish.disabled).toBe(false);
+    await act(async () => polish.click());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${expectedBase}/api/defect-agent/defects/polish/stream`,
+      expect.objectContaining({ method: 'POST', body: expect.stringContaining(input.content) }),
+    );
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')?.value).toBe(input.content);
+    expect(document.body.textContent).toContain('润色结果');
+  });
 
   it('结果待确认时reset不能丢弃同一提交身份', async () => {
     calls.submit.mockImplementationOnce(async () => {

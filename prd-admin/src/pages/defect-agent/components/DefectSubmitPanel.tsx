@@ -11,6 +11,7 @@ import {
   analyzeDefectImage,
 } from '@/services';
 import { toast } from '@/lib/toast';
+import { resolveApiUrl } from '@/services/real/apiClient';
 import { DefectSeverity } from '@/services/contracts/defectAgent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
@@ -274,7 +275,7 @@ export function DefectSubmitPanel() {
 
   // AI Polish — 流式版 (使用通用 useAiPreviewStream + AiPreviewModal, 替代旧的 polishDefect 一次性 API)
   const polishStream = useAiPreviewStream({
-    url: '/api/defect-agent/defects/polish/stream',
+    url: resolveApiUrl('/api/defect-agent/defects/polish/stream'),
     onApply: (final) => {
       setContent(final);
       toast.success('AI 润色已应用');

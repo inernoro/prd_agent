@@ -18,6 +18,7 @@ import {
   previewApiLogs,
 } from '@/services';
 import { toast } from '@/lib/toast';
+import { resolveApiUrl } from '@/services/real/apiClient';
 import { useAiPreviewStream } from '@/lib/useAiPreviewStream';
 import { AiPreviewModal } from '@/components/streaming/AiPreviewModal';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -170,7 +171,7 @@ export function GlobalDefectSubmitDialog() {
   }, [showDialog, resetSubmission]);
 
   const polishStream = useAiPreviewStream({
-    url: '/api/defect-agent/defects/polish/stream',
+    url: resolveApiUrl('/api/defect-agent/defects/polish/stream'),
     onApply: (final) => {
       setContent(final);
       toast.success('AI 润色已应用');
