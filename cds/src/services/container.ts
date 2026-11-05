@@ -1711,7 +1711,8 @@ export class ContainerService {
       const runtime = await this.staticWebService().prepare({
         identity: { projectId: entry.projectId!, branchId: entry.id, profileId: profile.id },
         serviceName: service.containerName, image: artifact.image, revision: artifact.revision, config: profile.staticWeb,
-        env: this.resolveProfileRuntimeEnv(entry, profile, customEnv), check,
+        // 与容器路径一致，版本模板使用实际核验产物，不能依赖新分支尚未生成的提交缓存。
+        env: this.resolveProfileRuntimeEnv({ ...entry, pinnedCommit: undefined, githubCommitSha: artifact.revision }, profile, customEnv), check,
       });
       check();
       service.runtimeKind = 'static'; service.staticWeb = runtime; service.containerId = runtime.id; service.creationIssued = true;

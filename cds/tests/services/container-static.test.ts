@@ -26,6 +26,7 @@ function fixture() {
     fs.mkdirSync(path.join(destination, 'assets'));
     fs.writeFileSync(path.join(destination, 'index.html'), '<html><script type="module" src="/assets/index-12345678.js"></script></html>');
     fs.writeFileSync(path.join(destination, 'assets/index-12345678.js'), 'export default 42');
+    fs.writeFileSync(path.join(destination, 'runtime-config.json'), JSON.stringify({ VITE_TARGET_SHA: null, VITE_BUILD_ID: null }));
     return ok();
   });
   shell.addResponsePattern(/^docker rm -f /, () => ok());
@@ -43,6 +44,27 @@ function fixture() {
 }
 
 describe('正常部署入口的非容器前端', () => {
+  it.each([
+    { name: '全新分支尚无提交缓存', recordedCommit: undefined, pinnedCommit: undefined },
+    { name: '已有提交缓存与固定值均落后于本次产物', recordedCommit: 'c'.repeat(40), pinnedCommit: 'd'.repeat(40) },
+  ])('$name 时公开配置仍采用本次已核验产物提交', async ({ recordedCommit, pinnedCommit }) => {
+    const f = fixture();
+    const revision = 'b'.repeat(40);
+    f.entry.githubCommitSha = recordedCommit;
+    f.entry.pinnedCommit = pinnedCommit;
+    f.profile.env = { IMP_TARGET_SHA: '${CDS_COMMIT_SHA}', VITE_TARGET_SHA: '${CDS_COMMIT_SHA}' };
+    f.profile.staticWeb!.runtimeConfig = true;
+    await f.manager.runService(f.entry, f.profile, f.service, undefined, undefined, { artifactCommitSha: revision });
+    const response = await fetch(`http://127.0.0.1:${f.service.hostPort}/runtime-config`);
+    expect(response.status).toBe(200);
+    const script = await response.text();
+    expect(script).toContain(`"VITE_TARGET_SHA":"${revision}"`);
+    expect(script).toContain(`"VITE_BUILD_ID":"${revision.slice(0, 12)}"`);
+    expect(f.entry.githubCommitSha).toBe(recordedCommit);
+    expect(f.entry.pinnedCommit).toBe(pinnedCommit);
+    expect(f.shell.commands.some(command => /^docker (run|start|restart)\b/.test(command))).toBe(false);
+  });
+
   it('仅从从未启动的隔离导出器读取文件，站点停止/重启/冷恢复不走 Docker', async () => {
     const f = fixture();
     await f.manager.runService(f.entry, f.profile, f.service);
