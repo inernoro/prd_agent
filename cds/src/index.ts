@@ -34,7 +34,8 @@ import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
-import { ContainerService } from './services/container.js';
+import { ContainerService, resolveEffectiveProfile } from './services/container.js';
+import { deploymentInputBranch } from './services/deployment-input.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv, resolveBranchPublishedEntrypoints } from './services/preview-entrypoints.js';
 import { parseCdsRefs, resolveCdsRef, cdsRefResolverDepsFromState } from './services/cross-project-refs.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
@@ -3521,6 +3522,15 @@ const janitorService = new JanitorService(
   { ...config.janitor, pinnedBranches: config.scheduler?.pinnedBranches ?? [] },
   config.worktreeBase,
   undefined, undefined, janitorDocker.dockerPrune, janitorDocker.imageDocker, janitorDocker.orphanWorktreeFs,
+  () => branchOperationCoordinator.getDeploymentImageReferences((request, input) => {
+    const branch = stateService.getBranch(request.branchId);
+    if (!branch) throw new Error('在途部署归属尚未确认，暂停本轮镜像回收');
+    const captured = deploymentInputBranch(input, branch);
+    return [...input.profiles.filter(profile => !request.profileId || profile.id === request.profileId)
+      .map(profile => resolveEffectiveProfile(profile, captured).dockerImage),
+      ...(input.artifactAdmission?.artifacts || []).map(artifact => artifact.selectedImage || artifact.requestedImage)]
+      .filter((image): image is string => Boolean(image));
+  }),
 );
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
