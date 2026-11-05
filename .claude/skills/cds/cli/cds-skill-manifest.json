@@ -23,7 +23,7 @@
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
     "cds/reference/instance-catalog.json": "69b7549cf130deafb5b907921288afefa15d1ed417a080d30de845d34604a0ea",
-    "cds/reference/maintainer.md": "459e24e658bed53702e7ee6f43bdf40552f56f07396eec7fa5217726a6ce2ed7",
+    "cds/reference/maintainer.md": "f64b0b7c662ff15d297e56765c0dff8af4d4600338f124092aa23f3553ed739e",
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/scripts/refresh_manifest.py": "22a4f7d70480a7bd35bc852ea7270fc85f4d12c404c0db49d9a003f009d21e5e",
@@ -63,5 +63,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-05T21:00:10.952651+00:00"
+  "generatedAt": "2026-11-05T21:20:12.533698+00:00"
 }
