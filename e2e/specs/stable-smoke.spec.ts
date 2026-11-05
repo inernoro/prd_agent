@@ -732,9 +732,11 @@ async function cleanupRecordingIdempotencyFixture(
     ['entry', cleanupEntryId, `/api/document-store/entries/${cleanupEntryId}`],
     ...[...new Set(deferredRunIds)].map(id => [`run:${id}`, id, `/api/document-store/agent-runs/${id}`]),
   ].filter(([, id]) => id).map(([kind, id, path]) => ({ kind, id, path, readbackStatus: receipt[`${kind}ReadbackStatus`] }));
-  if (resources.length) await testInfo.attach('stable-smoke-cleanup-receipt', {
-    body: JSON.stringify({ schemaVersion: 1, inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry, resources, errors: safeErrors }), contentType: 'application/json',
-  });
+  if (resources.length) {
+    const canonicalReceipt = { schemaVersion: 1, inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry, resources, errors: safeErrors };
+    persistCleanupResourceEvidence(canonicalReceipt);
+    await testInfo.attach('stable-smoke-cleanup-receipt', { body: JSON.stringify(canonicalReceipt), contentType: 'application/json' });
+  }
   if (errors.length) throw Error(`录音幂等测试清理未闭环：${safeErrors.join('；')}`);
 }
 
@@ -6404,11 +6406,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test('[REC-010] 录音分片重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
+    const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+    const journalScope = { inspectionRunId, environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry };
+    const saveCreated = async (name: string, body: Record<string, unknown>, operationId: string) => {
+      persistCreatedResourceEvidence(name, { ...body, inspectionRunId }, journalScope, undefined, operationId);
+      await testInfo.attach(name, { body: JSON.stringify({ ...body, inspectionRunId }), contentType: 'application/json' });
+    };
     let storeId = '';
     let sessionId = '';
     let entryId = '';
     const deferredRunIds: string[] = [];
     try {
+      persistResourceCreationIntent('store', journalScope);
       const createStore = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: {
@@ -6418,17 +6427,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         },
       });
       storeId = (await readEnvelope<{ id: string }>(createStore)).id;
-      await testInfo.attach('recording-idempotency-store-created', {
-        body: JSON.stringify({ storeId }), contentType: 'application/json',
-      });
+      await saveCreated('recording-idempotency-store-created', { storeId }, 'store');
+      persistResourceCreationIntent('session', journalScope);
       const started = await page.request.post(`/api/document-store/stores/${storeId}/recording-uploads`, {
         headers: authHeaders(token),
         data: { fileName: `${requiredEnv('STABLE_SMOKE_RUN_ID')}.m4a`, mimeType: 'audio/mp4' },
       });
       sessionId = (await readEnvelope<{ sessionId: string }>(started)).sessionId;
-      await testInfo.attach('recording-idempotency-session-created', {
-        body: JSON.stringify({ storeId, sessionId }), contentType: 'application/json',
-      });
+      await saveCreated('recording-idempotency-session-created', { storeId, sessionId }, 'session');
 
       const midpoint = Math.ceil(speechFixture.length / 2);
       const chunks = [speechFixture.subarray(0, midpoint), speechFixture.subarray(midpoint)];
@@ -6453,24 +6459,22 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       expect((await readEnvelope<{ duplicate: boolean }>(duplicate)).duplicate).toBe(true);
 
+      persistResourceCreationIntent('complete-first', journalScope);
       const firstComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
         headers: authHeaders(token),
       });
       const first = await readEnvelope<{ entry: { id: string }; sessionId: string; deferredTranscriptionRunId?: string | null }>(firstComplete);
       entryId = first.entry.id;
       if (typeof first.deferredTranscriptionRunId === 'string' && first.deferredTranscriptionRunId) deferredRunIds.push(first.deferredTranscriptionRunId);
-      await testInfo.attach('recording-idempotency-entry-created', {
-        body: JSON.stringify({ storeId, sessionId, entryId, deferredTranscriptionRunId: first.deferredTranscriptionRunId ?? null }), contentType: 'application/json',
-      });
+      await saveCreated('recording-idempotency-entry-created', { storeId, sessionId, entryId, deferredTranscriptionRunId: first.deferredTranscriptionRunId ?? null }, 'complete-first');
       expect(first.sessionId).toBe(sessionId);
+      persistResourceCreationIntent('complete-second', journalScope);
       const secondComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
         headers: authHeaders(token),
       });
       const second = await readEnvelope<{ entry: { id: string }; reused: boolean; deferredTranscriptionRunId?: string | null }>(secondComplete);
       if (typeof second.deferredTranscriptionRunId === 'string' && second.deferredTranscriptionRunId) deferredRunIds.push(second.deferredTranscriptionRunId);
-      await testInfo.attach('recording-idempotency-second-complete', {
-        body: JSON.stringify({ storeId, sessionId, entryId: second.entry.id, deferredTranscriptionRunId: second.deferredTranscriptionRunId ?? null }), contentType: 'application/json',
-      });
+      await saveCreated('recording-idempotency-second-complete', { storeId, sessionId, entryId: second.entry.id, deferredTranscriptionRunId: second.deferredTranscriptionRunId ?? null }, 'complete-second');
       assertRecordingIdempotencyRuns(first.deferredTranscriptionRunId, second.deferredTranscriptionRunId);
       expect(second.entry.id).toBe(first.entry.id);
       expect(second.reused).toBe(true);

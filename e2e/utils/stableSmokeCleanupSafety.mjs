@@ -159,6 +159,13 @@ export function persistCleanupResourceEvidence(receipt, sharedPath = sharedClean
   if (!validCleanupReceipt(receipt, scope)) return;
   appendResourceEvent(scope, { event: 'readback', resources: receipt.resources.map(({ id, path, readbackStatus }) => ({ id, path, readbackStatus })) }, sharedPath);
 }
+function validJournalResource({ id, path }) {
+  return /^\/api\/[a-z0-9/-]+$/.test(path || '') && (
+    /^[a-f0-9]{32}$/.test(id || '')
+    || (/^recording-completed-[a-f0-9]{32}$/.test(id || '') && path === `/api/document-store/entries/${id}`)
+    || (/^recording-archive-transcribe-[a-f0-9]{32}$/.test(id || '') && path === `/api/document-store/agent-runs/${id}`)
+  );
+}
 export function readResourceJournalBlocker({ environment, sharedPath = sharedCleanupSafetyPath }) {
   const root = resolve(dirname(sharedPath), 'resource-journals');
   if (!existsSync(root)) return undefined;
@@ -184,7 +191,7 @@ export function readResourceJournalBlocker({ environment, sharedPath = sharedCle
           if (!operations.delete(event.operationId)) throw Error('创建回执没有对应意图');
         }
         for (const resource of event.resources) {
-          if (!/^[a-f0-9]{32}$/.test(resource.id || '') || !/^\/api\/[a-z0-9/-]+$/.test(resource.path || '')) throw Error('资源身份无效');
+          if (!validJournalResource(resource)) throw Error('资源身份无效');
           if (event.event === 'created') outstanding.set(resource.path, resource.id);
           else if (resource.readbackStatus === 404 && outstanding.get(resource.path) === resource.id) outstanding.delete(resource.path);
         }
@@ -231,6 +238,7 @@ export function knownCreatedResources(attachments, inspectionRunId) {
     'recording-idempotency-store-created': [['storeId', '/api/document-store/stores/']],
     'recording-idempotency-session-created': [['storeId', '/api/document-store/stores/'], ['sessionId', '/api/document-store/recording-uploads/']],
     'recording-idempotency-entry-created': [['storeId', '/api/document-store/stores/'], ['sessionId', '/api/document-store/recording-uploads/'], ['entryId', '/api/document-store/entries/'], ['deferredTranscriptionRunId', '/api/document-store/agent-runs/', '', true]],
+    'recording-idempotency-second-complete': [['storeId', '/api/document-store/stores/'], ['sessionId', '/api/document-store/recording-uploads/'], ['entryId', '/api/document-store/entries/'], ['deferredTranscriptionRunId', '/api/document-store/agent-runs/', '', true]],
     'recording-idempotency-second-complete': [['storeId', '/api/document-store/stores/'], ['sessionId', '/api/document-store/recording-uploads/'], ['entryId', '/api/document-store/entries/'], ['deferredTranscriptionRunId', '/api/document-store/agent-runs/', '', true]],
     'default-white-peach-actual-request': [['runId', '/api/visual-agent/image-gen/runs/']],
     'jpeg-actual-ui-request': [['runId', '/api/visual-agent/image-gen/runs/']],

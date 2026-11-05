@@ -206,4 +206,6 @@ REG-file-001 的空文件子判据必须从首页进入知识库、使用真实�
 
 2026-11-04 同一 REG-stsmk-cleanup-circuit-001 补充云端路径绑定：允许STABLE_SMOKE_CLEANUP_SAFETY_PATH显式指向云端可写的原fuse副本，未设置时保留旧默认路径。SIGKILL子进程实际通过该环境绑定落账并回读，不需要改HOME/CODEX_HOME或本地自动化，不把文件路径作为跨机器租约。原active状态及未知任务仍不核销。
 
+2026-11-05 同一 REG-stsmk-cleanup-circuit-001 / 原 REC-010 补齐重复完成旅程：库、会话及两次complete分别先登记意图，再在响应后立即保存各自条目和转录run；第二次响应丢失时，第一次精确run仍可恢复且原未知意图不能被已知资源404解除。账本只接受固定API路径绑定的recording-completed及recording-archive-transcribe编号，原session归属由创建回执白名单核对；独立清理回执在最终reporter前持久化。原函数体离线回归和原REC010清理检查真实消费，保留两个旧红复现结果；不增加业务调用，不解除10月28日原fuse，原录音、完整业务与产品发布验收仍未执行。
+
 2026-11-04 原 REG-stsmk-report-risk-001 补充完整历史接续判据：STABLE_SMOKE_MEMORY_PATH显式绑定同一工作池，规划读取、预览与三个真实回填阶段一致，不被自定义output-root切成空池；源原件独立只读，工作副本有版本校验。子进程实际读取旧事件和4项verified，回填后仍保留原值；云端收到完整revision45后另实读31/127/157/1679/21及4 verified。仅文件接续与工具判据，不据此解除清理fuse或宣布正式业务恢复。

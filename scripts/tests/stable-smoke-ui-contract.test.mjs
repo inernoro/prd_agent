@@ -206,9 +206,10 @@ test('REG-stsmk-account-scope-001 REC010原case真实完成前缀登记两次run
     const page = { request: { post: async path => { assert.equal(path, '/api/document-store/recording-uploads/own-session/complete'); return complete(); }, get: async path => { assert.equal(path, '/api/document-store/stores/own-store/entries?all=true&pageSize=500'); return { items: [{ id: 'own-entry', storeId: 'own-store' }], total: duplicate ? 2 : 1 }; } } };
     const expectValue = value => ({ toBe: expectedValue => assert.equal(value, expectedValue), toBeTruthy: () => assert.ok(value), toHaveLength: length => assert.equal(value.length, length) });
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'readEnvelope', 'authHeaders', 'expect', 'assertRecordingIdempotencyRuns', prefix);
+    const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'readEnvelope', 'authHeaders', 'expect', 'assertRecordingIdempotencyRuns', 'saveCreated', 'persistResourceCreationIntent', 'journalScope', prefix);
     const action = () => execute(page, 'offline-only', 'own-store', 'own-session', '', ids,
-      { attach: async (name, value) => attachments.push({ name, value: JSON.parse(value.body) }) }, async response => response, () => ({}), expectValue, recordingTools.assertRecordingIdempotencyRuns);
+      { attach: async (name, value) => attachments.push({ name, value: JSON.parse(value.body) }) }, async response => response, () => ({}), expectValue, recordingTools.assertRecordingIdempotencyRuns,
+      async (name, value) => attachments.push({ name, value }), () => {}, {});
     if (expected) await action(); else await assert.rejects(action);
     if (firstId) assert.ok(ids.includes(firstId), '首次真实返回的run立即登记');
     assert.ok(attachments.some(item => item.value.deferredTranscriptionRunId === firstId));
@@ -986,6 +987,8 @@ function recordingCleanupFixture({ residual = '', readThrows = '', archiveStatus
   const info = { testId: 'fixture-test', retry: 0, attach: async (name, attachment) => {
     const body = JSON.parse(attachment.body);
     if (name === 'stable-smoke-cleanup-receipt') {
+      assert.equal(calls.at(-1)?.method, 'PERSIST', '清理回执必须先持久化，再交给可能中断的reporter');
+      assert.deepEqual(calls.at(-1).value, body);
       assert.equal(body.resources.length, missingRun ? 3 : 4);
       for (const row of body.resources) assert.equal(row.readbackStatus, receipts[0][`${row.kind}ReadbackStatus`]);
       assert.deepEqual(body.errors, receipts[0].errors);
@@ -994,11 +997,16 @@ function recordingCleanupFixture({ residual = '', readThrows = '', archiveStatus
     assert.equal(name, 'recording-idempotency-cleanup-receipt'); receipts.push(body);
   } };
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'retryTransientTransport', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'requiredEnv', 'redactStableSmokeDiagnosticText', 'waitForRecordingIdempotencySettlement', 'readEnvelope', body);
+  const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'retryTransientTransport', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'requiredEnv', 'redactStableSmokeDiagnosticText', 'waitForRecordingIdempotencySettlement', 'readEnvelope', 'persistCleanupResourceEvidence', body);
   const action = () => execute(page, 'offline-only', 'own-store', 'own-session', 'own-entry', missingRun ? [] : ['own-run'], info,
     async (_label, operation) => operation(), () => ({}), 100, () => 'stsmk-own-run', redactStableSmokeDiagnosticText,
     options => { let clock = 0; return recordingTools.waitForRecordingIdempotencySettlement({ ...options, timeoutMs: 3, intervalMs: 1, now: () => clock, sleep: async ms => { clock += ms; } }); },
-    async response => { assert.equal(response.status(), 200); return (await response.json()).data; });
+    async response => { assert.equal(response.status(), 200); return (await response.json()).data; }, value => {
+      assert.equal(value.schemaVersion, 1);
+      assert.equal(value.testId, info.testId);
+      assert.equal(value.retry, info.retry);
+      calls.push({ method: 'PERSIST', value });
+    });
   return { calls, receipts, paths, action, page, info, execute };
 }
 

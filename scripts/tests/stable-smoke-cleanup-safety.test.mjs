@@ -62,6 +62,76 @@ test('REG-stsmk-cleanup-circuit-001 半行或错归属账本failclosed，白名�
   assert.match(safety.readResourceJournalBlocker({ environment: 'cds', sharedPath: options.sharedPath }).reason, /损坏/);
 });
 
+test('REG-stsmk-cleanup-circuit-001 真实录音确定性entry和run可恢复且只能由原路径404核销', t => {
+  const options = fixture(t), scope = { inspectionRunId: 'stsmk-rec010-journal', environment: 'cds', testId: 'REC-010', retry: 0 };
+  const storeId = 'a'.repeat(32), sessionId = 'b'.repeat(32);
+  const entryId = `recording-completed-${sessionId}`, deferredTranscriptionRunId = `recording-archive-transcribe-${sessionId}`;
+  safety.persistResourceCreationIntent('complete-first', scope, options.sharedPath);
+  safety.persistCreatedResourceEvidence('recording-idempotency-entry-created', { storeId, sessionId, entryId, deferredTranscriptionRunId }, scope, options.sharedPath, 'complete-first');
+  safety.persistResourceCreationIntent('complete-second', scope, options.sharedPath);
+  safety.persistCreatedResourceEvidence('recording-idempotency-second-complete', { storeId, sessionId, entryId, deferredTranscriptionRunId }, scope, options.sharedPath, 'complete-second');
+  assert.deepEqual(new Set(safety.readResourceJournalBlocker({ ...options, environment: 'cds' }).resourceIds), new Set([storeId, sessionId, entryId, deferredTranscriptionRunId]));
+  const rows = [
+    { kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` },
+    { kind: 'session', id: sessionId, path: `/api/document-store/recording-uploads/${sessionId}` },
+    { kind: 'entry', id: entryId, path: `/api/document-store/entries/${entryId}` },
+    { kind: `run:${deferredTranscriptionRunId}`, id: deferredTranscriptionRunId, path: `/api/document-store/agent-runs/${deferredTranscriptionRunId}` },
+  ].map(row => ({ ...row, readbackStatus: 404 }));
+  const receipt = { schemaVersion: 1, ...scope, errors: [], resources: rows };
+  safety.persistCleanupResourceEvidence({ ...receipt, resources: rows.map(row => row.id === entryId ? { ...row, path: `/api/document-store/agent-runs/${entryId}` } : row) }, options.sharedPath);
+  assert.ok(safety.readResourceJournalBlocker({ ...options, environment: 'cds' }));
+  safety.persistCleanupResourceEvidence(receipt, options.sharedPath);
+  assert.equal(safety.readResourceJournalBlocker({ ...options, environment: 'cds' }), undefined);
+});
+
+test('REG-stsmk-cleanup-circuit-001 执行原REC010两次完成路径，第二次响应丢失仍保留第一次run与未知意图', async t => {
+  const options = fixture(t), inspectionRunId = 'stsmk-rec010-response-loss';
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const start = source.indexOf("  test('[REC-010]");
+  const block = source.slice(start, source.indexOf('\n  });\n  });', start));
+  const callback = (block.slice(block.indexOf('async (')) + '\n}')
+    .replace('name: string, body: Record<string, unknown>, operationId: string', 'name, body, operationId')
+    .replace('const deferredRunIds: string[]', 'const deferredRunIds')
+    .replace(/readEnvelope<[^]*?>\(/g, 'readEnvelope(');
+  const storeId = 'c'.repeat(32), sessionId = 'd'.repeat(32), entryId = `recording-completed-${sessionId}`;
+  const runId = `recording-archive-transcribe-${sessionId}`;
+  const scope = { inspectionRunId, environment: 'cds', testId: 'actual-REC-010', retry: 0 };
+  let completeCalls = 0, nextChunk = 0, cleanupCalls = 0;
+  const attachments = [];
+  const bindings = {
+    test: { setTimeout() {} }, requiredEnv: name => name === 'STABLE_SMOKE_RUN_ID' ? inspectionRunId : 'cds',
+    loginAndReadToken: async () => 'fixture-token', authHeaders: () => ({}), speechFixture: Buffer.from('offline-audio'),
+    readEnvelope: async body => body,
+    expect: actual => ({ toBe: expected => assert.equal(actual, expected), toBeGreaterThan: expected => assert.ok(actual > expected) }),
+    redactStableSmokeDiagnosticText: text => text,
+    persistResourceCreationIntent: (operation, currentScope) => safety.persistResourceCreationIntent(operation, currentScope, options.sharedPath),
+    persistCreatedResourceEvidence: (name, body, currentScope, _path, operation) => safety.persistCreatedResourceEvidence(name, body, currentScope, options.sharedPath, operation),
+    cleanupRecordingIdempotencyFixture: async (_page, _token, store, session, entry, runs) => {
+      cleanupCalls++;
+      assert.deepEqual({ store, session, entry, runs }, { store: storeId, session: sessionId, entry: entryId, runs: [runId] });
+    },
+  };
+  const execute = new Function(...Object.keys(bindings), `return (${callback});`)(...Object.values(bindings));
+  await assert.rejects(execute({ page: { request: {
+    post: async path => {
+      if (path.endsWith('/stores')) return { id: storeId };
+      if (path.endsWith('/recording-uploads')) return { sessionId };
+      if (path.includes('/chunks/')) return path.endsWith('/0') && nextChunk === 2 ? { duplicate: true } : { nextChunkIndex: ++nextChunk, uploadedBytes: 4 };
+      if (path.endsWith('/complete')) {
+        if (++completeCalls === 2) throw Error('second-response-lost');
+        return { entry: { id: entryId }, sessionId, deferredTranscriptionRunId: runId };
+      }
+      throw Error('unexpected write');
+    }, get: async () => ({ nextChunkIndex: nextChunk }),
+  } } }, { ...scope, attach: async (name, body) => attachments.push({ name, ...body }) }), /second-response-lost/);
+  assert.equal(cleanupCalls, 1);
+  const blocker = safety.readResourceJournalBlocker({ ...options, environment: 'cds' });
+  assert.ok(blocker?.resourceIds.includes(runId), 'reporter缺失仍有第一次精确run');
+  const rows = safety.knownCreatedResources(attachments, inspectionRunId).map(row => ({ ...row, kind: row.id === entryId ? 'entry' : row.id === runId ? `run:${runId}` : 'resource', readbackStatus: 404 }));
+  safety.persistCleanupResourceEvidence({ schemaVersion: 1, ...scope, errors: [], resources: rows }, options.sharedPath);
+  assert.ok(safety.readResourceJournalBlocker({ ...options, environment: 'cds' }), '第一次资源全404不能核销第二次未知创建');
+});
+
 const referenceController = readFileSync(new URL('../../prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs', import.meta.url), 'utf8');
 const referenceContract = readFileSync(new URL('../../prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs', import.meta.url), 'utf8');
 const referenceSource = (controller = referenceController, contract = referenceContract) => (_revision, path) => path.endsWith('/ImageMasterController.cs') ? controller : contract;
