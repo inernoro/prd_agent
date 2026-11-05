@@ -4106,6 +4106,8 @@ janitorService.setRemoveFn(async (slug: string) => {
         continue;
       }
       for (const [profileId, svc] of Object.entries(branch.services)) {
+        // 静态站已经由独立恢复流程核对，不能因 Docker 清单中没有应用容器而误标丢失。
+        if (servingRuntime(svc)?.staticWeb) continue;
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
         if (found) {
