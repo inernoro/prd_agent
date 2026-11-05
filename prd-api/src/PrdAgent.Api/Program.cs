@@ -557,6 +557,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductClaimWebhookWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductScheduledNotificationWorker>();
 builder.Services.AddHttpClient("ProductAnnouncements")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
