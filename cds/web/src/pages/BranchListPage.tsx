@@ -2118,10 +2118,6 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           : { status: 'error', message });
         return;
       }
-      if (projectResult.status === 'rejected' && branchesResult.value.branches.length === 0) {
-        setState({ status: 'error', message: `项目读取失败，请刷新重试。${readableError(projectResult.reason)}` });
-        return;
-      }
       const branchesRes = branchesResult.value;
       const project = projectResult.status === 'fulfilled'
         ? projectResult.value
@@ -2145,6 +2141,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       );
       let needsEmptyRecheck = false;
       setState((prev) => {
+        if (prev.status !== 'ok' && projectResult.status === 'rejected' && branchesRes.branches.length === 0) {
+          return { status: 'error', message: `项目读取失败，请刷新重试。${readableError(projectResult.reason)}` };
+        }
         const base: OkLoadState = prev.status === 'ok'
           ? prev
           : {

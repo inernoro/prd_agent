@@ -39,11 +39,11 @@ function callback(name: string) {
 }
 
 // 执行真实页面回调；HTTP结果与React状态setter是边界夹具，不代浏览器验收。
-async function runLoad(name: 'refresh' | 'confirmEmptyBranchList', project: unknown, branches: unknown[] = [], warm = false) {
+async function runLoad(name: 'refresh' | 'confirmEmptyBranchList', project: unknown, branches: unknown[] = [], warm: boolean | 'empty' = false) {
   const old = { id: 'kept', projectId: 'current-project', status: 'running' };
   let state: any = warm ? {
-    status: 'ok', project: { id: 'current-project', name: '原项目', branchCount: 1 },
-    branches: [old], lastKnownGoodBranches: [old], remoteBranches: [],
+    status: 'ok', project: { id: 'current-project', name: '原项目', branchCount: warm === 'empty' ? 0 : 1 },
+    branches: warm === 'empty' ? [] : [old], lastKnownGoodBranches: warm === 'empty' ? [] : [old], remoteBranches: [],
   } : { status: 'loading' };
   const requests: string[] = [];
   const ctx: any = {
@@ -96,6 +96,20 @@ describe('真实分支页项目读取回调', () => {
     const { state } = await runLoad('refresh', new Error('offline'));
     expect(state.status).toBe('error');
     expect(state.message).toContain('项目读取失败');
+  });
+  it('临时元信息失败与空列表不能抹掉已确认分支', async () => {
+    const { state } = await runLoad('refresh', new ApiError(502, {}, 'gateway', undefined, true), [], true);
+    expect(state.status).toBe('ok');
+    expect(state.branches.map((b: any) => b.id)).toEqual(['kept']);
+    expect(state.lastKnownGoodBranches.map((b: any) => b.id)).toEqual(['kept']);
+    expect(state.projectWarning).toContain('gateway');
+  });
+  it('临时元信息失败仍保留已确认的真实空项目', async () => {
+    const { state } = await runLoad('refresh', new ApiError(502, {}, 'gateway', undefined, true), [], 'empty');
+    expect(state.status).toBe('ok');
+    expect(state.branches).toEqual([]);
+    expect(state.lastKnownGoodBranches).toEqual([]);
+    expect(state.projectWarning).toContain('gateway');
   });
   it('真实项目成功读取仍正常显示确认的空项目', async () => {
     const { state } = await runLoad('refresh', { id: 'current-project', name: '真实项目', branchCount: 0 });
