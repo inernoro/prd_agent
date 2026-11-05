@@ -10,6 +10,7 @@ import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.
 import { buildCdsSkillManifest } from '../services/cds-skill-manifest.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
+import { remoteProxyOwner, readOwnedRemoteChunk, type RemoteDeploymentIdentity } from '../services/remote-deployment-owner.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
 import { replaceDirectoriesAtomically, type AtomicDirectoryReplacement } from '../services/atomic-directory-replacement.js';
 import { SelfMaintenanceRuntime, type SelfMaintenanceOwner, type SelfMaintenanceSource } from '../services/self-maintenance-runtime.js';
@@ -3919,6 +3920,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     context: {
       requestId?: string | null;
       operationId?: string | null;
+      lease?: BranchOperationLease | null;
       actor?: string | null;
       trigger?: string | null;
       deploymentRunId?: string;
@@ -3937,6 +3939,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       failDeploymentRun(context.deploymentRunId, message, 'storage-preflight');
       res.status(409).json({ error: message });
       return 'failed';
+    }
+    if (!context.lease || !context.deploymentRunId || !branchOperationCoordinator) {
+      res.status(409).json({ error: '远端部署缺少原操作资格，旧服务保持，请重新部署' }); return 'failed';
+    }
+    const owner: RemoteDeploymentIdentity = { projectId: entry.projectId || 'default', branchId: entry.id,
+      executorId: executor.id, deploymentRunId: context.deploymentRunId,
+      operationId: context.lease.operationId, operationGeneration: context.lease.generation };
+    const remoteHeaders = { 'Content-Type': 'application/json', ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}) };
+    const ownerGuard = remoteProxyOwner({ owner, entry, state: stateService, coordinator: branchOperationCoordinator,
+      lease: context.lease, url: `http://${executor.host}:${executor.port}/exec/deployment-owner`, headers: remoteHeaders });
+    try { await ownerGuard.claim(); ownerGuard.assertCurrent(); }
+    catch {
+      await ownerGuard.close(true);
+      failDeploymentRun(context.deploymentRunId, '执行器原代次能力未确认，旧服务保留；请升级执行器后重新部署', 'remote-owner');
+      res.status(409).json({ error: '执行器原代次能力未确认，旧服务保留；请升级执行器后重新部署' }); return 'failed';
     }
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
@@ -4000,6 +4017,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...deriveCommitMeta(entry),
     };
     let proxyHasError = false;
+    let remoteCompleted = false;
     // 远端 error 事件携带的失败原因（executor SSE error.message），供 finally 把分支态从派发时的 building
     // 落到 error 时回填 errorMessage（Bugbot「Remote deploy error stuck building」）。
     let proxyErrorMessage: string | null = null;
@@ -4049,20 +4067,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       requestId: context.requestId || null,
       operationId: context.operationId || null,
       deploymentRunId: context.deploymentRunId || null,
+      operationGeneration: owner.operationGeneration,
+      executorId: executor.id,
+      admissionId: ownerGuard.admissionId(),
       actor: context.actor || null,
       trigger: context.trigger || 'manual',
     };
 
     const upstreamUrl = `http://${executor.host}:${executor.port}/exec/deploy`;
     try {
+      ownerGuard.assertCurrent();
       const upstream = await fetch(upstreamUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
-        },
+        headers: remoteHeaders,
         body: JSON.stringify(payload),
+        signal: ownerGuard.signal,
       });
+      ownerGuard.assertCurrent();
 
       if (!upstream.ok || !upstream.body) {
         const errText = await (upstream.text ? upstream.text() : Promise.resolve('(no body)'));
@@ -4099,6 +4120,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return { frames: out, tail: rest };
       };
       const ingestFrame = (frame: string): void => {
+        ownerGuard.assertCurrent();
         if (!frame.trim()) return;
         let eventName = 'message';
         const dataLines: string[] = [];
@@ -4111,6 +4133,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
+        if (eventName === 'phase-wait') {
+          deploymentRunService?.observeRemoteExecutionWait(owner, parsed);
+          if (res.locals.cdsScopedHuman) sendSSE(res, eventName, parsed);
+          return;
+        }
+        if (eventName === 'complete') remoteCompleted = true;
         // Reuse complete frames already parsed for history; never forward raw
         // executor network chunks to members, including split credentials.
         if (res.locals.cdsScopedHuman) sendSSE(res, eventName, parsed);
@@ -4233,7 +4261,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       };
 
       while (true) {
-        const { done, value } = await reader.read();
+        ownerGuard.assertCurrent();
+        const { done, value } = await readOwnedRemoteChunk(reader, ownerGuard.signal);
+        ownerGuard.assertCurrent();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
@@ -4246,9 +4276,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try {
           if (!res.locals.cdsScopedHuman) res.write(chunk);
         } catch {
-          // Client disconnected mid-stream — stop piping; the remote will
-          // continue its build independently of this pipe going away.
-          break;
+          // 浏览器断开不结束服务器的原代次读取与收尾。
         }
       }
       // If the upstream ended mid-event (rare), drain the final bytes.
@@ -4273,6 +4301,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const frame of drained.frames) ingestFrame(frame);
         if (drained.tail.trim()) ingestFrame(drained.tail);
       }
+      if (!remoteCompleted) throw new Error('执行器没有返回完整部署回执，请查看运行记录后重新部署');
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
@@ -4318,6 +4347,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
     } catch (err) {
+      ownerGuard.assertCurrent();
       const msg = (err as Error).message;
       const errEvent = { message: `派发到执行器失败: ${msg}` };
       sendSSE(res, 'error', errEvent);
@@ -4327,6 +4357,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
       stateService.save();
     } finally {
+      try {
+      ownerGuard.assertCurrent();
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
@@ -4394,6 +4426,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: context.actor || null,
         trigger: context.trigger || null,
       });
+      ownerGuard.assertCurrent();
       if (flushResult !== 'flushed') {
         proxyHasError = true;
         if (!entry.errorMessage) entry.errorMessage = branchStateFlushFailureMessage(flushResult, '远端部署执行完成');
@@ -4409,7 +4442,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           commitSha: entry.githubCommitSha,
         });
       }
-      try { res.end(); } catch { /* ignore */ }
+      } finally {
+        deploymentRunService?.clearRemoteExecutionWait(owner.deploymentRunId);
+        await ownerGuard.close(proxyHasError);
+        try { res.end(); } catch { /* ignore */ }
+      }
     }
     return proxyHasError ? 'failed' : 'completed';
   }
@@ -13716,6 +13753,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         branchOperationFinalStatus = await proxyDeployToExecutor(remoteTarget, entry, res, {
           requestId: requestId || null,
+          lease: branchOperationLease,
           operationId: branchOperationLease?.operationId || null,
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
@@ -13739,7 +13777,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
-        throw err;
+        const message = branchOperationFinalStatus === 'cancelled' ? '原部署已结束，请查看最新任务' : '远端部署未完成，请查看运行记录';
+        if (branchOperationFinalStatus === 'failed') failDeploymentRun(deploymentRun?.id, message, 'remote-proxy');
+        if (!res.headersSent) res.status(branchOperationFinalStatus === 'cancelled' ? 409 : 500).json({ error: message });
+        else if (!res.writableEnded && !res.destroyed) { sendSSE(res, 'error', { message, status: branchOperationFinalStatus }); try { res.end(); } catch { /* 浏览器已经断开。 */ } }
       } finally {
         completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
