@@ -39,7 +39,19 @@ public partial class WebPagesController
     {
         var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
         var origins = config.GetSection("Cors:AllowedOrigins").Get<string[]>()?.ToList() ?? new List<string>();
-        origins.Add($"{Request.Scheme}://{Request.Host}");
+        // TLS 在前置代理终止时内部请求为 HTTP；同一站点域名的 HTTPS 链接仍属于本站。
+        origins.Add($"http://{Request.Host}");
+        origins.Add($"https://{Request.Host}");
+        // CDS 会改写内部 Host，原外部域名由代理透传；这只用于识别链接，不授予文件访问权。
+        var publicHost = Request.Headers["X-Forwarded-Host"].FirstOrDefault()?.Split(',')[0].Trim();
+        if (!string.IsNullOrWhiteSpace(publicHost) && publicHost.Length <= 256
+            && Uri.TryCreate($"https://{publicHost}", UriKind.Absolute, out var publicOrigin)
+            && publicOrigin.UserInfo.Length == 0 && publicOrigin.AbsolutePath == "/"
+            && publicOrigin.Query.Length == 0 && publicOrigin.Fragment.Length == 0)
+        {
+            origins.Add(publicOrigin.GetLeftPart(UriPartial.Authority));
+            origins.Add($"http://{publicOrigin.Authority}");
+        }
         origins.AddRange(config.GetSection("WebHosting:RelatedDocumentOrigins").Get<string[]>() ?? Array.Empty<string>());
         var ssoOrigin = await _db.AppSettings.Find(x => x.Id == "global").Project(x => x.MiduoSsoRedirectUri).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(ssoOrigin)) origins.Add(ssoOrigin);
