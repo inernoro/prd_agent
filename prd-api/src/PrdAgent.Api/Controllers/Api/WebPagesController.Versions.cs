@@ -30,10 +30,10 @@ public partial class WebPagesController
 
     [AllowAnonymous]
     [HttpGet("shares/view/{token}/revisions")]
-    public async Task<IActionResult> ListSharedReviewVersions(string token, [FromQuery] string? password)
+    public async Task<IActionResult> ListSharedReviewVersions(string token, [FromQuery] string? password, [FromQuery] string? siteId = null)
     {
         var viewer = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
-        var access = await _siteService.ResolveShareSiteAsync(token, null, password, viewer, CancellationToken.None);
+        var access = await _siteService.ResolveShareSiteAsync(token, siteId, password, viewer, CancellationToken.None);
         if (access.Error != null)
             return MapCommentError(access.Error, access.HttpStatus, access.ErrorCode, access.RetryAfterSeconds);
         return access.Site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享内无站点"))
@@ -42,10 +42,10 @@ public partial class WebPagesController
 
     [AllowAnonymous]
     [HttpGet("shares/view/{token}/revisions/{revisionId}/preview")]
-    public async Task<IActionResult> PreviewSharedReviewVersion(string token, string revisionId, [FromQuery] string? password)
+    public async Task<IActionResult> PreviewSharedReviewVersion(string token, string revisionId, [FromQuery] string? password, [FromQuery] string? siteId = null)
     {
         var viewer = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
-        var access = await _siteService.ResolveShareSiteAsync(token, null, password, viewer, CancellationToken.None);
+        var access = await _siteService.ResolveShareSiteAsync(token, siteId, password, viewer, CancellationToken.None);
         if (access.Error != null)
             return MapCommentError(access.Error, access.HttpStatus, access.ErrorCode, access.RetryAfterSeconds);
         return access.Site == null ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享内无站点"))

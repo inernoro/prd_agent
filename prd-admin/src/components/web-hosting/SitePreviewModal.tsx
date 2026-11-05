@@ -1,3 +1,4 @@
+import RelatedDocumentsBar from './RelatedDocumentsBar';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
@@ -31,6 +32,7 @@ const SRCDOC_WAIT_MS = 1500;
 interface Props {
   site: HostedSite;
   onClose: () => void;
+  onNavigateRelated?: (id: string) => void;
   onSiteVersionChanged?: (site: HostedSite) => void;
   /** 评论开关变更后回传给父组件，避免关闭再打开时从 stale site.commentsEnabled 重新初始化 */
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
@@ -52,6 +54,7 @@ interface Props {
 export default function SitePreviewModal({
   site: originalSite,
   onClose,
+  onNavigateRelated,
   onCommentsEnabledChange,
   onAskEnabledChange,
   canToggleComments = true,
@@ -219,8 +222,8 @@ export default function SitePreviewModal({
   }, [site.siteUrl, review.loading]);
 
   const handleOpenExternal = () => {
-    // 与 iframe 同源同 URL：PDF 站在新窗口里也直接给原始 PDF，和 ShareViewPage 顶栏一致
-    if (previewSource.src) window.open(previewSource.src, '_blank');
+    // 当前版在独立阅读器打开；历史版保留已授权的原版本地址，避免跳回当前版。
+    if (previewSource.src) window.open(review.historical ? previewSource.src : `/web-pages?openSite=${encodeURIComponent(originalSite.id)}`, '_blank', 'noopener,noreferrer');
   };
 
   const handleToggleCommentsEnabled = async () => {
@@ -269,6 +272,8 @@ export default function SitePreviewModal({
             </button>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
+            <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar"
+              onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
             <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)} expanded={showComments} showVersions={!originalSite.wrappedAssetType} onBubbleMode={() => { if (isMobile) setShowComments(false); }} />
             {askEnabled && !review.historical && (
               <button
@@ -329,6 +334,7 @@ export default function SitePreviewModal({
             </button>
           </div>
         </div>
+
 
         {/* 主体：iframe + 可选评论面板 */}
         <div className="relative flex-1 min-h-0 flex overflow-hidden" style={{ flexDirection: isMobile ? 'column' : 'row' }}>

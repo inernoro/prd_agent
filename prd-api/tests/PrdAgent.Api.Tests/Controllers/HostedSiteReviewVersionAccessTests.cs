@@ -12,11 +12,152 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace PrdAgent.Api.Tests.Controllers;
 
 public class HostedSiteReviewVersionAccessTests
 {
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RelatedTeamAndGroupSync_NeverExposesRestrictedSiteWhileActivityIsPending()
+    {
+        await WithReviewDb(async db =>
+        {
+            var site = ReviewSite();
+            await db.HostedSites.InsertOneAsync(site);
+            await db.WebPageGroups.InsertOneAsync(new WebPageGroup {
+                Id = "restricted", TeamId = "team", Visibility = WebPageGroupVisibility.Restricted,
+            });
+            var teams = new Mock<ITeamService>(MockBehavior.Strict);
+            teams.Setup(t => t.GetMyTeamIdsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "team" });
+            teams.Setup(t => t.GetMyWebHostingTeamRolesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string user, CancellationToken _) => new Dictionary<string, string> { ["team"] = user == "owner" ? "owner" : "viewer" });
+            var logging = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var activity = new Mock<ITeamActivityService>(MockBehavior.Strict);
+            activity.Setup(a => a.LogForTeamsAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<string>(), "owner",
+                It.IsAny<string>(), "site", "site", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns(async () => { logging.TrySetResult(true); await release.Task; throw new IOException("activity unavailable"); });
+            var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+            storage.Setup(s => s.BuildUrlForKey("current.html")).Returns("https://assets.example/current.html");
+            var service = new HostedSiteService(db, storage.Object, null!, null!, teams.Object, activity.Object, null!, null!, NullLogger<HostedSiteService>.Instance);
+            Assert.Null(await service.GetByIdAsync("site", "viewer", CancellationToken.None));
+            var syncing = service.SetSharedTeamsAndGroupAsync("site", "owner", new() { "team" }, "restricted");
+            try
+            {
+                await logging.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                var saved = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+                Assert.Equal(new[] { "team" }, saved.SharedTeamIds);
+                Assert.Equal("restricted", saved.GroupId);
+                Assert.Null(await service.GetByIdAsync("site", "viewer", CancellationToken.None));
+            }
+            finally { release.TrySetResult(true); }
+            var result = await syncing;
+            Assert.Equal("restricted", result!.GroupId);
+            Assert.Null(await service.GetByIdAsync("site", "viewer", CancellationToken.None));
+            var cleared = await service.SetSharedTeamsAndGroupAsync("site", "owner", new(), null);
+            Assert.Empty(cleared!.SharedTeamIds);
+            Assert.Null(cleared.GroupId);
+        });
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("editor")]
+    [InlineData("viewer")]
+    public async Task RelatedRestrictedGroupSync_RejectsNonOwnerBeforeAnyMembershipWrite(string role)
+    {
+        await WithReviewDb(async db =>
+        {
+            await db.HostedSites.InsertOneAsync(ReviewSite());
+            await db.WebPageGroups.InsertOneAsync(new WebPageGroup { Id = "restricted", TeamId = "team", Visibility = WebPageGroupVisibility.Restricted });
+            var teams = new Mock<ITeamService>(MockBehavior.Strict);
+            teams.Setup(t => t.GetMyWebHostingTeamRolesAsync("owner", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new Dictionary<string, string> { ["team"] = role });
+            var service = new HostedSiteService(db, null!, null!, null!, teams.Object, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.SetSharedTeamsAndGroupAsync("site", "owner", new() { "team" }, "restricted"));
+            var saved = await db.HostedSites.Find(s => s.Id == "site").FirstAsync();
+            Assert.Empty(saved.SharedTeamIds);
+            Assert.Null(saved.GroupId);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RelatedDocuments_PreserveSavedOrderAndAppendAutomaticReferences()
+    {
+        await WithReviewDb(async db =>
+        {
+            var documents = new[] { ReviewSite(), ReviewSite(), ReviewSite() };
+            documents[1].Id = "second"; documents[2].Id = "automatic";
+            await db.HostedSites.InsertManyAsync(documents);
+            await db.HostedDocumentGroups.InsertOneAsync(new HostedDocumentGroup {
+                OwnerUserId = "owner", SiteIds = new() { "second", "site" }, MainSiteId = "site",
+            });
+            await db.HostedSiteComments.InsertOneAsync(new HostedSiteComment {
+                SiteId = "second", AuthorUserId = "owner", AuthorName = "作者",
+                Content = "/web-pages?openSite=site /web-pages?openSite=automatic",
+                ContentVersion = HostedSiteCommentRules.VersionKey(documents[1].ContentVersion),
+            });
+            var service = new Mock<IHostedSiteService>(MockBehavior.Strict);
+            service.Setup(s => s.GetByIdAsync(It.IsAny<string>(), "owner", It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string id, string _, CancellationToken __) => documents.FirstOrDefault(site => site.Id == id));
+            service.Setup(s => s.CanEditSiteAsync(It.IsAny<HostedSite>(), "owner", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            using var provider = new ServiceCollection().AddSingleton<IConfiguration>(new ConfigurationBuilder().Build()).BuildServiceProvider();
+            var controller = ReviewController(service.Object, db, new Mock<IAssetStorage>(MockBehavior.Strict).Object, "owner");
+            controller.HttpContext.RequestServices = provider;
+            controller.HttpContext.Request.Host = new HostString("map.example.test");
+            var response = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await controller.GetRelatedDocuments("site")).Value);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(response.Data));
+            var items = json.RootElement.GetProperty("items").EnumerateArray().ToList();
+            Assert.Equal(new[] { "second", "site", "automatic" }, items.Select(x => x.GetProperty("Id").GetString()));
+            Assert.Equal("site", json.RootElement.GetProperty("mainSiteId").GetString());
+            Assert.False(items[2].GetProperty("isManual").GetBoolean());
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CollectionDiscussionResolution_UsesSelectedMemberAndPreservesShareBoundary()
+    {
+        await WithReviewDb(async db =>
+        {
+            var documents = new[] { ReviewSite(), ReviewSite(), ReviewSite() };
+            documents[1].Id = "second"; documents[2].Id = "outside";
+            await db.HostedSites.InsertManyAsync(documents);
+            await db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink {
+                Token = "collection", ShareType = "collection", SiteIds = new() { "site", "second" },
+                CreatedBy = "owner", Visibility = "public",
+            });
+            await db.HostedSiteComments.InsertManyAsync(documents.Select(site => new HostedSiteComment {
+                Id = "thread-" + site.Id, SiteId = site.Id, AuthorUserId = "owner", Content = "discussion",
+                ContentVersion = HostedSiteCommentRules.VersionKey(site.ContentVersion),
+            }));
+            var service = new HostedSiteService(db, null!, null!, null!, null!, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
+            var controller = ReviewController(service, db, new Mock<IAssetStorage>(MockBehavior.Strict).Object, "owner");
+            foreach (var id in new[] { "site", "second" })
+            {
+                Assert.IsType<OkObjectResult>(await controller.SetShareCommentResolved("collection", "thread-" + id, null,
+                    new SetCommentResolvedRequest { Resolved = true }, id));
+                Assert.True((await db.HostedSiteComments.Find(c => c.Id == "thread-" + id).FirstAsync()).IsResolved);
+                Assert.IsType<OkObjectResult>(await controller.SetShareCommentResolved("collection", "thread-" + id, null,
+                    new SetCommentResolvedRequest { Resolved = false }, id));
+                Assert.False((await db.HostedSiteComments.Find(c => c.Id == "thread-" + id).FirstAsync()).IsResolved);
+            }
+            // 即使是所有者，也不能借合集 token 修改不在合集中的文档或另一成员的讨论。
+            Assert.Equal(404, (await service.SetCommentResolvedByShareAsync("collection", null, "thread-outside", "owner", true, siteId: "outside")).HttpStatus);
+            Assert.Equal(404, (await service.SetCommentResolvedByShareAsync("collection", null, "thread-second", "owner", true, siteId: "site")).HttpStatus);
+            Assert.False((await db.HostedSiteComments.Find(c => c.Id == "thread-outside").FirstAsync()).IsResolved);
+            // 不传目标的旧客户端仍操作首份文档；撤销分享后不能再修改。
+            Assert.Null((await service.SetCommentResolvedByShareAsync("collection", null, "thread-site", "owner", true)).Error);
+            await db.WebPageShareLinks.UpdateOneAsync(s => s.Token == "collection", Builders<WebPageShareLink>.Update.Set(s => s.IsRevoked, true));
+            Assert.Equal(404, (await service.SetCommentResolvedByShareAsync("collection", null, "thread-second", "owner", true, siteId: "second")).HttpStatus);
+            Assert.False((await db.HostedSiteComments.Find(c => c.Id == "thread-second").FirstAsync()).IsResolved);
+        });
+    }
+
     [Theory]
     [InlineData("create-zip")]
     [InlineData("replace-zip")]

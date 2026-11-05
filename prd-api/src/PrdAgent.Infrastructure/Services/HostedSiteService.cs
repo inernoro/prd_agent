@@ -2361,6 +2361,13 @@ public class HostedSiteService : IHostedSiteService
     }
 
     public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
+        => AttachDerivedFields(await SetSharedTeamsCoreAsync(siteId, userId, teamIds, false, null, ct));
+
+    public async Task<HostedSite?> SetSharedTeamsAndGroupAsync(string siteId, string userId, List<string> teamIds, string? groupId, CancellationToken ct = default)
+        => AttachDerivedFields(await SetSharedTeamsCoreAsync(siteId, userId, teamIds, true, groupId, ct));
+
+    private async Task<HostedSite?> SetSharedTeamsCoreAsync(string siteId, string userId, List<string> teamIds,
+        bool updateGroup, string? groupId, CancellationToken ct)
     {
         // 只有 owner 能改「分享到哪些团队」（分享出去是所有权动作）
         var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
@@ -2386,11 +2393,24 @@ public class HostedSiteService : IHostedSiteService
         var sanitized = requested;
         var added = sanitized.Except(site.SharedTeamIds).ToList();
 
+        if (updateGroup && groupId != null)
+        {
+            var group = await _db.WebPageGroups.Find(g => g.Id == groupId).FirstOrDefaultAsync(ct);
+            if (group == null || !sanitized.Contains(group.TeamId))
+                throw new ArgumentException("分组不存在或不属于目标团队");
+            if (WebPageGroupAccess.IsRestricted(group)
+                && (!roles.TryGetValue(group.TeamId, out var role) || role != WebHostingRoles.Owner))
+                throw new UnauthorizedAccessException("受限分组的权限同步需要团队所有者操作");
+        }
+
+        var update = Builders<HostedSite>.Update
+            .Set(x => x.SharedTeamIds, sanitized)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (updateGroup) update = update.Set(x => x.GroupId, groupId);
+
         await _db.HostedSites.UpdateOneAsync(
-            x => x.Id == siteId,
-            Builders<HostedSite>.Update
-                .Set(x => x.SharedTeamIds, sanitized)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            x => x.Id == siteId && x.OwnerUserId == userId,
+            update,
             cancellationToken: ct);
 
         if (added.Count > 0)
@@ -2417,7 +2437,8 @@ public class HostedSiteService : IHostedSiteService
         }
 
         site.SharedTeamIds = sanitized;
-        return AttachDerivedFields(site);
+        if (updateGroup) site.GroupId = groupId;
+        return site;
     }
 
     public async Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct)
@@ -5379,15 +5400,15 @@ public class HostedSiteService : IHostedSiteService
         };
     }
 
-    public async Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default)
+    public async Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default, string? siteId = null)
     {
-        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
-        if (err != null)
-            return new SiteCommentsResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
-        if (sites.Count == 0)
+        var access = await ResolveShareSiteAsync(token, siteId, password, viewerUserId, ct);
+        if (access.Error != null)
+            return new SiteCommentsResult { Error = access.Error, HttpStatus = access.HttpStatus, ErrorCode = access.ErrorCode, RetryAfterSeconds = access.RetryAfterSeconds };
+        var site = access.Site;
+        if (site == null)
             return new SiteCommentsResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        var site = sites[0];
         var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true);
         return new SiteCommentsResult
         {
@@ -5415,18 +5436,18 @@ public class HostedSiteService : IHostedSiteService
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
         string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
-        string? revisionId = null, string? expectedContentVersion = null)
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null)
     {
         if (string.IsNullOrWhiteSpace(authorUserId))
             return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
 
-        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, authorUserId, ct);
-        if (err != null)
-            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
-        if (sites.Count == 0)
+        var access = await ResolveShareSiteAsync(token, siteId, password, authorUserId, ct);
+        if (access.Error != null)
+            return new AddCommentResult { Error = access.Error, HttpStatus = access.HttpStatus, ErrorCode = access.ErrorCode, RetryAfterSeconds = access.RetryAfterSeconds };
+        if (access.Site == null)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
-        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion);
+        return await InsertCommentAsync(access.Site, authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct, anchor, parentId, revisionId, expectedContentVersion);
     }
 
     public async Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
@@ -5439,15 +5460,15 @@ public class HostedSiteService : IHostedSiteService
     }
 
     public async Task<AddCommentResult> SetCommentResolvedByShareAsync(string token, string? password,
-        string commentId, string userId, bool resolved, CancellationToken ct = default)
+        string commentId, string userId, bool resolved, CancellationToken ct = default, string? siteId = null)
     {
-        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, userId, ct);
-        if (err != null)
-            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus,
-                ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
-        if (sites.Count == 0)
+        var access = await ResolveShareSiteAsync(token, siteId, password, userId, ct);
+        if (access.Error != null)
+            return new AddCommentResult { Error = access.Error, HttpStatus = access.HttpStatus,
+                ErrorCode = access.ErrorCode, RetryAfterSeconds = access.RetryAfterSeconds };
+        if (access.Site == null)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
-        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true);
+        return await SetCommentResolvedAsync(access.Site, commentId, userId, resolved, ct, maskUserId: true);
     }
 
     private async Task<AddCommentResult> SetCommentResolvedAsync(HostedSite site, string commentId, string userId,
