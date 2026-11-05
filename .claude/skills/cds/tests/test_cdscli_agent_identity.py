@@ -77,7 +77,7 @@ class CdsCliAgentIdentityTests(unittest.TestCase):
 
         with mock.patch.object(cdscli, "_AGENT_SESSION_ID", "cdscli_session_789"), mock.patch.object(
             cdscli.urllib.request, "urlopen", return_value=FakeResponse(),
-        ), mock.patch.object(cdscli, "ok") as ok_mock:
+        ), mock.patch.dict(os.environ, {"CDS_HOST": "https://cds.test.example"}), mock.patch.object(cdscli, "ok") as ok_mock:
             cdscli._run_self_action(
                 "/api/self-restart",
                 {},

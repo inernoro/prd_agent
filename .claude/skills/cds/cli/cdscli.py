@@ -9889,7 +9889,10 @@ def cmd_instance_list(args: argparse.Namespace) -> None:
 # Reuse the server's load-high threshold: one-minute load / CPU cores >= 80%.
 # Memory usage alone includes OS cache and cannot prove CPU saturation.
 def _load_recommendation() -> dict[str, Any]:
-    host = _instance_origin(_cds_base())
+    try:
+        host = _instance_origin(_cds_base())
+    except ValueError:
+        die("当前 CDS 地址无效，请使用站点根地址后重试 instance recommend", code=1)
     entries = _instance_catalog()["instances"]
     started = time.time()
     try:
@@ -9966,8 +9969,13 @@ def _deployment_load_preflight(handler: Any) -> None:
         return
     # Optional advice must not add requests when no matching local multi-site catalog exists.
     entries = _instance_catalog()["instances"]
-    host = _instance_origin(_cds_base())
-    if len(entries) > 1 and any(entry["url"] == host for entry in entries):
+    if len(entries) < 2:
+        return
+    try:
+        host = _instance_origin(_cds_base())
+    except ValueError:
+        return
+    if any(entry["url"] == host for entry in entries):
         _notify_high_load(_load_recommendation())
 
 

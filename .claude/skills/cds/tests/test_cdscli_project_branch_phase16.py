@@ -521,6 +521,7 @@ class _FakeHttpResponse:
 
 def test_smoke_uses_api_primary_preview_url(monkeypatch):
     """smoke 只探测 CDS 返回的主入口，不用 slug 或 host 重建。"""
+    monkeypatch.setenv("MAP_AI_USER", "test-user-not-real")
     monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
     monkeypatch.setattr(
         cdscli,

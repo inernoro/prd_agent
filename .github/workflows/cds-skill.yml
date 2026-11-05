@@ -27,6 +27,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test dependency
-        run: python -m pip install pytest
+        run: python -m pip install pytest pyyaml
       - name: Verify CLI including real HTTP host isolation
         run: python -m pytest .claude/skills/cds/tests -q -p no:cacheprovider
