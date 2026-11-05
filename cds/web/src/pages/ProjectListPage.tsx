@@ -24,6 +24,7 @@ import {
   KeyRound,
   Loader2,
   Pause,
+  Pin,
   Play,
   Plus,
   RefreshCw,
@@ -46,9 +47,11 @@ import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
 import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import { useNowTick } from '@/hooks/useNowTick';
+import { readProjectInventoryPreferences, writeProjectInventoryPreferences, type ProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
-import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
+import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
@@ -479,6 +482,40 @@ export function ProjectListPage(): JSX.Element {
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
   const [pendingImportError, setPendingImportError] = useState('');
   const [inventorySelection, setInventorySelection] = useState<ProjectInventorySelection>(INITIAL_PROJECT_SELECTION);
+  const [inventoryPreferences, setInventoryPreferences] = useState<ProjectInventoryPreferences>({ view: 'grid', pinnedProjectIds: [] });
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    const preferences = readProjectInventoryPreferences();
+    setInventoryPreferences(preferences);
+    setInventorySelection(selection => ({ ...selection, view: preferences.view }));
+  }, []);
+
+  const saveInventoryPreferences = (preferences: ProjectInventoryPreferences): void => {
+    setInventoryPreferences(preferences);
+    if (!writeProjectInventoryPreferences(preferences)) setToast('已更新本页排序，浏览器未能保存显示偏好');
+  };
+  const updateInventorySelection = (selection: ProjectInventorySelection): void => {
+    setInventorySelection(selection);
+    if (selection.view !== inventoryPreferences.view) saveInventoryPreferences({ ...inventoryPreferences, view: selection.view });
+  };
+  const toggleProjectPin = (project: ProjectSummary): void => {
+    const wasPinned = inventoryPreferences.pinnedProjectIds.includes(project.id);
+    const preferences = { ...inventoryPreferences, pinnedProjectIds: wasPinned
+      ? inventoryPreferences.pinnedProjectIds.filter(id => id !== project.id)
+      : [...inventoryPreferences.pinnedProjectIds, project.id] };
+    setInventoryPreferences(preferences);
+    const saved = writeProjectInventoryPreferences(preferences);
+    setToast(`${wasPinned ? '已取消置顶' : '已置顶项目'}${saved ? '' : '（本页有效，浏览器未保存）'}`);
+  };
+  const copyProjectName = async (project: ProjectSummary): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(displayName(project));
+      setToast('项目名称已复制');
+    } catch {
+      setToast('浏览器未允许复制，请选择项目名称后手动复制');
+    }
+  };
   const [repositoryImportOpen, setRepositoryImportOpen] = useState(false);
   const [environmentTargets, setEnvironmentTargets] = useState<ProjectEnvironmentTarget[]>([]);
   const [environmentStatus, setEnvironmentStatus] = useState<ProjectEnvironmentStatus>('loading');
@@ -556,6 +593,7 @@ export function ProjectListPage(): JSX.Element {
         legacy: legacyRes,
         canManageProjects,
       });
+      if (!suspiciousEmpty) setLastRefreshedAt(new Date().toISOString());
       if (suspiciousEmpty) {
         setToast('项目列表返回可疑空结果，已保留上一次有效列表');
       }
@@ -654,7 +692,7 @@ export function ProjectListPage(): JSX.Element {
   const pendingImportCount = pendingImports.pendingCount || 0;
   const serviceLabels = useMemo(() => new Map(projects.map(project =>
     [project.id, uniqueProjectBrands(project).map(brand => brand.label)])), [projects]);
-  const visibleProjects = selectInventoryProjects(projects, inventorySelection, environmentTargets, serviceLabels);
+  const visibleProjects = selectInventoryProjects(projects, inventorySelection, environmentTargets, serviceLabels, inventoryPreferences.pinnedProjectIds);
 
   async function createProjectFromRepoUrl(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -815,7 +853,7 @@ export function ProjectListPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? <ProjectInventoryHeader
-          projects={projects} selection={inventorySelection} onChange={setInventorySelection}
+          projects={projects} selection={inventorySelection} onChange={updateInventorySelection}
           targets={environmentTargets} environmentStatus={environmentStatus} canManageProjects={canManageProjects}
           importOpen={repositoryImportOpen} onImport={() => setRepositoryImportOpen(open => !open)}
           onCreate={() => { setCreateAutoPickRepo(false); setCreateOpen(true); }}
@@ -865,6 +903,10 @@ export function ProjectListPage(): JSX.Element {
                   key={project.id}
                   project={project}
                   canManageProjects={canManageProjects}
+                  pinned={inventoryPreferences.pinnedProjectIds.includes(project.id)}
+                  onTogglePin={() => toggleProjectPin(project)}
+                  onCopyName={() => void copyProjectName(project)}
+                  environments={environmentStatus === 'ready' ? projectEnvironmentNames(project.id, environmentTargets) : undefined}
                   onClone={() => setCloneTarget(project)}
                   onAgentKeys={() => setAgentKeyProject(project)}
                   onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
@@ -876,7 +918,8 @@ export function ProjectListPage(): JSX.Element {
           ) : null}
         </section>
         {state.status === 'ok' && projects.length > 0 ? <footer className="cds-project-inventory-footer" aria-live="polite">
-          显示 {visibleProjects.length} 个项目，共 {projects.length} 个
+          <span>显示 {visibleProjects.length} 个项目，共 {projects.length} 个</span>
+          <ProjectInventoryFreshness updatedAt={lastRefreshedAt} />
         </footer> : null}
 
         {canManageProjects ? <CreateProjectDialog
@@ -1841,6 +1884,23 @@ function uniqueProjectBrands(project: ProjectSummary): ProjectBrand[] {
     : brands;
 }
 
+function ProjectInventoryFreshness({ updatedAt }: { updatedAt: string | null }): JSX.Element {
+  useNowTick(Boolean(updatedAt), 30_000);
+  return <span className="cds-project-inventory-freshness">列表更新于 {formatRelativeTime(updatedAt)}</span>;
+}
+
+const PROJECT_SERVICE_ROLES: Record<string, string> = {
+  dotnet: '应用框架', node: '应用运行时', python: '应用运行时', java: '应用运行时', go: '应用运行时',
+  rust: '应用运行时', php: '应用运行时', static: '静态站点', api: '应用服务', mongo: '文档数据库',
+  mysql: '关系数据库', postgres: '关系数据库', redis: '缓存服务', rabbit: '消息队列', minio: '对象存储',
+  milvus: '向量数据库', qdrant: '向量数据库', weaviate: '向量数据库', chroma: '向量数据库', nacos: '配置服务',
+};
+function projectServiceRole(brand: ProjectBrand): string { return PROJECT_SERVICE_ROLES[brand.key] || '关联服务'; }
+function projectServiceTitle(project: ProjectSummary, brand: ProjectBrand): string {
+  const state = project.paused ? '已暂停' : brand.running === undefined ? '状态未采集' : brand.running ? '运行中' : '未运行';
+  return `${brand.label} · ${projectServiceRole(brand)} · ${state} · ${brand.source}`;
+}
+
 /** A compact inventory, not a dependency graph: no inferred runtime edges. */
 function ProjectServiceModules({ project, brands }: { project: ProjectSummary; brands: ProjectBrand[] }): JSX.Element {
   if (!brands.length) {
@@ -1859,34 +1919,45 @@ function ProjectServiceModules({ project, brands }: { project: ProjectSummary; b
     );
   }
   const [lead, ...others] = brands;
+  const configuredCount = (project.appServiceCount ?? project.appServices?.length ?? 0)
+    + (project.infraServiceCount ?? project.infraServices?.length ?? 0);
+  const hasServiceInventory = project.appServiceCount !== undefined || project.infraServiceCount !== undefined
+    || project.appServices !== undefined || project.infraServices !== undefined;
   // Every registered stack remains reachable; long inventories scroll in this
   // bounded column rather than silently dropping services after the sixth icon.
   return (
     <div className={`cds-project-services ${others.length ? '' : 'cds-project-services--single'}`}>
-      <div className="cds-project-service-focus" title={`${lead.label} · ${lead.source}`}>
+      <div className="cds-project-service-focus" title={projectServiceTitle(project, lead)}>
         <span className="cds-project-service-glyph" aria-hidden>{lead.icon}</span>
-        <strong>{lead.label}</strong>
+        <span className="cds-project-service-copy"><strong>{lead.label}</strong>
+          {!others.length ? <small>{projectServiceRole(lead)}</small> : null}
+        </span>
       </div>
       {others.length ? (
         <div className="cds-project-service-list" data-service-count={others.length}>
           {others.map((brand) => (
-            <div className="cds-project-service-item" key={brand.key} title={`${brand.label} · ${brand.source}`}>
+            <div className="cds-project-service-item" key={brand.key} title={projectServiceTitle(project, brand)}>
               <span className="cds-project-service-glyph" aria-hidden>{brand.icon}</span>
               <span className="truncate">{brand.label}</span>
               <i className={`cds-project-service-dot ${!project.paused && brand.running ? 'bg-ok' : 'bg-muted-foreground/40'}`} aria-label={project.paused ? '已暂停' : brand.running === undefined ? '状态未采集' : brand.running ? '运行中' : '未运行'} />
             </div>
           ))}
         </div>
-      ) : <span className="cds-project-service-caption">已配置服务</span>}
+      ) : <span className="cds-project-service-caption">{hasServiceInventory ? <><b>{configuredCount}</b> 服务</> : '数量未采集'}</span>}
     </div>
   );
 }
 
 export function ProjectCard({
   project, canManageProjects, onClone, onAgentKeys, onAgentSessions, onDelete, onTogglePause,
+  pinned = false, onTogglePin, onCopyName, environments,
 }: {
   project: ProjectSummary;
   canManageProjects: boolean;
+  pinned?: boolean;
+  onTogglePin?: () => void;
+  onCopyName?: () => void;
+  environments?: readonly string[];
   onClone: () => void;
   onAgentKeys: () => void;
   onAgentSessions: () => void;
@@ -1905,7 +1976,7 @@ export function ProjectCard({
       : project.cloneStatus === 'error' ? '克隆失败' : null;
   const running = project.runningServiceCount || 0;
   const branches = project.branchCount || 0;
-  const appTotal = project.appServiceCount || Math.max(branches, running);
+  const appTotal = project.appServiceCount ?? Math.max(project.appServices?.length ?? 0, running);
   const infraCount = project.infraServiceCount ?? project.infraServices?.length ?? 0;
   const totalOnline = running + (project.runningInfraServiceCount || 0);
   const totalServices = Math.max(appTotal + infraCount, totalOnline);
@@ -1915,13 +1986,14 @@ export function ProjectCard({
   const monogram = (project.slug || project.name || project.id).slice(0, 2).toLocaleUpperCase();
 
   return (
-    <article className="cds-project-card cds-cv-auto" data-project-id={project.id} data-paused={paused || undefined}>
+    <article className="cds-project-card cds-cv-auto" data-project-id={project.id} data-paused={paused || undefined} data-pinned={pinned || undefined}>
       <a href={isReady ? projectHref(project) : '#'}
         onClick={(event) => { if (!isReady) event.preventDefault(); }}
         aria-label={`查看 ${title}`} className="cds-project-card-link">
         <header className="cds-project-card-heading">
           <span className="cds-project-monogram" aria-hidden>{monogram}</span>
           <h2 title={project.description ? `${title} · ${project.description}` : title}>{title}</h2>
+          {pinned ? <Pin className="cds-project-pin" aria-label="已置顶" /> : null}
           <span className={`cds-project-state ${stateTone}`}><i aria-hidden />{stateLabel}</span>
         </header>
         <ProjectServiceModules project={project} brands={uniqueProjectBrands(project)} />
@@ -1938,10 +2010,13 @@ export function ProjectCard({
           </span>
         </div>
         <footer className="cds-project-card-footer">
-          <span className="cds-project-environment" title="当前环境">production</span>
-          <span className="cds-project-branch" title={project.gitDefaultBranch ? `默认分支 ${project.gitDefaultBranch} · ${branches} 个分支` : `${branches} 个分支`}>
-            <GitBranch aria-hidden /><span>{project.gitDefaultBranch || `${branches} 分支`}</span>
+          <span className="cds-project-environment" title={environments === undefined ? '发布环境尚未读取或当前账号不可见' : environments.length ? `已配置发布目标环境：${environments.join('、')}` : '项目未声明发布目标环境'}>
+            {environments === undefined ? '环境 —' : environments.length ? `${environments[0]}${environments.length > 1 ? ` +${environments.length - 1}` : ''}` : '未配置发布环境'}
           </span>
+          {project.gitDefaultBranch ? <span className="cds-project-branch" title={`默认分支 ${project.gitDefaultBranch} · ${branches} 个分支`}>
+            <GitBranch aria-hidden /><span>{project.gitDefaultBranch}</span>
+          </span> : null}
+          <span className="cds-project-branch-count" title="查看项目分支">{branches} 分支</span>
           <time title={project.lastDeployedAt ? `最近部署：${formatDate(project.lastDeployedAt)}` : '尚未部署'}>{formatRelativeTime(project.lastDeployedAt)}</time>
         </footer>
         {project.cloneStatus === 'error' && project.cloneError ? (
@@ -1956,6 +2031,11 @@ export function ProjectCard({
       {canManageProjects ? (
         <div className="cds-project-actions">
           <DropdownMenu width={200} trigger={<Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`${title} 项目操作`} title="项目操作"><MoreHorizontal /></Button>}>
+            <DropdownItem asChild href={projectHref(project)}><ExternalLink />查看项目</DropdownItem>
+            {project.kind !== 'shared-service' ? <DropdownItem asChild href={`/branches/${encodeURIComponent(project.id)}`}><GitBranch />查看分支</DropdownItem> : null}
+            {onTogglePin ? <DropdownItem onSelect={onTogglePin}><Pin />{pinned ? '取消置顶' : '置顶项目'}</DropdownItem> : null}
+            {onCopyName ? <DropdownItem onSelect={onCopyName}><Copy />复制项目名称</DropdownItem> : null}
+            <DropdownDivider />
             <DropdownItem onSelect={onTogglePause}>{paused ? <Play /> : <Pause />}{paused ? '恢复项目' : '暂停项目'}</DropdownItem>
             {project.cloneStatus === 'pending' || project.cloneStatus === 'error' ? (
               <DropdownItem onSelect={onClone}><FolderGit2 />{project.cloneStatus === 'error' ? '重新克隆' : '开始克隆'}</DropdownItem>

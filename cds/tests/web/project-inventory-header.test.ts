@@ -45,6 +45,13 @@ describe('完整项目页保留 Demo 页头与可工作的工具条', () => {
     expect(projects.map(project => project.id)).toEqual(['live', 'paused', 'ready', 'error', 'pending']);
   });
 
+  it('置顶优先于当前排序，置顶组与普通组内部仍按所选排序，筛选不被置顶绕过', () => {
+    const sorted = selectInventoryProjects(projects, { ...INITIAL_PROJECT_SELECTION, sort: 'recent' }, targets, serviceLabels, ['live', 'ready']);
+    expect(sorted.map(project => project.id)).toEqual(['live', 'ready', 'paused', 'error', 'pending']);
+    expect(selectInventoryProjects(projects, { ...INITIAL_PROJECT_SELECTION, status: 'paused' }, targets, serviceLabels, ['live']).map(project => project.id)).toEqual(['paused']);
+    expect(projects.map(project => project.id)).toEqual(['live', 'paused', 'ready', 'error', 'pending']);
+  });
+
   it('环境只来自该项目启用的真实发布目标，不把缺失环境伪装成 production', () => {
     expect(projectEnvironmentNames('paused', targets)).toEqual([]);
     expect(selectInventoryProjects(projects, { ...INITIAL_PROJECT_SELECTION, environment: 'production' }, targets, serviceLabels).map(project => project.id)).toEqual(['live']);

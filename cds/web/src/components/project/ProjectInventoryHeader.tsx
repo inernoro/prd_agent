@@ -38,6 +38,7 @@ export function selectInventoryProjects(
   selection: ProjectInventorySelection,
   targets: readonly ProjectEnvironmentTarget[],
   serviceLabels: ReadonlyMap<string, readonly string[]>,
+  pinnedProjectIds: readonly string[] = [],
 ): ProjectSummary[] {
   const query = selection.query.trim().toLocaleLowerCase();
   const selected = projects.filter(project => {
@@ -55,6 +56,10 @@ export function selectInventoryProjects(
   if (selection.sort === 'name') selected.sort((a, b) =>
     (a.aliasName || a.name || a.slug || a.id).localeCompare(b.aliasName || b.name || b.slug || b.id, 'zh-CN'));
   if (selection.sort === 'recent') selected.sort((a, b) => (b.lastDeployedAt || '').localeCompare(a.lastDeployedAt || ''));
+  if (pinnedProjectIds.length) {
+    const pinned = new Set(pinnedProjectIds);
+    selected.sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)));
+  }
   return selected;
 }
 
