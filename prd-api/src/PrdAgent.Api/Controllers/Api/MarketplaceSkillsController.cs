@@ -39,6 +39,7 @@ public class MarketplaceSkillsController : ControllerBase
     private const int SummaryMaxChars = 30;
     private const int DescriptionMaxChars = 200;
     private const int TitleMaxChars = 80;
+    private const int VersionMaxChars = 64;
     private const int MaxTagsPerItem = 10;
     private const int MaxTagLength = 20;
     private const int PreviewUrlMaxLen = 512;
@@ -484,6 +485,8 @@ public class MarketplaceSkillsController : ControllerBase
         var meta = _zipExtractor.Extract(bytes);
         if (!string.IsNullOrEmpty(meta.Error))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", $"压缩包解析失败: {meta.Error}"));
+        if (meta.FrontmatterVersion is { Length: > VersionMaxChars })
+            return BadRequest(ApiResponse<object>.Fail("INVALID_VERSION", $"版本号不能超过 {VersionMaxChars} 个字符"));
 
         // 生成 ID、上传 zip 到 COS / R2
         var id = Guid.NewGuid().ToString("N");
@@ -1215,7 +1218,7 @@ public class MarketplaceSkillsController : ControllerBase
             s.Id,
             s.Title,
             s.Description,
-            version = s.Version,
+            version = s.Version is { Length: <= VersionMaxChars } ? s.Version : null,
             iconEmoji = string.Empty,
             coverImageUrl = s.CoverImageUrl,
             previewUrl = s.PreviewUrl,

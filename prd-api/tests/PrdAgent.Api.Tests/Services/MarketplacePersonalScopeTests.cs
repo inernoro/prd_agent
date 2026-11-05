@@ -4,6 +4,9 @@ using PrdAgent.Core.Models;
 using PrdAgent.Api.Controllers.Api;
 using System.Reflection;
 using System.Text.Json;
+using System.IO.Compression;
+using System.Security.Claims;
+using PrdAgent.Infrastructure.Services.MarketplaceSkills;
 using Shouldly;
 using Xunit;
 
@@ -11,6 +14,43 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class MarketplacePersonalScopeTests
 {
+    [Theory]
+    [InlineData(65)]
+    [InlineData(8192)]
+    public async Task 超长上传版本在存储与数据库访问前拒绝(int length)
+    {
+        using var zip = new MemoryStream();
+        using (var archive = new ZipArchive(zip, ZipArchiveMode.Create, leaveOpen: true))
+        using (var writer = new StreamWriter(archive.CreateEntry("SKILL.md").Open()))
+            await writer.WriteAsync($"---\nname: sample\nversion: {new string('1', length)}\n---\n# Skill");
+        zip.Position = 0;
+        var controller = new MarketplaceSkillsController(null!, null!, null!, null!, new SkillZipMetadataExtractor(), null!, null!, null!, null!)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "viewer") }, "test"))
+            } }
+        };
+        var result = await controller.Upload(new FormFile(zip, 0, zip.Length, "file", "skill.zip"),
+            null, null, null, null, null, null, null, null, CancellationToken.None);
+        var response = result.ShouldBeOfType<BadRequestObjectResult>().Value.ShouldBeOfType<ApiResponse<object>>();
+        response.Error!.Code.ShouldBe("INVALID_VERSION");
+    }
+
+    [Theory]
+    [InlineData(64, true)]
+    [InlineData(65, false)]
+    [InlineData(8 * 1024 * 1024, false)]
+    public void 既有超长版本不能放大列表与收藏响应(int length, bool preserved)
+    {
+        var skill = new MarketplaceSkill { Version = new string('1', length) };
+        var mapper = typeof(MarketplaceSkillsController).GetMethod("ToDto", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var dto = mapper.Invoke(null, new object[] { skill, "viewer", 0L });
+        var json = JsonSerializer.SerializeToElement(dto, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        json.GetProperty("version").GetString().ShouldBe(preserved ? skill.Version : null);
+        json.GetRawText().Length.ShouldBeLessThan(2048);
+    }
+
     [Theory]
     [InlineData("1.2.3")]
     [InlineData("v2.0.0")]
