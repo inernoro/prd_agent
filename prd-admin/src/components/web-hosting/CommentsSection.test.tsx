@@ -6,12 +6,12 @@ import CommentsSection from './CommentsSection';
 import type { HostedAnnotations } from './useHostedAnnotations';
 import type { HostedReview } from './useHostedReview';
 
-const { auth, list, login, select, add } = vi.hoisted(() => ({
-  auth: { isAuthenticated: false, token: '' }, list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(),
+const { auth, list, login, select, add, resolveComment } = vi.hoisted(() => ({
+  auth: { isAuthenticated: false, token: '' }, list: vi.fn(), login: vi.fn(), select: vi.fn(), add: vi.fn(), resolveComment: vi.fn(),
 }));
-vi.mock('../../stores/authStore', () => ({ useAuthStore: (selector: (state: typeof auth) => unknown) => selector(auth) }));
+vi.mock('../../stores/authStore', () => ({ useAuthStore: Object.assign((selector: (state: typeof auth) => unknown) => selector(auth), { getState: () => auth }) }));
 vi.mock('../../services/real/webPages', () => ({ listShareComments: list, listSiteComments: list,
-  addShareComment: add, addSiteComment: add, deleteSiteComment: vi.fn(), setSiteCommentResolved: vi.fn() }));
+  addShareComment: add, addSiteComment: add, deleteSiteComment: vi.fn(), setSiteCommentResolved: resolveComment }));
 vi.mock('../ui/VideoLoader', () => ({ MapSpinner: () => null, MapSectionLoader: ({ text }: { text?: string }) => <p>{text ?? '正在加载讨论…'}</p> }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root, container: HTMLDivElement;
@@ -36,6 +36,21 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); container?.remove(); });
 
 describe('annotation entry availability', () => {
+  it('合集第二份文档解决和重新打开讨论都携带当前文档及密码', async () => {
+    auth.isAuthenticated = true; auth.token = 'session';
+    const comment = { id: 'thread-b', siteId: 'document-b', authorName: '作者', content: '第二份讨论',
+      createdAt: new Date().toISOString(), canResolve: true, isResolved: false };
+    list.mockResolvedValue({ success: true, data: { comments: [comment], commentsEnabled: true, canComment: true } });
+    resolveComment.mockResolvedValueOnce({ success: true, data: { ...comment, isResolved: true } });
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
+    await act(async () => root.render(<CommentsSection mode="share" token="collection" password="pw" siteId="document-b" />));
+    await act(async () => button('标记解决').click());
+    expect(resolveComment).toHaveBeenNthCalledWith(1, { token: 'collection', password: 'pw', siteId: 'document-b' }, 'thread-b', true);
+    await act(async () => button('已解决 1').click());
+    resolveComment.mockResolvedValueOnce({ success: true, data: comment });
+    await act(async () => button('重新打开').click());
+    expect(resolveComment).toHaveBeenNthCalledWith(2, { token: 'collection', password: 'pw', siteId: 'document-b' }, 'thread-b', false);
+  });
   it.each(['10000', '20000'])('waits for version metadata and preserves drafts only for the same publication, next=%s', async next => {
     auth.isAuthenticated = true; auth.token = 'session';
     list.mockResolvedValue({ success: true, data: { comments: [], commentsEnabled: true, canComment: true } });

@@ -34,6 +34,9 @@ public class HostedSiteComment
     /// <summary>评论正文</summary>
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>从正文解析的站内引用索引，不授予访问权；读取时按原评论和目标文档的权限裁剪。</summary>
+    public List<string> ReferencedSiteIds { get; set; } = new();
+
     /// <summary>根讨论的网页定位信息；整页评论和回复为空。</summary>
     public HostedSiteCommentAnchor? Anchor { get; set; }
 

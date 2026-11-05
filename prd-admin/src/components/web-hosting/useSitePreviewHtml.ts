@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getSiteContent } from '@/services/real/webPages';
+import { getSiteContent, getShareSiteContent } from '@/services/real/webPages';
 import { canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
 
 /**
@@ -34,10 +34,11 @@ export interface SitePreviewHtmlSite {
   pdfFilePaths?: readonly string[];
   contentShape?: 'self-contained-html' | 'multi-file';
   requiresPreviewBridge?: boolean;
+  shareAccess?: { token: string; password?: string };
 }
 
 function cacheKey(site: SitePreviewHtmlSite) {
-  return `${site.id}::${site.siteUrl}::${site.contentShape ?? ''}::${site.wrappedAssetType ?? ''}::${shouldFetchPreviewHtml(site)}`;
+  return `${site.shareAccess?.token ?? 'account'}::${site.shareAccess?.password ?? ''}::${site.id}::${site.siteUrl}::${site.contentShape ?? ''}::${site.wrappedAssetType ?? ''}::${shouldFetchPreviewHtml(site)}`;
 }
 
 async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
@@ -50,7 +51,9 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
 
   const task = (async (): Promise<CacheEntry> => {
     try {
-      const res = await getSiteContent(site.id);
+      const res = site.shareAccess
+        ? await getShareSiteContent(site.shareAccess.token, site.id, site.shareAccess.password)
+        : await getSiteContent(site.id);
       if (res.success && res.data?.html) {
         const html = res.data.html;
         // 打包型 SPA（入口是外链 module 脚本）必须留在直链：srcDoc 的不透明源会让模块脚本

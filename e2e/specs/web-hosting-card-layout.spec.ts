@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 // 验证真实列表路由的生产组件；API 使用隔离测试数据，不操作用户站点。
 for (const width of [390, 1440]) {
@@ -43,6 +44,7 @@ for (const width of [390, 1440]) {
           let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
           if (path === '/api/web-pages') data = { items: sites, total: sites.length, activity, traffic,
             visitors: Object.fromEntries(sites.map((site, i) => [site.id, views[i]])) };
+          else if (path === '/api/web-pages/related-documents/summaries') data = { items: Object.fromEntries(sites.map((site, i) => [site.id, { count: 3, mainTitle: titles[0], isMain: i === 0, titles: titles.filter(title => title !== site.title) }])) };
           else if (path === '/api/web-pages/tags') data = { tags: tagNames.map((tag, index) => ({ tag, count: tagCounts[index] })) };
           else if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
           else if (path === '/api/web-pages/shares') data = { items: [0, 2].map(i => ({ id: `layout-share-${i}`, token: `layout-share-${i}`, siteId: sites[i].id,
@@ -55,6 +57,7 @@ for (const width of [390, 1440]) {
         const cards = page.locator('[data-tour-id="webpages-card"]');
         await expect(cards).toHaveCount(4);
         await expect(page.getByLabel('已编辑 987654321 次', { exact: true })).toBeAttached();
+        await expect(cards.locator('.related-variant-badge')).toHaveCount(4);
         await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
         await page.evaluate(() => document.fonts.ready);
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
@@ -64,18 +67,21 @@ for (const width of [390, 1440]) {
           const editBounds = card.querySelector('[data-site-edit-badge]')?.getBoundingClientRect();
           const thumbBounds = card.querySelector('[data-site-card-thumbnail]')!.getBoundingClientRect();
           const sharedBounds = card.querySelector('[data-site-shared-badge]')?.getBoundingClientRect();
+          const selectBounds = card.querySelector('[data-site-select]')!.getBoundingClientRect();
+          const meta = card.querySelector<HTMLElement>('[data-site-card-meta]')!;
+          const columns = getComputedStyle(stats).gridTemplateColumns.split(/\s+/).length;
           const titleBounds = card.querySelector('h3')!.getBoundingClientRect();
           const badge = card.querySelector('[aria-label="新创建，尚未打开"]');
           const badgeBounds = badge?.getBoundingClientRect();
           const slots = Array.from(stats.children).map(child => child.getBoundingClientRect()).filter(rect => rect.height > 0);
           return {
             title: card.querySelector('h3')!.textContent, cardHeight: bounds.height,
-            statsHeight: statsBounds.height,
-            editInThumbnail: !editBounds || (editBounds.top >= thumbBounds.top && editBounds.bottom <= thumbBounds.bottom && editBounds.right <= thumbBounds.right),
-            editBottom: editBounds ? thumbBounds.bottom - editBounds.bottom : null,
-            editRight: editBounds ? thumbBounds.right - editBounds.right : null,
-            shareGap: editBounds && sharedBounds ? editBounds.left - sharedBounds.right : null,
-            metaFits: card.querySelector('[data-site-thumbnail-meta]')!.scrollWidth <= card.querySelector('[data-site-thumbnail-meta]')!.clientWidth,
+            statsHeight: statsBounds.height, columns, metricCount: slots.length,
+            editInFooter: !!editBounds && editBounds.top >= statsBounds.top && editBounds.bottom <= statsBounds.bottom && editBounds.top >= thumbBounds.bottom,
+            shareInBody: !sharedBounds || sharedBounds.top >= thumbBounds.bottom,
+            selectionAtTop: selectBounds.top <= thumbBounds.top + 2 && selectBounds.bottom <= thumbBounds.top + 44,
+            noThumbnailStrip: !card.querySelector('[data-site-thumbnail-meta]'),
+            metaFits: meta.scrollWidth <= meta.clientWidth,
             overflow: slots.some(rect => rect.left < bounds.left || rect.right > bounds.right),
             wrapped: slots.some(rect => rect.height > 16.5),
             badgeGap: badgeBounds ? badgeBounds.left - titleBounds.right : null,
@@ -86,12 +92,13 @@ for (const width of [390, 1440]) {
         for (const metric of metrics) {
           expect(metric.overflow, JSON.stringify(metric)).toBe(false);
           expect(metric.wrapped, JSON.stringify(metric)).toBe(false);
-          expect(metric.statsHeight).toBeCloseTo(16, 0);
-          expect(metric.editInThumbnail).toBe(true);
+          expect(metric.metricCount).toBe(4);
+          expect(metric.statsHeight).toBeCloseTo(metric.columns === 4 ? 16 : 36, 0);
+          expect(metric.editInFooter).toBe(true);
+          expect(metric.shareInBody).toBe(true);
+          expect(metric.selectionAtTop).toBe(true);
+          expect(metric.noThumbnailStrip).toBe(true);
           expect(metric.metaFits, JSON.stringify(metric)).toBe(true);
-          if (metric.editRight !== null) expect(metric.editRight).toBeCloseTo(8, 0);
-          if (metric.editBottom !== null) expect(metric.editBottom).toBeGreaterThanOrEqual(8);
-          if (metric.shareGap !== null) expect(metric.shareGap).toBeCloseTo(4, 0);
           expect(metric.badgeInCard).toBe(true);
           expect(metric.titleLineHeight).toBeCloseTo(20, 0);
           if (metric.badgeGap !== null) {
@@ -123,9 +130,9 @@ for (const width of [390, 1440]) {
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
         // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
         if (size === 'large') {
-          const lastAccess = cards.nth(3).getByText('最近访问', { exact: true }).locator('..');
+          const lastAccess = cards.nth(3).locator('[title^="最近访问"]');
           await expect(lastAccess).toContainText('刚刚');
-          await expect(cards.nth(3).getByText('有效链接', { exact: true }).locator('..')).toContainText('0');
+          await expect(cards.nth(3).getByLabel('有效分享链接', { exact: true })).toContainText('0');
         }
         const visited: string[] = [];
         page.on('request', request => { if (request.url().includes('/record-view')) visited.push(request.url()); });
@@ -263,3 +270,89 @@ test('返回定位的分页外网页移到团队后，不会在个人空间恢�
   await expect.poll(() => moved).toBe(true);
   await expect(card).toHaveCount(0);
 });
+
+// 回归：关联点击只打开当前页模态窗，不能经过列表路由或丢失原阅读现场。
+for (const mode of ['list', 'account-share', 'guest-share'] as const) {
+  test(`关联文档当前页预览保留原背景：${mode}`, async ({ page }) => {
+    const sites = ['source', 'target'].map(id => ({ id, title: id === 'source' ? '来源文档' : '关联目标',
+      siteUrl: `https://hosting.example/${id}/index.html`, entryFile: 'index.html', contentShape: 'self-contained-html',
+      ownerUserId: 'qa-related-user', sourceType: 'upload', files: [], tags: [], totalSize: 1024,
+      cosPrefix: '', folderCanonicalName: '', createdAt: '2026-11-05T00:00:00Z', updatedAt: '2026-11-05T00:00:00Z', askEnabled: false }));
+    const apiRequests: string[] = [];
+    const errors: string[] = [];
+    // Playwright 的 serviceWorkers:block 在不透明沙箱 iframe 注入脚本会抛平台错误；仍记录所有应用错误。
+    page.on('pageerror', error => {
+      if (!error.message.includes("Service worker is disabled because the context is sandboxed")) errors.push(error.message);
+    });
+    if (mode !== 'guest-share') await page.addInitScript(() => {
+      if (window.top !== window) return;
+      localStorage.setItem('prd-admin-auth', JSON.stringify({
+      state: { isAuthenticated: true, user: { userId: 'qa-related-user', username: 'qa-related-user', role: 'ADMIN' },
+        token: 'qa-related-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
+        isRoot: false, menuCatalog: [], menuCatalogLoaded: true }, version: 0,
+    })); });
+    await page.route('**/api/**', async route => {
+      const url = new URL(route.request().url()), path = url.pathname;
+      apiRequests.push(path);
+      if (path.endsWith('/annotation-runtime.js')) {
+        await route.fulfill({ contentType: 'text/javascript', body: await readFile(
+          new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8') });
+        return;
+      }
+      let data: unknown = { items: [], folders: [], tags: [], teams: [], total: 0 };
+      if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+      else if (path === '/api/changelog/current-week') data = { weekStart: sites[0].createdAt, weekEnd: sites[0].createdAt, fetchedAt: sites[0].createdAt, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
+      else if (path === '/api/web-pages') data = { items: sites, total: sites.length };
+      else if (path === '/api/web-pages/related-documents/summaries') data = { items: { source: { count: 1, isMain: true, titles: ['关联目标'] } } };
+      else if (path.endsWith('/related-documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
+        hasPermissionDifferences: false, items: sites.map(site => ({ ...site, isMain: site.id === 'source',
+          preview: { ...site, useShareAccess: mode === 'guest-share' },
+          href: mode === 'guest-share' ? `/s/wp/qa-related?siteId=${site.id}` : `/web-pages?openSite=${site.id}` })) };
+      else if (path === '/api/web-pages/shares/view/qa-related') data = { title: '来源分享', shareType: 'collection', sites };
+      else if (path.endsWith('/content')) {
+        const id = url.searchParams.get('siteId') || path.split('/')[3];
+        data = { siteId: id, siteUrl: `https://hosting.example/${id}/index.html`, contentType: 'text/html',
+          html: `<!doctype html><h1>${id === 'source' ? '来源正文' : '目标正文'}</h1><input aria-label="保留输入"><div style="height:2000px"></div>` };
+      } else if (path.endsWith('/revisions')) data = [];
+      else if (path.endsWith('/comments')) data = { siteId: 'source', commentsEnabled: true, canComment: false, comments: [] };
+      else if (path === '/api/web-pages/target') data = sites[1];
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto(mode === 'list' ? '/web-pages?keepFilter=1' : '/s/wp/qa-related?siteId=source');
+    const originalUrl = page.url();
+    let sourceFrame;
+    if (mode === 'list') {
+      await page.locator('[data-hosted-site-id="source"] .related-trigger').click();
+    } else {
+      sourceFrame = page.locator('iframe[title="来源文档"]').contentFrame();
+      await sourceFrame.getByLabel('保留输入').fill('原页面状态');
+      await sourceFrame.locator('body').evaluate(el => { el.ownerDocument.defaultView!.scrollTo(0, 200); });
+      await page.locator('.share-topbar .related-trigger').click();
+    }
+    const listReads = apiRequests.filter(path => path === '/api/web-pages').length;
+    await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
+    const modal = mode === 'guest-share' ? page.getByRole('dialog', { name: '关联文档预览', exact: true })
+      : page.getByRole('dialog', { name: '关联目标', exact: true });
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('iframe').first().contentFrame().getByRole('heading', { name: '目标正文' })).toBeVisible();
+    expect(page.url()).toBe(originalUrl);
+    expect(page.context().pages()).toHaveLength(1);
+    expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
+    if (mode === 'guest-share') expect(apiRequests).not.toContain('/api/web-pages/target');
+    // 原生和 Radix 阅读器都必须一次只关闭最上层，不丢失当前正文状态。
+    await modal.locator('.related-trigger').click();
+    await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toHaveCount(0);
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('.related-trigger')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(modal).toHaveCount(0);
+    expect(page.url()).toBe(originalUrl);
+    if (sourceFrame) {
+      await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
+      expect(await sourceFrame.locator('body').evaluate(el => el.ownerDocument.defaultView!.scrollY)).toBe(200);
+    }
+    expect(errors).toEqual([]);
+  });
+}

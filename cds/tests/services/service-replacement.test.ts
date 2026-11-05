@@ -10,14 +10,37 @@ function fixture() {
     networkName: 'new-network', servingRuntime: { containerName: 'old-api', containerId: 'a'.repeat(64), hostPort: 10001, networkName: 'old-network' } };
   const entry = { id: 'branch', projectId: 'project', services: { api: service } } as BranchEntry;
   let port = 10010;
-  const state = { save: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), allocatePort: () => port++ } as unknown as StateService;
+  const state = { save: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), allocatePort: () => port++,
+    appendContainerLogArchive: vi.fn((_id, snapshot) => ({ ...snapshot, capturedAt: '2026-11-05T00:00:00Z' })) } as unknown as StateService;
   const container = { cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined), removeOwnedRuntime: vi.fn().mockResolvedValue(undefined),
+    getLogs: vi.fn().mockResolvedValue(''),
     inspectOwnedRuntime: vi.fn().mockImplementation(async (_entry, _id, runtime) =>
       ({ ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName] })) } as unknown as ContainerService;
   return { entry, service, state, container };
 }
 
 describe('就绪切换与保旧回退', () => {
+  it('失败诊断归档持久化未确认时不收回候选', async () => {
+    const f = fixture(); f.service.status = 'error'; f.service.creationIssued = true;
+    f.service.containerId = 'b'.repeat(64); f.entry.replacementNetwork = 'new-network';
+    vi.mocked(f.state.flush).mockRejectedValueOnce(new Error('archive persistence failed'));
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('archive persistence failed');
+    expect(f.state.appendContainerLogArchive).toHaveBeenCalled();
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.service.containerId).toBe('b'.repeat(64));
+  });
+
+  it('失败诊断读取期间代次失效不追加归档或收回候选', async () => {
+    const f = fixture(); f.service.status = 'error'; f.service.creationIssued = true;
+    f.service.containerId = 'b'.repeat(64); f.entry.replacementNetwork = 'new-network';
+    let current = true;
+    vi.mocked(f.container.getLogs).mockImplementation(async () => { current = false; return 'late old-owner logs'; });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'],
+      assertCurrent: () => { if (!current) throw new Error('superseded generation'); } })).rejects.toThrow('superseded generation');
+    expect(f.state.appendContainerLogArchive).not.toHaveBeenCalled();
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+
   it('同轮身份和环境提前预约，接口仍指向旧服务；下一轮另分网络', () => {
     const { entry, state, service } = fixture();
     entry.services.web = { ...service, profileId: 'web', containerName: 'old-web', hostPort: 10003,

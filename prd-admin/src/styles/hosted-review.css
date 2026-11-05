@@ -1,6 +1,6 @@
 /* Shared chrome for hosted-page review. Colors inherit the surrounding surface theme. */
-.review-toolbar-controls { display: flex; align-items: center; gap: 0; flex-shrink: 0; padding: 2px; border: 1px solid var(--border-subtle); border-radius: 13px; background: var(--bg-nested); }
-.review-tool { position: relative; display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 7px; padding: 7px 11px; border: 0; border-radius: 9px; background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500; line-height: 1.2; white-space: nowrap; cursor: pointer; transition: background 160ms, border-color 160ms; }
+.review-toolbar-controls { display: flex; align-items: center; gap: 2px; flex-shrink: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; }
+.review-tool { position: relative; display: inline-flex; min-height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 11px; font-weight: 500; line-height: 1.2; white-space: nowrap; cursor: pointer; transition: background 160ms, border-color 160ms; }
 .review-tool:hover { color: var(--text-primary); background: var(--button-secondary-bg-hover); border-color: var(--button-secondary-border); }
 .review-tool:focus-visible, .review-popover button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .review-annotate-trigger { color: var(--accent-fg-amber); border-color: color-mix(in srgb, var(--accent-fg-amber) 36%, transparent); background: color-mix(in srgb, var(--accent-fg-amber) 11%, transparent); }

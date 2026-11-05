@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef } from '../types.js';
+import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef, OperationLogContainerSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
 import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
+import { archiveBranchContainerLogs } from './container-log-archiver.js';
 
 export function reserveServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; portStart: number; operationId?: string;
@@ -198,14 +199,23 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
 
 /** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
 export async function commitServiceReplacements(options: {
-  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
+  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs'>;
   operationId?: string; operationGeneration?: number;
   assertCurrent?: (step: string) => void;
+  onFailureDiagnostics?: (snapshots: OperationLogContainerSnapshot[]) => void;
 }): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
   const selected = profileIds.map(id => entry.services[id]).filter((service): service is ServiceState => Boolean(service));
   if (selected.some(service => service.status !== 'running')) {
-    if (selected.some(service => service.status === 'error')) await abortUnpublishedServiceReplacements(options);
+    if (selected.some(service => service.status === 'error')) {
+      const archived = await archiveBranchContainerLogs({ stateService: state, containerService: container,
+        branch: entry, source: 'deploy-error', profileIds: new Set(profileIds), assertCurrent });
+      options.onFailureDiagnostics?.(archived.map(snapshot => ({ ...snapshot, source: 'deploy-error', tailLines: 500 })));
+      assertCurrent?.('before failed replacement archive persistence');
+      state.save(); await state.flush();
+      assertCurrent?.('after failed replacement archive persistence');
+      await abortUnpublishedServiceReplacements(options);
+    }
     return;
   }
   const changed = selected.filter(service => service.servingRuntime && service.servingRuntime.containerName !== service.containerName);

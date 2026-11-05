@@ -5783,9 +5783,10 @@ describe('Branch Routes', () => {
       });
     }
 
-    it.each([{ readiness: false, captureFails: false, priorLive: true }, { readiness: false, captureFails: true, priorLive: true },
-      { readiness: true, captureFails: false, priorLive: true }, { readiness: true, captureFails: true, priorLive: true },
-      { readiness: false, captureFails: false, priorLive: false }, { readiness: false, captureFails: true, priorLive: false }])('failed candidate diagnostics readiness=$readiness captureFails=$captureFails priorLive=$priorLive', async ({ readiness, captureFails, priorLive }) => {
+    it.each([{ readiness: false, captureFails: false, priorLive: true, created: true }, { readiness: false, captureFails: true, priorLive: true, created: true },
+      { readiness: true, captureFails: false, priorLive: true, created: true }, { readiness: true, captureFails: true, priorLive: true, created: true },
+      { readiness: false, captureFails: false, priorLive: false, created: true }, { readiness: false, captureFails: true, priorLive: false, created: true },
+      { readiness: false, captureFails: false, priorLive: true, created: false }])('failed candidate diagnostics readiness=$readiness captureFails=$captureFails priorLive=$priorLive created=$created', async ({ readiness, captureFails, priorLive, created }) => {
       const id = 'failed-evidence', oldCid = 'a'.repeat(64), candidateCid = 'b'.repeat(64);
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node',
         command: 'node server.js', workDir: '.', containerPort: 3000 });
@@ -5795,7 +5796,9 @@ describe('Branch Routes', () => {
           hostPort: 10001, status: priorLive ? 'running' : 'idle', networkName: priorLive ? 'old-network' : undefined } } };
       stateService.addBranch(entry); let candidate = '';
       vi.spyOn(containerService, 'runService').mockImplementation(async (_entry, _profile, service) => {
-        candidate = service.containerName; service.containerId = candidateCid; service.creationIssued = true;
+        candidate = service.containerName;
+        if (!created) throw new Error('candidate pull failed before creation');
+        service.containerId = candidateCid; service.creationIssued = true;
         if (!readiness) throw new Error('candidate startup failed');
         return service.hostPort;
       });
@@ -5813,10 +5816,11 @@ describe('Branch Routes', () => {
         containerId: priorLive ? oldCid : candidateCid, status: 'error' });
       const snapshots = stateService.getLogs(id).at(-1)!.containerLogSnapshots!;
       expect(snapshots).toContainEqual(expect.objectContaining({ profileId: 'api', containerName: candidate,
-        logs: captureFails ? '' : expect.stringContaining('candidate failure evidence') }));
+        logs: captureFails || !created ? '' : expect.stringContaining('candidate failure evidence') }));
       const report = await buildCheckRunFailurePostmortem(entry, containerService, new Set(['api']), snapshots);
       expect(report).not.toContain('unrelated old version failure');
-      expect(report).toContain(captureFails ? (readiness ? '就绪探测' : 'candidate startup failed') : 'candidate failure evidence');
+      expect(report).toContain(!created ? 'candidate pull failed before creation' : captureFails ? (readiness ? '就绪探测' : 'candidate startup failed') : 'candidate failure evidence');
+      if (!created) expect(logs.mock.calls.some(([name]) => name === candidate)).toBe(false);
       expect(oldReadAfterCandidate).toBe(false);
     });
 

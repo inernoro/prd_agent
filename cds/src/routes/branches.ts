@@ -3583,15 +3583,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     profileIds?: Set<string>,
     tailLines = 500,
   ): Promise<OperationLogContainerSnapshot[]> {
+    if (source === 'deploy-error') {
+      const archived = await archiveBranchContainerLogs({ stateService, containerService, branch: entry,
+        source, profileIds, tailLines, serverEventLogStore });
+      return archived.map(snapshot => ({ ...snapshot, source, tailLines }));
+    }
     const services = Object.entries(entry.services || {})
       .filter(([profileId, svc]) => (!profileIds || profileIds.has(profileId)) && !!svc.containerName);
     const snapshots: OperationLogContainerSnapshot[] = [];
 
     for (const [profileId, svc] of services) {
-      const pending = svc.pendingRuntime;
-      const runtime = source === 'deploy-error' && pending && pending.networkName === entry.replacementNetwork
-        && (pending.creationIssued || pending.containerId) ? pending : svc;
-      const { containerName, hostPort } = runtime, status = svc.status;
+      const { containerName, hostPort } = svc, status = svc.status;
       try {
         const raw = await containerService.getLogs(containerName, tailLines);
         const maskedLogs = maskSecretsText(raw, { mask: true });
@@ -14816,13 +14818,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
       }
-      if (entry.replacementNetwork && activeServices.some(([, service]) => service.status === 'error')) {
-        assertBranchOperationCurrent(branchOperationLease, 'before failed replacement log capture');
-        opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', activeProfileIds);
-        assertBranchOperationCurrent(branchOperationLease, 'after failed replacement log capture');
-      }
       await commitServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
         operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
+        onFailureDiagnostics: snapshots => { opLog.containerLogSnapshots ||= snapshots; },
         container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
@@ -15759,13 +15757,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         deployQueueTracker.dispose();
       }
 
-      if (entry.replacementNetwork && svc.status === 'error') {
-        assertBranchOperationCurrent(branchOperationLease, 'before failed profile replacement log capture');
-        opLog.containerLogSnapshots ||= await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
-        assertBranchOperationCurrent(branchOperationLease, 'after failed profile replacement log capture');
-      }
       await commitServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
         operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
+        onFailureDiagnostics: snapshots => { opLog.containerLogSnapshots ||= snapshots; },
         container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       // Update overall status
       assertBranchOperationCurrent(branchOperationLease, 'before-profile-deploy-finalize');
