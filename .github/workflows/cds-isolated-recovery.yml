@@ -1,6 +1,7 @@
 name: CDS Isolated Recovery
 
 on:
+  workflow_dispatch:
   push:
     branches: [codex/cds-state-write-throttle-20261009]
     paths:

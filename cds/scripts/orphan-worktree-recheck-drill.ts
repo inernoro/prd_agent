@@ -8,9 +8,11 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 import { runOrphanRecheckProbe, probeEnumerationYield, type RecheckCase } from './orphan-worktree-recheck-probe.js';
 import { runOrphanOwnershipProbe, type OwnershipCase } from './orphan-worktree-ownership-probe.js';
+import { qualifyNativeSource } from './native-source-qualification.js';
 
 const referenceHead = 'a64d9b2494c8a0e140dd678c9c4bd9b90e1935c4';
 const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
+const historicalCandidateHead = '8c3d37a8fc10bbd6c8e281b78dd29bddc72d56cb';
 // 保留旧历史范围/编译黄金；本批新增按需能力准备及探针归属这一源，不能抵扣旧路径语义。
 const currentSourceChanges = ['src/executor/routes.ts', 'src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/access-requests.ts', 'src/routes/branches.ts', 'src/routes/cache.ts', 'src/routes/projects.ts', 'src/routes/remote-hosts.ts', 'src/server.ts', 'src/services/agent-workspace-session-runtime.ts', 'src/services/artifact-admission.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/cds-events-bus.ts', 'src/services/compose-parser.ts', 'src/services/container.ts', 'src/services/core-image-cache.ts', 'src/services/deployment-phase-budget.ts', 'src/services/forwarder-route-publisher.ts', 'src/services/github-webhook-dispatcher.ts', 'src/services/internal-pending-replay-auth.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/proxy.ts', 'src/services/resource-usage-sampler.ts', 'src/services/running-version.ts', 'src/services/service-replacement.ts', 'src/services/service-runtime.ts', 'src/services/state.ts', 'src/services/uptime-history-write.ts', 'src/services/uptime-monitor.ts', 'src/types.ts', 'src/widget-script.ts'];
 const ownershipReferenceHead = '766a259d8383da5e60e426819a97a110bfedf275';
@@ -34,7 +36,8 @@ async function main() {
     checks: [], isolatedFilesRemoved: false };
   try {
     report.stage = 'fixed-original-source-preparation';
-    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead], { stdio: 'pipe', timeout: 120000 });
+    report.currentQualification = await qualifyNativeSource(path.resolve('..'), process.env.GITHUB_SHA || '');
+    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead, historicalCandidateHead], { stdio: 'pipe', timeout: 120000 });
     const changed = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, inheritedCandidateHead, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
     report.inheritedCandidateHead = inheritedCandidateHead;
@@ -47,11 +50,16 @@ async function main() {
       'cds/src/services/worktree.ts', 'cds/src/types.ts']);
     report.changedProductionSources = execFileSync('/usr/bin/git', ['diff', '--name-only', inheritedCandidateHead, report.head, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
-    assert.deepEqual(report.changedProductionSources, currentSourceChanges.map(name => `cds/${name}`).sort());
-    const manifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
+    report.historicalCandidateHead = historicalCandidateHead;
+    const historicalChanges = execFileSync('/usr/bin/git', ['diff', '--name-only', inheritedCandidateHead, historicalCandidateHead, '--', ':(top)cds/src'],
+      { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+    assert.deepEqual(historicalChanges, currentSourceChanges.map(name => `cds/${name}`).sort());
+    const manifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, historicalCandidateHead, '--',
       ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim();
     report.referenceDependencyManifestsChanged = manifestsChanged;
     assert.equal(manifestsChanged, '');
+    report.currentDependencyManifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
+      ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim();
     const referenceRuntime = path.join(temp, 'reference-runtime');
     await fs.cp(path.resolve('dist'), referenceRuntime, { recursive: true });
     await fs.writeFile(path.join(referenceRuntime, 'package.json'), '{"type":"module"}\n', { mode: 0o600 });
