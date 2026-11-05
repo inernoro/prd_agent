@@ -908,9 +908,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </div>
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
+              <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
+                onNavigate={item => { if (item.href) navigate(item.href); }} />
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
                 onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
                 onBubbleMode={() => { if (isMobile) setShowComments(false); }} />}
+              {token && !review.historical && <a className="share-topbar-btn share-topbar-icon" href={`/s/wp/${encodeURIComponent(token)}?siteId=${encodeURIComponent(liveSite.id)}`}
+                target="_blank" rel="noopener noreferrer" aria-label="在新标签页打开当前文档" title="在新标签页打开当前文档"><ExternalLink size={13} /></a>}
               <span className="share-topbar-divider" />
               {!site.pdfAssetUrl && (
                 <button
@@ -1001,10 +1005,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
 
             </div>
           </div>
-          <div className="surface-tone-dark">
-            <RelatedDocumentsBar siteId={liveSite.id} source={{ token, password: password || undefined }}
-              onNavigate={item => { if (item.href) navigate(item.href); }} />
-          </div>
+
           {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
           {visibleNote && (
             <div

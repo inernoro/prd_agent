@@ -35,7 +35,7 @@ describe('mobile web hosting layout', () => {
   });
 
   it('keeps the functional page controls at least 44px on mobile', () => {
-    expect(cardSource).toContain('className="absolute bottom-[-5px] left-[-5px] z-20 inline-flex h-11 w-11');
+    expect(cardSource).toContain('className="absolute top-[-5px] left-[-5px] z-20 inline-flex h-11 w-11');
     expect(cardActionsSource).toContain('max-sm:h-11 max-sm:min-h-11');
     expect(cardActionsSource).toContain('max-sm:w-11 max-sm:min-w-11');
     expect(editPanelSource).not.toContain('aria-label="页面修改执行器"');

@@ -1,6 +1,11 @@
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
+import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
+import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
+import type { RelatedSummary } from '@/services/real/relatedDocuments';
 import { Badge } from '@/components/design/Badge';
 import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
@@ -424,6 +429,14 @@ export default function WebPagesPage() {
   useEffect(() => { writePref(PREF_KEYS.cardSize, cardSize); }, [cardSize]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const selectionContainer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectionMode) return;
+    const exit = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) setSelectionMode(false); };
+    window.addEventListener('keydown', exit);
+    return () => window.removeEventListener('keydown', exit);
+  }, [selectionMode]);
   // 分享链接原始列表：这一份是唯一事实源，「已分享」标记从它算出来。
   const [shareLinks, setShareLinks] = useState<ShareLinkItem[]>([]);
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心。
@@ -963,6 +976,10 @@ export default function WebPagesPage() {
     }
     return m;
   }, [spaceSites, personalFolderCanonicalNames, personalFolderOptions]);
+  const relatedSummaries = useRelatedSummaries(displaySites.map(site => site.id));
+  const selection = useHostedSiteSelection({ container: selectionContainer, enabled: !isMobile && workspaceTab === 'library',
+    mode: selectionMode, selected: selectedIds, onChange: setSelectedIds, visibleIds: displaySites.map(site => site.id) });
+
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
   // 顶栏「分享 N」与分享档结论句同一个口径：未过期且未撤销
@@ -1254,6 +1271,7 @@ export default function WebPagesPage() {
             site={site}
             size={cardSize}
             selected={selectedIds.has(site.id)}
+            selectionMode={selectionMode}
             fresh={freshIds.has(site.id)}
             shared={sharedSiteIds.has(site.id)}
             shareStats={siteShareStats.get(site.id)}
@@ -1261,6 +1279,8 @@ export default function WebPagesPage() {
             ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
             traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
+            relatedSummary={relatedSummaries[site.id]}
+            onNavigateRelated={id => navigate(`/web-pages?openSite=${encodeURIComponent(id)}`)}
             onVisit={() => handleVisitSite(site)}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}
@@ -1284,10 +1304,13 @@ export default function WebPagesPage() {
           <SiteListItem
             traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
+            relatedSummary={relatedSummaries[site.id]}
+            onNavigateRelated={id => navigate(`/web-pages?openSite=${encodeURIComponent(id)}`)}
             onVisit={() => handleVisitSite(site)}
             key={site.id}
             site={site}
             selected={selectedIds.has(site.id)}
+            selectionMode={selectionMode}
             shared={sharedSiteIds.has(site.id)}
             caps={siteCaps(site)}
             onSelect={() => toggleSelect(site.id)}
@@ -2068,9 +2091,15 @@ export default function WebPagesPage() {
           </div>
         )}
         <div
+          ref={selectionContainer}
+          data-site-selection-surface
+          onPointerDownCapture={selection.onPointerDownCapture}
           className={!isMobile ? 'flex-1 min-h-0 overflow-y-auto flex flex-col' : 'flex-1 min-h-0 flex flex-col'}
           style={!isMobile ? { padding: '14px 18px', overscrollBehavior: 'contain' } : undefined}
         >
+      {selection.rectangle && createPortal(<div aria-hidden data-site-selection-rectangle className="pointer-events-none fixed z-[10000] rounded-sm"
+        style={{ left: selection.rectangle.left, top: selection.rectangle.top, width: Math.max(0, selection.rectangle.right - selection.rectangle.left),
+          height: Math.max(0, selection.rectangle.bottom - selection.rectangle.top), background: 'var(--selection-bg)', border: '1px solid var(--selection-border)' }} />, document.body)}
       {loading && sites.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-token-muted">
           加载中...
@@ -2105,6 +2134,15 @@ export default function WebPagesPage() {
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>{headline.lead}</span>
             <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>{headline.stats}</span>
+            {!isMobile && <div className="ml-auto flex items-center gap-2">
+              {selectionMode && <button type="button" className="text-[11px] text-token-secondary" onClick={() => setSelectedIds(new Set(displaySites.map(site => site.id)))}>全选当前列表</button>}
+              <button type="button" aria-label="批量选择" aria-pressed={selectionMode}
+                title="从空白处拖框；按住勾选框滑选。多选模式下可直接滑过卡片；Esc 退出"
+                onClick={() => setSelectionMode(value => !value)} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px]"
+                style={{ color: selectionMode ? 'var(--accent-primary)' : 'var(--text-secondary)', background: selectionMode ? 'var(--bg-hover)' : undefined }}>
+                <CheckSquare2 size={13} />{selectionMode ? '结束多选' : '多选'}
+              </button>
+            </div>}
           </div>
           {siteGroups.map(group => (
             <div key={group.key} className="flex flex-col gap-2">
@@ -3098,13 +3136,16 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-export function SiteListItem({ site, selected, shared, caps, activity, traffic, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, selected, selectionMode = false, shared, caps, activity, traffic, relatedSummary, onNavigateRelated, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
+  selectionMode?: boolean;
   shared?: boolean;
   caps?: SiteCaps;
   activity?: HostedSiteActivity;
   traffic?: HostedSiteTraffic;
+  relatedSummary?: RelatedSummary;
+  onNavigateRelated?: (id: string) => void;
   onVisit?: () => void;
   onSelect: () => void;
   onEdit: () => void;
@@ -3140,16 +3181,19 @@ export function SiteListItem({ site, selected, shared, caps, activity, traffic, 
   };
   return (
     <div
-      className={`group @container flex items-center gap-3 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      className={`group @container flex items-center gap-3 px-3 py-2 rounded-md touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))] ${selectionMode ? 'cursor-crosshair' : canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
       data-hosted-site-id={site.id}
-      data-dock-draggable={canDrag ? 'true' : 'false'}
+      data-selected={selected}
+      data-dock-draggable={!selectionMode && canDrag ? 'true' : 'false'}
       style={{
         background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
       }}
-      onPointerDown={canDrag ? onPointerDown : undefined}
+      onPointerDown={!selectionMode && canDrag ? onPointerDown : undefined}
     >
       <input
         type="checkbox"
+        data-site-select
+        aria-label={selected ? '取消选择' : '选择'}
         checked={selected}
         onChange={onSelect}
         className="shrink-0"
@@ -3187,6 +3231,8 @@ export function SiteListItem({ site, selected, shared, caps, activity, traffic, 
             {site.title}
           </span>
           <SiteNewBadge activity={activity} />
+          {relatedSummary && relatedSummary.count > 0 && <RelatedDocumentsBar siteId={site.id} variant="badge" summary={relatedSummary}
+            onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />}
           {site.sourceType !== 'upload' && (
             <Badge className="hidden shrink-0 whitespace-nowrap @[768px]:inline-flex" variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
               {siteSourceLabel(site.sourceType)}

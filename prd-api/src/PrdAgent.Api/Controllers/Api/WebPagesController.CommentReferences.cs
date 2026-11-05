@@ -34,8 +34,7 @@ public partial class WebPagesController
         return result;
     }
 
-    private async Task<Dictionary<string, List<RelatedMention>>> RelatedCommentMentionsAsync(
-        HostedSite current, List<HostedSite> visible, string? userId, HashSet<string> sharedIds)
+    private async Task<List<string>> RelatedOriginsAsync()
     {
         var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
         var origins = config.GetSection("Cors:AllowedOrigins").Get<string[]>()?.ToList() ?? new List<string>();
@@ -55,6 +54,13 @@ public partial class WebPagesController
         origins.AddRange(config.GetSection("WebHosting:RelatedDocumentOrigins").Get<string[]>() ?? Array.Empty<string>());
         var ssoOrigin = await _db.AppSettings.Find(x => x.Id == "global").Project(x => x.MiduoSsoRedirectUri).FirstOrDefaultAsync();
         if (!string.IsNullOrWhiteSpace(ssoOrigin)) origins.Add(ssoOrigin);
+        return origins;
+    }
+
+    private async Task<Dictionary<string, List<RelatedMention>>> RelatedCommentMentionsAsync(
+        HostedSite current, List<HostedSite> visible, string? userId, HashSet<string> sharedIds)
+    {
+        var origins = await RelatedOriginsAsync();
         var sites = visible.ToDictionary(x => x.Id);
         var checkedIds = new HashSet<string>(sites.Keys);
         async Task<HostedSite?> Accessible(string id)

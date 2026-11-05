@@ -61,13 +61,13 @@ describe('卡片 hover 条的指针契约', () => {
     expect(actions.match(/pointer-events-auto/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
-  it('批量勾选框在 hover 条的留白区内（左内边距要给它让位）', () => {
+  it('勾选位于顶部触控区，与底部 hover 操作条分开', () => {
     const src = read('SiteCard.tsx');
-    // 勾选框 left 7px + 宽 20px = 右边缘 27px；hover 条左内边距必须大于它，
-    // 否则第一个操作按钮会压在勾选框上（视觉重叠，即使指针能穿透也读不清）
-    const at = src.indexOf('data-hoverbar');
-    const pad = src.slice(at, at + 900).match(/padding:\s*'7px 7px 7px (\d+)px'/);
-    expect(pad, 'hover 条的内边距写法变了，守卫要同步').not.toBeNull();
-    expect(Number(pad![1])).toBeGreaterThan(27);
+    const at = src.indexOf('data-site-select');
+    expect(at).toBeGreaterThan(-1);
+    expect(src.slice(at, at + 300)).toContain('absolute top-[-5px] left-[-5px]');
+    expect(src.slice(at, at + 300)).toContain('h-11 w-11');
+    expect(hoverBarClassName(src)).toContain('bottom-1');
+    expect(src).not.toContain('data-site-thumbnail-meta');
   });
 });

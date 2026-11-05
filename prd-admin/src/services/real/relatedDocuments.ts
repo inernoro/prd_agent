@@ -67,3 +67,13 @@ export function previewRelatedPermissions(id: string) {
 export function syncRelatedPermissions(id: string, fingerprint: string, revokeTargetShares: boolean) {
   return apiRequest<RelatedSyncResult>(`${path(id)}/permissions/sync`, { method: 'POST', body: { fingerprint, revokeTargetShares } });
 }
+
+export interface RelatedSummary {
+  count: number;
+  mainTitle?: string | null;
+  isMain: boolean;
+  titles: string[];
+}
+export function getRelatedSummaries(siteIds: string[]) {
+  return apiRequest<{ items: Record<string, RelatedSummary> }>(`/api/web-pages/related-documents/summaries?${new URLSearchParams({ siteIds: siteIds.join(',') })}`);
+}

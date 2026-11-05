@@ -49,6 +49,32 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+  it('列表关联标记先展示摘要，点击才读取完整关联与预览', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" summary={{ count: 1, isMain: true, mainTitle: '总体方案', titles: ['技术设计'] }} />));
+    expect(getRelatedDocuments).not.toHaveBeenCalled();
+    expect(container.querySelector('.related-trigger')?.getAttribute('title')).toContain('技术设计');
+    await open();
+    expect(getRelatedDocuments).toHaveBeenCalledTimes(1);
+    expect(document.querySelectorAll('.related-document-card')).toHaveLength(2);
+  });
+  it('紧凑工具栏把主文档和权限说明放进浮层，并提供独立标签页入口', async () => {
+    const navigate = vi.fn();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" onNavigate={navigate} />));
+    expect(container.querySelector('.related-main-label')).toBeNull();
+    expect(container.querySelector('.related-permission-hint')).toBeNull();
+    expect(container.querySelector('[data-permission-warning]')).not.toBeNull();
+    expect(container.querySelector('.related-trigger')?.getAttribute('title')).toContain('权限不一致');
+    await open();
+    expect(document.querySelector('.related-context-row')?.textContent).toContain('总体方案');
+    expect(document.querySelector('.related-context-row')?.textContent).toContain('权限不一致');
+    const external = document.querySelector<HTMLAnchorElement>('[aria-label="在新标签页打开：技术设计"]')!;
+    expect(external.getAttribute('target')).toBe('_blank');
+    expect(external.getAttribute('href')).toBe('/web-pages?openSite=b');
+    expect(external.rel).toContain('noopener');
+    expect(external.closest('.related-document-card')).toBeNull();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
 
   it('真实页面预览接入，并支持列表与卡片视图切换和记忆', async () => {
     const previewItem = { ...data.items[1], preview: { id: 'b', siteUrl: 'https://assets.test/b.html', entryFile: 'index.html', useShareAccess: false } };
