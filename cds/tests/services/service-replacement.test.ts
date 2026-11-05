@@ -20,6 +20,16 @@ function fixture() {
 }
 
 describe('就绪切换与保旧回退', () => {
+  it('旧入口查询返回空时也不能跳过失效代次围栏', async () => {
+    const f = fixture(); f.service.status = 'error'; f.service.creationIssued = true;
+    f.service.containerId = 'b'.repeat(64); f.entry.replacementNetwork = 'new-network';
+    let current = true;
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async () => { current = false; return null; });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'],
+      assertCurrent: () => { if (!current) throw new Error('superseded generation'); } })).rejects.toThrow('superseded generation');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+
   it('失败诊断归档持久化未确认时不收回候选', async () => {
     const f = fixture(); f.service.status = 'error'; f.service.creationIssued = true;
     f.service.containerId = 'b'.repeat(64); f.entry.replacementNetwork = 'new-network';

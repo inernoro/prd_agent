@@ -93,6 +93,8 @@ export function preserveReplacementNames(entry: BranchEntry, candidate: ServiceS
     .filter(runtime => runtime.containerName !== candidate.containerName).map(runtime => runtime.containerName);
 }
 
+class OldServingRuntimeUnavailable extends Error {}
+
 /** 本轮整体失败后收回未发布候选；已确认旧入口、其他轮次及已发布依赖保持。 */
 export async function abortUnpublishedServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService;
@@ -110,25 +112,31 @@ export async function abortUnpublishedServiceReplacements(options: {
     if (!candidates.length) continue;
     assertCurrent?.('before failed replacement old identity');
     const confirmedActive = await container.inspectOwnedRuntime(entry, id, active);
-    if (!confirmedActive) continue;
     assertCurrent?.('after failed replacement old identity');
+    if (!confirmedActive) continue;
     for (const candidate of candidates) {
       // 名称不同也可能仍携带旧CID；当前实际入口身份绝不能作为失败候选删除。
       if (candidate.containerId && candidate.containerId === confirmedActive.containerId) continue;
       // 同网段已有发布角色可能仍消费它；没有发布任何角色时才整体撤销候选。
       if (Object.values(entry.services).some(peer => peer !== service
         && servingRuntime(peer)?.networkName === candidate.networkName)) continue;
-      await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
-        operationId: options.operationId, operationGeneration: options.operationGeneration,
-        profileId: id, operation: 'failed-unpublished-runtime', source: 'service-replacement',
-        beforeRemove: async () => {
-          const current = await container.inspectOwnedRuntime(entry, id, active);
-          assertCurrent?.('after failed replacement old liveness');
-          if (!current || current.containerId !== confirmedActive.containerId || service.servingRuntime !== active) {
-            throw new Error('旧入口已失效或身份变化，保留未发布候选');
-          }
-        },
-        assertCurrent: () => assertCurrent?.('failed replacement cleanup command') });
+      try {
+        await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
+          operationId: options.operationId, operationGeneration: options.operationGeneration,
+          profileId: id, operation: 'failed-unpublished-runtime', source: 'service-replacement',
+          beforeRemove: async () => {
+            const current = await container.inspectOwnedRuntime(entry, id, active);
+            assertCurrent?.('after failed replacement old liveness');
+            if (!current || current.containerId !== confirmedActive.containerId || service.servingRuntime !== active) {
+              throw new OldServingRuntimeUnavailable('旧入口已失效或身份变化，保留未发布候选');
+            }
+          },
+          assertCurrent: () => assertCurrent?.('failed replacement cleanup command') });
+      } catch (error) {
+        assertCurrent?.('after failed replacement cleanup guard');
+        if (error instanceof OldServingRuntimeUnavailable) continue;
+        throw error;
+      }
       assertCurrent?.('after failed replacement cleanup');
       if (service.containerName === candidate.containerName) Object.assign(service, runtimeRef(active));
       if (service.pendingRuntime?.containerName === candidate.containerName) service.pendingRuntime = undefined;
@@ -210,8 +218,8 @@ export async function commitServiceReplacements(options: {
     if (selected.some(service => service.status === 'error')) {
       const archived = await archiveBranchContainerLogs({ stateService: state, containerService: container,
         branch: entry, source: 'deploy-error', profileIds: new Set(profileIds), assertCurrent });
-      options.onFailureDiagnostics?.(archived.map(snapshot => ({ ...snapshot, source: 'deploy-error', tailLines: 500 })));
       assertCurrent?.('before failed replacement archive persistence');
+      options.onFailureDiagnostics?.(archived.map(snapshot => ({ ...snapshot, source: 'deploy-error', tailLines: 500 })));
       state.save(); await state.flush();
       assertCurrent?.('after failed replacement archive persistence');
       await abortUnpublishedServiceReplacements(options);

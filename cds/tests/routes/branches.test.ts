@@ -5783,10 +5783,12 @@ describe('Branch Routes', () => {
       });
     }
 
-    it.each([{ readiness: false, captureFails: false, priorLive: true, created: true }, { readiness: false, captureFails: true, priorLive: true, created: true },
-      { readiness: true, captureFails: false, priorLive: true, created: true }, { readiness: true, captureFails: true, priorLive: true, created: true },
-      { readiness: false, captureFails: false, priorLive: false, created: true }, { readiness: false, captureFails: true, priorLive: false, created: true },
-      { readiness: false, captureFails: false, priorLive: true, created: false }])('failed candidate diagnostics readiness=$readiness captureFails=$captureFails priorLive=$priorLive created=$created', async ({ readiness, captureFails, priorLive, created }) => {
+    it.each([{ readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'live' }, { readiness: false, captureFails: true, priorLive: true, created: true, oldEntry: 'live' },
+      { readiness: true, captureFails: false, priorLive: true, created: true, oldEntry: 'live' }, { readiness: true, captureFails: true, priorLive: true, created: true, oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: false, created: true, oldEntry: 'live' }, { readiness: false, captureFails: true, priorLive: false, created: true, oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: true, created: false, oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'dead' },
+      { readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'changed' }])('failed candidate diagnostics readiness=$readiness captureFails=$captureFails priorLive=$priorLive created=$created oldEntry=$oldEntry', async ({ readiness, captureFails, priorLive, created, oldEntry }) => {
       const id = 'failed-evidence', oldCid = 'a'.repeat(64), candidateCid = 'b'.repeat(64);
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node',
         command: 'node server.js', workDir: '.', containerPort: 3000 });
@@ -5810,7 +5812,20 @@ describe('Branch Routes', () => {
         if (captureFails) throw new Error('candidate logs unavailable');
         return 'Candidate.cs(1,1): error CS0101: candidate failure evidence';
       });
-      const response = await request(server, 'POST', `/api/branches/${id}/deploy`);
+      let lostOldEntry = false;
+      const inspect = containerService.inspectOwnedRuntime.bind(containerService);
+      if (oldEntry !== 'live') vi.spyOn(containerService, 'inspectOwnedRuntime').mockImplementation(async (...args) =>
+        lostOldEntry && args[2].containerId === oldCid ? (oldEntry === 'dead' ? null : { ...args[2], containerId: 'd'.repeat(64) }) : inspect(...args));
+      const release = oldEntry === 'live' ? () => {} : await deploymentPhaseBudget.acquire('cleanup', { branchId: 'diagnostic-cleanup-holder' });
+      const pendingResponse = request(server, 'POST', `/api/branches/${id}/deploy`);
+      let response: Awaited<ReturnType<typeof request>>;
+      try {
+        if (oldEntry !== 'live') {
+          await vi.waitFor(() => expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(true));
+          lostOldEntry = true; release();
+        }
+        response = await pendingResponse;
+      } finally { release(); await pendingResponse; }
       expect(response.status).toBe(200); expect(candidate).not.toBe('old-api');
       expect(entry.services.api).toMatchObject({ containerName: priorLive ? 'old-api' : candidate,
         containerId: priorLive ? oldCid : candidateCid, status: 'error' });
@@ -5822,6 +5837,12 @@ describe('Branch Routes', () => {
       expect(report).toContain(!created ? 'candidate pull failed before creation' : captureFails ? (readiness ? '就绪探测' : 'candidate startup failed') : 'candidate failure evidence');
       if (!created) expect(logs.mock.calls.some(([name]) => name === candidate)).toBe(false);
       expect(oldReadAfterCandidate).toBe(false);
+      if (oldEntry !== 'live') {
+        expect(entry.errorMessage).toBe('api: candidate startup failed');
+        expect(deploymentRunService.list({ branchId: id })[0].failure?.summary).toBe('api: candidate startup failed');
+        expect(entry.services.api.pendingRuntime?.containerId).toBe(candidateCid);
+        expect(mock.commands.some(command => /^docker (stop|rm) /.test(command) && command.includes(candidateCid))).toBe(false);
+      }
     });
 
     it.each(['failed-candidate', 'unused-network', 'failed-candidate-old-dead', 'failed-candidate-old-changed'])('local replacement cleanup %s preserves retention and exact bounded waits', async kind => {
@@ -5858,7 +5879,7 @@ describe('Branch Routes', () => {
           const inspect = containerService.inspectOwnedRuntime.bind(containerService);
           vi.spyOn(containerService, 'inspectOwnedRuntime').mockImplementation(async (...args) =>
             args[2].containerId === oldCid ? (kind.endsWith('dead') ? null : { ...args[2], containerId: 'd'.repeat(64) }) : inspect(...args));
-          release(); expect(await result).toBeInstanceOf(Error);
+          release(); expect(await result).toBeUndefined();
           expect(entry.services.api.containerId).toBe(candidateCid);
           expect(mock.commands.some(command => /^docker (?:stop|rm) /.test(command) && command.includes(candidateCid))).toBe(false);
           return;
