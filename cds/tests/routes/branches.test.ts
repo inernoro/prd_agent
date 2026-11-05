@@ -5806,23 +5806,21 @@ describe('Branch Routes', () => {
         operationId: lease.operationId, operationGeneration: lease.generation, assertCurrent: step => lease.assertCurrent(step) });
       const result = cleanup.then(() => undefined, error => error);
       try {
-        if (kind === 'failed-candidate') {
-          // 当前主干只提交全部已就绪服务；失败候选保持原引用，不在提交入口偷偷清理。
-          expect(await result).toBeUndefined();
-          expect(entry.services.api.status).toBe('error');
-          expect(entry.services.api.containerId).toBe(candidateCid);
-          expect(entry.services.api.servingRuntime?.containerId).toBe(oldCid);
-          expect(entry.replacementNetwork).toBe(unusedNetwork);
-          expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(false);
-          expect(mock.commands.filter(command => /^docker (?:stop|rm|network rm) /.test(command))).toEqual([]);
-          return;
-        }
         await vi.waitFor(() => expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(true));
         const queued = deploymentPhaseBudget.snapshot().cleanup.queued.find(item => item.branchId === id)!;
         expect(deploymentRunService.reconcileInterrupted(new Date(queued.enqueuedAt + 16 * 60_000))).toEqual([]);
         expect(run.heartbeatAt).toBe(heartbeat);
         expect(queued.operationGeneration).toBe(lease.generation);
         release(); expect(await result).toBeUndefined();
+        if (kind === 'failed-candidate') {
+          expect(entry.services.api.status).toBe('error');
+          expect(entry.services.api.containerId).toBe(oldCid);
+          expect(entry.services.api.servingRuntime?.containerId).toBe(oldCid);
+          expect(entry.replacementNetwork).toBe(unusedNetwork);
+          expect(mock.commands.some(command => /^docker rm /.test(command) && command.includes(candidateCid))).toBe(true);
+          expect(mock.commands.filter(command => /^docker (?:stop|rm) /.test(command) && command.includes(oldCid))).toEqual([]);
+          return;
+        }
         expect(mock.commands.some(command => command === `docker network rm '${unusedNetwork}'`)).toBe(true);
         expect(entry.replacementNetworks).toEqual([]);
         expect(entry.services.api.retainedRuntimes).toEqual([expect.objectContaining({ containerName: 'unknown-old-api', containerId: oldCid })]);
