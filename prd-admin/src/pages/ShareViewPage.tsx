@@ -1,4 +1,8 @@
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
+import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
+import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
+import type { RelatedDocument } from '@/services/real/relatedDocuments';
+import { Dialog } from '@/components/ui/Dialog';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from '@/components/web-hosting/useHostedPdfDownload';
 import { useEffect, useState, useRef, useCallback } from 'react';
@@ -170,9 +174,13 @@ export function shouldMaskDirectPreview(opts: { source: PreviewSource }): boolea
 interface ShareViewPageProps {
   /** 显式注入 token；若未传，则从 useParams().token 读取（兼容旧路由 /s/wp/:token） */
   tokenOverride?: string;
+  siteIdOverride?: string;
+  passwordOverride?: string;
+  embedded?: boolean;
+  onNavigateRelated?: (item: RelatedDocument) => void;
 }
 
-export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}) {
+export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordOverride, embedded = false, onNavigateRelated }: ShareViewPageProps = {}) {
   const params = useParams<{ token: string }>();
   const token = tokenOverride ?? params.token;
   const navigate = useNavigate();
@@ -181,7 +189,17 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const currentUserId = useAuthStore(s => s.user?.userId);
   const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
-  const requestedRelatedSiteId = searchParams.get('siteId');
+  const requestedRelatedSiteId = siteIdOverride ?? searchParams.get('siteId');
+  const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
+  const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
+  const [relatedOpenError, setRelatedOpenError] = useState('');
+  const showAccountSite = useCallback((site: HostedSite) => { setRelatedSharedSite(null); setRelatedAccountSite(site); }, []);
+  const relatedPreview = useRelatedSiteOpener(showAccountSite, setRelatedOpenError);
+  const openRelatedDocument = onNavigateRelated ?? ((item: RelatedDocument) => {
+    if (item.preview?.useShareAccess && token) {
+      relatedPreview.cancel(); setRelatedAccountSite(null); setRelatedSharedSite(item);
+    } else void relatedPreview.open(item.id);
+  });
   const openedSiteId = data?.sites.length === 1 ? data.sites[0].id : undefined;
   useEffect(() => {
     if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
@@ -189,7 +207,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(passwordOverride ?? '');
   /**
    * 密码试太频繁被 429 挡下时的提示（后端文案自带「请 N 秒后再试」）。
    * 之前这一档会掉进整屏的「出错了」，把人踢出密码表单——他刚才输的密码没了，
@@ -391,7 +409,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     const res = await viewSiteShare(token, pwd?.trim());
     setLoading(false);
     if (res.success) {
-      const selectedId = searchParams.get('siteId');
+      const selectedId = requestedRelatedSiteId;
       const selected = selectedId ? res.data.sites.find(item => item.id === selectedId) : undefined;
       if (selectedId && !selected) {
         setData(null);
@@ -879,8 +897,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       <div
         ref={singleViewRef}
         style={{
-          width: '100vw',
-          height: pageFullscreen ? '100dvh' : '100vh',
+          width: embedded ? '100%' : '100vw',
+          height: embedded && !pageFullscreen ? '100%' : pageFullscreen ? '100dvh' : '100vh',
           minHeight: 0,
           position: pageFullscreen ? 'fixed' : 'relative',
           inset: pageFullscreen ? 0 : undefined,
@@ -909,7 +927,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
-                onNavigate={item => { if (item.href) navigate(item.href); }} />
+                onNavigate={openRelatedDocument} />
+              {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
+                canToggleComments={relatedAccountSite.ownerUserId === currentUserId}
+                onNavigateRelated={relatedPreview.open}
+                onClose={() => { relatedPreview.cancel(); setRelatedAccountSite(null); }} />}
+              <Dialog open={!!relatedSharedSite} onOpenChange={open => { if (!open) setRelatedSharedSite(null); }}
+                title="关联文档预览" maxWidth={1400} contentStyle={{ width: '90vw', height: '90dvh', maxHeight: '90dvh' }}
+                content={relatedSharedSite && <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
+                  <ShareViewPage key={relatedSharedSite.id} tokenOverride={token} siteIdOverride={relatedSharedSite.id}
+                    passwordOverride={password} embedded onNavigateRelated={openRelatedDocument} />
+                </div>} />
+              <Dialog open={!!relatedOpenError} onOpenChange={open => { if (!open) setRelatedOpenError(''); }}
+                title="无法打开关联文档" content={<p role="alert">{relatedOpenError}</p>} />
               {token && <ReviewToolbarControls review={review} canUpload={liveSite.viewerCanEdit === true}
                 onOpen={() => setShowComments(value => !value)} expanded={showComments} count={commentCount} showVersions={!liveSite.wrappedAssetType}
                 onBubbleMode={() => { if (isMobile) setShowComments(false); }} />}
@@ -930,7 +960,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 if (!token) return;
                 const result = await viewSiteShare(token, password || undefined);
                 if (!result.success) throw new Error('refresh failed');
-                const selectedId = searchParams.get('siteId');
+                const selectedId = requestedRelatedSiteId;
                 const selected = selectedId ? result.data.sites.find(item => item.id === selectedId) : undefined;
                 setData(selected ? { ...result.data, sites: [selected] } : result.data);
               }} />

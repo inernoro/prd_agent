@@ -4,6 +4,7 @@ import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSe
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
+import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
 import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
 import type { RelatedSummary } from '@/services/real/relatedDocuments';
 import { Badge } from '@/components/design/Badge';
@@ -540,17 +541,12 @@ export default function WebPagesPage() {
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
   const relatedOpenId = new URLSearchParams(location.search).get('openSite');
   const [relatedOpenError, setRelatedOpenError] = useState('');
+  const { open: openRelatedSite, cancel: cancelRelatedSite } = useRelatedSiteOpener(setCommentSite, setRelatedOpenError);
   useEffect(() => {
     if (!relatedOpenId) return;
-    let alive = true;
-    setRelatedOpenError('');
-    void getSite(relatedOpenId).then(result => {
-      if (!alive) return;
-      if (result.success) setCommentSite(result.data);
-      else setRelatedOpenError(result.error?.message || '文档不存在或无权访问');
-    }).catch(() => { if (alive) setRelatedOpenError('打开关联文档失败，请重试'); });
-    return () => { alive = false; };
-  }, [relatedOpenId]);
+    void openRelatedSite(relatedOpenId);
+    return cancelRelatedSite;
+  }, [relatedOpenId, openRelatedSite, cancelRelatedSite]);
 
   // 「帮我修改」进生成工作台：对话里就是每一轮修改，右边在线上版与草稿之间切换，版本记录也在那里。
   const openSiteEditor = (site: HostedSite) => {
@@ -1280,7 +1276,7 @@ export default function WebPagesPage() {
             traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
             relatedSummary={relatedSummaries[site.id]}
-            onNavigateRelated={id => navigate(`/web-pages?openSite=${encodeURIComponent(id)}`)}
+            onNavigateRelated={openRelatedSite}
             onVisit={() => handleVisitSite(site)}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}
@@ -1305,7 +1301,7 @@ export default function WebPagesPage() {
             traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
             relatedSummary={relatedSummaries[site.id]}
-            onNavigateRelated={id => navigate(`/web-pages?openSite=${encodeURIComponent(id)}`)}
+            onNavigateRelated={openRelatedSite}
             onVisit={() => handleVisitSite(site)}
             key={site.id}
             site={site}
@@ -2401,13 +2397,13 @@ export default function WebPagesPage() {
         <SitePreviewModal
           key={commentSite.id}
           site={commentSite}
-          onNavigateRelated={(id) => navigate(`/web-pages?openSite=${encodeURIComponent(id)}`)}
+          onNavigateRelated={openRelatedSite}
           onSiteVersionChanged={(updated) => {
             setCommentSite(updated);
             setSites(current => current.map(item => item.id === updated.id ? updated : item));
           }}
           onEditInWorkbench={() => openSiteEditor(commentSite)}
-          onClose={() => setCommentSite(null)}
+          onClose={() => { cancelRelatedSite(); setCommentSite(null); }}
           canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值

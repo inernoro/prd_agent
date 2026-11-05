@@ -269,3 +269,77 @@ test('返回定位的分页外网页移到团队后，不会在个人空间恢�
   await expect.poll(() => moved).toBe(true);
   await expect(card).toHaveCount(0);
 });
+
+// 回归：关联点击只打开当前页模态窗，不能经过列表路由或丢失原阅读现场。
+for (const mode of ['list', 'account-share', 'guest-share'] as const) {
+  test(`关联文档当前页预览保留原背景：${mode}`, async ({ page }) => {
+    const sites = ['source', 'target'].map(id => ({ id, title: id === 'source' ? '来源文档' : '关联目标',
+      siteUrl: `https://hosting.example/${id}/index.html`, entryFile: 'index.html', contentShape: 'self-contained-html',
+      ownerUserId: 'qa-related-user', sourceType: 'upload', files: [], tags: [], totalSize: 1024,
+      cosPrefix: '', folderCanonicalName: '', createdAt: '2026-11-05T00:00:00Z', updatedAt: '2026-11-05T00:00:00Z', askEnabled: false }));
+    const apiRequests: string[] = [];
+    const errors: string[] = [];
+    // Playwright 的 serviceWorkers:block 在不透明沙箱 iframe 注入脚本会抛平台错误；仍记录所有应用错误。
+    page.on('pageerror', error => {
+      if (!error.message.includes("Service worker is disabled because the context is sandboxed")) errors.push(error.message);
+    });
+    if (mode !== 'guest-share') await page.addInitScript(() => {
+      if (window.top !== window) return;
+      localStorage.setItem('prd-admin-auth', JSON.stringify({
+      state: { isAuthenticated: true, user: { userId: 'qa-related-user', username: 'qa-related-user', role: 'ADMIN' },
+        token: 'qa-related-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
+        isRoot: false, menuCatalog: [], menuCatalogLoaded: true }, version: 0,
+    })); });
+    await page.route('**/api/**', async route => {
+      const url = new URL(route.request().url()), path = url.pathname;
+      apiRequests.push(path);
+      let data: unknown = { items: [], folders: [], tags: [], teams: [], total: 0 };
+      if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+      else if (path === '/api/changelog/current-week') data = { weekStart: sites[0].createdAt, weekEnd: sites[0].createdAt, fetchedAt: sites[0].createdAt, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
+      else if (path === '/api/web-pages') data = { items: sites, total: sites.length };
+      else if (path === '/api/web-pages/related-documents/summaries') data = { items: { source: { count: 1, isMain: true, titles: ['关联目标'] } } };
+      else if (path.endsWith('/related-documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
+        hasPermissionDifferences: false, items: sites.map(site => ({ ...site, isMain: site.id === 'source',
+          preview: { ...site, useShareAccess: mode === 'guest-share' },
+          href: mode === 'guest-share' ? `/s/wp/qa-related?siteId=${site.id}` : `/web-pages?openSite=${site.id}` })) };
+      else if (path === '/api/web-pages/shares/view/qa-related') data = { title: '来源分享', shareType: 'collection', sites };
+      else if (path.endsWith('/content')) {
+        const id = url.searchParams.get('siteId') || path.split('/')[3];
+        data = { siteId: id, siteUrl: `https://hosting.example/${id}/index.html`, contentType: 'text/html',
+          html: `<!doctype html><h1>${id === 'source' ? '来源正文' : '目标正文'}</h1><input aria-label="保留输入"><div style="height:2000px"></div>` };
+      } else if (path.endsWith('/revisions')) data = [];
+      else if (path.endsWith('/comments')) data = { siteId: 'source', commentsEnabled: true, canComment: false, comments: [] };
+      else if (path === '/api/web-pages/target') data = sites[1];
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto(mode === 'list' ? '/web-pages?keepFilter=1' : '/s/wp/qa-related?siteId=source');
+    const originalUrl = page.url();
+    let sourceFrame;
+    if (mode === 'list') {
+      await page.locator('[data-hosted-site-id="source"] .related-trigger').click();
+    } else {
+      sourceFrame = page.locator('iframe[title="来源文档"]').contentFrame();
+      await sourceFrame.getByLabel('保留输入').fill('原页面状态');
+      await sourceFrame.locator('body').evaluate(el => { el.ownerDocument.defaultView!.scrollTo(0, 200); });
+      await page.locator('.share-topbar .related-trigger').click();
+    }
+    const listReads = apiRequests.filter(path => path === '/api/web-pages').length;
+    await page.locator('.related-document-card').filter({ hasText: '关联目标' }).click();
+    const modal = mode === 'guest-share' ? page.getByRole('dialog', { name: '关联文档预览', exact: true })
+      : page.getByRole('dialog', { name: '关联目标', exact: true });
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('iframe').first().contentFrame().getByRole('heading', { name: '目标正文' })).toBeVisible();
+    expect(page.url()).toBe(originalUrl);
+    expect(page.context().pages()).toHaveLength(1);
+    expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
+    if (mode === 'guest-share') expect(apiRequests).not.toContain('/api/web-pages/target');
+    await modal.getByRole('button', { name: '关闭', exact: true }).filter({ visible: true }).first().click();
+    await expect(modal).toHaveCount(0);
+    expect(page.url()).toBe(originalUrl);
+    if (sourceFrame) {
+      await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
+      expect(await sourceFrame.locator('body').evaluate(el => el.ownerDocument.defaultView!.scrollY)).toBe(200);
+    }
+    expect(errors).toEqual([]);
+  });
+}
