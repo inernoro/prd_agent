@@ -49,7 +49,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.19.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.19.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -9694,7 +9694,11 @@ def _instance_origin(raw: str) -> str:
 def _instance_catalog(value: Any = None) -> dict[str, Any]:
     file = Path(_workspace_root()) / "cds-instances.json"
     if value is None and not file.exists():
-        return {"version": 1, "instances": []}
+        # Public release snapshot supports fresh installations even when the current
+        # CDS is offline or predates /api/instance-catalog. Project config wins.
+        file = Path(__file__).resolve().parents[1] / "reference" / "instance-catalog.json"
+        if not file.exists():
+            return {"version": 1, "instances": []}
     try:
         data = value if value is not None else json.loads(file.read_text(encoding="utf-8"))
         if data.get("version") != 1 or not isinstance(data.get("instances"), list) or len(data["instances"]) > 20:

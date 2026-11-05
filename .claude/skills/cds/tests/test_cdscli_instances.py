@@ -216,3 +216,29 @@ def test_instance_check_refuses_redirect_without_forwarding_credentials(workspac
         assert json.loads((root / '.cds/active-instance.json').read_text()) == {'id': 'primary'}
     finally:
         server.shutdown(); server.server_close(); thread.join()
+
+
+def test_fresh_install_discovers_bundled_sites_offline(workspace, monkeypatch):
+    root, _ = workspace
+    (root / 'cds-instances.json').unlink()
+    monkeypatch.setattr(cli, '_request', lambda *a, **kw: pytest.fail('offline discovery must not call any host'))
+    code, text = run('instance', 'list')
+    data = json.loads(text)['data']
+    assert code == 0
+    assert [(x['id'], x['url']) for x in data['instances']] == [
+        ('primary', 'https://cds.miduo.org'), ('standby', 'https://mycds.net')]
+    assert all(not x['connected'] for x in data['instances'])
+    assert not (root / 'cds-instances.json').exists()
+
+
+def test_bundled_standby_without_its_grant_never_uses_primary_key(workspace, monkeypatch):
+    root, _ = workspace
+    (root / 'cds-instances.json').unlink()
+    save('https://cds.miduo.org', 'source-project', 'primary-only-secret')
+    monkeypatch.setenv('CDS_HOST', 'https://cds.miduo.org')
+    monkeypatch.setenv('AI_ACCESS_KEY', 'primary-global-secret')
+    monkeypatch.setattr(cli, '_request', lambda *a, **kw: pytest.fail('missing standby grant must stop before any request'))
+    code, text = run('instance', 'use', 'standby')
+    assert code == 1 and '尚未接入' in json.loads(text)['error']
+    assert 'secret' not in text
+    assert not (root / '.cds/active-instance.json').exists()

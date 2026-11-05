@@ -166,6 +166,8 @@ CLI 未封装的能力不得编造命令。需要 fallback 时先确认认证类
 `GET /api/instance-catalog`：通过现有 CDS 鉴权后读取仓库根目录 `cds-instances.json`，只返回
 `version` 与实例的 `id/name/role/url`。无配置返回空列表，无效配置返回 503，响应禁止缓存。
 CLI：`instance sync` 同步目录，`instance list` 离线发现；网页与 CLI 使用相同目录格式。
+CLI 优先读取项目根目录；没有时回退技能包 `reference/instance-catalog.json` 的公开快照，
+快照由仓库根目录生成且 CI 对拍。它不包含凭据，不检查站点健康，也不要求当前服务支持目录 API。
 
 `instance recommend` 只读查询当前 `GET /api/host-stats`，返回 `state=normal|high|unknown`、
 CPU 数值、阈值 80%、HTTP 状态和备用列表。备用 `authorization` 是本地授权存在性

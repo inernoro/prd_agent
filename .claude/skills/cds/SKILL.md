@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.19.0
+  version: 0.19.1
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.19.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.19.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -44,8 +44,10 @@ CDS 这边您想做什么？
 
 ### 负载偏高时主动告知用户
 
-开始部署、拉取或创建分支前，先检查 `cdscli instance list`；目录为空且当前站点可访问时，
-执行 `cdscli instance sync` 同步公开备用地址，再执行 `cdscli instance recommend`。它只查询当前站点
+开始部署、拉取或创建分支前，先检查 `cdscli instance list`。优先读项目根目录
+`cds-instances.json`；没有项目目录时使用技能包自带的公开地址快照，首次安装可直接离线发现主备。
+可用 `instance sync` 从支持该接口的当前站点刷新项目目录；旧站点不支持时保留包内快照，
+不能把目录查询失败解释为授权失败。再执行 `cdscli instance recommend`。它只查询当前站点
 `/api/host-stats`：CPU 一分钟负载占核心数比例达到 80% 判为 `high`；未达到为 `normal`；
 超时、权限失败、维护 503、重定向或响应缺字段为 `unknown`，不能据此宣称过载。
 
@@ -65,7 +67,8 @@ JSON `notices[code=cds-load-high]`。这是兜底提示，原命令仍在原站�
 
 用户说“用备用 CDS 继续部署”时，先离线运行 `cdscli instance list`，读取仓库根目录
 `cds-instances.json`；没有目录且主站可用时可运行 `cdscli instance sync` 同步公共地址。
-主站故障时不能依赖它重新下发备用地址；目录应提前随项目保存。
+技能包包含与仓库公开目录一致的地址快照；项目根目录可覆盖，目录只描述地址与角色，不表示健康或授权。
+主站故障时直接使用已保存的项目目录或包内快照，不依赖故障主站重新下发地址。
 
 - `cdscli instance connect standby --project <目标项目ID> --agent Codex`：申请目标项目独立授权，保留原实例授权。
 - 目标还没有项目：使用 `instance connect standby --new-project --create-project <名称> --git-url <仓库地址>`，然后走冷路径完成项目接入。
@@ -85,6 +88,23 @@ JSON `notices[code=cds-load-high]`。这是兜底提示，原命令仍在原站�
 
 用户入口：控制台顶部“主备 CDS”；断线提示展开后也能打开入口。网页切换进入目标项目列表，
 需要独立登录。可提前“下载备用入口”保存地址；标签页目录快照仅用于故障导航，不代表健康状态。
+
+### 备用继续部署：现有分支的完整验收路径
+
+用户明确选择备用后，沿用已批准的目标项目授权；没有目标授权才运行 `instance connect`。
+不重新申请已保存且校验有效的授权，不复制当前站点 Key，不把主站的项目或分支 ID 当作备用 ID。
+
+1. `instance check standby` → `instance use standby` → `auth inspect --strict`：校验备用项目与仓库，保存选择并确认后续命令使用备用独立授权。继承的主站环境 Key 必须被清除。
+2. `project show <备用项目ID>` → `profile list` → `branch list`：从备用实际返回结果选择现有分支，核对就绪路径、依赖与预构建模式。不要创建同名副本或改项目级默认来代替分支选择。
+3. 固定完整 40 位目标提交，确认同提交 CI 和预构建产物成功；已有同提交的成功产物可以复用，不以另一提交的 CI 代替。
+4. `branch deploy <备用实际分支ID> --commit <完整SHA> --timeout 600`：只向备用发起一次部署。记录返回的 `deploymentRunId`，用 `deployment-run show <runId>` 跟踪本次运行；超时先查该运行，不能自动跨站重放或重复部署。
+5. `branch status <备用实际分支ID>`：本次运行终态为 running，`runningCommitSha` 与 `targetCommitSha` 等于目标提交，`deployRuntime.prebuilt=true`、`sourceProfiles=0`、`drift.hasDrift=false`。不能只凭原有 BranchEntry 显示 running 宣称本次部署成功。
+6. `cdscli --human preview-url` 读取实际入口，按目标 profile 配置的就绪路径检查，并访问公网 HTML 及实际 JS/CSS。核对部署前后的主备控制台可用性；正式控制面、全局代理、共享依赖和其他项目不属于本次验收分支的修改范围。
+
+使用受限 CDS Self Preview 时，原配置就绪路径是 `/api/instance-mode`；它不具备宿主 Docker 权限，
+通用 `/healthz` 的既有异常应如实记录，不能修改探针掩盖，也不能将该例推广成所有项目的默认。
+验收记录只保存目标站点、请求 ID、部署运行、提交和“目标 Key 匹配 / 主站 Key 未携带”等判定，
+不能保存真实 Key、原始认证头或含密钥的完整环境。切换不迁移数据库，也不接管业务流量。
 
 ## cdscli — 唯一 CLI 入口（其他两个技能也走它）
 
