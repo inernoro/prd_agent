@@ -542,7 +542,7 @@ const serviceBuildScopes = [
 ];
 
 function deployedImageCommit(service) {
-  return String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i)?.[1] || '';
+  return String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})(?:@sha256:[0-9a-f]{64})?$/i)?.[1] || '';
 }
 
 function serviceNeedsCurrentCommit(serviceName, changedFiles) {
@@ -617,7 +617,7 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
     if (service.status !== 'running') reasons.push(`${serviceName} 未运行`);
     const expectedServiceCommit = serviceRuntimeCommits[serviceKey] || runtimeCommit;
     const sourceMode = service.deployedMode && service.deployedMode !== 'express';
-    if (!sourceMode && !String(service.deployedImage || '').endsWith(`:sha-${expectedServiceCommit}`)) {
+    if (!sourceMode && deployedImageCommit(service) !== expectedServiceCommit) {
       reasons.push(`${serviceName} 尚未切换到运行时目标镜像`);
     }
   }

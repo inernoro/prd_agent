@@ -1109,8 +1109,23 @@ test('网关巡检用 MAP 签名换单次票据并完成短会话登录', async 
   });
 });
 
+test('CDS 版本冻结识别摘要锁定镜像，仍拒绝错误提交和无效摘要', () => {
+  const commit = 'a'.repeat(40);
+  const branch = {
+    status: 'running', commitSha: commit, ciTargetSha: commit, ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: commit,
+    services: { api: { profileId: 'api', status: 'running', deployedMode: 'express',
+      deployedImage: `registry/api:sha-${commit}@sha256:${'b'.repeat(64)}` } },
+  };
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  branch.services.api.deployedImage = `registry/api:sha-${'c'.repeat(40)}@sha256:${'b'.repeat(64)}`;
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, false);
+  branch.services.api.deployedImage = `registry/api:sha-${commit}@sha256:bad`;
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, false);
+});
+
 test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移', () => {
-  const commit = 'abc123';
+  const commit = 'abc1234';
   const branch = {
     status: 'running',
     commitSha: commit,
