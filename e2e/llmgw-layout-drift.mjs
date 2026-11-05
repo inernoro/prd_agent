@@ -422,6 +422,78 @@ await page.fill('#llmgw-password', 'demo');
 await page.click('button[type=submit]');
 await page.waitForURL('**/llmgw/logs');
 
+// 只用本机假数据验证模型页合同；不创建真实模型、授权或计费记录。
+if (process.env.LLMGW_MODEL_CONTRACT_ONLY === '1') {
+  try {
+    const fixtures = LOGICAL_MODELS.slice(0, 3);
+    const usage = fixtures.map((model, index) => ({
+      publicId: model.publicId, days: ['2026-11-06'], dailyCalls: [736],
+      totalCalls: 736, totalTokens: 1000,
+      totalCostUsd: index === 1 ? 2.5 : 0,
+      unpricedCalls: index === 0 ? 736 : index === 1 ? 20 : 0,
+    }));
+    let submitted = null;
+    await page.route('**/llmgw/gw/logical-models', async (route) => {
+      if (route.request().method() === 'POST') {
+        submitted = route.request().postDataJSON();
+        return route.fulfill({ json: { success: true, error: null,
+          data: { ...submitted, id: 'local-code-only', enabled: true, offerings: [],
+            defaultForAppCallerCodes: [], isDefaultForType: false } } });
+      }
+      return route.fulfill({ json: { success: true, error: null, data: { items: fixtures, total: fixtures.length } } });
+    });
+    await page.route(/\/llmgw\/gw\/logical-models\/usage(?:\?.*)?$/, (route) => route.fulfill({
+      json: { success: true, error: null, data: { days: 30, items: usage } },
+    }));
+    activeProbe = '模型Code选择与缺价费用';
+    await page.goto(`${base}/logical-models`);
+    const rows = page.locator('.lg-logical-model-grid').filter({ has: page.locator('[aria-label="近 30 天用量"]') });
+    await rows.first().waitFor();
+    const costs = await Promise.all(fixtures.map((item) => rows.filter({
+      has: page.getByText(item.name, { exact: true }),
+    }).locator('[aria-label="近 30 天用量"]').innerText()));
+    const header = await page.locator('.lg-page-heading .lg-summary-strip').innerText();
+    await page.getByRole('button', { name: '手动新建', exact: true }).click();
+    const type = page.locator('label').filter({ hasText: /^模型类型/ }).locator('select');
+    await type.waitFor({ state: 'visible' });
+    const codeAvailable = await type.locator('option[value="code"]').count() === 1;
+    if (codeAvailable) {
+      await page.getByLabel('公开模型标识', { exact: true }).fill('local-workflow-code');
+      await page.getByLabel('显示名称', { exact: true }).fill('本机Code合同');
+      await type.selectOption('code');
+      await page.locator('label').filter({ hasText: /^能力，逗号分隔/ }).locator('input').fill('code');
+      await page.locator('label').filter({ hasText: /^允许的 appCaller/ }).locator('input').fill('demo.workflow::code');
+      await page.getByRole('button', { name: '保存逻辑模型', exact: true }).click();
+      await page.getByText('逻辑模型「本机Code合同」已创建', { exact: false }).waitFor();
+    }
+    const checks = {
+      codeAvailable,
+      originalCreateContract: submitted?.modelType === 'code'
+        && submitted.capabilities.join(',') === 'code'
+        && submitted.allowedAppCallerCodes.join(',') === 'demo.workflow::code',
+      allUnpricedUnknown: costs[0].includes('费用未知') && !costs[0].includes('$0.00'),
+      partialEstimateExplicit: costs[1].includes('已计价部分') && costs[1].includes('$2.50') && costs[1].includes('20'),
+      genuineZeroRetained: costs[2].includes('$0.00') && !costs[2].includes('费用未知'),
+      headerPartialEstimateExplicit: header.includes('已计价部分') && header.includes('$2.50'),
+      noRuntimeErrors: runtimeErrors.length === 0,
+    };
+    console.log(JSON.stringify({ checks, costs, header, localFakeDataOnly: true, productionWrites: 0, modelCalls: 0 }));
+    if (Object.values(checks).some((passed) => !passed)) process.exitCode = 1;
+  } catch (error) {
+    console.error(JSON.stringify({ localModelContractFailure: String(error),
+      formCount: await page.locator('form').count(), labels: await page.locator('label').allTextContents(),
+      selects: await page.locator('select').evaluateAll((elements) => elements.map((el) => ({
+        name: Array.from(el.labels ?? []).map((label) => label.textContent),
+        options: Array.from(el.options).map((option) => option.value), height: el.getBoundingClientRect().height,
+      }))), runtimeErrors }));
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  process.exit(process.exitCode || 0);
+}
+
 const ROUTES = ['/logs', '/platforms', '/models', '/service-keys', '/audits', '/app-callers', '/pools', '/logical-models', '/exchanges'];
 const data = {};
 const idleFetches = {};
