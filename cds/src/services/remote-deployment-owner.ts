@@ -30,8 +30,23 @@ type ExecutorLease = { owner: RemoteDeploymentOwner; expiresAt: number; started:
 /** 每条远端分支保留最后原代次；同提交不能合并不同所有者，迟到撤销不影响继任者。 */
 class ExecutorDeploymentOwners {
   private readonly leases = new Map<string, ExecutorLease>();
+  private readonly admissions = new Map<string, ExecutorLease>();
   constructor(private readonly state: StateService) {}
   private key(owner: RemoteDeploymentIdentity): string { return JSON.stringify([owner.projectId, owner.branchId]); }
+  private reclaim(): void {
+    for (const records of [this.leases, this.admissions]) for (const [key, lease] of records) {
+      if (Date.now() >= lease.expiresAt) records.delete(key);
+    }
+  }
+  private assertNewer(owner: RemoteDeploymentIdentity, previous?: RemoteDeploymentIdentity): void {
+    if (previous && previous.operationGeneration >= owner.operationGeneration) {
+      throw new BranchOperationSupersededError(owner.operationId, owner.branchId, 'remote-generation');
+    }
+  }
+  private hasCapacity(key: string): boolean {
+    return this.leases.has(key) || this.admissions.has(key)
+      || new Set([...this.leases.keys(), ...this.admissions.keys()]).size < 1024;
+  }
   private publish(lease: ExecutorLease): void {
     const branch = this.state.getBranch(lease.owner.branchId);
     if (branch && (branch.projectId || 'default') === lease.owner.projectId
@@ -40,29 +55,35 @@ class ExecutorDeploymentOwners {
     }
   }
   claim(owner: RemoteDeploymentIdentity): ExecutorLease {
+    this.reclaim();
     const branch = this.state.getBranch(owner.branchId);
     if (branch && (branch.projectId || 'default') !== owner.projectId) throw new Error('远端项目身份不一致');
     const key = this.key(owner), prior = this.leases.get(key), persisted = branch?.remoteDeployment;
-    const previous = prior?.owner || persisted;
-    if (previous && (previous.operationGeneration > owner.operationGeneration
-      || previous.operationGeneration === owner.operationGeneration && (!sameRemoteOwner(previous, owner) || previous.revoked))) {
-      throw new BranchOperationSupersededError(owner.operationId, owner.branchId, 'remote-generation');
-    }
-    if (!prior && persisted && sameRemoteOwner(persisted, owner)) throw new Error('重启后的旧代次不能重新执行，请创建新的部署');
     if (prior && sameRemoteOwner(prior.owner, owner)) {
-      if (Date.now() >= prior.expiresAt) { prior.owner.revoked = true; this.publish(prior); throw new Error('远端原代次资格已过期，请重新部署'); }
+      if (prior.owner.revoked) throw new Error('远端原代次资格已结束，请重新部署');
       prior.expiresAt = Date.now() + REMOTE_OWNER_TTL_MS; return prior;
     }
-    if (!prior && !this.state.getBranch(owner.branchId) && this.leases.size >= 1024) throw new Error('远端部署资格暂满，请稍后重试');
+    this.assertNewer(owner, prior?.owner); this.assertNewer(owner, persisted);
+    const pending = this.admissions.get(key);
+    if (pending && sameRemoteOwner(pending.owner, owner)) {
+      if (pending.owner.revoked) throw new Error('远端原代次预约已撤销，请重新部署');
+      pending.expiresAt = Date.now() + REMOTE_OWNER_TTL_MS; return pending;
+    }
+    this.assertNewer(owner, pending?.owner);
+    if (!this.hasCapacity(key)) throw new Error('远端部署资格暂满，请稍后重试');
     const lease: ExecutorLease = { owner: { ...owner, revoked: false }, expiresAt: Date.now() + REMOTE_OWNER_TTL_MS,
       started: false, sequence: 0, admissionId: randomUUID() };
-    this.leases.set(key, lease); this.publish(lease); return lease;
+    // 控制请求只预约；真正部署携原生回执开始后，才替换旧运行资格。
+    this.admissions.set(key, lease); return lease;
   }
   begin(owner: RemoteDeploymentIdentity, admissionId: unknown): { assertCurrent: () => void; receipt: () => RemoteExecutionReceipt } {
-    const lease = this.leases.get(this.key(owner));
+    this.reclaim();
+    const key = this.key(owner), lease = this.admissions.get(key);
     if (!lease || !sameRemoteOwner(lease.owner, owner) || admissionId !== lease.admissionId || lease.started
       || lease.owner.revoked || Date.now() >= lease.expiresAt) throw new Error('远端原代次未准入或已经受理，不能重放执行');
-    lease.started = true;
+    this.assertNewer(owner, this.leases.get(key)?.owner);
+    this.assertNewer(owner, this.state.getBranch(owner.branchId)?.remoteDeployment);
+    lease.started = true; this.admissions.delete(key); this.leases.set(key, lease); this.publish(lease);
     const assertCurrent = () => {
       if (this.leases.get(this.key(owner)) !== lease || lease.owner.revoked || Date.now() >= lease.expiresAt) {
         if (!lease.owner.revoked) { lease.owner.revoked = true; this.publish(lease); }
@@ -77,17 +98,25 @@ class ExecutorDeploymentOwners {
     } };
   }
   revoke(owner: RemoteDeploymentIdentity): boolean {
-    const key = this.key(owner), lease = this.leases.get(key);
-    const prior = lease?.owner || this.state.getBranch(owner.branchId)?.remoteDeployment;
+    this.reclaim();
+    const key = this.key(owner), lease = this.leases.get(key), pending = this.admissions.get(key);
+    if (lease && sameRemoteOwner(lease.owner, owner)) { lease.owner.revoked = true; this.publish(lease); return true; }
+    if (pending && sameRemoteOwner(pending.owner, owner)) { pending.owner.revoked = true; return true; }
+    const persisted = this.state.getBranch(owner.branchId)?.remoteDeployment;
+    const prior = pending?.owner || lease?.owner || persisted;
     if (prior && (prior.operationGeneration > owner.operationGeneration
       || prior.operationGeneration === owner.operationGeneration && !sameRemoteOwner(prior, owner))) return false;
-    if (!lease && !this.state.getBranch(owner.branchId) && this.leases.size >= 1024) return false;
-    const revoked: ExecutorLease = lease && sameRemoteOwner(lease.owner, owner) ? lease
-      : { owner: { ...owner, revoked: true }, expiresAt: 0, started: false, sequence: 0, admissionId: '' };
-    revoked.owner.revoked = true; this.leases.set(key, revoked); this.publish(revoked); return true;
+    if (!this.hasCapacity(key)) return false;
+    const revoked: ExecutorLease = { owner: { ...owner, revoked: true }, expiresAt: Date.now() + REMOTE_OWNER_TTL_MS,
+      started: false, sequence: 0, admissionId: '' };
+    this.admissions.set(key, revoked);
+    if (sameRemoteOwner(persisted, owner)) this.publish(revoked);
+    return true;
   }
   protected(branchId: string): boolean {
-    return !!this.state.getBranch(branchId)?.remoteDeployment || [...this.leases.values()].some(lease => lease.owner.branchId === branchId);
+    this.reclaim();
+    return !!this.state.getBranch(branchId)?.remoteDeployment
+      || [...this.leases.values(), ...this.admissions.values()].some(lease => lease.owner.branchId === branchId);
   }
 }
 const executors = new WeakMap<StateService, ExecutorDeploymentOwners>();
@@ -146,12 +175,13 @@ export function remoteProxyOwner(options: { owner: RemoteDeploymentIdentity; ent
   coordinator: BranchOperationCoordinator; lease: BranchOperationLease; url: string; headers: Record<string, string> }) {
   const { owner, entry, state, coordinator, lease, url, headers } = options;
   const controller = new AbortController();
-  const current = () => lease.isCurrent() && state.getBranch(entry.id) === entry
-    && sameRemoteOwner(entry.remoteDeployment, owner) && !entry.remoteDeployment?.revoked;
+  let admitted = false, closing = false, cancelled = false;
+  const current = () => !cancelled && lease.isCurrent() && state.getBranch(entry.id) === entry
+    && entry.id === owner.branchId && (entry.projectId || 'default') === owner.projectId
+    && (!admitted || sameRemoteOwner(entry.remoteDeployment, owner) && !entry.remoteDeployment?.revoked);
   const assertCurrent = () => { if (!current()) throw new BranchOperationSupersededError(owner.operationId, owner.branchId, 'remote-proxy'); };
   lease.assertCurrent('remote owner admission');
-  entry.remoteDeployment = { ...owner, revoked: false }; state.save([{ kind: 'branches', id: entry.id }]);
-  let revoke: Promise<void> | undefined, renew: Promise<void> | undefined, timer: NodeJS.Timeout | undefined, cancelled = false;
+  let revoke: Promise<void> | undefined, renew: Promise<void> | undefined, timer: NodeJS.Timeout | undefined;
   let admissionId: string | undefined;
   const control = async (action: 'claim' | 'renew' | 'revoke') => {
     const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ ...owner, action }), signal: AbortSignal.timeout(5_000) });
@@ -162,7 +192,7 @@ export function remoteProxyOwner(options: { owner: RemoteDeploymentIdentity; ent
   };
   const cancel = (failed = false) => {
     if (cancelled) return; cancelled = true;
-    if (state.getBranch(entry.id) === entry && sameRemoteOwner(entry.remoteDeployment, owner)) {
+    if (admitted && state.getBranch(entry.id) === entry && sameRemoteOwner(entry.remoteDeployment, owner)) {
       entry.remoteDeployment!.revoked = true;
       if (failed && lease.isCurrent()) { entry.status = 'error'; entry.errorMessage ||= '执行器原代次资格失效，旧服务保留；请查看最新部署'; }
       state.save([{ kind: 'branches', id: entry.id }]);
@@ -177,14 +207,18 @@ export function remoteProxyOwner(options: { owner: RemoteDeploymentIdentity; ent
     admissionId: () => admissionId,
     async claim() {
       assertCurrent(); await control('claim'); assertCurrent();
+      admitted = true; entry.remoteDeployment = { ...owner, revoked: false }; state.save([{ kind: 'branches', id: entry.id }]);
       timer = setInterval(() => {
+        if (closing) return;
         if (!current()) { cancel(); return; }
-        renew ||= control('renew').catch(() => { cancel(true); }).finally(() => { renew = undefined; });
+        renew ||= control('renew').catch(() => { if (!closing) cancel(true); }).finally(() => { renew = undefined; });
       }, 10_000); timer.unref();
     },
     async close(failed = false) {
-      if (failed) cancel(true); if (timer) clearInterval(timer); unsubscribe();
-      await Promise.allSettled([renew]); await Promise.allSettled([revoke]);
+      closing = true;
+      if (failed) cancel(true); if (timer) clearInterval(timer);
+      try { await Promise.allSettled([renew]); await Promise.allSettled([revoke]); }
+      finally { unsubscribe(); }
     },
   };
 }

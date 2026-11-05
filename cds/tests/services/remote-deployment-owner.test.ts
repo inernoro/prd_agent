@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StateService } from '../../src/services/state.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import { executorDeploymentOwners, readOwnedRemoteChunk, remoteProxyOwner, RemoteExecutionWaits,
   REMOTE_OWNER_TTL_MS, type RemoteDeploymentIdentity } from '../../src/services/remote-deployment-owner.js';
 
@@ -41,6 +42,7 @@ describe('远端原代次与本机剩余时长', () => {
 
   it('执行器重启后旧准入回执不能重放，必须由主节点派发新代次', async () => {
     const owners = executorDeploymentOwners(state), admitted = owners.claim(owner);
+    owners.begin(owner, admitted.admissionId);
     await state.flush();
     const restarted = new StateService(path.join(dir, 'state.json')); restarted.load();
     const cold = executorDeploymentOwners(restarted);
@@ -48,6 +50,100 @@ describe('远端原代次与本机剩余时长', () => {
     expect(() => cold.claim(owner)).toThrow();
     const next = { ...owner, operationId: 'op-new', operationGeneration: 2, deploymentRunId: 'run-new' };
     expect(() => cold.begin(next, cold.claim(next).admissionId)).not.toThrow(); await restarted.flush();
+  });
+
+  it('项目历史真实裁剪后冷启动仍从分支已保存所有者恢复代次', async () => {
+    const runs = new DeploymentRunService(state);
+    const original = await runs.begin({ ...owner, operationGeneration: 7, trigger: 'manual' });
+    runs.cancel(original.id, '原部署已结束');
+    Object.assign(state.getBranch('owned')!, { executorId: owner.executorId,
+      remoteDeployment: { ...owner, operationGeneration: 7, deploymentRunId: original.id, revoked: false } });
+    state.addBranch({ ...state.getBranch('owned')!, id: 'history', branch: 'feature/history', remoteDeployment: undefined });
+    for (let index = 0; index < 50; index++) state.addDeploymentRun({ ...original, id: `history-${index}`, branchId: 'history',
+      operationId: `history-op-${index}`, operationGeneration: index + 1, startedAt: new Date(Date.now() + 1_000 + index).toISOString() });
+    expect(state.getDeploymentRun(original.id)).toBeUndefined(); await state.flush();
+    const cold = new StateService(path.join(dir, 'state.json')); cold.load();
+    try {
+      const coordinator = new BranchOperationCoordinator(); new DeploymentRunService(cold).restoreQueued(coordinator);
+      const next = coordinator.begin({ projectId: 'default', branchId: 'owned', kind: 'deploy', trigger: 'manual' });
+      expect(next.generation).toBe(8);
+    } finally { await cold.flush(); }
+  });
+
+  it('1024条过期资格可回收且旧准入回执无法重放', () => {
+    let now = 1_000; vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const owners = executorDeploymentOwners(state);
+    const historical = { ...owner, branchId: 'deleted-0' };
+    const admission = owners.claim(historical).admissionId;
+    owners.begin(historical, admission);
+    for (let index = 1; index < 1024; index++) {
+      const item = { ...owner, branchId: `deleted-${index}` }; owners.begin(item, owners.claim(item).admissionId);
+    }
+    expect(() => owners.claim({ ...owner, branchId: 'new-branch' })).toThrow('暂满');
+    now += REMOTE_OWNER_TTL_MS;
+    expect(() => owners.claim({ ...owner, branchId: 'new-branch' })).not.toThrow();
+    expect(() => owners.begin(historical, admission)).toThrow();
+  });
+
+  it('新资格仅预约时不围住旧执行，取消预约也不改已运行所有者', () => {
+    const owners = executorDeploymentOwners(state), active = owners.begin(owner, owners.claim(owner).admissionId);
+    const before = JSON.stringify(state.getBranch('owned'));
+    const next = { ...owner, operationId: 'next', deploymentRunId: 'next', operationGeneration: 2 };
+    const admission = owners.claim(next).admissionId;
+    expect(() => owners.claim(owner)).not.toThrow();
+    expect(() => active.assertCurrent()).not.toThrow(); expect(JSON.stringify(state.getBranch('owned'))).toBe(before);
+    expect(owners.revoke(next)).toBe(true);
+    expect(() => active.assertCurrent()).not.toThrow(); expect(JSON.stringify(state.getBranch('owned'))).toBe(before);
+    expect(() => owners.begin(next, admission)).toThrow(); expect(() => owners.claim(next)).toThrow();
+  });
+
+  it('主节点准入失败仅结束新操作，旧运行态与心跳所有者保持逐字不变', async () => {
+    const entry = state.getBranch('owned')!;
+    Object.assign(entry, { status: 'running', errorMessage: '原诊断记录', executorId: owner.executorId, remoteDeployment: { ...owner, revoked: false } });
+    const before = JSON.stringify(entry), actions: string[] = [];
+    const registry = new ExecutorRegistry(state);
+    registry.register({ id: owner.executorId, host: '127.0.0.1', port: 9901, capacity: { maxBranches: 4, memoryMB: 1024, cpuCores: 2 } });
+    const coordinator = new BranchOperationCoordinator(); coordinator.seedGeneration('owned', 1);
+    const decision = coordinator.begin({ projectId: 'default', branchId: 'owned', kind: 'deploy', trigger: 'manual' });
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const action = JSON.parse(String(init.body)).action; actions.push(action);
+      return new Response(JSON.stringify({ qualified: action === 'revoke' }), { status: action === 'revoke' ? 200 : 409 });
+    }));
+    const guard = remoteProxyOwner({ owner: { ...owner, operationId: decision.operationId, operationGeneration: decision.generation }, entry,
+      state, coordinator, lease: decision.lease!, url: 'http://127.0.0.1/exec/deployment-owner', headers: {} });
+    try {
+      await expect(guard.claim()).rejects.toThrow(); await guard.close(true);
+      expect(JSON.stringify(entry)).toBe(before); expect(decision.lease!.isCurrent()).toBe(false);
+      expect(actions).toEqual(['claim', 'revoke']);
+      registry.heartbeat(owner.executorId, { load: { memoryUsedMB: 0, cpuPercent: 0 }, branches: {
+        owned: { status: 'running', remoteDeployment: { ...owner, revoked: false }, services: {
+          api: { profileId: 'api', containerName: 'original-api', hostPort: 10001, status: 'running' },
+        } } as any,
+      } });
+      expect(entry.services.api?.containerName).toBe('original-api'); expect(entry.status).toBe('running');
+    } finally { await guard.close(); vi.unstubAllGlobals(); }
+  });
+
+  it('成功收尾期间迟到续期失败不改已成功状态且没有遗留控制请求', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const entry = state.getBranch('owned')!, actions: string[] = [];
+    const coordinator = new BranchOperationCoordinator();
+    const decision = coordinator.begin({ projectId: 'default', branchId: 'owned', kind: 'deploy', trigger: 'manual' });
+    let rejectRenew!: (reason: Error) => void;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const action = JSON.parse(String(init.body)).action; actions.push(action);
+      if (action === 'renew') return new Promise<Response>((_resolve, reject) => { rejectRenew = reject; });
+      return new Response(JSON.stringify({ qualified: true, admissionId: 'success-admission' }));
+    }));
+    const guard = remoteProxyOwner({ owner: { ...owner, operationId: decision.operationId, operationGeneration: decision.generation }, entry,
+      state, coordinator, lease: decision.lease!, url: 'http://127.0.0.1/exec/deployment-owner', headers: {} });
+    try {
+      await guard.claim(); await vi.advanceTimersByTimeAsync(10_000); expect(actions).toEqual(['claim', 'renew']);
+      entry.status = 'running'; const before = JSON.stringify(entry), closing = guard.close(false);
+      rejectRenew(new Error('迟到的网络失败')); await closing;
+      expect(JSON.stringify(entry)).toBe(before); expect(decision.lease!.isCurrent()).toBe(true);
+      expect(actions).toEqual(['claim', 'renew']);
+    } finally { await guard.close(); vi.unstubAllGlobals(); vi.useRealTimers(); }
   });
 
   it.each([-120_000, 120_000])('执行器时钟偏移%s毫秒仍以本机首次收到后的20分钟为截止，重复回执不能续命', skew => {

@@ -3979,6 +3979,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // next retry will still target this executor (sticky).
     entry.executorId = executor.id;
     entry.status = 'building';
+    entry.errorMessage = undefined;
     // 本轮构建起点锚点 —— 远端执行器路径同样要钉，否则预览等待页 ETA 会回退到
     // 历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
     entry.lastDeployStartedAt = new Date().toISOString();
@@ -13746,10 +13747,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const checkedExecutor = deploymentInput.artifactAdmission?.executorId;
     const remoteTarget = checkedExecutor === 'local' ? null : resolveDeployTarget(entry, checkedExecutor || explicitTarget);
     if (remoteTarget) {
-      // Clear any stale error + clear the local services map since we're
-      // handing this branch off to the remote — the master isn't running
-      // containers for it, the executor is.
-      entry.errorMessage = undefined;
       try {
         branchOperationFinalStatus = await proxyDeployToExecutor(remoteTarget, entry, res, {
           requestId: requestId || null,

@@ -6796,6 +6796,34 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('真实Master原生准入被拒不清旧错误和运行态，也不派发部署', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const id = 'remote-claim-rejected', now = new Date().toISOString(), actions: string[] = [];
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/claim-rejected', worktreePath: path.join(tmpDir, id),
+        createdAt: now, status: 'running', errorMessage: '原运行诊断', executorId: 'exec-rejected', services: {
+          api: { profileId: 'api', containerName: 'original-api', hostPort: 10001, status: 'running' },
+        }, remoteDeployment: { projectId: 'default', branchId: id, executorId: 'exec-rejected', operationId: 'old-op',
+          operationGeneration: 7, deploymentRunId: 'old-run', revoked: false } });
+      branchOperationCoordinator.seedGeneration(id, 7);
+      const entry = stateService.getBranch(id)!, runtime = () => JSON.stringify([entry.status, entry.errorMessage, entry.executorId, entry.services, entry.remoteDeployment]);
+      const before = runtime();
+      const remote = http.createServer((req, res) => {
+        let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+          const action = JSON.parse(raw).action; actions.push(action || 'deploy'); res.setHeader('Content-Type', 'application/json');
+          res.writeHead(action === 'revoke' ? 200 : 409); res.end(JSON.stringify({ qualified: action === 'revoke' }));
+        });
+      });
+      await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+      registryNodes.push({ id: 'exec-rejected', host: '127.0.0.1', port: (remote.address() as { port: number }).port,
+        status: 'online', role: 'remote', labels: [], branches: [], capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-rejected' });
+        expect(response.status).toBe(409); expect(runtime()).toBe(before); expect(actions).toEqual(['claim', 'revoke']);
+        expect(branchOperationCoordinator.getActiveOperations(id)).toHaveLength(0);
+      } finally { remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve())); }
+    });
+
     it('真实Master静默远端流取消独立撤销原代次，旧finally不能覆盖继任者', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
       const id = 'remote-quiet-owned', now = new Date().toISOString(), controls: any[] = [];

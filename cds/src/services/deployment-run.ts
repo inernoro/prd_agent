@@ -13,7 +13,7 @@ import { cancelsBranchDeployments } from './branch-operation-coordinator.js';
 import { captureDeploymentIntent, readDeploymentIntent, type DeploymentExecutionInput } from './deployment-intent.js';
 import { isLocallyOwned } from './executor-ownership.js';
 import { isSealedSecret } from '../infra/secret-seal.js';
-import { RemoteExecutionWaits, sameRemoteOwner, type RemoteDeploymentIdentity } from './remote-deployment-owner.js';
+import { remoteIdentity, RemoteExecutionWaits, sameRemoteOwner, type RemoteDeploymentIdentity } from './remote-deployment-owner.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -227,6 +227,11 @@ export class DeploymentRunService {
     this.bindOperationCoordinator(coordinator);
     const runs = this.list();
     for (const run of runs) if (run.operationGeneration !== undefined) coordinator.seedGeneration(run.branchId, run.operationGeneration);
+    for (const branch of this.stateService.getAllBranches()) {
+      const owner = remoteIdentity(branch.remoteDeployment);
+      if (owner && owner.branchId === branch.id && owner.projectId === (branch.projectId || 'default')
+        && owner.executorId === branch.executorId) coordinator.seedGeneration(branch.id, owner.operationGeneration);
+    }
     const restored: DeploymentRun[] = [];
     const intents = this.stateService.getDeploymentIntents().sort((a, b) => a.admissionGeneration - b.admissionGeneration);
     for (const intent of intents) {
