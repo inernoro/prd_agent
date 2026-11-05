@@ -271,7 +271,7 @@ export const MarketplacePage: React.FC = () => {
       let requestFailed = false;
       await Promise.all(
         Object.entries(CONFIG_TYPE_REGISTRY).map(async ([typeKey, typeDef]) => {
-          if (scope !== 'all' && typeKey !== 'skill') return;
+          if ((scope !== 'all' || background) && typeKey !== 'skill') return;
           try {
             const res = scope === 'all'
               ? await typeDef.api.listMarketplace({ keyword: '', sort: sortBy })

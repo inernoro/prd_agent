@@ -287,6 +287,31 @@ for (const scope of ['mine', 'favorites'] as const) {
   });
 }
 
+test('收藏后台只刷新技能，无关类型故障不触发刷新失败提示', async ({ page }) => {
+  const items = await installMarketplaceFixture(page);
+  const item = items.find(item => item.id === 'fixture-skill-20')!;
+  await page.goto('/marketplace');
+  await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
+  await page.waitForLoadState('networkidle');
+  const unrelatedRequests: string[] = [];
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/marketplace') && path !== '/api/marketplace/skills') {
+      unrelatedRequests.push(path);
+      await route.fulfill({ status: 503, json: { success: false, error: { code: 'TEMPORARY', message: '无关类型暂时不可用' } } });
+    } else await route.fallback();
+  });
+  const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/marketplace/skills' && response.ok());
+  const card = page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) });
+  await card.getByTitle('取消收藏', { exact: true }).click();
+  await refreshed;
+  await page.waitForLoadState('networkidle');
+  await expect(card.locator('.mkt-card-favorite')).toHaveAttribute('data-active', 'false');
+  await expect(page.locator('.mkt-card')).toHaveCount(24);
+  expect(unrelatedRequests).toEqual([]);
+  await expect(page.getByText('列表刷新失败', { exact: true })).toHaveCount(0);
+});
+
 for (const scope of ['all', 'favorites'] as const) {
   test(`收藏后台刷新失败保留 ${scope} 已确认内容并可恢复`, async ({ page }) => {
     const items = await installMarketplaceFixture(page);
