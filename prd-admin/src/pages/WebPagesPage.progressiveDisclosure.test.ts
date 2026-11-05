@@ -20,8 +20,8 @@ describe('网页托管原版列表布局回归', () => {
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(toolbar).toContain('ALL_GROUP_MODES.map');
-    expect(toolbar).toContain('data-tour-id="webpages-sort-pills"');
-    expect(toolbar).toContain('data-tour-id="webpages-card-size-pills"');
+    expect(toolbar).toContain('sortTourId="webpages-sort-pills"');
+    expect(toolbar).toContain('cardSizeTourId="webpages-card-size-pills"');
     expect(toolbar).toContain('来源筛选');
     // 设计稿 Main（2026-09-23）：「生成网页」是主操作，「上传网页」退为次操作紧挨着它。
     expect(toolbar).toContain('size="sm" variant="secondary" onClick={openCreateUploadDialog}');
