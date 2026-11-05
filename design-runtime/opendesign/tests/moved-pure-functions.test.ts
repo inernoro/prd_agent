@@ -45,22 +45,18 @@ function digest(value: Buffer | string): string {
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
 describe('OpenDesign prompt quality contracts', () => {
-  const assertNoGeneratedReadableText = (prompt: string) => {
-    expect(prompt).toContain('All readable text must be ordinary visible HTML text nodes.');
-    expect(prompt).toContain('CSS content declarations and pseudo-elements may contain decorative symbols only');
-    expect(prompt).toContain('never put letters, digits, Chinese characters, or escaped forms of any of them in CSS content');
-    expect(prompt).toContain('Inspect every content declaration and move any readable text into visible HTML before stopping.');
-  };
-
-  it('forbids CSS-generated readable text in generation and strict final review', () => {
+  it('delegates content and design to native self-check without installing MAP copy or numeric gates', () => {
     const generation = buildPlatformRules({ knowledgeFiles: [], editingExistingPage: false }).join(' ');
     const finalReview = buildReviewMessage({ reviewPass: 0, editingExistingPage: false, reviewAddendum: '' });
-
-    assertNoGeneratedReadableText(generation);
-    assertNoGeneratedReadableText(finalReview);
+    expect(generation).toContain('MAP checks safe complete delivery');
+    for (const prompt of [generation, finalReview]) {
+      expect(prompt).not.toContain('All readable text must be ordinary visible HTML text nodes.');
+      expect(prompt).not.toContain('4.5:1 and 3.0:1 hard gate');
+      expect(prompt).not.toContain('versioned qualityContract in task.json is mandatory');
+    }
   });
 
-  it('prevents unusable mobile navigation and low-contrast key text in generation, final review and browser repair', () => {
+  it('keeps the legacy repair helper bounded without installing its numeric rules into task prompts', () => {
     const generation = buildPlatformRules({ knowledgeFiles: [], editingExistingPage: false }).join(' ');
     const finalReview = buildReviewMessage({ reviewPass: 0, editingExistingPage: false, reviewAddendum: '' });
     const attempt = summarizeAttempt(0, 'test-chromium', [{
@@ -76,7 +72,9 @@ describe('OpenDesign prompt quality contracts', () => {
     }]);
     const repair = browserRepairMessage(attempt);
 
-    for (const prompt of [generation, finalReview, repair]) {
+    expect(generation).not.toContain('4.5:1 and 3.0:1 hard gate');
+    expect(finalReview).not.toContain('4.5:1 and 3.0:1 hard gate');
+    for (const prompt of [repair]) {
       expect(prompt).toContain('390px mobile viewport');
       expect(prompt).toContain('aria-controls exactly references the navigation element');
       expect(prompt).toContain('5.0:1 for normal text and 3.3:1 for large text');
@@ -1411,8 +1409,8 @@ describe('unreplaced template placeholders are caught where the repair loop can 
  * 凡是 `design_output_quality_rejected` 能抛出的字面量消息，都必须分得出类。
  * 判据只认字面量——带模板插值的消息（例如带数量的那几条）由它们自己的用例覆盖。
  */
-describe('every quality rejection must reach the repair loop', () => {
-  it('has a classifier entry for each literal rejection message the gate can throw', () => {
+describe('legacy quality classification is not an execution gate', () => {
+  it('keeps legacy classification coverage without wiring it into automatic delivery repairs', () => {
     // 搬迁后闸门拆在三个文件里（质量判据 / HTML 遍历 / 公开包派生），执行器单独一个文件；
     // 判据不变：扫全部会抛质量拒绝的源码，再单独钉住执行器里的修复入口。
     const gateSource = ['../src/quality/gate.ts', '../src/quality/html.ts', '../src/artifact/public-package.ts']
@@ -1450,23 +1448,11 @@ describe('every quality rejection must reach the repair loop', () => {
       expect(messages).toContain(exempted);
     }
 
-    // 上面证明的是「每条消息都分得出类」。还差一句：执行器里除了分类器之外没有别的内容判据
-    // 会把一条拒绝挡在修复回路之外——否则「分得出类」与「真的会去修」仍是两回事
-    // （`predicate-and-wiring-discipline.md` 形状 2）。这里把那个入口条件本身钉住：
-    // 只许按「不是运行时错误 / 不是质量拒绝」两项在分类前提前重抛。修复次数已用尽时也要先
-    // 分类，才能把稳定 issueCode 和预算状态放进终态错误，不能再把原始错误直接抛回去。
-    const repairEntry = source.slice(
-      source.indexOf('} catch (error) {', source.indexOf('hardenedHtml = checkArtifactQuality(')),
-    ).slice(0, 900);
-    expect(repairEntry).toContain('error.code !== \'design_output_quality_rejected\'');
-    expect(repairEntry).toContain('const maximumRepairAttempts = isPresentation ? 1 : MAX_QUALITY_REPAIR_ATTEMPTS');
-    const classifierIndex = repairEntry.indexOf('const repairReason = classifyQualityRepairReason(error);');
-    const attemptLimitIndex = repairEntry.indexOf('qualityRepairAttempt >= maximumRepairAttempts');
-    expect(classifierIndex).toBeGreaterThan(0);
-    expect(attemptLimitIndex).toBeGreaterThan(classifierIndex);
-    expect(repairEntry.slice(attemptLimitIndex)).toContain('traceableDeterministicQualityRejection(');
-    // 分类前出现第二个 `||` 就说明多了一条内容判据，必须回来重新审。
-    expect((repairEntry.slice(0, repairEntry.indexOf('throw error;')).match(/\|\|/g) ?? []).length).toBe(1);
+    // 历史纯函数继续有界可读，但真实执行只能复用安全分支，不能重新接上内容判定或付费修复。
+    expect(source).toContain("createArtifactQualityGate('', [], '', false)");
+    expect(source).not.toContain('classifyQualityRepairReason(');
+    expect(source).not.toContain('open_design_quality_repairing');
+
   });
 });
 
