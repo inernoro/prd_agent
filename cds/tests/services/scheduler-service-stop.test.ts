@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { stopServiceForCooling } from '../../src/services/scheduler-service-stop.js';
+import { ContainerService } from '../../src/services/container.js';
+import { settleMemberAfterStop } from '../../src/services/replica-stop.js';
 import type { ServiceState } from '../../src/types.js';
 
 import fs from 'node:fs';
@@ -66,6 +68,40 @@ describe('生产降温回调的真实停止结果', () => {
 
 const service = (): ServiceState => ({ profileId: 'api', containerName: 'candidate', hostPort: 10001, status: 'error',
   servingRuntime: { containerName: 'serving', hostPort: 10002 } });
+
+describe('副本降温的失败确认边界', () => {
+  it.each([false, true])('副本停止确认%s时不能用不可用inspect补签成功', async confirmed => {
+    const member = { id: 'replica', containerName: 'owned-replica', status: 'running' };
+    const branch = { id: 'branch', projectId: 'project', branch: 'feature', status: 'running', services: {},
+      replicaSets: { db: { profileId: 'db', members: [member] } } };
+    const error = new Error('owned replica stop unconfirmed');
+    const shell = { exec: vi.fn().mockResolvedValue({ stdout: '', stderr: 'Docker unavailable', exitCode: 1 }) };
+    const container = new ContainerService(shell, {} as ConstructorParameters<typeof ContainerService>[1]);
+    vi.spyOn(container, 'stop').mockImplementation(async () => { if (!confirmed) throw error; });
+    const released = vi.fn(), completed = vi.fn(), assertCurrent = vi.fn();
+    const callback = actualCoolingCallback({
+      stateService: { getBranch: () => branch, save: vi.fn(), appendActivityLog: vi.fn(), incrementBranchStat: vi.fn() },
+      beginBackgroundBranchOperation: () => ({ operationId: 'owned-operation', assertCurrent }),
+      completeBackgroundBranchOperation: completed, containerService: container, settleMemberAfterStop,
+      getObservedRunningContainerNames: () => new Set(['owned-replica']),
+      serviceRuntimeRefs: () => [], stopServiceForCooling, forgetConfirmedStoppedContainers: released,
+      archiveBranchContainerLogs: vi.fn().mockResolvedValue(undefined),
+      config: { scheduler: { idleTTLSeconds: 900 } }, activeServerEventLogStore: undefined,
+      console: { log: vi.fn(), warn: vi.fn(), error: vi.fn() }, Date, Math,
+    });
+    if (confirmed) {
+      await callback('branch');
+      expect(member.status).toBe('stopped'); expect(branch.status).toBe('idle');
+      expect(released).toHaveBeenCalledTimes(1); expect(released).toHaveBeenCalledWith(['owned-replica']);
+      expect(completed).toHaveBeenLastCalledWith(expect.anything(), 'completed');
+    } else {
+      await expect(callback('branch')).rejects.toBe(error);
+      expect(member.status).toBe('running'); expect(branch.status).toBe('error');
+      expect(released).not.toHaveBeenCalled(); expect(shell.exec).not.toHaveBeenCalled();
+      expect(completed).toHaveBeenLastCalledWith(expect.anything(), 'failed');
+    }
+  });
+});
 
 describe('真实停止确认与降温状态', () => {
   it('未知停止不能标 stopped 或释放驻留；下一次确认后才释放全部身份', async () => {

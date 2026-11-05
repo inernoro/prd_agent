@@ -2954,7 +2954,10 @@ schedulerService.setCoolFn(async (slug: string) => {
             source: 'schedulerService.setCoolFn',
           });
         } catch (err) {
-          console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+          branchOperationLease?.assertCurrent('scheduler replica cooling failure persistence');
+          branch.status = 'error';
+          stateService.save([{ kind: 'branches', id: branch.id }]);
+          throw err;
         }
       }
       // 停止必须核实再落状态（Codex 第三十五轮 P1 点名的三处循环之一，

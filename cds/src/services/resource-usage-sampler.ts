@@ -71,17 +71,20 @@ const DEFAULT_INTERVAL_MS = Math.max(
 
 let latest: ResourceUsageSnapshot | null = null;
 let observedRunningNames: ReadonlySet<string> | null = null;
+// 分支额度只信任已知分支身份；完整宿主盘点仍供真实内存与驻留查询使用。
+let observedBranchRunningNames = new Set<string>();
 
 export function getObservedRunningContainerNames(): ReadonlySet<string> | null { return observedRunningNames; }
 
 /** 只由真实停止确认调用；未知或失败停止必须保留盘点。 */
 export function forgetConfirmedStoppedContainers(names: readonly string[]): void {
+  for (const name of names) observedBranchRunningNames.delete(name);
   if (observedRunningNames) observedRunningNames = new Set([...observedRunningNames].filter(name => !names.includes(name)));
 }
 
 /** 被动容量读取复用最后一次真实盘点；读取失败不能把既知活容器释放为零。 */
 export function countReservedContainers(branches: ReadonlyArray<BranchEntry>): number {
-  const names = new Set<string>(observedRunningNames || []);
+  const names = new Set<string>(observedBranchRunningNames);
   for (const branch of branches) {
     for (const [id, svc] of Object.entries(branch.services || {})) {
       if (['running', 'building', 'starting', 'restarting'].includes(svc.status)
@@ -104,7 +107,7 @@ export function getLatestResourceUsage(): ResourceUsageSnapshot | null {
 /** 测试隔离用。 */
 export function __setLatestResourceUsageForTests(snapshot: ResourceUsageSnapshot | null): void {
   latest = snapshot;
-  if (!snapshot) observedRunningNames = null;
+  if (!snapshot) { observedRunningNames = null; observedBranchRunningNames = new Set(); }
 }
 
 function round1(n: number): number {
@@ -218,7 +221,19 @@ export class ResourceUsageSampler {
       const actualRunningNames = this.containerService.getRunningContainerNamesSnapshot
         ? await this.containerService.getRunningContainerNamesSnapshot() : await this.containerService.getRunningContainerNames?.();
       if (actualRunningNames === null) throw new Error('实际容器盘点未确认，保留已有资源占用');
-      if (actualRunningNames) observedRunningNames = actualRunningNames;
+      if (actualRunningNames) {
+        observedRunningNames = actualRunningNames;
+        const knownBranchNames = new Set(observedBranchRunningNames);
+        for (const branch of branches) {
+          for (const service of Object.values(branch.services || {})) {
+            for (const runtime of serviceRuntimeRefs(service)) knownBranchNames.add(runtime.containerName);
+          }
+          for (const set of Object.values(branch.replicaSets || {})) {
+            for (const member of set.members) if (member.containerName) knownBranchNames.add(member.containerName);
+          }
+        }
+        observedBranchRunningNames = new Set([...knownBranchNames].filter(name => actualRunningNames.has(name)));
+      }
       const runningNames = new Set<string>();
       for (const branch of branches) {
         for (const svc of Object.values(branch.services || {})) {
