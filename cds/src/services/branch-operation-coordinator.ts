@@ -370,6 +370,20 @@ export class BranchOperationCoordinator {
     if (!this.deploymentInputs.has(key)) this.deploymentInputs.set(key, structuredClone(input));
   }
 
+  /** 原受理输入仍由协调器的既有终态负责释放；仅在进程内提取镜像引用。 */
+  getDeploymentImageReferences(resolve: (request: Readonly<BranchOperationRequest>, input: Readonly<DeploymentInputSnapshot>) => readonly string[]): string[] {
+    const owners = [...this.active.values(), ...this.pendingWebhookDeploys.values(), ...this.reservedContinuations.values(),
+      ...[...this.pendingReplayClaims.values()].map(claim => claim.pending)];
+    const seen = new Set<string>(), images = new Set<string>();
+    for (const owner of owners) {
+      const key = this.replayKey(owner), input = this.deploymentInputs.get(key);
+      if (!input || seen.has(key)) continue;
+      seen.add(key);
+      for (const image of resolve(owner.request, input)) if (image) images.add(image);
+    }
+    return [...images];
+  }
+
   /** HTTP 鉴权只读当前领取的公开身份；不暴露私有配置，begin 仍原子消费并复核。 */
   getClaimedPendingReplay(input: BranchOperationRequest['pendingReplay']): PendingWebhookDeploy | undefined {
     this.prunePendingReplayClaims();
