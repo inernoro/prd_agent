@@ -567,6 +567,7 @@ public class MarketplaceSkillsController : ControllerBase
         {
             Id = id,
             Title = finalTitle,
+            Version = meta.FrontmatterVersion,
             Description = finalDescription,
             IconEmoji = finalIcon,
             CoverImageUrl = coverUrl,
@@ -1214,6 +1215,7 @@ public class MarketplaceSkillsController : ControllerBase
             s.Id,
             s.Title,
             s.Description,
+            version = s.Version,
             iconEmoji = string.Empty,
             coverImageUrl = s.CoverImageUrl,
             previewUrl = s.PreviewUrl,

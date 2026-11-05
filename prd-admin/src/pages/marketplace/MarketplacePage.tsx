@@ -492,7 +492,7 @@ export const MarketplacePage: React.FC = () => {
         </section>
       </div>
       <AnchoredMenu open={quickConnectOpen} onClose={() => setQuickConnectOpen(false)} anchorRef={connectBtnRef}
-        minWidth={340} className="marketplace-quick-connect" style={{ padding: 0 }}>
+        minWidth={340} className="marketplace-quick-connect" style={{ padding: 0, width: 380 }}>
         <QuickConnectPanel onClose={() => setQuickConnectOpen(false)}
           onOpenFullDialog={() => { setQuickConnectOpen(false); setOpenApiOpen(true); }} />
       </AnchoredMenu>

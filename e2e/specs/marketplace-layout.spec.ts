@@ -47,6 +47,17 @@ test('市场平铺：实际组件铺满可用宽度，搜索、分类与角色�
   await expect(page.locator('[aria-label="接入 AI"]')).toHaveCount(0);
 });
 
+test('接入 AI 桌面浮层宽度固定且描述按设计换行', async ({ page }) => {
+  await installMarketplaceFixture(page);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/marketplace');
+  await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
+  await page.getByRole('button', { name: '接入 AI', exact: true }).click();
+  const panel = page.locator('.marketplace-quick-connect');
+  await expect(panel).toBeVisible();
+  expect((await panel.boundingBox())!.width).toBeCloseTo(380, 0);
+});
+
 test('手机筛选和接入浮层：小屏不横溢出，生成结果与 Esc 关闭可见', async ({ page }) => {
   await installMarketplaceFixture(page);
   await page.setViewportSize({ width: 375, height: 844 });
