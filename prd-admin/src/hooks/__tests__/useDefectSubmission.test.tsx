@@ -215,6 +215,41 @@ describe('缺陷提交的失败恢复与传输幂等身份', () => {
     expect(document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')?.value).toBe('新草稿内容');
   });
 
+  it('成功后再次确认丢失响应，前一次成功定时器不得关闭待确认会话', async () => {
+    const ui = await openEntry('global');
+    calls.submit.mockImplementationOnce(async () => {
+      draft = { ...draft, status: 'submitted' };
+      return ok({ defect: draft });
+    });
+    await act(async () => ui.submit().click());
+    await act(async () => vi.advanceTimersByTimeAsync(1330));
+    calls.submit.mockResolvedValueOnce(fail('NETWORK_ERROR', '确认响应丢失'));
+    await act(async () => ui.submit().click());
+    expect(ui.close().disabled).toBe(true);
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(ui.isOpen()).toBe(true);
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')?.value).toBe(input.content);
+    expect(ui.close().disabled).toBe(true);
+    await act(async () => ui.submit().click());
+    expect(new Set(calls.create.mock.calls.map(([request]) => request.clientRequestId)).size).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1600));
+    expect(ui.isOpen()).toBe(false);
+  });
+
+  it('成功后新一轮仍在保存，旧成功定时器不得越过同步关闭保护', async () => {
+    const ui = await openEntry('global');
+    await act(async () => ui.submit().click());
+    await act(async () => vi.advanceTimersByTimeAsync(1330));
+    let finishSave!: (value: ReturnType<typeof ok<{ defect: DefectReport }>>) => void;
+    calls.create.mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve; }));
+    await act(async () => ui.submit().click());
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(ui.isOpen()).toBe(true);
+    expect(ui.close().disabled).toBe(true);
+    expect(document.querySelector<HTMLTextAreaElement>('[aria-label="问题描述"]')?.value).toBe(input.content);
+    await act(async () => finishSave(ok({ defect: draft })));
+  });
+
   it('附件业务失败立即停止，不调用最终提交；重试复用草稿和附件身份', async () => {
     const file = new File(['evidence'], 'evidence.txt', { type: 'text/plain' });
     calls.upload.mockResolvedValueOnce(fail('UPLOAD_TIMEOUT', '上传超时'));

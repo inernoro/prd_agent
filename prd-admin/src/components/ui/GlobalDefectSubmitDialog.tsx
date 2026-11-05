@@ -471,6 +471,8 @@ export function GlobalDefectSubmitDialog() {
 
   // Submit defect - 返回 boolean 供 SuccessConfettiButton 使用
   const handleSubmit = async (): Promise<boolean> => {
+    // 新动作接管会话，上一轮成功的延迟关闭不能影响本次确认。
+    cancelScheduledClose();
     if (!content.trim() && !submission.confirmationPending) {
       toast.warning('请输入问题描述');
       return false;
