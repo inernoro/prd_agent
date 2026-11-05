@@ -243,6 +243,13 @@ async function main() {
         console.log(`[${theme}] 第 ${i + 1} 排 ${row.list.map((c) => `${c.id}=${c.h}`).join('  ')}`);
         check(spread <= 1, `[${theme}] 第 ${i + 1} 排卡片等高（差 ${spread.toFixed(1)}px）`);
       });
+      const names = await page.$$eval('[data-branch-card-id] h3', (headings) => headings.map((heading) => {
+        const style = getComputedStyle(heading);
+        return style.whiteSpace === 'nowrap' && style.textOverflow === 'ellipsis'
+          && heading.clientHeight <= parseFloat(style.lineHeight) + 1
+          && heading.title === heading.textContent.trim();
+      }));
+      check(names.length > 0 && names.every(Boolean), `[${theme}] 分支名保持单行省略，完整名称保留在提示中`);
       // 复制集卡：与分支卡同高，成员区真的溢出并可在卡内滚动，底部按钮没被挤出卡片
       const replica = await page.evaluate(() => {
         const members = document.querySelector('[data-replica-members]');
