@@ -643,6 +643,7 @@ public class MarketplaceSkillsController : ControllerBase
             .Set(x => x.Title, NormalizeTitle(title, skill.Title))
             .Set(x => x.Description, NormalizeDescription(description, skill.Description))
             .Set(x => x.IconEmoji, string.Empty)
+            .Set(x => x.ContentUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         if (tagsJson != null)
@@ -1240,6 +1241,7 @@ public class MarketplaceSkillsController : ControllerBase
             ownerUserAvatar = s.AuthorAvatar,
             createdAt = s.CreatedAt,
             updatedAt = s.UpdatedAt,
+            contentUpdatedAt = s.ContentUpdatedAt,
         };
     }
 }
