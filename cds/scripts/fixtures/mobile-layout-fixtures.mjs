@@ -145,6 +145,7 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
+  '/api/instance-catalog': { version: 1, instances: [] },
   '/api/auth/status': { authenticated: true, enabled: true, user: { name: '布局冒烟', isSystemOwner: true } },
   '/api/instance-mode': { mode: 'master' },
   '/api/notices': { notices: [] },
