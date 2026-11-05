@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as cp from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -67,23 +67,31 @@ describe('发布Git读取隔离', () => {
     overflow = false;
     await expect(read(['status'])).resolves.toBe('owned');
   });
-  it('真实提交台账和流水轴不从Master同步创建Git命令', async () => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), 'cds-release-git-owned-')); dirs.push(dir);
-    const git = (...args: string[]) => cp.execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    git('init', '-q'); git('config', 'user.name', 'Owned Test'); git('config', 'user.email', 'owned@example.test');
-    await writeFile(path.join(dir, 'owned.txt'), 'owned'); git('add', '.'); git('commit', '-qm', '自有提交');
-    const sha = git('rev-parse', 'HEAD').trim(); git('update-ref', 'refs/remotes/origin/main', sha);
-    const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2 });
-    const shell = new IsolatedShellExecutor(operation); pools.push(shell, operation);
-    await Promise.all([shell.start(), operation.start()]);
-    vi.mocked(cp.execFileSync).mockClear(); vi.mocked(cp.spawn).mockClear();
-    const clock = new ReleaseCommitClock({ shell });
-    const rail = new ReleaseCommitRailReader({ shell, repoRootResolver: () => dir });
-    expect(await clock.remember('owned', sha, dir)).toBeTruthy();
-    const result = await rail.read({ projectId: 'owned', branch: 'main', targets: [{ targetId: 'owned-target', commitSha: sha }] });
-    expect(result.rail.nodes[0].sha).toBe(sha); expect(result.positions['owned-target'].behindCount).toBe(0);
-    expect(cp.execFileSync).not.toHaveBeenCalled(); expect(cp.spawn).not.toHaveBeenCalled();
-    expect(shell.getStats().active).toBe(0);
+  describe('真实Git与生产预热执行池', () => {
+    let dir: string, sha: string, shell: IsolatedShellExecutor;
+    beforeEach(async () => {
+      dir = await mkdtemp(path.join(os.tmpdir(), 'cds-release-git-owned-')); dirs.push(dir);
+      const git = (...args: string[]) => cp.execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      git('init', '-q'); git('config', 'user.name', 'Owned Test'); git('config', 'user.email', 'owned@example.test');
+      await writeFile(path.join(dir, 'owned.txt'), 'owned'); git('add', '.'); git('commit', '-qm', '自有提交');
+      sha = git('rev-parse', 'HEAD').trim(); git('update-ref', 'refs/remotes/origin/main', sha);
+      const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2 });
+      shell = new IsolatedShellExecutor(operation); pools.push(shell, operation);
+      // 只准备原本在mockClear之前的仓库及真实池；被测Git读取仍受原it期限约束。
+      await Promise.all([shell.start(), operation.start()]);
+      expect(shell.getLifecycle().readyAt).toEqual(expect.any(String));
+      expect(operation.getLifecycle().readyAt).toEqual(expect.any(String));
+    });
+    it('真实提交台账和流水轴不从Master同步创建Git命令', async () => {
+      vi.mocked(cp.execFileSync).mockClear(); vi.mocked(cp.spawn).mockClear();
+      const clock = new ReleaseCommitClock({ shell });
+      const rail = new ReleaseCommitRailReader({ shell, repoRootResolver: () => dir });
+      expect(await clock.remember('owned', sha, dir)).toBeTruthy();
+      const result = await rail.read({ projectId: 'owned', branch: 'main', targets: [{ targetId: 'owned-target', commitSha: sha }] });
+      expect(result.rail.nodes[0].sha).toBe(sha); expect(result.positions['owned-target'].behindCount).toBe(0);
+      expect(cp.execFileSync).not.toHaveBeenCalled(); expect(cp.spawn).not.toHaveBeenCalled();
+      expect(shell.getStats().active).toBe(0);
+    });
   });
   it('并发相同查询共用读取且固定已解析提交，ref移动不混入后续计数', async () => {
     const sha = 'a'.repeat(40); const target = 'b'.repeat(40); let release!: () => void;

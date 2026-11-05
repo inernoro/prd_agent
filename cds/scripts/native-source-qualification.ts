@@ -10,6 +10,8 @@ export async function qualifyNativeSource(root: string, expectedHead: string) {
   const git = (args: string[], input?: string) => execFileSync('/usr/bin/git', args,
     { cwd: root, input, timeout: 30_000, maxBuffer: 128 * 1024 * 1024 });
   assert.equal(git(['rev-parse', 'HEAD']).toString().trim(), expectedHead, '原生候选提交与外部准确目标不符');
+  assert.equal(git(['diff', '--cached', '--name-only', expectedHead, '--', 'cds/src', 'cds/scripts', 'cds/tests/helpers',
+    'cds/package.json', 'cds/pnpm-lock.yaml']).toString().trim(), '', '原生候选暂存区不符准确提交');
   assert.equal(git(['ls-files', '--others', '--exclude-standard', '--', 'cds/src', 'cds/scripts', 'cds/tests/helpers',
     'cds/package.json', 'cds/pnpm-lock.yaml']).toString().trim(), '', '原生候选含未提交输入');
   const entries = git(['ls-tree', '-rz', expectedHead, '--', 'cds/src', 'cds/scripts', 'cds/tests/helpers',

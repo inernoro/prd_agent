@@ -45,6 +45,8 @@ describe('原生候选的独立源码与镜像资格', () => {
       await fs.writeFile(path.join(root, 'cds/pnpm-lock.yaml'), 'lockfileVersion: 9\n');
       await fs.writeFile(path.join(root, 'cds/src/extra.ts'), 'extra');
       await expect(qualifyNativeSource(root, head)).rejects.toThrow('未提交输入');
+      git('add', 'cds/src/extra.ts');
+      await expect(qualifyNativeSource(root, head)).rejects.toThrow('暂存区');
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
 

@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { serviceRuntimeRefs } from '../../src/services/service-runtime.js';
 import { execFileSync } from 'node:child_process';
 import {
+  buildCheckRunFailurePostmortem,
   clearRunningServiceErrorMessages,
   createBranchRouter,
   shouldSkipFencedDeployCleanupForNewerRuntime,
@@ -5782,7 +5783,78 @@ describe('Branch Routes', () => {
       });
     }
 
-    it.each(['failed-candidate', 'unused-network'])('local replacement cleanup %s preserves retention and exact bounded waits', async kind => {
+    it.each([{ readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'live' }, { readiness: false, captureFails: true, priorLive: true, created: true, oldEntry: 'live' },
+      { readiness: true, captureFails: false, priorLive: true, created: true, oldEntry: 'live' }, { readiness: true, captureFails: true, priorLive: true, created: true, oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: false, created: true, oldEntry: 'live' }, { readiness: false, captureFails: true, priorLive: false, created: true, oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: true, created: false, oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: true, created: 'issued', oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'dead' },
+      { readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'changed' }])('failed candidate diagnostics readiness=$readiness captureFails=$captureFails priorLive=$priorLive created=$created oldEntry=$oldEntry', async ({ readiness, captureFails, priorLive, created, oldEntry }) => {
+      const id = 'failed-evidence', oldCid = 'a'.repeat(64), candidateCid = 'b'.repeat(64);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node',
+        command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const entry: BranchEntry = { id, projectId: 'default', branch: 'feature/failed-evidence',
+        worktreePath: path.join(tmpDir, 'worktrees', id), status: 'running', createdAt: new Date().toISOString(),
+        services: { api: { profileId: 'api', containerName: priorLive ? 'old-api' : 'first-api', containerId: priorLive ? oldCid : undefined,
+          hostPort: 10001, status: priorLive ? 'running' : 'idle', networkName: priorLive ? 'old-network' : undefined } } };
+      stateService.addBranch(entry); let candidate = '';
+      vi.spyOn(containerService, 'runService').mockImplementation(async (_entry, _profile, service) => {
+        candidate = service.containerName;
+        if (!created) throw new Error('candidate pull failed before creation');
+        if (created === 'issued') { service.creationIssued = true; throw new Error('candidate docker run failed before CID'); }
+        service.containerId = candidateCid; service.creationIssued = true;
+        if (!readiness) throw new Error('candidate startup failed');
+        return service.hostPort;
+      });
+      (containerService as any).waitForReadiness = async () => false;
+      let oldReadAfterCandidate = false;
+      const logs = vi.spyOn(containerService, 'getLogs').mockImplementation(async name => {
+        if (candidate && name === 'old-api') oldReadAfterCandidate = true;
+        if (name === 'old-api') return 'unrelated old version failure';
+        if (captureFails) throw new Error('candidate logs unavailable');
+        return 'Candidate.cs(1,1): error CS0101: candidate failure evidence';
+      });
+      let lostOldEntry = false;
+      const inspect = containerService.inspectOwnedRuntime.bind(containerService);
+      if (oldEntry !== 'live') vi.spyOn(containerService, 'inspectOwnedRuntime').mockImplementation(async (...args) =>
+        lostOldEntry && args[2].containerId === oldCid ? (oldEntry === 'dead' ? null : { ...args[2], containerId: 'd'.repeat(64) }) : inspect(...args));
+      const release = oldEntry === 'live' ? () => {} : await deploymentPhaseBudget.acquire('cleanup', { branchId: 'diagnostic-cleanup-holder' });
+      const pendingResponse = request(server, 'POST', `/api/branches/${id}/deploy`);
+      let response: Awaited<ReturnType<typeof request>>;
+      try {
+        if (oldEntry !== 'live') {
+          await vi.waitFor(() => expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(true));
+          lostOldEntry = true; release();
+        }
+        response = await pendingResponse;
+      } finally { release(); await pendingResponse; }
+      expect(response.status).toBe(200); expect(candidate).not.toBe('old-api');
+      expect(entry.services.api).toMatchObject({ containerName: priorLive ? 'old-api' : candidate,
+        containerId: priorLive ? oldCid : candidateCid, status: 'error' });
+      const snapshots = stateService.getLogs(id).at(-1)!.containerLogSnapshots!;
+      expect(snapshots).toContainEqual(expect.objectContaining({ profileId: 'api', containerName: candidate,
+        logs: captureFails || created !== true ? '' : expect.stringContaining('candidate failure evidence') }));
+      const report = await buildCheckRunFailurePostmortem(entry, containerService, new Set(['api']), snapshots);
+      expect(report).not.toContain('unrelated old version failure');
+      expect(report).toContain(!created ? 'candidate pull failed before creation' : created === 'issued' ? 'candidate docker run failed before CID' : captureFails ? (readiness ? '就绪探测' : 'candidate startup failed') : 'candidate failure evidence');
+      if (created !== true) expect(logs.mock.calls.some(([name]) => name === candidate)).toBe(false);
+      if (created === 'issued') {
+        expect(entry.errorMessage).toBe('api: candidate docker run failed before CID');
+        expect(deploymentRunService.list({ branchId: id })[0].failure?.summary).toBe('api: candidate docker run failed before CID');
+        expect(entry.services.api.pendingRuntime).toMatchObject({ creationIssued: true, containerName: candidate });
+        expect(mock.commands.some(command => command.includes(`docker stop ${candidate}`) || command.includes(`docker rm ${candidate}`))).toBe(false);
+      }
+      expect(oldReadAfterCandidate).toBe(false);
+      if (oldEntry !== 'live') {
+        expect(entry.errorMessage).toBe('api: candidate startup failed');
+        expect(deploymentRunService.list({ branchId: id })[0].failure?.summary).toBe('api: candidate startup failed');
+        expect(entry.services.api.pendingRuntime?.containerId).toBe(candidateCid);
+        expect(mock.commands.some(command => command.includes(`docker stop ${candidateCid}`) || command.includes(`docker rm ${candidateCid}`))).toBe(false);
+      }
+    });
+
+    it.each(['failed-candidate', 'unused-network', 'failed-candidate-old-dead', 'failed-candidate-old-changed'])('local replacement cleanup %s preserves retention and exact bounded waits', async kind => {
+      const failed = kind !== 'unused-network';
       const id = `replacement-${kind}`, oldCid = 'a'.repeat(64), candidateCid = 'b'.repeat(64);
       const unusedNetwork = `${branchAppNetworkName(id).slice(0, 27)}-r-${'c'.repeat(32)}`;
       mock.addResponsePatternFirst(/^docker network rm /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -5790,9 +5862,9 @@ describe('Branch Routes', () => {
         worktreePath: path.join(tmpDir, 'worktrees', id), status: 'running', createdAt: new Date().toISOString(),
         replacementNetwork: unusedNetwork, replacementNetworks: [unusedNetwork], services: { api: {
           profileId: 'api', containerName: 'candidate-api', containerId: candidateCid, hostPort: 10002,
-          status: kind === 'failed-candidate' ? 'error' : 'running', creationIssued: true,
-          networkName: kind === 'failed-candidate' ? unusedNetwork : 'current-network',
-          ...(kind === 'failed-candidate' ? { servingRuntime: { containerName: 'old-api', containerId: oldCid,
+          status: failed ? 'error' : 'running', creationIssued: true,
+          networkName: failed ? unusedNetwork : 'current-network',
+          ...(failed ? { servingRuntime: { containerName: 'old-api', containerId: oldCid,
             hostPort: 10001, networkName: 'old-network' } } : { retainedRuntimes: [{ containerName: 'unknown-old-api', containerId: oldCid, hostPort: 10003 }] }),
         } } };
       stateService.addBranch(entry);
@@ -5806,23 +5878,30 @@ describe('Branch Routes', () => {
         operationId: lease.operationId, operationGeneration: lease.generation, assertCurrent: step => lease.assertCurrent(step) });
       const result = cleanup.then(() => undefined, error => error);
       try {
-        if (kind === 'failed-candidate') {
-          // 当前主干只提交全部已就绪服务；失败候选保持原引用，不在提交入口偷偷清理。
-          expect(await result).toBeUndefined();
-          expect(entry.services.api.status).toBe('error');
-          expect(entry.services.api.containerId).toBe(candidateCid);
-          expect(entry.services.api.servingRuntime?.containerId).toBe(oldCid);
-          expect(entry.replacementNetwork).toBe(unusedNetwork);
-          expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(false);
-          expect(mock.commands.filter(command => /^docker (?:stop|rm|network rm) /.test(command))).toEqual([]);
-          return;
-        }
         await vi.waitFor(() => expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(true));
         const queued = deploymentPhaseBudget.snapshot().cleanup.queued.find(item => item.branchId === id)!;
         expect(deploymentRunService.reconcileInterrupted(new Date(queued.enqueuedAt + 16 * 60_000))).toEqual([]);
         expect(run.heartbeatAt).toBe(heartbeat);
         expect(queued.operationGeneration).toBe(lease.generation);
+        if (kind === 'failed-candidate-old-dead' || kind === 'failed-candidate-old-changed') {
+          const inspect = containerService.inspectOwnedRuntime.bind(containerService);
+          vi.spyOn(containerService, 'inspectOwnedRuntime').mockImplementation(async (...args) =>
+            args[2].containerId === oldCid ? (kind.endsWith('dead') ? null : { ...args[2], containerId: 'd'.repeat(64) }) : inspect(...args));
+          release(); expect(await result).toBeUndefined();
+          expect(entry.services.api.containerId).toBe(candidateCid);
+          expect(mock.commands.some(command => command.includes(`docker stop ${candidateCid}`) || command.includes(`docker rm ${candidateCid}`))).toBe(false);
+          return;
+        }
         release(); expect(await result).toBeUndefined();
+        if (kind === 'failed-candidate') {
+          expect(entry.services.api.status).toBe('error');
+          expect(entry.services.api.containerId).toBe(oldCid);
+          expect(entry.services.api.servingRuntime?.containerId).toBe(oldCid);
+          expect(entry.replacementNetwork).toBe(unusedNetwork);
+          expect(mock.commands.some(command => command.includes(`docker rm ${candidateCid}`))).toBe(true);
+          expect(mock.commands.filter(command => command.includes(`docker stop ${oldCid}`) || command.includes(`docker rm ${oldCid}`))).toEqual([]);
+          return;
+        }
         expect(mock.commands.some(command => command === `docker network rm '${unusedNetwork}'`)).toBe(true);
         expect(entry.replacementNetworks).toEqual([]);
         expect(entry.services.api.retainedRuntimes).toEqual([expect.objectContaining({ containerName: 'unknown-old-api', containerId: oldCid })]);
