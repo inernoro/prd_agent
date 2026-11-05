@@ -104,7 +104,9 @@ export async function verifyLoadingRefresh(browser, base, out) {
     assert.equal(await page.locator('[data-content-loading="panel"]').count(), 0);
     assert(await page.locator('[data-testid="relation-workspace"]').isVisible());
     releaseRelation(); await page.getByRole('button', { name: '刷新', exact: true }).waitFor({ state: 'visible' }); relationGate = null;
-    await page.waitForFunction(() => !document.querySelector('button[disabled]'));
+    // Wait for this refresh to settle; unrelated disabled controls (e.g. an unconfigured
+    // instance-address download) are valid and do not describe refresh progress.
+    await page.getByRole('button', { name: '刷新', exact: true }).and(page.locator(':enabled')).waitFor();
     failRelation = true; await page.getByRole('button', { name: '刷新', exact: true }).click(); await page.getByRole('alert').filter({ hasText: '合成：关系读取失败' }).waitFor();
     assert(await page.locator('[data-testid="relation-workspace"]').isVisible());
     failRelation = false; await page.getByRole('button', { name: '刷新', exact: true }).click(); await page.getByRole('alert').filter({ hasText: '合成：关系读取失败' }).waitFor({ state: 'hidden' });

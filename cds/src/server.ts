@@ -3489,7 +3489,9 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
 
-  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot));
+  // Use the same web/dist location as the SPA: esbuild flattens route modules into dist/index.mjs.
+  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot,
+    path.resolve(__dirname, '..', 'web', 'dist', 'cds-instances.json')));
 
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));

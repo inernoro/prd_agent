@@ -20,7 +20,7 @@ describe('CDS Self 预构建预览契约', () => {
     expect(effective.dockerImage).toBe(`ghcr.io/inernoro/prd_agent/cds-preview:sha-${'a'.repeat(40)}`);
     expect(effective.command).toBe('cd /app/cds && node dist/index.js');
     expect(effective.env).toMatchObject({ CDS_PREVIEW_INSTANCE: '1', CDS_STORAGE_MODE: 'json', CDS_REPO_ROOT: '/app' });
-    const inputs = ['cds/**', '.github/workflows/cds-prebuilt.yml', ...CDS_SKILL_KEYS.map(key => `.claude/skills/${key}/**`)];
+    const inputs = ['cds/**', 'cds-instances.json', '.github/workflows/cds-prebuilt.yml', ...CDS_SKILL_KEYS.map(key => `.claude/skills/${key}/**`)];
     expect(profile.buildScope).toEqual(inputs);
     expect(effective.buildScope).toEqual(inputs);
     for (const key of CDS_SKILL_KEYS) {
