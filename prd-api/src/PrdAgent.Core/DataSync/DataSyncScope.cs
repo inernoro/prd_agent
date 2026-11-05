@@ -316,6 +316,7 @@ public static class DataSyncScope
             new DataSyncCollection("project_route_site_specs", System.Array.Empty<string>()),
             new DataSyncCollection("web_folders", System.Array.Empty<string>()),
             new DataSyncCollection("web_page_groups", System.Array.Empty<string>()),
+            new DataSyncCollection("hosted_document_groups", System.Array.Empty<string>()),
         }),
         new DataSyncGroup("channel", "渠道与邮件", new[]
         {

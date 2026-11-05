@@ -14,7 +14,7 @@ export function ReviewVersionBar({ review, canUpload }: { review: HostedReview; 
   return <div className="review-version-control" onKeyDownCapture={event => {
     if (open && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
   }}>
-    <button ref={trigger} type="button" className="review-tool review-version-trigger min-h-11" aria-label={`网页版本：${review.selected?.versionLabel ?? '加载中'}`}
+    <button ref={trigger} type="button" className="review-tool review-version-trigger max-sm:min-h-11" aria-label={`网页版本：${review.selected?.versionLabel ?? '加载中'}`}
       aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(value => !value)} title="切换网页版本，查看对应批注">
       {busy ? <MapSpinner size={15} /> : <Files size={15} />}
       <span>{review.selected?.versionLabel ?? '版本'}<span className="review-version-state">{review.historical ? '历史版' : '当前版'}</span></span>

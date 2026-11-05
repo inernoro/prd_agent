@@ -24,11 +24,11 @@ export function ReviewToolbarControls({ review, canUpload, onOpen, expanded, cou
   return <div className="review-toolbar-controls" onKeyDownCapture={event => {
     if (open && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
   }}>
-    <button type="button" className={`review-tool review-annotate-trigger min-h-11${expanded ? ' is-selected' : ''}`} onClick={onOpen}
+    <button type="button" className={`review-tool review-annotate-trigger max-sm:min-h-11${expanded ? ' is-selected' : ''}`} onClick={onOpen}
       aria-label="批注与讨论" aria-expanded={expanded} title="打开批注与讨论，选择页面位置留下意见">
-      <MessageSquare size={15} /><span>批注</span>{!!count && <span className="review-count">{count}</span>}<i className="review-attention-dot" aria-hidden="true" />
+      <MessageSquare size={15} /><span>批注</span>{!!count && <span className="review-count">{count}</span>}
     </button>
-    <button ref={trigger} type="button" className="review-tool review-display-trigger min-h-11" aria-label="批注显示方式" title={`批注显示：${active.label}`}
+    <button ref={trigger} type="button" className="review-tool review-display-trigger max-sm:min-h-11" aria-label="批注显示方式" title={`批注显示：${active.label}`}
       aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       <active.icon size={15} /><span className="review-control-label">{active.short}</span><ChevronDown size={12} />
     </button>

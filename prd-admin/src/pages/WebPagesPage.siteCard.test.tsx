@@ -74,7 +74,8 @@ describe('WebPagesPage SiteCard', () => {
     expect(readShared).toContain('已编辑 3 次');
     expect(renderSiteCard()).not.toContain('已编辑 0 次');
     expect(renderSiteCard()).toContain('编辑次数暂不可用');
-    expect(renderSiteCard()).toContain('— 访问');
+    expect(renderSiteCard()).toContain('aria-label="全部访问（含作者）"');
+    expect(renderSiteCard()).toContain('访问统计暂不可用');
     expect(renderSiteCard()).not.toContain('3 浏览');
   });
 
@@ -254,8 +255,7 @@ describe('WebPagesPage SiteCard', () => {
 
     // 小卡放不下常驻按钮条，但 kebab 必须在，否则小卡视图下无法操作
     expect(html).toContain('aria-label="更多设置"');
-    // 分享状态：小卡是「绿点 + 已分享」独占一行（设计稿屏 2 小卡形态），
-    // 条数收进 title——不能因为卡片小就把这个状态整个丢掉
+    // 分享状态移入元信息行，小卡保留绿色链接图标与完整说明，不能因尺寸小而丢失状态
     expect(html).toContain('已分享');
     expect(html).toContain('已分享 1 条有效链接');
     expect(html).not.toContain('帮我修改');
