@@ -67,6 +67,7 @@ public sealed class AuthzController : ControllerBase
                 SystemRoleKey = "root",
                 EffectivePermissions = AdminPermissionCatalog.All.Select(x => x.Key).ToList(),
                 CdnBaseUrl = GetCdnBaseUrl(),
+                LegacyCdnBaseUrl = HistoricalAssetUrlResolver.ResolveLegacyPublicBaseUrl(_cfg),
                 PermissionFingerprint = fingerprint
             }));
         }
@@ -95,6 +96,7 @@ public sealed class AuthzController : ControllerBase
             SystemRoleKey = roleKey,
             EffectivePermissions = perms.ToList(),
             CdnBaseUrl = GetCdnBaseUrl(),
+            LegacyCdnBaseUrl = HistoricalAssetUrlResolver.ResolveLegacyPublicBaseUrl(_cfg),
             PermissionFingerprint = fingerprint
         }));
     }

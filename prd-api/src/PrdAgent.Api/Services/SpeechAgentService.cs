@@ -496,8 +496,6 @@ public class SpeechAgentService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage },
                 },
                 ["temperature"] = 0.5,
-                ["include_reasoning"] = true,
-                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 180,
             IncludeThinking = true,
