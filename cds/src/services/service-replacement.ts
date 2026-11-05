@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { BranchEntry, BuildProfile, ServiceState } from '../types.js';
+import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef } from '../types.js';
 import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
@@ -131,6 +131,64 @@ export async function abortUnpublishedServiceReplacements(options: {
   }
 }
 
+function publicationIdentity(entry: BranchEntry): string {
+  return JSON.stringify(Object.entries(entry.services).map(([id, service]) =>
+    [id, service.status, runtimeRef(service), service.servingRuntime, service.pendingRuntime]));
+}
+
+/** 连接旧网络不代表仍依赖旧版本；消费者必须已能通过服务别名访问当前版本。 */
+async function retireReplacedRuntimes(options: Parameters<typeof commitServiceReplacements>[0]): Promise<void> {
+  const { entry, state, container } = options;
+  const identity = publicationIdentity(entry);
+  const check = (step: string) => {
+    options.assertCurrent?.(step);
+    if (publicationIdentity(entry) !== identity) throw new Error('当前服务身份已变化，停止回收旧版本');
+  };
+  const published = new Map<string, ServiceRuntimeRef | null>();
+  for (const [id, service] of Object.entries(entry.services)) {
+    const active = servingRuntime(service);
+    if (!active) continue;
+    // 以 Docker 的实际别名和连网为准，不能拿持久化的历史拓扑当作可达证明。
+    published.set(id, await container.inspectOwnedRuntime(entry, id, active));
+    check('after retirement serving identity');
+  }
+  const protectedRefs = [...Object.values(entry.services).flatMap(service =>
+    [service, service.servingRuntime, service.pendingRuntime]), ...published.values()]
+    .filter((ref): ref is ServiceRuntimeRef => Boolean(ref));
+  const isProtected = (runtime: ServiceRuntimeRef) => protectedRefs.some(ref =>
+    ref.containerName === runtime.containerName || Boolean(ref.containerId && ref.containerId === runtime.containerId));
+  for (const [id, service] of Object.entries(entry.services)) {
+    const active = published.get(id);
+    if (!active || !active.aliasNetworks?.length) continue;
+    for (const old of [...(service.retainedRuntimes || [])]) {
+      if (!old.networkName || isProtected(old)) continue;
+      const confirmed = await container.inspectOwnedRuntime(entry, id, active);
+      check('after retirement replacement liveness');
+      if (!confirmed || confirmed.containerId !== active.containerId) continue;
+      const actual = await container.inspectOwnedRuntime(entry, id, old, false);
+      check('after retirement retained identity');
+      if (actual && (isProtected(actual) || !actual.aliasNetworks?.length)) continue;
+      const referenced = actual && [...published].some(([peerId, peer]) => {
+        if (peerId === id) return false;
+        if (!peer) return true; // 当前消费者未确认运行时，保留其可能依赖的旧版本。
+        const networks = [peer.networkName, ...(peer.connectedNetworks || [])];
+        return networks.some(network => actual.aliasNetworks!.includes(network!))
+          && !networks.some(network => confirmed.aliasNetworks?.includes(network!));
+      });
+      if (referenced) continue;
+      check('before old runtime retirement');
+      await container.removeOwnedRuntime(entry, id, actual || old, { branchId: entry.id, projectId: entry.projectId,
+        operationId: options.operationId, operationGeneration: options.operationGeneration,
+        profileId: id, operation: 'ready-runtime-retirement', source: 'service-replacement',
+        assertCurrent: () => check('old runtime retirement command') });
+      check('after old runtime retirement');
+      service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== old.containerName);
+      state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+      check('after old runtime retirement persistence');
+    }
+  }
+}
+
 /** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
 export async function commitServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
@@ -167,24 +225,7 @@ export async function commitServiceReplacements(options: {
   } finally {
     for (const release of pins) release();
   }
-  // 仍被未替换服务连接的旧版本保留；每个已声明网络关系都计入实际容量。
-  for (const service of Object.values(entry.services)) {
-    for (const old of [...(service.retainedRuntimes || [])]) {
-      const aliases = old.aliasNetworks || (old.networkName ? [old.networkName] : []);
-      const referenced = Object.values(entry.services).some(peer => {
-        if (peer === service) return false;
-        const active = servingRuntime(peer);
-        return active && [...(active.aliasNetworks || []), ...(active.networkName ? [active.networkName] : [])].some(network => aliases.includes(network));
-      });
-      if (referenced || !old.networkName) continue;
-      assertCurrent?.('before old runtime retirement');
-      await container.removeOwnedRuntime(entry, service.profileId, old, { branchId: entry.id, projectId: entry.projectId,
-        operationId: options.operationId, operationGeneration: options.operationGeneration,
-        profileId: service.profileId, operation: 'ready-runtime-retirement', source: 'service-replacement',
-        assertCurrent: () => assertCurrent?.('old runtime retirement command') });
-      service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== old.containerName);
-    }
-  }
+  await retireReplacedRuntimes(options);
   await container.cleanupUnusedReplacementNetworks(entry, { branchId: entry.id, projectId: entry.projectId,
     operationId: options.operationId, operationGeneration: options.operationGeneration,
     assertCurrent: () => assertCurrent?.('unused replacement network cleanup') });

@@ -11,7 +11,9 @@ function fixture() {
   const entry = { id: 'branch', projectId: 'project', services: { api: service } } as BranchEntry;
   let port = 10010;
   const state = { save: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), allocatePort: () => port++ } as unknown as StateService;
-  const container = { cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined), removeOwnedRuntime: vi.fn().mockResolvedValue(undefined) } as unknown as ContainerService;
+  const container = { cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined), removeOwnedRuntime: vi.fn().mockResolvedValue(undefined),
+    inspectOwnedRuntime: vi.fn().mockImplementation(async (_entry, _id, runtime) =>
+      ({ ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName] })) } as unknown as ContainerService;
   return { entry, service, state, container };
 }
 
@@ -95,6 +97,76 @@ describe('就绪切换与保旧回退', () => {
     expect(f.service.retainedRuntimes).toEqual([]);
   });
 
+  it('当前消费者已连通新版本时，共享服务的历史网络不再锁住多代旧实例', async () => {
+    const f = fixture(); f.service.status = 'running';
+    f.service.retainedRuntimes = [1, 2, 3].map(n => ({ containerName: `retained-${n}`, containerId: String(n).repeat(64),
+      hostPort: 11000 + n, networkName: `generation-${n}`, aliasNetworks: [`generation-${n}`, 'old-network'] }));
+    f.entry.services.redis = { profileId: 'redis', containerName: 'redis', status: 'running', hostPort: 12000,
+      networkName: 'old-network', connectedNetworks: ['new-network', 'generation-1', 'generation-2', 'generation-3'] };
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(4);
+    expect(f.service.retainedRuntimes).toEqual([]);
+    expect(f.entry.services.redis.containerName).toBe('redis');
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+  });
+
+  it('新版本没有实际服务别名时不凭历史拓扑删除旧资源', async () => {
+    const f = fixture(); f.service.status = 'running';
+    f.service.aliasNetworks = ['old-network', 'new-network'];
+    f.entry.services.web = { profileId: 'web', containerName: 'web', status: 'running', hostPort: 12000, networkName: 'old-network' };
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, _id, runtime) =>
+      ({ ...runtime, aliasNetworks: [runtime.networkName!] }));
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.service.retainedRuntimes?.[0].containerName).toBe('old-api');
+  });
+
+  it('当前版本死亡或任一当前消费者状态未知时保留旧实例', async () => {
+    const f = fixture(); f.service.status = 'running';
+    f.entry.services.web = { profileId: 'web', containerName: 'web', status: 'running', hostPort: 12000, networkName: 'new-network' };
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, id, runtime) => id === 'web'
+      ? null : ({ ...runtime, aliasNetworks: [runtime.networkName!] }));
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    vi.mocked(f.container.inspectOwnedRuntime).mockResolvedValue(null);
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+
+  it('保留列表混入当前或待发布CID时拒绝回收这些身份', async () => {
+    const f = fixture(); f.service.status = 'running'; f.service.containerId = 'b'.repeat(64);
+    f.service.pendingRuntime = { containerName: 'pending', containerId: 'c'.repeat(64), hostPort: 13000, networkName: 'pending-network' };
+    f.service.retainedRuntimes = [{ containerName: 'stale-name', containerId: 'b'.repeat(64), hostPort: 10002, networkName: 'new-network' },
+      { ...f.service.pendingRuntime }];
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(vi.mocked(f.container.removeOwnedRuntime).mock.calls.map(call => call[2].containerId)).toEqual(['a'.repeat(64)]);
+    expect(f.service.retainedRuntimes).toHaveLength(2);
+  });
+
+  it('Docker观测期间当前服务变化时终止回收', async () => {
+    const f = fixture(); f.service.status = 'running';
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementationOnce(async (_entry, _id, runtime) => {
+      f.service.containerName = 'newer-api'; return { ...runtime, aliasNetworks: ['new-network'] };
+    });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('身份已变化');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+
+  it('历史记录缺CID时仍保护Docker确认的当前CID，逐项回收前重验当前存活', async () => {
+    const f = fixture(); f.service.status = 'running';
+    f.service.retainedRuntimes = [{ containerName: 'misnamed-current', containerId: 'b'.repeat(64), hostPort: 10002, networkName: 'new-network' }];
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, _id, runtime) =>
+      ({ ...runtime, containerId: runtime.containerName === 'new-api' ? 'b'.repeat(64) : runtime.containerId, aliasNetworks: [runtime.networkName!] }));
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(vi.mocked(f.container.removeOwnedRuntime).mock.calls.map(call => call[2].containerId)).toEqual(['a'.repeat(64)]);
+    vi.mocked(f.container.removeOwnedRuntime).mockClear();
+    vi.mocked(f.container.inspectOwnedRuntime).mockResolvedValueOnce({ ...f.service, containerId: 'b'.repeat(64), aliasNetworks: ['new-network'] })
+      .mockResolvedValueOnce(null);
+    f.service.retainedRuntimes = [{ containerName: 'other-old', containerId: 'c'.repeat(64), hostPort: 10005, networkName: 'other-network' }];
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.service.retainedRuntimes).toHaveLength(1);
+  });
   it('整体失败后收回已就绪但未发布的候选，旧入口及失败结果保持', async () => {
     const f = fixture(); f.entry.replacementNetwork = 'new-network';
     Object.assign(f.service, { status: 'running', containerId: 'b'.repeat(64), creationIssued: true });
