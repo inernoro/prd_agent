@@ -1629,12 +1629,17 @@ export async function addShareComment(token: string, content: string, password?:
 }
 
 /** 解决/重新打开根讨论；分享路径仍需验证当前分享链接和密码。 */
-export function setSiteCommentResolved(source: { siteId: string } | { token: string; password?: string },
+export function setSiteCommentResolved(source: { siteId: string } | { token: string; password?: string; siteId?: string },
   commentId: string, resolved: boolean): Promise<ApiResponse<HostedSiteCommentDto>> {
   const prefix = 'token' in source
     ? `/api/web-pages/shares/view/${encodeURIComponent(source.token)}`
     : `/api/web-pages/${encodeURIComponent(source.siteId)}`;
-  const query = 'token' in source && source.password ? `?password=${encodeURIComponent(source.password)}` : '';
+  const params = new URLSearchParams();
+  if ('token' in source) {
+    if (source.password) params.set('password', source.password);
+    if (source.siteId) params.set('siteId', source.siteId);
+  }
+  const query = params.size ? `?${params}` : '';
   return apiRequest(`${prefix}/comments/${encodeURIComponent(commentId)}/resolved${query}`, {
     method: 'PATCH', body: { resolved },
   });

@@ -434,7 +434,7 @@ public interface IHostedSiteService
         bool resolved, CancellationToken ct = default);
 
     Task<AddCommentResult> SetCommentResolvedByShareAsync(string token, string? password, string commentId,
-        string userId, bool resolved, CancellationToken ct = default);
+        string userId, bool resolved, CancellationToken ct = default, string? siteId = null);
 
     /// <summary>删除评论（作者本人或站点 owner）。无权 / 不存在返回 false。</summary>
     Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default);

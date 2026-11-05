@@ -5439,15 +5439,15 @@ public class HostedSiteService : IHostedSiteService
     }
 
     public async Task<AddCommentResult> SetCommentResolvedByShareAsync(string token, string? password,
-        string commentId, string userId, bool resolved, CancellationToken ct = default)
+        string commentId, string userId, bool resolved, CancellationToken ct = default, string? siteId = null)
     {
-        var (sites, _, err) = await ResolveShareForCommentAsync(token, password, userId, ct);
-        if (err != null)
-            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus,
-                ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
-        if (sites.Count == 0)
+        var access = await ResolveShareSiteAsync(token, siteId, password, userId, ct);
+        if (access.Error != null)
+            return new AddCommentResult { Error = access.Error, HttpStatus = access.HttpStatus,
+                ErrorCode = access.ErrorCode, RetryAfterSeconds = access.RetryAfterSeconds };
+        if (access.Site == null)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
-        return await SetCommentResolvedAsync(sites[0], commentId, userId, resolved, ct, maskUserId: true);
+        return await SetCommentResolvedAsync(access.Site, commentId, userId, resolved, ct, maskUserId: true);
     }
 
     private async Task<AddCommentResult> SetCommentResolvedAsync(HostedSite site, string commentId, string userId,

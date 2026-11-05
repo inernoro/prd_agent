@@ -2061,9 +2061,9 @@ public partial class WebPagesController : ControllerBase
     /// <summary>分享访问门禁通过后，根讨论作者或站点所有者标记解决／重新打开。</summary>
     [HttpPatch("shares/view/{token}/comments/{commentId}/resolved")]
     public async Task<IActionResult> SetShareCommentResolved(string token, string commentId, [FromQuery] string? password,
-        [FromBody] SetCommentResolvedRequest req)
+        [FromBody] SetCommentResolvedRequest req, [FromQuery] string? siteId = null)
     {
-        var result = await _siteService.SetCommentResolvedByShareAsync(token, password, commentId, GetUserId(), req.Resolved);
+        var result = await _siteService.SetCommentResolvedByShareAsync(token, password, commentId, GetUserId(), req.Resolved, siteId: siteId);
         return MapAddCommentResult(result);
     }
 

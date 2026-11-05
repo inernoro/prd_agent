@@ -159,7 +159,7 @@ export default function CommentsSection(props: Props) {
     const operationIdentity = identity;
     setBusyId(comment.id); setError(null);
     try {
-      const source = mode === 'share' ? { token: token!, password } : { siteId: siteId! };
+      const source = mode === 'share' ? { token: token!, password, siteId } : { siteId: siteId! };
       const res = await setSiteCommentResolved(source, comment.id, !comment.isResolved);
       if (!mounted.current || operationIdentity !== identityRef.current) return;
       if (res.success && res.data) {

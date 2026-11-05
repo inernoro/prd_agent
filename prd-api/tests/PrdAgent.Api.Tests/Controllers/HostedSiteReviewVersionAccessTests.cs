@@ -17,6 +17,46 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public class HostedSiteReviewVersionAccessTests
 {
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CollectionDiscussionResolution_UsesSelectedMemberAndPreservesShareBoundary()
+    {
+        await WithReviewDb(async db =>
+        {
+            var documents = new[] { ReviewSite(), ReviewSite(), ReviewSite() };
+            documents[1].Id = "second"; documents[2].Id = "outside";
+            await db.HostedSites.InsertManyAsync(documents);
+            await db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink {
+                Token = "collection", ShareType = "collection", SiteIds = new() { "site", "second" },
+                CreatedBy = "owner", Visibility = "public",
+            });
+            await db.HostedSiteComments.InsertManyAsync(documents.Select(site => new HostedSiteComment {
+                Id = "thread-" + site.Id, SiteId = site.Id, AuthorUserId = "owner", Content = "discussion",
+                ContentVersion = HostedSiteCommentRules.VersionKey(site.ContentVersion),
+            }));
+            var service = new HostedSiteService(db, null!, null!, null!, null!, null!, null!, null!, NullLogger<HostedSiteService>.Instance);
+            var controller = ReviewController(service, db, new Mock<IAssetStorage>(MockBehavior.Strict).Object, "owner");
+            foreach (var id in new[] { "site", "second" })
+            {
+                Assert.IsType<OkObjectResult>(await controller.SetShareCommentResolved("collection", "thread-" + id, null,
+                    new SetCommentResolvedRequest { Resolved = true }, id));
+                Assert.True((await db.HostedSiteComments.Find(c => c.Id == "thread-" + id).FirstAsync()).IsResolved);
+                Assert.IsType<OkObjectResult>(await controller.SetShareCommentResolved("collection", "thread-" + id, null,
+                    new SetCommentResolvedRequest { Resolved = false }, id));
+                Assert.False((await db.HostedSiteComments.Find(c => c.Id == "thread-" + id).FirstAsync()).IsResolved);
+            }
+            // 即使是所有者，也不能借合集 token 修改不在合集中的文档或另一成员的讨论。
+            Assert.Equal(404, (await service.SetCommentResolvedByShareAsync("collection", null, "thread-outside", "owner", true, siteId: "outside")).HttpStatus);
+            Assert.Equal(404, (await service.SetCommentResolvedByShareAsync("collection", null, "thread-second", "owner", true, siteId: "site")).HttpStatus);
+            Assert.False((await db.HostedSiteComments.Find(c => c.Id == "thread-outside").FirstAsync()).IsResolved);
+            // 不传目标的旧客户端仍操作首份文档；撤销分享后不能再修改。
+            Assert.Null((await service.SetCommentResolvedByShareAsync("collection", null, "thread-site", "owner", true)).Error);
+            await db.WebPageShareLinks.UpdateOneAsync(s => s.Token == "collection", Builders<WebPageShareLink>.Update.Set(s => s.IsRevoked, true));
+            Assert.Equal(404, (await service.SetCommentResolvedByShareAsync("collection", null, "thread-second", "owner", true, siteId: "second")).HttpStatus);
+            Assert.False((await db.HostedSiteComments.Find(c => c.Id == "thread-second").FirstAsync()).IsResolved);
+        });
+    }
+
     [Theory]
     [InlineData("create-zip")]
     [InlineData("replace-zip")]

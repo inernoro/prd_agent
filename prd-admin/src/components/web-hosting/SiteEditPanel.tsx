@@ -52,6 +52,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     phase,
     progress,
     elapsedSeconds,
+    previewDurationSeconds,
     resolvedModel,
     previewHtml,
     previewUrl,
@@ -607,7 +608,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 </div>
                 <div className="shrink-0 text-right text-[10px] text-token-muted">
                   <div className="max-w-28 truncate text-token-secondary">{activeRuntime?.label || '设计执行器'}</div>
-                  <div className="mt-0.5 tabular-nums">{generating ? '任务运行中' : `${progress}% · ${elapsedSeconds} 秒`}</div>
+                  <div className="mt-0.5 tabular-nums">{generating ? '任务运行中' : `${progress}% · ${previewDurationSeconds == null ? '用时未记录' : `${Math.round(previewDurationSeconds)} 秒`}`}</div>
                 </div>
               </div>
 
