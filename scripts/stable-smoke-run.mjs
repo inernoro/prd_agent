@@ -706,6 +706,7 @@ function runPlaywright(environment, values, runDir, grep = '') {
   };
   const args = [
     '--dir', 'e2e', 'exec', 'playwright', 'test', 'specs/stable-smoke.spec.ts',
+    '--retries=0',
   ];
   if (grep) args.push('--grep', grep);
   const result = command('pnpm', args, { env, stdio: 'inherit', encoding: undefined });
