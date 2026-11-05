@@ -55,7 +55,8 @@ jobs:
   e2e-preview:
     name: Playwright E2E (Preview)
     if: github.event.inputs.e2e_base_url != ''
-    runs-on: ubuntu-latest
+    # e2e 锁定的 Playwright 1.59 不支持 Ubuntu 26.04，固定受支持的 LTS。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: e2e
