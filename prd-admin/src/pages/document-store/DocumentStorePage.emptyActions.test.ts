@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { DOCUMENT_STORE_EMPTY_ACTIONS } from './DocumentStorePage';
+import { advanceDocumentUploadProgress, beginDocumentUploadProgress } from './documentUploadProgress';
 
 describe('document store empty actions', () => {
   it('keeps all onboarding cards actionable', () => {
@@ -43,6 +44,7 @@ function actualUploadHandler() {
   const setEntries = vi.fn();
   const setSelectedEntryId = vi.fn();
   const bindings = {
+    advanceDocumentUploadProgress, beginDocumentUploadProgress,
     MAX_UPLOAD_BYTES: maxBytes, storeId: 'stsmk-offline-store', toast,
     uploadDocumentFileWithProgress: upload, setUploading, setUploadProgress, setEntries, setSelectedEntryId,
   };

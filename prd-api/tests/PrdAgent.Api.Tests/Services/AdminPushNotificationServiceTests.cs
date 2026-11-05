@@ -1256,7 +1256,7 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
-    public void NotificationsController_NewQuotaAlert_ShouldKeepSafeEnvironmentAndModelDetails()
+    public void NotificationsController_NewQuotaAlert_ShouldKeepDiagnosticsOutOfUserPresentation()
     {
         const string message = "上游 AI 服务因额度不足拒绝了本次调用，本次 AI 创作未完成。\n" +
                                "环境：CDS 预览环境（分支：fix/quota-alert）\n" +
@@ -1271,10 +1271,12 @@ public sealed class AdminPushNotificationServiceTests
             Source = "llm-gateway-quota",
         });
 
-        Assert.Equal("AI 服务额度不足", presentation.Title);
-        Assert.Contains("环境：CDS 预览环境", presentation.Message);
-        Assert.Contains("模型：anthropic/claude-sonnet", presentation.Message);
-        Assert.Contains("平台：OpenRouter", presentation.Message);
+        Assert.Equal("AI 创作服务需要管理员处理", presentation.Title);
+        Assert.Contains("请稍后重试", presentation.Message);
+        Assert.Contains("诊断信息已保留", presentation.Message);
+        Assert.DoesNotContain("anthropic/claude-sonnet", presentation.Message);
+        Assert.DoesNotContain("OpenRouter", presentation.Message);
+        Assert.DoesNotContain("fix/quota-alert", presentation.Message);
     }
 
     [Fact]

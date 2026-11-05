@@ -1,3 +1,5 @@
+// 几何回归使用真实组件夹具，不冒充真实模型产物或完整视觉验收。
+import './generation-progress-layout.spec';
 import { devices, expect, test, type APIRequestContext, type APIResponse, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -220,7 +222,7 @@ function authHeaders(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-async function readEnvelope<T>(response: Awaited<ReturnType<APIRequestContext['get']>>) {
+async function readEnvelope<T>(response: APIResponse | Response) {
   const body = await response.json() as ApiEnvelope<T>;
   expect(response.ok(), body.error?.message || '业务接口调用失败').toBe(true);
   expect(body.success, body.error?.message || '业务接口调用失败').toBe(true);
@@ -2430,7 +2432,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(deep.ok()).toBe(true);
     expect(contractCheck?.status).toBe('pass');
     expect(contractCheck?.observedValue).toBe(0);
-    expect(contractCheck?.targetCount).toBe(5);
+    expect(contractCheck?.targetCount).toBe(6);
     expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
   });
 
@@ -5224,6 +5226,123 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(audit, `诊断 ${failure.code} 必须有管理员可回读证据`).toBeTruthy();
       expect(audit!.requestId).toBeTruthy();
       expect(audit!.action).toBeTruthy();
+    }
+  });
+
+  test('[PARSE-002][PARSE-005][PARSE-007][PARSE-008] 官方固定公开视频真实解析、转写、刷新回读和完整清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(900_000);
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const prefix = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video`;
+    let storeId = '', runId = '';
+    const entryIds: string[] = [];
+    try {
+      const store = await readEnvelope<{ id: string }>(await request.post('/api/document-store/stores', {
+        headers: authHeaders(token), data: { name: prefix, isPublic: false },
+      }));storeId = store.id;
+      // 样本来自 TikHub 官方接口文档，不使用真实用户的私有视频。
+      const created = await readEnvelope<{ run: { id: string; status: string } }>(await request.post('/api/short-video-materials/runs', {
+        headers: authHeaders(token), data: { storeId, title: prefix, videoUrl: 'https://www.douyin.com/video/7372484719365098803' },
+      }));runId = created.run.id;
+      const stages = new Set([created.run.status]);
+      let final: { status: string; errorMessage?: string; sourceEntryId?: string; transcriptEntryId?: string; timelineEntryId?: string; sourceVideoUrl?: string; stages: Array<{ key: string; status: string; message: string }> } | undefined;
+      await expect.poll(async () => {
+        final = await readEnvelope<typeof final & object>(await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }));
+        stages.add(final!.status + ':' + final!.stages.map(x => `${x.key}=${x.status}`).join(','));
+        if (final!.status === 'failed') throw Error(final!.errorMessage || '短视频解析失败');
+        return final!.status;
+      }, { timeout: 720_000, intervals: [500, 1000, 2000] }).toBe('done');
+      expect(stages.size, '必须看到异步阶段持续推进').toBeGreaterThan(1);
+      expect(final!.sourceEntryId).toBeTruthy();expect(final!.transcriptEntryId, '没有现成字幕时也必须真实转写出文字').toBeTruthy();
+      expect(final!.stages.find(x => x.key === 'transcript')?.status).toBe('done');
+      expect(final!.sourceVideoUrl).toMatch(/^https:/);
+      entryIds.push(final!.sourceEntryId!, final!.transcriptEntryId!);
+      const media = await request.get(final!.sourceVideoUrl!);
+      expect(media.ok()).toBe(true);expect(media.headers()['content-type']).toMatch(/^video\//);expect((await media.body()).length).toBeGreaterThan(1000);
+      const transcript = await readEnvelope<{ content?: string; hasContent: boolean }>(await request.get(`/api/document-store/entries/${final!.transcriptEntryId}/content`, { headers: authHeaders(token) }));
+      expect(transcript.hasContent).toBe(true);expect(transcript.content!.length).toBeGreaterThan(30);
+      expect(transcript.content).not.toMatch(/待补充文稿|补充字幕.*后重新/);
+      // 新版只默认保存视频与真实原文，时间线属于明确发起的后续加工，不制造空时间轴。
+      if (final!.timelineEntryId) entryIds.push(final!.timelineEntryId);
+      await page.goto(`/document-store?store=${storeId}`, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('body')).toContainText(prefix);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      const restored = await readEnvelope<{ id: string; sourceEntryId: string; transcriptEntryId: string }>(await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }));
+      expect(restored.id).toBe(runId);expect(restored.sourceEntryId).toBe(final!.sourceEntryId);expect(restored.transcriptEntryId).toBe(final!.transcriptEntryId);
+      await testInfo.attach('short-video-real-artifacts', { body: JSON.stringify({ runId, sourceEntryId: final!.sourceEntryId, transcriptEntryId: final!.transcriptEntryId, stages: [...stages], noFabricatedTimeline: !final!.timelineEntryId }), contentType: 'application/json' });
+    } finally {
+      if (runId) {
+        let state = await readEnvelope<{ status: string }>(await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }));
+        if (['queued', 'running'].includes(state.status)) {
+          await expect.poll(async () => {
+            state = await readEnvelope<{ status: string }>(await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }));
+            return ['done', 'failed'].includes(state.status);
+          }, { timeout: 120_000, intervals: [2000] }).toBe(true);
+        }
+        await expectDeleteSucceeded(await request.delete(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }), '短视频运行记录清理失败');
+        expect((await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+      if (storeId) {
+        await readEnvelope(await request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) }));
+        expect((await request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        for (const id of entryIds) expect((await request.get(`/api/document-store/entries/${id}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('[VIDEO-001][VIDEO-002][VIDEO-005] 原稿生成真实分镜、编辑回读并取消闲置任务', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '取消验证只在 CDS 执行');
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/video-agent');
+    let runId = '', projectId = '';
+    try {
+      await page.getByRole('button', { name: '新项目', exact: true }).click();
+      await page.getByRole('button', { name: '故事分镜 小说、散文、脚本', exact: true }).click();
+      await page.getByLabel('项目名称').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-storyboard`);
+      await page.getByLabel('文学稿内容').fill('请拆成两个镜头。第一镜：清晨，一只蓝色陶瓷杯放在白色桌面，阳光照入。第二镜：镜头慢慢靠近杯口，热气缓缓升起。每个镜头五秒，不要旁白。');
+      const created = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/video-agent/runs');
+      await page.getByRole('button', { name: '生成故事分镜', exact: true }).click();
+      runId = (await readEnvelope<{ runId: string }>(await created)).runId;
+      await testInfo.attach('created-storyboard-run', {body:JSON.stringify({runId}),contentType:'application/json'});
+      await expect.poll(async () => await page.getByTestId('video-storyboard-progress').isVisible() || await page.getByTestId('video-console').isVisible() || await page.getByText('没有生成可编辑镜头', {exact:true}).isVisible()).toBe(true);
+      const initialRun = await readEnvelope<{status:string;errorCode?:string}>(await request.get(`/api/video-agent/runs/${runId}`, {headers:authHeaders(token)}));
+      await testInfo.attach('initial-storyboard-status', {body:JSON.stringify({runId,status:initialRun.status,errorCode:initialRun.errorCode}),contentType:'application/json'});
+      expect(initialRun.status, initialRun.errorCode || '分镜创建后不应立即失败').not.toBe('Failed');
+      const progressBefore = await page.getByTestId('video-storyboard-progress').isVisible() ? await page.getByTestId('video-storyboard-progress').innerText() : '两秒内完成，已进入分镜编辑';
+      let final: { status: string; projectId: string; scenes: Array<{ index: number; topic: string; prompt: string; durationSeconds: number; duration?: number; videoUrl?: string }> } | undefined;
+      await expect.poll(async () => {
+        final = await readEnvelope<NonNullable<typeof final>>(await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) }));
+        projectId = final.projectId;
+        if (final.status === 'Failed') throw Error('分镜生成失败，请检查脱敏调用证据');
+        return final.status;
+      }, { timeout: 150_000, intervals: [500, 1000, 2000] }).toBe('Editing');
+      expect(final!.scenes.length).toBeGreaterThanOrEqual(2);
+      for (const scene of final!.scenes) {
+        expect(scene.topic.trim()).not.toBe('');expect(scene.prompt.trim()).not.toBe('');
+      }
+      await expect(page.getByTestId('video-console')).toBeVisible();
+      await expect(page.getByLabel('生成提示词')).not.toHaveValue('');
+      expect(progressBefore.length).toBeGreaterThan(0);
+      const updatedPrompt = final!.scenes[0].prompt + '，固定镜头，保持杯子的蓝色。';
+      await page.getByLabel('生成提示词').fill(updatedPrompt);
+      await page.getByRole('region', { name: '镜头生成' }).getByRole('button', { name: '保存', exact: true }).click();
+      await expect.poll(async () => (await readEnvelope<NonNullable<typeof final>>(await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) }))).scenes[0].prompt).toBe(updatedPrompt);
+      await request.post(`/api/video-agent/runs/${runId}/cancel`, { headers: authHeaders(token) });
+      await expect.poll(async () => (await readEnvelope<{ status: string }>(await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) }))).status, { timeout: 12_000 }).toBe('Cancelled');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      const cancelled = await readEnvelope<NonNullable<typeof final>>(await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) }));
+      expect(cancelled.status).toBe('Cancelled');expect(cancelled.scenes.every(x => !x.videoUrl)).toBe(true);
+      await testInfo.attach('storyboard-run', { body: JSON.stringify({ runId, projectId, sceneCount: cancelled.scenes.length, status: cancelled.status }), contentType: 'application/json' });
+    } finally {
+      if (runId) {
+        const state = await readEnvelope<{ status: string }>(await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) }));
+        if (!/Completed|Failed|Cancelled/.test(state.status)) {
+          await request.post(`/api/video-agent/runs/${runId}/cancel`, { headers: authHeaders(token) });
+          await expect.poll(async () => (await readEnvelope<{ status: string }>(await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) }))).status, { timeout: 12_000 }).toBe('Cancelled');
+        }
+        await expectDeleteSucceeded(await request.delete(`/api/video-agent/runs/${runId}?deleteEmptyProject=true`, { headers: authHeaders(token) }), '分镜任务清理失败');
+        expect((await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        if (projectId) expect((await request.get(`/api/video-agent/projects/${projectId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
     }
   });
 

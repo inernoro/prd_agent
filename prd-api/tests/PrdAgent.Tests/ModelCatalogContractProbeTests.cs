@@ -19,10 +19,10 @@ public class ModelCatalogContractProbeTests
         var result = await probe.CheckAsync();
 
         Assert.Equal(0, result.FailureCount);
-        Assert.Equal(5, result.TargetCount);
-        Assert.Equal(5, result.CatalogEntryCount);
+        Assert.Equal(6, result.TargetCount);
+        Assert.Equal(6, result.CatalogEntryCount);
         Assert.Empty(result.Failures);
-        Assert.Equal(5, gateway.CatalogCalls.Count);
+        Assert.Equal(6, gateway.CatalogCalls.Count);
         Assert.Empty(gateway.ResolveCalls);
     }
 
@@ -35,9 +35,9 @@ public class ModelCatalogContractProbeTests
 
         var result = await probe.CheckAsync();
 
-        Assert.Equal(5, result.FailureCount);
+        Assert.Equal(6, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":IDENTIFIER_DRIFT", failure));
-        Assert.Equal(5, gateway.CatalogCalls.Count);
+        Assert.Equal(6, gateway.CatalogCalls.Count);
         Assert.Empty(gateway.ResolveCalls);
     }
 
@@ -50,7 +50,7 @@ public class ModelCatalogContractProbeTests
 
         var result = await probe.CheckAsync();
 
-        Assert.Equal(5, result.FailureCount);
+        Assert.Equal(6, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":DEFAULT_RUNTIME_MISMATCH", failure));
         Assert.Empty(gateway.ResolveCalls);
     }
@@ -64,7 +64,7 @@ public class ModelCatalogContractProbeTests
 
         var result = await probe.CheckAsync();
 
-        Assert.Equal(5, result.FailureCount);
+        Assert.Equal(6, result.FailureCount);
         Assert.Equal(0, result.CatalogEntryCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":CATALOG_EMPTY", failure));
         Assert.Empty(gateway.ResolveCalls);
@@ -79,8 +79,8 @@ public class ModelCatalogContractProbeTests
 
         var result = await probe.CheckAsync();
 
-        Assert.Equal(5, result.CatalogEntryCount);
-        Assert.Equal(5, result.FailureCount);
+        Assert.Equal(6, result.CatalogEntryCount);
+        Assert.Equal(6, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":MODEL_UNAVAILABLE", failure));
         Assert.Empty(gateway.ResolveCalls);
     }
@@ -106,8 +106,8 @@ public class ModelCatalogContractProbeTests
 
         var result = await probe.CheckAsync();
 
-        Assert.Equal(5, result.FailureCount);
-        Assert.Equal(5, result.Failures.Count(failure => failure.EndsWith(":DUPLICATE_DISPLAY_NAME")));
+        Assert.Equal(6, result.FailureCount);
+        Assert.Equal(6, result.Failures.Count(failure => failure.EndsWith(":DUPLICATE_DISPLAY_NAME")));
     }
 
     [Fact]
@@ -119,8 +119,19 @@ public class ModelCatalogContractProbeTests
 
         var result = await probe.CheckAsync();
 
-        Assert.Equal(5, result.FailureCount);
+        Assert.Equal(6, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":DUPLICATE_PHYSICAL_OFFERING", failure));
+    }
+
+    [Fact]
+    public async Task CheckAsync_DetectsMissingStoryboardDefaultBeforeUserCreatesVideo()
+    {
+        var probe = new ModelCatalogContractProbe(
+            new FakeCatalog(false, missingDefaultCaller: AppCallerRegistry.VideoAgent.Script.Chat),
+            new FakeGateway());
+        var result = await probe.CheckAsync();
+        Assert.Contains("视频分镜脚本:DEFAULT_COUNT_0", result.Failures);
+        Assert.Equal(1, result.FailureCount);
     }
 
     private sealed class FakeCatalog(
@@ -129,7 +140,8 @@ public class ModelCatalogContractProbeTests
         string healthStatus = "Healthy",
         bool displayNameDrift = false,
         bool duplicateDisplayNames = false,
-        bool duplicatePhysicalOffering = false) : IModelPoolQueryService
+        bool duplicatePhysicalOffering = false,
+        string? missingDefaultCaller = null) : IModelPoolQueryService
     {
         public Task<List<ModelPoolForAppResult>> GetModelPoolsAsync(
             string? appCallerCode,
@@ -150,7 +162,7 @@ public class ModelCatalogContractProbeTests
                     Name = displayNameDrift || duplicateDisplayNames ? "营销别名" : publicId,
                     Code = publicId,
                     ModelType = modelType,
-                    IsDefault = true,
+                    IsDefault = appCallerCode != missingDefaultCaller,
                     IsDefaultForType = true,
                     ResolutionType = "LogicalModel",
                     Models =

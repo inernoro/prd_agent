@@ -20,6 +20,7 @@ public sealed class ModelCatalogContractProbe
         new("文学创作对话", AppCallerRegistry.LiteraryAgent.Content.Chat, ModelTypes.Chat),
         new("文学创作文生图", AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, ModelTypes.ImageGen),
         new("文学创作图生图", AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, ModelTypes.ImageGen),
+        new("视频分镜脚本", AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat),
         new("视频直出", AppCallerRegistry.VideoAgent.VideoGen.Generate, ModelTypes.VideoGen),
         new("百宝箱视觉创作", AppCallerRegistry.AiToolbox.Agents.VisualGeneration, ModelTypes.ImageGen),
     ];
@@ -163,7 +164,7 @@ public sealed class ModelCatalogContractProbe
 
         var distinctFailures = failures.Distinct(StringComparer.Ordinal).ToArray();
         var output = distinctFailures.Length == 0
-            ? $"{Targets.Length} 个业务选择器、{catalogEntries} 个对外模型均与运行时目录一致且当前可用"
+            ? $"{Targets.Length} 个业务链路、{catalogEntries} 个对外模型均与运行时目录一致且当前可用"
             : $"业务模型目录有 {distinctFailures.Length} 处契约失配：{string.Join("、", distinctFailures.Take(5))}";
         return new ModelCatalogContractProbeResult(
             distinctFailures.Length,

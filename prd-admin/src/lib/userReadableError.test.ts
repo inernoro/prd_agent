@@ -46,6 +46,11 @@ describe('toUserReadableErrorMessage', () => {
     expect(message).toBe('文件格式不受支持，请更换文件后重试。');
   });
 
+  it('保留损坏文件的已确认固定恢复文案，不把它泛化成重新上传', () => {
+    const backendMessage = '文件无法解析，请确认文件未损坏并重新选择';
+    expect(toUserReadableErrorMessage({ code: 'INVALID_FORMAT', message: backendMessage }, options)).toBe(backendMessage);
+  });
+
   it.each([
     ['文档标题不能为空', '文档标题不能为空，请检查文件后重新上传。'],
     ['文档标题最长 200 字符', '文档标题最长 200 字符，请检查文件后重新上传。'],

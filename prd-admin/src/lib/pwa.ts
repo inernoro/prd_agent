@@ -10,8 +10,13 @@ export function registerPwaServiceWorker(): void {
   if (typeof window !== 'undefined' && !window.isSecureContext) return;
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
+    // 不透明来源的沙箱 iframe 会在读取属性时同步抛错，尚未返回可捕获的 Promise。
+    try {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.warn('[pwa] service worker 注册失败:', err);
+      });
+    } catch (err) {
       console.warn('[pwa] service worker 注册失败:', err);
-    });
+    }
   });
 }

@@ -150,7 +150,7 @@ async function assertMeta(page: Page, zoom: number, level: MetaLevel) {
   }
 }
 
-test('方图横图竖图在 5%–300% 缩放下保持可读或明确逐段收起', async ({ page }) => {
+test('[REG-visual-viewport-001] 方图横图竖图在 5%–300% 缩放下保持可读或明确逐段收起', async ({ page }) => {
   const sizes = [[256, 256], [512, 512], [1024, 1024], [1536, 1024], [1024, 1536], [2048, 2048], [1536, 2752], [2752, 1536], [2048, 512], [512, 2048]];
   for (const [w, h] of sizes) {
     for (const zoom of [0.05, 0.125, 0.2, 0.25, 0.5, 1, 2, 3]) {

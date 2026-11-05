@@ -284,6 +284,27 @@ public class ImageGenRunWorker : BackgroundService
         // 模型池调度：统一在 Worker 中处理，确保所有来源的 Run 都能正确关联模型池
         var preRefCount = run.ImageRefs?.Count ?? 0;
         var preHasInit = !string.IsNullOrWhiteSpace(run.InitImageAssetSha256);
+        var submittedReferenceCount = preRefCount > 0 ? preRefCount : preHasInit ? 1 : 0;
+        var referenceValidation = ImageReferenceContract.Validate(
+            run.ExpectedImageRefCount,
+            submittedReferenceCount,
+            !string.IsNullOrWhiteSpace(run.MaskBase64));
+        if (!referenceValidation.IsValid)
+        {
+            var message = $"参考图没有完整进入生成任务：应有 {referenceValidation.ExpectedCount} 张，实际收到 {referenceValidation.SubmittedCount} 张。这次没有生成，请重新选择参考图后再试。";
+            await AppendEventAsync(run, "run", new
+            {
+                type = "error",
+                errorCode = referenceValidation.ErrorCode,
+                errorMessage = message,
+            }, ct);
+            await MarkRunFailedSafeAsync(
+                run.Id,
+                referenceValidation.ErrorCode ?? ImageReferenceContract.IncompleteCode,
+                message,
+                ct);
+            return;
+        }
         var preIsVision = preRefCount > 1;
         var preAppCallerCode = ResolveImageGenAppCallerCode(run, preIsVision, preRefCount, preHasInit);
         if (!IsRegisteredImageGenAppCaller(preAppCallerCode))

@@ -57,6 +57,7 @@ public class VideoGenRunWorker : BackgroundService
             try
             {
                 if (await ResumePendingDeletionAsync(stoppingToken)) continue;
+                if (await SettleIdleCancellationAsync(stoppingToken)) continue;
 
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
@@ -174,6 +175,35 @@ public class VideoGenRunWorker : BackgroundService
 
             await Task.Delay(2000, stoppingToken);
         }
+    }
+
+    internal async Task<bool> SettleIdleCancellationAsync(CancellationToken ct)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var scenes = Builders<VideoGenScene>.Filter;
+        // 编辑中的空闲任务没有后续队列可唤醒取消；与镜头领取原子竞争，不能提前终结已在调用上游的任务。
+        var idle = fb.Eq(run => run.Status, VideoGenRunStatus.Editing)
+                   & fb.Eq(run => run.CancelRequested, true)
+                   & fb.Ne(run => run.ExportRequested, true)
+                   & fb.Not(fb.ElemMatch(run => run.Scenes, scenes.In(scene => scene.Status,
+                       [SceneItemStatus.Generating, SceneItemStatus.Submitting, SceneItemStatus.SubmittingClaimed,
+                        SceneItemStatus.Polling, SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering])));
+        var cancelled = await _db.VideoGenRuns.FindOneAndUpdateAsync(idle,
+            Builders<VideoGenRun>.Update
+                .Set(run => run.Status, VideoGenRunStatus.Cancelled)
+                .Set(run => run.CurrentPhase, "cancelled")
+                .Set(run => run.EndedAt, DateTime.UtcNow),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, ct);
+        if (cancelled == null) return false;
+        if (!string.IsNullOrWhiteSpace(cancelled.ProjectId))
+        {
+            await _db.VideoProjects.UpdateOneAsync(
+                project => project.Id == cancelled.ProjectId && project.LatestRunId == cancelled.Id,
+                Builders<VideoProject>.Update.Set(project => project.Status, VideoProjectStatus.Draft)
+                    .Set(project => project.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+        }
+        await PublishEventAsync(cancelled.Id, "run.cancelled", new { });
+        return true;
     }
 
     private async Task<bool> ResumePendingDeletionAsync(CancellationToken ct)

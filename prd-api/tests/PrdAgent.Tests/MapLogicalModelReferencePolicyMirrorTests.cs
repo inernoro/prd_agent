@@ -48,10 +48,14 @@ public sealed class MapLogicalModelReferencePolicyMirrorTests
             MapLogicalModelReferencePolicy.TerminalImageRunStatuses.ToHashSet());
     }
 
-    [Fact]
-    public void 三类过滤器都绑定公开模型标识()
+    [Theory]
+    [InlineData("image2")]
+    [InlineData("gpt-image-2")]
+    [InlineData("gpt-image-2.5-sunburst")]
+    [InlineData("gemini-3-pro-image-preview")]
+    [InlineData("doubao-seedream-4-5-251128")]
+    public void 三类过滤器都按任意公开模型标识生效(string publicId)
     {
-        var publicId = "image-public-id";
         var rendered = new[]
         {
             Render(MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId)),

@@ -18,6 +18,43 @@ namespace PrdAgent.Api.Tests.Services;
 public class VideoSceneConcurrencyTests
 {
     [Fact]
+    public async Task CancelIdleStoryboard_ShouldSettleAndPreserveCompletedScenes()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-idle", test.OwnerId, SceneItemStatus.Done, SceneItemStatus.Error);
+        run.CancelRequested = true;
+        run.Scenes[0].VideoUrl = "https://assets.example/owned-result.mp4";
+        await test.SaveRunAsync(run);
+        var worker = test.CreateWorker();
+        (await worker.SettleIdleCancellationAsync(CancellationToken.None)).ShouldBeTrue();
+        var saved = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        saved.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        saved.EndedAt.ShouldNotBeNull();
+        saved.Scenes[0].VideoUrl.ShouldBe(run.Scenes[0].VideoUrl);
+        (await worker.SettleIdleCancellationAsync(CancellationToken.None)).ShouldBeFalse();
+        (await test.CreateService().DeleteRunAsync(run.Id, test.OwnerId, appKey: run.AppKey))!.Deleted.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(SceneItemStatus.Generating)]
+    [InlineData(SceneItemStatus.Submitting)]
+    [InlineData(SceneItemStatus.SubmittingClaimed)]
+    [InlineData(SceneItemStatus.Polling)]
+    [InlineData(SceneItemStatus.PollingClaimed)]
+    [InlineData(SceneItemStatus.Rendering)]
+    public async Task CancelActiveStoryboard_ShouldWaitForClaimedWorkToSettle(string sceneStatus)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-active", test.OwnerId, sceneStatus);
+        run.CancelRequested = true;
+        await test.SaveRunAsync(run);
+        (await test.CreateWorker().SettleIdleCancellationAsync(CancellationToken.None)).ShouldBeFalse();
+        var saved = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        saved.Status.ShouldBe(VideoGenRunStatus.Editing);
+        saved.Scenes[0].Status.ShouldBe(sceneStatus);
+    }
+
+    [Fact]
     public async Task DeleteCompletedRun_ShouldRemoveOwnedArtifactRunExportAndEmptyProject()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
