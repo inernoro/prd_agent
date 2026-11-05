@@ -97,6 +97,7 @@ export interface ProjectNetworkResolver {
 
 export interface ContainerRemoveContext {
   beforeRemove?: () => Promise<void>;
+  requiredRunningContainerId?: string;
   assertCurrent?: (step: string) => void;
   onProgress?: (step: 'admitted' | 'diagnostics-returned' | 'stop' | 'stop-returned' | 'rm' | 'rm-returned') => void;
   kind?: ContainerLifecycleIntentKind;
@@ -700,6 +701,10 @@ export class ContainerStopUnconfirmedError extends Error {
     super('容器停止结果未确认，请查看状态并重试');
     this.name = 'ContainerStopUnconfirmedError';
   }
+}
+
+export class ContainerRemovalPrerequisiteError extends Error {
+  constructor() { super('旧入口已失效或身份未确认，保留未发布候选'); }
 }
 
 export class ContainerService {
@@ -3015,12 +3020,18 @@ export class ContainerService {
         await context.beforeRemove();
         context.assertCurrent?.(`cleanup ${step} prerequisite`);
       }
-      return shell.exec(`docker ${step} ${containerName}`, {
+      const required = context.requiredRunningContainerId;
+      if (required && !/^[a-f0-9]{64}$/.test(required)) throw new ContainerRemovalPrerequisiteError();
+      // 与破坏命令处于同一执行槽，不能在排队前读一次存活后沿用。
+      const guard = required ? `if [ "$(docker inspect --format '{{.Id}} {{.State.Running}}' ${this.shellQuote(required)} 2>/dev/null)" != ${this.shellQuote(`${required} true`)} ]; then printf '%s\\n' 'CDS_OLD_RUNTIME_UNAVAILABLE' >&2; exit 125; fi; ` : '';
+      const result = await shell.exec(`${guard}docker ${step} ${containerName}`, {
         executionLane: 'operation', executionPurpose: 'temporary-cleanup', beforeStart: () => {
           context.assertCurrent?.(`cleanup ${step} dispatch`);
           context.onProgress?.(step);
         },
       });
+      if (required && result.exitCode === 125 && result.stderr.trim() === 'CDS_OLD_RUNTIME_UNAVAILABLE') throw new ContainerRemovalPrerequisiteError();
+      return result;
     };
     const stopResult = await dispatch('stop');
     context.assertCurrent?.('after cleanup stop return');

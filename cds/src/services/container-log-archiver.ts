@@ -58,8 +58,8 @@ export async function archiveBranchContainerLogs(
     const runtime = source === 'deploy-error' && pending && pending.networkName === branch.replacementNetwork ? pending : svc;
     const { containerName, hostPort } = runtime, status = svc.status;
     try {
-      if (runtime === pending && !runtime.creationIssued && !runtime.containerId) {
-        throw new Error('本次候选尚未创建，没有可归属的容器日志');
+      if (source === 'deploy-error' && !runtime.containerId && (runtime === pending || runtime.creationIssued)) {
+        throw new Error('本次候选创建身份尚未确认，没有可归属的容器日志');
       }
       const raw = await containerService.getLogs(containerName, tailLines);
       options.assertCurrent?.('after container log read');

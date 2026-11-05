@@ -377,6 +377,7 @@
 - [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
 - [角色技能套装 · 债务台账](./debt.skill.role-bundle.md) `debt.skill.role-bundle`
+- [海鲜市场时间与热度展示边界 · 债务台账](./debt.marketplace.activity.md) `debt.marketplace.activity`
 - [演讲智能体 · 债务台账](./debt.speech-agent.md) `debt.speech-agent`
 - [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
 - [视频生成 Agent · 债务台账](./debt.video-agent.md) `debt.video-agent`

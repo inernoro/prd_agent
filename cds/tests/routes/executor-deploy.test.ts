@@ -998,7 +998,8 @@ describe('Executor /exec/deploy', () => {
   });
 
   it.each([{ readiness: false, audit: false }, { readiness: false, audit: true },
-    { readiness: true, audit: false }, { readiness: true, audit: true }])('远端失败候选在共享收尾前归档自己的诊断，readiness=$readiness audit=$audit', async ({ readiness, audit }) => {
+    { readiness: true, audit: false }, { readiness: true, audit: true },
+    { readiness: false, audit: false, issued: true }, { readiness: false, audit: true, issued: true }])('远端失败候选在共享收尾前归档自己的诊断，readiness=$readiness audit=$audit issued=$issued', async ({ readiness, audit, issued }) => {
     const id = 'remote-failure-archive', oldCid = 'a'.repeat(64), candidateCid = 'b'.repeat(64);
     stateService.addBranch({ id, projectId: 'default', branch: 'feature/remote-failure-archive',
       worktreePath: path.join(tmpDir, 'worktrees', id), status: 'running', createdAt: new Date().toISOString(),
@@ -1008,7 +1009,9 @@ describe('Executor /exec/deploy', () => {
     vi.spyOn(containerService, 'inspectOwnedRuntime').mockImplementation(async (_entry, _id, runtime) => ({ ...runtime }));
     let candidate = '';
     vi.spyOn(containerService, 'runService').mockImplementation(async (_entry, _profile, runtime, _output, _env, context) => {
-      candidate = runtime.containerName; runtime.containerId = candidateCid; runtime.creationIssued = true;
+      candidate = runtime.containerName; runtime.creationIssued = true;
+      if (issued) throw new Error('remote docker run failed before CID');
+      runtime.containerId = candidateCid;
       await context?.onRuntimeCreated?.(runtime);
       if (!readiness) throw new Error('remote candidate startup failed');
       return runtime.hostPort;
@@ -1026,15 +1029,23 @@ describe('Executor /exec/deploy', () => {
     expect(stateService.getBranch(id)!.services.api).toMatchObject({ containerName: 'old-api', containerId: oldCid, status: 'error' });
     const archive = containerEvents.find(event => event.action === 'container.remove.requested'
       && event.details?.operation === 'failed-unpublished-runtime');
+    if (issued) {
+      expect(archive).toBeUndefined();
+      expect(JSON.stringify(result.events)).toContain('remote docker run failed before CID');
+      expect(JSON.stringify(result.events)).not.toContain('迟到创建身份未确认');
+      expect(stateService.getContainerLogArchives(id)).toContainEqual(expect.objectContaining({ containerName: candidate, logs: '', message: expect.stringContaining('身份') }));
+      expect(mock.commands.some(command => command.includes(`docker stop ${candidate}`) || command.includes(`docker rm ${candidate}`))).toBe(false);
+      return;
+    }
     if (audit) expect(archive).toMatchObject({ branchId: id, profileId: 'api', operationId: 'op-remote-failure',
       containerName: candidateCid, logs: { text: 'remote failed candidate evidence', lineCount: 1 } });
     else expect(archive).toBeUndefined();
     expect(stateService.getContainerLogArchives(id)).toContainEqual(expect.objectContaining({
       containerName: candidate, source: 'deploy-error', masked: true, logs: 'remote failed candidate evidence' }));
     const logRead = mock.commands.findIndex(command => command.startsWith('docker logs ') && command.includes(candidateCid));
-    const removed = mock.commands.findIndex(command => command.startsWith('docker rm ') && command.includes(candidateCid));
+    const removed = mock.commands.findIndex(command => command.includes(`docker rm ${candidateCid}`));
     expect(logRead).toBeGreaterThanOrEqual(0); expect(removed).toBeGreaterThan(logRead);
-    expect(mock.commands.some(command => /^docker (stop|rm) /.test(command) && command.includes(oldCid))).toBe(false);
+    expect(mock.commands.some(command => command.includes(`docker stop ${oldCid}`) || command.includes(`docker rm ${oldCid}`))).toBe(false);
   });
 
   it('threads operationId into executor stop and delete container events', async () => {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef, OperationLogContainerSnapshot } from '../types.js';
 import type { StateService } from './state.js';
-import type { ContainerService } from './container.js';
+import { ContainerRemovalPrerequisiteError, type ContainerService } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
 import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
 import { archiveBranchContainerLogs } from './container-log-archiver.js';
@@ -108,7 +108,7 @@ export async function abortUnpublishedServiceReplacements(options: {
     const service = entry.services[id], active = service?.servingRuntime;
     if (!service || !active) continue;
     const candidates = serviceRuntimeRefs(service).filter(runtime => runtime.containerName !== active.containerName
-      && runtime.networkName === entry.replacementNetwork && (runtime.creationIssued || runtime.containerId));
+      && runtime.networkName === entry.replacementNetwork && Boolean(runtime.containerId));
     if (!candidates.length) continue;
     assertCurrent?.('before failed replacement old identity');
     const confirmedActive = await container.inspectOwnedRuntime(entry, id, active);
@@ -124,6 +124,7 @@ export async function abortUnpublishedServiceReplacements(options: {
         await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
           operationId: options.operationId, operationGeneration: options.operationGeneration,
           profileId: id, operation: 'failed-unpublished-runtime', source: 'service-replacement',
+          requiredRunningContainerId: confirmedActive.containerId,
           beforeRemove: async () => {
             const current = await container.inspectOwnedRuntime(entry, id, active);
             assertCurrent?.('after failed replacement old liveness');
@@ -134,7 +135,7 @@ export async function abortUnpublishedServiceReplacements(options: {
           assertCurrent: () => assertCurrent?.('failed replacement cleanup command') });
       } catch (error) {
         assertCurrent?.('after failed replacement cleanup guard');
-        if (error instanceof OldServingRuntimeUnavailable) continue;
+        if (error instanceof OldServingRuntimeUnavailable || error instanceof ContainerRemovalPrerequisiteError) continue;
         throw error;
       }
       assertCurrent?.('after failed replacement cleanup');

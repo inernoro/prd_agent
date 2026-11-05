@@ -5787,6 +5787,7 @@ describe('Branch Routes', () => {
       { readiness: true, captureFails: false, priorLive: true, created: true, oldEntry: 'live' }, { readiness: true, captureFails: true, priorLive: true, created: true, oldEntry: 'live' },
       { readiness: false, captureFails: false, priorLive: false, created: true, oldEntry: 'live' }, { readiness: false, captureFails: true, priorLive: false, created: true, oldEntry: 'live' },
       { readiness: false, captureFails: false, priorLive: true, created: false, oldEntry: 'live' },
+      { readiness: false, captureFails: false, priorLive: true, created: 'issued', oldEntry: 'live' },
       { readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'dead' },
       { readiness: false, captureFails: false, priorLive: true, created: true, oldEntry: 'changed' }])('failed candidate diagnostics readiness=$readiness captureFails=$captureFails priorLive=$priorLive created=$created oldEntry=$oldEntry', async ({ readiness, captureFails, priorLive, created, oldEntry }) => {
       const id = 'failed-evidence', oldCid = 'a'.repeat(64), candidateCid = 'b'.repeat(64);
@@ -5800,6 +5801,7 @@ describe('Branch Routes', () => {
       vi.spyOn(containerService, 'runService').mockImplementation(async (_entry, _profile, service) => {
         candidate = service.containerName;
         if (!created) throw new Error('candidate pull failed before creation');
+        if (created === 'issued') { service.creationIssued = true; throw new Error('candidate docker run failed before CID'); }
         service.containerId = candidateCid; service.creationIssued = true;
         if (!readiness) throw new Error('candidate startup failed');
         return service.hostPort;
@@ -5831,17 +5833,23 @@ describe('Branch Routes', () => {
         containerId: priorLive ? oldCid : candidateCid, status: 'error' });
       const snapshots = stateService.getLogs(id).at(-1)!.containerLogSnapshots!;
       expect(snapshots).toContainEqual(expect.objectContaining({ profileId: 'api', containerName: candidate,
-        logs: captureFails || !created ? '' : expect.stringContaining('candidate failure evidence') }));
+        logs: captureFails || created !== true ? '' : expect.stringContaining('candidate failure evidence') }));
       const report = await buildCheckRunFailurePostmortem(entry, containerService, new Set(['api']), snapshots);
       expect(report).not.toContain('unrelated old version failure');
-      expect(report).toContain(!created ? 'candidate pull failed before creation' : captureFails ? (readiness ? '就绪探测' : 'candidate startup failed') : 'candidate failure evidence');
-      if (!created) expect(logs.mock.calls.some(([name]) => name === candidate)).toBe(false);
+      expect(report).toContain(!created ? 'candidate pull failed before creation' : created === 'issued' ? 'candidate docker run failed before CID' : captureFails ? (readiness ? '就绪探测' : 'candidate startup failed') : 'candidate failure evidence');
+      if (created !== true) expect(logs.mock.calls.some(([name]) => name === candidate)).toBe(false);
+      if (created === 'issued') {
+        expect(entry.errorMessage).toBe('api: candidate docker run failed before CID');
+        expect(deploymentRunService.list({ branchId: id })[0].failure?.summary).toBe('api: candidate docker run failed before CID');
+        expect(entry.services.api.pendingRuntime).toMatchObject({ creationIssued: true, containerName: candidate });
+        expect(mock.commands.some(command => command.includes(`docker stop ${candidate}`) || command.includes(`docker rm ${candidate}`))).toBe(false);
+      }
       expect(oldReadAfterCandidate).toBe(false);
       if (oldEntry !== 'live') {
         expect(entry.errorMessage).toBe('api: candidate startup failed');
         expect(deploymentRunService.list({ branchId: id })[0].failure?.summary).toBe('api: candidate startup failed');
         expect(entry.services.api.pendingRuntime?.containerId).toBe(candidateCid);
-        expect(mock.commands.some(command => /^docker (stop|rm) /.test(command) && command.includes(candidateCid))).toBe(false);
+        expect(mock.commands.some(command => command.includes(`docker stop ${candidateCid}`) || command.includes(`docker rm ${candidateCid}`))).toBe(false);
       }
     });
 
@@ -5881,7 +5889,7 @@ describe('Branch Routes', () => {
             args[2].containerId === oldCid ? (kind.endsWith('dead') ? null : { ...args[2], containerId: 'd'.repeat(64) }) : inspect(...args));
           release(); expect(await result).toBeUndefined();
           expect(entry.services.api.containerId).toBe(candidateCid);
-          expect(mock.commands.some(command => /^docker (?:stop|rm) /.test(command) && command.includes(candidateCid))).toBe(false);
+          expect(mock.commands.some(command => command.includes(`docker stop ${candidateCid}`) || command.includes(`docker rm ${candidateCid}`))).toBe(false);
           return;
         }
         release(); expect(await result).toBeUndefined();
@@ -5890,8 +5898,8 @@ describe('Branch Routes', () => {
           expect(entry.services.api.containerId).toBe(oldCid);
           expect(entry.services.api.servingRuntime?.containerId).toBe(oldCid);
           expect(entry.replacementNetwork).toBe(unusedNetwork);
-          expect(mock.commands.some(command => /^docker rm /.test(command) && command.includes(candidateCid))).toBe(true);
-          expect(mock.commands.filter(command => /^docker (?:stop|rm) /.test(command) && command.includes(oldCid))).toEqual([]);
+          expect(mock.commands.some(command => command.includes(`docker rm ${candidateCid}`))).toBe(true);
+          expect(mock.commands.filter(command => command.includes(`docker stop ${oldCid}`) || command.includes(`docker rm ${oldCid}`))).toEqual([]);
           return;
         }
         expect(mock.commands.some(command => command === `docker network rm '${unusedNetwork}'`)).toBe(true);
