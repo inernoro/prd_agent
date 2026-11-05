@@ -39,6 +39,22 @@ describe('ExecutorRegistry', () => {
 
   // ── register() ──
 
+  it('旧远端心跳不能覆盖已撤销或更新代次，但宿主真实容量仍计入', () => {
+    registry.register({ id: 'exec-a', host: '127.0.0.1', port: 9901, capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 2 } });
+    const owner = { projectId: 'default', branchId: 'owned', executorId: 'exec-a', deploymentRunId: 'run-new',
+      operationId: 'op-new', operationGeneration: 2, revoked: false };
+    const entry = { id: 'owned', projectId: 'default', branch: 'feature/owned', worktreePath: '', createdAt: new Date().toISOString(),
+      status: 'building' as const, services: {}, executorId: 'exec-a', remoteDeployment: owner };
+    stateService.addBranch(entry);
+    const before = JSON.stringify(entry);
+    registry.heartbeat('exec-a', { load: { memoryUsedMB: 512, cpuPercent: 10 }, branches: {
+      owned: { status: 'running', services: { old: { status: 'running' } },
+        remoteDeployment: { ...owner, operationId: 'op-old', operationGeneration: 1, deploymentRunId: 'run-old' } } as any,
+    } });
+    expect(JSON.stringify(entry)).toBe(before);
+    expect(stateService.getExecutor('exec-a')?.runningContainers).toBe(1);
+  });
+
   describe('register()', () => {
     it('creates a new executor with role="remote" by default', () => {
       const node = registry.register({

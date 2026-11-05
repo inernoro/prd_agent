@@ -19,6 +19,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import { commitServiceReplacements } from '../../src/services/service-replacement.js';
 import { branchAppNetworkName } from '../../src/services/branch-network.js';
@@ -1492,6 +1493,7 @@ describe('Branch Routes', () => {
       const fetchCalls: Array<{ url: string; body: any }> = [];
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/exec/deployment-owner')) return new Response(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' }), { status: 200 });
         const body = init?.body ? JSON.parse(String(init.body)) : undefined;
         fetchCalls.push({ url: String(input), body });
         if (String(input).includes('/exec/artifact-preflight')) return new Response(JSON.stringify({ state: 'ready', targetCommitSha: body.commitSha,
@@ -4575,6 +4577,7 @@ describe('Branch Routes', () => {
       const flush = vi.spyOn(stateService, 'flush').mockImplementationOnce(async () => { blocked(); await gate; await originalFlush(); });
       let dispatched: any;
       vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(_input).endsWith('/exec/deployment-owner')) return new Response(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' }), { status: 200 });
         dispatched = JSON.parse(String(init?.body));
         return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
       });
@@ -5076,6 +5079,7 @@ describe('Branch Routes', () => {
       mock.addResponsePatternFirst(/^'git'.*'diff'/, () => ({ stdout: '', stderr: '', exitCode: mode === 'master-changed' ? 1 : 0 }));
       let dispatched: any;
       vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(_input).endsWith('/exec/deployment-owner')) return new Response(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' }), { status: 200 });
         const body = JSON.parse(String(init?.body));
         if (String(_input).includes('/artifact-preflight')) return new Response(JSON.stringify({ state: 'ready', targetCommitSha: B,
           checkedAt: now, repoRoot: '/remote-untrusted-proof-root', accepted: true, artifacts: [{ profileIds: ['api'], requestedImage: body.profiles[0].dockerImage,
@@ -5176,6 +5180,7 @@ describe('Branch Routes', () => {
       let dispatched: any, preflight: any;
       const digest = `ghcr.io/owned/api@sha256:${'d'.repeat(64)}`;
       vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(_input).endsWith('/exec/deployment-owner')) return new Response(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' }), { status: 200 });
         const body = JSON.parse(String(init?.body));
         if (String(_input).includes('/artifact-preflight')) {
           preflight = body; return new Response(JSON.stringify({ state: 'ready', targetCommitSha: requested, checkedAt: new Date().toISOString(),
@@ -6729,6 +6734,7 @@ describe('Branch Routes', () => {
       const fetchCalls: Array<{ url: string; body: any }> = [];
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/exec/deployment-owner')) return new Response(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' }), { status: 200 });
         fetchCalls.push({
           url: String(input),
           body: init?.body ? JSON.parse(String(init.body)) : undefined,
@@ -6791,6 +6797,188 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('真实Master原生准入被拒不清旧错误和运行态，也不派发部署', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const id = 'remote-claim-rejected', now = new Date().toISOString(), actions: string[] = [];
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/claim-rejected', worktreePath: path.join(tmpDir, id),
+        createdAt: now, status: 'running', errorMessage: '原运行诊断', executorId: 'exec-rejected', services: {
+          api: { profileId: 'api', containerName: 'original-api', hostPort: 10001, status: 'running' },
+        }, remoteDeployment: { projectId: 'default', branchId: id, executorId: 'exec-rejected', operationId: 'old-op',
+          operationGeneration: 7, deploymentRunId: 'old-run', revoked: false } });
+      branchOperationCoordinator.seedGeneration(id, 7);
+      const entry = stateService.getBranch(id)!, runtime = () => JSON.stringify([entry.status, entry.errorMessage, entry.executorId, entry.services, entry.remoteDeployment]);
+      const before = runtime();
+      const remote = http.createServer((req, res) => {
+        let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+          const action = JSON.parse(raw).action; actions.push(action || 'deploy'); res.setHeader('Content-Type', 'application/json');
+          res.writeHead(action === 'revoke' ? 200 : 409); res.end(JSON.stringify({ qualified: action === 'revoke' }));
+        });
+      });
+      await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+      registryNodes.push({ id: 'exec-rejected', host: '127.0.0.1', port: (remote.address() as { port: number }).port,
+        status: 'online', role: 'remote', labels: [], branches: [], capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-rejected' });
+        expect(response.status).toBe(409); expect(runtime()).toBe(before); expect(actions).toEqual(['claim', 'revoke']);
+        expect(branchOperationCoordinator.getActiveOperations(id)).toHaveLength(0);
+      } finally { remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve())); }
+    });
+
+    it.each([false, true])('真实Master非成功正文读取后复核原代次，已换代=%s', async superseded => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const id = `remote-nonok-${superseded}`, now = new Date().toISOString();
+      stateService.addBranch({ id, projectId: 'default', branch: `feature/${id}`, worktreePath: path.join(tmpDir, id), createdAt: now, status: 'idle', services: {} });
+      const entry = stateService.getBranch(id)!, originalFetch = globalThis.fetch;
+      let payload: any, bodyRead = false, expected: string | undefined;
+      let next: ReturnType<BranchOperationCoordinator['begin']> | undefined;
+      const remote = http.createServer((req, res) => {
+        let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+          const value = JSON.parse(raw);
+          if (req.url === '/exec/deployment-owner') {
+            res.setHeader('Content-Type', 'application/json'); res.end('{"qualified":true,"admissionId":"native-nonok-admission"}');
+          } else { payload = value; res.writeHead(503, { 'Content-Type': 'text/plain' }); res.end('owned upstream rejection'); }
+        });
+      });
+      await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+      const port = (remote.address() as { port: number }).port;
+      registryNodes.push({ id: 'exec-nonok', host: '127.0.0.1', port, status: 'online', role: 'remote', labels: [], branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      globalThis.fetch = async (input, init) => {
+        const response = await originalFetch(input, init);
+        if (String(input) === `http://127.0.0.1:${port}/exec/deploy`) {
+          const read = response.text.bind(response);
+          response.text = async () => {
+            const text = await read(); bodyRead = true;
+            // 真正HTTP正文已结算；在Master继续执行前交给真实协调器换代。
+            if (superseded) {
+              branchOperationCoordinator.cancelBranch(id, '原错误正文已收到时接受继任者');
+              next = branchOperationCoordinator.begin({ projectId: 'default', branchId: id, kind: 'deploy', trigger: 'manual' });
+              Object.assign(entry, { status: 'starting', errorMessage: '继任者诊断', services: {
+                current: { profileId: 'current', containerName: 'successor-api', hostPort: 10002, status: 'starting' },
+              }, remoteDeployment: { ...entry.remoteDeployment!, operationId: next.operationId,
+                operationGeneration: next.generation, deploymentRunId: 'successor-nonok-run', revoked: false } });
+              expected = JSON.stringify(entry);
+            }
+            return text;
+          };
+        }
+        return response;
+      };
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-nonok' });
+        expect(response.status).toBe(200); expect(bodyRead).toBe(true);
+        if (superseded) {
+          expect(JSON.stringify(entry)).toBe(expected); expect(next!.lease!.isCurrent()).toBe(true);
+          expect(deploymentRunService.get(payload.deploymentRunId)?.status).toBe('cancelled');
+        } else {
+          expect(entry.status).toBe('error'); expect(entry.errorMessage).toContain('HTTP 503');
+          expect(entry.errorMessage).toContain('owned upstream rejection'); expect(deploymentRunService.get(payload.deploymentRunId)?.status).toBe('failed');
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        if (next?.lease) branchOperationCoordinator.complete(next.lease, 'cancelled');
+        remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve()));
+      }
+    });
+
+    it.each(['remote-error', 'post-complete-flush', 'missing-terminal'] as const)('远端终态与本机保存边界%s保留真实执行原因和心跳资格', async mode => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const id = `remote-terminal-${mode}`, now = new Date().toISOString(), controls: string[] = [];
+      stateService.addBranch({ id, projectId: 'default', branch: `feature/${id}`, worktreePath: path.join(tmpDir, id), createdAt: now, status: 'idle', services: {} });
+      const entry = stateService.getBranch(id)!, originalFlush = stateService.flush.bind(stateService);
+      let payload: any, flushRejected = false;
+      const flush = vi.spyOn(stateService, 'flush').mockImplementation(async () => {
+        if (mode === 'post-complete-flush' && !flushRejected && entry.services.api?.containerName === 'remote-final-api') {
+          flushRejected = true; throw new Error('synthetic persistence failure after real completion');
+        }
+        await originalFlush();
+      });
+      const remote = http.createServer((req, res) => {
+        let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+          const value = JSON.parse(raw);
+          if (req.url === '/exec/deployment-owner') {
+            controls.push(value.action); res.setHeader('Content-Type', 'application/json'); res.end('{"qualified":true,"admissionId":"native-terminal-admission"}');
+          } else {
+            payload = value; res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+            res.end(mode === 'remote-error'
+              ? 'event: error\ndata: {"message":"真实执行器git失败","services":{}}\n\n'
+              : mode === 'missing-terminal'
+                ? 'event: step\ndata: {"step":"building","status":"running"}\n\n'
+                : 'event: complete\ndata: {"ok":true,"services":{"api":{"profileId":"api","containerName":"remote-final-api","hostPort":10001,"status":"running"}}}\n\n');
+          }
+        });
+      });
+      await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+      registryNodes.push({ id: 'exec-terminal', host: '127.0.0.1', port: (remote.address() as { port: number }).port,
+        status: 'online', role: 'remote', labels: [], branches: [], capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-terminal' });
+        expect(response.status).toBe(200); expect(deploymentRunService.get(payload.deploymentRunId)?.status).toBe('failed');
+        if (mode === 'remote-error') {
+          expect(entry.errorMessage).toBe('真实执行器git失败'); expect(String(response.body)).not.toContain('没有返回完整部署回执');
+          expect(entry.remoteDeployment?.revoked).toBe(true); expect(controls).toEqual(['claim', 'revoke']);
+        } else if (mode === 'missing-terminal') {
+          expect(entry.errorMessage).toContain('没有返回完整部署回执'); expect(entry.status).toBe('error');
+          expect(entry.remoteDeployment?.revoked).toBe(true); expect(controls).toEqual(['claim', 'revoke']);
+        } else {
+          expect(flushRejected).toBe(true); expect(entry.errorMessage).toMatch(/保存|持久|确认/);
+          expect(entry.remoteDeployment?.revoked).toBe(false); expect(entry.status).toBe('running'); expect(controls).toEqual(['claim']);
+          const registry = new ExecutorRegistry(stateService);
+          registry.register({ id: 'exec-terminal', host: '127.0.0.1', port: 9901, capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 } });
+          registry.heartbeat('exec-terminal', { load: { memoryUsedMB: 0, cpuPercent: 0 }, branches: {
+            [id]: { status: 'running', remoteDeployment: { ...payload, revoked: false }, services: {
+              api: { profileId: 'api', containerName: 'remote-final-api', hostPort: 10002, status: 'running' },
+            } } as any,
+          } });
+          expect(entry.services.api.hostPort).toBe(10002);
+        }
+      } finally { flush.mockRestore(); remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve())); }
+    });
+
+    it('真实Master静默远端流取消独立撤销原代次，旧finally不能覆盖继任者', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const id = 'remote-quiet-owned', now = new Date().toISOString(), controls: any[] = [];
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/remote-quiet', worktreePath: path.join(tmpDir, id),
+        createdAt: now, status: 'idle', services: {} });
+      let dispatched!: () => void, originalPayload: any;
+      const entered = new Promise<void>(resolve => { dispatched = resolve; });
+      const remote = http.createServer((req, res) => {
+        let raw = ''; req.on('data', chunk => { raw += chunk; }); req.on('end', () => {
+          if (req.url === '/exec/deployment-owner') {
+            controls.push(JSON.parse(raw)); res.setHeader('Content-Type', 'application/json'); res.end('{"qualified":true,"admissionId":"fixture-admission"}');
+          } else if (req.url === '/exec/deploy') {
+            originalPayload = JSON.parse(raw); res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.flushHeaders(); dispatched();
+          } else { res.writeHead(404); res.end(); }
+        });
+      });
+      await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+      registryNodes.push({ id: 'exec-quiet', host: '127.0.0.1', port: (remote.address() as { port: number }).port,
+        status: 'online', role: 'remote', labels: [], branches: [], capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      const deployment = request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-quiet' });
+      try {
+        await entered;
+        const run = deploymentRunService.get(originalPayload.deploymentRunId)!;
+        expect(originalPayload.operationGeneration).toBe(run.operationGeneration);
+        branchOperationCoordinator.cancelBranch(id, '本轮原代次主动取消');
+        const next = branchOperationCoordinator.begin({ branchId: id, projectId: 'default', kind: 'deploy', trigger: 'manual' });
+        const entry = stateService.getBranch(id)!;
+        Object.assign(entry, { status: 'starting', services: { current: { profileId: 'current', containerName: 'cds-current', hostPort: 10002, status: 'starting' } },
+          remoteDeployment: { ...entry.remoteDeployment!, operationId: next.operationId, operationGeneration: next.generation, deploymentRunId: 'successor-run', revoked: false } });
+        const expected = JSON.stringify(entry);
+        const response = await deployment;
+        expect(response.status).toBe(200); expect(String(response.body)).not.toContain('event: complete');
+        expect(JSON.stringify(entry)).toBe(expected); expect(next.lease!.isCurrent()).toBe(true); expect(run.status).toBe('cancelled');
+        expect(controls.map(control => control.action)).toEqual(['claim', 'revoke']);
+        expect(controls[1]).toMatchObject({ operationId: originalPayload.operationId, operationGeneration: originalPayload.operationGeneration,
+          deploymentRunId: run.id, executorId: 'exec-quiet', projectId: 'default', branchId: id });
+      } finally {
+        remote.closeAllConnections(); await new Promise<void>(resolve => remote.close(() => resolve())); await deployment;
+      }
+    });
+
     it('normalizes project-scoped dependencies before dispatching to a remote executor', async () => {
       const now = new Date().toISOString();
       stateService.addProject({
@@ -6841,6 +7029,7 @@ describe('Branch Routes', () => {
       let dispatchedBody: any;
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(_input).endsWith('/exec/deployment-owner')) return new Response(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' }), { status: 200 });
         dispatchedBody = init?.body ? JSON.parse(String(init.body)) : undefined;
         return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
       }) as typeof fetch;

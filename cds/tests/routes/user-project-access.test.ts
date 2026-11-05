@@ -13,6 +13,7 @@ import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { humanPrincipalId, humanProjectGrantUpdateStatus, beginHumanProjectGrantUpdate } from '../../src/services/human-project-access.js';
 import { createIdentityRouter, resolveUserCredential } from '../../src/routes/identity.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { multiPreviewUrl } from '../../web/src/lib/previewUrl.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { branchEvents } from '../../src/services/branch-events.js';
@@ -78,6 +79,7 @@ describe('human project grants through the production server', () => {
       getLogs: async () => 'PASSWORD=fake-diagnostic-secret\nbooting\n' };
     const app = createServer({ stateService: state, worktreeService: new WorktreeService(shell, dir),
       shell, config, authStore: store, registry, bridgeService: {} as any,
+      branchOperationCoordinator: new BranchOperationCoordinator(),
       containerService: container as any,
       proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
     server = app.listen(0, '127.0.0.1');
@@ -764,6 +766,7 @@ describe('human project grants through the production server', () => {
     const remote = http.createServer((req, res) => {
       req.on('data', () => {});
       req.on('end', () => {
+        if (req.url === '/exec/deployment-owner') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ qualified: true, admissionId: 'fixture-admission' })); return; }
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         res.write('event: step\ndata: {"step":"build","status":"running","title":"safe progress","detail":{"env":{"PASSWORD":"fake-remote-map-secret"}}}\n\n');
         res.write('event: log\ndata: {"profileId":"profile-project-a","chunk":"API_TOKEN=fake-remote-');
