@@ -48,6 +48,7 @@ import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
+import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
@@ -477,12 +478,43 @@ export function ProjectListPage(): JSX.Element {
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
   const [pendingImportError, setPendingImportError] = useState('');
+  const [inventorySelection, setInventorySelection] = useState<ProjectInventorySelection>(INITIAL_PROJECT_SELECTION);
+  const [repositoryImportOpen, setRepositoryImportOpen] = useState(false);
+  const [environmentTargets, setEnvironmentTargets] = useState<ProjectEnvironmentTarget[]>([]);
+  const [environmentStatus, setEnvironmentStatus] = useState<ProjectEnvironmentStatus>('loading');
+  const [environmentRefresh, setEnvironmentRefresh] = useState(0);
+  const environmentAccess = state.status === 'ok' ? state.canManageProjects : null;
   const [quickRepoUrl, setQuickRepoUrl] = useState('');
   const [quickCreating, setQuickCreating] = useState(false);
   const [pendingImports, setPendingImports] = useState<PendingImportsResponse>({
     imports: [],
     pendingCount: 0,
   });
+
+  useEffect(() => {
+    if (environmentAccess === null) return;
+    if (!environmentAccess) {
+      setEnvironmentStatus('unavailable');
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15_000);
+    setEnvironmentStatus('loading');
+    void apiRequest<{ targets: ProjectEnvironmentTarget[] }>('/api/releases/targets', { signal: controller.signal })
+      .then(data => {
+        if (cancelled) return;
+        setEnvironmentTargets(data.targets || []);
+        setEnvironmentStatus('ready');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEnvironmentStatus('error');
+        setInventorySelection(selection => ({ ...selection, environment: 'all' }));
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => { cancelled = true; window.clearTimeout(timeout); controller.abort(); };
+  }, [environmentRefresh, environmentAccess]);
 
   const loadPendingImports = useCallback(async (): Promise<PendingImportsResponse | null> => {
     try {
@@ -619,11 +651,10 @@ export function ProjectListPage(): JSX.Element {
   const projects = state.status === 'ok' ? state.projects : [];
   const canManageProjects = state.status === 'ok' && state.canManageProjects;
   const legacy = state.status === 'ok' ? state.legacy : null;
-  const activeCount = useMemo(
-    () => projects.reduce((sum, project) => sum + (project.runningServiceCount || 0), 0),
-    [projects],
-  );
   const pendingImportCount = pendingImports.pendingCount || 0;
+  const serviceLabels = useMemo(() => new Map(projects.map(project =>
+    [project.id, uniqueProjectBrands(project).map(brand => brand.label)])), [projects]);
+  const visibleProjects = selectInventoryProjects(projects, inventorySelection, environmentTargets, serviceLabels);
 
   async function createProjectFromRepoUrl(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -650,7 +681,7 @@ export function ProjectListPage(): JSX.Element {
       // 有冲突就先别开始 clone —— 见下面那条注释与完整表单里的同一处判断。
       if (needsClone && !res.repoAlreadyLinked) setCloneTarget(res.project);
       await refresh(false);
-      // 顶栏这条是建项目的**主**路径，撞上已被绑走的仓库同样要当场问清楚。
+      // 仓库导入保留粘贴 URL 直接建项目的路径，撞上已被绑走的仓库同样要当场问清楚。
       // 只在完整表单里处理会让主路径静默建出一个没绑仓库的项目，
       // 而用户看到的是「已创建」，之后推送永远到不了它（Codex P1）。
       if (res.repoAlreadyLinked) {
@@ -667,63 +698,13 @@ export function ProjectListPage(): JSX.Element {
     }
   }
 
-  /*
-   * Render. Layout follows Week 4.6 第九刀 (user-tested):
-   *   - TopBar carries the page's primary action (Git URL paste) inline so
-   *     the workspace below is reserved for the project grid only.
-   *   - Automation tools (skill pack / global agent key / agent records)
-   *     hide in a dropdown menu; they are not first-class panels.
-   *   - Workspace renders only the project tile grid.
-   */
+  // 页面标题、操作与筛选属于完整项目页；全局顶栏继续承载通用运维入口。
   return (
     <AppShell
       active="projects"
       topbar={
         <TopBar
-          centerWide
-          left={
-            <>
-              <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />
-              {state.status === 'ok' && projects.length > 0 ? (
-                <div className="hidden items-center gap-3 border-l border-[hsl(var(--hairline))] pl-3 lg:flex">
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{projects.length}</span>
-                    <span className="cds-stat-label">项目</span>
-                  </span>
-                  <span className="cds-stat">
-                    <span className="cds-stat-value">{activeCount}</span>
-                    <span className="cds-stat-label">运行</span>
-                  </span>
-                </div>
-              ) : null}
-            </>
-          }
-          center={canManageProjects ? (
-            <form
-              className="flex min-w-0 items-center gap-1.5"
-              onSubmit={(event) => void createProjectFromRepoUrl(event)}
-            >
-              <label className="sr-only" htmlFor="topbar-git-repo-url">
-                Git 仓库 URL
-              </label>
-              <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3">
-                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <input
-                  id="topbar-git-repo-url"
-                  className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-                  value={quickRepoUrl}
-                  onChange={(event) => setQuickRepoUrl(event.target.value)}
-                  placeholder="粘贴 Git 仓库 URL · 回车创建并克隆"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-              <Button type="submit" size="sm" disabled={quickCreating || !quickRepoUrl.trim()}>
-                {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
-                创建
-              </Button>
-            </form>
-          ) : null}
+          left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '项目' }]} />}
           right={
             <>
               <PaletteHint />
@@ -761,7 +742,7 @@ export function ProjectListPage(): JSX.Element {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => void refresh(false)}
+                onClick={() => { void refresh(false); setEnvironmentRefresh(value => value + 1); }}
                 aria-label="刷新项目列表"
                 title="刷新"
               >
@@ -772,7 +753,7 @@ export function ProjectListPage(): JSX.Element {
                 trigger={
                   <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">
                     <Plus />
-                    一键部署
+                    项目工具
                   </Button>
                 }
                 width={240}
@@ -814,7 +795,7 @@ export function ProjectListPage(): JSX.Element {
         />
       }
     >
-      <Workspace fluid>
+      <Workspace fluid className="cds-project-inventory-workspace">
         {legacy?.legacyInUse ? (
           <div className="mb-6">
             <LegacyBanner
@@ -833,16 +814,53 @@ export function ProjectListPage(): JSX.Element {
           </div>
         ) : null}
 
-        {/* Project tile grid — only content in the workspace, like Railway. */}
-        <section>
+        {state.status === 'ok' ? <ProjectInventoryHeader
+          projects={projects} selection={inventorySelection} onChange={setInventorySelection}
+          targets={environmentTargets} environmentStatus={environmentStatus} canManageProjects={canManageProjects}
+          importOpen={repositoryImportOpen} onImport={() => setRepositoryImportOpen(open => !open)}
+          onCreate={() => { setCreateAutoPickRepo(false); setCreateOpen(true); }}
+        /> : null}
+        {canManageProjects && repositoryImportOpen ? (
+            <form
+              className="cds-project-repository-import"
+              id="project-repository-import"
+              onSubmit={(event) => void createProjectFromRepoUrl(event)}
+            >
+              <label className="sr-only" htmlFor="project-import-git-repo-url">
+                Git 仓库 URL
+              </label>
+              <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3">
+                <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <input
+                  id="project-import-git-repo-url"
+                  autoFocus
+                  className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+                  value={quickRepoUrl}
+                  onChange={(event) => setQuickRepoUrl(event.target.value)}
+                  placeholder="粘贴 Git 仓库 URL · 回车创建并克隆"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <Button type="submit" size="sm" disabled={quickCreating || !quickRepoUrl.trim()}>
+                {quickCreating ? <Loader2 className="animate-spin" /> : <ArrowRight />}
+                创建
+              </Button>
+              <Button variant="outline" type="button" size="sm" onClick={() => { setCreateAutoPickRepo(true); setCreateOpen(true); }}><Github />从 GitHub 选择</Button>
+            </form>
+        ) : null}
+        <section aria-label="项目列表">
           {state.status === 'loading' ? <ProjectListSkeleton /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
             <EmptyProjects canManageProjects={canManageProjects} onCreate={() => setCreateOpen(true)} />
           ) : null}
           {state.status === 'ok' && projects.length > 0 ? (
-            <div className="cds-card-grid">
-              {projects.map((project) => (
+            visibleProjects.length === 0 ? <div className="cds-project-inventory-empty" role="status">
+              <h2>没有匹配的项目</h2><p>试试其他名称、服务或筛选条件。</p>
+              <Button variant="outline" size="sm" onClick={() => setInventorySelection({ ...INITIAL_PROJECT_SELECTION, view: inventorySelection.view })}>清除筛选</Button>
+            </div> : <div className={`cds-card-grid cds-project-inventory-grid ${inventorySelection.view === 'list' ? 'cds-project-inventory--list' : ''}`}>
+              {visibleProjects.map((project) => (
                 <ProjectCard
                   key={project.id}
                   project={project}
@@ -857,6 +875,9 @@ export function ProjectListPage(): JSX.Element {
             </div>
           ) : null}
         </section>
+        {state.status === 'ok' && projects.length > 0 ? <footer className="cds-project-inventory-footer" aria-live="polite">
+          显示 {visibleProjects.length} 个项目，共 {projects.length} 个
+        </footer> : null}
 
         {canManageProjects ? <CreateProjectDialog
           open={createOpen}
