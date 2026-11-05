@@ -59,7 +59,7 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
     // 会在 service 鉴权前被中间件提前拦成 403（Codex P2，两轮）。这里只豁免「管理权限检查」，
     // [Authorize] 仍要求登录，业务层 owner/editor/成员鉴权仍在，故是登录态 + 业务层鉴权。
     private static readonly Regex SiteCommentRoute = new(
-        @"^/api/web-pages/[^/]+/comments(-enabled)?/?$",
+        @"^/api/web-pages/[^/]+/comments(-enabled|/[^/]+/resolved)?/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // 站点「向我提问」路由（siteId 同样在路径中段，PublicRoutes 的 StartsWith 命中不了）：
@@ -218,6 +218,8 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
 
     private bool IsPublicRoute(string path)
     {
+        if (string.Equals(path, "/api/web-pages/annotation-runtime.js", StringComparison.OrdinalIgnoreCase))
+            return true;
         foreach (var publicRoute in PublicRoutes)
         {
             if (path.StartsWith(publicRoute, StringComparison.OrdinalIgnoreCase))
@@ -226,7 +228,8 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
             }
         }
         // 站点维度评论列表/发表（siteId 在路径中段，前缀匹配命中不了）
-        if (SiteCommentRoute.IsMatch(path))
+        if (SiteCommentRoute.IsMatch(path)
+            || Regex.IsMatch(path, @"^/api/web-pages/[^/]+/revisions(?:/[^/]+/preview)?/?$", RegexOptions.IgnoreCase))
         {
             return true;
         }

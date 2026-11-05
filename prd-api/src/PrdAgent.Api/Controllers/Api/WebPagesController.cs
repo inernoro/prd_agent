@@ -11,6 +11,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -21,7 +22,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/web-pages")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
-public class WebPagesController : ControllerBase
+public partial class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
     private readonly IHostedSiteOptimizationService _optimizationService;
@@ -73,7 +74,8 @@ public class WebPagesController : ControllerBase
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory,
-        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null)
+        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
+        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -83,6 +85,7 @@ public class WebPagesController : ControllerBase
         _httpClientFactory = httpClientFactory;
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
+        _reviewStorage = assetStorage;
     }
 
     /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
@@ -1512,6 +1515,10 @@ public class WebPagesController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
             return Ok(ApiResponse<object>.Ok(updated));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
@@ -1705,6 +1712,10 @@ public class WebPagesController : ControllerBase
                 unifiedShareUrl = share.ShortSeq > 0 ? $"/s/{share.Token}" : null,
             }));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
@@ -1853,8 +1864,15 @@ public class WebPagesController : ControllerBase
             }
         }
 
-        var result = await _siteService.UpdateShareSettingsAsync(
-            shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        UpdateShareSettingsResult result;
+        try
+        {
+            result = await _siteService.UpdateShareSettingsAsync(shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         if (!result.Ok)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "修改失败"));
         return Ok(ApiResponse<object>.Ok(new { visibility = result.Visibility, expiresAt = result.ExpiresAt }));
@@ -1971,6 +1989,13 @@ public class WebPagesController : ControllerBase
     // 评论
     // ─────────────────────────────────────────────
 
+    /// <summary>公开静态批注脚本，不携带站点数据或身份凭据。</summary>
+    [AllowAnonymous]
+    [HttpGet("annotation-runtime.js")]
+    [ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+    public IActionResult AnnotationRuntime() =>
+        Content(HostedSiteAnnotationRuntime.Script, "text/javascript; charset=utf-8");
+
     /// <summary>切换站点是否允许评论（仅 owner / editor 可调）</summary>
     [HttpPatch("{id}/comments-enabled")]
     public async Task<IActionResult> SetCommentsEnabled(string id, [FromBody] SetCommentsEnabledRequest req)
@@ -1996,7 +2021,8 @@ public class WebPagesController : ControllerBase
     public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
     {
         var result = await _siteService.AddCommentBySiteAsync(
-            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
+            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
         return MapAddCommentResult(result);
     }
 
@@ -2019,7 +2045,25 @@ public class WebPagesController : ControllerBase
         var userId = GetUserId();
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
-            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip);
+            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("{siteId}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetSiteCommentResolved(string siteId, string commentId, [FromBody] SetCommentResolvedRequest req)
+    {
+        var result = await _siteService.SetCommentResolvedBySiteAsync(siteId, commentId, GetUserId(), req.Resolved);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>分享访问门禁通过后，根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("shares/view/{token}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetShareCommentResolved(string token, string commentId, [FromQuery] string? password,
+        [FromBody] SetCommentResolvedRequest req)
+    {
+        var result = await _siteService.SetCommentResolvedByShareAsync(token, password, commentId, GetUserId(), req.Resolved);
         return MapAddCommentResult(result);
     }
 
@@ -2061,6 +2105,7 @@ public class WebPagesController : ControllerBase
             401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, error)),
             403 => StatusCode(403, ApiResponse<object>.Fail(errorCode ?? "FORBIDDEN", error)),
             400 => BadRequest(ApiResponse<object>.Fail(errorCode ?? ErrorCodes.INVALID_FORMAT, error)),
+            409 => Conflict(ApiResponse<object>.Fail(errorCode ?? "CONTENT_VERSION_CHANGED", error)),
             _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, error)),
         };
     }
@@ -2235,8 +2280,17 @@ public class SetCommentsEnabledRequest
     public bool Enabled { get; set; }
 }
 
+public class SetCommentResolvedRequest
+{
+    public bool Resolved { get; set; }
+}
+
 public class AddSiteCommentRequest
 {
+    public string? RevisionId { get; set; }
+    public string? ExpectedContentVersion { get; set; }
+    public HostedSiteCommentAnchor? Anchor { get; set; }
+    public string? ParentId { get; set; }
     /// <summary>评论正文（1-2000 字）</summary>
     public string? Content { get; set; }
 }

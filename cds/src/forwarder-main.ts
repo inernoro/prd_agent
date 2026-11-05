@@ -26,6 +26,7 @@
 
 import './load-env.js';
 import http from 'node:http';
+import { isPrivateForwarderDiagnostic } from './forwarder/preview-activity.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -122,6 +123,7 @@ function loadRoutes(): void {
     const parsed = JSON.parse(txt);
     if (!Array.isArray(parsed)) throw new Error('routes JSON is not an array');
     routes = parsed as RouteRecord[];
+    proxy.reconcilePreviewActivityRoutes(routes);
     routesSource = 'json';
     routesLoadedAt = Date.now();
     routesError = null;
@@ -194,11 +196,7 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
   // 表(branchId/branchName/upstreamPort 全泄露)。新检查:**同时**要求 socket
   // remote 是 loopback **且** Host header 是内部域名(127.0.0.1/localhost),这样
   // nginx 转过来的公网 host 直接被拒，只允许运维 SSH 后直连 9090 调用。
-  const remoteAddr = (req.socket?.remoteAddress ?? '') as string;
-  const remoteIsLoopback = /^(127\.|::1$|::ffff:127\.)/.test(remoteAddr);
-  const hostHeader = (req.headers.host ?? '').split(':')[0].toLowerCase();
-  const hostIsInternal = hostHeader === '127.0.0.1' || hostHeader === 'localhost' || hostHeader === '::1';
-  const isLoopback = remoteIsLoopback && hostIsInternal;
+  const isLoopback = isPrivateForwarderDiagnostic(req);
   if (url === '/__forwarder/healthz') {
     const stats = proxy.getStats();
     const body = {
@@ -237,6 +235,11 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
     if (!isLoopback) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'forbidden' }));
+      return true;
+    }
+    if (parsedUrl.searchParams.get('view') === 'preview-activity') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ previewActivity: proxy.getPreviewActivity() }));
       return true;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });

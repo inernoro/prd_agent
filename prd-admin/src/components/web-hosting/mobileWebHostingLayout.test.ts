@@ -3,6 +3,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const previewSource = readFileSync(path.resolve(__dirname, 'SitePreviewModal.tsx'), 'utf8');
+const previewHeaderActionsSource = previewSource
+  + readFileSync(path.resolve(__dirname, 'ReviewToolbarControls.tsx'), 'utf8')
+  + readFileSync(path.resolve(__dirname, 'ReviewVersionBar.tsx'), 'utf8');
+const reviewStyles = readFileSync(path.resolve(__dirname, '../../styles/hosted-review.css'), 'utf8');
 const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8')
   + readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
 const pageSource = readFileSync(path.resolve(__dirname, '../../pages/WebPagesPage.tsx'), 'utf8');
@@ -21,7 +25,9 @@ describe('mobile web hosting layout', () => {
   });
 
   it('gives every preview-header action at least a 44px touch target', () => {
-    expect(previewSource.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(7);
+    expect(previewSource).toContain('<ReviewToolbarControls');
+    expect(previewHeaderActionsSource.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(9);
+    expect(reviewStyles).toMatch(/\.review-tool\s*\{[^}]*min-height:\s*44px/);
     expect(previewSource).toContain('min-w-11');
     // 2026-09-24：「帮我修改」进生成工作台，版本记录作为那里的对话显示，预览顶栏只留一个入口。
     expect(previewSource).toContain('帮我修改');
