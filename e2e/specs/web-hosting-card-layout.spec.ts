@@ -339,7 +339,14 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
     expect(page.context().pages()).toHaveLength(1);
     expect(apiRequests.filter(path => path === '/api/web-pages')).toHaveLength(listReads);
     if (mode === 'guest-share') expect(apiRequests).not.toContain('/api/web-pages/target');
-    await modal.getByRole('button', { name: '关闭', exact: true }).filter({ visible: true }).first().click();
+    // 原生和 Radix 阅读器都必须一次只关闭最上层，不丢失当前正文状态。
+    await modal.locator('.related-trigger').click();
+    await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toHaveCount(0);
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('.related-trigger')).toBeFocused();
+    await page.keyboard.press('Escape');
     await expect(modal).toHaveCount(0);
     expect(page.url()).toBe(originalUrl);
     if (sourceFrame) {

@@ -42,6 +42,17 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const token = source?.token;
   const password = source?.password;
   const close = useCallback(() => { setOpen(false); setPinned(false); }, []);
+  useEffect(() => {
+    if (!open) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      // 在文档和窗口上的父弹窗监听器之前消费按键，一次只关闭关联浮层。
+      event.preventDefault(); event.stopPropagation();
+      close(); anchor.current?.focus();
+    };
+    window.addEventListener('keydown', onEscape, true);
+    return () => window.removeEventListener('keydown', onEscape, true);
+  }, [open, close]);
   const invalidate = useCallback(() => { generation.current++; }, []);
   const refresh = useCallback(async () => {
     const current = ++generation.current;

@@ -49,6 +49,23 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+  it('Escape 先关闭关联浮层并归还焦点，再按一次才交给父阅读器', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" />));
+    const parentEscape = vi.fn();
+    document.addEventListener('keydown', parentEscape, true);
+    try {
+      await open();
+      const anchor = container.querySelector<HTMLButtonElement>('.related-trigger')!;
+      const first = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      await act(async () => anchor.dispatchEvent(first));
+      expect(document.querySelector('.related-popover')).toBeNull();
+      expect(first.defaultPrevented).toBe(true);
+      expect(parentEscape).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(anchor);
+      await act(async () => anchor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+      expect(parentEscape).toHaveBeenCalledTimes(1);
+    } finally { document.removeEventListener('keydown', parentEscape, true); }
+  });
   it('列表关联标记先展示摘要，点击才读取完整关联与预览', async () => {
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" summary={{ count: 1, isMain: true, mainTitle: '总体方案', titles: ['技术设计'] }} />));
     expect(getRelatedDocuments).not.toHaveBeenCalled();
