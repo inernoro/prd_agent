@@ -38,6 +38,7 @@ export function ToolbarPopover({
         type="button"
         data-tour-id={tourId}
         onClick={() => onOpenChange(!open)}
+        aria-expanded={open}
         className="inline-flex shrink-0 items-center gap-1.5 transition-colors"
         style={{
           height: 34,
@@ -51,7 +52,7 @@ export function ToolbarPopover({
         }}
       >
         {label}
-        {summary && <span style={{ fontWeight: 400, color: 'var(--text-tertiary)' }}>{summary}</span>}
+        {summary && <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>{summary}</span>}
         {(count ?? 0) > 0 && <span className="text-[12px] tabular-nums">{count}</span>}
         <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
       </button>

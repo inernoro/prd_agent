@@ -63,7 +63,11 @@ import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDra
 import { isAskSupported } from '@/components/web-hosting/askAvailability';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { toOpenableUrl } from '@/components/web-hosting/siteFormat';
-import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
+import { ToolbarPopover } from '@/components/design/ToolbarPopover';
+import { ListDisplayOptions } from '@/components/design/ListDisplayOptions';
+import { SegmentPills } from '@/components/design/SegmentPills';
+import { useListDisplayPreferences } from '@/hooks/useListDisplayPreferences';
+import { readUiPreference, writeUiPreference } from '@/lib/uiPreferences';
 import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
@@ -93,7 +97,6 @@ import {
   SITE_CARD_SIZES,
   WEB_PAGE_MIME,
   type SiteCaps,
-  type SiteCardSize,
   type SiteShareStats,
 } from '@/components/web-hosting/SiteCard';
 import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
@@ -260,13 +263,8 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 // ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
 
 /** 卡片尺寸档的唯一定义在 SiteCard 组件（宽度与设计稿绑定），这里只消费。 */
-type WebPageCardSize = SiteCardSize;
-
 const CARD_SIZE_OPTIONS = SITE_CARD_SIZES;
 
-function normalizeCardSize(v: string): WebPageCardSize {
-  return v === 'small' || v === 'large' || v === 'medium' ? v : 'medium';
-}
 
 // ─── 列表偏好持久化（排序/视图/分组/卡片尺寸）───
 // 用 localStorage：纯 UI 偏好（非敏感、设备本地、发版后用旧值无害），
@@ -278,21 +276,6 @@ const PREF_KEYS = {
   cardSize: 'webpages.pref.cardSize',
 } as const;
 
-function readPref(key: string, fallback: string): string {
-  try {
-    return localStorage.getItem(key) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writePref(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    /* 隐私模式 / 存储已满时静默降级 */
-  }
-}
 
 // ─── 排序循环：单击在 5 个选项之间下一步 ───
 
@@ -307,60 +290,6 @@ const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'largest', label: '体积' },
 ];
 
-// ─── 分段 pill 组件：当前项 pill 高亮 + 平铺所有选项，单击即切 ───
-function SegmentPills({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: string; label: string }[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div
-      className="inline-flex max-w-full items-center gap-1 overflow-x-auto p-1 rounded-lg shrink-0"
-      style={{
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border-default)',
-        scrollbarWidth: 'none',
-      }}
-    >
-      {options.map((opt) => {
-        const active = opt.value === value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className="h-7 min-w-10 shrink-0 whitespace-nowrap px-3 rounded-md text-center text-[13px] transition-colors"
-            style={
-              active
-                ? {
-                    background: 'var(--selection-bg)',
-                    color: 'var(--selection-text)',
-                    fontWeight: 500,
-                    boxShadow: 'inset 0 0 0 1px var(--selection-border)',
-                  }
-                : {
-                    background: 'transparent',
-                    color: 'var(--text-muted)',
-                  }
-            }
-            onMouseEnter={(e) => {
-              if (!active) e.currentTarget.style.color = 'var(--text-primary)';
-            }}
-            onMouseLeave={(e) => {
-              if (!active) e.currentTarget.style.color = 'var(--text-muted)';
-            }}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 // ─── Main Page ───
 
@@ -404,12 +333,13 @@ export default function WebPagesPage() {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   // 来源筛选（手动上传 / 工作流生成 / MCP 生成 / 保存自分享）；null = 不限
   const [activeSource, setActiveSource] = useState<string | null>(null);
-  const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
+  const { sort, setSort, cardSize, setCardSize } = useListDisplayPreferences({
+    sortKey: PREF_KEYS.sort, cardSizeKey: PREF_KEYS.cardSize,
+    sortOptions: SORT_OPTIONS, cardSizeOptions: CARD_SIZE_OPTIONS,
+    defaultSort: 'newest', defaultCardSize: 'medium',
+  });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
-    () => readPref(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
-  );
-  const [cardSize, setCardSize] = useState<WebPageCardSize>(
-    () => normalizeCardSize(readPref(PREF_KEYS.cardSize, 'medium')),
+    () => readUiPreference(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
   );
 
   // 空间 → 作用域（个人空间走 mine 再客户端剔除已进团队的；团队空间走 team）。下游隔离/角色门控不变
@@ -420,14 +350,12 @@ export default function WebPagesPage() {
     [currentSpace],
   );
   const [groupMode, setGroupMode] = useState<GroupMode>(
-    () => normalizeGroupMode(readPref(PREF_KEYS.groupMode, 'time') as GroupMode, readLastSpace().kind),
+    () => normalizeGroupMode(readUiPreference(PREF_KEYS.groupMode, 'time') as GroupMode, readLastSpace().kind),
   );
 
   // 排序/视图/分组/卡片尺寸偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
-  useEffect(() => { writePref(PREF_KEYS.sort, sort); }, [sort]);
-  useEffect(() => { writePref(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
-  useEffect(() => { writePref(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
-  useEffect(() => { writePref(PREF_KEYS.cardSize, cardSize); }, [cardSize]);
+  useEffect(() => { writeUiPreference(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
+  useEffect(() => { writeUiPreference(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -1470,23 +1398,9 @@ export default function WebPagesPage() {
                   open={openToolbarPanel === 'display'}
                   onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
                 >
-                  <div className="space-y-3" style={{ minWidth: 260 }}>
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">排序</div>
-                      <div data-tour-id="webpages-sort-pills">
-                        <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">卡片尺寸</div>
-                      <div data-tour-id="webpages-card-size-pills">
-                        <SegmentPills
-                          options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-                          value={cardSize}
-                          onChange={(v) => setCardSize(normalizeCardSize(v))}
-                        />
-                      </div>
-                    </div>
+                  <ListDisplayOptions sortOptions={SORT_OPTIONS} sort={sort} onSortChange={setSort}
+                    cardSizeOptions={CARD_SIZE_OPTIONS} cardSize={cardSize} onCardSizeChange={setCardSize}
+                    sortTourId="webpages-sort-pills" cardSizeTourId="webpages-card-size-pills" rememberPreferences>
                     <div className="space-y-1">
                       <div className="text-[11px] font-semibold text-token-muted">来源筛选</div>
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -1507,8 +1421,7 @@ export default function WebPagesPage() {
                         ))}
                       </div>
                     </div>
-                    <div className="text-[11px] text-token-muted">偏好会被记住，下次进来沿用。</div>
-                  </div>
+                  </ListDisplayOptions>
                 </ToolbarPopover>
 
                 <div data-tour-id="webpages-view-toggle" className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-token-default">

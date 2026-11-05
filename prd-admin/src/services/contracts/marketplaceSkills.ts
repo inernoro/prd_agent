@@ -68,10 +68,13 @@ export interface MarketplaceSkillTagCount {
 
 // === Contracts ===
 
+export type MarketplaceSkillScope = 'all' | 'favorites' | 'mine';
+
 export type ListMarketplaceSkillsContract = (input: {
   keyword?: string;
   sort?: 'hot' | 'new';
   tag?: string;
+  scope?: MarketplaceSkillScope;
 }) => Promise<ApiResponse<{ items: MarketplaceSkillDto[] }>>;
 
 /** 当前用户收藏的技能列表（供"我的空间"消费） */
