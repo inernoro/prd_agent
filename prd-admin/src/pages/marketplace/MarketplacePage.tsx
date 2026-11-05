@@ -262,7 +262,7 @@ export const MarketplacePage: React.FC = () => {
     const skillsOnly = background && activeLoadRef.current?.kind !== 'full';
     const requestId = ++loadRequestRef.current;
     activeLoadRef.current = { requestId, kind: skillsOnly ? 'skills' : 'full' };
-    if (!skillsOnly) setLoading(true);
+    if (!background) setLoading(true);
     setLoadError('');
     if (cardDemoEnabled) {
       setSnapshot({ scope, viewerId: currentUserId, byType: { skill: CARD_DEMO_SKILLS.filter(item => scope === 'all' || (scope === 'mine' ? item.ownerUserId === currentUserId : item.isFavoritedByCurrentUser)) } });
@@ -296,11 +296,12 @@ export const MarketplacePage: React.FC = () => {
       if (requestId === loadRequestRef.current) {
         setSnapshot(previous => ({
           scope, viewerId: currentUserId,
-          byType: skillsOnly && previous.scope === scope && previous.viewerId === currentUserId
+          // 请求广度与后台刷新语义独立：失败类型保留同范围的已有快照。
+          byType: background && previous.scope === scope && previous.viewerId === currentUserId
             ? { ...previous.byType, ...results } : results,
         }));
-        setLoadError(skillsOnly ? '' : personalError);
-        if (skillsOnly && requestFailed) toast.error('列表刷新失败', '收藏已更新，已保留当前内容，请稍后刷新页面');
+        setLoadError(background ? '' : personalError);
+        if (background && requestFailed) toast.error('列表刷新失败', '收藏已更新，已保留当前内容，请稍后刷新页面');
       }
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);

@@ -391,58 +391,65 @@ test('收藏请求期间后台计数更新后失败，回到最新服务端快�
   }
 });
 
-test('收藏确认不丢弃主动全量查询的新条目', async ({ page }) => {
-  const items = await installMarketplaceFixture(page);
-  const item = items.find(item => item.id === 'fixture-skill-20')!;
-  const oldPrompt = { id: 'existing-prompt', title: '原有提示词', content: '已有内容', forkCount: 20,
-    createdAt: '2026-10-01T00:00:00Z', ownerUserId: 'fixture-author', ownerUserName: '作者' };
-  const newPrompt = { ...oldPrompt, id: 'newly-published-prompt', title: '刚发布的提示词', forkCount: 0,
-    createdAt: '2026-11-05T00:00:00Z' };
-  let releaseFavorite!: () => void;
-  let releasePrompts!: () => void;
-  let promptCaptured!: () => void;
-  const favoriteGate = new Promise<void>(resolve => { releaseFavorite = resolve; });
-  const promptGate = new Promise<void>(resolve => { releasePrompts = resolve; });
-  const captured = new Promise<void>(resolve => { promptCaptured = resolve; });
-  let newSkillRequests = 0;
-  page.on('request', request => {
-    const url = new URL(request.url());
-    if (url.pathname === '/api/marketplace/skills' && url.searchParams.get('sort') === 'new') newSkillRequests++;
+for (const promptFails of [false, true]) {
+  test(promptFails ? '收藏继承主动全量查询遇失败时保留已有类型并提示' : '收藏确认不丢弃主动全量查询的新条目', async ({ page }) => {
+    const items = await installMarketplaceFixture(page);
+    const item = items.find(item => item.id === 'fixture-skill-20')!;
+    const oldPrompt = { id: 'existing-prompt', title: '原有提示词', content: '已有内容', forkCount: 20,
+      createdAt: '2026-10-01T00:00:00Z', ownerUserId: 'fixture-author', ownerUserName: '作者' };
+    const newPrompt = { ...oldPrompt, id: 'newly-published-prompt', title: '刚发布的提示词', forkCount: 0,
+      createdAt: '2026-11-05T00:00:00Z' };
+    let releaseFavorite!: () => void;
+    let releasePrompts!: () => void;
+    let promptCaptured!: () => void;
+    const favoriteGate = new Promise<void>(resolve => { releaseFavorite = resolve; });
+    const promptGate = new Promise<void>(resolve => { releasePrompts = resolve; });
+    const captured = new Promise<void>(resolve => { promptCaptured = resolve; });
+    let newSkillRequests = 0;
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.pathname === '/api/marketplace/skills' && url.searchParams.get('sort') === 'new') newSkillRequests++;
+    });
+    await page.route('**/api/literary-agent/prompts/marketplace?*', async route => {
+      const isNew = new URL(route.request().url()).searchParams.get('sort') === 'new';
+      if (isNew) { promptCaptured(); await promptGate; }
+      if (isNew && promptFails) {
+        await route.fulfill({ status: 503, json: { success: false, error: { code: 'TEMPORARY', message: '提示词暂时不可用' } } });
+        return;
+      }
+      await route.fulfill({ json: { success: true, data: { items: isNew ? [newPrompt, oldPrompt] : [oldPrompt] }, error: null } });
+    });
+    await page.route(`**/api/marketplace/skills/${item.id}/unfavorite`, async route => {
+      await favoriteGate;
+      item.isFavoritedByCurrentUser = false;
+      item.favoriteCount = 0;
+      await route.fulfill({ json: { success: true, data: { item }, error: null } });
+    });
+    try {
+      await page.goto('/marketplace');
+      await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
+      const started = page.waitForRequest(request => request.url().endsWith(`/${item.id}/unfavorite`));
+      await page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) })
+        .getByTitle('取消收藏', { exact: true }).click();
+      await started;
+      await page.getByRole('button', { name: /^显示/ }).click();
+      await page.getByRole('button', { name: '最新', exact: true }).click();
+      await captured;
+      releaseFavorite();
+      await expect.poll(() => newSkillRequests).toBeGreaterThanOrEqual(2);
+      releasePrompts();
+      await page.waitForLoadState('networkidle');
+      if (promptFails) await expect.soft(page.getByText('列表刷新失败', { exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: '提示词', exact: true }).click();
+      await expect(page.locator('.mkt-card')).toHaveCount(promptFails ? 1 : 2);
+      await expect(page.getByTitle(promptFails ? oldPrompt.title : newPrompt.title, { exact: true })).toBeVisible();
+    } finally {
+      releaseFavorite();
+      releasePrompts();
+    }
   });
-  await page.route('**/api/literary-agent/prompts/marketplace?*', async route => {
-    const isNew = new URL(route.request().url()).searchParams.get('sort') === 'new';
-    if (isNew) { promptCaptured(); await promptGate; }
-    await route.fulfill({ json: { success: true, data: { items: isNew ? [newPrompt, oldPrompt] : [oldPrompt] }, error: null } });
-  });
-  await page.route(`**/api/marketplace/skills/${item.id}/unfavorite`, async route => {
-    await favoriteGate;
-    item.isFavoritedByCurrentUser = false;
-    item.favoriteCount = 0;
-    await route.fulfill({ json: { success: true, data: { item }, error: null } });
-  });
-  try {
-    await page.goto('/marketplace');
-    await expect(page.locator('.mkt-card')).toHaveCount(24, { timeout: 30_000 });
-    const started = page.waitForRequest(request => request.url().endsWith(`/${item.id}/unfavorite`));
-    await page.locator('.mkt-card').filter({ has: page.getByTitle(item.title, { exact: true }) })
-      .getByTitle('取消收藏', { exact: true }).click();
-    await started;
-    await page.getByRole('button', { name: /^显示/ }).click();
-    await page.getByRole('button', { name: '最新', exact: true }).click();
-    await captured;
-    releaseFavorite();
-    await expect.poll(() => newSkillRequests).toBeGreaterThanOrEqual(2);
-    releasePrompts();
-    await page.waitForLoadState('networkidle');
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: '提示词', exact: true }).click();
-    await expect(page.locator('.mkt-card')).toHaveCount(2);
-    await expect(page.getByTitle(newPrompt.title, { exact: true })).toBeVisible();
-  } finally {
-    releaseFavorite();
-    releasePrompts();
-  }
-});
+}
 
 test('网页创作与市场共用显示控件，样式一致且偏好各自保留', async ({ page }) => {
   test.setTimeout(180_000);
