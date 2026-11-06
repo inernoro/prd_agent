@@ -5,6 +5,9 @@
   "fork": "https://github.com/inernoro/DeepAudit.git",
   "license": "AGPL-3.0-only",
   "overwrittenUpstreamFiles": {
-    "frontend/src/pages/Login.tsx": "075d3b994bb0a5680ce6c58c1eb82e33f42007683e72a212c9fd488e6edaf0bc"
+    "frontend/src/pages/Login.tsx": "075d3b994bb0a5680ce6c58c1eb82e33f42007683e72a212c9fd488e6edaf0bc",
+    "frontend/src/app/routes.tsx": "178ae3f3a58e9f798243f8d13fe6f6a0fe516308840e1670e6a193f6152cc6c6",
+    "frontend/src/pages/Dashboard.tsx": "daa13af0d351fb0ba52624416db2155fb352a16a1738ad8242b2745ec1de8e7d",
+    "frontend/src/pages/AuditTasks.tsx": "aa1b3fbb715b8b8755950500e9f517f6601afe5b91579b907d54d099648acd49"
   }
 }

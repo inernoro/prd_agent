@@ -9,8 +9,9 @@ RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
     pnpm install --frozen-lockfile
 COPY . .
-ENV VITE_API_BASE_URL=/api/v1
-RUN pnpm build
+ENV VITE_API_BASE_URL=/api/v1 VITE_CDS_STATIC_REVIEW=true
+RUN pnpm exec vitest run src/shared/config/__tests__/cdsStaticReview.test.tsx --maxWorkers=1 --minWorkers=1 \
+    && pnpm type-check && pnpm build
 FROM nginx:1.27-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.cds.conf.template /etc/nginx/templates/default.conf.template
