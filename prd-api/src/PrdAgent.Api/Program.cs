@@ -294,6 +294,10 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.PrdDocumentAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.SpeechAssetProvider>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Speech.SpeechQuotaService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Speech.SpeechGenerationService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.Speech.SpeechRunWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.HostedSiteService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.Services.HostedSiteService>());

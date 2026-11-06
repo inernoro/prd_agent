@@ -81,6 +81,7 @@ public class RequestResponseLoggingMiddleware
         // 按深度/宽度/长度三维截断，本来就是给人看的那一份。
         "/api/open/",
         "/api/mcp",
+        "/api/mcp-speech",
         // OpenDesign 运行时数据面，同理：`workspace/result` 的请求体是
         // `files[].contentBase64`——刚生成的整页 HTML 与由知识库推导出的正文本身。
         // 它还比上面两条更危险一点：这条路由是 `[AllowAnonymous]`（凭 runId + bearer 票据），
