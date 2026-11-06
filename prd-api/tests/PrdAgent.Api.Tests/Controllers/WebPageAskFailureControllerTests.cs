@@ -19,8 +19,8 @@ namespace PrdAgent.Api.Tests.Controllers;
 /// <summary>
 /// 执行两个公开控制器方法、真实 SSE writer 与独立 Mongo GUID 数据库；
 /// 只替代外部付费网关，不用纯文案函数测试冒充消费端接线已经正确。
+/// 使用现有 CI Mongo 服务进入默认回归，不额外创建测试任务或外部依赖。
 /// </summary>
-[Trait("Category", "Integration")]
 public sealed class WebPageAskFailureControllerTests
 {
     private const string DiagnosticCanary = "fixture-private-error https://fixture.invalid/offering SECRET-fixture-only";
