@@ -1,10 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as codeReviewSource from '../../src/services/code-review-source.js';
 import { CodeReviewEngine, CodeReviewWorkerStoppedError } from '../../src/services/code-review-engine.js';
 import { reviewJsonRequest, type CodeReviewAuditEvent } from '../../src/services/code-review-audit.js';
 import { validateCodeReviewZip } from '../../src/services/code-review-source.js';
 import { buildZip } from '../../src/utils/zip.js';
 
 describe('DeepAudit five-dimension adapter', () => {
+  it.each([false, true])('finishes snapshot preparation before login or any upstream request (legacy retry=%s)', async (retryFailed) => {
+    const order: string[] = [];
+    const readSnapshot = codeReviewSource.readCodeReviewSnapshot;
+    const prepare = vi.spyOn(codeReviewSource, 'readCodeReviewSnapshot').mockImplementationOnce(async (...args) => {
+      const snapshot = await readSnapshot(...args); order.push('prepared'); return snapshot;
+    });
+    try {
+      const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', username: 'service@internal.test', password: 'private', fetchImpl: (async (url) => {
+        expect(order[0]).toBe('prepared');
+        const path = new URL(String(url)).pathname; order.push(path);
+        if (path.endsWith('/auth/login')) return Response.json({ access_token: 'test-token' });
+        if (path.endsWith('/tasks/legacy')) return Response.json({ status: 'failed', total_files: 1, scanned_files: 0, checkpoint_version: 0 });
+        if (path.endsWith('/projects/')) return Response.json({ id: 'project' });
+        if (path.endsWith('/scan/upload-zip')) return Response.json({ task_id: 'new-scan' });
+        return path.endsWith('/issues') ? Response.json([]) : Response.json({ status: 'completed', total_files: 1, scanned_files: 1 });
+      }) as typeof fetch });
+      await engine.run({ taskId: 'task', zip: buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]), excludePatterns: [],
+        engineTaskId: retryFailed ? 'legacy' : undefined, retryFailed, signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['prepared', '/api/v1/auth/login', ...(retryFailed ? ['/api/v1/tasks/legacy'] : []), '/api/v1/projects/',
+        '/api/v1/scan/upload-zip', '/api/v1/tasks/new-scan', '/api/v1/tasks/new-scan/issues']);
+    } finally { prepare.mockRestore(); }
+  });
   it('creates ZIP project and scan, reports progress and preserves incomplete coverage', async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const events: CodeReviewAuditEvent[] = [];
@@ -56,7 +80,7 @@ describe('DeepAudit five-dimension adapter', () => {
       return Response.json(resumed ? { status: 'completed', total_files: 40, scanned_files: 40, resumable: false, failed_files: 0 }
         : { status, total_files: 40, scanned_files: 37, resumable: true, failed_files: 3 });
     }) as typeof fetch });
-    const result = await engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
+    const result = await engine.run({ taskId: 'task', zip: buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
     expect(result).toMatchObject({ engineTaskId: 'same-task', scannedFiles: 40 });
     expect(calls.filter((call) => call.url.endsWith('/resume'))).toEqual([{ url: 'http://deepaudit/api/v1/tasks/same-task/resume', method: 'POST' }]);
@@ -88,7 +112,7 @@ describe('DeepAudit five-dimension adapter', () => {
         : Response.json({ status: 'completed', checkpoint_version: 1, total_files: 40, scanned_files: 37,
           skipped_files: 3, failed_files: 0, processed_files: 40, resumable: false, issues_count: 0 });
     }) as typeof fetch });
-    const result = await engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed,
+    const result = await engine.run({ taskId: 'task', zip: buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]), excludePatterns: [], engineTaskId: 'same-task', retryFailed,
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
     expect(result).toMatchObject({ totalFiles: 40, scannedFiles: 37, skippedFiles: 3, engineTaskId: 'same-task' });
     expect(result.notes).toContain('DeepAudit 按引擎政策跳过 3 个文件；跳过不计为分析成功，不能视为审查通过。');
@@ -135,7 +159,7 @@ describe('DeepAudit five-dimension adapter', () => {
       calls.push({ url: String(url), method: init?.method });
       return Response.json({ status, total_files: 40, scanned_files: 37, failed_files: 3, resumable: false, checkpoint_version: 1 });
     }) as typeof fetch });
-    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
+    await expect(engine.run({ taskId: 'task', zip: buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/原生任务暂不可续跑.*已保留原任务编号/);
     expect(calls).toEqual([{ url: 'http://deepaudit/api/v1/tasks/same-task', method: undefined }]);
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
@@ -147,7 +171,7 @@ describe('DeepAudit five-dimension adapter', () => {
       calls.push(String(url)); return String(url).endsWith('/resume') ? Response.json({ detail: 'busy' }, { status: 409 })
         : Response.json({ status: 'cancelled', total_files: 40, scanned_files: 37, resumable: true, checkpoint_version: 1 });
     }) as typeof fetch });
-    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
+    await expect(engine.run({ taskId: 'task', zip: buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow('409');
     expect(calls).toHaveLength(2); expect(calls.every((url) => url.includes('/tasks/same-task'))).toBe(true);
   });
@@ -347,6 +371,17 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(events.map((event) => event.outcome)).toEqual(['http_error', 'parse_error', 'network_error']);
     expect(events[0].evidence).toContain('not authorized');
     expect(events[2].evidence).toContain('未收到响应');
+  });
+
+  it('retains only whitelisted network error types and cause codes without private messages or stacks', async () => {
+    const events: CodeReviewAuditEvent[] = [];
+    const cause = Object.assign(new Error('private-source https://private.example/?token=secret'), { code: 'ECONNRESET',
+      cause: { name: 'private-credential-type', code: 'sk-private-code', message: 'private-source', stack: 'private-stack' } });
+    await expect(reviewJsonRequest('submit', 'http://deepaudit/api', {}, async (event) => { events.push(event); },
+      (async () => { throw new TypeError('private-message', { cause }); }) as typeof fetch)).rejects.toThrow('private-message');
+    expect(JSON.parse(events[0].evidence)).toEqual({ reason: '未收到响应', causes: [{ type: 'TypeError' }, { type: 'Error', code: 'ECONNRESET' }] });
+    expect(events[0].evidence).not.toContain('private'); expect(events[0].evidence).not.toContain('secret');
+    expect(events[0].evidence).not.toContain('stack');
   });
 
   it('refreshes service login once on HTTP 401 and audits both attempts', async () => {

@@ -75,6 +75,18 @@ export class CodeReviewEngine {
     audit: CodeReviewAudit;
   }): Promise<CodeReviewEngineResult> {
     input.signal.throwIfAborted();
+    let preparedUpload: FormData | undefined;
+    if (!input.engineTaskId || input.retryFailed) {
+      // Do CPU-heavy verification/enumeration before opening an upstream keepalive connection.
+      // Explicit retries may need a legacy resubmission; ordinary tracking must never reparse its snapshot.
+      const snapshot = await readCodeReviewSnapshot(input.zip);
+      preparedUpload = new FormData();
+      preparedUpload.set('file', new Blob([new Uint8Array(input.zip)], { type: 'application/zip' }), 'snapshot.zip');
+      // CDS already applied boundary-based exclusions; explicit targets bypass legacy sampling.
+      preparedUpload.set('scan_config', JSON.stringify({ exclude_patterns: [], max_analyze_files: 0,
+        file_paths: snapshot.files.map((file) => file.name) }));
+      input.signal.throwIfAborted();
+    }
     if (!this.token) await this.login(input.signal, input.audit);
     const request = async (operation: string, path: string, init: RequestInit = {}): Promise<unknown> => {
       const attempt = () => reviewJsonRequest(operation, `${this.base}${path}`, {
@@ -114,15 +126,8 @@ export class CodeReviewEngine {
           body: JSON.stringify({ name: `CDS-${input.taskId}`, source_type: 'zip', description: 'CDS 固定源码快照审查' }),
         }) as { id?: string };
         if (!project.id || typeof project.id !== 'string') throw new Error('DeepAudit 未返回项目 ID');
-        const form = new FormData();
+        const form = preparedUpload!;
         form.set('project_id', project.id);
-        form.set('file', new Blob([new Uint8Array(input.zip)], { type: 'application/zip' }), 'snapshot.zip');
-        // CDS already applied user exclusions to this fixed snapshot with directory boundaries.
-        // DeepAudit uses substring exclusions, so replaying them would silently remove different files.
-        const snapshot = await readCodeReviewSnapshot(input.zip);
-        // Explicit targets also bypass the legacy service account's file sampling limit.
-        form.set('scan_config', JSON.stringify({ exclude_patterns: [], max_analyze_files: 0,
-          file_paths: snapshot.files.map((file) => file.name) }));
         const scan = await request('deepaudit.submit_scan', '/scan/upload-zip', { method: 'POST', body: form }) as { task_id?: string };
         if (!scan.task_id || typeof scan.task_id !== 'string') throw new Error('DeepAudit 未返回审查任务 ID');
         engineTaskId = scan.task_id;
