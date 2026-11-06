@@ -216,17 +216,25 @@ public class ProductScheduledNotificationLifecycleTests
     }
 
     [Fact]
-    public async Task ExpiredInFlightSingleTaskBecomesUnknownWithoutAutomaticDuplicateDelivery()
+    public async Task InFlightSingleTaskCanBeDisabledAndExpiresWithoutDuplicateDelivery()
     {
         await using var fixture = new Fixture();
         var task = fixture.Task();
-        task.Enabled = false;
+        task.EnablementExplicit = true;
+        task.OneTimeRunState = ProductNotificationOneTimeRunState.Attempted;
         task.NextRunAt = null;
         task.LastRunAt = DateTime.UtcNow.AddMinutes(-5);
         task.LastResult = "sending";
         task.LeaseId = "previous-worker";
-        task.LeaseUntil = DateTime.UtcNow.AddMinutes(-3);
+        task.LeaseUntil = DateTime.UtcNow.AddMinutes(2);
         await fixture.Db.ProductScheduledNotifications.InsertOneAsync(task);
+        Assert.IsType<OkObjectResult>(await fixture.Controller().SetScheduledNotificationEnabled(
+            task.Id, new(false, task.Revision), fixture.Configuration));
+        var disabled = await fixture.Saved(task.Id);
+        Assert.False(disabled.IsScheduleEnabled());
+        Assert.Equal(task.LeaseId, disabled.LeaseId);
+        await fixture.Db.ProductScheduledNotifications.UpdateOneAsync(x => x.Id == task.Id,
+            Builders<ProductScheduledNotification>.Update.Set(x => x.LeaseUntil, DateTime.UtcNow.AddMinutes(-1)));
         await fixture.Worker().ProcessNextAsync(CancellationToken.None);
         var saved = await fixture.Saved(task.Id);
         Assert.Equal("unknown", saved.LastResult);

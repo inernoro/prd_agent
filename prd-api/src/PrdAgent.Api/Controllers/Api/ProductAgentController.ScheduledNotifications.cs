@@ -67,8 +67,9 @@ public partial class ProductAgentController
         var update = Builders<ProductScheduledNotification>.Update
             .Set(x => x.Enabled, request.Enabled).Set(x => x.EnablementExplicit, true).Set(x => x.NextRunAt, next)
             .Set(x => x.UpdatedAt, now).Set(x => x.Revision, Guid.NewGuid().ToString("N"));
+        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision);
         var saved = await _db.ProductScheduledNotifications.FindOneAndUpdateAsync(
-            x => x.Id == id && x.Revision == request.Revision, update,
+            filter, update,
             new FindOneAndUpdateOptions<ProductScheduledNotification> { ReturnDocument = ReturnDocument.After });
         return saved == null
             ? Conflict(ApiResponse<object>.Fail("NOTIFICATION_CHANGED", "任务已更新，请刷新列表后重试。"))
