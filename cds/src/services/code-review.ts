@@ -55,6 +55,7 @@ export class CodeReviewService {
   private stopped = false;
   private started = false;
   private submissions = Promise.resolve();
+  private engineProbeTimer?: ReturnType<typeof setTimeout>;
   constructor(readonly deps: CodeReviewDeps) {}
   private engine() {
     if (this.deps.engine) return this.deps.engine;
@@ -138,7 +139,12 @@ export class CodeReviewService {
     }
     void this.pump();
   }
-  stop() { this.stopped = true; for (const controller of this.active.values()) controller.abort(); }
+  stop() {
+    this.stopped = true;
+    if (this.engineProbeTimer) clearTimeout(this.engineProbeTimer);
+    this.engineProbeTimer = undefined;
+    for (const controller of this.active.values()) controller.abort();
+  }
   async cancel(id: string) {
     const task = this.get(id); this.assertOwned(task);
     if (terminal.has(task.status) || task.status === 'archiving') throw new CodeReviewError(409, '任务已结束或正在归档');
@@ -184,24 +190,31 @@ export class CodeReviewService {
     return { events, nextBefore };
   }
   async pump(): Promise<void> {
-    if (this.pumping || this.stopped || !this.engine()) return;
+    if (this.pumping || this.stopped) return;
+    if (this.engineProbeTimer) clearTimeout(this.engineProbeTimer);
+    this.engineProbeTimer = undefined;
     this.pumping = true;
     try {
       for (;;) {
         if (this.stopped) return;
         const next = this.list().reverse().find((t) => t.ownerScope === this.deps.ownerScope && !terminal.has(t.status));
         if (!next) return;
-        await this.execute(next.id);
+        // A branch update can temporarily remove its runtime between tasks. Keep those tasks intact.
+        const engine = this.engine();
+        if (!engine) {
+          this.engineProbeTimer = setTimeout(() => { this.engineProbeTimer = undefined; void this.pump(); }, 5000);
+          this.engineProbeTimer.unref();
+          return;
+        }
+        await this.execute(next.id, engine);
       }
     } finally { this.pumping = false; }
   }
-  private async execute(id: string) {
+  private async execute(id: string, engine: Pick<CodeReviewEngine, 'run'>) {
     const controller = new AbortController(); this.active.set(id, controller);
     const timeout = setTimeout(() => controller.abort(new Error('审查超过 2 小时，请缩小范围后重试')), 2 * 60 * 60 * 1000);
     timeout.unref();
     try {
-      const engine = this.engine();
-      if (!engine) throw new CodeReviewError(503, 'DeepAudit 尚未配置，请联系管理员接入审查引擎');
       let task = this.get(id);
       task.status = 'preparing'; task.phase = '准备固定源码快照'; await this.save(task);
       if (!task.inputKey) {

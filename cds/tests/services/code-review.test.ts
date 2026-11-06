@@ -104,6 +104,45 @@ describe('代码审查任务完整闭环', () => {
     expect(service.get(task.id)).toMatchObject({ status: 'completed', phase: '部分文件未完成分析，报告已归档', progress: { totalFiles: 2, scannedFiles: 1 } });
     expect(service.get(task.id).reportId).toBeTruthy();
   });
+  it('派发间引擎暂不可用时保留原排队任务，恢复探测后使用原 ID 和源码继续', async () => {
+    let available = true;
+    run.mockImplementationOnce(async () => { available = false; return result(); });
+    service = new CodeReviewService({ state, inputs, resolveEngine: () => available ? { run } : undefined,
+      mail: { configured: () => true, send }, ownerScope: 'test', publicBaseUrl: 'https://cds.example', autoStart: false });
+    const first = await submit({ idempotencyKey: 'before-runtime-change' });
+    const queued = await submit({ title: '等待中的原任务', idempotencyKey: 'after-runtime-change' });
+    const original = { id: queued.id, sourceHash: queued.sourceHash, inputKey: queued.inputKey };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await service.pump();
+      expect(service.get(first.id).status).toBe('completed');
+      expect(service.get(queued.id)).toMatchObject({ ...original, status: 'queued' });
+      expect(service.get(queued.id).error).toBeUndefined();
+      expect(run).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(service.get(queued.id)).toMatchObject({ ...original, status: 'queued' });
+      expect(run).toHaveBeenCalledTimes(1);
+      available = true;
+      await vi.advanceTimersByTimeAsync(5000);
+      await vi.waitFor(() => expect(service.get(queued.id).status).toBe('completed'));
+      expect(service.get(queued.id)).toMatchObject(original);
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally { service.stop(); vi.useRealTimers(); }
+  });
+  it('停止服务会清理引擎恢复探测，不再派发仍排队的任务', async () => {
+    let available = true;
+    service = new CodeReviewService({ state, inputs, resolveEngine: () => available ? { run } : undefined,
+      mail: { configured: () => true, send }, ownerScope: 'test', publicBaseUrl: 'https://cds.example', autoStart: false });
+    const queued = await submit(); available = false;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await service.pump();
+      service.stop(); available = true;
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(service.get(queued.id).status).toBe('queued'); expect(run).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { service.stop(); vi.useRealTimers(); }
+  });
   it('并发重复提交幂等且不同项目保持隔离', async () => {
     const [a, b] = await Promise.all([submit({ idempotencyKey: 'same' }), submit({ idempotencyKey: 'same' })]);
     expect(a.id).toBe(b.id); expect(service.list('b')).toEqual([]);
