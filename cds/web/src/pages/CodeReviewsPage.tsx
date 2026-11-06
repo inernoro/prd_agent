@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowUpRight, Check, Download, FileArchive, FileCode2, GitBr
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { CodeReviewsSkeleton } from '@/components/skeletons/CodeReviewsSkeleton';
 import { apiRequest, apiUrl } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
 import { CODE_REVIEW_STATUS, codeReviewAction, codeReviewReportUrl, listCodeReviews, submitCodeReview, type CodeReviewTask } from '@/lib/codeReviews';
@@ -26,6 +27,8 @@ export function CodeReviewsPage(): JSX.Element {
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [setupError, setSetupError] = useState('');
+  const [setupLoading, setSetupLoading] = useState(true);
+  const [initialSettled, setInitialSettled] = useState(false);
   const [tasks, setTasks] = useState<CodeReviewTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState('');
@@ -64,7 +67,8 @@ export function CodeReviewsPage(): JSX.Element {
       setSetupError('');
       setProjectId((current) => projectResponse.projects.some((project) => project.id === current)
         ? current : projectResponse.projects[0]?.id || '');
-    }).catch((error: unknown) => { if (!controller.signal.aborted) setSetupError(errorMessage(error)); });
+    }).catch((error: unknown) => { if (!controller.signal.aborted) setSetupError(errorMessage(error)); })
+      .finally(() => { if (!controller.signal.aborted) setSetupLoading(false); });
     return () => controller.abort();
   }, [refresh]);
 
@@ -94,6 +98,10 @@ export function CodeReviewsPage(): JSX.Element {
     void load();
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [projectFilter, refresh]);
+
+  useEffect(() => {
+    if ((!setupLoading && !loading) || setupError || listError) setInitialSettled(true);
+  }, [setupLoading, loading, setupError, listError]);
 
   const hasActive = submitting || tasks.some((task) => isActive(task) || task.delivery.status === 'sending');
   useEffect(() => {
@@ -149,10 +157,16 @@ export function CodeReviewsPage(): JSX.Element {
     return project?.aliasName || project?.name || id;
   };
 
-  return <AppShell active="code-reviews" wide topbar={<TopBar
+  const topbar = <TopBar
     left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '代码审查报告' }]} />}
     right={<Button variant="outline" size="sm" onClick={() => setRefresh((value) => value + 1)} disabled={loading}><RefreshCw />刷新</Button>}
-  />}>
+  />;
+  const initialLoading = !initialSettled && !setupError && !listError;
+  if (initialLoading) return <AppShell active="code-reviews" topbar={topbar}>
+    <Workspace fluid><CodeReviewsSkeleton /></Workspace>
+  </AppShell>;
+
+  return <AppShell active="code-reviews" wide topbar={topbar}>
     <Workspace wide className="min-h-0 space-y-6 pb-8">
       <header className="space-y-2">
         <div className="flex items-center gap-2"><SearchCode className="size-6 text-muted-foreground" aria-hidden="true" /><h1 className="text-2xl font-semibold tracking-tight">代码审查报告</h1></div>
