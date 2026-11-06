@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
@@ -40,6 +41,7 @@ public class SubtitleGenerationProcessor
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILLMRequestContextAccessor _llmCtx;
     private readonly ContentReprocessApplyService _applyService;
+    private readonly IAssetStorage _assetStorage;
 
     public SubtitleGenerationProcessor(
         IModelResolver modelResolver,
@@ -48,6 +50,7 @@ public class SubtitleGenerationProcessor
         IHttpClientFactory httpClientFactory,
         ILLMRequestContextAccessor llmCtx,
         ContentReprocessApplyService applyService,
+        IAssetStorage assetStorage,
         ILogger<SubtitleGenerationProcessor> logger)
     {
         _modelResolver = modelResolver;
@@ -56,6 +59,7 @@ public class SubtitleGenerationProcessor
         _httpClientFactory = httpClientFactory;
         _llmCtx = llmCtx;
         _applyService = applyService;
+        _assetStorage = assetStorage;
         _logger = logger;
     }
 
@@ -77,7 +81,7 @@ public class SubtitleGenerationProcessor
             throw new InvalidOperationException($"不支持的文件类型: {contentType}（仅支持音频/视频/图片）");
 
         // 2) 已完成的实时原文是录音转写一级数据源，不依赖对象存储归档完成。
-        // R2/COS 故障时条目会先由 Mongo 分片耐久保全，后台再补 Attachment。
+        // 正式附件未归档时，已确认的对象分片仍可供完整转录读取。
         var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
 
         // 没有实时原文时才要求正式文件 URL，通过 Attachment 间接取。
@@ -93,7 +97,8 @@ public class SubtitleGenerationProcessor
             pendingRecordingAudio = await LoadPendingRecordingAudioAsync(
                 db,
                 entry,
-                CancellationToken.None);
+                CancellationToken.None,
+                _assetStorage);
         }
         if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && pendingRecordingAudio == null)
             throw new InvalidOperationException("源文件 URL 不可用（可能尚未归档到对象存储）");
@@ -228,10 +233,10 @@ public class SubtitleGenerationProcessor
             throw new InvalidOperationException($"不支持的文件类型: {contentType}（转录仅支持音频/视频）");
 
         // 录音期间已稳定完成的实时原文不依赖对象存储。R2/COS 故障时，
-        // Mongo 分片只在对象存储异常期间临时保全音频并等待后台归档；
+        // 已确认的对象分片在正式附件归档前保全音频；
         // 正式录音文件仍以对象存储为准，快捷录音在恢复期间也应立即生成原文。
         // 但录音终态已持久化完整音频校准意图时，即使实时中继随后变成 Completed，
-        // 固定转录任务也必须跳过实时预览并读取 Attachment 或 Mongo 全量分片。
+        // 固定转录任务也必须跳过实时预览并读取 Attachment 或全量分片。
         var liveTranscript = isAudio
             ? GetPreferredLiveTranscriptForTranscription(entry)
             : null;
@@ -248,7 +253,8 @@ public class SubtitleGenerationProcessor
             pendingRecordingAudio = await LoadPendingRecordingAudioAsync(
                 db,
                 entry,
-                CancellationToken.None);
+                CancellationToken.None,
+                _assetStorage);
         }
         if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && pendingRecordingAudio == null)
             throw new InvalidOperationException("源文件 URL 不可用（可能尚未归档到对象存储）");
@@ -416,7 +422,7 @@ public class SubtitleGenerationProcessor
         if (runWrite.MatchedCount == 0)
             throw new DocumentStoreRunLeaseLostException(run.Id);
 
-        // 若对象归档先完成，转录就是最后一个分片读取者，应立即释放 Mongo 音频。
+        // 若对象归档先完成，转录就是最后一个分片读取者，应立即释放临时对象。
         // 若归档仍在进行则保留；归档端完成后会回读本 run 的 OutputEntryId 并清理。
         try
         {
@@ -424,7 +430,8 @@ public class SubtitleGenerationProcessor
                 db.DocumentRecordingUploadSessions,
                 db.DocumentRecordingUploadChunks,
                 entry,
-                CancellationToken.None);
+                CancellationToken.None,
+                _assetStorage);
         }
         catch (Exception ex)
         {
@@ -744,7 +751,8 @@ public class SubtitleGenerationProcessor
     internal static async Task<byte[]?> LoadPendingRecordingAudioAsync(
         MongoDbContext db,
         DocumentEntry entry,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IAssetStorage? storage = null)
     {
         var sessionId = entry.Metadata?.GetValueOrDefault("recordingUploadSessionId")?.Trim();
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -760,10 +768,12 @@ public class SubtitleGenerationProcessor
             .Find(c => c.SessionId == session.Id)
             .SortBy(c => c.Index)
             .ToListAsync(cancellationToken);
-        return DocumentRecordingArchiveWorker.AssembleChunks(
-            chunks,
-            session.NextChunkIndex,
-            session.UploadedBytes);
+        return storage == null
+            ? DocumentRecordingArchiveWorker.AssembleChunks(
+                chunks, session.NextChunkIndex, session.UploadedBytes)
+            : await DocumentRecordingChunkStore.AssembleAsync(
+                chunks, session.NextChunkIndex, session.UploadedBytes,
+                storage, cancellationToken);
     }
 
     private async Task<List<SubtitleSegment>> TranscribeWithFallbackAsync(

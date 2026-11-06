@@ -156,6 +156,9 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
         return _inner.BuildSiteKey(siteId, filePath);
     }
 
+    public string BuildRecordingChunkKey(string sessionId, int index, string sha256)
+        => _inner.BuildRecordingChunkKey(sessionId, index, sha256);
+
     internal static bool IsIntegrationTestKey(string? key)
     {
         var normalized = (key ?? string.Empty)
