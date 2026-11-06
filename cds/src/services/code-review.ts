@@ -227,7 +227,12 @@ export class CodeReviewService {
           await this.save(current);
         }, audit: async (e) => this.audit(id, e) });
       task = this.get(id); this.checkActive(task, controller.signal);
-      task.engineCompleted = true; task.engineTaskId = result.engineTaskId;
+      task.engineTaskId = result.engineTaskId;
+      if (selectedFiles > 0 && result.scannedFiles === 0) {
+        task.engineCompleted = false; // A manual retry must start a new analysis, not reuse the empty result.
+        throw new CodeReviewError(502, `审查引擎未成功分析任何文件（已分析 0/${selectedFiles} 个文件），未形成代码质量结论。请联系管理员检查模型服务与引擎日志后重试。`);
+      }
+      task.engineCompleted = true;
       task.phase = '汇总静态检查与 AI 分析'; await this.save(task);
       const staticResult = await runCodeReviewStaticAnalysis({ zip, signal: controller.signal });
       result.findings.push(...staticResult.findings); result.notes.push(...staticResult.notes);
@@ -243,7 +248,8 @@ export class CodeReviewService {
         contentHash: task.sourceHash, sourceId: `code-review:${id}`,
       });
       task = this.get(id); this.checkActive(task, controller.signal);
-      task.reportId = report.id; task.status = 'completed'; task.phase = '审查完成，报告已归档';
+      task.reportId = report.id; task.status = 'completed';
+      task.phase = result.scannedFiles < result.totalFiles ? '部分文件未完成分析，报告已归档' : '审查完成，报告已归档';
       task.progress = { totalFiles: result.totalFiles, scannedFiles: result.scannedFiles };
       task.findingsSummary = {};
       for (const finding of result.findings) task.findingsSummary[finding.severity] = (task.findingsSummary[finding.severity] || 0) + 1;

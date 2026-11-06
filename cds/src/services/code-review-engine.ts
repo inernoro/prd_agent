@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { CodeReviewUpstreamHttpError, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
+import { CODE_REVIEW_ENGINE_FAILURE_REASONS, CodeReviewUpstreamHttpError, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
 
 export interface CodeReviewFinding {
   filePath: string;
@@ -20,7 +20,7 @@ export interface CodeReviewEngineResult {
   engineTaskId: string;
 }
 
-interface EngineTask { id: string; status: string; total_files: number; scanned_files: number }
+interface EngineTask { id: string; status: string; total_files: number; scanned_files: number; error_code?: string; error_message?: string }
 
 /** DeepAudit v3 five-dimension ZIP scanner. Does not call the Agent/PoC sandbox API. */
 export class CodeReviewEngine {
@@ -102,7 +102,12 @@ export class CodeReviewEngine {
         await input.onProgress({ phase: task.status === 'completed' ? 'DeepAudit 分析结束' : 'DeepAudit 正在分析源码',
           totalFiles, scannedFiles, engineTaskId });
         if (task.status === 'completed') break;
-        if (task.status === 'failed' || task.status === 'cancelled') throw new Error(`DeepAudit 任务${task.status === 'failed' ? '失败' : '已取消'}`);
+        if (task.status === 'failed') {
+          const reason = task.error_code && Object.hasOwn(CODE_REVIEW_ENGINE_FAILURE_REASONS, task.error_code)
+            ? CODE_REVIEW_ENGINE_FAILURE_REASONS[task.error_code] : CODE_REVIEW_ENGINE_FAILURE_REASONS.ANALYSIS_FAILED;
+          throw new Error(`DeepAudit 审查引擎执行失败（已分析 ${scannedFiles}/${totalFiles} 个文件），未形成代码质量结论。${reason}`);
+        }
+        if (task.status === 'cancelled') throw new Error(`DeepAudit 任务已取消（已分析 ${scannedFiles}/${totalFiles} 个文件），未形成代码质量结论。`);
         await delay(this.options.pollIntervalMs ?? 2000, undefined, { signal: input.signal });
       }
       const rawIssues = await request('deepaudit.task_findings', `${taskPath}/issues`);

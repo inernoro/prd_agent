@@ -97,7 +97,30 @@ describe('DeepAudit five-dimension adapter', () => {
     const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async () =>
       Response.json({ status: 'failed', total_files: 5, scanned_files: 0 })) as typeof fetch });
     await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'upstream',
-      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/失败/);
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/已分析 0\/5 个文件.*未形成代码质量结论/);
+  });
+
+  it.each([
+    ['MODEL_POOL_ALL_UNAVAILABLE', '模型服务暂时没有可用模型'],
+    ['MODEL_RATE_LIMITED', '模型服务暂时限流'],
+    ['MODEL_TIMEOUT', '模型服务响应超时'],
+    ['MODEL_AUTH_FAILED', '模型服务认证失败'],
+    ['ANALYSIS_FAILED', '请联系管理员检查引擎日志'],
+    ['UNKNOWN_PROVIDER_CODE', '请联系管理员检查引擎日志'],
+  ])('uses safe optional engine error code %s and never forwards provider details', async (code, expected) => {
+    const events: CodeReviewAuditEvent[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async () => Response.json({
+      status: 'failed', total_files: 12, scanned_files: 0, error_code: code,
+      error_message: 'provider-private-source-and-credential', code_snippet: 'private-source',
+    })) as typeof fetch });
+    const failed = engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'upstream',
+      signal: new AbortController().signal, audit: async (event) => { events.push(event); }, onProgress: async () => {} });
+    await expect(failed).rejects.toThrow(expected);
+    await expect(failed).rejects.toThrow('已分析 0/12 个文件');
+    await expect(failed).rejects.not.toThrow('provider-private');
+    const evidence = JSON.stringify(events);
+    expect(evidence).not.toContain('provider-private'); expect(evidence).not.toContain('private-source');
+    if (code !== 'UNKNOWN_PROVIDER_CODE') expect(evidence).toContain(code);
   });
 
   it('cancels upstream when interrupted during polling', async () => {
