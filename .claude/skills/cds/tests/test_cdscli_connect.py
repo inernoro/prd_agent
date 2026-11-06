@@ -860,3 +860,20 @@ def test_unknown_local_key_recovery_uses_saved_identity_without_anonymous_fallba
         assert path.read_bytes() == before
         assert all(method == "GET" for method, _ in calls)
     assert all(secret not in output for secret in ["cdsp_unknown", "cdsu_saved", "cdsp_recovered"])
+
+
+def test_recovery_repository_identity_does_not_merge_different_git_service_ports():
+    first = cdscli._repository_identity('ssh://git@git.example:2222/team/original.git')
+    other = cdscli._repository_identity('ssh://git@git.example:2223/team/original.git')
+    assert first == 'git.example:2222/team/original'
+    assert first != other
+    assert cdscli._repository_identity('ssh://git@git.example:22/team/original.git') == cdscli._repository_identity('git@git.example:team/original.git')
+
+
+def test_recovery_ticket_for_other_git_service_port_is_not_reused(workspace):
+    ticket = workspace / '.cds/identity-recovery.json'
+    ticket.parent.mkdir()
+    ticket.write_text(json.dumps({'host': 'https://cds.example',
+        'repository': cdscli._repository_identity('ssh://git@git.example:2222/team/original.git'),
+        'expires': cdscli.time.time() + 100, 'requestId': 'ic_old-port', 'pollToken': 'fake-ticket'}))
+    assert cdscli._pending_identity_request('https://cds.example', 'ssh://git@git.example:2223/team/original.git') == {}
