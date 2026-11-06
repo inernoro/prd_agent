@@ -76,17 +76,20 @@ export async function readCodeReviewSnapshot(zip: Buffer, excludePatterns: strin
         void (async () => {
           if (++entries > CODE_REVIEW_ZIP_LIMITS.entries) throw new Error('ZIP 文件数量超过 20000');
           const mode = entry.externalFileAttributes >>> 16;
-          if (!safePath(entry.fileName) || ![0, 0x8000, 0x4000].includes(mode & 0xf000) || entry.isEncrypted()) {
-            throw new Error('ZIP 含不安全路径、符号链接或加密文件');
+          const symlink = (mode & 0xf000) === 0xa000;
+          if (!safePath(entry.fileName) || ![0, 0x8000, 0x4000, 0xa000].includes(mode & 0xf000) || entry.isEncrypted()) {
+            throw new Error('ZIP 含不安全路径、特殊文件或加密文件');
           }
           if (seen.has(entry.fileName)) throw new Error('ZIP 含重复文件路径');
           seen.add(entry.fileName);
           expanded += entry.uncompressedSize;
           if (expanded > CODE_REVIEW_ZIP_LIMITS.expanded) throw new Error('ZIP 解压体积超过 1 GiB');
-          if (entry.fileName.endsWith('/')) { archive.readEntry(); return; }
           const include = shouldInclude(entry.fileName, excludePatterns) && entry.uncompressedSize <= CODE_REVIEW_ZIP_LIMITS.file;
+          if (symlink && include) throw new Error('ZIP 审查范围内含符号链接');
+          if (entry.fileName.endsWith('/') && !symlink) { archive.readEntry(); return; }
           if (!include) skippedFiles++;
-          // Verify all files, including skipped entries: lying sizes / corrupt data are never forwarded.
+          // Skipped links are verified as opaque bytes only: never resolve, follow, extract or forward them.
+          // Verify all skipped entries too: lying sizes / corrupt data are never forwarded.
           const stream = await new Promise<NodeJS.ReadableStream>((res, rej) => archive.openReadStream(entry,
             (error, value) => error || !value ? rej(error ?? new Error('ZIP 无法读取')) : res(value)));
           const chunks: Buffer[] = [];
@@ -112,7 +115,8 @@ export async function readCodeReviewSnapshot(zip: Buffer, excludePatterns: strin
   const firstParts = selected[0].name.split('/');
   const prefix = firstParts.length > 1 ? `${firstParts[0]}/` : '';
   const sourceRoots = new Set(['src', 'app', 'apps', 'lib', 'libs', 'test', 'tests', 'api', 'web', 'backend', 'frontend', 'packages']);
-  const stripPrefix = normalizeWrapper && prefix && !sourceRoots.has(firstParts[0]) && selected.every((entry) => entry.name.startsWith(prefix));
+  // Filtering to one source subtree must not turn that real directory into a presumed archive wrapper.
+  const stripPrefix = normalizeWrapper && prefix && !sourceRoots.has(firstParts[0]) && [...seen].every((name) => name.startsWith(prefix));
   const clean = selected.map((entry) => ({ ...entry, name: stripPrefix ? entry.name.slice(prefix.length) : entry.name,
     // Fixed local DOS timestamp makes snapshot hashes reproducible across retries and host timezones.
     modifiedAt: new Date(1980, 0, 1, 0, 0, 0) }));

@@ -11,11 +11,26 @@ function rename(zip: Buffer, before: string, after: string): Buffer {
   return copy;
 }
 
+function symlinkEntry(zip: Buffer, name: string): { zip: Buffer; centralOffset: number } {
+  const copy = Buffer.from(zip);
+  let offset = copy.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  while (offset !== -1 && copy.readUInt32LE(offset) === 0x02014b50) {
+    const nameLength = copy.readUInt16LE(offset + 28);
+    if (copy.subarray(offset + 46, offset + 46 + nameLength).toString('utf8') === name) {
+      copy.writeUInt16LE((3 << 8) | 20, offset + 4); // Git archive's Unix symlink metadata.
+      copy.writeUInt32LE((0xa1ff << 16) >>> 0, offset + 38);
+      return { zip: copy, centralOffset: offset };
+    }
+    offset += 46 + nameLength + copy.readUInt16LE(offset + 30) + copy.readUInt16LE(offset + 32);
+  }
+  throw new Error('fixture entry missing');
+}
+
 describe('code review source snapshots', () => {
-  it('preserves real source directory paths when a sanitized snapshot is checked again', async () => {
-    const first = await validateCodeReviewZip(buildZip([{ name: 'repository/src/a.ts', data: 'const a = 1' }]));
+  it.each(['src', 'app'])('preserves real %s directory paths when a sanitized snapshot is checked again', async (directory) => {
+    const first = await validateCodeReviewZip(buildZip([{ name: `repository/${directory}/a.ts`, data: 'const a = 1' }]));
     const second = await readCodeReviewSnapshot(first.zip);
-    expect(second.files.map((file) => file.name)).toEqual(['src/a.ts']);
+    expect(second.files.map((file) => file.name)).toEqual([`${directory}/a.ts`]);
     expect((await validateCodeReviewZip(first.zip)).zip).toEqual(first.zip);
   });
   it('removes dependencies, credentials, unsupported and oversized files and common wrapper', async () => {
@@ -34,6 +49,50 @@ describe('code review source snapshots', () => {
     expect(result.zip.includes(Buffer.from('src/a.ts'))).toBe(true);
     expect(result.zip.includes(Buffer.from('credentials'))).toBe(false);
     expect(result.zip.includes(Buffer.from('repository/'))).toBe(false);
+  });
+
+  it.each([
+    { name: 'deploy/nginx/conf.d/default.conf', exclude: ['deploy'] },
+    { name: 'deploy/nginx/conf.d/default.conf', exclude: [] },
+    { name: 'deploy/excluded.ts', exclude: ['deploy'] },
+  ])('skips out-of-scope Git archive symlink $name without following or forwarding it', async ({ name, exclude }) => {
+    const target = '../../../../outside-secret';
+    const source = 'export const value = 1;';
+    const archive = symlinkEntry(buildZip([{ name: 'cds/src/utils/zip.ts', data: source }, { name, data: target }]), name).zip;
+    const result = await validateCodeReviewZip(archive, exclude);
+    const sanitized = await readCodeReviewSnapshot(result.zip);
+    expect(result.totalFiles).toBe(1);
+    expect(result.skippedFiles).toBe(1);
+    expect(sanitized.files.map((file) => file.name)).toEqual(['cds/src/utils/zip.ts']);
+    expect(sanitized.files[0].data.toString()).toBe(source);
+    expect(result.zip.includes(Buffer.from(name))).toBe(false);
+    expect(result.zip.includes(Buffer.from(target))).toBe(false);
+  });
+
+  it.each(['deploy/nginx/conf.d/default.conf', 'deploy/excluded.ts'])('still verifies CRC of skipped symlink %s', async (name) => {
+    const fixture = symlinkEntry(buildZip([{ name: 'a.ts', data: 'const value = 1;' }, { name, data: '../target' }]), name);
+    fixture.zip.writeUInt32LE((fixture.zip.readUInt32LE(fixture.centralOffset + 16) ^ 1) >>> 0, fixture.centralOffset + 16);
+    await expect(validateCodeReviewZip(fixture.zip, ['deploy'])).rejects.toThrow(/校验失败/);
+  });
+
+  it('normalizes a real GitHub archive wrapper while retaining the selected cds source path', async () => {
+    const wrapper = 'inernoro-prd_agent-6b2dce4/';
+    const linkName = `${wrapper}deploy/nginx/conf.d/default.conf`;
+    const archive = symlinkEntry(buildZip([
+      { name: `${wrapper}cds/src/utils/zip.ts`, data: 'export const value = 1;' },
+      { name: linkName, data: '../../../../outside-secret' },
+    ]), linkName).zip;
+    const result = await validateCodeReviewZip(archive, ['deploy']);
+    const checkedAgain = await readCodeReviewSnapshot(result.zip);
+    expect(checkedAgain.files.map((file) => file.name)).toEqual(['cds/src/utils/zip.ts']);
+  });
+
+  it('rejects links in the selected source scope and excluded special device entries', async () => {
+    const link = symlinkEntry(buildZip([{ name: 'cds/src/utils/zip.ts', data: '../outside.ts' }]), 'cds/src/utils/zip.ts');
+    await expect(validateCodeReviewZip(link.zip)).rejects.toThrow(/符号链接/);
+    const device = symlinkEntry(buildZip([{ name: 'a.ts', data: 'code' }, { name: 'deploy/device.conf', data: '' }]), 'deploy/device.conf');
+    device.zip.writeUInt32LE((0x21ff << 16) >>> 0, device.centralOffset + 38);
+    await expect(validateCodeReviewZip(device.zip, ['deploy'])).rejects.toThrow(/特殊文件/);
   });
 
   it.each(['../aa.ts', '/absx.ts', 'C:/aa.ts', 'src\\a.ts'])('rejects unsafe archive path %s', async (unsafe) => {
