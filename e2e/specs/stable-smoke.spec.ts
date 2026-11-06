@@ -5296,6 +5296,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       entryIds.push(final!.sourceEntryId!, final!.transcriptEntryId!);
       const media = await request.get(final!.sourceVideoUrl!);
       expect(media.ok()).toBe(true);expect(media.headers()['content-type']).toMatch(/^video\//);const downloadedVideo = await media.body();expect(downloadedVideo.length).toBeGreaterThan(1000);const sourceContainer = inspectMp4(downloadedVideo);expect(sourceContainer.videoTracks).toBeGreaterThan(0);expect(sourceContainer.audioTracks).toBeGreaterThan(0);expect(sourceContainer.durationSeconds).toBeGreaterThan(0);
+      const audits = await readEnvelope<{ items: Array<{ id: string; requestId: string }> }>(await request.get('/api/logs/api?direction=outbound&sessionId=' + encodeURIComponent(runId), { headers: authHeaders(token) }));
+      const downloads = audits.items.filter(item => item.requestId.startsWith(runId + ':video-download:'));
+      expect(downloads.length, '每次真实下载都必须能从管理员审计入口查回').toBeGreaterThan(0);
+      let hasSuccessfulAudit = false;
+      for (const row of downloads) {
+        const audit = await readEnvelope<{ absoluteUrl: string; query?: string; responseBody: string }>(await request.get('/api/logs/api/' + row.id, { headers: authHeaders(token) }));
+        const snapshot = JSON.parse(audit.responseBody) as { runId: string; outcome: string; capturedBytes?: number; responseReceived: boolean; omittedReason: string };
+        expect(snapshot.runId).toBe(runId);expect(audit.query || '').toBe('');expect(audit.absoluteUrl).not.toMatch(/\?|signature=|token=/i);
+        if (snapshot.outcome === 'success') { expect(snapshot.responseReceived).toBe(true);expect(snapshot.capturedBytes).toBe(downloadedVideo.length);expect(snapshot.omittedReason).toBe('media_body_excluded');hasSuccessfulAudit = true; }
+      }
+      expect(hasSuccessfulAudit).toBe(true);
       const transcript = await readEnvelope<{ content?: string; hasContent: boolean }>(await request.get(`/api/document-store/entries/${final!.transcriptEntryId}/content`, { headers: authHeaders(token) }));
       expect(transcript.hasContent).toBe(true);expect(transcript.content!.length).toBeGreaterThan(30);
       expect(transcript.content).not.toMatch(/待补充文稿|补充字幕.*后重新/);
@@ -5555,6 +5566,38 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       if (runId) { await expectDeleteSucceeded(await request.delete(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }), '失效短视频运行清理失败');expect((await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404); }
       if (storeId) { await readEnvelope(await request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) }));expect((await request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404); }
     }
+  });
+
+
+  test('[REG-gateway-browser-sso-001] 网关专用一次性票据经真实网页交换、刷新会话并拒绝重放', async ({ page, request }) => {
+    const gateway = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+    await page.goto(gateway + '/login', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('heading', { name: '登录后，查看属于你的租户数据', exact: true })).toBeVisible();
+    const body = '{}';
+    const route = '/api/v1/auth/synthetic/gateway-ticket';
+    const ticket = await readEnvelope<{ code: string }>(await request.post(route, {
+      headers: { 'Content-Type': 'application/json', ...buildStableSmokeAuthHeaders({ method: 'POST', url: route, body, username: requiredEnv('STABLE_SMOKE_USER'), keyId: requiredEnv('STABLE_SMOKE_SIGNING_KEY_ID'), privateKey: requiredEnv('STABLE_SMOKE_SIGNING_PRIVATE_KEY') }) }, data: body,
+    }));
+    const exchanged = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/gw/auth/stable-smoke-sso'));
+    await page.goto(gateway + '/auth/stable-smoke#code=' + encodeURIComponent(ticket.code), { waitUntil: 'domcontentloaded' });
+    const result = await readEnvelope<{ mustChangePassword: boolean }>(await exchanged);
+    expect(result.mustChangePassword).toBe(false);
+    await expect(page).toHaveURL(gateway + '/');
+    await expect(page.getByRole('link', { name: '模型', exact: true })).toBeVisible();
+    expect(new URL(page.url()).hash).toBe('');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('link', { name: '模型', exact: true })).toBeVisible();
+    const replay = await request.post(gateway + '/gw/auth/stable-smoke-sso', { data: { code: ticket.code } });
+    expect(replay.status()).toBe(401);
+    const invalid = await page.context().newPage();
+    try {
+      await invalid.goto(gateway + '/auth/stable-smoke#code=' + 'a'.repeat(43), { waitUntil: 'domcontentloaded' });
+      await expect(invalid.getByRole('heading', { name: '需要重新发起安全登录', exact: true })).toBeVisible();
+      await expect(invalid.getByRole('link', { name: '返回 MAP 重新打开', exact: true })).toBeVisible();
+      expect(new URL(invalid.url()).hash).toBe('');
+    } finally { await invalid.close(); }
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('link', { name: '模型', exact: true }), '无效一次性票据不能使已有有效会话退出').toBeVisible();
   });
 
 });

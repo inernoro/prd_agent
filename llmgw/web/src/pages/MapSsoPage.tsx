@@ -23,7 +23,7 @@ export function takeSafeMapReturnTo(search: string): string {
   return value;
 }
 
-export function MapSsoPage() {
+export function MapSsoPage({ ticketKind = 'map' }: { ticketKind?: 'map' | 'stable-smoke' }) {
   const { loginWithMapCode } = useAuth();
   // 同上：失败态那条「返回 MAP」链接要能等到权威地址。
   usePlatformMapHome();
@@ -39,7 +39,7 @@ export function MapSsoPage() {
       return () => { active = false; };
     }
 
-    void loginWithMapCode(code).then((result) => {
+    void loginWithMapCode(code, ticketKind).then((result) => {
       if (!active) return;
       if (result.success) {
         navigate(returnTo, { replace: true });
@@ -48,7 +48,7 @@ export function MapSsoPage() {
       setError('安全登录未完成。一次性链接可能已使用或已过期，请从 MAP 重新打开。');
     });
     return () => { active = false; };
-  }, [code, loginWithMapCode, navigate, returnTo]);
+  }, [code, loginWithMapCode, navigate, returnTo, ticketKind]);
 
   return (
     <main className="lg-map-sso-page">

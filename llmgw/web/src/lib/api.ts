@@ -137,7 +137,7 @@ const mapSsoExchanges = new Map<string, Promise<ApiResponse<LoginResult>>>();
 
 // 匿名端点：这些接口本来就允许未登录调用，它们返回 401 表示「这次凭据不对」，
 // 不代表「当前会话过期」，不得据此清会话或把用户踢去登录页。
-const ANONYMOUS_PATHS = ['/auth/login', '/auth/map-sso', '/healthz'];
+const ANONYMOUS_PATHS = ['/auth/login', '/auth/map-sso', '/auth/stable-smoke-sso', '/healthz'];
 
 export const SESSION_EXPIRED_MESSAGE = '登录已失效，请重新登录';
 
@@ -506,12 +506,14 @@ export function login(req: LoginRequest): Promise<ApiResponse<LoginResult>> {
   return apiRequest<LoginResult>('/auth/login', { method: 'POST', body: req });
 }
 
-export function exchangeMapSso(req: MapSsoRequest): Promise<ApiResponse<LoginResult>> {
-  const existing = mapSsoExchanges.get(req.code);
+export function exchangeMapSso(req: MapSsoRequest, ticketKind: 'map' | 'stable-smoke' = 'map'): Promise<ApiResponse<LoginResult>> {
+  const cacheKey = `${ticketKind}:${req.code}`;
+  const existing = mapSsoExchanges.get(cacheKey);
   if (existing) return existing;
 
-  const exchange = apiRequest<LoginResult>('/auth/map-sso', { method: 'POST', body: req });
-  mapSsoExchanges.set(req.code, exchange);
+  const path = ticketKind === 'stable-smoke' ? '/auth/stable-smoke-sso' : '/auth/map-sso';
+  const exchange = apiRequest<LoginResult>(path, { method: 'POST', body: req });
+  mapSsoExchanges.set(cacheKey, exchange);
   return exchange;
 }
 

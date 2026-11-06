@@ -35,7 +35,7 @@ type AuthState = {
   /** 上一次会话是被动失效（过期/吊销）而非主动退出；登录页据此提示原因。 */
   sessionExpiredReason: SessionExpiredReason | null;
   login: (username: string, password: string) => Promise<ApiResponse<LoginResult>>;
-  loginWithMapCode: (code: string) => Promise<ApiResponse<LoginResult>>;
+  loginWithMapCode: (code: string, ticketKind?: 'map' | 'stable-smoke') => Promise<ApiResponse<LoginResult>>;
   /** 设置本地口令。联邦账号首次认领时可不带 oldPassword，并可顺带把自动用户名改成记得住的。 */
   changePassword: (req: ChangePasswordRequest) => Promise<ApiResponse<ChangePasswordResult>>;
   logout: () => void;
@@ -227,8 +227,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return res;
       },
-      async loginWithMapCode(code: string) {
-        const res = await exchangeMapSso({ code });
+      async loginWithMapCode(code: string, ticketKind: 'map' | 'stable-smoke' = 'map') {
+        const res = await exchangeMapSso({ code }, ticketKind);
         if (res.success && res.data?.token) {
           setSession(res.data);
           setUser(getStoredUser());

@@ -98,6 +98,7 @@ export function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/map" element={<MapSsoPage />} />
+          <Route path="/auth/stable-smoke" element={<MapSsoPage ticketKind="stable-smoke" />} />
           <Route
             path="/change-password"
             element={
