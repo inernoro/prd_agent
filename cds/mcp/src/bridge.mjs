@@ -24,6 +24,12 @@ const submitSchema = z.object({
 const uploadSchema = z.object({ filePath: z.string().min(1), title: common.title.unwrap(), idempotencyKey: common.idempotencyKey }).strict();
 const getSchema = z.object({ taskId: id }).strict();
 const listSchema = z.object({}).strict();
+const inputSchemas = {
+  cds_code_review_submit: submitSchema,
+  cds_code_review_get: getSchema,
+  cds_code_review_list: listSchema,
+  cds_code_review_report_upload: uploadSchema,
+};
 
 const stringProperty = (description, extra = {}) => ({ type: 'string', description, ...extra });
 export const TOOLS = [
@@ -156,6 +162,7 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
   // Native fetch on Node 20 does not honor HTTP(S)_PROXY. Preserve configured
   // network routing and CA trust instead of silently attempting direct access.
   const ownedDispatcher = dispatcher ?? new EnvHttpProxyAgent();
+  let supportedTools;
   const assertProject = (resource) => {
     if (!resource || resource.projectId !== credentials.projectId) throw new Error('CDS 返回资源与当前项目不匹配');
   };
@@ -185,8 +192,29 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
     }
     return parsed;
   }
+  async function listTools() {
+    // The shared CDS registry is authoritative about availability. Local tool
+    // definitions only describe the bounded inputs this bridge understands.
+    // Clear a previous catalog before refreshing so an invalid response cannot
+    // leave a formerly enabled write tool callable.
+    supportedTools = undefined;
+    const capabilities = await request('GET', '/api/code-reviews/capabilities');
+    if (!Array.isArray(capabilities.tools)
+      || capabilities.tools.some((name) => typeof name !== 'string' || !TOOLS.some((tool) => tool.name === name))
+      || new Set(capabilities.tools).size !== capabilities.tools.length) {
+      throw new Error('CDS 代码审查能力目录无效或与本地 MCP 版本不兼容，请更新服务或桥接');
+    }
+    supportedTools = new Set(capabilities.tools);
+    return TOOLS.filter((tool) => supportedTools.has(tool.name));
+  }
   return {
+    listTools,
     async call(name, input = {}) {
+      if (!Object.hasOwn(inputSchemas, name)) throw new Error('未知 CDS 代码审查工具');
+      // Reject caller-supplied scope/credential overrides before any request.
+      inputSchemas[name].parse(input);
+      if (!supportedTools) await listTools();
+      if (!supportedTools.has(name)) throw new Error('当前 CDS 能力目录未开放此代码审查工具');
       if (name === 'cds_code_review_submit') {
         const args = submitSchema.parse(input);
         let result;
