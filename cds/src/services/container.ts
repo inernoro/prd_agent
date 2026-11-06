@@ -751,13 +751,14 @@ export class ContainerService {
     const restored = new Set<string>();
     for (const branch of branches) for (const service of Object.values(branch.services)) {
       if (branch.executorId && this.config.mode !== 'executor') continue;
-      if (['idle', 'stopped', 'stopping'].includes(service.status)) continue;
       for (const runtime of serviceRuntimeRefs(service).filter(runtime => runtime === service || runtime === service.servingRuntime)) {
         if (!runtime.staticWeb || restored.has(runtime.staticWeb.id)) continue;
         try {
           if (runtime.staticWeb.branchId !== branch.id || runtime.staticWeb.projectId !== branch.projectId
             || runtime.staticWeb.profileId !== service.profileId || runtime.containerId !== runtime.staticWeb.id) throw new Error('静态预览恢复归属不一致');
-          await this.staticWebService().start(runtime.staticWeb, runtime.hostPort);
+          if (['idle', 'stopped', 'stopping'].includes(service.status)) {
+            this.stoppedStaticSites.set(runtime.staticWeb.id, { runtime: runtime.staticWeb, port: runtime.hostPort });
+          } else await this.staticWebService().start(runtime.staticWeb, runtime.hostPort);
           restored.add(runtime.staticWeb.id);
         } catch (error) {
           if (runtime.containerName === service.containerName) {
@@ -2603,6 +2604,11 @@ export class ContainerService {
     timeoutSeconds = 300,
   ): Promise<boolean> {
     if (isPreviewInstance()) { onOutput?.(`${previewInstanceBlockedMessage('docker')}\n`); return false; }
+    if (this.staticWebLogMessage(containerName) !== undefined) {
+      const listening = this.staticSites?.has(containerName) === true;
+      onOutput?.(listening ? '── 静态站已建立监听，后续仍须通过实际HTTP就绪探测 ──\n' : '── 静态站当前未运行，无法继续就绪探测 ──\n');
+      return listening;
+    }
     if (this.startupStreams) {
       // 只保留跨帧匹配所需尾部，不把启动前的大量日志复制到Master。
       if (!signal || signal.length > 64 * 1024) return false;
@@ -2713,6 +2719,7 @@ export class ContainerService {
     let consecutiveDead = 0;
     const containerGaveUp = async (attempt: number): Promise<boolean> => {
       if (!containerName || attempt % 5 !== 0) return false;
+      if (this.staticWebLogMessage(containerName) !== undefined) return !this.staticSites?.has(containerName);
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
         { timeout: 5000, executionLane: 'observation' },
@@ -3370,11 +3377,17 @@ export class ContainerService {
     return out;
   }
 
-  async getLogs(containerName: string, tail = 500): Promise<string> {
+  private staticWebLogMessage(containerName: string): string | undefined {
     const staticSite = this.staticSites?.inspect(containerName);
     if (staticSite) return `静态文件预览运行中；产物提交 ${staticSite.runtime.revision}，无独立前端容器。`;
     if ([...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return '静态文件预览当前未运行。';
     if (containerName.startsWith('static:')) return '静态文件预览当前未运行。';
+    return undefined;
+  }
+
+  async getLogs(containerName: string, tail = 500): Promise<string> {
+    const staticMessage = this.staticWebLogMessage(containerName);
+    if (staticMessage !== undefined) return staticMessage;
     const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`, { timeout: 7000, executionLane: 'observation' });
     return combinedOutput(result);
   }
@@ -3391,6 +3404,15 @@ export class ContainerService {
     scope = '',
   ): AbortController {
     const ac = new AbortController();
+    const staticMessage = this.staticWebLogMessage(containerName);
+    if (staticMessage !== undefined) {
+      queueMicrotask(() => {
+        if (ac.signal.aborted) return;
+        onData(`${staticMessage}\n`);
+        onClose({ reason: 'closed' });
+      });
+      return ac;
+    }
     if (isPreviewInstance()) {
       queueMicrotask(() => {
         if (ac.signal.aborted) return;
@@ -3405,6 +3427,7 @@ export class ContainerService {
   }
 
   async getEnv(containerName: string): Promise<string> {
+    if (this.staticWebLogMessage(containerName) !== undefined) return '# 静态文件预览没有独立容器环境变量；运行配置沿用原构建配置。\n';
     // Use docker inspect instead of docker exec to support stopped containers
     const result = await this.shell.exec(
       `docker inspect ${containerName} --format='{{range .Config.Env}}{{println .}}{{end}}'`,

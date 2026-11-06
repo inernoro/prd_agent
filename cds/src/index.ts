@@ -4100,6 +4100,8 @@ janitorService.setRemoveFn(async (slug: string) => {
         continue;
       }
       for (const [profileId, svc] of Object.entries(branch.services)) {
+        // 静态监听器已由 restoreStaticWebRuntimes 恢复；没有 Docker 容器不代表产物丢失。
+        if (svc.staticWeb) continue;
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
         if (found) {
