@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { bootstrapRepository, bootstrapTarget } from '../../src/services/bootstrap-target.js';
 
@@ -25,5 +28,32 @@ describe('建项目仓库身份绑定', () => {
     expect(bootstrapRepository('ssh://git@gitbox:2222/acme/demo')).toBe('gitbox:2222/acme/demo');
     expect(bootstrapRepository('http://github.com:22/acme/demo')).not.toBe('github.com/acme/demo');
     expect(bootstrapTarget({ name: '   ', repository: 'https://github.com/acme/demo' })).toBeNull();
+  });
+});
+
+// 运行原两个批准按钮的实际disabled表达式，避免卡片与详情各自漂移。
+describe('目标绑定审批的两个现有入口', () => {
+  it.each([
+    { name: '历史未绑定申请', kind: 'bootstrap', targetBound: false, busy: false, disabled: true },
+    { name: '已绑定申请', kind: 'bootstrap', targetBound: true, busy: false, disabled: false },
+    { name: '原项目访问申请', kind: 'project', targetBound: false, busy: false, disabled: false },
+    { name: '正在处理申请', kind: 'bootstrap', targetBound: true, busy: true, disabled: true },
+  ])('$name在卡片和详情保持相同批准资格', ({ kind, targetBound, busy, disabled }) => {
+    const source = readFileSync(new URL('../../web/src/components/AccessRequestInbox.tsx', import.meta.url), 'utf8');
+    const file = ts.createSourceFile('AccessRequestInbox.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const actual: boolean[] = [], item = { kind, targetBound };
+    const visit = (node: ts.Node): void => {
+      if (ts.isJsxOpeningElement(node) && node.tagName.getText(file) === 'Button') {
+        const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
+        if (attributes.find(a => a.name.getText(file) === 'onClick')?.initializer?.getText(file).includes('approve(')) {
+          const expression = attributes.find(a => a.name.getText(file) === 'disabled')?.initializer;
+          if (expression && ts.isJsxExpression(expression) && expression.expression)
+            actual.push(Boolean(runInNewContext(expression.expression.getText(file), { item, primary: item, isBusy: busy, primaryBusy: busy })));
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    expect(actual).toEqual([disabled, disabled]);
   });
 });

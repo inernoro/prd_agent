@@ -308,7 +308,7 @@ export function AccessRequestInbox({
                         {isBusy ? <Loader2 className="animate-spin" /> : null}
                         拒绝
                       </Button>
-                      <Button type="button" variant="default" size="sm" onClick={() => approve(item.id)} disabled={isBusy}>
+                      <Button type="button" variant="default" size="sm" onClick={() => approve(item.id)} disabled={isBusy || (item.kind === 'bootstrap' && !item.targetBound)}>
                         {isBusy ? <Loader2 className="animate-spin" /> : null}
                         {item.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
                       </Button>
