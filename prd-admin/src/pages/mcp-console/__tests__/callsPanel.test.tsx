@@ -65,3 +65,33 @@ it('慢返回的旧筛选不会覆盖新筛选数据', async () => {
   expect(document.body.textContent).toContain('新筛选结果');
   expect(document.body.textContent).not.toContain('历史客户端');
 });
+
+it('语音入队虽然已有历史链接，调用记录仍显示未完成，并可打开任务', async () => {
+  vi.mocked(listMcpCalls).mockResolvedValue(result([{ ...call, toolName: 'map_speech_generate', isWrite: true, artifact: { kind: 'audio-run', id: 'speech-1', url: '/mcp-console?tab=speech&run=speech-1', status: 'queued' } }]));
+  await mount();
+  expect(document.querySelector('.mcp-event-status')?.textContent).toBe('还没出结果');
+  expect(document.querySelector('a[href="/mcp-console?tab=speech&run=speech-1"]')?.textContent).toContain('查看语音任务');
+});
+
+it('语音结果不明显示待核查并指向历史，不建议再次提交', async () => {
+  vi.mocked(listMcpCalls).mockResolvedValue(result([{ ...call, toolName: 'map_speech_generate', isWrite: true, artifact: { kind: 'audio-run', id: 'speech-1', url: '/mcp-console?tab=speech&run=speech-1', status: 'unknown' } }]));
+  await mount();
+  expect(document.querySelector('.mcp-event-status')?.textContent).toBe('待核查');
+  await act(async () => document.querySelector<HTMLButtonElement>('.mcp-event-row')!.click());
+  expect(document.body.textContent).toContain('确认前不要再次提交生成');
+  expect(document.body.textContent).toContain('任务历史');
+  expect(document.body.textContent).not.toContain('从发起到失败');
+});
+
+it('分组内语音每一步也依据业务状态显示，不把已入队的步骤写成成功', async () => {
+  const artifact = { kind: 'audio-run', id: 'speech-1', url: '/mcp-console?tab=speech&run=speech-1', status: 'generating' };
+  vi.mocked(listMcpCalls).mockResolvedValue(result([
+    { ...call, id: 'poll', toolName: 'map_speech_get_run', createdAt: '2026-11-06T01:00:10Z', artifact },
+    { ...call, id: 'enqueue', toolName: 'map_speech_generate', isWrite: true, createdAt: '2026-11-06T01:00:00Z', artifact },
+  ]));
+  await mount();
+  await act(async () => document.querySelector<HTMLButtonElement>('.mcp-event-row')!.click());
+  const steps = [...document.querySelectorAll('code')].filter(node => node.textContent?.startsWith('map_speech_')).map(node => node.parentElement?.textContent);
+  expect(steps).toHaveLength(2);
+  steps.forEach(text => { expect(text).toContain('还没出结果'); expect(text).not.toContain('成功'); });
+});

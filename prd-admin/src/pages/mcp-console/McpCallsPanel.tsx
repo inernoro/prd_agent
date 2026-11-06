@@ -6,7 +6,7 @@ import { toast } from '@/lib/toast';
 import { listMcpCalls } from '@/services';
 import type { McpCallLogDto, McpClientDto } from '@/services/contracts/mcpConsole';
 import { safeArtifactHref } from './artifactHref';
-import { eventTime, groupCalls, soloGroup, type CallGroup } from './callGroups';
+import { eventTime, groupCalls, outcomeOf, soloGroup, type CallGroup } from './callGroups';
 import { eventClock } from './eventClock';
 
 const STATUS_STYLE: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -47,6 +47,12 @@ const NEXT_STEP: Record<string, string> = {
     '它没这块权限，或者今天的额度用完了。在「客户端」中点击对应的「管理」，检查授权范围和每日额度。',
   error: '请根据错误原因检查参数或服务状态；重试写入前先确认是否已产生结果。',
 };
+
+function statusStyle(status: string, artifact: McpCallLogDto['artifact']) {
+  if (status === 'error' && artifact?.kind === 'audio-run' && artifact.status === 'unknown')
+    return { ...STATUS_STYLE.denied, label: '待核查' };
+  return STATUS_STYLE[status] ?? STATUS_STYLE.success;
+}
 
 /**
  * 「它干了什么」—— 一件事一行。
@@ -188,7 +194,7 @@ export function McpCallsPanel({
         <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
           {loading ? '正在读取记录…' : loadError ? '记录暂不可用' : status
             ? `共 ${total} 次调用，这一档里最近 ${groups.length} 条${
-                filteredOut > 0 ? `（另有 ${filteredOut} 条按传输结果算成功、但产物还没出来，在「全部结果」里看）` : ''
+                filteredOut > 0 ? `（另有 ${filteredOut} 条按任务当前状态不属于这一档，可在「全部结果」里查看）` : ''
               }`
             : `最近 ${items.length} 次调用折成 ${groups.length} 件事（共 ${total} 次）`}
         </span>
@@ -235,7 +241,7 @@ export function McpCallsPanel({
               </p>
               <p className="max-w-[420px] text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                 {filteredOut > 0
-                  ? `最近这一页里有 ${filteredOut} 条按传输结果算成功、但产物还没出来，它们不算在这一档里。把上面的筛选切回「全部结果」就能看到。`
+                  ? `最近这一页里有 ${filteredOut} 条按任务当前状态不属于这一档。把上面的筛选切回「全部结果」就能看到。`
                   : '当前客户端或结果条件下没有匹配记录，可以清除筛选查看全部历史。'}
               </p>
               <button className="mcp-button" onClick={() => { setKeyId(''); setStatus(''); setSkip(0); }}>清除筛选</button>
@@ -285,12 +291,16 @@ function EventRow({
 }) {
   const [granting, setGranting] = useState(false);
   const [grantError, setGrantError] = useState<string | null>(null);
-  const st = STATUS_STYLE[group.status] ?? STATUS_STYLE.success;
+  const st = statusStyle(group.status, group.artifact);
+  const audioRun = group.artifact?.kind === 'audio-run';
+  const uncertainAudio = group.status === 'error' && audioRun && group.artifact?.status === 'unknown';
   // pending 不是失败：不整行染色、也不给「下一步」（没什么要他做的，等就完了）
   const bad = group.status === 'error' || group.status === 'denied';
   const href = safeArtifactHref(group.artifact?.url);
   const title = group.first.toolName;
-  const nextStep = group.last.authorizationScope
+  const nextStep = uncertainAudio
+    ? '请打开语音任务历史核查上游结果，确认前不要再次提交生成，避免重复计费。'
+    : group.last.authorizationScope
     ? '点击「授权」补充该工具所需权限，然后在客户端重新发起调用。'
     : NEXT_STEP[group.status];
 
@@ -333,7 +343,7 @@ function EventRow({
           style={{ color: 'var(--accent-primary)' }}
         >
           <ExternalLink size={12} aria-hidden />
-          打开
+          {audioRun ? '查看语音任务' : '打开'}
         </a>
       )}
       </div>
@@ -343,7 +353,7 @@ function EventRow({
         <div className="flex flex-col gap-1 px-3.5 pb-2.5" style={{ paddingLeft: 46 }}>
           <span className="flex items-start gap-1.5 text-[12px] leading-relaxed" style={{ color: st.color }}>
             <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden />
-            {group.last.errorMessage || '服务端没有留下可读的原因。'}
+            {group.last.errorMessage || (uncertainAudio ? '上游结果尚未确认，需要核查任务。' : audioRun ? '语音生成失败，请打开任务历史查看原因。' : '服务端没有留下可读的原因。')}
             {group.last.authorizationScope && <button className="mcp-authorize" disabled={granting} title={`为此 Key 增加 ${group.last.authorizationScope}`} onClick={async () => {
               setGranting(true); setGrantError(null);
               try {
@@ -372,7 +382,7 @@ function EventRow({
           <DetailRow label="工具" value={group.first.toolName} mono />
           <DetailRow label="记录编号" value={group.first.id} mono />
           <DetailRow label="它发过来的参数" value={group.first.argumentsPreview || '（无参数）'} mono />
-          {group.artifact?.url && <DetailRow label="产物地址" value={group.artifact.url} mono />}
+          {group.artifact?.url && <DetailRow label={audioRun ? '任务历史' : '产物地址'} value={group.artifact.url} mono />}
           {/* 没有可点地址时至少把 id 露出来（如还没跑完的生图 run）：
               既没有「打开」又看不到 id，这条记录就等于只告诉用户「有个东西」。 */}
           {!group.artifact?.url && group.artifact?.id && (
@@ -387,7 +397,7 @@ function EventRow({
                   : `这一页里看到它的 ${group.steps.length} 次（新到旧）；发起那一次在更早的记录里`}
               </span>
               {group.steps.map((step) => {
-                const sst = STATUS_STYLE[step.status] ?? STATUS_STYLE.success;
+                const sst = statusStyle(outcomeOf(step, step.artifact ?? null), step.artifact);
                 return (
                   <div
                     key={step.id}
@@ -446,6 +456,8 @@ function EventRow({
                 <span>从发起算起 {(group.elapsedMs / 1000).toFixed(1)}s，还没出结果</span>
               ) : group.status === 'success' ? (
                 <span>从发起到落地 {(group.elapsedMs / 1000).toFixed(1)}s</span>
+              ) : uncertainAudio ? (
+                <span>从发起到最近查询 {(group.elapsedMs / 1000).toFixed(1)}s，结果待核查</span>
               ) : (
                 <span>从发起到失败 {(group.elapsedMs / 1000).toFixed(1)}s</span>
               )
