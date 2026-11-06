@@ -53,6 +53,9 @@ jobs:
           pnpm -C cds install --frozen-lockfile
           pnpm -C cds/web install --frozen-lockfile
 
+      - name: Install design runtime test dependencies
+        run: pnpm -C design-runtime/opendesign install --frozen-lockfile
+
       # 类型门：把 self-update 现有的 tsc --noEmit 校验挪到 CI。两端都过才出产物，
       # 等于「预构建产物天生已通过类型检查」，本机自更新不必再花 52s 跑 tsc。
       - name: Type-check gate (cds + web)

@@ -90,6 +90,9 @@ jobs:
       - name: Install web dependencies
         run: pnpm run install:web
 
+      - name: Install design runtime test dependencies
+        run: pnpm -C ../design-runtime/opendesign install --frozen-lockfile
+
       - name: Type check
         run: pnpm build
 
