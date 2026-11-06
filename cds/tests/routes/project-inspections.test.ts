@@ -17,6 +17,8 @@ import { discoverMonitors } from '../../src/services/monitor-discovery.js';
 import { reconcileDiscoveredMonitors } from '../../src/services/monitor-reconcile.js';
 import { classifyAlert } from '../../src/services/alarm-route.js';
 import { createScheduledJobsRouter } from '../../src/routes/scheduled-jobs.js';
+import { createProjectsRouter } from '../../src/routes/projects.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { Project } from '../../src/types.js';
 import { checkPurpose, inspectionState, inspectionCheckState, inspectionCheckLabel, projectChannels } from '../../web/src/lib/projectStatus.js';
 
@@ -24,6 +26,62 @@ const now = Date.parse('2026-11-05T14:00:00Z');
 const input = () => ({ name: '模型全量实测', executor: '外部巡检执行器', enabled: true, intervalSeconds: 172800, lastCompletedAt: '2026-11-05T14:00:00Z', runKind: 'manual', checks: [{ id: 'image-a', name: '生图甲', purpose: '确认可生成图片', outcome: 'pass', checkedAt: '2026-11-05T14:00:00Z', result: '图片已解码', evidenceUrl: '/reports?project=a&report=one' }], notification: { channel: 'MAP 站内通知', recipient: '巡检接收人', policy: '仅异常和恢复时通知', outcome: 'not-triggered' } });
 const servers: Array<ReturnType<express.Express['listen']>> = [];
 afterEach(() => { for (const server of servers.splice(0)) server.close(); });
+
+describe('项目通用摘要不包含巡检私密详情', () => {
+  it.each([
+    { label: '仅创建项目的全局凭据', projects: [] as string[], allowed: false },
+    { label: '其他项目全局凭据', projects: ['b'], allowed: false },
+    { label: '本项目全局凭据', projects: ['a'], allowed: true },
+    { label: '全项目全局凭据', projects: 'all' as const, allowed: true },
+    { label: '本项目凭据', scope: 'a', allowed: true },
+    { label: '所有者会话', owner: true, allowed: true },
+  ])('$label只在获准的专用入口读取完整巡检', async persona => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-inspection-summary-'));
+    const state = new StateService(path.join(dir, 'state.json'), dir);
+    state.load();
+    for (const id of ['a', 'b']) state.addProject({
+      id, slug: id, name: `项目${id}`, kind: 'git', createdAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+      monitoringInspections: [parseProjectInspection('models', input(), `project:${id}`, now)],
+    });
+    const before = JSON.stringify(state.getProjects()), shell = new MockShellExecutor();
+    const app = express();
+    app.use((req, _res, next) => {
+      const context = req as unknown as { cdsAccess?: unknown; cdsProjectKey?: unknown; cdsUser?: unknown; cdsSession?: unknown };
+      if ('projects' in persona) context.cdsAccess = { keyId: 'owned-test-global', access: { canCreateProjects: true, projects: persona.projects } };
+      if ('scope' in persona) context.cdsProjectKey = { projectId: persona.scope, keyId: 'owned-test-project' };
+      if ('owner' in persona) { context.cdsUser = { id: 'owner', isSystemOwner: true, authProvider: 'local' }; context.cdsSession = {}; }
+      next();
+    });
+    app.use('/api', createProjectInspectionsRouter({ getProject: id => state.getProject(id), save: () => { throw new Error('只读请求不得写入'); } }));
+    app.use('/api', createProjectsRouter({ stateService: state, shell }));
+    const server = app.listen(0), port = (server.address() as { port: number }).port;
+    const get = async (route: string) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api${route}`);
+      return { status: response.status, data: await response.json() };
+    };
+    try {
+      const list = await get('/projects');
+      expect(list.status).toBe(200);
+      expect(list.data.projects.map((p: Project) => p.id).sort()).toEqual('scope' in persona ? ['a'] : ['a', 'b']);
+      for (const project of list.data.projects) expect(project).not.toHaveProperty('monitoringInspections');
+      expect(JSON.stringify(list.data)).not.toMatch(/巡检接收人|reports\?project=a|图片已解码/);
+      const detail = await get('/projects/a');
+      expect(detail.status).toBe(persona.allowed ? 200 : 403);
+      expect(JSON.stringify(detail.data)).not.toMatch(/monitoringInspections|巡检接收人|reports\?project=a|图片已解码/);
+      const inspections = await get('/projects/a/inspection-checks');
+      expect(inspections.status).toBe(persona.allowed ? 200 : 403);
+      if (persona.allowed) expect(inspections.data.inspections).toEqual(state.getProject('a')!.monitoringInspections);
+      else expect(JSON.stringify(inspections.data)).not.toMatch(/巡检接收人|reports\?project=a|图片已解码/);
+      expect(JSON.stringify(state.getProjects())).toBe(before);
+      expect(shell.commands).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      await flushAllJsonStateStores();
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+});
 
 describe('项目总览实际通知分类与调度请求', () => {
   it.each([
