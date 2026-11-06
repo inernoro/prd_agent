@@ -24,4 +24,8 @@ CDS 配置导入后、部署前，读取 `cds-storage-plan.json`，对后端 pro
 
 CDS 的新归属卷使用 nocopy，初始根目录由 root 持有。镜像启动入口只初始化固定的上传、数据与缓存目录权限，然后通过 gosu 切换为 UID/GID 10001 执行迁移和分析服务。CI 使用两个真实 root-owned nocopy 卷验证写入与降权；不通过宿主临时 chmod、不挂 Docker socket、不以 root 分析上传源码。
 
-网关专用服务密钥使用 `sourceSystem: external`、`clientCode: deepaudit`、`purpose: external-platform`，仅绑定一个新用途（如 `deepaudit.code-review::chat`），协议为 `openai-compatible`，权限为 `invoke`、`stream:invoke`、`route:read`。兼容入口可从单用途密钥推断 appCaller，DeepAudit 使用标准 Bearer 即可；无需额外来源头。`LLM_MODEL` 填该用途已获权的逻辑模型 publicId，`LLM_BASE_URL` 填平台实际返回的网关 OpenAI 入口（以 `/v1` 结尾）。控制台真人 SSO 与 CDS 配置审批仍由用户完成。
+网关专用服务密钥使用 `sourceSystem: external`、`clientCode: deepaudit`、`purpose: external-platform`，仅绑定一个新用途（如 `deepaudit.code-review::chat`），协议为 `openai-compatible`，权限为 `invoke`、`stream:invoke`、`route:read`。兼容入口可从单用途密钥推断 appCaller，DeepAudit 使用标准 Bearer 即可；无需额外来源头。`LLM_MODEL` 使用 `openai/<逻辑模型 publicId>`，例如 `openai/deepseek/deepseek-v4.1-flash-1017`；此前缀由 LiteLLM 消费，网关收到完整 publicId。`LLM_BASE_URL` 填平台实际返回的网关 OpenAI 入口（以 `/v1` 结尾）。SSO 使用正常账号登录与平台签发的单次票据；配置审批由用户完成。
+
+线上验收记录（2026-11-06）：独立项目 `f9cd30ef1696` 的 `feat/cds-integration` 已运行 Fork 提交 `b300c10092289c27da98519a2094004c35d529d2`，对应 [Branch Image CI](https://github.com/inernoro/DeepAudit/actions/runs/42203069192) 成功。管理员入口由 CDS 实际返回为 [DeepAudit 管理页](https://cds-integration-feat-deepaudit.miduo.org)，匿名 401、正常认证 HTML 与 6 个入口资源读取通过。API 服务账号登录、模型目录与真实对话探针成功；已知问题 ZIP 样本完成 1/1 个支持文件分析，29.8 秒得到 10 项发现，涵盖五个维度，源码未执行。该记录证明部署和分析路径，当前项目结论以 CDS 归档报告的覆盖说明为准。
+
+通过 CDS 官方原地重启接口验收后，已完成任务全文、10 条发现的校验和、ZIP 元数据及 ZIP 内文件清单、服务账号模型与 1ms 请求间隔配置均保持一致；容器与端口保持原值。实际后端进程 `/proc/1/status` 的 UID/GID 均为 10001。重新部署后的内部端口可能变化，调用方应从 CDS 运行时资源读取实际地址。
