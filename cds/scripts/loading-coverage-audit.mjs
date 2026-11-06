@@ -17,6 +17,7 @@ const progressOwners = new Map([
   ['ApiProbe', '诊断接口实测状态'],
   ['ProjectCard', '真实仓库克隆状态徽标；项目内容并非页面请求占位'],
   ['SelfUpdateStatusPanel', '真实 self-update 排空与进程切换阶段，保留后端阶段说明'],
+  ['IdentityRecoveryPanel', '已加载申请的待人工批准业务状态；保留原项目、账号选择与批准拒绝操作'],
 ]);
 export const loadingCondition = text => {
   const positive = text.replace(/(['"])(.*?)\1/g, (match, quote, value) => ['loading', 'checking', 'pending'].includes(value) ? match : '""').replace(/!\s*\w*[Ll]oading\w*/g, 'false');
@@ -68,6 +69,8 @@ export function auditLoadingCoverage(root = sourceRoot) {
           record.owner === 'BranchSearchDropdown' && record.condition === 'remoteLoading' ||
           record.owner === 'ProjectCard' && record.condition === '!isReady && cloneLabel' ||
           record.owner === 'SelfUpdateStatusPanel' && record.condition === "data.restartStatus === 'pending' && data.restartWait" ||
+          record.owner === 'IdentityRecoveryPanel' && record.condition === "r.status === 'pending'"
+            && /<select\b/.test(markup) && markup.includes('/approve') && markup.includes('/reject') ||
           record.owner === 'PreviewActionSplitButton' || record.owner === 'ApiProbe'
         )) { record.category = 'progress'; record.reason = progressOwners.get(record.owner); }
         else if (/^<Loader2\b/.test(markup) && record.owner === 'CommandPalette') { record.category = 'progress'; record.reason = '搜索输入框刷新指示，结果区域另有骨架'; }

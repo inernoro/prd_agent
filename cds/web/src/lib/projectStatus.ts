@@ -1,7 +1,7 @@
-import { inspectionOverdue } from '../../../src/services/project-inspections';
-import type { ProjectInspection } from '../../../src/services/project-inspections';
+import { inspectionOverdue } from '../../../src/shared/project-inspections';
+import type { ProjectInspection } from '../../../src/shared/project-inspections';
 import type { UptimeTargetSummary } from './monitorCenter';
-export type { ProjectInspection } from '../../../src/services/project-inspections';
+export type { ProjectInspection } from '../../../src/shared/project-inspections';
 export type CheckState = 'up' | 'down' | 'unknown' | 'paused' | 'overdue';
 export function inspectionState(inspection: ProjectInspection, now: number): CheckState {
   if (!inspection.enabled) return 'paused';
@@ -33,7 +33,7 @@ const PURPOSE: Record<string, string> = {
   'deployment.version-match': '核对当前运行版本和发布记录是否一致，发现未生效或被覆盖的发布。',
 };
 export function checkPurpose(target: UptimeTargetSummary): string {
-  if (target.healthCheck?.componentId.startsWith('inspection.freshness.')) return '监督巡检有没有按时完成并回填各项结果；任务停摆或漏项逾期时告警，不会再次调用付费模型。';
+  if (target.healthCheck?.componentId.split(':').pop()?.startsWith('inspection.freshness.')) return '监督巡检有没有按时完成并回填各项结果；任务停摆或漏项逾期时告警，不会再次调用付费模型。';
   if (target.healthCheck && PURPOSE[target.healthCheck.componentId]) return PURPOSE[target.healthCheck.componentId];
   if (target.collectionMembers) return '检查业务自检数据能否采集；采集成功不等于内部每项业务都正常。';
   if (target.source === 'branch') return '检查分支预览服务是否可访问，供开发验收使用。';

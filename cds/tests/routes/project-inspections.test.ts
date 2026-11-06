@@ -5,14 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { createHash } from 'node:crypto';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { StateService } from '../../src/services/state.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { createProjectInspectionsRouter } from '../../src/routes/project-inspections.js';
 import { parseProjectInspection, inspectionHealthDocument } from '../../src/services/project-inspections.js';
+import * as inspectionService from '../../src/services/project-inspections.js';
+import { discoverMonitors } from '../../src/services/monitor-discovery.js';
+import { reconcileDiscoveredMonitors } from '../../src/services/monitor-reconcile.js';
 import type { Project } from '../../src/types.js';
-import { inspectionState, inspectionCheckState, inspectionCheckLabel, projectChannels } from '../../web/src/lib/projectStatus.js';
+import { checkPurpose, inspectionState, inspectionCheckState, inspectionCheckLabel, projectChannels } from '../../web/src/lib/projectStatus.js';
 
 const now = Date.parse('2026-11-05T14:00:00Z');
 const input = () => ({ name: '模型全量实测', executor: '外部巡检执行器', enabled: true, intervalSeconds: 172800, lastCompletedAt: '2026-11-05T14:00:00Z', runKind: 'manual', checks: [{ id: 'image-a', name: '生图甲', purpose: '确认可生成图片', outcome: 'pass', checkedAt: '2026-11-05T14:00:00Z', result: '图片已解码', evidenceUrl: '/reports?project=a&report=one' }], notification: { channel: 'MAP 站内通知', recipient: '巡检接收人', policy: '仅异常和恢复时通知', outcome: 'not-triggered' } });
@@ -31,6 +35,81 @@ async function setup(scope?: string, globalProjects?: string[] | 'all') {
   const request = async (method: string, path: string, body?: unknown) => { const response = await fetch(`http://127.0.0.1:${port}/api${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }); return { status: response.status, data: await response.json() }; };
   return { project, request };
 }
+
+async function actualSelfCheck(authorized = true, paused = false) {
+  const before = Date.now() - 86_400_000, at = new Date(before).toISOString();
+  const inspection = parseProjectInspection('models', { ...input(), intervalSeconds: 60,
+    lastCompletedAt: at, enabled: !paused, checks: [{ ...input().checks[0], checkedAt: at }] }, 'project:a', before);
+  const projects = [{ id: 'a', name: '甲项目', monitoringInspections: [inspection] },
+    { id: 'b', name: '乙项目', monitoringInspections: [inspection] }];
+  const core = { status: 'warn', serviceId: 'cds', description: '原自检', releaseId: 'a'.repeat(40),
+    checks: { 'core.keep': { componentId: 'core.keep', componentType: 'system', observedValue: 1, status: 'warn', time: at } } };
+  const original = JSON.parse(JSON.stringify(core)), calls = { cache: 0, projects: 0 };
+  const source = fs.readFileSync(path.resolve('src/index.ts'), 'utf8');
+  const file = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true), handlers: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.expression.getText(file) === 'app.get'
+      && node.arguments[0]?.getText(file) === 'SELF_CHECK_PATH') handlers.push(node.arguments[1].getText(file));
+    ts.forEachChild(node, visit);
+  };
+  visit(file); expect(handlers).toHaveLength(1);
+  const context = { ...inspectionService, SELF_CHECK_HEADER: 'x-cds-self-check',
+    selfCheckAuth: { verify: () => authorized },
+    stateService: { getProject: (id: string) => projects.find(p => p.id === id), getProjects: () => { calls.projects++; return projects; } },
+    cachedSelfCheck: async () => { calls.cache++; return core; }, handler: null as unknown };
+  vm.runInNewContext(ts.transpileModule(`handler = (${handlers[0]});`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  const app = express(); app.get('/api/self-check', context.handler as express.RequestHandler);
+  const server = app.listen(0); servers.push(server); const port = (server.address() as { port: number }).port;
+  return { core, original, calls, inspection, get: async (suffix = '') => {
+    const response = await fetch(`http://127.0.0.1:${port}/api/self-check${suffix}`);
+    return { status: response.status, data: await response.json() };
+  } };
+}
+
+describe('原常设自检实际HTTP接线', () => {
+  it('原项目监督端点发现的标识在总览说明只监督回填期限，不再次调用付费模型', async () => {
+    const f = await actualSelfCheck(), response = await f.get('?projectInspection=a');
+    const discovered = discoverMonitors(response.data, 'https://cds.example.test/api/self-check?projectInspection=a');
+    expect(discovered.rejected).toEqual([]); expect(discovered.monitors).toHaveLength(1);
+    const purpose = (componentId: string) => checkPurpose({ healthCheck: { componentId } } as Parameters<typeof checkPurpose>[0]);
+    expect(purpose('inspection.freshness.models')).toContain('监督巡检');
+    for (const monitor of discovered.monitors) expect(purpose(monitor.componentId)).toBe(purpose('inspection.freshness.models'));
+  });
+  it('原裸端点保持核心检查及发现集合，不隐式登记项目监督或污染短缓存', async () => {
+    const f = await actualSelfCheck(), response = await f.get();
+    expect(response.status).toBe(200); expect(response.data).toEqual(f.core);
+    expect(discoverMonitors(response.data, 'https://cds.example.test/api/self-check').monitors).toEqual([]);
+    expect(f.core).toEqual(f.original); expect(f.calls).toEqual({ cache: 1, projects: 0 });
+  });
+  it('原项目诊断参数保持独立监督文档及发现标识，不运行宿主核心检查', async () => {
+    const f = await actualSelfCheck(), response = await f.get('?projectInspection=a');
+    expect(response.data.serviceId).toBe('project-inspection-supervision');
+    expect(Object.keys(response.data.checks)).toEqual(['inspection.freshness.models']);
+    expect(response.data.releaseId).toBeUndefined(); expect(f.core).toEqual(f.original);
+    expect(f.calls).toEqual({ cache: 0, projects: 0 });
+  });
+  it('既有项目监督发现身份保持，不删除原监控或隐式生成替代项', async () => {
+    const f = await actualSelfCheck(), response = await f.get('?projectInspection=a');
+    const endpointUrl = 'https://cds.example.test/api/self-check?projectInspection=a';
+    const legacy = discoverMonitors(inspectionHealthDocument([f.inspection]), endpointUrl);
+    const args = { endpointUrl, projectId: 'a', hash: (s: string) => createHash('sha256').update(s).digest('hex'), now: () => '2026-11-06T00:00:00Z' };
+    const existing = reconcileDiscoveredMonitors({ ...args, existing: [], discovered: legacy.monitors }).upsert;
+    const current = discoverMonitors(response.data, endpointUrl);
+    expect(current.monitors.map(m => m.key)).toEqual(legacy.monitors.map(m => m.key));
+    const plan = reconcileDiscoveredMonitors({ ...args, existing, discovered: current.monitors });
+    expect(plan.remove).toEqual([]); expect(plan.upsert).toEqual([]);
+  });
+  it.each([{ authorized: false, suffix: '', status: 401 }, { authorized: true, suffix: '?projectInspection=missing', status: 404 },
+    { authorized: true, suffix: '?projectInspection=a&projectInspection=b', status: 400 }])('鉴权和无效参数先拒绝$status，不计算原宿主自检', async ({ authorized, suffix, status }) => {
+    const f = await actualSelfCheck(authorized); expect((await f.get(suffix)).status).toBe(status);
+    expect(f.calls).toEqual({ cache: 0, projects: 0 });
+  });
+  it('暂停的巡检不声明监督目标，也不清空原核心检查', async () => {
+    const f = await actualSelfCheck(true, true); expect((await f.get()).data).toEqual(f.core); expect(f.core).toEqual(f.original);
+    expect((await f.get('?projectInspection=a')).data.checks).toEqual({});
+    expect(f.calls.cache).toBe(1);
+  });
+});
 describe('项目定期实测与通知回填', () => {
   it.each([{ projects: [] as string[] }, { projects: ['b'] }, { projects: ['a'] }, { projects: 'all' as const }])('全局项目范围%j在真实读取入口遵守既有项目权限', async ({ projects }) => {
     const allowed = projects === 'all' || projects.includes('a');

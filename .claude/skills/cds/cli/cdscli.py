@@ -32,6 +32,7 @@ import contextlib
 import hashlib
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
+import math
 import os
 import pathlib
 import re
@@ -41,6 +42,7 @@ import socket
 import subprocess
 import sys
 import time
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -48,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.20.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -56,6 +58,7 @@ VERSION = "0.17.6"  # ← bundled cli 变更时 bump；服务端自动读这一�
 BOOTSTRAP_SOURCE_PAGE_APPROVAL = "page-approval"
 _TRACE_ID: str = ""
 _HUMAN: bool = False
+_LOAD_NOTICES: list[dict[str, Any]] = []
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
 _AGENT_SESSION_ID: str = os.environ.get("CDS_AGENT_SESSION_ID", "").strip() or f"cdscli_{secrets.token_hex(8)}"
 _GENERIC_WORKSPACE_SLUGS = {
@@ -125,10 +128,79 @@ def _exclude_local_credentials(root: str) -> None:
     _exclude_local_path(root, "/.cds/credentials.json")
 
 
+def _repository_identity(raw: str) -> str:
+    """仅保存仓库位置，不保留用户名、口令、查询或片段。"""
+    raw = raw.strip()
+    scp = re.fullmatch(r"git@([a-zA-Z0-9.-]+):([^\s?#]+)", raw)
+    try:
+        url = urllib.parse.urlparse(raw if "://" in raw else "https://" + raw)
+        host, path = (scp.group(1), scp.group(2)) if scp else (url.hostname or "", url.path)
+        if not scp and url.port and (url.scheme, url.port) not in (("http", 80), ("https", 443), ("ssh", 22)):
+            host += ":" + str(url.port)
+        path = path.strip("/")
+        if path.lower().endswith(".git"):
+            path = path[:-4]
+        if host.lower() == "github.com":
+            path = path.lower()
+        return host.lower() + "/" + path if host and path else ""
+    except ValueError:
+        return ""
+
+
+def _safe_repository_url(raw: str) -> str:
+    if re.fullmatch(r"git@([a-zA-Z0-9.-]+):([^\s?#]+)", raw):
+        return raw
+    try:
+        url = urllib.parse.urlsplit(raw)
+        if url.scheme not in ("http", "https", "ssh") or not url.hostname:
+            return raw
+        netloc = url.hostname + (":" + str(url.port) if url.port else "")
+        if url.scheme == "ssh":
+            netloc = "git@" + netloc
+        return urllib.parse.urlunsplit((url.scheme, netloc, url.path, "", ""))
+    except ValueError:
+        return raw
+
+
+def _origin_repository() -> str:
+    result = subprocess.run(["git", "remote", "get-url", "origin"], cwd=_workspace_root(),
+                            capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+_CONNECTION_FIELDS = ("version", "host", "projectId", "repository", "projectName", "projectSlug", "creationName", "creationSlug")
+
+
+def _connection_context() -> dict[str, Any]:
+    try:
+        value = json.loads(Path(_workspace_root(), ".cds", "connection.json").read_text())
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_private_json(target: str, payload: dict[str, Any]) -> None:
+    """创建即0600；写入中断不留含秘密的临时碎片。"""
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=os.path.basename(target) + ".", suffix=".tmp", dir=os.path.dirname(target))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, target)
+    finally:
+        try: os.unlink(temporary)
+        except FileNotFoundError: pass
+
+
 def _save_local_credentials(*, host: str, project_id: str | None = None,
                             project_key: str | None = None,
                             bootstrap_key: str | None = None,
-                            bootstrap_source: str | None = None) -> str:
+                            bootstrap_source: str | None = None,
+                            repository: str | None = None,
+                            project_name: str | None = None, project_slug: str | None = None) -> str:
     """原子写入当前项目凭据；不打印密钥，不修改 shell profile。
 
     `bootstrap_source` 记这把 bootstrapKey 的来源。`init --yes` 也会把一把静态或
@@ -150,14 +222,32 @@ def _save_local_credentials(*, host: str, project_id: str | None = None,
         payload["bootstrapKey"] = bootstrap_key
         if bootstrap_source:
             payload["bootstrapSource"] = bootstrap_source
-    tmp_path = target + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-    os.chmod(tmp_path, 0o600)
-    os.replace(tmp_path, target)
-    os.chmod(target, 0o600)
+    # 替换旧凭据指针前，分别保留两个实例的独立授权。
+    _archive_instance_credentials(_read_local_credentials_file())
+    _archive_instance_credentials(payload)
     _exclude_local_credentials(root)
+    _exclude_local_path(root, "/.cds/*.tmp")
+    _write_private_json(target, payload)
+    if project_id:
+        # 无密钥的定位信息独立保存；丢失密钥时仍回到原项目，不再创建副本。
+        previous_context = _connection_context()
+        if previous_context.get("projectId") != project_id:
+            previous_context = {}
+        context = {"version": 1, "host": host.rstrip("/"), "projectId": project_id,
+                   "repository": _repository_identity(repository or _origin_repository()),
+                   "projectName": project_name or previous_context.get("projectName"),
+                   "projectSlug": project_slug or previous_context.get("projectSlug"),
+                   "creationName": previous_context.get("creationName") or previous_context.get("projectName") or project_name,
+                   "creationSlug": previous_context.get("creationSlug") or previous_context.get("projectSlug") or project_slug}
+        context_path = os.path.join(root, ".cds", "connection.json")
+        with open(context_path + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(context, f, ensure_ascii=False, indent=2)
+        os.chmod(context_path + ".tmp", 0o600)
+        os.replace(context_path + ".tmp", context_path)
+        # Creation and key delivery can both succeed before a later check fails.
+        # Preserve matching creation metadata alongside this host's credentials.
+        _archive_instance_credentials({**payload, **context})
+        _exclude_local_path(root, "/.cds/connection.json")
     return target
 
 
@@ -551,6 +641,8 @@ def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None
     payload: dict[str, Any] = {"ok": False, "error": msg, "trace": _TRACE_ID}
     if extra:
         payload.update(extra)
+    if _LOAD_NOTICES:
+        payload["notices"] = _LOAD_NOTICES
     if _SUPPRESS_EMIT:
         global _NESTED_PAYLOAD
         _NESTED_PAYLOAD = payload
@@ -586,6 +678,8 @@ def ok(data: Any = None, *, note: str | None = None, code: int = 0) -> None:
             payload["note"] = note
         if data is not None:
             payload["data"] = data
+        if _LOAD_NOTICES:
+            payload["notices"] = _LOAD_NOTICES
         print(json.dumps(payload, ensure_ascii=False))
     sys.exit(code)
 
@@ -610,9 +704,11 @@ def cmd_auth_check(args: argparse.Namespace) -> None:
     die(f"认证失败: {status} {body}", code=2)
 
 
-def _credential_summary() -> dict[str, Any]:
+def _credential_summary(selection: str | None = None) -> dict[str, Any]:
     """共享的脱敏凭据来源判据；接入自检与 auth inspect 必须一致。"""
-    local = _load_local_credentials()
+    selected = selection or _read_instance_private("active-instance.json", {}).get("id")
+    # main 已应用目标实例；不得再次从旧指针注入另一站的项目密钥。
+    local = (_instance_credentials(_instance_entry(selected)) or {}) if selected else _load_local_credentials()
     local_host = str(local.get("host") or "").strip()
     local_project = str(local.get("projectId") or "").strip()
     explicit_host = _EXPLICIT_CREDENTIAL_ENV["CDS_HOST"]
@@ -667,7 +763,7 @@ def _credential_summary() -> dict[str, Any]:
         and not secrets.compare_digest(explicit_access_key, local_effective_key)
     ):
         conflicts.append("accessKeySource")
-    source = "explicit-env" if any(_EXPLICIT_CREDENTIAL_ENV.values()) else "workspace" if local else "none"
+    source = "workspace" if selected else "explicit-env" if any(_EXPLICIT_CREDENTIAL_ENV.values()) else "workspace" if local else "none"
     summary = {
         "source": source,
         "host": effective_host or None,
@@ -687,7 +783,7 @@ def _credential_summary() -> dict[str, Any]:
 
 def cmd_auth_inspect(args: argparse.Namespace) -> None:
     """只输出凭据来源、目标和作用域摘要，永不输出密钥。"""
-    summary = _credential_summary()
+    summary = _credential_summary(getattr(args, "instance", None))
     conflicts = summary["conflicts"]
     if conflicts and getattr(args, "strict", False):
         die(
@@ -730,7 +826,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             fail("host", "unexpected_redirect", "目标接口发生重定向，已停止继续发送凭据；先核对 CDS 主机与代理配置，不重新授权。")
         return response
 
-    summary = _credential_summary()
+    summary = _credential_summary(getattr(args, "instance", None))
     if summary["conflicts"]:
         fail("credentials", "credential_conflict", "先解决环境与仓库的凭据来源冲突，不要重新授权。")
     if not _auth_headers().get("X-AI-Access-Key"):
@@ -931,6 +1027,7 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
         and str(_creds.get("bootstrapSource") or "").strip() == BOOTSTRAP_SOURCE_PAGE_APPROVAL
     )
 
+    _instance_store()
     body = _call("POST", "/api/projects", body=payload, timeout=timeout)
     proj = body.get("project") if isinstance(body, dict) else None
     pid = str((proj or {}).get("id") or "").strip()
@@ -945,10 +1042,12 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
         # 拿的是一次性 create-only 身份，没换到钥匙就是死局——那把一次性 key 建完
         # 项目就作废了，此时必须明说，不能让调用方继续往下跑一串 401。
         if had_bootstrap_identity:
+            _save_local_credentials(host=_cds_base(), project_id=pid,
+                                    repository=str(proj.get("gitRepoUrl") or ""),
+                                    project_name=proj.get("name"), project_slug=proj.get("slug"))
             die(
-                f"项目已创建（id={pid}），但后端未返回项目级 Key，当前一次性授权即将失效。\n"
-                f"用户需要做：在 CDS 项目卡「Agent Key」里手动签发一把该项目的 Key，"
-                f"再让 Agent 重新 connect --project {pid}。",
+                f"项目已创建（id={pid}），但项目凭据未交付。已保留原项目定位信息。"
+                "请重新运行同一接入口令，在页面批准恢复访问；无需复制密钥，不会再建项目。",
                 code=2,
                 extra={"data": {"projectId": pid, "adopted": False}},
             )
@@ -963,6 +1062,8 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
 
     credentials_path = _save_local_credentials(
         host=_cds_base(), project_id=pid, project_key=plaintext,
+        repository=str(proj.get("gitRepoUrl") or ""),
+        project_name=proj.get("name"), project_slug=proj.get("slug"),
     )
     os.environ["CDS_PROJECT_ID"] = pid
     os.environ["CDS_PROJECT_KEY"] = plaintext
@@ -2125,11 +2226,7 @@ def save_user_credential(host: str, credential: str) -> str:
     # 记下默认主机：后续 whoami / heal 不必再要求 CDS_HOST，否则「照着签发页
     # 跑一次 save 就好」这条路会在下一条命令上断掉。
     data["defaultHost"] = _normalize_host_key(host)
-    tmp = _USER_CREDENTIALS_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, _USER_CREDENTIALS_PATH)
+    _write_private_json(_USER_CREDENTIALS_PATH, data)
     return _USER_CREDENTIALS_PATH
 
 
@@ -3991,6 +4088,179 @@ def _restore_auth_env(previous: dict[str, str | None]) -> None:
             os.environ[key] = value
 
 
+def _wait_for_original_project_access(project_id: str, proof: str, deadline: float,
+                                      interval: int) -> bool | None:
+    """只读等待原身份/原授权恢复；绝不改成匿名申请或签发替代权限。"""
+    last_progress = 0.0
+    waited = False
+    while time.monotonic() < deadline:
+        status, body, _ = _request(
+            "GET", f"/api/projects/{urllib.parse.quote(project_id)}/access-status",
+            timeout=10, extra_headers={"x-ai-access-key": proof}, fatal_network_errors=False,
+        )
+        if status in (401, 403, 404, 405):
+            # 旧控制面的认证门也可能先于不存在的路由返回 401/403。
+            # 用已经提供的公开凭据自检核对原凭据，不把拒绝直接降级为匿名。
+            identity_status, identity, _ = _request(
+                "GET", "/api/credentials/self-check", timeout=10,
+                extra_headers={"x-ai-access-key": proof}, fatal_network_errors=False,
+            )
+            if identity_status == 200 and isinstance(identity, dict):
+                if identity.get("status") == "active":
+                    return False
+                if (proof.startswith("cdsp_") and identity.get("kind") == "project"
+                        and identity.get("status") in ("expired", "revoked")):
+                    return False  # 仅继续原项目的人工审批，仍携带原凭据。
+                if (proof.startswith("cdsp_") and identity.get("kind") == "project"
+                        and identity.get("status") == "never-issued"):
+                    return None  # 只允许调用方另行核验已有用户身份，不能匿名降级。
+            if identity_status == 0 or 500 <= identity_status < 600:
+                status = identity_status
+            else:
+                die("原凭据自检未通过，未创建匿名申请、未覆盖凭据；请由管理员核对原身份。", code=2)
+        if status == 0 or 500 <= status < 600:
+            now = time.monotonic()
+            if now - last_progress >= 10:
+                print("网络或服务短暂不可用，保留原身份并继续等待恢复。", file=sys.stderr)
+                last_progress = now
+            time.sleep(interval)
+            continue
+        if status != 200 or not isinstance(body, dict):
+            die(f"原访问身份暂时无法核对（HTTP {status}），未创建匿名申请、未覆盖凭据。", code=2)
+        state = body.get("state")
+        if state in ("ready", "approval-required", "credential-unusable"):
+            if proof.startswith("cdsu_") and state == "credential-unusable":
+                die("原身份凭据已失效，未改成匿名申请；请管理员恢复原身份凭据。", code=2)
+            return waited or state == "ready"
+        if state not in ("account-disabled", "project-access-revoked", "access-update-pending"):
+            die("CDS 返回了无法识别的恢复状态，未改变任何授权或凭据。", code=2)
+        waited = True
+        now = time.monotonic()
+        if now - last_progress >= 10:
+            print(str(body.get("message") or "原访问权限暂停，等待管理员恢复；同一条命令将自动继续。"), file=sys.stderr)
+            last_progress = now
+        time.sleep(interval)
+    die("等待原访问权限恢复超时；原项目和凭据保留，恢复后重跑原命令即可。", code=2)
+
+
+def _pending_identity_request(host: str, repository: str) -> dict[str, Any]:
+    path = os.path.join(_workspace_root(), ".cds", "identity-recovery.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            saved = json.load(f)
+        if (isinstance(saved, dict) and saved.get("host") == host
+                and saved.get("repository") == _repository_identity(repository)
+                and saved.get("expires", 0) > time.time() and saved.get("requestId") and saved.get("pollToken")):
+            return saved
+    except (OSError, ValueError, TypeError):
+        pass
+    return {}
+
+
+def _connect_original_identity(args: argparse.Namespace, host: str, repository: str, project_hint: str = "") -> None:
+    """无本地身份时只申请恢复，原账号/项目由所有者核对，秘密自动落地。"""
+    if not repository:
+        die("无法读取原仓库origin；请让Agent先核对所在仓库，不要另建项目。", code=1)
+    previous = {key: os.environ.get(key) for key in ("CDS_HOST", "CDS_PROJECT_ID", "CDS_PROJECT_KEY", "AI_ACCESS_KEY")}
+    os.environ["CDS_HOST"] = host
+    for key in ("CDS_PROJECT_ID", "CDS_PROJECT_KEY", "AI_ACCESS_KEY"):
+        os.environ.pop(key, None)
+    deadline = time.monotonic() + max(10, int(getattr(args, "timeout", 300) or 300))
+    interval = max(1, int(getattr(args, "interval", 2) or 2))
+    try:
+        body = _pending_identity_request(host, repository)
+        ticket_path = os.path.join(_workspace_root(), ".cds", "identity-recovery.json")
+        if body and body.get("projectHint") and body["projectHint"] != project_hint and project_hint:
+            die("本地未完成申请对应不同项目，未覆盖原申请。", code=2)
+        if not body:
+            status, body, _ = _request("POST", "/api/identity-connections", body={
+                "repository": repository, "agentName": str(getattr(args, "agent", "Agent") or "Agent"),
+                **({"projectId": project_hint} if project_hint else {}),
+            }, timeout=30)
+            if status != 201 or not isinstance(body, dict) or not body.get("requestId") or not body.get("pollToken"):
+                die("无法发起原身份恢复申请，未保存任何凭据。", code=2)
+            body = {**body, "host": host, "repository": _repository_identity(repository), "projectHint": project_hint, "expires": time.time() + 15 * 60}
+            _exclude_local_path(_workspace_root(), "/.cds/identity-recovery.json")
+            _exclude_local_path(_workspace_root(), "/.cds/*.tmp")
+            _write_private_json(ticket_path, body)
+        path = "/api/identity-connections/" + urllib.parse.quote(str(body["requestId"]))
+        headers = {"X-Poll-Token": str(body["pollToken"])}
+        print(f"已自动读取原仓库。请管理员在 {host}/cds-settings#users 核对原账号与原项目后批准。无需复制密钥。", file=sys.stderr)
+        def clear_ticket() -> None:
+            try: os.unlink(ticket_path)
+            except FileNotFoundError: pass
+
+        def reuse_saved_receipt() -> bool:
+            local = _read_local_credentials_file()
+            key = str(local.get("projectKey") or "")
+            user = _load_user_credential(host)
+            if (not body.get("receivedProjectId") or local.get("host") != host
+                    or local.get("projectId") != body["receivedProjectId"]
+                    or hashlib.sha256(key.encode()).hexdigest() != body.get("projectKeyHash")
+                    or hashlib.sha256(user.encode()).hexdigest() != body.get("userKeyHash")):
+                return False
+            status, actual, _ = _request("GET", "/api/projects/" + urllib.parse.quote(local["projectId"]),
+                timeout=10, extra_headers={"X-AI-Access-Key": key}, fatal_network_errors=False)
+            if status != 200 or not isinstance(actual, dict) or actual.get("project", actual).get("id") != local["projectId"]:
+                return False
+            clear_ticket()
+            ok({"projectId": local["projectId"], "reused": True, "verified": True}, note="原身份交接已完成，已复用保存的原项目连接。")
+            return True
+
+        last = 0.0
+        while time.monotonic() < deadline:
+            _instance_store()
+            code, result, _ = _request("GET", path, timeout=10, extra_headers=headers, fatal_network_errors=False)
+            if code == 0:
+                result = {"status": "pending"}
+            elif code in (403, 404, 410):
+                if reuse_saved_receipt(): return
+                clear_ticket()
+                die("恢复申请不可用或已过期，请让Agent重新发起；未另建项目。", code=2)
+            elif code != 200 or not isinstance(result, dict):
+                die("恢复服务暂时不可用，原申请已保留，请重跑原口令。", code=2)
+            state = result.get("status")
+            if state == "approved":
+                project_id = str(result.get("projectId") or "")
+                project_key = str(result.get("authorizationKey") or "")
+                user_key = str(result.get("userCredential") or "")
+                if not project_id or not project_key.startswith("cdsp_") or not user_key.startswith("cdsu_"):
+                    die("恢复结果缺少原身份或项目凭据，未保存。", code=2)
+                verify, actual, _ = _request("GET", "/api/projects/" + urllib.parse.quote(project_id), timeout=10,
+                    extra_headers={"X-AI-Access-Key": project_key}, fatal_network_errors=False)
+                if verify != 200 or not isinstance(actual, dict) or actual.get("project", actual).get("id") != project_id:
+                    die("原项目恢复验证未通过，未保存凭据。", code=2)
+                if project_hint and project_hint not in (project_id, actual.get("project", actual).get("slug")):
+                    die("恢复项目与原目标不同，未覆盖凭据。", code=2)
+                body.update(receivedProjectId=project_id, projectKeyHash=hashlib.sha256(project_key.encode()).hexdigest(),
+                            userKeyHash=hashlib.sha256(user_key.encode()).hexdigest())
+                _write_private_json(ticket_path, body)
+                # 未确认领取前可从相同加密票据重取，两个文件都落地后才清除服务端信封。
+                save_user_credential(host, user_key)
+                _save_local_credentials(host=host, project_id=project_id, project_key=project_key,
+                    project_name=result.get("projectName"), project_slug=result.get("projectSlug"), repository=repository)
+                ack, _, _ = _request("POST", path + "/ack", body={}, timeout=10, extra_headers=headers, fatal_network_errors=False)
+                if ack == 200:
+                    clear_ticket()
+                if ack != 200:
+                    print("原连接已验证保存，领取回执暂未确认；重跑原口令会直接复用。", file=sys.stderr)
+                ok({"projectId": project_id, "identityRecovered": True, "verified": True}, note="原账号与原项目已接通，无需复制密钥。")
+                return
+            if state in ("rejected", "delivered"):
+                if state == "delivered" and reuse_saved_receipt(): return
+                clear_ticket()
+                die("恢复申请已拒绝或已完成，请让Agent核对本地连接后重新发起。", code=2)
+            if state not in ("pending", "blocked"):
+                die("恢复状态无法识别，未保存凭据。", code=2)
+            if time.monotonic() - last >= 10:
+                print(str(result.get("message") or "等待管理员核对原账号与原项目；原命令将自动继续。"), file=sys.stderr)
+                last = time.monotonic()
+            time.sleep(interval)
+        die("等待原身份恢复超时；没有另建项目，请管理员核对后重跑原口令。", code=2)
+    finally:
+        _restore_auth_env(previous)
+
+
 def cmd_connect(args: argparse.Namespace) -> None:
     """免密发起页面授权，并把一次性结果保存为当前项目凭据。"""
     raw_host = str(getattr(args, "host", "") or os.environ.get("CDS_HOST", "")).strip()
@@ -4001,8 +4271,44 @@ def cmd_connect(args: argparse.Namespace) -> None:
     host = raw_host.rstrip("/")
     project_id = str(getattr(args, "project", "") or "").strip()
     new_project = bool(getattr(args, "new_project", False))
-    if bool(project_id) == new_project:
-        die("--project <项目 ID> 与 --new-project 必须二选一", code=1)
+    recover = bool(getattr(args, "recover", False))
+    if sum((bool(project_id), new_project, recover)) != 1:
+        die("请选择项目接入、新建或原身份恢复中的一项", code=1)
+    # Reject an already broken local archive before creating an approval or
+    # consuming a one-time delivery. Do not discover it only while saving the key.
+    _instance_store()
+    if recover:
+        repo = _safe_repository_url(_origin_repository())
+        pending = _pending_identity_request(host, repo)
+        if pending:
+            _connect_original_identity(args, host, repo, str(pending.get("projectHint") or ""))
+            return
+        known = _connection_context() or _read_local_credentials_file()
+        if known.get("projectId") and str(known.get("host") or "").rstrip("/") == host:
+            args.project = known["projectId"]
+            args.recover = False
+            cmd_connect(args)
+            return
+        saved = _load_user_credential(host)
+        if saved:
+            previous_host = os.environ.get("CDS_HOST")
+            os.environ["CDS_HOST"] = host
+            try:
+                code, body, _ = _request("GET", "/api/projects", extra_headers={"X-AI-Access-Key": saved}, timeout=10)
+            finally:
+                if previous_host is None: os.environ.pop("CDS_HOST", None)
+                else: os.environ["CDS_HOST"] = previous_host
+            if code != 200 or not isinstance(body, dict):
+                die("本机原身份已失效，请管理员恢复原身份；未降为匿名申请。", code=2)
+            repo = _repository_identity(_origin_repository())
+            matches = [p for p in body.get("projects", []) if _repository_identity(str(p.get("gitRepoUrl") or "")) == repo]
+            if len(matches) != 1:
+                die("原身份下仓库项目不唯一，请管理员在原项目入口核对；未覆盖身份或新建项目。", code=2)
+            args.project = matches[0]["id"]; args.recover = False
+            cmd_connect(args)
+            return
+        _connect_original_identity(args, host, _safe_repository_url(_origin_repository()))
+        return
     # --create-project 的校验必须在发起申请**之前**做完。放到批准之后再报错，等于让用户
     # 白批一次、还把已经换来的一次性授权丢掉（明文只发一次），下一轮得重新申请重新批。
     create_name_raw = getattr(args, "create_project", None)
@@ -4023,6 +4329,45 @@ def cmd_connect(args: argparse.Namespace) -> None:
     if orphan_flags and not create_name:
         die(f"{' / '.join(orphan_flags)} 只在 --create-project 时生效；"
             f"要建项目请补上 --create-project <名称>，否则去掉这些参数。", code=1)
+    git_url = _safe_repository_url(str(getattr(args, "git_url", "") or "").strip() or _origin_repository())
+    if new_project:
+        if not git_url:
+            die("当前仓库没有 origin；请让 Agent 自动补上 --git-url，再提交接入申请。", code=1)
+        args.git_url = git_url
+    context = _connection_context()
+    local = _read_local_credentials_file()
+    known = context if context else local
+    if new_project and known.get("projectId") and str(known.get("host") or "").rstrip("/") == host:
+        same_repository = bool(context.get("repository")) and context["repository"] == _repository_identity(git_url)
+        # 旧连接没有名称时先自动补定位信息；明确换名/换slug的任务仍走新建审批。
+        if (same_repository and not known.get("projectName") and local.get("projectKey")
+                and str(local.get("host") or "").rstrip("/") == host
+                and local.get("projectId") == known["projectId"]):
+            previous_host = os.environ.get("CDS_HOST")
+            os.environ["CDS_HOST"] = host
+            try:
+                meta_status, meta_body, _ = _request(
+                    "GET", f"/api/projects/{urllib.parse.quote(str(known['projectId']))}", timeout=10,
+                    extra_headers={"X-AI-Access-Key": str(local['projectKey'])}, fatal_network_errors=False,
+                )
+            finally:
+                if previous_host is None: os.environ.pop("CDS_HOST", None)
+                else: os.environ["CDS_HOST"] = previous_host
+            if meta_status == 200 and isinstance(meta_body, dict):
+                actual = meta_body.get("project", meta_body)
+                if isinstance(actual, dict) and actual.get("id") == known["projectId"]:
+                    known = {**known, "projectName": actual.get("name"), "projectSlug": actual.get("slug")}
+            elif meta_status not in (401, 403):
+                die(f"原项目暂时无法核对（HTTP {meta_status}），未新建或覆盖凭据，请稍后重试。", code=2)
+        requested_slug = str(getattr(args, "slug", "") or "").strip().lower()
+        creation_name = known.get("creationName") or known.get("projectName")
+        creation_slug = known.get("creationSlug") or known.get("projectSlug")
+        same_name = not create_name or not creation_name or creation_name == create_name
+        same_slug = not requested_slug or not creation_slug or creation_slug == requested_slug
+        if same_repository and same_name and same_slug:
+            project_id = str(known["projectId"])
+            new_project = False
+            create_name = ""
     agent_name = str(getattr(args, "agent", "") or "Agent").strip()[:100] or "Agent"
     timeout_seconds = max(10, int(getattr(args, "timeout", 300) or 300))
     interval_seconds = max(1, int(getattr(args, "interval", 2) or 2))
@@ -4038,6 +4383,77 @@ def cmd_connect(args: argparse.Namespace) -> None:
     os.environ.pop("CDS_PROJECT_KEY", None)
     os.environ.pop("AI_ACCESS_KEY", None)
 
+    saved_user_cred = _load_user_credential(host)
+    recovery_deadline = time.monotonic() + timeout_seconds
+    if not new_project and _pending_identity_request(host, git_url):
+        _restore_auth_env(previous)
+        _connect_original_identity(args, host, git_url, project_id)
+        return
+    local_key = ""
+    if not new_project:
+        local_key = str(local.get("projectKey") or "") if str(local.get("host") or "").rstrip("/") == host and local.get("projectId") == project_id else ""
+        if local_key:
+            check_status, check_body, _ = _request(
+                "GET", f"/api/projects/{urllib.parse.quote(project_id)}", timeout=10,
+                extra_headers={"x-ai-access-key": local_key}, fatal_network_errors=False,
+            )
+            if check_status == 200 and isinstance(check_body, dict):
+                actual = check_body.get("project", check_body)
+                if not isinstance(actual, dict) or actual.get("id") != project_id:
+                    _restore_auth_env(previous)
+                    die("CDS 返回的项目身份与本地连接不一致，未继续操作。", code=2)
+                _save_local_credentials(host=host, project_id=project_id, project_key=local_key,
+                                        project_name=actual.get("name"), project_slug=actual.get("slug"))
+                _restore_auth_env(previous)
+                ok({"projectId": project_id, "reused": True}, note="已复用原项目授权，无需再次批准。")
+                return
+            if check_status not in (401, 403):
+                _restore_auth_env(previous)
+                die(f"原项目暂时无法核对（HTTP {check_status}），未新建或覆盖凭据，请稍后重试。", code=2)
+            try:
+                waited = _wait_for_original_project_access(project_id, local_key, recovery_deadline, interval_seconds)
+            except SystemExit:
+                _restore_auth_env(previous)
+                raise
+            if waited is None:
+                if not saved_user_cred:
+                    _restore_auth_env(previous)
+                    die("原项目凭据无法识别，且没有已保存的用户身份；未匿名申请或覆盖凭据。", code=2)
+                local_key = ""
+            if waited:
+                check_status, check_body, _ = _request(
+                    "GET", f"/api/projects/{urllib.parse.quote(project_id)}", timeout=10,
+                    extra_headers={"x-ai-access-key": local_key}, fatal_network_errors=False,
+                )
+                if check_status == 200 and isinstance(check_body, dict):
+                    actual = check_body.get("project", check_body)
+                    if not isinstance(actual, dict) or actual.get("id") != project_id:
+                        _restore_auth_env(previous)
+                        die("恢复后的项目身份不一致，未覆盖凭据。", code=2)
+                    _save_local_credentials(host=host, project_id=project_id, project_key=local_key,
+                                            project_name=actual.get("name"), project_slug=actual.get("slug"))
+                    _restore_auth_env(previous)
+                    ok({"projectId": project_id, "reused": True}, note="原访问权限已恢复，已自动继续原项目。")
+                    return
+                if check_status not in (401, 403):
+                    _restore_auth_env(previous)
+                    die(f"恢复后原项目暂时无法核对（HTTP {check_status}），未改变凭据。", code=2)
+            print("原项目凭据已失效，正在申请恢复原项目访问；不会重新建项目。", file=sys.stderr)
+        if not local_key:
+            if saved_user_cred:
+                try:
+                    _wait_for_original_project_access(project_id, saved_user_cred, recovery_deadline, interval_seconds)
+                except SystemExit:
+                    _restore_auth_env(previous)
+                    raise
+            # 有效身份与仍有效的授权可恢复丢失文件；已撤销密钥始终走页面确认。
+            healed = try_self_heal_project_credential(host, project_id)
+            if healed and healed.get("healed"):
+                _restore_auth_env(previous)
+                ok(healed, note="已恢复原项目授权，无需复制密钥。")
+                return
+            print("正在申请恢复原项目访问；批准后自动保存凭据。", file=sys.stderr)
+
     request_path = (
         "/api/bootstrap-access-requests"
         if new_project
@@ -4046,28 +4462,34 @@ def cmd_connect(args: argparse.Namespace) -> None:
     purpose = (
         "申请一次性创建项目权限；项目创建后自动切换到项目级授权。"
         if new_project
-        else f"申请连接并操作项目 {project_id}。"
+        else "申请恢复或连接原项目访问；项目由 CDS 自动核对，批准后自动保存凭据，不会重新建项目。"
     )
-    # 带上本机已保存的用户级凭证（如果有）。这条路由是免鉴权的，但服务端会顺手
-    # 认一次主体，并在批准时据此写一条项目授权 —— 少了这个头，批准只会签出一把
-    # 无主的钥匙，钥匙一丢又得重新申请，「批一次就够」根本不成立。
-    # 上面刻意清掉了项目级 / 静态密钥（申请阶段不该带旧凭据），用户级是另一回事：
-    # 它代表「我是谁」，正是这次申请要登记的东西。
-    saved_user_cred = _load_user_credential(host)
+    # The shipped approval endpoint resolves user credentials only. A project key
+    # cannot preserve principal/expiry policy when requesting a replacement key.
+    if local_key:
+        identity_status, identity, _ = _request(
+            "GET", "/api/credentials/self-check", timeout=10,
+            extra_headers={"x-ai-access-key": saved_user_cred}, fatal_network_errors=False,
+        ) if saved_user_cred else (0, {}, {})
+        if (identity_status != 200 or not isinstance(identity, dict)
+                or identity.get("kind") != "user" or identity.get("status") != "active"):
+            _restore_auth_env(previous)
+            die("原项目凭据已失效，需先恢复本机用户身份后再申请原项目授权；未降为匿名申请、未覆盖原连接。", code=2)
+    request_proof = saved_user_cred
     status, body, _ = _request(
         "POST",
         request_path,
         body={
             "agentName": agent_name, "purpose": purpose,
             **({"requestedProject": {
-                "name": create_name,
+                "name": create_name or _repository_identity(git_url).rsplit("/", 1)[-1],
                 "repository": str(getattr(args, "git_url", "") or "").strip(),
-            }} if new_project and create_name else {}),
+            }} if new_project else {}),
         },
         # 创建请求会触发持久化与事件通知；共享控制面忙时可能超过 10 秒，
         # 但该 POST 不能盲目重试，否则响应丢失时会生成重复审批单。
         timeout=30,
-        extra_headers=({"x-ai-access-key": saved_user_cred} if saved_user_cred else None),
+        extra_headers=({"x-ai-access-key": request_proof} if request_proof else None),
     )
     if status not in (200, 201) or not isinstance(body, dict):
         _restore_auth_env(previous)
@@ -4089,45 +4511,55 @@ def cmd_connect(args: argparse.Namespace) -> None:
         if new_project
         else f"/api/projects/{urllib.parse.quote(project_id)}/access-requests/{urllib.parse.quote(request_id)}"
     )
-    deadline = time.monotonic() + timeout_seconds
+    deadline = recovery_deadline
     last_progress_at = 0.0
     authorization_key: str | None = None
-    while time.monotonic() < deadline:
-        poll_status, poll_body, _ = _request(
-            "GET",
-            poll_path,
-            timeout=10,
-            extra_headers={"X-Poll-Token": poll_token},
-            fatal_network_errors=False,
-        )
-        if poll_status == 0:
+    try:
+        while time.monotonic() < deadline:
+            _instance_store()
+            poll_status, poll_body, _ = _request(
+                "GET",
+                poll_path,
+                timeout=10,
+                extra_headers={"X-Poll-Token": poll_token},
+                fatal_network_errors=False,
+            )
+            if poll_status == 0:
+                now = time.monotonic()
+                if now - last_progress_at >= 10:
+                    remaining = max(0, int(deadline - now))
+                    print(f"网络短暂波动，继续等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
+                    last_progress_at = now
+                time.sleep(interval_seconds)
+                continue
+            if poll_status != 200 or not isinstance(poll_body, dict):
+                _restore_auth_env(previous)
+                die(f"轮询授权失败: HTTP {poll_status} {poll_body}", code=2)
+            state = str(poll_body.get("status") or "")
+            if state == "approved":
+                authorization_key = str(poll_body.get("authorizationKey") or "")
+                if not authorization_key:
+                    _restore_auth_env(previous)
+                    die("授权已批准，但凭据已被其他轮询方取走。请重新发起。", code=2)
+                break
+            if state == "rejected":
+                _restore_auth_env(previous)
+                reason = poll_body.get("rejectReason") or "用户拒绝"
+                die(f"授权未通过: {reason}", code=2)
+            if state not in ("pending", "blocked"):
+                _restore_auth_env(previous)
+                die("无法识别授权状态，未保存凭据。", code=2)
             now = time.monotonic()
             if now - last_progress_at >= 10:
                 remaining = max(0, int(deadline - now))
-                print(f"网络短暂波动，继续等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
+                print((str(poll_body.get("message") or "等待管理员恢复原访问权限，同一条命令将自动继续。")
+                       if state == "blocked" else f"仍在等待批准，剩余约 {remaining} 秒。"), file=sys.stderr)
                 last_progress_at = now
             time.sleep(interval_seconds)
-            continue
-        if poll_status != 200 or not isinstance(poll_body, dict):
+    finally:
+        if new_project and not authorization_key:
+            print("本地等待已结束，原建项目申请仍可能待审批；请在 CDS 核对并拒绝不再需要的申请，不要重复提交。", file=sys.stderr)
             _restore_auth_env(previous)
-            die(f"轮询授权失败: HTTP {poll_status} {poll_body}", code=2)
-        state = str(poll_body.get("status") or "")
-        if state == "approved":
-            authorization_key = str(poll_body.get("authorizationKey") or "")
-            if not authorization_key:
-                _restore_auth_env(previous)
-                die("授权已批准，但凭据已被其他轮询方取走。请重新发起。", code=2)
-            break
-        if state == "rejected":
-            _restore_auth_env(previous)
-            reason = poll_body.get("rejectReason") or "用户拒绝"
-            die(f"授权未通过: {reason}", code=2)
-        now = time.monotonic()
-        if now - last_progress_at >= 10:
-            remaining = max(0, int(deadline - now))
-            print(f"仍在等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
-            last_progress_at = now
-        time.sleep(interval_seconds)
 
     if not authorization_key:
         _restore_auth_env(previous)
@@ -4158,6 +4590,12 @@ def cmd_connect(args: argparse.Namespace) -> None:
     verify_status, _verify_body, _ = _request("GET", verification_path, timeout=10)
     if not 200 <= verify_status < 300:
         die(f"授权已保存，但验证失败: HTTP {verify_status}", code=2)
+
+    if not new_project and isinstance(_verify_body, dict):
+        actual = _verify_body.get("project", _verify_body)
+        if isinstance(actual, dict) and actual.get("id") == resolved_project_id:
+            _save_local_credentials(host=host, project_id=resolved_project_id, project_key=authorization_key,
+                                    project_name=actual.get("name"), project_slug=actual.get("slug"))
 
     # --create-project：把「批准 → 一次性钥匙 → 建项目 → 换成项目级钥匙」压成
     # 同一条命令、同一个进程。分成两步时，那把一次性钥匙要在上层（往往是大模型）
@@ -9540,6 +9978,370 @@ def cmd_schedule_delete(args: argparse.Namespace) -> None:
     ok(data, note="任务已删除")
 
 
+
+# ── Host-scoped instance selection (public catalog + private authorizations) ──
+
+def _instance_origin(raw: str) -> str:
+    url = urllib.parse.urlsplit(raw if "://" in raw else "https://" + raw)
+    local = url.hostname in ("localhost", "127.0.0.1", "::1")
+    if (not url.hostname or (url.scheme != "https" and not (local and url.scheme == "http"))
+            or url.username or url.password or url.query or url.fragment or url.path not in ("", "/")):
+        raise ValueError("实例地址必须为 HTTPS 根地址，不能包含凭据或页面路径")
+    return f"{url.scheme}://{url.netloc.lower()}".rstrip("/")
+
+
+def _instance_catalog(value: Any = None, *, strict: bool = True) -> dict[str, Any]:
+    file = Path(_workspace_root()) / "cds-instances.json"
+    if value is None and not file.exists():
+        # Public release snapshot supports fresh installations even when the current
+        # CDS is offline or predates /api/instance-catalog. Project config wins.
+        file = Path(__file__).resolve().parents[1] / "reference" / "instance-catalog.json"
+        if not file.exists():
+            return {"version": 1, "instances": []}
+    try:
+        data = value if value is not None else json.loads(file.read_text(encoding="utf-8"))
+        if data.get("version") != 1 or not isinstance(data.get("instances"), list) or len(data["instances"]) > 20:
+            raise ValueError("格式错误")
+        entries = []
+        ids, hosts = set(), set()
+        for entry in data["instances"]:
+            ident, name = entry.get("id", ""), entry.get("name", "")
+            host = _instance_origin(entry["url"])
+            if (not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", ident)
+                    or not isinstance(name, str) or not name.strip() or len(name) > 60
+                    or entry.get("role") not in ("primary", "standby") or ident in ids or host in hosts):
+                raise ValueError("实例定义无效或重复")
+            ids.add(ident)
+            hosts.add(host)
+            entries.append({"id": ident, "name": name.strip(), "role": entry["role"], "url": host})
+        return {"version": 1, "instances": entries}
+    except (ValueError, KeyError, TypeError, AttributeError, OSError):
+        if strict:
+            die("cds-instances.json 无效，请检查实例标识、名称和 HTTPS 根地址", code=1)
+        return {"version": 1, "instances": []}
+
+
+def _instance_entry(ident: str) -> dict[str, Any]:
+    for entry in _instance_catalog()["instances"]:
+        if entry["id"] == ident:
+            return entry
+    die(f"未登记 CDS 实例：{ident}。请检查 cds-instances.json", code=1)
+    return {}
+
+
+def _private_instance_file(name: str) -> Path:
+    return Path(_workspace_root()) / ".cds" / name
+
+
+def _read_instance_private(name: str, default: dict[str, Any]) -> dict[str, Any]:
+    file = _private_instance_file(name)
+    if not file.exists():
+        return default
+    try:
+        result = json.loads(file.read_text(encoding="utf-8"))
+        if not isinstance(result, dict):
+            raise ValueError("invalid")
+        return result
+    except (ValueError, OSError):
+        die(f"本地 {name} 无法读取，未更改实例或凭据；请恢复该文件后重试", code=1)
+        return {}
+
+
+def _write_instance_private(name: str, payload: dict[str, Any]) -> None:
+    target = _private_instance_file(name)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temp = target.with_name(target.name + "." + secrets.token_hex(6) + ".tmp")
+    try:
+        with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as out:
+            json.dump(payload, out, ensure_ascii=False, indent=2)
+            out.write("\n")
+        os.replace(temp, target)
+    finally:
+        temp.unlink(missing_ok=True)
+    marker = name.split("/", 1)[0] + "/" if "/" in name else name
+    _exclude_local_path(_workspace_root(), f"/.cds/{marker}")
+
+
+def _credential_origin(raw: str) -> str:
+    url = urllib.parse.urlsplit(raw if "://" in raw else "https://" + raw)
+    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
+        raise ValueError("凭据主机格式无效")
+    return f"{url.scheme}://{url.netloc.lower()}"
+
+
+def _instance_store() -> dict[str, Any]:
+    store = _read_instance_private("instance-credentials.json", {"version": 1, "hosts": {}})
+    if not isinstance(store.get("hosts"), dict):
+        die("实例凭据格式无效，未覆盖原有授权", code=1)
+    return store
+
+
+def _archive_instance_credentials(payload: dict[str, Any]) -> None:
+    if not payload.get("host"):
+        return
+    host = _credential_origin(payload["host"])
+    store = _instance_store()
+    existing = store["hosts"].get(host, {})
+    if isinstance(existing, dict) and payload.get("projectId") and existing.get("projectId") == payload["projectId"]:
+        # Legacy pointers omit creation metadata; archiving one must not erase it.
+        payload = {**{k: existing[k] for k in _CONNECTION_FIELDS if k in existing}, **payload}
+    store["hosts"][host] = payload
+    _write_instance_private("instance-credentials.json", store)
+
+
+def _instance_credentials(entry: dict[str, Any], *, archived_only: bool = False) -> dict[str, Any] | None:
+    store = _instance_store()
+    current = _read_local_credentials_file()
+    # Legacy credential remains usable until the next successful connect archives it.
+    candidate = store["hosts"].get(entry["url"])
+    if not archived_only and current.get("host") and _credential_origin(current["host"]) == entry["url"]:
+        candidate = current
+    if not isinstance(candidate, dict) or not candidate.get("host"):
+        return None
+    if _credential_origin(candidate["host"]) != entry["url"]:
+        die("实例与凭据地址不匹配，已停止；请重新接入目标实例", code=1)
+    return candidate
+
+
+def _apply_instance(entry: dict[str, Any], *, require_project: bool = True) -> dict[str, Any]:
+    credentials = _instance_credentials(entry)
+    if not credentials or (require_project and not (credentials.get("projectId") and credentials.get("projectKey"))):
+        die(f"{entry['name']} 尚未接入当前项目。运行 instance connect {entry['id']} --project <目标项目ID>，"
+            "或使用 --new-project --create-project <名称> 创建后再部署。原实例授权未改变。", code=1)
+    # Selection is explicit: never forward the previous host's key, including inherited env keys.
+    for key in _EXPLICIT_CREDENTIAL_ENV:
+        os.environ.pop(key, None)
+    os.environ["CDS_HOST"] = entry["url"]
+    for field, key in (("projectId", "CDS_PROJECT_ID"), ("projectKey", "CDS_PROJECT_KEY"), ("bootstrapKey", "AI_ACCESS_KEY")):
+        if credentials.get(field):
+            os.environ[key] = credentials[field]
+    return credentials
+
+
+def _check_instance(entry: dict[str, Any]) -> dict[str, Any]:
+    previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
+    try:
+        creds = _apply_instance(entry)
+        project_id = str(creds["projectId"])
+        started = time.time()
+        status, body, headers = _request("GET", f"/api/projects/{urllib.parse.quote(project_id, safe='')}",
+                                         timeout=15, fatal_network_errors=False, follow_redirects=False)
+        project = body.get("project", body) if isinstance(body, dict) else {}
+        if not isinstance(project, dict):
+            project = {}
+        repo = _repository_identity(_origin_repository())
+        remote_url = str(project.get("gitRepoUrl") or "").strip()
+        github_name = str(project.get("githubRepoFullName") or "").strip()
+        # gitRepoUrl is the configured repository; provider metadata may be stale.
+        remote_repo = _repository_identity(remote_url) if remote_url else (
+            _repository_identity("https://github.com/" + github_name) if github_name else "")
+        matched = bool(repo and remote_repo and repo == remote_repo)
+        ready = 200 <= status < 300 and project.get("id") == project_id and matched
+        result = {"instance": entry["id"], "host": entry["url"], "projectId": project_id,
+                  "status": status, "repositoryMatched": matched, "ready": ready,
+                  "checkedAt": time.time(), "trace": _TRACE_ID}
+        # Persist bounded, allowlisted response evidence. Never store project envs/keys or raw errors.
+        headers = {key.lower(): value for key, value in headers.items()}
+        evidence = {**result, "operation": "instance-check", "startedAt": started,
+                    "durationMs": round((time.time() - started) * 1000),
+                    "upstreamRequestId": headers.get("x-cds-request-id"), "responseReceived": status != 0,
+                    "upstream": {"id": project.get("id") if project.get("id") == project_id else None,
+                                 "repositoryFieldPresent": bool(remote_repo),
+                                 "projectFieldPresent": bool(project.get("id")),
+                                 "contentType": headers.get("content-type")},
+                    "snapshotPolicy": "project identity fields only; other fields omitted to protect secrets"}
+        code = body.get("error") if isinstance(body, dict) else None
+        evidence["upstream"]["errorCode"] = code if isinstance(code, str) and re.fullmatch(r"[a-z_]{1,60}", code) else None
+        _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", evidence)
+        if not ready:
+            die("目标实例项目校验未通过，未切换或发起部署。请确认授权、目标项目和仓库绑定后重试。",
+                code=2, extra=result)
+        return result
+    finally:
+        _restore_auth_env(previous)
+
+
+def cmd_instance_sync(args: argparse.Namespace) -> None:
+    # Import only public addresses, retaining a per-attempt audit even on failure.
+    started = time.time()
+    status, body, headers = _request("GET", "/api/instance-catalog", timeout=15,
+                                     fatal_network_errors=False, follow_redirects=False)
+    evidence = {"operation": "instance-sync", "trace": _TRACE_ID, "host": _cds_base(),
+                "status": status, "responseReceived": status != 0, "startedAt": started,
+                "durationMs": round((time.time() - started) * 1000),
+                "responseType": type(body).__name__, "outcome": "rejected",
+                "snapshotPolicy": "validated public addresses only; unknown fields and raw errors omitted to protect secrets"}
+    try:
+        if not 200 <= status < 300:
+            die("无法同步实例目录，请检查当前 CDS 连接；本地目录未改变，可用 instance list 离线查看", code=2)
+        data = _instance_catalog(body)
+        evidence["response"] = data
+        evidence["outcome"] = "validated"
+        target = Path(_workspace_root()) / "cds-instances.json"
+        temp = target.with_name(target.name + "." + secrets.token_hex(6) + ".tmp")
+        try:
+            temp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+    finally:
+        _write_instance_private(f"instance-checks/{secrets.token_hex(12)}.json", evidence)
+    ok(data, note="已同步主备地址到当前仓库；未复制授权或选择实例")
+
+
+def cmd_instance_list(args: argparse.Namespace) -> None:
+    active = _read_instance_private("active-instance.json", {}).get("id")
+    entries = [{**entry, "selected": active == entry["id"],
+                "connected": bool((_instance_credentials(entry) or {}).get("projectKey"))}
+               for entry in _instance_catalog()["instances"]]
+    ok({"instances": entries, "activeInstance": active}, note="本地实例目录，不代表目标服务或项目已就绪")
+
+
+# Reuse the server's load-high threshold: one-minute load / CPU cores >= 80%.
+# Memory usage alone includes OS cache and cannot prove CPU saturation.
+def _load_recommendation() -> dict[str, Any]:
+    try:
+        host = _instance_origin(_cds_base())
+    except ValueError:
+        die("当前 CDS 地址无效，请使用站点根地址后重试 instance recommend", code=1)
+    entries = _instance_catalog()["instances"]
+    started = time.time()
+    try:
+        status, body, _ = _request("GET", "/api/host-stats", timeout=3,
+                                   fatal_network_errors=False, follow_redirects=False)
+    except (OSError, http.client.HTTPException):
+        status, body = 0, {"error": "response_read_failed"}
+    cpu = body.get("cpu") if isinstance(body, dict) else None
+    metrics = {}
+    if isinstance(cpu, dict):
+        for field in ("cores", "loadAvg1", "loadPercent"):
+            value = cpu.get(field)
+            if type(value) in (int, float) and math.isfinite(value) and value >= 0:
+                metrics[field] = value
+    valid = (200 <= status < 300 and len(metrics) == 3 and metrics["cores"] >= 1)
+    state = "high" if valid and metrics["loadPercent"] >= 80 else "normal" if valid else "unknown"
+    alternatives = []
+    for entry in entries:
+        if entry["url"] == host:
+            continue
+        credentials = _instance_credentials(entry) or {}
+        # Presence only; no request to an alternative and no claim its key is valid.
+        authorized = bool(credentials.get("projectId") and credentials.get("projectKey"))
+        alternatives.append({**entry, "authorization": "stored-not-verified" if authorized else "required",
+                             "nextCommand": f"instance check {entry['id']}" if authorized else
+                                            f"instance connect {entry['id']} --project <目标项目ID>"})
+    result = {"host": host, "state": state, "cpu": metrics, "thresholdPercent": 80,
+              "status": status, "alternatives": alternatives, "switched": False,
+              "alternativeHealthChecked": False}
+    # Preserve bounded response evidence without upstream free text, headers or credentials.
+    snapshot = json.dumps(body, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    evidence = {"operation": "instance-load-check", "trace": _TRACE_ID, "host": host,
+                "endpoint": "/api/host-stats", "startedAt": started,
+                "durationMs": round((time.time() - started) * 1000), "status": status,
+                "responseReceived": status != 0, "responseType": type(body).__name__,
+                "responseSha256": hashlib.sha256(snapshot).hexdigest(),
+                "responseBytes": len(snapshot), "cpu": metrics, "state": state,
+                "snapshotPolicy": "finite public CPU numbers only; raw text and other fields omitted"}
+    name = f"instance-load-checks/{secrets.token_hex(12)}.json"
+    try:
+        _write_instance_private(name, evidence)
+        result["evidencePath"] = str(_private_instance_file(name))
+    except OSError:
+        result["evidenceSaved"] = False
+        print("[cdscli] 负载查询证据未能保存，请检查当前项目 .cds 目录写入权限。", file=sys.stderr)
+    return result
+
+
+def _notify_high_load(result: dict[str, Any]) -> None:
+    if result["state"] != "high":
+        return
+    options = "；".join(
+        f"{item['name']} {item['url']}（独立授权{'已保存，需校验' if item['authorization'] == 'stored-not-verified' else '尚未申请'}）"
+        for item in result["alternatives"])
+    message = (f"当前 CDS {result['host']} CPU 负载偏高（{result['cpu']['loadPercent']}%）。"
+               + (f"可选择备用站点：{options}。" if options else "当前项目未登记备用站点，请先补充实例目录。")
+               + "不同站点使用不同密钥，不能复用当前站点密钥。尚未自动切换或向备用重试；请告知用户并按其选择继续。")
+    _LOAD_NOTICES.append({"code": "cds-load-high", "message": message, **result})
+    print(f"[cdscli] {message}", file=sys.stderr)
+
+
+def cmd_instance_recommend(args: argparse.Namespace) -> None:
+    result = _load_recommendation()
+    _notify_high_load(result)
+    notes = {"normal": "当前站点负载未达到提示阈值；未检查备用站点健康状态",
+             "high": "请向用户说明备用选择及独立授权要求；尚未切换或部署",
+             "unknown": "无法确定当前负载，不据此认定过载；可用 instance list 查看已登记备用入口"}
+    ok(result, note=notes[result["state"]])
+
+
+def _deployment_load_preflight(handler: Any) -> None:
+    if handler not in (cmd_deploy, cmd_branch_create, cmd_branch_deploy,
+                       cmd_project_clone, cmd_deployment_version_deploy):
+        return
+    # Optional advice must not add requests when no matching local multi-site catalog exists.
+    entries = _instance_catalog(strict=False)["instances"]
+    if len(entries) < 2:
+        return
+    try:
+        host = _instance_origin(_cds_base())
+    except ValueError:
+        return
+    if any(entry["url"] == host for entry in entries):
+        _notify_high_load(_load_recommendation())
+
+
+def cmd_instance_check(args: argparse.Namespace) -> None:
+    ok(_check_instance(_instance_entry(args.id)), note="目标项目授权与仓库绑定校验通过")
+
+
+def cmd_instance_use(args: argparse.Namespace) -> None:
+    entry = _instance_entry(args.id)
+    result = _check_instance(entry)
+    _write_instance_private("active-instance.json", {"id": entry["id"]})
+    ok(result, note="已选择目标实例。后续命令使用该实例；未迁移数据或重试任何部署")
+
+
+def cmd_instance_connect(args: argparse.Namespace) -> None:
+    entry = _instance_entry(args.id)
+    previous = {
+        name: _read_instance_private(name, {}) if _private_instance_file(name).exists() else None
+        for name in ("credentials.json", "connection.json", "active-instance.json")
+    }
+    args.host = entry["url"]
+    try:
+        if getattr(args, "new_project", False) and getattr(args, "create_project", None):
+            pending = _instance_credentials(entry, archived_only=True) or {}
+            if pending.get("projectId") and not pending.get("bootstrapKey"):
+                # Restore a coherent target-host pair for cmd_connect. Never put a
+                # secret in the keyless locator or combine it with another host's key.
+                _write_instance_private("connection.json", {k: pending[k] for k in _CONNECTION_FIELDS if k in pending})
+                _write_instance_private("credentials.json", {k: pending[k] for k in
+                    ("version", "host", "projectId", "projectKey") if k in pending})
+        # Existing command exits through ok(); collect that result before checking/selection.
+        connect_code = 0
+        with _nested_call():
+            try:
+                cmd_connect(args)
+            except SystemExit as exc:
+                connect_code = exc.code or 0
+        outcome = _NESTED_PAYLOAD or {}
+        if connect_code:
+            die(outcome.get("error") or "目标实例接入未完成，原默认连接已保留", code=connect_code)
+        if not getattr(args, "new_project", False) or getattr(args, "create_project", None):
+            _check_instance(entry)
+        _write_instance_private("active-instance.json", {"id": entry["id"]})
+    except BaseException:
+        # A valid authorization can still point at the wrong repository. Keep it archived,
+        # but restore the previous pointer and recovery metadata together on any failure.
+        for name, payload in previous.items():
+            if payload is not None:
+                _write_instance_private(name, payload)
+            else:
+                _private_instance_file(name).unlink(missing_ok=True)
+        raise
+    ok(outcome.get("data"), note="目标实例接入并选择完成；其它实例授权已保留")
+
+
 # ── argparse wiring ────────────────────────────────────────────────
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -9547,7 +10349,28 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--human", action="store_true", help="人读输出")
     p.add_argument("--trace", help="链路 ID (默认随机 8 hex)")
     p.add_argument("--version", action="version", version=f"cdscli {VERSION}")
+    p.add_argument("--instance", help="仅本次命令使用指定 CDS 实例及其独立项目授权")
     sub = p.add_subparsers(dest="cmd", required=True)
+    instances = sub.add_parser("instance", help="主备实例发现、接入、检查与选择").add_subparsers(dest="instance_cmd", required=True)
+    instances.add_parser("sync", help="从当前已授权 CDS 同步公共实例目录").set_defaults(func=cmd_instance_sync)
+    instances.add_parser("recommend", help="只读检查当前负载并提示备用站点及独立授权要求").set_defaults(func=cmd_instance_recommend)
+    instances.add_parser("list", help="离线列出已登记实例（不展示密钥）").set_defaults(func=cmd_instance_list)
+    for command, handler in (("check", cmd_instance_check), ("use", cmd_instance_use)):
+        item = instances.add_parser(command, help="校验目标项目" if command == "check" else "校验并选择后续命令使用的实例")
+        item.add_argument("id")
+        item.set_defaults(func=handler)
+    item = instances.add_parser("connect", help="在指定实例申请项目授权，保留其它实例授权")
+    item.add_argument("id")
+    target = item.add_mutually_exclusive_group(required=True)
+    target.add_argument("--project")
+    target.add_argument("--new-project", action="store_true")
+    item.add_argument("--create-project")
+    item.add_argument("--git-url")
+    item.add_argument("--slug")
+    item.add_argument("--agent", default="Agent")
+    item.add_argument("--timeout", type=int, default=300)
+    item.add_argument("--interval", type=int, default=2)
+    item.set_defaults(func=cmd_instance_connect)
 
     sub.add_parser("health", help="CDS /healthz").set_defaults(func=cmd_health)
 
@@ -9987,6 +10810,7 @@ def _build_parser() -> argparse.ArgumentParser:
     con.add_argument("--host", required=True, help="CDS 地址，例如 https://cds.miduo.org")
     con_target = con.add_mutually_exclusive_group(required=True)
     con_target.add_argument("--project", help="连接已有项目 ID")
+    con_target.add_argument("--recover", action="store_true", help="身份和连接都丢失时，从原仓库自动发起恢复，无需填写项目ID")
     con_target.add_argument("--new-project", action="store_true", help="申请一次性创建项目权限")
     con.add_argument("--create-project", metavar="NAME",
                      help="批准后立刻用一次性授权创建该项目并换成项目级授权（与 --new-project 搭配，一条命令走完接入全链路）")
@@ -10243,6 +11067,7 @@ def cmd_identity_heal(args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     global _TRACE_ID, _HUMAN
+    _LOAD_NOTICES.clear()
     _load_local_credentials()
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -10252,7 +11077,34 @@ def main(argv: list[str] | None = None) -> None:
     if func is None:
         parser.print_help()
         sys.exit(1)
-    func(args)
+    workspace_connection = func in (cmd_connect, cmd_init) and not getattr(args, "legacy_env", False)
+    # Discovery and connection must work even if the selected host is unavailable or unconfigured.
+    if args.cmd in ("instance", "connect") and args.instance:
+        parser.error("接入请用 instance connect <实例ID> 或 connect --host <站点>，不与全局 --instance 混用")
+    if args.cmd == "instance" and args.instance_cmd in ("sync", "recommend"):
+        selected = _read_instance_private("active-instance.json", {}).get("id")
+        if selected:
+            _apply_instance(_instance_entry(selected), require_project=False)
+    if args.cmd not in ("instance", "connect"):
+        selected = args.instance or (None if workspace_connection else _read_instance_private("active-instance.json", {}).get("id"))
+        if selected:
+            entry = _instance_entry(selected)
+            _apply_instance(entry, require_project=False)
+            if args.instance:
+                # Scoped selection must prove project identity before any existing command can mutate.
+                _check_instance(entry)
+            # Auth inspection reflects the selected host, not a superseded inherited env.
+            for key in _EXPLICIT_CREDENTIAL_ENV:
+                _EXPLICIT_CREDENTIAL_ENV[key] = os.environ.get(key, "")
+    _deployment_load_preflight(func)
+    try:
+        func(args)
+    except SystemExit as exc:
+        if workspace_connection and not args.instance and exc.code in (None, 0):
+            # Workspace onboarding adopts the saved pointer. A previous
+            # instance choice must not override that newly reported connection.
+            _private_instance_file("active-instance.json").unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":

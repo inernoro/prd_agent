@@ -27,6 +27,7 @@ jobs:
           filters: |
             cds:
               - 'cds/**'
+              - 'cds-instances.json'
               - '.github/workflows/cds.yml'
               - '.github/workflows/cds-prebuilt.yml'
               - '.claude/skills/cds/**'

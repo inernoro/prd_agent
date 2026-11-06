@@ -917,3 +917,34 @@ it('strict infrastructure discovery preserves application classification for fil
  try{const file=path.join(dir,'compose.yml');fs.writeFileSync(file,content);for(const defs of [parseComposeString(content,{preserveVolumeDeclaration:true}),parseComposeFile(file,{preserveVolumeDeclaration:true})])expect(defs.map(s=>s.id)).toEqual(['db']);}
  finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+describe('非容器静态模式声明', () => {
+  const compose = `services:
+  web:
+    image: nginx
+    volumes: ["./web:/app"]
+    labels:
+      cds.port: "80"
+x-cds-deploy-modes:
+  web:
+    static-files:
+      label: 静态文件
+      image: ghcr.io/example/web:sha-abc
+      prebuilt: true
+      staticWeb:
+        imagePath: /usr/share/nginx/html
+        runtimeConfig: true
+        proxyRules: [{pathPrefix: /api, profileId: api}]
+`;
+  it('解析并导出模式时保留文件目录与接口转发，未选模式不改变默认容器行为', () => {
+    const parsed = parseCdsCompose(compose)!;
+    const profile = parsed.buildProfiles[0];
+    expect(profile.staticWeb).toBeUndefined();
+    expect(profile.deployModes?.['static-files'].staticWeb).toEqual({ imagePath: '/usr/share/nginx/html', runtimeConfig: true,
+      proxyRules: [{ pathPrefix: '/api', profileId: 'api' }] });
+    expect(toCdsCompose(parsed.buildProfiles, {}, parsed.infraServices, parsed.routingRules)).toContain('staticWeb:');
+  });
+  it('拒绝越界产物目录，不会静默退回容器运行', () => {
+    expect(() => parseCdsCompose(compose.replace('/usr/share/nginx/html', '/../../secret'))).toThrow('staticWeb.imagePath');
+  });
+});

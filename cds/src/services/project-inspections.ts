@@ -1,35 +1,8 @@
+import { inspectionOverdue, type ProjectInspection, type ProjectInspectionCheck } from '../shared/project-inspections.js';
+export { inspectionOverdue } from '../shared/project-inspections.js';
+export type { ProjectInspection, ProjectInspectionCheck } from '../shared/project-inspections.js';
+
 /** 外部巡检只回填事实，不创建另一个调度器。与常设探测分别标注证据来源。 */
-export interface ProjectInspectionCheck {
-  id: string;
-  name: string;
-  purpose: string;
-  outcome: 'pass' | 'fail' | 'unknown' | 'skipped';
-  result: string;
-  evidenceUrl?: string;
-  checkedAt?: string;
-}
-export interface ProjectInspection {
-  id: string;
-  name: string;
-  executor: string;
-  enabled: boolean;
-  intervalSeconds: number;
-  lastCompletedAt: string | null;
-  runKind: 'manual' | 'scheduled';
-  reportUrl?: string;
-  checks: ProjectInspectionCheck[];
-  notification: {
-    channel: string;
-    recipient: string;
-    policy: string;
-    outcome: 'not-triggered' | 'accepted' | 'failed' | 'unknown';
-    at?: string;
-    evidenceUrl?: string;
-  };
-  registeredAt: string;
-  receivedAt: string;
-  reportedBy: string;
-}
 const object = (v: unknown): Record<string, unknown> => {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw Error('巡检记录格式不正确');
   return v as Record<string, unknown>;
@@ -69,13 +42,6 @@ export function parseProjectInspection(id: string, value: unknown, actor: string
     notification: { channel: text(notice.channel, '通知渠道', 160), recipient: text(notice.recipient, '接收人', 160), policy: text(notice.policy, '通知条件'), outcome: notice.outcome as ProjectInspection['notification']['outcome'], at: notice.at === undefined ? undefined : timestamp(notice.at, '通知时间', now), evidenceUrl: link(notice.evidenceUrl) }, registeredAt: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), reportedBy: actor };
 }
 
-/** 服务端的常设监督和页面共用截止判据；回填空结果不能刷新未执行项的期限。 */
-export function inspectionOverdue(inspection: ProjectInspection, now = Date.now()): boolean {
-  if (!inspection.enabled) return false;
-  const start = inspection.registeredAt;
-  const times = [inspection.lastCompletedAt || start, ...inspection.checks.filter(c => c.outcome !== 'skipped').map(c => c.checkedAt || start)];
-  return times.some(at => !Number.isFinite(Date.parse(at)) || now - Date.parse(at) > inspection.intervalSeconds * 1000 + 300_000);
-}
 export function inspectionHealthDocument(inspections: ProjectInspection[], now = Date.now()) {
   const checks = Object.fromEntries(inspections.filter(i => i.enabled).map(i => {
     const overdue = inspectionOverdue(i, now), componentId = `inspection.freshness.${i.id}`;
