@@ -61,78 +61,48 @@ Connect trigger, process, control, and output capsules on a canvas. Start from a
 
 <sub>The illustrated chain comes from the [homepage's TAPD template](prd-admin/src/pages/home/i18n/landing.ts). [Workflow scene source](prd-admin/src/pages/home/scenes/WorkflowScene.tsx).</sub>
 
-## Agent toolbox
-
-The registry contains **30+ agents and tools**, grouped here by the work they help with. Preview entries retain their product labels.
-
-| Create | Deliver | Retain | Coordinate |
-| :--- | :--- | :--- | :--- |
-| Visual agent | PR review agent | My shares | AI arena |
-| Writing agent | Frontend partner **(Preview)** | Weekly report agent | Project management **(Preview)** |
-| Video agent | CDS agent **(Preview)** | Markdown to slides | Product management **(Preview)** |
-| Storyboard bench **(Preview)** | Defect reporting | Transcription bench | Blunt secretary **(Preview)** |
-
-Search the Toolbox by the task you need to finish. The [tool registry](prd-admin/src/stores/toolboxStore.ts) and [homepage catalog](prd-admin/src/pages/home/i18n/landing.ts) define the entries and their availability.
-
 ## Product architecture
 
-**MAP is the desk. LLMGW handles model execution. CDS delivers a working branch.** Each product can be used independently; together they connect the work, the compute, and the environment where the result can be reviewed.
+Work in **MAP**, route model calls through **LLMGW**, and review a working branch through **CDS**.
 
 <picture>
   <source media="(max-width: 640px)" srcset="assets/readme/platform-layers-mobile.svg?v=light-1" />
   <img src="assets/readme/platform-layers.svg?v=light-1" width="100%" alt="MAP takes work from a prompt through agents to an artifact. LLMGW routes a caller through its model pool and provider members. CDS turns a code branch into services and a preview address." />
 </picture>
 
-The gateway manages member selection, health, and retries within the selected model pool. Cross-pool substitution requires explicit authorization. CDS handles branch builds, preview routing, reusable versions, deployment records, and rollback.
-
-<p align="center">
-  <a href="prd-admin/src/pages/home/scenes/LayersScene.tsx">Homepage layer view</a> &nbsp; / &nbsp;
-  <a href="doc/design.platform.llm-gateway.md">Gateway design</a> &nbsp; / &nbsp;
-  <a href="cds/README.md">CDS guide</a>
-</p>
-
-<details>
-<summary>Explore the implementation map</summary>
-
-| Component | Responsibility | Source |
-| :--- | :--- | :--- |
-| MAP backend | .NET API, product operations, and background workers | [prd-api](prd-api/) |
-| Web console | React interface for the workspace and administration | [prd-admin](prd-admin/) |
-| Desktop client | Tauri desktop application | [prd-desktop](prd-desktop/) |
-| LLM gateway | Model execution and request governance | [llmgw](llmgw/) |
-| Cloud Dev Suite | Branch builds, previews, and delivery records | [cds](cds/) |
-| Agent SDK sidecar | Supporting Agent SDK service | [claude-sdk-sidecar](claude-sdk-sidecar/) |
-
-</details>
+<p align="center"><sub><a href="doc/design.platform.llm-gateway.md">Model routing</a> &nbsp; / &nbsp; <a href="cds/README.md">Branch delivery</a> &nbsp; / &nbsp; <a href="#developer-reference">Source map</a></sub></p>
 
 ## Project status
 
-<table>
-  <tr><th width="33%">Build &amp; test</th><th width="33%">Container delivery</th><th width="34%">Operations</th></tr>
-  <tr>
-    <td align="center" valign="top"><a href="https://github.com/inernoro/prd_agent/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/ci.yml?branch=main&amp;style=flat-square&amp;label=CI&amp;labelColor=26322B" alt="CI — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/cds.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds.yml?branch=main&amp;style=flat-square&amp;label=CDS+tests&amp;labelColor=26322B" alt="CDS tests — latest main-branch workflow result" /></a></td>
-    <td align="center" valign="top"><a href="https://github.com/inernoro/prd_agent/actions/workflows/server-deploy.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/server-deploy.yml?branch=main&amp;style=flat-square&amp;label=server+image&amp;labelColor=26322B" alt="server image — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/branch-image.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/branch-image.yml?branch=main&amp;style=flat-square&amp;label=branch+image&amp;labelColor=26322B" alt="branch image — latest main-branch workflow result" /></a></td>
-    <td align="center" valign="top"><a href="https://map.ebcone.net"><img src="https://img.shields.io/website?url=https%3A%2F%2Fmap.ebcone.net&amp;style=flat-square&amp;label=web+HTTP&amp;up_message=reachable&amp;down_message=unreachable&amp;labelColor=26322B" alt="Public web entry — external HTTP reachability" /></a><br /><br /><a href="https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/cds-independent-status/watchdog.yml?branch=main&amp;style=flat-square&amp;label=watchdog&amp;labelColor=26322B" alt="watchdog — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/cds-external-port-audit.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds-external-port-audit.yml?branch=main&amp;style=flat-square&amp;label=port+audit&amp;labelColor=26322B" alt="port audit — latest main-branch workflow result" /></a></td>
-  </tr>
-</table>
-
-Build badges show the latest matching `main` run. Container badges track image publication. The web probe measures HTTP reachability; the external watchdog badge tracks its scheduled heartbeat-check job. The port audit runs daily. Open a badge for the source evidence and timestamps; schedules and badge refreshes can be delayed.
-
 <p align="center">
-  <a href="https://github.com/inernoro/prd_agent/actions">Build history</a> &nbsp; / &nbsp;
-  <a href="https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml">Heartbeat check history</a> &nbsp; / &nbsp;
-  <a href="https://github.com/inernoro/prd_agent/actions/workflows/preview-acceptance.yml">Preview acceptance</a>
+<a href="https://github.com/inernoro/prd_agent/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/ci.yml?branch=main&amp;style=flat-square&amp;label=CI&amp;labelColor=26322B" alt="CI — latest main-branch workflow result" /></a>
+  <a href="https://github.com/inernoro/prd_agent/actions/workflows/cds.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds.yml?branch=main&amp;style=flat-square&amp;label=CDS+tests&amp;labelColor=26322B" alt="CDS tests — latest main-branch workflow result" /></a>
+  <a href="https://github.com/inernoro/prd_agent/actions/workflows/server-deploy.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/server-deploy.yml?branch=main&amp;style=flat-square&amp;label=server+image&amp;labelColor=26322B" alt="server image — latest main-branch workflow result" /></a>
+  <a href="https://github.com/inernoro/prd_agent/actions/workflows/branch-image.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/branch-image.yml?branch=main&amp;style=flat-square&amp;label=branch+image&amp;labelColor=26322B" alt="branch image — latest main-branch workflow result" /></a>
 </p>
+<p align="center">
+<a href="https://map.ebcone.net"><img src="https://img.shields.io/website?url=https%3A%2F%2Fmap.ebcone.net&amp;style=flat-square&amp;label=web+HTTP&amp;up_message=reachable&amp;down_message=unreachable&amp;labelColor=26322B" alt="Public web entry — external HTTP reachability" /></a>
+  <a href="https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/cds-independent-status/watchdog.yml?branch=main&amp;style=flat-square&amp;label=watchdog&amp;labelColor=26322B" alt="watchdog — latest main-branch workflow result" /></a>
+  <a href="https://github.com/inernoro/prd_agent/actions/workflows/cds-external-port-audit.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds-external-port-audit.yml?branch=main&amp;style=flat-square&amp;label=port+audit&amp;labelColor=26322B" alt="port audit — latest main-branch workflow result" /></a>
+</p>
+
+<p align="center"><sub>Latest matching <code>main</code> runs. Web: HTTP reachability. Watchdog: heartbeat-check execution. Audit: scheduled port checks.<br />Open any badge for its source; run times and badge refreshes can vary.</sub></p>
 
 ## Get started
 
-### Open the web workspace
+**Use the workspace** · [Open MAP](https://map.ebcone.net/home), sign in, choose an agent, and describe one task.
 
-Open [MAP](https://map.ebcone.net/home), sign in, and choose an agent from the Toolbox. Describe one task; work with the result on its canvas or in its document. The homepage introduces the visual, writing, knowledge, workflow, model, and delivery surfaces before you sign in.
+**Take it to the desktop** · [Download the latest release](https://github.com/inernoro/prd_agent/releases/latest) for macOS, Windows, or Linux.
 
-### Download the desktop app
+**Develop or self-host** · Follow the [developer reference](#developer-reference) below for local setup, module checks, and deployment entrypoints.
 
-The [latest release](https://github.com/inernoro/prd_agent/releases/latest) includes installers for **macOS, Windows, and Linux**. Open the release assets to choose your operating system and architecture. See [all releases](https://github.com/inernoro/prd_agent/releases) for previous versions and published assets.
+## Documentation
+
+[Product workflows](doc/design.product-agent.md) &nbsp; / &nbsp; [Model gateway](doc/design.platform.llm-gateway.md) &nbsp; / &nbsp; [Cloud Dev Suite](cds/README.md) &nbsp; / &nbsp; [Contributor rules](AGENTS.md) &nbsp; / &nbsp; [Changelog](CHANGELOG.md)
+
+<a id="developer-reference"></a>
+<details>
+<summary><strong>Developer reference</strong> — setup, commands, agents, and source map</summary>
 
 ### Develop locally
 
@@ -151,8 +121,7 @@ Open **[http://localhost:5500](http://localhost:5500)** for the web console and 
 | MongoDB | `mongodb://localhost:18081` |
 | Redis | `localhost:18082` |
 
-<details>
-<summary>Local development shortcuts</summary>
+### Local development shortcuts
 
 Use the existing launchers when developing with the local toolchains and configured infrastructure:
 
@@ -171,10 +140,7 @@ Windows:
 
 The full desktop workflow uses the .NET, Node/pnpm, Rust, and Tauri development toolchains. Frontend packages use **pnpm**.
 
-</details>
-
-<details>
-<summary>Build and check individual modules</summary>
+### Build and check individual modules
 
 Backend, from `prd-api/`:
 
@@ -201,10 +167,7 @@ pnpm tauri:dev
 
 The test command above selects the non-integration, non-manual suite. See [AGENTS.md](AGENTS.md) for scope-specific checks, CI requirements, and integration test rules.
 
-</details>
-
-<details>
-<summary>Start Cloud Dev Suite and manage deployments</summary>
+### Start Cloud Dev Suite and manage deployments
 
 From the repository root:
 
@@ -236,9 +199,31 @@ Local production-like builds:
 
 Use the deployment entrypoint with the environment configuration for your intended target. The development Compose stack is the local development path.
 
-</details>
+### Agent directory
 
-## Documentation
+The registry contains **30+ agents and tools**, grouped here by the work they help with. Preview entries retain their product labels.
+
+| Create | Deliver | Retain | Coordinate |
+| :--- | :--- | :--- | :--- |
+| Visual agent | PR review agent | My shares | AI arena |
+| Writing agent | Frontend partner **(Preview)** | Weekly report agent | Project management **(Preview)** |
+| Video agent | CDS agent **(Preview)** | Markdown to slides | Product management **(Preview)** |
+| Storyboard bench **(Preview)** | Defect reporting | Transcription bench | Blunt secretary **(Preview)** |
+
+Search the Toolbox by the task you need to finish. The [tool registry](prd-admin/src/stores/toolboxStore.ts) and [homepage catalog](prd-admin/src/pages/home/i18n/landing.ts) define the entries and their availability.
+
+### Implementation map
+
+| Component | Responsibility | Source |
+| :--- | :--- | :--- |
+| MAP backend | .NET API, product operations, and background workers | [prd-api](prd-api/) |
+| Web console | React interface for the workspace and administration | [prd-admin](prd-admin/) |
+| Desktop client | Tauri desktop application | [prd-desktop](prd-desktop/) |
+| LLM gateway | Model execution and request governance | [llmgw](llmgw/) |
+| Cloud Dev Suite | Branch builds, previews, and delivery records | [cds](cds/) |
+| Agent SDK sidecar | Supporting Agent SDK service | [claude-sdk-sidecar](claude-sdk-sidecar/) |
+
+### Further reading and repository conventions
 
 | For | Start here |
 | :--- | :--- |
@@ -250,8 +235,7 @@ Use the deployment entrypoint with the environment configuration for your intend
 | Contributor rules and checks | [AGENTS.md](AGENTS.md) |
 | Changes across releases | [Changelog](CHANGELOG.md) |
 
-<details>
-<summary>Repository and documentation conventions</summary>
+### Repository and documentation conventions
 
 The root keeps project entrypoints and top-level documentation. Supporting material lives with its owning module:
 
@@ -269,12 +253,27 @@ Documentation uses the prefixes `spec.`, `design.`, `plan.`, `rule.`, `guide.`, 
 
 README illustrations follow a shared [visual specification](assets/readme/design-system.json) for color, typography, geometry, and badge treatment.
 
-</details>
+### Model execution boundaries
 
-## License
+The gateway selects members, records health, and retries within the selected model pool. Cross-pool substitution requires explicit authorization. CDS manages branch builds, preview routing, reusable versions, deployment records, and rollback.
+
+### Build and operational evidence
+
+[All workflow runs](https://github.com/inernoro/prd_agent/actions) · [Preview acceptance](https://github.com/inernoro/prd_agent/actions/workflows/preview-acceptance.yml) · [Heartbeat check history](https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml)
+
+The architecture illustration follows the [homepage layer view](prd-admin/src/pages/home/scenes/LayersScene.tsx).
+
+### License
 
 MIT
 
----
+</details>
 
-<p align="center"><strong>MAP · Create, freely.</strong><br /><sub>Pick one agent. Finish one useful thing. Keep the result.</sub></p>
+<br />
+
+<a href="https://map.ebcone.net/home">
+  <picture>
+    <source media="(max-width: 640px)" srcset="assets/readme/map-close-mobile.svg?v=light-1" />
+    <img src="assets/readme/map-close.svg?v=light-1" width="100%" alt="Open MAP. Pick one agent. Finish one useful thing. MAP — Create, freely." />
+  </picture>
+</a>
