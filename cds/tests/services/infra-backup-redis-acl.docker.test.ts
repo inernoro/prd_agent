@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { buildRedisAppendOnlyScript, buildRedisBackupProbeScript, buildRedisRdbPathScript, redisProbeStdin } from '../../src/services/infra-backup-schedule.js';
+import { buildRedisAppendOnlyScript, buildRedisBackupProbeScript, buildRedisRdbPathScript, redisUsernameFromServiceDefinition, redisProbeStdin } from '../../src/services/infra-backup-schedule.js';
 
 const docker = (args: string[], input?: string): string => execFileSync('docker', args, {
   input, encoding: 'utf8', timeout: 120_000, stdio: ['pipe', 'pipe', 'pipe'],
@@ -32,20 +32,27 @@ afterAll(() => {
 
 describe.skipIf(!ready)('命名 ACL 账号的真实 Redis 备份与隔离恢复', () => {
   it('默认账号停用后，认证、BGSAVE、路径探测与恢复产物均使用同一命名账号', async () => {
-    docker(['run', '-d', '--network', 'none', '--name', name, 'redis:7-alpine', 'redis-server', '--save', '', '--appendonly', 'no']);
+    docker(['run', '-d', '--network', 'none', '--name', name, '-e', `REDIS_USERNAME=${user}`, 'redis:7-alpine', 'redis-server', '--save', '', '--appendonly', 'no']);
     await waitForRedis(name);
     docker(['exec', name, 'redis-cli', 'SET', 'backup-fixture-key', 'backup-fixture-value']);
     docker(['exec', name, 'redis-cli', 'ACL', 'SETUSER', user, 'on', `>${password}`, '~*', '+@all']);
     docker(['exec', name, 'redis-cli', 'ACL', 'SETUSER', 'default', 'off']);
-    const missingUser = spawnSync('docker', ['exec', '-i', name, 'sh', '-s'], {
+    const missingUser = spawnSync('docker', ['exec', '-i', '-e', 'REDIS_USERNAME=', name, 'sh', '-s'], {
       input: redisProbeStdin(buildRedisBackupProbeScript(), password), encoding: 'utf8', timeout: 30_000,
     });
     expect(missingUser.status).toBe(22);
-    const probe = (script: string): string => docker(['exec', '-i', name, 'sh', '-s'], redisProbeStdin(script, password, user));
+    const storedService = { env: { REDIS_USERNAME: '${CDS_BACKUP_REDIS_USER}' } };
+    const unresolved = spawnSync('docker', ['exec', '-i', name, 'sh', '-s'], {
+      input: redisProbeStdin(buildRedisBackupProbeScript(), password, storedService.env.REDIS_USERNAME), encoding: 'utf8', timeout: 30_000,
+    });
+    expect(unresolved.status).toBe(22);
+    const resolvedUser = redisUsernameFromServiceDefinition(storedService, { CDS_BACKUP_REDIS_USER: user });
+    const probe = (script: string, username = resolvedUser): string => docker(['exec', '-i', name, 'sh', '-s'], redisProbeStdin(script, password, username));
     expect(probe(buildRedisAppendOnlyScript())).toBe('no');
     const path = probe(buildRedisBackupProbeScript());
     expect(path).toBe('/data/dump.rdb');
     expect(probe(buildRedisRdbPathScript())).toBe(path);
+    expect(probe(buildRedisRdbPathScript(), redisUsernameFromServiceDefinition(storedService, {}))).toBe(path);
     expect(docker(['exec', name, 'redis-check-rdb', path])).toContain('RDB looks OK');
     docker(['cp', `${name}:${path}`, join(dir, 'dump.rdb')]);
     docker(['create', '--network', 'none', '--name', restored, 'redis:7-alpine', 'redis-server', '--save', '', '--appendonly', 'no']);

@@ -977,9 +977,9 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 
 | 编号 | 状态 | 实测事实 | 保留边界 |
 |---|---|---|---|
-| VIDEO-MOBILE-STOP | 已关闭 | MAP a377118c正式390像素明暗主题按钮完整单行，实际取消进入Cancelled，专用夹具删除404 | 成片额度及广泛补测独立暂缓 |
-| GW-DISABLED-REASON | 已关闭 | MAP a377118c管理员正常SSO，临时线路手动停用提示正确，启用正常，精确清理后读回不存在 | 未改在用上游、密钥或OpenRouter；无新增推理调用 |
-| OPS-REDIS-BACKUP-AUTH | 已关闭 | CDS 898d3e823正式新RDB校验和正确并隔离恢复成功；原生历史另回读到自动周期新副本 | 未在生产执行恢复；原生周期摘要须整轮结束后更新，不人工改绿 |
-| REPORT-EMBED-BLANK | 已关闭 | CDS 898d3e823正常已登录报告入口可见正文、4图及实际点击定位；保留隔离sandbox与raw安全策略 | main已有等价修复，本PR保留现有实现和回归 |
+| VIDEO-MOBILE-STOP | 已修复 | MAP a377118c正式390像素明暗主题按钮完整单行，实际取消进入Cancelled，专用夹具删除404 | 成片额度及广泛补测独立暂缓 |
+| GW-DISABLED-REASON | 已修复 | MAP a377118c管理员正常SSO，临时线路手动停用提示正确，启用正常，精确清理后读回不存在 | 未改在用上游、密钥或OpenRouter；无新增推理调用 |
+| OPS-REDIS-BACKUP-AUTH | 已修复 | CDS 898d3e823正式新RDB校验和正确并隔离恢复成功；原生历史另回读到自动周期新副本 | 未在生产执行恢复；原生周期摘要须整轮结束后更新，不人工改绿 |
+| REPORT-EMBED-BLANK | 已修复 | CDS 898d3e823正常已登录报告入口可见正文、4图及实际点击定位；保留隔离sandbox与raw安全策略 | main已有等价修复，本PR保留现有实现和回归 |
 
 [最终验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=dda0753c27c24231a66dea4db2c98ce3&report=e487f83a44cd474d863fe76efbfcdf50)与[统一总览](https://cds.miduo.org/status/prd-agent#inspections)记录本次四项4/4=100%。原7项异常6/7=85.7%和143项覆盖核销38/143=26.6%分别保留，不改写为全量通过。

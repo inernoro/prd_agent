@@ -17,6 +17,7 @@
 
 import { detectInfraKind, type InfraKindHints } from './infra-exposure-audit.js';
 import { maskSecrets } from './secret-masker.js';
+import { resolveEnvTemplates } from './compose-parser.js';
 
 /**
  * 每一轮周期备份的结果文件，落在备份目录里。
@@ -810,6 +811,14 @@ export function redisAuthFromServiceDefinition(svc: {
     if (inline) return inline[2] ?? inline[3] ?? inline[4] ?? '';
   }
   return '';
+}
+
+/** 与容器启动采用相同项目变量展开；未解析值留空，不覆盖容器真实用户名兜底。 */
+export function redisUsernameFromServiceDefinition(
+  svc: { env?: Record<string, string> | null },
+  variables: Record<string, string> = {},
+): string {
+  return resolveEnvTemplates({ REDIS_USERNAME: svc.env?.REDIS_USERNAME || '' }, variables).REDIS_USERNAME;
 }
 
 /**

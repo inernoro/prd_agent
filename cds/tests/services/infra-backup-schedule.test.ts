@@ -18,6 +18,7 @@ import {
   buildRedisRdbPathScript,
   REDIS_CONNECT_LINES,
   redisAuthFromServiceDefinition,
+  redisUsernameFromServiceDefinition,
   redisProbeStdin,
   buildRedisAppendOnlyScript,
   buildRedisRestorePlan,
@@ -794,6 +795,13 @@ describe('Redis 备份探测脚本', () => {
       })).toBe('fromenv');
     });
 
+
+    it('Redis ACL 用户名沿项目变量展开，未展开时保留容器真实环境兜底', () => {
+      const svc = { env: { REDIS_USERNAME: '${CDS_BACKUP_REDIS_USER}' } };
+      expect(redisUsernameFromServiceDefinition(svc, { CDS_BACKUP_REDIS_USER: 'backup_fixture' })).toBe('backup_fixture');
+      expect(redisUsernameFromServiceDefinition(svc, {})).toBe('');
+      expect(redisUsernameFromServiceDefinition({ env: { REDIS_USERNAME: 'named-user' } }, {})).toBe('named-user');
+    });
     it('没有口令时 stdin 内容就是脚本本身，不引入新语义', () => {
       expect(redisProbeStdin('echo hi', '')).toBe('echo hi');
     });
