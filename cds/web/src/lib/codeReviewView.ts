@@ -14,9 +14,9 @@ export function reviewCoverage(task: CodeReviewTask): { kind: 'external' | 'pend
   if (!Number.isFinite(total) || !Number.isFinite(scanned) || scanned > total || total <= 0 || scanned < 0) {
     return { kind: isReviewActive(task) ? 'pending' : 'unknown', text: isReviewActive(task) ? '等待统计分析范围' : '扫描覆盖尚未确认' };
   }
-  if (scanned === 0) return { kind: isReviewActive(task) ? 'pending' : 'unknown', text: `尚无有效分析结果 · 本批 ${total} 个文件` };
+  if (scanned === 0) return { kind: isReviewActive(task) ? 'pending' : 'unknown', text: `尚无有效分析结果 · 本次审查 ${total} 个文件` };
   if (scanned < total) return { kind: 'partial', text: `${scanned} / ${total} 个文件已分析 · 部分覆盖` };
-  return { kind: 'counted', text: `本批 ${scanned} / ${total} 个文件已分析` };
+  return { kind: 'counted', text: `本次审查 ${scanned} / ${total} 个文件已分析` };
 }
 
 export function needsReviewAttention(task: CodeReviewTask): boolean {
@@ -44,12 +44,12 @@ export function reviewTaskExplanation(task: CodeReviewTask): string {
   if (task.status === 'completed') {
     if (reviewCoverage(task).kind === 'partial') return '报告只覆盖已完成分析的文件，不能作为整个项目审查完成的依据。请查看报告中的未覆盖项。';
     if (reviewCoverage(task).kind === 'unknown') return '任务虽然已结束，但没有足够的扫描计数证明覆盖情况。请先核对报告，不要按全量审查通过使用。';
-    return '本批分析结果已保存。文件计数只对应本次提交的范围，具体发现和跳过项请以报告为准。';
+    return '本次审查结果已保存。文件计数只对应本次提交的范围，具体发现和跳过项请以报告为准。';
   }
   const descriptions: Partial<Record<CodeReviewTask['status'], string>> = {
     queued: '任务已进入队列，尚未开始分析。可离开页面，稍后回来查看进度。',
     preparing: '正在检查代码来源并准备本次审查的固定快照。',
-    running: '正在分析本批源码。文件进度和后续结果会自动更新。',
+    running: '正在分析本次提交的源码。文件进度和后续结果会自动更新。',
     archiving: '正在汇总分析结果并保存报告，报告归档后即可阅读。',
   };
   return descriptions[task.status] || '请查看最新任务状态。';

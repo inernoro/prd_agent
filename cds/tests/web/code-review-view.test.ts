@@ -35,7 +35,7 @@ describe('代码审查结果的可理解性与真实性', () => {
     const summary = summarizeReviews([failed, good]);
     expect(summary).toMatchObject({ failed: 1, attention: 1, reports: 1 });
     expect(summary.headline).toContain('1 项审查失败');
-    expect(reviewCoverage(good).text).toContain('本批 12 / 12');
+    expect(reviewCoverage(good).text).toContain('本次审查 12 / 12');
     expect(reviewTaskLabel(good).label).toBe('报告已生成');
   });
 
