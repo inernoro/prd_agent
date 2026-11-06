@@ -133,6 +133,23 @@ it('停机期间先明确未知，原端口恢复后重新鉴权并透传原终�
   await vi.waitFor(() => expect(f.proxy.getStats().widgetStreams?.active).toBe(0));
 }, 5000);
 
+it.each([false, true])('首次故障及时记账，恢复后长流关闭%s不扩大503耗时或重复计数', async longLived => {
+  const f = await fixture();
+  const s = await stream(f.port); await s.first;
+  await f.start();
+  await vi.waitFor(() => expect(s.chunks.join('')).toContain('snapshot'));
+  const clock = longLived ? vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 7_200_000) : undefined;
+  try {
+    if (longLived) {
+      s.res.destroy(); s.req.destroy();
+      await vi.waitFor(() => expect(f.proxy.getStats().widgetStreams?.active).toBe(0));
+    }
+    expect(f.proxy.getStats()).toMatchObject({ error503Count: 1, statusCounts: { '503': 1 } });
+    expect(f.proxy.getStats().p99LatencyMs).toBeLessThan(5000);
+    expect(f.log.mock.calls.filter(([entry]) => entry.status === 503)).toHaveLength(1);
+  } finally { clock?.mockRestore(); s.res.destroy(); s.req.destroy(); }
+}, 5000);
+
 it('原鉴权拒绝保留403，恢复中遇到拒绝只发forbidden，不泄漏快照', async () => {
   const f = await fixture({ reject: true });
   const s = await stream(f.port);

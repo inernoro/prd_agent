@@ -457,14 +457,14 @@ export class ProxyHandler {
         headers: { ...fwdHeaders, 'accept-encoding': 'identity' }, agent: this.agent,
         unavailable: code => {
           failed = true;
+          this.stats.record(host, 503, Date.now() - t0);
           this.opts.logger?.warn?.(`[forward] widget stream upstream unavailable: ${code}`);
           // 传输层恢复不抹去真实上游失败；持久日志供常设自检消费。
           logHttp(503, {}, 'upstream-error', { code, message: 'widget control plane stream unavailable' }, false);
         },
         completed: status => {
           completeActiveRequest();
-          if (!failed) logHttp(status);
-          this.stats.record(host, failed ? 503 : status, Date.now() - t0);
+          if (!failed) { logHttp(status); this.stats.record(host, status, Date.now() - t0); }
         },
       });
     }

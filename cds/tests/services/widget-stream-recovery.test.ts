@@ -66,6 +66,15 @@ it('首屏按真实初始化入口执行，流尚无快照时仍采用成功的�
   expect(state.branchConnectionState).toBe('connected');
 });
 
+it.each([false, true])('首次真实握手不把首读%s完成的正常连接改成过期', async loaded => {
+  const { state } = client(true);
+  if (loaded) await vi.advanceTimersByTimeAsync(1);
+  const expected = loaded ? 'connected' : 'connecting';
+  expect(state.branchConnectionState).toBe(expected);
+  Source.instances[0].emit('cds.transport', { state: 'connected' });
+  expect(state.branchConnectionState).toBe(expected);
+});
+
 it.each(['disconnect', 'reconnecting', 'forbidden', 'unavailable'])('已排队补读遇到%s必须取消，不能在流断开后把连接刷绿', async reason => {
   const { state } = client();
   state.fetch = vi.fn(state.fetch);
