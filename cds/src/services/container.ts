@@ -3115,7 +3115,7 @@ export class ContainerService {
     // kind 以前不在这个 Pick 里，于是所有停止一律记成通用的 cds-stop：调用方明明知道
     // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
     // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
-    context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+    context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'assertCurrent'> = {},
   ): Promise<void> {
     return deploymentPhaseBudget.run('terminal', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
       profileId: context.profileId || undefined, operationId: context.operationId },
@@ -3155,6 +3155,7 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    context.assertCurrent?.('before stop sentinel');
     await this.writeStopSentinel(containerName, reason);
     this.noteLifecycleIntent(containerName, context.kind ?? 'cds-stop', reason, {
       projectId: context.projectId ?? null,
@@ -3168,7 +3169,9 @@ export class ContainerService {
       operation: context.operation ?? null,
       source: context.source ?? null,
     });
+    context.assertCurrent?.('before docker stop');
     const result = await this.shell.exec(`docker stop ${containerName}`, { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
+    context.assertCurrent?.('after docker stop');
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
     const confirmed = state?.running === false

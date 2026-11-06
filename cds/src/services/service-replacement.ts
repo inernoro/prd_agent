@@ -25,7 +25,7 @@ export function reserveServiceReplacements(options: {
   staticProfileIds?: readonly string[];
 }): void {
   const { entry, state, profileIds } = options;
-  if (!profileIds.some(id => entry.services[id]?.servingRuntime)) return;
+  if (!profileIds.length || (profileIds.length === 1 && !entry.services[profileIds[0]]?.servingRuntime)) return;
   const generation = options.operationId || randomUUID().replaceAll('-', '');
   const staticIds = new Set(options.staticProfileIds);
   if (entry.replacementOperationId !== generation) {
@@ -58,10 +58,31 @@ export function replacementLaunchEntry(entry: BranchEntry): BranchEntry {
 /** 候选是独立对象；迟到旧操作不能借共享ServiceState改掉更新操作的容器身份。 */
 export async function prepareServiceReplacement(options: {
   entry: BranchEntry; service: ServiceState; profile: BuildProfile; state: StateService;
-  container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>; portStart: number; operationId?: string; assertCurrent?: (step: string) => void;
+  container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'> & Partial<Pick<ContainerService, 'stop'>>; portStart: number; operationId?: string; assertCurrent?: (step: string) => void;
 }): Promise<ServiceState> {
   const { entry, service, state, container, profile, assertCurrent } = options;
   if (profile.staticWeb?.browserOnly) assertBrowserOnlyStaticConsumers(entry, profile.id, state);
+  if (profile.updateOrder === 'stop-first') {
+    if (profile.staticWeb) throw new Error('静态站无需先停旧实例，请使用默认更新顺序');
+    const stop = container.stop?.bind(container);
+    if (!stop) throw new Error('当前部署执行器不支持先停旧实例，未启动候选');
+    // 只停经归属核对的本服务精确 CID。停止不删除容器或卷；失败必须在新实例启动前熔断。
+    for (const runtime of serviceRuntimeRefs(service).map(runtimeRef)) {
+      assertCurrent?.('before stop-first identity');
+      const owned = await container.inspectOwnedRuntime(entry, profile.id, runtime);
+      assertCurrent?.('after stop-first identity');
+      if (!owned) continue;
+      await stop(owned.containerId!, 'replacement-stop-first', { projectId: entry.projectId,
+        branchId: entry.id, profileId: profile.id, operationId: options.operationId,
+        operation: 'replacement-stop-first', source: 'service-replacement', assertCurrent });
+      assertCurrent?.('after stop-first stop');
+      if (await container.inspectOwnedRuntime(entry, profile.id, owned)) throw new Error('旧实例停止未确认，未启动独占数据卷的候选');
+      assertCurrent?.('after stop-first confirmation');
+    }
+    // 不再向已主动停止的旧入口导流；失败时保留数据与运行身份，后续托管部署可以恢复。
+    service.servingRuntime = undefined;
+    state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+  }
   if (!service.servingRuntime && !service.pendingRuntime) return service;
   assertCurrent?.('before candidate prepare');
   const approved = servingRuntime(service);

@@ -92,6 +92,8 @@ export interface BuildProfile {
    * Example: "dotnet restore && dotnet build && dotnet run --urls http://0.0.0.0:5000"
    */
   command?: string;
+  /** 默认先启动候选；独占数据卷的服务可显式选择先停旧实例，允许本服务短暂不可用。 */
+  updateOrder?: 'start-first' | 'stop-first';
   /**
    * CDS managed 车道的 build/start 分离契约。compose 车道不写此字段，继续使用
    * command 的兼容语义。managed 构建先把源码复制进临时容器，执行 install/build，

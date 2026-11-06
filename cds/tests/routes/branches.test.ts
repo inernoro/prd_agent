@@ -1999,6 +1999,22 @@ describe('Branch Routes', () => {
       expect((res.body as any).extraProfiles).toEqual([]);
     });
 
+    it('显式先停后启可往返保存，非法更新顺序被拒且不影响兄弟分支', async () => {
+      seedBranch('b1'); seedBranch('b2');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ ...extraSvc('private-db'), updateOrder: 'stop-first' }],
+      });
+      expect(put.status).toBe(200);
+      const read = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect((read.body as any).extraProfiles[0].updateOrder).toBe('stop-first');
+      const invalid = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ ...extraSvc('private-db'), updateOrder: 'parallel-writers' }],
+      });
+      expect(invalid.status).toBe(400);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].updateOrder).toBe('stop-first');
+      expect(stateService.getBranch('b2')!.extraProfiles || []).toEqual([]);
+    });
+
     it('PUT declares an extra service; GET reflects it; a sibling stays empty (zero cross-impact)', async () => {
       seedBranch('b1'); seedBranch('b2');
       const put = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });

@@ -18290,6 +18290,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       };
       const pathPrefixes = strArray(raw?.pathPrefixes);
       const dependsOn = strArray(raw?.dependsOn);
+      if (raw.updateOrder !== undefined && raw.updateOrder !== 'start-first' && raw.updateOrder !== 'stop-first') {
+        res.status(400).json({ error: `额外服务 "${id}" 的 updateOrder 非法（仅允许 start-first 或 stop-first）` });
+        return;
+      }
       const startupSignal = typeof raw?.startupSignal === 'string' && raw.startupSignal.trim() !== ''
         ? raw.startupSignal : undefined;
       const readinessProbe = ((): ReadinessProbe | undefined => {
@@ -18370,6 +18374,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })()),
         ...(pathPrefixes ? { pathPrefixes } : {}),
         ...(dependsOn ? { dependsOn } : {}),
+        ...(raw.updateOrder !== undefined ? { updateOrder: raw.updateOrder } : {}),
         ...(readinessProbe ? { readinessProbe } : {}),
         ...(startupSignal ? { startupSignal } : {}),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
