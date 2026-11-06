@@ -209,7 +209,9 @@ export class CodeReviewService {
     try {
       for (;;) {
         if (this.stopped) return;
-        const next = this.list().reverse().find((t) => t.ownerScope === this.deps.ownerScope && !terminal.has(t.status));
+        // Keep insertion order when submissions share a millisecond; reverse() inverts those ties.
+        const next = this.list().sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          .find((t) => t.ownerScope === this.deps.ownerScope && !terminal.has(t.status));
         if (!next) return;
         const cooldownMs = this.dispatchNotBefore - Date.now();
         if (cooldownMs > 0) { this.probeAfter(cooldownMs); return; }
