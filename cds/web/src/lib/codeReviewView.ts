@@ -14,8 +14,12 @@ export function reviewCoverage(task: CodeReviewTask): { kind: 'external' | 'pend
   if (!Number.isFinite(total) || !Number.isFinite(scanned) || scanned > total || total <= 0 || scanned < 0) {
     return { kind: isReviewActive(task) ? 'pending' : 'unknown', text: isReviewActive(task) ? '等待统计分析范围' : '扫描覆盖尚未确认' };
   }
-  if (scanned === 0) return { kind: isReviewActive(task) ? 'pending' : 'unknown', text: `尚无有效分析结果 · 本次审查 ${total} 个文件` };
-  if (scanned < total) return { kind: 'partial', text: `${scanned} / ${total} 个文件已分析 · 部分覆盖` };
+  if (scanned === 0) return isReviewActive(task)
+    ? { kind: 'pending', text: `已接收 ${total} 个文件，等待分析进度` }
+    : { kind: 'unknown', text: `尚无有效分析结果 · 本次审查 ${total} 个文件` };
+  if (scanned < total) return isReviewActive(task)
+    ? { kind: 'pending', text: `${scanned} / ${total} 个文件已分析 · 审查进行中` }
+    : { kind: 'partial', text: `${scanned} / ${total} 个文件已分析 · 部分覆盖` };
   return { kind: 'counted', text: `本次审查 ${scanned} / ${total} 个文件已分析` };
 }
 

@@ -10,6 +10,16 @@ function task(input: Partial<CodeReviewTask> = {}): CodeReviewTask {
 }
 
 describe('代码审查结果的可理解性与真实性', () => {
+  it('进行中的整仓进度保持正常状态，结束后覆盖不足才提示警告', () => {
+    const active = task({ status: 'running', progress: { totalFiles: 6061, scannedFiles: 13 } });
+    expect(reviewCoverage(active)).toMatchObject({ kind: 'pending' });
+    expect(reviewCoverage(active).text).toContain('审查进行中');
+    const html = renderToStaticMarkup(createElement(ReviewDetail, { task: active, now: Date.now(), pending: false, onAction: () => undefined }));
+    expect(html).toContain('审查文件进度');
+    expect(html).not.toContain('bg-warn-soft');
+    expect(reviewCoverage({ ...active, status: 'completed' }).kind).toBe('partial');
+  });
+
   it('上传档案不算 AI 审查报告，也不展示零文件成功', () => {
     const uploaded = task({ sourceType: 'report', status: 'completed', reportId: 'report' });
     expect(reviewTaskLabel(uploaded).label).toBe('上传归档');
