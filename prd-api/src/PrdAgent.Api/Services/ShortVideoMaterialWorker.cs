@@ -279,7 +279,7 @@ public sealed class ShortVideoMaterialProcessor
         MarkStage(run, "source", "running", $"正在把视频文件保存到知识库「{store.Name}」");
         await SaveRunAsync(run);
 
-        var videoMaterial = await DownloadVideoMaterialAsync(parsed);
+        var videoMaterial = await DownloadVideoMaterialAsync(run, parsed);
         var sourceEntry = await CreateVideoEntryAsync(
             store,
             run.UserId,
@@ -419,27 +419,14 @@ public sealed class ShortVideoMaterialProcessor
             store.PrimaryEntryId = entryId;
     }
 
-    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed)
+    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ShortVideoMaterialRun run, ParsedShortVideoSource parsed)
     {
-        var videoUrl = RequireResolvedVideoUrl(parsed.VideoUrl);
-
-        var node = new WorkflowNode
-        {
-            NodeId = "short-video-download",
-            Name = "短视频下载",
-            NodeType = CapsuleTypes.VideoDownloader,
-            Config = new Dictionary<string, object?>
-            {
-                ["videoUrl"] = videoUrl,
-                ["timeoutSeconds"] = 180,
-            },
-        };
-        var result = await CapsuleExecutor.ExecuteVideoDownloaderAsync(
-            _serviceProvider,
-            node,
-            new Dictionary<string, string>(),
-            new List<ExecutionArtifact>());
-        return ExtractDownloadedVideo(result.Artifacts.FirstOrDefault()?.InlineContent);
+        var downloader = _serviceProvider.GetRequiredService<ShortVideoSourceDownloader>();
+        var downloaded = await downloader.DownloadAsync(run, RequireResolvedVideoUrl(parsed.VideoUrl), parsed.MetadataJson);
+        var assets = _serviceProvider.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
+        var stored = await assets.SaveAsync(downloaded.Bytes, downloaded.Mime, CancellationToken.None,
+            domain: "workflow-agent", type: "doc");
+        return new DownloadedVideoMaterial(stored.Url, stored.Mime, stored.SizeBytes, stored.Sha256);
     }
 
     private async Task<VideoTranscriptionAttempt> TryTranscribeVideoAsync(string videoUrl, string title)
@@ -497,31 +484,6 @@ public sealed class ShortVideoMaterialProcessor
         if (message.Contains("模型调度失败"))
             return "ASR 模型调度失败";
         return message.Length > 120 ? message[..120] : message;
-    }
-
-    private static DownloadedVideoMaterial ExtractDownloadedVideo(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            throw new InvalidOperationException("视频下载器未返回入库地址");
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            var url = GetJsonString(root, "cosUrl", "url");
-            if (string.IsNullOrWhiteSpace(url))
-                throw new InvalidOperationException("视频下载器未返回入库地址");
-            var sizeRaw = GetJsonString(root, "fileSize", "size");
-            long.TryParse(sizeRaw, out var fileSize);
-            return new DownloadedVideoMaterial(
-                url,
-                GetJsonString(root, "mimeType") ?? "video/mp4",
-                fileSize,
-                GetJsonString(root, "sha256"));
-        }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException($"视频下载器返回格式错误: {ex.Message}");
-        }
     }
 
     private static string BuildVideoFileName(string title)

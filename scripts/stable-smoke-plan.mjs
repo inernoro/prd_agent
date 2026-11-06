@@ -118,6 +118,14 @@ export function validateCatalog(catalog) {
     if (!feature.cdsPolicy || !feature.productionPolicy) errors.push(`${feature.id} 缺少双环境策略`);
     if (!feature.rollback) errors.push(`${feature.id} 缺少回滚策略`);
   }
+  const inactiveIds = new Set();
+  for (const item of catalog.inactiveCases || []) {
+    if (!/^(FILE|PARSE|VIDEO|LIT)-\d{3}$/.test(item.caseId || '') || inactiveIds.has(item.caseId)) errors.push('不适用用例编号缺失、非法或重复');
+    inactiveIds.add(item.caseId);
+    if (!item.label || !item.reason || !Array.isArray(item.sourcePaths) || item.sourcePaths.length === 0
+      || !Array.isArray(item.replacementCaseIds) || item.replacementCaseIds.length === 0) errors.push(`${item.caseId} 缺少不适用依据或替代检查`);
+    if (item.replacementCaseIds?.some((id) => (catalog.inactiveCases || []).some((other) => other.caseId === id))) errors.push(`${item.caseId} 的替代检查不能同样不适用`);
+  }
   return errors;
 }
 
@@ -196,6 +204,14 @@ export function buildPlan({
       ...functionalRegressions.filter((caseId) => !cdsOnlyRegressionSet.has(caseId)),
     ])].sort(),
   };
+  const originalRequiredCaseIdsByEnvironment = Object.fromEntries(Object.entries(requiredCaseIdsByEnvironment).map(([environment, ids]) => [environment, [...ids]]));
+  const inactiveCases = (catalog.inactiveCases || []).map((item) => ({ ...item,
+    environments: Object.entries(originalRequiredCaseIdsByEnvironment).filter(([, ids]) => ids.includes(item.caseId)).map(([environment]) => environment),
+  })).filter((item) => item.environments.length > 0);
+  const inactiveSet = new Set(inactiveCases.map((item) => item.caseId));
+  for (const environment of Object.keys(requiredCaseIdsByEnvironment)) {
+    requiredCaseIdsByEnvironment[environment] = requiredCaseIdsByEnvironment[environment].filter((id) => !inactiveSet.has(id));
+  }
   const requiredCaseIds = [...new Set([
     ...requiredCaseIdsByEnvironment.cds,
     ...requiredCaseIdsByEnvironment.production,
@@ -215,6 +231,8 @@ export function buildPlan({
     visualRegressions,
     requiredCaseIds,
     requiredCaseIdsByEnvironment,
+    originalRequiredCaseIdsByEnvironment,
+    inactiveCases,
     matrixPolicies: Object.fromEntries(normalizedMatrixCases.map((item) => [item.caseId, {
       cds: item.cdsPolicy,
       production: item.productionPolicy,
@@ -251,6 +269,11 @@ export function renderPlanMarkdown(plan) {
       ? '- 48 小时复测固定纳入全部功能线和全部 active 永久回归。'
       : '- 本次按代码路径映射受影响功能线，并追加全部 active 永久回归。',
     ...plan.featureLines.filter((feature) => feature.matchedFiles.length > 0).map((feature) => `- ${feature.label}：${feature.matchedFiles.join('、')}`),
+    '',
+    '## 原检查表适用性核对',
+    '',
+    '原编号和原断言保留；以下项目属于检查表与现有产品不符，不计入实测通过。',
+    ...(plan.inactiveCases || []).map((item) => `- ${item.caseId} ${item.label}：${item.reason} 替代检查：${item.replacementCaseIds.join('、')}。依据：${item.sourcePaths.join('、')}`),
     '',
     '## 未覆盖或阻断',
     '',

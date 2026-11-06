@@ -50,10 +50,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: stableSmokeTraceMode(Boolean(process.env.STABLE_SMOKE_RUN)),
     video: 'retain-on-failure',
-    // Network fixture tests use page.route() to replace API responses.
-    // Service workers can satisfy fetches before Playwright sees them,
-    // which makes visual fixture tests silently hit live data.
-    serviceWorkers: 'block',
+    // 真实业务沿用浏览器默认行为。Playwright 的 block 注入会在无同源权限的
+    // 托管预览 iframe 中读取 navigator.serviceWorker 并自行抛出 SecurityError。
+    // 网络夹具仍阻止 Service Worker，避免 page.route() 被已有缓存绕过。
+    serviceWorkers: process.env.STABLE_SMOKE_RUN ? 'allow' : 'block',
     // 10s action timeout matches "if a button click takes >10s you
     // already have a worse problem" heuristic.
     actionTimeout: 10_000,

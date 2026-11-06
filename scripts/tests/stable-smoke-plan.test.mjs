@@ -126,10 +126,12 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
     ...catalog.featureLines.flatMap((feature) => feature.regressionCaseIds),
   ])].filter((caseId) => !visualRegressionCaseIds.includes(caseId));
   const cdsOnlyRegressions = new Set(catalog.featureLines.flatMap((feature) => feature.cdsOnlyRegressionCaseIds || []));
-  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
+  const inactive = new Set(catalog.inactiveCases.map((item) => item.caseId));
+  assert.deepEqual(new Set(plan.originalRequiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
+  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions].filter((id) => !inactive.has(id))));
   assert.deepEqual(
     new Set(plan.requiredCaseIdsByEnvironment.production),
-    new Set([...selected.production, ...functionalRegressions.filter((caseId) => !cdsOnlyRegressions.has(caseId))]),
+    new Set([...selected.production, ...functionalRegressions.filter((caseId) => !cdsOnlyRegressions.has(caseId))].filter((id) => !inactive.has(id))),
   );
   assert.deepEqual(plan.visualRegressions, ['REG-visual-evidence-001']);
   assert.ok(!plan.requiredCaseIds.includes('REG-visual-evidence-001'));
@@ -259,4 +261,20 @@ test('PR 变更模式同样遵守双环境矩阵策略', () => {
   });
   assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REC-006'));
   assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('REC-006'));
+});
+
+
+test('检查表超出产品范围时保留原编号与逐项理由，不冒充实测通过', () => {
+  const plan = buildPlan({ catalog, changedFiles: [], activeRegressions: regressions, visualRegressionCaseIds, matrixCases, mode: 'scheduled', commit: 'scope-proof' });
+  assert.equal(plan.inactiveCases.length, 7);
+  for (const item of plan.inactiveCases) {
+    assert.ok(item.reason && item.sourcePaths.length && item.replacementCaseIds.length);
+    assert.ok(!plan.requiredCaseIds.includes(item.caseId));
+    assert.ok(item.environments.every((environment) => plan.originalRequiredCaseIdsByEnvironment[environment].includes(item.caseId)));
+    assert.ok(item.sourcePaths.every((path) => existsSync(resolve(repoRoot, path))));
+  }
+  assert.ok(plan.requiredCaseIds.includes('PARSE-011'));
+  const invalid = structuredClone(catalog);
+  delete invalid.inactiveCases[0].reason;
+  assert.ok(validateCatalog(invalid).some((error) => /缺少不适用依据/.test(error)));
 });

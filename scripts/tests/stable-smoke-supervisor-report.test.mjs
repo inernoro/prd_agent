@@ -105,3 +105,11 @@ test('单环境执行时主管模块表明确标记另一环境未选择', () =>
   assert.doesNotMatch(report, /未选择.*通过（0 通过，0 失败，0 未执行）/);
   assert.doesNotMatch(report, /\| 无 \| 双环境 \|/);
 });
+
+
+test('主管总览逐项保留原检查表不适用项及原因，不增加通过数', () => {
+  const result = renderSupervisorReport({ plan: { ...plan, inactiveCases: [{ caseId: 'LIT-003', label: '正文停止与续写', reason: '现有流程仅为文章配图，不提供正文续写。', environments: ['cds', 'production'] }] }, rows: [], runId: 'scope-check', selectedEnvironments: ['cds'], matrixMarkdown: matrix });
+  assert.match(result, /正文停止与续写.*不适用，未计通过/);
+  assert.match(result, /现有流程仅为文章配图/);
+  assert.doesNotMatch(result, /LIT-003/);
+});

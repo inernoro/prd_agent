@@ -71,24 +71,24 @@
     {
       "id": "short-video-parsing",
       "name": "短视频上传与链接解析",
-      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 解析短视频 → 抽取与转写 → 时间轴结果",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 解析短视频 → 抽取与转写 → 转写原文结果",
       "entryPath": "/document-store",
       "uniqueScreenshotFloor": 12,
       "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
-      "requiredStates": ["入口", "视频上传", "链接输入", "抽取进度", "转写进度", "时间轴结果", "失败恢复", "移动端"],
+      "requiredStates": ["入口", "视频上传", "链接输入", "抽取进度", "转写进度", "转写原文结果", "失败恢复", "移动端"],
       "methods": ["双输入路径", "异步进度", "结果完整性", "失败恢复"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面链接输入", "primaryState": "链接输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下输入、提交与校验信息完整"},
         {"label": "移动端视频上传", "primaryState": "视频上传", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端可选择并上传短视频"},
         {"label": "超长错误提示", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "错误长文案不溢出并给出恢复动作"},
-        {"label": "移动端时间轴", "primaryState": "时间轴结果", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏时间轴可滚动且内容不裁切"}
+        {"label": "移动端转写原文", "primaryState": "转写原文结果", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏真实转写可滚动且内容不裁切"}
       ]
     },
     {
       "id": "literary-creation",
       "name": "文学创作",
-      "breadcrumb": "首页 → 文学创作 → 新建作品 → 流式创作 → 保存结果",
+      "breadcrumb": "首页 → 文学创作 → 新建作品 → 上传文章 → 流式生成配图标记 → 保存结果",
       "entryPath": "/literary-agent",
       "uniqueScreenshotFloor": 14,
       "requiredThemes": ["dark"],
@@ -138,15 +138,15 @@
     {
       "id": "video-creation",
       "name": "视频创作",
-      "breadcrumb": "首页 → 视频创作 → 脚本 → 分镜与关键帧 → 成片",
+      "breadcrumb": "首页 → 视频创作 → 脚本 → 分镜与首帧参考 → 成片",
       "entryPath": "/video-agent",
       "uniqueScreenshotFloor": 16,
       "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
-      "requiredStates": ["入口", "新建", "脚本输入", "脚本生成", "分镜", "关键帧", "阶段进度", "动态反馈", "成片或受控终态", "失败恢复", "持久化", "移动端"],
+      "requiredStates": ["入口", "新建", "脚本输入", "脚本生成", "分镜", "首帧参考", "阶段进度", "动态反馈", "成片或受控终态", "失败恢复", "持久化", "移动端"],
       "methods": ["长任务状态机", "阶段结果", "失败恢复", "持久化", "移动端"],
       "additionalEvidenceSlots": [
-        {"label": "暗色桌面分镜", "primaryState": "分镜", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下分镜顺序与关键帧操作清晰"},
+        {"label": "暗色桌面分镜", "primaryState": "分镜", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下分镜顺序与首帧参考操作清晰"},
         {"label": "移动端阶段进度", "primaryState": "阶段进度", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏长任务阶段持续变化且无遮挡"},
         {"label": "超长脚本输入", "primaryState": "脚本输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长脚本滚动与生成动作保持可用"},
         {"label": "部分失败与继续处理", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "局部失败明确指出影响并允许继续或重试"}

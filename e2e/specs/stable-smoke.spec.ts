@@ -2947,12 +2947,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-004][REC-005] 路由离开后从保险箱恢复同一后台录音', { tag: '@cleanup' }, async ({ page, request }) => {
+  async function verifyRecordingRecovery(page: Page, request: APIRequestContext, interruptNetwork = false, cleanupProof: { storeRemoved?: boolean } = {}) {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/');
     let storeId = '';
     let sessionId = '';
     let entryId = '';
+    const vaultId = `rec-recovery-${Date.now()}`;
+    const completionRoute = '**/api/document-store/recording-uploads/*/complete';
     const storeName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-recording-recovery`;
     try {
       storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
@@ -2981,7 +2983,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(appended.ok()).toBe(true);
       }
 
-      const vaultId = `rec-recovery-${Date.now()}`;
       await page.evaluate(async ({ id, store, serverSession, audioBase64 }) => {
         await new Promise<void>((resolveSeed, rejectSeed) => {
           const open = indexedDB.open('map-recording-vault', 1);
@@ -3031,11 +3032,33 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await spotlightDismissPanel.click({ position: { x: 2, y: 2 } });
         await expect(page.locator('[aria-label="关闭高亮引导"]')).toHaveCount(0);
       }
+      if (interruptNetwork) {
+        let blocked = 0;
+        await page.route(completionRoute, async (route) => { blocked += 1; await route.abort('internetdisconnected'); });
+        await storeCardHeading.click();
+        await expect.poll(() => blocked).toBeGreaterThan(0);
+        const protectedAudio = await page.evaluate(async (id) => new Promise<{ serverSession?: string; bytes: number }>((resolveState, reject) => {
+          const open = indexedDB.open('map-recording-vault', 1);
+          open.onerror = () => reject(open.error);
+          open.onsuccess = () => {
+            const db = open.result, tx = db.transaction(['meta', 'chunks'], 'readonly');
+            const meta = tx.objectStore('meta').get(id), chunks = tx.objectStore('chunks').index('sessionId').getAll(id);
+            tx.oncomplete = () => { resolveState({ serverSession: meta.result?.serverUploadSessionId, bytes: chunks.result.reduce((sum: number, row: { blob: Blob }) => sum + row.blob.size, 0) }); db.close(); };
+            tx.onerror = () => reject(tx.error);
+          };
+        }), vaultId);
+        expect(protectedAudio.serverSession).toBe(sessionId);
+        expect(protectedAudio.bytes).toBe(speechFixture.length);
+        const server = await readEnvelope<{ status: string }>(await request.get(`/api/document-store/recording-uploads/${sessionId}`, { headers: authHeaders(token) }));
+        expect(server.status).toBe('uploading');
+        await page.unroute(completionRoute);
+      }
       const recoveredResponsePromise = page.waitForResponse((response) => (
         new URL(response.url()).pathname === `/api/document-store/recording-uploads/${sessionId}/complete`
         && response.request().method() === 'POST'
       ), { timeout: 60_000 });
-      await storeCardHeading.click();
+      if (interruptNetwork) await page.reload({ waitUntil: 'domcontentloaded' });
+      else await storeCardHeading.click();
       await expect(page).toHaveURL(new RegExp(`\\?store=${storeId}(?:&|$)`));
       const recoveredResponse = await recoveredResponsePromise;
       const recoveredBody = await recoveredResponse.json() as ApiEnvelope<{
@@ -3075,6 +3098,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(repeated.entry.id).toBe(entryId);
       expect(repeated.reused).toBe(true);
     } finally {
+      await page.unroute(completionRoute);
       if (sessionId) {
         await page.request.delete(`/api/document-store/recording-uploads/${sessionId}`, {
           headers: authHeaders(token),
@@ -3085,11 +3109,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           headers: authHeaders(token),
         });
         expect([200, 204]).toContain(deleted.status());
+        cleanupProof.storeRemoved = (await request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status() === 404;
         if (entryId) {
           expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
         }
       }
     }
+  }
+
+  test('[REC-004][REC-005] 路由离开后从保险箱恢复同一后台录音', { tag: '@cleanup' }, async ({ page, request }) => {
+    const proof: { storeRemoved?: boolean } = {};
+    try { await verifyRecordingRecovery(page, request, false, proof); }
+    finally { expect(proof.storeRemoved, '录音恢复后专用知识库必须删除并回读为不存在').toBe(true); }
+  });
+
+  test('[REC-009] 网络中断保留本地音频和同一服务端会话，恢复网络后幂等归档', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '故障注入仅在 CDS 执行，正式环境只记录自然失败');
+    const proof: { storeRemoved?: boolean } = {};
+    try { await verifyRecordingRecovery(page, request, true, proof); }
+    finally { expect(proof.storeRemoved, '断网恢复后专用知识库必须删除并回读为不存在').toBe(true); }
   });
 
   test('[REC-010] 录音分片重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }) => {
@@ -5229,7 +5267,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[PARSE-002][PARSE-005][PARSE-007][PARSE-008] 官方固定公开视频真实解析、转写、刷新回读和完整清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[PARSE-002][PARSE-005][PARSE-010][PARSE-008] 官方固定公开视频真实解析、转写、刷新回读和完整清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(900_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const prefix = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video`;
@@ -5257,7 +5295,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(final!.sourceVideoUrl).toMatch(/^https:/);
       entryIds.push(final!.sourceEntryId!, final!.transcriptEntryId!);
       const media = await request.get(final!.sourceVideoUrl!);
-      expect(media.ok()).toBe(true);expect(media.headers()['content-type']).toMatch(/^video\//);expect((await media.body()).length).toBeGreaterThan(1000);
+      expect(media.ok()).toBe(true);expect(media.headers()['content-type']).toMatch(/^video\//);const downloadedVideo = await media.body();expect(downloadedVideo.length).toBeGreaterThan(1000);const sourceContainer = inspectMp4(downloadedVideo);expect(sourceContainer.videoTracks).toBeGreaterThan(0);expect(sourceContainer.audioTracks).toBeGreaterThan(0);expect(sourceContainer.durationSeconds).toBeGreaterThan(0);
       const transcript = await readEnvelope<{ content?: string; hasContent: boolean }>(await request.get(`/api/document-store/entries/${final!.transcriptEntryId}/content`, { headers: authHeaders(token) }));
       expect(transcript.hasContent).toBe(true);expect(transcript.content!.length).toBeGreaterThan(30);
       expect(transcript.content).not.toMatch(/待补充文稿|补充字幕.*后重新/);
@@ -5343,6 +5381,179 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect((await request.get(`/api/video-agent/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
         if (projectId) expect((await request.get(`/api/video-agent/projects/${projectId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
+    }
+  });
+
+  test('[LIT-006] 文学配图真实生成、归属审计、正文位置及刷新保持一致', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(360_000);
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    let workspaceId = '', runId = '';
+    const article = '清晨，蓝色长椅在公园的树下。\n\n午后，读者坐在长椅上翻开一本书。';
+    type Detail = { workspace: { articleContent: string; articleContentWithMarkers: string; articleWorkflow: { markers: Array<{ index: number; text: string; url?: string; assetId?: string }>; assetIdByMarkerIndex: Record<string, string> } }; assets: Array<{ id: string; url?: string; articleInsertionIndex?: number }> };
+    try {
+      workspaceId = (await readEnvelope<{ workspace: { id: string } }>(await request.post('/api/literary-agent/workspaces', {
+        headers: authHeaders(token), data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学实际配图`, scenarioType: 'article-illustration', articleContent: article },
+      }))).workspace.id;
+      await readEnvelope(await request.put(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token), data: { articleContent: article, suppressAutoSubmit: true } }));
+      const chat = (await readEnvelope<BusinessModelPool[]>(await request.get('/api/literary-agent/config/models/chat', { headers: authHeaders(token) }))).find(x => x.isDefault)!;
+      const stream = await request.post(`/api/visual-agent/image-master/workspaces/${workspaceId}/article/generate-markers`, {
+        headers: { ...authHeaders(token), Accept: 'text/event-stream', 'Idempotency-Key': `${workspaceId}-markers` },
+        data: { articleContent: article, modelId: chat.code, userInstruction: '只生成一个配图标记，保持原文不变', insertionMode: 'anchor' }, timeout: 120_000,
+      });
+      expect(stream.ok()).toBe(true);const text = await stream.text();expect(text).toContain('"type":"done"');expect(text).not.toContain('"type":"error"');
+      const before = await readEnvelope<Detail>(await request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      const marker = before.workspace.articleWorkflow.markers[0];expect(marker).toBeTruthy();
+      const model = (await readEnvelope<BusinessModelPool[]>(await request.get('/api/literary-agent/config/models/text2img', { headers: authHeaders(token) }))).find(x => x.isDefault)!;
+      const capability = await readEnvelope<{ sizesByResolution: Record<string, Array<{ size: string }>> }>(await request.get('/api/literary-agent/image-gen/adapter-info?modelId=' + encodeURIComponent(model.code), { headers: authHeaders(token) }));
+      const sizes = Object.values(capability.sizesByResolution).flat();expect(sizes.length).toBeGreaterThan(0);
+      const size = sizes.find(x => x.size === '1024x1024')?.size || sizes[0].size;
+      runId = (await readEnvelope<{ runId: string }>(await request.post('/api/literary-agent/image-gen/runs', {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${workspaceId}-image` },
+        data: { workspaceId, appKey: 'literary-agent', articleMarkerIndex: marker.index, platformId: 'logical-model', modelId: model.code, size, responseFormat: 'url', maxConcurrency: 1, items: [{ prompt: '清晨公园里一张蓝色长椅，柔和自然光，不要人物和文字', count: 1, size }] },
+      }))).runId;
+      const states = new Set<string>();
+      await expect.poll(async () => {
+        const run = await readEnvelope<{ status: string; appKey: string; errorCode?: string }>(await request.get(`/api/literary-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) }));
+        expect(run.appKey).toBe('literary-agent');states.add(run.status);if (/Failed|Cancelled/.test(run.status)) throw Error(run.errorCode || '文学配图未完成');return run.status;
+      }, { timeout: 240_000, intervals: [500, 1000, 2000] }).toBe('Completed');
+      const after = await readEnvelope<Detail>(await request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      expect(after.workspace.articleContent).toBe(article);const updated = after.workspace.articleWorkflow.markers.find(x => x.index === marker.index)!;
+      expect(updated.url).toMatch(/^https:/);expect(updated.assetId).toBeTruthy();expect(after.workspace.articleWorkflow.assetIdByMarkerIndex[String(marker.index)]).toBe(updated.assetId);
+      expect(after.assets.some(x => x.id === updated.assetId && x.articleInsertionIndex === marker.index)).toBe(true);
+      const image = await request.get(updated.url!);expect(image.ok()).toBe(true);expect(image.headers()['content-type']).toMatch(/^image\//);expect((await image.body()).length).toBeGreaterThan(1000);
+      const log = await waitForGatewayLog(request, `${runId}-0-0`);expect(log.appCallerCode).toBe('literary-agent.illustration.text2img::generation');
+      await page.goto(`/literary-agent/${workspaceId}`, { waitUntil: 'domcontentloaded' });
+      const content = page.locator('[data-tour-id="literary-editor-content"]');await expect(content).toContainText('蓝色长椅');
+      await expect.poll(() => content.locator('img').evaluateAll((images, url) => images.some(image => (image as HTMLImageElement).src.startsWith(url) && (image as HTMLImageElement).naturalWidth > 0), updated.url!), { timeout: 30_000 }).toBe(true);
+      await page.reload({ waitUntil: 'domcontentloaded' });await expect(content).toContainText('读者');
+      await expect.poll(() => content.locator('img').evaluateAll((images, url) => images.some(image => (image as HTMLImageElement).src.startsWith(url) && (image as HTMLImageElement).naturalWidth > 0), updated.url!), { timeout: 30_000 }).toBe(true);
+      await testInfo.attach('literary-image-identity', { body: JSON.stringify({ workspaceId, runId, markerIndex: marker.index, assetId: updated.assetId, appCallerCode: log.appCallerCode, states: [...states] }), contentType: 'application/json' });
+    } finally {
+      if (runId) {
+        const state = await readEnvelope<{ status: string }>(await request.get(`/api/literary-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) }));
+        if (!/Completed|Cancelled|Failed/.test(state.status)) {
+          await request.post(`/api/literary-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+          await expect.poll(async () => (await readEnvelope<{ status: string }>(await request.get(`/api/literary-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) }))).status, { timeout: 120_000 }).toMatch(/Completed|Cancelled|Failed/);
+        }
+      }
+      if (workspaceId) {
+        await expectDeleteSucceeded(await request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) }), '文学配图工作区清理失败');
+        expect((await request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('[PARSE-011][PARSE-008] 上传最短合成视频、真实提取音轨转写并清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(300_000);
+    const token = await loginAndReadToken(page, request, '/document-store');
+    // 在远端由既有合成语音配纯蓝色画面生成；3.52 秒、无用户内容，不依赖不稳定的外部分享地址。
+    const video = Buffer.from(readFileSync(resolve(specDir, '../fixtures/stable-smoke-short-video.mp4.b64'), 'utf8').trim(), 'base64');
+    const sourceMedia = inspectMp4(video);expect(sourceMedia.videoTracks).toBe(1);expect(sourceMedia.audioTracks).toBe(1);expect(sourceMedia.durationSeconds).toBeGreaterThan(3);
+    let storeId = '', entryId = '', runId = '';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await request.post('/api/document-store/stores', {
+        headers: authHeaders(token), data: { name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-video-upload`, isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${storeId}`, { waitUntil: 'domcontentloaded' });
+      const upload = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === `/api/document-store/stores/${storeId}/upload`);
+      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({ name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video.mp4`, mimeType: 'video/mp4', buffer: video });
+      const uploaded = await readEnvelope<{ entry: { id: string; contentType: string } }>(await upload);entryId = uploaded.entry.id;expect(uploaded.entry.contentType).toBe('video/mp4');
+      await expect(page.locator('video')).toBeVisible({ timeout: 30_000 });
+      await expect.poll(() => page.locator('video').evaluate(element => (element as HTMLVideoElement).readyState), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+      const duration = await page.locator('video').evaluate(element => (element as HTMLVideoElement).duration);expect(Math.abs(duration - sourceMedia.durationSeconds)).toBeLessThan(0.3);
+      runId = (await readEnvelope<{ runId: string }>(await request.post(`/api/document-store/entries/${entryId}/transcribe`, { headers: authHeaders(token), data: {} }))).runId;
+      const stages = new Set<string>();let transcript = '';
+      await expect.poll(async () => {
+        const run = await readEnvelope<{ status: string; phase: string; errorMessage?: string; transcriptText?: string; sourceEntryId: string; outputEntryId?: string }>(await request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) }));
+        expect(run.sourceEntryId).toBe(entryId);stages.add(run.status + ':' + run.phase);if (run.status === 'failed') throw Error(run.errorMessage || '合成视频转写失败');transcript = run.transcriptText || '';if (run.status === 'done') expect(run.outputEntryId).toBe(entryId);return run.status;
+      }, { timeout: 180_000, intervals: [500, 1000] }).toBe('done');
+      expect(stages.size).toBeGreaterThan(1);expect(transcript.trim().length).toBeGreaterThan(10);
+      const content = await readEnvelope<{ content: string; fileUrl: string }>(await request.get(`/api/document-store/entries/${entryId}/content`, { headers: authHeaders(token) }));expect(content.content).toContain(transcript);
+      const original = await request.get(content.fileUrl);expect(original.ok()).toBe(true);expect(original.headers()['content-type']).toMatch(/^video\//);expect(inspectMp4(await original.body()).durationSeconds).toBe(sourceMedia.durationSeconds);
+      await page.reload({ waitUntil: 'domcontentloaded' });const persisted = await readEnvelope<{ transcriptText: string }>(await request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) }));expect(persisted.transcriptText).toBe(transcript);
+      await testInfo.attach('video-upload-media-and-asr', { body: JSON.stringify({ entryId, runId, sourceMedia, stages: [...stages], transcriptCharacters: transcript.length }), contentType: 'application/json' });
+    } finally {
+      if (runId) await expect.poll(async () => (await readEnvelope<{ status: string }>(await request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) }))).status, { timeout: 180_000 }).toMatch(/done|failed/);
+      if (storeId) {
+        await readEnvelope(await request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) }));expect((await request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        if (entryId) expect((await request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        if (runId) expect((await request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+
+  test('[LIT-007] 已选模型线路不可用时页面保留文章并给出恢复提示，配置可精确恢复', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '线路故障注入仅在 CDS 执行');
+    test.setTimeout(180_000);
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const article = '清晨，蓝色长椅在公园树下。原文不得在模型不可用时丢失。';
+    const gateway = await loginGateway(request);
+    const pools = await readEnvelope<BusinessModelPool[]>(await request.get('/api/literary-agent/config/models/chat', { headers: authHeaders(token) }));
+    const chosen = pools.find(pool => pool.isDefault)!;
+    const logicals = await readEnvelope<{ items: GatewayLogicalModel[] }>(await request.get(`${gateway.baseUrl}/gw/logical-models`, { headers: gateway.headers }));
+    const logical = logicals.items.find(model => model.publicId === chosen.code)!;
+    expect(logical).toBeTruthy();
+    const offerings = logical.offerings.filter(offering => offering.enabled);
+    expect(offerings.length).toBeGreaterThan(0);
+    let workspaceId = '';
+    try {
+      workspaceId = (await readEnvelope<{ workspace: { id: string } }>(await request.post('/api/literary-agent/workspaces', { headers: authHeaders(token), data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-模型不可用`, scenarioType: 'article-illustration', articleContent: article } }))).workspace.id;
+      await readEnvelope(await request.put(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token), data: { articleContent: article, suppressAutoSubmit: true } }));
+      await page.goto(`/literary-agent/${workspaceId}`, { waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      const generate = page.getByRole('button', { name: '生成配图标记', exact: true });
+      await expect(generate).toBeEnabled();
+      for (const offering of offerings) await readEnvelope(await request.put(`${gateway.baseUrl}/gw/logical-models/${logical.id}/offerings/${offering.id}/enabled`, { headers: gateway.headers, data: { enabled: false } }));
+      const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/article/generate-markers'));
+      await generate.click();
+      const stream = await response;
+      const text = await stream.text();
+      expect(text).toContain('"type":"error"');
+      await expect(page.getByText('生成失败', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: '生成配图标记', exact: true })).toBeEnabled();
+      const toast = page.locator('div.pointer-events-auto').filter({ has: page.getByText('生成失败', { exact: true }) });
+      await expect(toast).toContainText(/请|重试|稍后|选择|配置/);
+      const errors = [await toast.innerText()];
+      await testInfo.attach('literary-unavailable-visible-state', { body: await page.screenshot(), contentType: 'image/png' });
+      expect(errors.join(' ')).not.toMatch(/Bearer|api[_-]?key|stack trace|https?:\/\/|status code/i);
+      const detail = await readEnvelope<{ workspace: { articleContent: string } }>(await request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      expect(detail.workspace.articleContent).toBe(article);
+    } finally {
+      for (const offering of offerings) await readEnvelope(await request.put(`${gateway.baseUrl}/gw/logical-models/${logical.id}/offerings/${offering.id}/enabled`, { headers: gateway.headers, data: { enabled: true } }));
+      const restored = await readEnvelope<{ items: GatewayLogicalModel[] }>(await request.get(`${gateway.baseUrl}/gw/logical-models`, { headers: gateway.headers }));
+      expect(restored.items.find(model => model.id === logical.id)!.offerings.filter(offering => offerings.some(original => original.id === offering.id)).every(offering => offering.enabled)).toBe(true);
+      if (workspaceId) { await expectDeleteSucceeded(await request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) }), '文学负向检查清理失败');expect((await request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) })).status()).toBe(404); }
+    }
+  });
+
+  test('[PARSE-004] 已失效的公开视频链接真实解析失败后可读、可重新输入且无底层下载详情', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(240_000);
+    const token = await loginAndReadToken(page, request, '/document-store');
+    let storeId = '', runId = '';
+    try {
+      const name = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-失效短视频`;
+      storeId = (await readEnvelope<{ id: string }>(await request.post('/api/document-store/stores', { headers: authHeaders(token), data: { name, isPublic: false } }))).id;
+      await page.reload({ waitUntil: 'domcontentloaded' });await dismissCdsPreviewWidget(page);
+      await page.getByRole('button', { name: '新增内容；双击开始录音', exact: true }).click();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).click();
+      await page.getByRole('button', { name: '解析短视频', exact: true }).click();
+      await page.getByRole('button', { name: name + ' 0 篇', exact: true }).click();
+      const input = page.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接');
+      await input.fill('https://www.douyin.com/video/1');
+      const create = page.waitForResponse(r => new URL(r.url()).pathname === '/api/short-video-materials/runs' && r.request().method() === 'POST');
+      await page.getByRole('button', { name: '解析', exact: true }).click();
+      runId = (await readEnvelope<{ run: { id: string } }>(await create)).run.id;
+      await expect.poll(async () => (await readEnvelope<{ status: string }>(await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }))).status, { timeout: 150_000, intervals: [1000, 2000] }).toBe('failed');
+      await expect(page.getByText(/解析失败：/).filter({ visible: true }).last()).toBeVisible();
+      await expect(input).toBeEnabled();
+      const visible = await page.locator('body').innerText();
+      expect(visible).not.toMatch(/HTTP \d{3}|stack trace|TikHub|Traceback|api[_-]?key|ffmpeg|403 Forbidden/i);
+      expect(visible).toMatch(/重新|公开|链接|重试/);
+      await testInfo.attach('expired-short-video-user-recovery', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally {
+      if (runId) { await expectDeleteSucceeded(await request.delete(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) }), '失效短视频运行清理失败');expect((await request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404); }
+      if (storeId) { await readEnvelope(await request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) }));expect((await request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404); }
     }
   });
 

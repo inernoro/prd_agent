@@ -1,3 +1,4 @@
+import { literaryGenerationError } from './literaryGenerationError';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -1698,7 +1699,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     } catch (error) {
       console.error('Generate markers error:', error);
-      toast.error('生成失败', error instanceof Error ? error.message : '未知错误');
+      toast.error('生成失败', literaryGenerationError(error));
       setMarkers([]);
       setPhase(1); // Editing
     } finally {
@@ -4130,7 +4131,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             zIndex: 2,
                           }}
                         >
-                          {it.errorMessage}
+                          {literaryGenerationError(it.errorMessage)}
                         </div>
                       ) : null}
 

@@ -549,6 +549,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionRelay>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoSourceDownloader>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentRecordingArchiveWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
