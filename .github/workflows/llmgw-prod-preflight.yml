@@ -86,8 +86,11 @@ jobs:
           python3 -m pip install --disable-pip-version-check --timeout 30 --retries 2 playwright==1.56.0
           python3 - <<'PY'
           import importlib.util
+          import hashlib
           import subprocess
           import sys
+          import urllib.request
+          from pathlib import Path
           spec = importlib.util.spec_from_file_location("speech_browser_setup", "scripts/mcp-speech-production-smoke.py")
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
@@ -95,6 +98,17 @@ jobs:
               print("Using the runner's preinstalled Chromium-compatible browser.")
           else:
               subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"], check=True, timeout=120)
+          # Pin a CJK font because the hosted Chrome image has no Chinese glyphs.
+          font_url = "https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+          with urllib.request.urlopen(font_url, timeout=45) as response:
+              font_bytes = response.read(20 * 1024 * 1024 + 1)
+          if hashlib.sha256(font_bytes).hexdigest() != "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b":
+              raise SystemExit("Pinned CJK font integrity check failed.")
+          font_directory = Path.home() / ".local/share/fonts"
+          font_directory.mkdir(parents=True, exist_ok=True)
+          (font_directory / "NotoSansCJKsc-Regular.otf").write_bytes(font_bytes)
+          subprocess.run(["fc-cache", "-f", str(font_directory)], check=True, timeout=30)
+          print("Pinned CJK font installed for readable Chinese evidence.")
           PY
 
       - name: Run production preflight
