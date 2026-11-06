@@ -85,6 +85,40 @@ def test_selection_overrides_inherited_keys_and_keeps_old_host_reversible(worksp
     assert 'never-log' not in evidence[0].read_text()
 
 
+@pytest.mark.parametrize('explicit', [False, True])
+def test_strict_inspection_uses_selected_store_not_legacy_pointer(workspace, monkeypatch, explicit):
+    root, _ = workspace
+    save('https://standby.example', 'b', 'cdsp_standby_private')
+    save('https://primary.example', 'a', 'cdsp_primary_private')
+    legacy = (root / '.cds/credentials.json').read_bytes()
+    monkeypatch.setattr(cli, '_request', ready)
+    if explicit:
+        argv = ('--instance', 'standby', 'auth', 'inspect', '--strict')
+    else:
+        assert run('instance', 'use', 'standby')[0] == 0
+        argv = ('auth', 'inspect', '--strict')
+    status, output = run(*argv)
+    assert status == 0, output
+    summary = json.loads(output)['data']
+    assert summary['host'] == 'https://standby.example' and summary['projectId'] == 'b'
+    assert summary['workspaceCredentials']['host'] == 'https://standby.example'
+    assert summary['conflicts'] == []
+    assert (root / '.cds/credentials.json').read_bytes() == legacy
+    assert 'cdsp_primary_private' not in output and 'cdsp_standby_private' not in output
+
+
+def test_selected_bootstrap_inspection_cannot_reload_primary_project_key(workspace):
+    root, _ = workspace
+    cli._save_local_credentials(host='https://standby.example', bootstrap_key='cdsg_standby_private')
+    save('https://primary.example', 'a', 'cdsp_primary_private')
+    cli._write_instance_private('active-instance.json', {'id': 'standby'})
+    status, output = run('auth', 'inspect', '--strict')
+    assert status == 0, output
+    assert cli._auth_headers()['X-AI-Access-Key'] == 'cdsg_standby_private'
+    assert not os.environ.get('CDS_PROJECT_KEY') and not os.environ.get('CDS_PROJECT_ID')
+    assert json.loads(output)['data']['workspaceCredentials']['host'] == 'https://standby.example'
+
+
 @pytest.mark.parametrize('response', [
     (401, {'error': 'unauthorized'}, {}),
     (0, {'error': 'timeout'}, {}),
@@ -137,7 +171,14 @@ def test_real_http_target_receives_only_its_key_after_selection_and_process_rest
         def do_GET(self):
             calls.append((self.command, self.path, self.headers.get('X-CDS-Project-Key'), self.headers.get('X-AI-Access-Key')))
             self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
-            body = {'cpu': {'cores': 4, 'loadAvg1': 1, 'loadPercent': 25}} if self.path == '/api/host-stats' else {'id': 'b', 'githubRepoFullName': 'acme/app'}
+            if self.path == '/api/host-stats':
+                body = {'cpu': {'cores': 4, 'loadAvg1': 1, 'loadPercent': 25}}
+            elif self.path == '/api/agent/setup.json':
+                body = {'version': 'cds-agent-setup.v1', 'cliVersion': cli.VERSION, 'minCliVersion': '0.17.5'}
+            elif self.path == '/api/credentials/self-check':
+                body = {'status': 'active', 'kind': 'project', 'projectId': 'b'}
+            else:
+                body = {'id': 'b', 'githubRepoFullName': 'acme/app'}
             self.wfile.write(json.dumps(body).encode())
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers['content-length'])))
@@ -155,13 +196,16 @@ def test_real_http_target_receives_only_its_key_after_selection_and_process_rest
     save('https://primary.example', 'a', 'primary-secret')
     env = {k: v for k, v in os.environ.items() if k not in cli._EXPLICIT_CREDENTIAL_ENV}
     try:
-        for argv in [('instance', 'use', 'standby'), ('branch', 'create', '--branch', 'feature')]:
+        for argv in [('instance', 'use', 'standby'), ('auth', 'inspect', '--strict'),
+                     ('setup-check', '--host', host, '--project', 'b', '--skills', 'cds'),
+                     ('branch', 'create', '--branch', 'feature')]:
             completed = subprocess.run([os.sys.executable, str(Path(cli.__file__).resolve()), *argv], cwd=root, env=env, capture_output=True, text=True)
             assert completed.returncode == 0, completed.stdout + completed.stderr
             assert 'standby-secret' not in completed.stdout
         assert calls[0][0:2] == ('GET', '/api/projects/b')
-        assert calls[1][0:2] == ('GET', '/api/host-stats')
-        assert calls[2][0:3] == ('POST', '/api/branches', {'projectId': 'b', 'branch': 'feature'})
+        assert [call[1] for call in calls[1:4]] == ['/api/agent/setup.json', '/api/credentials/self-check', '/api/projects/b']
+        assert calls[4][0:2] == ('GET', '/api/host-stats')
+        assert calls[5][0:3] == ('POST', '/api/branches', {'projectId': 'b', 'branch': 'feature'})
         assert 'primary-secret' not in repr(calls)
         assert 'standby-secret' in repr(calls)
     finally:

@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.20.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -696,9 +696,11 @@ def cmd_auth_check(args: argparse.Namespace) -> None:
     die(f"认证失败: {status} {body}", code=2)
 
 
-def _credential_summary() -> dict[str, Any]:
+def _credential_summary(selection: str | None = None) -> dict[str, Any]:
     """共享的脱敏凭据来源判据；接入自检与 auth inspect 必须一致。"""
-    local = _load_local_credentials()
+    selected = selection or _read_instance_private("active-instance.json", {}).get("id")
+    # main 已应用目标实例；不得再次从旧指针注入另一站的项目密钥。
+    local = (_instance_credentials(_instance_entry(selected)) or {}) if selected else _load_local_credentials()
     local_host = str(local.get("host") or "").strip()
     local_project = str(local.get("projectId") or "").strip()
     explicit_host = _EXPLICIT_CREDENTIAL_ENV["CDS_HOST"]
@@ -753,7 +755,7 @@ def _credential_summary() -> dict[str, Any]:
         and not secrets.compare_digest(explicit_access_key, local_effective_key)
     ):
         conflicts.append("accessKeySource")
-    source = "explicit-env" if any(_EXPLICIT_CREDENTIAL_ENV.values()) else "workspace" if local else "none"
+    source = "workspace" if selected else "explicit-env" if any(_EXPLICIT_CREDENTIAL_ENV.values()) else "workspace" if local else "none"
     summary = {
         "source": source,
         "host": effective_host or None,
@@ -773,7 +775,7 @@ def _credential_summary() -> dict[str, Any]:
 
 def cmd_auth_inspect(args: argparse.Namespace) -> None:
     """只输出凭据来源、目标和作用域摘要，永不输出密钥。"""
-    summary = _credential_summary()
+    summary = _credential_summary(getattr(args, "instance", None))
     conflicts = summary["conflicts"]
     if conflicts and getattr(args, "strict", False):
         die(
@@ -816,7 +818,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             fail("host", "unexpected_redirect", "目标接口发生重定向，已停止继续发送凭据；先核对 CDS 主机与代理配置，不重新授权。")
         return response
 
-    summary = _credential_summary()
+    summary = _credential_summary(getattr(args, "instance", None))
     if summary["conflicts"]:
         fail("credentials", "credential_conflict", "先解决环境与仓库的凭据来源冲突，不要重新授权。")
     if not _auth_headers().get("X-AI-Access-Key"):
@@ -4087,6 +4089,20 @@ def _wait_for_original_project_access(project_id: str, proof: str, deadline: flo
             "GET", f"/api/projects/{urllib.parse.quote(project_id)}/access-status",
             timeout=10, extra_headers={"x-ai-access-key": proof}, fatal_network_errors=False,
         )
+        if status in (401, 403, 404, 405):
+            # 旧控制面的认证门也可能先于不存在的路由返回 401/403。
+            # 用已经提供的公开凭据自检核对原凭据，不把拒绝直接降级为匿名。
+            identity_status, identity, _ = _request(
+                "GET", "/api/credentials/self-check", timeout=10,
+                extra_headers={"x-ai-access-key": proof}, fatal_network_errors=False,
+            )
+            if identity_status == 200 and isinstance(identity, dict):
+                if identity.get("status") == "active":
+                    return False
+                if (proof.startswith("cdsp_") and identity.get("kind") == "project"
+                        and identity.get("status") in ("expired", "revoked")):
+                    return False  # 仅继续原项目的人工审批，仍携带原凭据。
+            die("原凭据自检未通过，未创建匿名申请、未覆盖凭据；请由管理员核对原身份。", code=2)
         if status != 200 or not isinstance(body, dict):
             die(f"原访问身份暂时无法核对（HTTP {status}），未创建匿名申请、未覆盖凭据。", code=2)
         state = body.get("state")
@@ -4341,7 +4357,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
 
     saved_user_cred = _load_user_credential(host)
     recovery_deadline = time.monotonic() + timeout_seconds
-    if not new_project and (_pending_identity_request(host, git_url) or (not saved_user_cred and not local.get("projectKey") and git_url and not context)):
+    if not new_project and _pending_identity_request(host, git_url):
         _restore_auth_env(previous)
         _connect_original_identity(args, host, git_url, project_id)
         return
@@ -4423,7 +4439,6 @@ def cmd_connect(args: argparse.Namespace) -> None:
         request_path,
         body={
             "agentName": agent_name, "purpose": purpose,
-            **({"waitSeconds": max(10, int(recovery_deadline - time.monotonic()))} if new_project else {}),
             **({"requestedProject": {
                 "name": create_name or _repository_identity(git_url).rsplit("/", 1)[-1],
                 "repository": str(getattr(args, "git_url", "") or "").strip(),
@@ -4499,13 +4514,8 @@ def cmd_connect(args: argparse.Namespace) -> None:
                 last_progress_at = now
             time.sleep(interval_seconds)
     finally:
-        # 仅收回本次未领取的一次建项目授权。网络不通也有服务端截止时间兜底。
         if new_project and not authorization_key:
-            try:
-                _request("DELETE", poll_path, timeout=10,
-                         extra_headers={"X-Poll-Token": poll_token}, fatal_network_errors=False)
-            except Exception:
-                pass
+            print("本地等待已结束，原建项目申请仍可能待审批；请在 CDS 核对并拒绝不再需要的申请，不要重复提交。", file=sys.stderr)
             _restore_auth_env(previous)
 
     if not authorization_key:

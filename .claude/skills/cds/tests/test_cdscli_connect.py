@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,73 @@ def test_connect_existing_project_saves_local_credential_without_printing_secret
         ("GET", "/api/projects/proj-a/access-requests/req1", 10),
         ("GET", "/api/projects/proj-a", 10),
     ]
+
+
+def test_fresh_clone_with_origin_uses_supported_project_approval(workspace, monkeypatch):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/acme/app.git"], check=True)
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda _host: "")
+    calls = []
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        if path == "/api/projects/proj-a/access-requests":
+            return 201, {"requestId": "fresh", "pollToken": "private-poll"}, {}
+        if path == "/api/projects/proj-a/access-requests/fresh":
+            return 200, {"status": "approved", "authorizationKey": "cdsp_fresh_private"}, {}
+        if path == "/api/projects/proj-a":
+            return 200, {"id": "proj-a"}, {}
+        return 401, {"error": "unsupported_anonymous_route"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    code, output = run_command(["connect", "--host", "https://cds.example", "--project", "proj-a"])
+    assert code == 0, output
+    assert calls == [("POST", "/api/projects/proj-a/access-requests"),
+                     ("GET", "/api/projects/proj-a/access-requests/fresh"), ("GET", "/api/projects/proj-a")]
+    assert json.loads((workspace / ".cds/credentials.json").read_text())["projectId"] == "proj-a"
+    assert "cdsp_fresh_private" not in output
+
+
+@pytest.mark.parametrize("missing_status", [401, 403, 404, 405])
+def test_missing_access_status_keeps_supported_approval_and_original_proof(workspace, monkeypatch, missing_status):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="proj-a", project_key="cdsp_original_private")
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda _host: "")
+    calls = []
+    def request(method, path, **kwargs):
+        calls.append((method, path, kwargs.get("extra_headers")))
+        if path.endswith("/access-status"):
+            return missing_status, {"error": "not_found"}, {}
+        if path == "/api/credentials/self-check":
+            assert kwargs["extra_headers"] == {"x-ai-access-key": "cdsp_original_private"}
+            return 200, {"kind": "project", "status": "expired"}, {}
+        if path.endswith("/access-requests"):
+            assert kwargs["extra_headers"] == {"x-ai-access-key": "cdsp_original_private"}
+            return 201, {"requestId": "restore", "pollToken": "private-poll"}, {}
+        if path.endswith("/access-requests/restore"):
+            return 200, {"status": "approved", "authorizationKey": "cdsp_new_private"}, {}
+        return (200, {"id": "proj-a"}, {}) if len(calls) > 2 else (401, {}, {})
+    monkeypatch.setattr(cdscli, "_request", request)
+    code, output = run_command(["connect", "--host", "https://cds.example", "--project", "proj-a"])
+    assert code == 0, output
+    assert json.loads((workspace / ".cds/credentials.json").read_text())["projectKey"] == "cdsp_new_private"
+    assert all("identity-connections" not in path and path != "/api/projects" for _, path, _ in calls)
+    assert "cdsp_original_private" not in output and "cdsp_new_private" not in output
+
+
+@pytest.mark.parametrize("identity_status", ["principal-disabled", "grant-revoked", "not-checkable"])
+def test_supported_identity_check_rejection_cannot_create_anonymous_approval(workspace, monkeypatch, identity_status):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="proj-a", project_key="cdsp_private")
+    before = (workspace / ".cds/credentials.json").read_bytes()
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda _host: "")
+    calls = []
+    def request(method, path, **kwargs):
+        assert method == "GET"
+        calls.append(path)
+        if path == "/api/credentials/self-check":
+            return 200, {"kind": "project", "status": identity_status}, {}
+        return 401, {}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    code, output = run_command(["connect", "--host", "https://cds.example", "--project", "proj-a"])
+    assert code == 2 and "cdsp_private" not in output
+    assert calls == ["/api/projects/proj-a", "/api/projects/proj-a/access-status", "/api/credentials/self-check"]
+    assert (workspace / ".cds/credentials.json").read_bytes() == before
 
 
 def test_connect_slug_saves_resolved_project_id(workspace, monkeypatch):
@@ -228,7 +296,8 @@ def test_unusable_saved_identity_never_downgrades_to_anonymous(workspace, monkey
     monkeypatch.setattr(cdscli, "_request", fake_request)
     code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
     assert code == 2
-    assert calls == [("GET", "/api/projects/p/access-status")]
+    assert calls == [("GET", "/api/projects/p/access-status")] + (
+        [("GET", "/api/credentials/self-check")] if status == 401 else [])
     assert not (workspace / ".cds/credentials.json").exists()
 
 
@@ -437,6 +506,12 @@ def test_original_identity_recovery_saves_both_credentials_without_user_input(wo
     monkeypatch.setattr(cdscli, '_USER_CREDENTIALS_PATH', str(workspace / 'private/user.json'))
     monkeypatch.setattr(cdscli, '_origin_repository', lambda: 'git@github.com:example/original.git')
     monkeypatch.setattr(cdscli.time, 'sleep', lambda _: None)
+    if not explicit:
+        cdscli._write_private_json(str(workspace / '.cds/identity-recovery.json'), {
+            'host': 'https://cds.example', 'repository': 'github.com/example/original',
+            'projectHint': 'project-a', 'requestId': 'ic_test', 'pollToken': 'ticket-secret',
+            'expires': time.time() + 300,
+        })
     calls = []
     def request(method, path, body=None, **kwargs):
         calls.append((method, path))
@@ -493,6 +568,11 @@ def test_identity_recovery_keeps_ticket_until_both_files_saved_and_resumes_witho
 def test_original_identity_recovery_rejects_wrong_project_without_saving(workspace, monkeypatch):
     monkeypatch.setattr(cdscli, '_USER_CREDENTIALS_PATH', str(workspace / 'private/user.json'))
     monkeypatch.setattr(cdscli, '_origin_repository', lambda: 'https://github.com/example/original')
+    cdscli._write_private_json(str(workspace / '.cds/identity-recovery.json'), {
+        'host': 'https://cds.example', 'repository': 'github.com/example/original',
+        'projectHint': 'project-a', 'requestId': 'ic_test', 'pollToken': 'secret-ticket',
+        'expires': time.time() + 300,
+    })
     def request(method, path, **kwargs):
         if method == 'POST': return 201, {'requestId': 'ic_test', 'pollToken': 'secret-ticket'}, {}
         return 200, {'status': 'approved', 'projectId': 'other', 'authorizationKey': 'cdsp_other', 'userCredential': 'cdsu_other'}, {}
@@ -532,6 +612,11 @@ def test_identity_recovery_ack_response_loss_reuses_saved_pair_on_next_process(w
 def test_identity_recovery_accepts_original_slug_and_saves_canonical_id(workspace, monkeypatch):
     monkeypatch.setattr(cdscli, '_USER_CREDENTIALS_PATH', str(workspace / 'private/user.json'))
     monkeypatch.setattr(cdscli, '_origin_repository', lambda: 'https://github.com/example/original')
+    cdscli._write_private_json(str(workspace / '.cds/identity-recovery.json'), {
+        'host': 'https://cds.example', 'repository': 'github.com/example/original',
+        'projectHint': 'original-slug', 'requestId': 'ic_slug', 'pollToken': 'slug-secret',
+        'expires': time.time() + 300,
+    })
     def request(method, path, **kwargs):
         if path == '/api/identity-connections': return 201, {'requestId': 'ic_slug', 'pollToken': 'slug-secret'}, {}
         if path.endswith('/ack'): return 200, {'delivered': True}, {}
@@ -560,7 +645,7 @@ def test_recovery_ticket_is_private_while_writing_and_failure_leaves_no_secret_f
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
-def test_bootstrap_wait_timeout_or_interrupt_cancels_only_own_request(workspace, monkeypatch, interrupt):
+def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interrupt(workspace, monkeypatch, capsys, interrupt):
     subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
     calls = []
     ticks = [0]
@@ -573,7 +658,7 @@ def test_bootstrap_wait_timeout_or_interrupt_cancels_only_own_request(workspace,
     def fake_request(method, path, body=None, extra_headers=None, **kwargs):
         calls.append((method, path, extra_headers))
         if method == "POST":
-            assert body["waitSeconds"] == 10
+            assert "waitSeconds" not in body
             return 201, {"requestId": "r", "pollToken": "poll"}, {}
         assert extra_headers == {"X-Poll-Token": "poll"}
         return 200, {"status": "pending"}, {}
@@ -586,5 +671,6 @@ def test_bootstrap_wait_timeout_or_interrupt_cancels_only_own_request(workspace,
         code, output = run_command(argv)
         assert code == 2
         assert "poll" not in output
-    assert calls[-1] == ("DELETE", "/api/bootstrap-access-requests/r", {"X-Poll-Token": "poll"})
+    assert all(method in ("POST", "GET") for method, _, _ in calls)
+    assert "仍可能待审批" in capsys.readouterr().err
     assert not (workspace / ".cds/credentials.json").exists()
