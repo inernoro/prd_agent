@@ -27,7 +27,8 @@ env:
 jobs:
   build-and-push:
     name: Build & Push CDS Prebuilt
-    runs-on: ubuntu-latest
+    # 浏览器验收与管理端使用同一受支持LTS，避免新runner字体依赖安装超时。
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
