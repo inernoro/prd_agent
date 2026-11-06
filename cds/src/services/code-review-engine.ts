@@ -113,9 +113,12 @@ export class CodeReviewEngine {
         const category = categories.includes(issueType) ? issueType as CodeReviewFinding['category']
           : /vuln|inject|xss|ssrf|secret|auth|crypto|security|traversal/.test(issueType) ? 'security' : 'bug';
         const severity = String(issue.severity ?? '').toLowerCase();
+        // The ZIP scanner copies title into message; description holds the actual cause.
+        const explanation = [...new Set([issue.title, issue.message, issue.description]
+          .filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean))].join('\n\n');
         return { filePath: String(issue.file_path ?? 'unknown'), line: Number.isInteger(issue.line_number) && Number(issue.line_number) > 0 ? Number(issue.line_number) : undefined,
           category, severity: severities.includes(severity) ? severity as CodeReviewFinding['severity'] : 'medium',
-          message: String(issue.message || issue.description || issue.title || '未提供问题说明'),
+          message: explanation || '未提供问题说明',
           suggestion: issue.suggestion ? String(issue.suggestion) : undefined, verified: false, tool: 'DeepAudit AI' };
       });
       const totalFiles = Math.max(0, Number(task.total_files) || 0);
