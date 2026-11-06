@@ -60,6 +60,10 @@ const VERIFIED_PACKAGE_ARTIFACT_CSP = [
 ].join('; ');
 const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const DOCUMENT_HEAD_RE = /^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
+const SVG_CSS_URL_ATTRIBUTES = [
+  'fill', 'stroke', 'filter', 'clip-path', 'mask', 'cursor',
+  'marker-start', 'marker-mid', 'marker-end',
+] as const;
 
 export function canAcceptUntrackedWorkspaceEdit(
   deliverableValidation: string | undefined,
@@ -434,6 +438,11 @@ function hardenHtmlWithFactRetention(
     const attributes = parseHtmlAttributes(tag.attributes);
     const inlineStyle = attributes.get('style');
     if (inlineStyle !== undefined) cssSources.push(decodeHtmlText(inlineStyle));
+    // SVG presentation attributes carry CSS resources without a style attribute.
+    for (const attribute of SVG_CSS_URL_ATTRIBUTES) {
+      const value = attributes.get(attribute);
+      if (value !== undefined) cssSources.push(decodeHtmlText(value));
+    }
     for (const attribute of ['src', 'href', 'poster', 'background']) {
       const rawValue = attributes.get(attribute);
       if (rawValue === undefined) continue;
