@@ -1,6 +1,7 @@
 import { apiRequest } from './apiClient';
 
 export type NotificationFrequency = 'once' | 'daily' | 'weekly' | 'monthly';
+export type ScheduledNotificationWebhookInput = { existingIndex: number } | { url: string };
 
 export type ScheduledNotificationInput = {
   name: string;
@@ -11,19 +12,22 @@ export type ScheduledNotificationInput = {
   day: number | null;
   enabled: boolean;
   mentionAll: boolean;
-  webhookUrl?: string;
+  webhooks?: ScheduledNotificationWebhookInput[];
   revision?: string;
   sourceTaskId?: string;
+  sourceRevision?: string;
 };
 
-export type ScheduledNotification = Omit<ScheduledNotificationInput, 'webhookUrl' | 'revision'> & {
+export type ScheduledNotification = Omit<ScheduledNotificationInput, 'webhooks' | 'revision' | 'sourceTaskId' | 'sourceRevision'> & {
   id: string;
   revision: string;
   nextRunAt: string | null;
   lastRunAt: string | null;
-  lastResult: 'sending' | 'sent' | 'failed' | 'unknown' | null;
+  lastResult: 'sending' | 'sent' | 'failed' | 'unknown' | 'partial' | null;
+  lastDelivery: { sent: number; failed: number; unknown: number } | null;
   webhookMasked: string;
   webhookConfigured: boolean;
+  webhookCount?: number;
   canEdit: boolean;
   debugLastResult: 'sending' | 'sent' | 'failed' | 'unknown' | null;
   debugLastRunAt: string | null;

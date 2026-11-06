@@ -12,7 +12,12 @@ public partial class ProductAgentController
 {
     public sealed record ScheduledNotificationRequest(string? Name, string? Message, string? Frequency,
         string? Time, string? Date, int? Day, bool Enabled, string? WebhookUrl, string? Revision,
-        bool? MentionAll = null, string? SourceTaskId = null);
+        bool? MentionAll = null, string? SourceTaskId = null,
+        ScheduledNotificationWebhookInput?[]? Webhooks = null, string? SourceRevision = null);
+
+    public sealed record ScheduledNotificationWebhookInput(int? ExistingIndex, string? Url);
+
+    private const int MaxScheduledNotificationWebhooks = 10;
 
     [HttpGet("settings/scheduled-notifications")]
     public async Task<IActionResult> ListScheduledNotifications([FromServices] IConfiguration configuration)
@@ -45,9 +50,10 @@ public partial class ProductAgentController
         if (!ProductScheduledNotificationWorker.CanManage(configuration))
             return Conflict(ApiResponse<object>.Fail("NOTIFICATION_PRODUCTION_ONLY", "请在正式环境管理定时通知。"));
 
+        ProductScheduledNotification? current = null;
         if (id != null)
         {
-            var current = await _db.ProductScheduledNotifications.Find(x => x.Id == id).FirstOrDefaultAsync();
+            current = await _db.ProductScheduledNotifications.Find(x => x.Id == id).FirstOrDefaultAsync();
             if (current == null)
                 return NotFound(ApiResponse<object>.Fail("NOTIFICATION_NOT_FOUND", "任务不存在，请刷新列表。"));
             if (current.HasCompletedOneTimeSchedule())
@@ -63,25 +69,63 @@ public partial class ProductAgentController
             || (request.Enabled && next == null))
             return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_SCHEDULE", "请填写有效的北京时间与周期，启用单次通知时请选择未来时间。"));
 
-        var webhook = request.WebhookUrl?.Trim();
-        string? inheritedWebhook = null;
-        if (id == null && string.IsNullOrEmpty(webhook) && !string.IsNullOrEmpty(request.SourceTaskId))
+        var existingWebhooks = current?.GetProtectedWebhooks() ?? [];
+        if (id == null && !string.IsNullOrEmpty(request.SourceTaskId))
         {
             var source = await _db.ProductScheduledNotifications.Find(x => x.Id == request.SourceTaskId).FirstOrDefaultAsync();
-            if (source == null || string.IsNullOrEmpty(source.ProtectedWebhook))
-                return BadRequest(ApiResponse<object>.Fail("NOTIFICATION_WEBHOOK_UNAVAILABLE", "原任务的 Webhook 不可用，请填写新的链接。"));
-            inheritedWebhook = source.ProtectedWebhook;
+            if (source == null || (request.SourceRevision != null && source.Revision != request.SourceRevision))
+                return Conflict(ApiResponse<object>.Fail("NOTIFICATION_SOURCE_CHANGED", "原任务已更新，请关闭后重新复制。"));
+            existingWebhooks = source.GetProtectedWebhooks();
         }
-        if (((id == null && inheritedWebhook == null) || !string.IsNullOrEmpty(webhook)) &&
-            (webhook is not { Length: <= 512 } || !ProductClaimWebhookPayload.IsValidWebhook(webhook)))
-            return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_WEBHOOK", "请输入有效的企业微信群机器人 Webhook 地址。"));
+
+        var requestedWebhooks = request.Webhooks;
+        if (requestedWebhooks == null && !string.IsNullOrWhiteSpace(request.WebhookUrl))
+            requestedWebhooks = [new(null, request.WebhookUrl)];
+        var protectedWebhooks = existingWebhooks;
+        if (requestedWebhooks != null)
+        {
+            if (requestedWebhooks.Length is < 1 or > MaxScheduledNotificationWebhooks)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_WEBHOOK_COUNT", "请配置 1 至 10 个企业微信群机器人 Webhook。"));
+
+            var protector = protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose);
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            protectedWebhooks = new string[requestedWebhooks.Length];
+            for (var i = 0; i < requestedWebhooks.Length; i++)
+            {
+                var entry = requestedWebhooks[i];
+                string? url = entry?.Url?.Trim();
+                string? encrypted = null;
+                if (entry?.ExistingIndex is int index)
+                {
+                    if (url != null || index < 0 || index >= existingWebhooks.Length
+                        || (id == null && request.SourceRevision == null))
+                        return BadRequest(ApiResponse<object>.Fail("NOTIFICATION_WEBHOOK_UNAVAILABLE", "已保存的 Webhook 发生变化，请刷新后重试。"));
+                    encrypted = existingWebhooks[index];
+                    try { url = protector.Unprotect(encrypted); }
+                    catch (System.Security.Cryptography.CryptographicException)
+                    {
+                        return BadRequest(ApiResponse<object>.Fail("NOTIFICATION_WEBHOOK_UNAVAILABLE", $"第 {i + 1} 个 Webhook 无法读取，请更换该地址。"));
+                    }
+                }
+                if (url is not { Length: <= 512 } || !ProductClaimWebhookPayload.IsValidWebhook(url))
+                    return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_WEBHOOK", $"请检查第 {i + 1} 个企业微信群机器人 Webhook。"));
+                var key = new Uri(url).Query[5..];
+                if (Guid.TryParseExact(key, "D", out var parsedKey)) key = parsedKey.ToString("D");
+                if (!keys.Add(key))
+                    return BadRequest(ApiResponse<object>.Fail("DUPLICATE_NOTIFICATION_WEBHOOK", $"第 {i + 1} 个 Webhook 已配置，请移除重复地址。"));
+                protectedWebhooks[i] = encrypted ?? protector.Protect(url);
+            }
+        }
+        if (protectedWebhooks.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("NOTIFICATION_WEBHOOK_UNAVAILABLE", "请至少配置一个企业微信群机器人 Webhook。"));
 
         var task = new ProductScheduledNotification
         {
             Name = name,
             Message = message,
             MentionAll = request.MentionAll ?? true,
-            ProtectedWebhook = inheritedWebhook ?? "",
+            ProtectedWebhook = protectedWebhooks[0],
+            ProtectedWebhooks = protectedWebhooks,
             Frequency = request.Frequency!,
             Time = request.Time!,
             Date = request.Frequency == "once" ? request.Date : null,
@@ -90,8 +134,6 @@ public partial class ProductAgentController
             NextRunAt = request.Enabled ? next : null,
             UpdatedAt = now,
         };
-        if (!string.IsNullOrEmpty(webhook))
-            task.ProtectedWebhook = protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose).Protect(webhook);
         if (id == null)
         {
             await _db.ProductScheduledNotifications.InsertOneAsync(task);
@@ -104,9 +146,10 @@ public partial class ProductAgentController
             .Set(x => x.Date, task.Date).Set(x => x.Day, task.Day)
             .Set(x => x.Enabled, task.Enabled).Set(x => x.NextRunAt, task.NextRunAt)
             .Set(x => x.UpdatedAt, task.UpdatedAt).Set(x => x.Revision, task.Revision);
-        if (task.ProtectedWebhook.Length > 0) update = update.Set(x => x.ProtectedWebhook, task.ProtectedWebhook);
+        if (requestedWebhooks != null)
+            update = update.Set(x => x.ProtectedWebhook, task.ProtectedWebhook).Set(x => x.ProtectedWebhooks, task.ProtectedWebhooks);
         if (request.MentionAll.HasValue) update = update.Set(x => x.MentionAll, request.MentionAll.Value);
-        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision
+        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision && x.LeaseId == null
             && (x.Frequency != "once" || x.LastRunAt == null || x.NextRunAt != null));
         var saved = await _db.ProductScheduledNotifications.FindOneAndUpdateAsync(
             filter, update,
@@ -119,9 +162,10 @@ public partial class ProductAgentController
     private static object ScheduledNotificationView(ProductScheduledNotification task) => new
     {
         task.Id, task.Revision, task.Name, task.Message, task.Frequency, task.Time, task.Date, task.Day,
-        task.Enabled, task.MentionAll, task.NextRunAt, task.LastRunAt, task.LastResult,
+        task.Enabled, task.MentionAll, task.NextRunAt, task.LastRunAt, task.LastResult, task.LastDelivery,
         canEdit = !task.HasCompletedOneTimeSchedule(),
-        webhookConfigured = !string.IsNullOrEmpty(task.ProtectedWebhook),
+        webhookCount = task.GetProtectedWebhooks().Length,
+        webhookConfigured = task.GetProtectedWebhooks().Length > 0,
         debugLastResult = task.DebugRun?.Status,
         debugLastRunAt = task.DebugRun?.RequestedAt,
         webhookMasked = ProductScheduledNotificationTiming.MaskedWebhook,

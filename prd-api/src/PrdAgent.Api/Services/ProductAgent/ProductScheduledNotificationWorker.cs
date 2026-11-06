@@ -50,13 +50,21 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
             x => x.Id == due.Id && x.Revision == due.Revision && x.NextRunAt == due.NextRunAt && x.LeaseId == null,
             updates.Set(x => x.LeaseId, lease).Set(x => x.LeaseUntil, now.AddMinutes(2))
                 .Set(x => x.LastRunAt, now).Set(x => x.LastResult, "sending").Set(x => x.Revision, lease)
+                .Set(x => x.LastDelivery, null)
                 .Set(x => x.Enabled, next != null).Set(x => x.NextRunAt, next),
             cancellationToken: CancellationToken.None);
         if (claimed.ModifiedCount == 0) return;
 
-        var result = await DeliverAsync(due, due.ProtectedWebhook, protection, clients, stoppingToken);
+        var webhooks = due.GetProtectedWebhooks();
+        var outcomes = await Task.WhenAll(webhooks.Select(webhook => DeliverAsync(due, webhook, protection, clients, stoppingToken)));
+        var delivery = new ProductNotificationDelivery(outcomes.Count(x => x == "sent"),
+            outcomes.Count(x => x == "failed"), outcomes.Count(x => x == "unknown"));
+        var result = delivery.Sent > 0
+            ? (delivery.Sent == outcomes.Length ? "sent" : "partial")
+            : (delivery.Unknown > 0 ? "unknown" : "failed");
         await tasks.UpdateOneAsync(x => x.Id == due.Id && x.LeaseId == lease,
-            updates.Set(x => x.LastResult, result).Set(x => x.LeaseUntil, null).Set(x => x.LeaseId, null),
+            updates.Set(x => x.LastResult, result).Set(x => x.LastDelivery, delivery)
+                .Set(x => x.LeaseUntil, null).Set(x => x.LeaseId, null),
             cancellationToken: CancellationToken.None);
     }
 
@@ -69,7 +77,7 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
             var url = protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose).Unprotect(protectedWebhook);
             if (!ProductClaimWebhookPayload.IsValidWebhook(url)) return "failed";
             var payload = ProductClaimWebhookPayload.Build(task.Message, null, task.MentionAll);
-            var client = clients.CreateClient("product-claim-webhook");
+            using var client = clients.CreateClient("product-claim-webhook");
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
             started = true;
             using var response = await client.PostAsync(url, content, stoppingToken);

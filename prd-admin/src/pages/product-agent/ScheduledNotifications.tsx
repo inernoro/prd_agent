@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
@@ -12,10 +13,16 @@ import {
 
 const frequencyLabel = { once: '单次', daily: '每天', weekly: '每周', monthly: '每月' };
 const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-const resultLabel = { sending: '发送中', sent: '发送成功', failed: '发送失败，请检查 Webhook', unknown: '结果未知，请查看群消息' };
+const resultLabel = { sending: '发送中', sent: '发送成功', failed: '发送失败，请检查 Webhook', unknown: '结果未知，请查看群消息', partial: '部分群已发送' };
 const beijing = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Shanghai' });
 const field = 'mt-1 w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary';
 type EditorSelection = { mode: 'new' } | { mode: 'edit' | 'copy'; task: ScheduledNotification };
+type WebhookRow = { id: number; existingIndex?: number; replacing?: boolean };
+const maxWebhooks = 10;
+
+function webhookCount(task: ScheduledNotification) {
+  return task.webhookCount ?? (task.webhookConfigured ? 1 : 0);
+}
 
 function scheduleLabel(task: ScheduledNotification) {
   if (task.frequency === 'once') return `${task.date} ${task.time}`;
@@ -27,8 +34,8 @@ function scheduleLabel(task: ScheduledNotification) {
 function notificationStatus(task: ScheduledNotification) {
   if (task.lastResult === 'sending') return '发送中';
   if (task.enabled) return '待发送';
-  if (task.lastResult === 'sent') return '已发送';
-  return task.lastRunAt ? '已执行' : '已停用';
+  if (!task.canEdit) return task.lastResult === 'sent' ? '已发送' : '已执行';
+  return '已禁用';
 }
 
 export function ScheduledNotifications() {
@@ -40,6 +47,7 @@ export function ScheduledNotifications() {
   const [editing, setEditing] = useState<EditorSelection | null>(null);
   const [debugSettingsOpen, setDebugSettingsOpen] = useState(false);
   const [debugging, setDebugging] = useState<string | null>(null);
+  const [switching, setSwitching] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState('');
 
   useEffect(() => {
@@ -80,6 +88,27 @@ export function ScheduledNotifications() {
     setError('');
     setLoading(true);
     setReload((value) => value + 1);
+  }
+
+  async function changeEnabled(task: ScheduledNotification, enabled: boolean) {
+    if (switching) return;
+    const { name, message, frequency, time, date, day, mentionAll, revision } = task;
+    setSwitching(task.id);
+    setActionMessage('');
+    try {
+      const response = await saveScheduledNotification({ name, message, frequency, time, date, day, mentionAll, enabled, revision }, task.id);
+      if (response.success) {
+        setItems((current) => current.map((item) => item.id === task.id ? response.data : item));
+        setActionMessage(enabled ? '任务已启用，将按计划发送。' : '任务已禁用。');
+      } else {
+        setActionMessage(response.error.message);
+      }
+    } catch {
+      setActionMessage('状态更新失败，请刷新列表后重试。');
+    } finally {
+      setSwitching(null);
+      setReload((value) => value + 1);
+    }
   }
 
   async function debug(task: ScheduledNotification) {
@@ -130,13 +159,23 @@ export function ScheduledNotifications() {
                 <tr key={task.id} className="border-t border-token-subtle align-top">
                   <td className="min-w-48 break-all px-4 py-3">
                     <div className="font-medium text-token-primary">{task.name}</div>
-                    <div className="mt-1 text-xs text-token-muted">{task.webhookMasked}</div>
+                    <div className="mt-1 text-xs text-token-muted">{webhookCount(task)} 个 Webhook</div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">{scheduleLabel(task)}</td>
-                  <td className="whitespace-nowrap px-4 py-3">{notificationStatus(task)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    {notificationStatus(task)}
+                    {task.canEdit && <div className="mt-1">
+                      <Switch checked={task.enabled} ariaLabel={`${task.name}的定时发送`}
+                        disabled={switching !== null || task.lastResult === 'sending'}
+                        onCheckedChange={(enabled) => changeEnabled(task, enabled)} />
+                    </div>}
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3">{task.nextRunAt ? beijing.format(new Date(task.nextRunAt)) : '—'}</td>
                   <td className="min-w-36 px-4 py-3">
                     {task.lastResult ? resultLabel[task.lastResult] : task.enabled ? '等待到点发送' : '—'}
+                    {task.lastDelivery && <div className="mt-1 text-xs text-token-muted">
+                      成功 {task.lastDelivery.sent} · 失败 {task.lastDelivery.failed} · 未知 {task.lastDelivery.unknown}
+                    </div>}
                     {task.lastRunAt && <div className="mt-1 text-xs text-token-muted">{beijing.format(new Date(task.lastRunAt))}</div>}
                     {task.debugLastResult && <div className="mt-2 text-xs text-token-muted">最近调试 {resultLabel[task.debugLastResult]}</div>}
                   </td>
@@ -231,8 +270,13 @@ function NotificationEditor({ selection, onClose, onSaved }: {
 }) {
   const source = selection.mode === 'new' ? null : selection.task;
   const task = selection.mode === 'edit' ? selection.task : null;
-  const [changeWebhook, setChangeWebhook] = useState(!source?.webhookConfigured);
-  const [frequency, setFrequency] = useState<NotificationFrequency>(task?.frequency ?? 'once');
+  const initialWebhookCount = source ? webhookCount(source) : 0;
+  const nextWebhookId = useRef(Math.max(initialWebhookCount, 1));
+  const [webhookRows, setWebhookRows] = useState<WebhookRow[]>(() => initialWebhookCount
+    ? Array.from({ length: initialWebhookCount }, (_, index) => ({ id: index, existingIndex: index }))
+    : [{ id: 0 }]);
+  const [enabled, setEnabled] = useState(source?.enabled ?? true);
+  const [frequency, setFrequency] = useState<NotificationFrequency>(source?.frequency ?? 'once');
   const [creationDate] = useState(() => {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -254,11 +298,14 @@ function NotificationEditor({ selection, onClose, onSaved }: {
       time: String(data.get('time') ?? ''),
       date: frequency === 'once' ? String(data.get('date') ?? '') : null,
       day: frequency === 'weekly' || frequency === 'monthly' ? Number(data.get('day')) : null,
-      enabled: true,
+      enabled,
       mentionAll: data.has('mentionAll'),
-      webhookUrl: String(data.get('webhook') ?? '').trim() || undefined,
+      webhooks: webhookRows.map((row) => row.existingIndex !== undefined && !row.replacing
+        ? { existingIndex: row.existingIndex }
+        : { url: String(data.get(`webhook-${row.id}`) ?? '').trim() }),
       revision: task?.revision,
       sourceTaskId: selection.mode === 'copy' ? selection.task.id : undefined,
+      sourceRevision: selection.mode === 'copy' ? selection.task.revision : undefined,
     };
     setError('');
     setSaving(true);
@@ -279,37 +326,51 @@ function NotificationEditor({ selection, onClose, onSaved }: {
       contentStyle={{ maxHeight: 'calc(100dvh - 32px)' }}
       content={
         <form id="scheduled-notification-form" className="space-y-4 text-sm text-token-secondary" onSubmit={(event) => void submit(event)}>
-          <label className="block">任务名称<input className={field} name="name" required maxLength={100} defaultValue={selection.mode === 'copy' ? `${selection.task.name.slice(0, 96)}（副本）` : task?.name} /></label>
+          <label className="block">任务名称<input className={field} name="name" required maxLength={100} defaultValue={source?.name} /></label>
           <label className="block">通知内容<textarea className={field} name="message" rows={4} required defaultValue={source?.message} /></label>
           <div className="grid grid-cols-2 gap-3">
             <label>发送周期<select className={field} value={frequency} onChange={(event) => setFrequency(event.target.value as NotificationFrequency)}>
               {Object.entries(frequencyLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select></label>
-            <label>发送时间（北京时间）<input className={field} name="time" type="time" required defaultValue={task?.time ?? '18:30'} /></label>
-            {frequency === 'once' && <label>发送日期<input className={field} name="date" type="date" required defaultValue={task?.date ?? creationDate} /></label>}
-            {frequency === 'weekly' && <label>发送星期<select className={field} name="day" defaultValue={task?.frequency === 'weekly' ? task.day ?? 1 : 1}>
+            <label>发送时间（北京时间）<input className={field} name="time" type="time" required defaultValue={source?.time ?? '18:30'} /></label>
+            {frequency === 'once' && <label>发送日期<input className={field} name="date" type="date" required defaultValue={source?.date ?? creationDate} /></label>}
+            {frequency === 'weekly' && <label>发送星期<select className={field} name="day" defaultValue={source?.frequency === 'weekly' ? source.day ?? 1 : 1}>
               {weekdays.map((day, index) => <option key={day} value={index}>{day}</option>)}
             </select></label>}
-            {frequency === 'monthly' && <label>每月日期<input className={field} name="day" type="number" min={1} max={31} required defaultValue={task?.frequency === 'monthly' ? task.day ?? 1 : 1} />
+            {frequency === 'monthly' && <label>每月日期<input className={field} name="day" type="number" min={1} max={31} required defaultValue={source?.frequency === 'monthly' ? source.day ?? 1 : 1} />
               <span className="mt-1 block text-xs text-token-muted">当月没有该日期时跳过。</span>
             </label>}
           </div>
-          <div>
-            <div className="text-sm">企业微信群机器人 Webhook</div>
-            {source?.webhookConfigured && (
-              <div className="mt-1 flex items-center justify-between gap-3 rounded-lg border border-token-subtle bg-token-nested p-3">
-                <div className="min-w-0">
-                  <div className="font-medium text-token-primary">已填写（脱敏）</div>
-                  <div className="mt-1 break-all text-xs text-token-muted">{source.webhookMasked}</div>
-                  {selection.mode === 'copy' && <div className="mt-1 text-xs text-token-muted">自动沿用原任务的 Webhook</div>}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <span>企业微信群机器人 Webhook</span>
+              <Button size="sm" disabled={saving || webhookRows.length >= maxWebhooks} onClick={() => {
+                const id = nextWebhookId.current++;
+                setWebhookRows((rows) => [...rows, { id }]);
+              }}><Plus size={14} />添加 Webhook</Button>
+            </div>
+            <p className="text-xs text-token-muted">同一条通知会发到这里配置的所有群，最多 {maxWebhooks} 个。</p>
+            {webhookRows.map((row, index) => <div key={row.id} className="rounded-lg border border-token-subtle bg-token-nested p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-token-primary">Webhook {index + 1}</span>
+                <div className="flex gap-1">
+                  {row.existingIndex !== undefined && <Button size="sm" variant="ghost" disabled={saving} onClick={() =>
+                    setWebhookRows((rows) => rows.map((item) => item.id === row.id ? { ...item, replacing: !item.replacing } : item))
+                  }>{row.replacing ? '取消修改' : '修改'}</Button>}
+                  {webhookRows.length > 1 && <Button size="sm" variant="ghost" disabled={saving} onClick={() =>
+                    setWebhookRows((rows) => rows.filter((item) => item.id !== row.id))
+                  }>移除</Button>}
                 </div>
-                <Button size="sm" onClick={() => setChangeWebhook((value) => !value)}>{changeWebhook ? '取消修改' : '修改'}</Button>
               </div>
-            )}
-            {changeWebhook && <label className="mt-2 block">Webhook 链接
-              <input className={field} name="webhook" type="password" autoComplete="new-password" required maxLength={512} placeholder="粘贴企业微信机器人链接" />
-            </label>}
+              {row.existingIndex !== undefined && !row.replacing ? <>
+                <div className="text-xs text-token-secondary">已填写（脱敏）</div>
+                <div className="mt-1 break-all text-xs text-token-muted">{source?.webhookMasked}</div>
+              </> : <input className={field} name={`webhook-${row.id}`} type="password" autoComplete="new-password"
+                aria-label={`Webhook ${index + 1} 链接`} required maxLength={512} placeholder="粘贴企业微信机器人链接" />}
+            </div>)}
           </div>
+          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={saving} label={enabled ? '已启用' : '已禁用'} />
+          {!enabled && <p className="text-xs text-token-muted">保存为禁用状态，启用后才会按计划发送。</p>}
           <label className="flex items-center gap-2"><input name="mentionAll" type="checkbox" defaultChecked={source?.mentionAll ?? true} />@全部人</label>
           {error && <p role="alert" className="text-semantic-danger">{error}</p>}
         </form>

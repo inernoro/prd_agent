@@ -58,31 +58,73 @@ public class ProductScheduledNotificationLifecycleTests
         var source = fixture.Task();
         source.Enabled = false;
         source.NextRunAt = null;
+        source.Date = DateTime.UtcNow.AddHours(8).AddDays(-1).ToString("yyyy-MM-dd");
         source.LastRunAt = DateTime.UtcNow.AddMinutes(-1);
         source.LastResult = "sent";
+        var protector = fixture.Protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose);
+        source.ProtectedWebhooks = [source.ProtectedWebhook, protector.Protect(TestUrl + "-second")];
         await fixture.Db.ProductScheduledNotifications.InsertOneAsync(source);
 
         var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateScheduledNotification(
-            fixture.Input() with { SourceTaskId = source.Id }, fixture.Protection, fixture.Configuration));
+            fixture.Input() with
+            {
+                SourceTaskId = source.Id, SourceRevision = source.Revision,
+                Name = source.Name, Message = source.Message, Date = source.Date, Enabled = false,
+                Webhooks = [new(0, null), new(1, null)],
+            }, fixture.Protection, fixture.Configuration));
         var copy = await fixture.Db.ProductScheduledNotifications.Find(x => x.Id != source.Id).SingleAsync();
         Assert.NotEqual(source.Id, copy.Id);
-        Assert.Equal(source.ProtectedWebhook, copy.ProtectedWebhook);
-        Assert.True(copy.Enabled);
+        Assert.Equal(source.Name, copy.Name);
+        Assert.Equal(source.Date, copy.Date);
+        Assert.Equal(source.GetProtectedWebhooks(), copy.GetProtectedWebhooks());
+        Assert.False(copy.Enabled);
+        Assert.Null(copy.NextRunAt);
         Assert.Null(copy.LastRunAt);
         Assert.Null(copy.LastResult);
         Assert.False(copy.HasCompletedOneTimeSchedule());
         var response = JsonSerializer.Serialize(created.Value);
         Assert.DoesNotContain(TestUrl, response);
-        Assert.DoesNotContain(copy.ProtectedWebhook, response);
+        Assert.All(copy.GetProtectedWebhooks(), encrypted => Assert.DoesNotContain(encrypted, response));
         Assert.Contains("key=********", response);
 
         var replacement = TestUrl + "-replacement";
-        var updated = fixture.Input() with { Revision = copy.Revision, WebhookUrl = replacement };
+        var updated = fixture.Input() with { Revision = copy.Revision, Webhooks = [new(0, null), new(null, replacement)] };
         Assert.IsType<OkObjectResult>(await fixture.Controller().UpdateScheduledNotification(copy.Id, updated, fixture.Protection, fixture.Configuration));
         var stored = await fixture.Saved(copy.Id);
-        Assert.Equal(replacement, fixture.Protection.CreateProtector(ProductScheduledNotificationTiming.ProtectionPurpose).Unprotect(stored.ProtectedWebhook));
-        Assert.Equal(source.ProtectedWebhook, (await fixture.Saved(source.Id)).ProtectedWebhook);
+        Assert.Equal(new[] { TestUrl, replacement }, stored.GetProtectedWebhooks().Select(value => protector.Unprotect(value)));
+        Assert.Equal(source.GetProtectedWebhooks(), (await fixture.Saved(source.Id)).GetProtectedWebhooks());
         Assert.Empty(fixture.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task DisabledTaskWaitsThenSendsToEachDistinctWebhookAndRecordsPartialOutcome()
+    {
+        await using var fixture = new Fixture();
+        var controller = fixture.Controller();
+        var input = fixture.Input() with { Enabled = false, Webhooks = [new(null, TestUrl), new(null, TestUrl + "-failed"), new(null, TestUrl + "-unknown")] };
+        Assert.IsType<BadRequestObjectResult>(await controller.CreateScheduledNotification(input with
+        {
+            Webhooks = [new(null, TestUrl), new(null, TestUrl.Replace("weixin.qq.com", "weixin.qq.com:443"))],
+        }, fixture.Protection, fixture.Configuration));
+        Assert.IsType<OkObjectResult>(await controller.CreateScheduledNotification(input, fixture.Protection, fixture.Configuration));
+        var saved = await fixture.Db.ProductScheduledNotifications.Find(FilterDefinition<ProductScheduledNotification>.Empty).SingleAsync();
+        Assert.Null(saved.NextRunAt);
+        await fixture.Worker().ProcessNextAsync(CancellationToken.None);
+        Assert.Empty(fixture.Http.Urls);
+
+        Assert.IsType<OkObjectResult>(await controller.UpdateScheduledNotification(saved.Id, input with
+        {
+            Enabled = true, Webhooks = null, Revision = saved.Revision,
+        }, fixture.Protection, fixture.Configuration));
+        Assert.True((await fixture.Saved(saved.Id)).NextRunAt > DateTime.UtcNow);
+        await fixture.Db.ProductScheduledNotifications.UpdateOneAsync(x => x.Id == saved.Id,
+            Builders<ProductScheduledNotification>.Update.Set(x => x.NextRunAt, DateTime.UtcNow.AddMinutes(-1)));
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => fixture.Worker().ProcessNextAsync(CancellationToken.None)));
+        Assert.Equal(new[] { TestUrl, TestUrl + "-failed", TestUrl + "-unknown" }, fixture.Http.Urls.OrderBy(x => x, StringComparer.Ordinal));
+        var completed = await fixture.Saved(saved.Id);
+        Assert.Equal("partial", completed.LastResult);
+        Assert.Equal(new ProductNotificationDelivery(1, 1, 1), completed.LastDelivery);
+        Assert.True(completed.HasCompletedOneTimeSchedule());
     }
 
     [Fact]
@@ -213,8 +255,13 @@ public class ProductScheduledNotificationLifecycleTests
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Urls.Enqueue(request.RequestUri!.ToString());
+            var uri = request.RequestUri!;
+            Urls.Enqueue(uri.ToString());
             Bodies.Enqueue(await request.Content!.ReadAsStringAsync(cancellationToken));
+            if (uri.Query.EndsWith("-unknown", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.BadGateway);
+            if (uri.Query.EndsWith("-failed", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"errcode\":40031}") };
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"errcode\":0}") };
         }
     }
