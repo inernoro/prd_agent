@@ -264,13 +264,15 @@ export class CodeReviewService {
       }
       const zip = await this.deps.inputs.get(task.inputKey!);
       const selectedFiles = task.progress.totalFiles;
-      let lastScanned = -1, lastTotal = -1, lastEngineTaskId: string | undefined;
+      let lastCounts = [-1, -1, -1, -1, -1], lastEngineTaskId: string | undefined;
       const result = await engine.run({ taskId: id, zip, signal: controller.signal, excludePatterns: task.excludePatterns,
         engineTaskId: task.engineTaskId, retryFailed: task.engineRetryRequested,
         onProgress: async (p) => {
           const current = this.get(id); this.checkActive(current, controller.signal);
-          if (p.scannedFiles > lastScanned || p.totalFiles > lastTotal || (p.engineTaskId && p.engineTaskId !== lastEngineTaskId)) refreshIdle();
-          lastScanned = Math.max(lastScanned, p.scannedFiles); lastTotal = Math.max(lastTotal, p.totalFiles);
+          // Failed/skipped files also represent completed work; repeated HTTP polls do not.
+          const counts = [p.scannedFiles, p.totalFiles, p.processedFiles ?? -1, p.failedFiles ?? -1, p.skippedFiles ?? -1];
+          if (counts.some((count, index) => count > lastCounts[index]) || (p.engineTaskId && p.engineTaskId !== lastEngineTaskId)) refreshIdle();
+          lastCounts = counts.map((count, index) => Math.max(count, lastCounts[index]));
           if (p.engineTaskId) lastEngineTaskId = p.engineTaskId;
           current.engineRetryRequested = undefined; // One explicit retry request is consumed once tracking starts.
           const newEngineTask = p.engineTaskId && current.engineTaskId && p.engineTaskId !== current.engineTaskId;

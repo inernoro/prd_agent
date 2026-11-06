@@ -25,7 +25,7 @@ export interface CodeReviewEngineResult {
 }
 
 interface EngineTask { id: string; status: string; total_files: number; scanned_files: number; error_code?: string; error_message?: string;
-  resumable?: boolean; failed_files?: number }
+  resumable?: boolean; processed_files?: number; failed_files?: number; skipped_files?: number }
 
 /** DeepAudit v3 five-dimension ZIP scanner. Does not call the Agent/PoC sandbox API. */
 export class CodeReviewEngine {
@@ -56,7 +56,8 @@ export class CodeReviewEngine {
 
   async run(input: {
     taskId: string; zip: Buffer; signal: AbortSignal; excludePatterns: string[]; engineTaskId?: string; retryFailed?: boolean;
-    onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string }) => Promise<void>;
+    onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string;
+      processedFiles?: number; failedFiles?: number; skippedFiles?: number }) => Promise<void>;
     audit: CodeReviewAudit;
   }): Promise<CodeReviewEngineResult> {
     input.signal.throwIfAborted();
@@ -121,7 +122,8 @@ export class CodeReviewEngine {
         const totalFiles = Math.max(0, Number(task.total_files) || 0);
         const scannedFiles = Math.max(0, Number(task.scanned_files) || 0);
         await input.onProgress({ phase: task.status === 'completed' ? 'DeepAudit 分析结束' : 'DeepAudit 正在分析源码',
-          totalFiles, scannedFiles, engineTaskId });
+          totalFiles, scannedFiles, engineTaskId,
+          processedFiles: task.processed_files, failedFiles: task.failed_files, skippedFiles: task.skipped_files });
         if (task.status === 'completed') {
           if (task.resumable === true && (Number(task.failed_files) > 0 || scannedFiles < totalFiles)) {
             throw new Error(`DeepAudit 整仓审查尚未完成（已分析 ${scannedFiles}/${totalFiles} 个文件）。已完成文件的分析结果已保留，请重试继续未完成部分；当前未形成完整代码质量结论。`);

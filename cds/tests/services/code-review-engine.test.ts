@@ -11,7 +11,7 @@ describe('DeepAudit five-dimension adapter', () => {
     const progress: unknown[] = [];
     const responses = [
       { access_token: 'private-jwt' }, { id: 'project' }, { task_id: 'scan' },
-      { id: 'scan', status: 'running', total_files: 3, scanned_files: 1 },
+      { id: 'scan', status: 'running', total_files: 3, scanned_files: 1, processed_files: 3, failed_files: 1, skipped_files: 1 },
       { id: 'scan', status: 'completed', total_files: 3, scanned_files: 2 },
       [{ file_path: 'a.ts', line_number: 7, issue_type: 'security', severity: 'high', message: 'SQL injection', suggestion: 'Parameterize query' }],
     ];
@@ -26,6 +26,7 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(calls[2].url).toMatch(/\/scan\/upload-zip$/);
     expect(calls[2].init?.body).toBeInstanceOf(FormData);
     expect(progress).toContainEqual(expect.objectContaining({ engineTaskId: 'scan', scannedFiles: 2 }));
+    expect(progress).toContainEqual(expect.objectContaining({ processedFiles: 3, failedFiles: 1, skippedFiles: 1 }));
     expect(JSON.stringify(events)).not.toContain('private-jwt');
     expect(JSON.stringify(events)).not.toContain('SQL injection');
     expect(calls.every((call) => !call.url.includes('agent-tasks'))).toBe(true);

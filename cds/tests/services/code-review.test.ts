@@ -318,6 +318,30 @@ describe('代码审查任务完整闭环', () => {
       expect(state.listAcceptanceReports('a')).toHaveLength(0);
     } finally { service.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); }
   });
+  it.each(['processedFiles', 'failedFiles', 'skippedFiles'])('%s实际增加可延长空闲期限，同值轮询最终仍超时', async (counter) => {
+    vi.stubEnv('CDS_CODE_REVIEW_IDLE_TIMEOUT_MS', '60000');
+    let entered = false;
+    run.mockImplementation(async (input) => {
+      await input.onProgress({ phase: '整仓分析中', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository', [counter]: 0 });
+      entered = true;
+      return new Promise<CodeReviewEngineResult>((_resolve, reject) => input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true }));
+    });
+    const task = await submit();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const pumping = service.pump(); await vi.waitFor(() => expect(entered).toBe(true));
+      for (let count = 1; count <= 3; count++) {
+        await vi.advanceTimersByTimeAsync(40_000);
+        await run.mock.calls[0][0].onProgress({ phase: '整仓分析中', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository', [counter]: count });
+        expect(run.mock.calls[0][0].signal.aborted).toBe(false);
+      }
+      await vi.advanceTimersByTimeAsync(40_000);
+      await run.mock.calls[0][0].onProgress({ phase: '重复状态', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository', [counter]: 3 });
+      await vi.advanceTimersByTimeAsync(20_000); await pumping;
+      expect(service.get(task.id).status).toBe('failed'); expect(service.get(task.id).error).toContain('长时间没有文件分析进展');
+      expect(service.get(task.id).progress.scannedFiles).toBe(7);
+    } finally { service.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); }
+  });
   it('整仓最长执行时间可配置且下限一小时，不无限等待', async () => {
     vi.stubEnv('CDS_CODE_REVIEW_MAX_DURATION_MS', '1');
     vi.stubEnv('CDS_CODE_REVIEW_IDLE_TIMEOUT_MS', String(6 * 60 * 60_000));
