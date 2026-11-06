@@ -1,7 +1,8 @@
 import { apiRequest } from './apiClient';
 
 export type NotificationFrequency = 'once' | 'daily' | 'weekly' | 'monthly';
-export type ScheduledNotificationWebhookInput = { existingIndex: number } | { url: string };
+export type ScheduledNotificationWebhookInput = { existingIndex: number } | { url: string }
+  | { groupId: string; groupRevision: string };
 
 export type ScheduledNotificationInput = {
   name: string;
@@ -28,12 +29,29 @@ export type ScheduledNotification = Omit<ScheduledNotificationInput, 'webhooks' 
   webhookMasked: string;
   webhookConfigured: boolean;
   webhookCount?: number;
+  webhookGroupNames?: (string | null)[] | null;
   canEdit: boolean;
   debugLastResult: 'sending' | 'sent' | 'failed' | 'unknown' | null;
   debugLastRunAt: string | null;
 };
 
 const endpoint = '/api/product/settings/scheduled-notifications';
+const groupsEndpoint = `${endpoint}/groups`;
+
+export type NotificationGroup = { id: string; name: string; revision: string; webhookMasked: string };
+
+export const listNotificationGroups = (signal?: AbortSignal) =>
+  apiRequest<{ items: NotificationGroup[] }>(groupsEndpoint, { signal, timeoutMs: 15_000 });
+
+export const saveNotificationGroup = (body: { name: string; webhookUrl?: string; revision?: string }, id?: string) =>
+  apiRequest<NotificationGroup>(id ? `${groupsEndpoint}/${encodeURIComponent(id)}` : groupsEndpoint, {
+    method: id ? 'PUT' : 'POST', body, timeoutMs: 15_000,
+  });
+
+export const removeNotificationGroup = (group: NotificationGroup) =>
+  apiRequest<{ id: string }>(`${groupsEndpoint}/${encodeURIComponent(group.id)}?revision=${encodeURIComponent(group.revision)}`, {
+    method: 'DELETE', timeoutMs: 15_000,
+  });
 
 export const listScheduledNotifications = (signal?: AbortSignal) =>
   apiRequest<{ canManage: boolean; items: ScheduledNotification[] }>(endpoint, { signal });

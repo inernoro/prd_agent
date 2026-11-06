@@ -3,11 +3,12 @@ import { Plus } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { NotificationGroupsDialog } from './NotificationGroupsDialog';
 import {
-  listScheduledNotifications, saveScheduledNotification,
+  listScheduledNotifications, saveScheduledNotification, listNotificationGroups,
   getNotificationDebugSettings, saveNotificationDebugSettings, debugScheduledNotification,
   type NotificationFrequency, type ScheduledNotification, type ScheduledNotificationInput,
-  type NotificationDebugSettings,
+  type NotificationDebugSettings, type NotificationGroup,
 } from '@/services/real/productScheduledNotifications';
 
 const frequencyLabel = { once: '单次', daily: '每天', weekly: '每周', monthly: '每月' };
@@ -16,7 +17,7 @@ const resultLabel = { sending: '发送中', sent: '发送成功', failed: '发�
 const beijing = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Shanghai' });
 const field = 'mt-1 w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary';
 type EditorSelection = { mode: 'new' } | { mode: 'edit' | 'copy'; task: ScheduledNotification };
-type WebhookRow = { id: number; existingIndex?: number; replacing?: boolean };
+type WebhookRow = { id: number; existingIndex?: number; replacing?: boolean; group?: NotificationGroup };
 const maxWebhooks = 10;
 
 function webhookCount(task: ScheduledNotification) {
@@ -41,6 +42,7 @@ export function ScheduledNotifications() {
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
   const [editing, setEditing] = useState<EditorSelection | null>(null);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const [debugSettingsOpen, setDebugSettingsOpen] = useState(false);
   const [debugging, setDebugging] = useState<string | null>(null);
   const [enableActions, setEnableActions] = useState<Record<string, { pending: boolean; error?: string }>>({});
@@ -132,6 +134,7 @@ export function ScheduledNotifications() {
         <p className="text-sm text-token-muted">按北京时间将消息发送到企业微信群。</p>
         <div className="flex shrink-0 gap-2">
           <Button size="sm" disabled={loading} onClick={refresh}>刷新</Button>
+          {canManage && <Button size="sm" onClick={() => setGroupsOpen(true)}>常用群</Button>}
           {canManage && <Button size="sm" onClick={() => setDebugSettingsOpen(true)}>调试设置</Button>}
           {canManage && <Button size="sm" variant="primary" onClick={() => setEditing({ mode: 'new' })}><Plus size={14} />新建任务</Button>}
         </div>
@@ -197,6 +200,7 @@ export function ScheduledNotifications() {
         setDebugSettingsOpen(false);
         setActionMessage('调试群已保存。立即调试会发送到此群，原定时计划继续按保存时间执行。');
       }} />}
+      {groupsOpen && <NotificationGroupsDialog onClose={() => setGroupsOpen(false)} />}
     </div>
   );
 }
@@ -266,10 +270,13 @@ function NotificationEditor({ selection, onClose, onSaved }: {
   const source = selection.mode === 'new' ? null : selection.task;
   const task = selection.mode === 'edit' ? selection.task : null;
   const initialWebhookCount = source ? webhookCount(source) : 0;
-  const nextWebhookId = useRef(Math.max(initialWebhookCount, 1));
-  const [webhookRows, setWebhookRows] = useState<WebhookRow[]>(() => initialWebhookCount
-    ? Array.from({ length: initialWebhookCount }, (_, index) => ({ id: index, existingIndex: index }))
-    : [{ id: 0 }]);
+  const nextWebhookId = useRef(initialWebhookCount);
+  const [webhookRows, setWebhookRows] = useState<WebhookRow[]>(() =>
+    Array.from({ length: initialWebhookCount }, (_, index) => ({ id: index, existingIndex: index })));
+  const [groups, setGroups] = useState<NotificationGroup[] | null>(null);
+  const [groupsError, setGroupsError] = useState('');
+  const [groupsReload, setGroupsReload] = useState(0);
+  const availableGroups = groups?.filter((group) => !webhookRows.some((row) => row.group?.id === group.id)) ?? [];
   const enabled = source?.enabled ?? true;
   const [frequency, setFrequency] = useState<NotificationFrequency>(source?.frequency ?? 'once');
   const [creationDate] = useState(() => {
@@ -281,6 +288,25 @@ function NotificationEditor({ selection, onClose, onSaved }: {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void listNotificationGroups(controller.signal).then((response) => {
+      if (controller.signal.aborted) return;
+      if (response.success) {
+        setGroups(response.data.items);
+        setGroupsError('');
+      } else setGroupsError(response.error.message);
+    }).catch(() => {
+      if (!controller.signal.aborted) setGroupsError('常用群读取失败。');
+    });
+    return () => controller.abort();
+  }, [groupsReload]);
+
+  function addWebhook(group?: NotificationGroup) {
+    const id = nextWebhookId.current++;
+    setWebhookRows((rows) => rows.length < maxWebhooks ? [...rows, { id, group }] : rows);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -295,9 +321,11 @@ function NotificationEditor({ selection, onClose, onSaved }: {
       day: frequency === 'weekly' || frequency === 'monthly' ? Number(data.get('day')) : null,
       enabled,
       mentionAll: data.has('mentionAll'),
-      webhooks: webhookRows.map((row) => row.existingIndex !== undefined && !row.replacing
-        ? { existingIndex: row.existingIndex }
-        : { url: String(data.get(`webhook-${row.id}`) ?? '').trim() }),
+      webhooks: webhookRows.map((row) => {
+        if (row.group) return { groupId: row.group.id, groupRevision: row.group.revision };
+        if (row.existingIndex !== undefined && !row.replacing) return { existingIndex: row.existingIndex };
+        return { url: String(data.get(`webhook-${row.id}`) ?? '').trim() };
+      }),
       revision: task?.revision,
       sourceTaskId: selection.mode === 'copy' ? selection.task.id : undefined,
       sourceRevision: selection.mode === 'copy' ? selection.task.revision : undefined,
@@ -307,7 +335,10 @@ function NotificationEditor({ selection, onClose, onSaved }: {
     try {
       const response = await saveScheduledNotification(input, task?.id);
       if (response.success) onSaved(response.data);
-      else setError(response.error.message);
+      else if (response.error.code === 'NOTIFICATION_GROUP_CHANGED') {
+        setError('常用群已更新，请移除旧选择并重新选择该群。');
+        setGroupsReload((value) => value + 1);
+      } else setError(response.error.message);
     } catch {
       setError('保存失败，请重试。');
     } finally {
@@ -339,27 +370,42 @@ function NotificationEditor({ selection, onClose, onSaved }: {
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-3">
               <span>企业微信群机器人 Webhook</span>
-              <Button size="sm" disabled={saving || webhookRows.length >= maxWebhooks} onClick={() => {
-                const id = nextWebhookId.current++;
-                setWebhookRows((rows) => [...rows, { id }]);
-              }}><Plus size={14} />添加 Webhook</Button>
+              <Button size="sm" disabled={saving || webhookRows.length >= maxWebhooks}
+                onClick={() => addWebhook()}><Plus size={14} />添加 Webhook</Button>
             </div>
             <p className="text-xs text-token-muted">同一条通知会发到这里配置的所有群，最多 {maxWebhooks} 个。</p>
+            <label className="block">选择常用群
+              <select className={field} value="" disabled={saving || webhookRows.length >= maxWebhooks || !availableGroups.length}
+                onChange={(event) => {
+                  const group = availableGroups.find((item) => item.id === event.target.value);
+                  if (group) addWebhook(group);
+                }}>
+                <option value="">{groups === null ? '正在读取常用群…' : groups.length ? '选择要发送的群' : '还没有常用群'}</option>
+                {availableGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              </select>
+            </label>
+            {groups?.length === 0 && <p className="text-xs text-token-muted">可在通知页「常用群」中添加，或在这里手动填写链接。</p>}
+            {groupsError && <div className="flex items-center gap-2 text-xs text-token-muted">
+              <span>{groupsError}</span>
+              <Button size="sm" disabled={saving} onClick={() => setGroupsReload((value) => value + 1)}>重试</Button>
+            </div>}
             {webhookRows.map((row, index) => <div key={row.id} className="rounded-lg border border-token-subtle bg-token-nested p-3">
               <div className="flex items-center justify-between gap-2">
-                <span className="font-medium text-token-primary">Webhook {index + 1}</span>
+                <span className="min-w-0 break-all font-medium text-token-primary">
+                  {row.group?.name ?? (row.existingIndex !== undefined && !row.replacing ? source?.webhookGroupNames?.[row.existingIndex] : null) ?? `Webhook ${index + 1}`}
+                </span>
                 <div className="flex gap-1">
                   {row.existingIndex !== undefined && <Button size="sm" variant="ghost" disabled={saving} onClick={() =>
                     setWebhookRows((rows) => rows.map((item) => item.id === row.id ? { ...item, replacing: !item.replacing } : item))
                   }>{row.replacing ? '取消修改' : '修改'}</Button>}
-                  {webhookRows.length > 1 && <Button size="sm" variant="ghost" disabled={saving} onClick={() =>
+                  <Button size="sm" variant="ghost" disabled={saving} onClick={() =>
                     setWebhookRows((rows) => rows.filter((item) => item.id !== row.id))
-                  }>移除</Button>}
+                  }>移除</Button>
                 </div>
               </div>
-              {row.existingIndex !== undefined && !row.replacing ? <>
+              {row.group || (row.existingIndex !== undefined && !row.replacing) ? <>
                 <div className="text-xs text-token-secondary">已填写（脱敏）</div>
-                <div className="mt-1 break-all text-xs text-token-muted">{source?.webhookMasked}</div>
+                <div className="mt-1 break-all text-xs text-token-muted">{row.group?.webhookMasked ?? source?.webhookMasked}</div>
               </> : <input className={field} name={`webhook-${row.id}`} type="password" autoComplete="new-password"
                 aria-label={`Webhook ${index + 1} 链接`} required maxLength={512} placeholder="粘贴企业微信机器人链接" />}
             </div>)}
@@ -371,7 +417,7 @@ function NotificationEditor({ selection, onClose, onSaved }: {
       }
       actions={<>
         <Button size="sm" onClick={onClose} disabled={saving}>取消</Button>
-        <Button size="sm" variant="primary" type="submit" form="scheduled-notification-form" disabled={saving}>{saving ? '保存中…' : '保存'}</Button>
+        <Button size="sm" variant="primary" type="submit" form="scheduled-notification-form" disabled={saving || !webhookRows.length}>{saving ? '保存中…' : '保存'}</Button>
       </>}
     />
   );

@@ -128,6 +128,47 @@ public class ProductScheduledNotificationLifecycleTests
     }
 
     [Fact]
+    public async Task SavedGroupSelectionKeepsOriginalNameAndDestinationWhenDirectoryChanges()
+    {
+        await using var fixture = new Fixture();
+        var controller = fixture.Controller();
+        var created = Assert.IsType<OkObjectResult>(await controller.CreateNotificationGroup(
+            new("运营群", TestUrl, null), fixture.Protection, fixture.Configuration));
+        Assert.DoesNotContain(TestUrl, JsonSerializer.Serialize(created.Value));
+        var settings = await fixture.Db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).SingleAsync();
+        var group = Assert.Single(settings.ScheduledNotificationGroups!.Items);
+        Assert.DoesNotContain(TestUrl, group.ProtectedWebhook);
+
+        var input = fixture.Input() with { Webhooks = [new(null, null, group.Id, group.Revision)] };
+        Assert.IsType<OkObjectResult>(await controller.CreateScheduledNotification(input, fixture.Protection, fixture.Configuration));
+        var saved = await fixture.Db.ProductScheduledNotifications.Find(FilterDefinition<ProductScheduledNotification>.Empty).SingleAsync();
+        Assert.Equal("运营群", Assert.Single(saved.WebhookGroupNames!));
+        Assert.Equal(group.ProtectedWebhook, Assert.Single(saved.GetProtectedWebhooks()));
+
+        var replacement = TestUrl + "-replacement";
+        Assert.IsType<OkObjectResult>(await controller.UpdateNotificationGroup(group.Id,
+            new("运营新群", replacement, group.Revision), fixture.Protection, fixture.Configuration));
+        Assert.IsType<ConflictObjectResult>(await controller.CreateScheduledNotification(input, fixture.Protection, fixture.Configuration));
+        var latest = await fixture.Db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).SingleAsync();
+        var latestGroup = Assert.Single(latest.ScheduledNotificationGroups!.Items);
+        Assert.IsType<OkObjectResult>(await controller.RemoveNotificationGroup(group.Id, latestGroup.Revision, fixture.Configuration));
+
+        var copied = fixture.Input() with
+        {
+            Enabled = false, SourceTaskId = saved.Id, SourceRevision = saved.Revision, Webhooks = [new(0, null)],
+        };
+        Assert.IsType<OkObjectResult>(await controller.CreateScheduledNotification(copied, fixture.Protection, fixture.Configuration));
+        var copy = await fixture.Db.ProductScheduledNotifications.Find(x => x.Id != saved.Id).SingleAsync();
+        Assert.Equal("运营群", Assert.Single(copy.WebhookGroupNames!));
+        Assert.Equal(group.ProtectedWebhook, Assert.Single(copy.GetProtectedWebhooks()));
+
+        await fixture.Db.ProductScheduledNotifications.UpdateOneAsync(x => x.Id == saved.Id,
+            Builders<ProductScheduledNotification>.Update.Set(x => x.NextRunAt, DateTime.UtcNow.AddMinutes(-1)));
+        await fixture.Worker().ProcessNextAsync(CancellationToken.None);
+        Assert.Equal(TestUrl, Assert.Single(fixture.Http.Urls));
+    }
+
+    [Fact]
     public async Task ExpiredInFlightSingleTaskBecomesUnknownWithoutAutomaticDuplicateDelivery()
     {
         await using var fixture = new Fixture();

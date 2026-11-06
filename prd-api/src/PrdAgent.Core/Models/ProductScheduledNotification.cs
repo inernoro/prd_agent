@@ -13,6 +13,7 @@ public sealed class ProductScheduledNotification
     public int? Day { get; set; }
     public string ProtectedWebhook { get; set; } = "";
     public string[]? ProtectedWebhooks { get; set; }
+    public string?[]? WebhookGroupNames { get; set; }
     public bool Enabled { get; set; }
     public DateTime? NextRunAt { get; set; }
     public DateTime? LastRunAt { get; set; }

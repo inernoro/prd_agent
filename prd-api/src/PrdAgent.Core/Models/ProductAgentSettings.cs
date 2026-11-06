@@ -11,8 +11,25 @@ public class ProductAgentSettings
     public ProductClaimWebhookConfig ClaimWebhook { get; set; } = new();
     [System.Text.Json.Serialization.JsonIgnore]
     public string? ScheduledNotificationDebugWebhook { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ProductNotificationGroupDirectory? ScheduledNotificationGroups { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string UpdatedBy { get; set; } = string.Empty;
+}
+
+public sealed class ProductNotificationGroupDirectory
+{
+    public string Revision { get; set; } = Guid.NewGuid().ToString("N");
+    public List<ProductNotificationGroup> Items { get; set; } = [];
+}
+
+public sealed class ProductNotificationGroup
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Revision { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string ProtectedWebhook { get; set; } = "";
 }
 
 public class ProductClaimWebhookConfig

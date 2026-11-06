@@ -1,14 +1,18 @@
 // @vitest-environment jsdom
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ScheduledNotifications } from './ScheduledNotifications';
 import type { ScheduledNotification } from '@/services/real/productScheduledNotifications';
 
-const api = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), debug: vi.fn(), getSettings: vi.fn(), saveSettings: vi.fn() }));
+const api = vi.hoisted(() => ({
+  list: vi.fn(), save: vi.fn(), debug: vi.fn(), getSettings: vi.fn(), saveSettings: vi.fn(),
+  listGroups: vi.fn(), saveGroup: vi.fn(), removeGroup: vi.fn(),
+}));
 vi.mock('@/services/real/productScheduledNotifications', () => ({
   listScheduledNotifications: api.list, saveScheduledNotification: api.save, debugScheduledNotification: api.debug,
   getNotificationDebugSettings: api.getSettings, saveNotificationDebugSettings: api.saveSettings,
+  listNotificationGroups: api.listGroups, saveNotificationGroup: api.saveGroup, removeNotificationGroup: api.removeGroup,
 }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSectionLoader: () => <span>读取中</span> }));
 vi.mock('@/components/ui/Dialog', () => ({
@@ -50,7 +54,46 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+beforeEach(() => {
+  api.listGroups.mockResolvedValue({ success: true, data: { items: [] } });
+});
+
 describe('定时通知真实组件交互', () => {
+  it('保存常用群后可按名称选择两个群，通知仅提交群引用', async () => {
+    const first = { id: 'sales', revision: 'v1', name: '销售群', webhookMasked: completed.webhookMasked };
+    const second = { id: 'ops', revision: 'v2', name: '运营群', webhookMasked: completed.webhookMasked };
+    api.list.mockResolvedValue({ success: true, data: { canManage: true, items: [] } });
+    api.listGroups.mockResolvedValueOnce({ success: true, data: { items: [first] } })
+      .mockResolvedValue({ success: true, data: { items: [first, second] } });
+    api.saveGroup.mockResolvedValue({ success: true, data: second });
+    api.save.mockResolvedValue({ success: true, data: completed });
+    await render();
+    await click('常用群');
+    await click('添加常用群');
+    const form = host.querySelector<HTMLFormElement>('#notification-group-form')!;
+    form.querySelector<HTMLInputElement>('[name=name]')!.value = second.name;
+    form.querySelector<HTMLInputElement>('[name=webhook]')!.value = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake-test-key';
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(api.saveGroup).toHaveBeenCalledWith(expect.objectContaining({ name: second.name }), undefined);
+    await click('关闭');
+    await click('新建任务');
+    const editor = host.querySelector<HTMLFormElement>('#scheduled-notification-form')!;
+    const picker = [...editor.querySelectorAll('select')].find((item) => item.labels?.[0].textContent?.includes('选择常用群'))!;
+    for (const group of [first, second]) {
+      await act(async () => {
+        picker.value = group.id;
+        picker.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+    expect(editor.querySelector('input[type=password]')).toBeNull();
+    expect(editor.textContent).toContain(first.name);
+    expect(editor.textContent).toContain(second.name);
+    await act(async () => { editor.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({
+      webhooks: [{ groupId: first.id, groupRevision: first.revision }, { groupId: second.id, groupRevision: second.revision }],
+    }), undefined);
+  });
+
   it('已发送单次仅能复制，副本保留原日期、时间、启用设置和全部已填写的 Webhook', async () => {
     api.list.mockResolvedValue({ success: true, data: { canManage: true, items: [completed] } });
     api.save.mockResolvedValue({ success: true, data: { ...completed, id: 'new-copy' } });

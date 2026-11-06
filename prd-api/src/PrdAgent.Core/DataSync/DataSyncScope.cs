@@ -178,7 +178,7 @@ public static class DataSyncScope
             new DataSyncCollection("model_lab_model_sets", System.Array.Empty<string>()),
             new DataSyncCollection("model_scheduler_config", System.Array.Empty<string>()),
             // 机器人配置属于本站；连同启停标志整体保留，避免跨站导入意外投递。
-            new DataSyncCollection("product_agent_settings", new[] { "ClaimWebhook", "ScheduledNotificationDebugWebhook" }),
+            new DataSyncCollection("product_agent_settings", new[] { "ClaimWebhook", "ScheduledNotificationDebugWebhook", "ScheduledNotificationGroups" }),
             new DataSyncCollection("reference_image_configs", System.Array.Empty<string>()),
             new DataSyncCollection("routing_rules", System.Array.Empty<string>()),
             new DataSyncCollection("shortcut_templates", System.Array.Empty<string>()),
