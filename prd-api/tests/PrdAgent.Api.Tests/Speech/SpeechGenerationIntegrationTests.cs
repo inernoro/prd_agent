@@ -71,8 +71,8 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("CDS_PROJECT_ID", previousProject);
     }
 
-    private SpeechGenerationService Service(IHostEnvironment environment) => new(db, gateway.Object,
-        new LLMRequestContextAccessor(), protection, storage, new SpeechQuotaService(db), environment,
+    private SpeechGenerationService Service(IHostEnvironment environment, IAssetStorage? assetStorage = null) => new(db, gateway.Object,
+        new LLMRequestContextAccessor(), protection, assetStorage ?? storage, new SpeechQuotaService(db), environment,
         NullLogger<SpeechGenerationService>.Instance);
 
     private static GatewayModelResolution Resolution(string protocol, string offering = "pinned-offering", string model = "future-supplier-model") => new()
@@ -138,6 +138,44 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
         var ledger = await db.SpeechQuotaLedgers.Find(FilterDefinition<SpeechQuotaLedger>.Empty).SingleAsync();
         Assert.Equal(run.CharacterCount, ledger.Characters);
         Assert.Equal(0, ledger.ActiveRuns);
+    }
+
+    [Theory]
+    [InlineData("openai")]
+    [InlineData("doubao-tts")]
+    public async Task RealLocalStoragePersistsEncryptedAudioUsingRegisteredPaths(string protocol)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"map-speech-assets-test-{Guid.NewGuid():N}");
+        try
+        {
+            service = Service(host, new LocalAssetStorage(directory));
+            await ConfigureAsync(protocol);
+            var created = await service.CreateAsync("owner-a", "client-a", new() { Text = "真实存储路径必须允许保存语音产物" });
+            Assert.True(await service.ProcessNextAsync("worker-a"));
+            var run = (await service.GetRunAsync("owner-a", created.Run.Id))!;
+            Assert.Equal(SpeechRunStatus.Completed, run.Status);
+            Assert.StartsWith("mcp-speech/bin/", run.AssetKey);
+            Assert.EndsWith(".bin", run.AssetKey);
+            var file = Assert.Single(Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories));
+            Assert.Equal(run.AssetKey, Path.GetRelativePath(directory, file).Replace(Path.DirectorySeparatorChar, '/'));
+            var encrypted = await File.ReadAllBytesAsync(file);
+            Assert.False(upstream.BinaryContent!.SequenceEqual(encrypted));
+            Assert.Equal(Convert.ToHexString(SHA256.HashData(encrypted)).ToLowerInvariant(), run.AssetSha256);
+            // 换一个真实存储实例读取磁盘，确保下载不会意外依赖替身中的字典。
+            var reader = Service(host, new LocalAssetStorage(directory));
+            var audio = await reader.ReadAudioAsync("owner-a", run.Id);
+            Assert.Equal(upstream.BinaryContent, audio.Bytes);
+            Assert.Equal("audio/mpeg", audio.Mime);
+            Assert.Equal("RUN_NOT_FOUND", (await Assert.ThrowsAsync<SpeechException>(() =>
+                reader.ReadAudioAsync("other-owner", run.Id))).Code);
+            var asset = Assert.Single(await new SpeechAssetProvider(db, host).GetAssetsAsync("owner-a", 20, default));
+            Assert.Equal($"/api/mcp-speech/runs/{run.Id}/audio", asset.Url);
+            Assert.Single(sent);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
@@ -331,7 +369,7 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
         {
             var encrypted = protection.CreateProtector("map.mcp-speech.audio.v1", run.Environment, run.OwnerUserId, run.Id)
                 .Protect(upstream.BinaryContent!);
-            var stored = await storage.SaveAsync(encrypted, "application/octet-stream", default, "private", "audio");
+            var stored = await storage.SaveAsync(encrypted, "application/octet-stream", default, "mcp-speech", AppDomainPaths.TypeBin);
             run.AssetKey = stored.Key;
             run.Mime = "audio/mpeg";
             run.SizeBytes = upstream.BinaryContent!.Length;
@@ -402,7 +440,7 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
     {
         public ConcurrentDictionary<string, byte[]> Objects { get; } = new();
         public string? TryBuildContentAddressedKey(byte[] bytes, string mime, string? domain = null, string? type = null,
-            string? fileName = null, string? extensionHint = null) => $"{domain}/{type}/{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}{extensionHint}";
+            string? fileName = null, string? extensionHint = null) => $"{AppDomainPaths.NormDomain(domain)}/{AppDomainPaths.NormType(type)}/{Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()}{extensionHint}";
         public Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null,
             string? type = null, string? fileName = null, string? extensionHint = null)
         {
