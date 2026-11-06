@@ -66,12 +66,14 @@ export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
   // healthz:任何 IP 可访问
   r.get('/__forwarder/healthz', (_req, res) => {
     const routesHealthState = opts.watcher.healthState();
-    const status = routesHealthState === 'live' ? 'ok' : 'degraded';
+    const widgetStreams = opts.proxy.getStats().widgetStreams;
+    const status = routesHealthState === 'live' && !widgetStreams?.recovering ? 'ok' : 'degraded';
     res.status(200).json({
       status,
       uptime: Math.floor((Date.now() - startedAt) / 1000),
       routesCount: opts.watcher.getRoutes().length,
       routesHealthState,
+      widgetStreams,
     });
   });
 
@@ -120,6 +122,7 @@ export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
       errorCount: stats.errorCount,
       error503Count: stats.error503Count,
       previewActivity: stats.previewActivity,
+      widgetStreams: stats.widgetStreams,
     });
   });
 

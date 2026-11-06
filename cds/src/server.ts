@@ -4054,6 +4054,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
+    res.flushHeaders();
     activityClients.add(res);
     // Send buffered history
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
