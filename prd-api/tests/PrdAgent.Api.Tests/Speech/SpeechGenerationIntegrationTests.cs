@@ -374,6 +374,22 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
         Assert.Empty(sent);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WorkerOnlyTakesOtherDeploymentQueuedJobsThatPredateStartup(bool predatesStartup)
+    {
+        await ConfigureAsync();
+        var run = (await service.CreateAsync("owner-a", null, new() { Text = "同环境部署升级时接管旧的排队任务" })).Run;
+        await db.SpeechRuns.UpdateOneAsync(x => x.Id == run.Id,
+            Builders<SpeechRun>.Update.Set(x => x.DeploymentSlug, "other-deployment-revision")
+                .Set(x => x.CreatedAt, predatesStartup ? DateTime.UtcNow.AddHours(-1) : DateTime.UtcNow));
+        Assert.Equal(predatesStartup, await service.ProcessNextAsync("new-worker"));
+        var result = (await service.GetRunAsync("owner-a", run.Id))!;
+        Assert.Equal(predatesStartup ? SpeechRunStatus.Completed : SpeechRunStatus.Queued, result.Status);
+        Assert.Equal(predatesStartup ? 1 : 0, sent.Count);
+    }
+
     private sealed class TestHost : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = "SpeechTests";
