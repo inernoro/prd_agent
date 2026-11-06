@@ -70,6 +70,8 @@ export interface McpCallArtifactDto {
   id?: string | null;
   url?: string | null;
   title?: string | null;
+  /** 异步产物的当前业务状态；历史入口地址本身不代表产物已完成。 */
+  status?: string | null;
 }
 
 export interface McpCallLogDto {
