@@ -27,6 +27,8 @@ ALLOWED_ROOT_FILES = {
     "README.md",
     "SECURITY.md",
     "cds-compose.yml",
+    # 主备 CDS 公共站点目录，供技能与控制台读取，不含凭据。
+    "cds-instances.json",
     "docker-compose.dev.yml",
     "docker-compose.local.yml",
     "docker-compose.yml",

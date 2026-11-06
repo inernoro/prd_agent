@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.17.6
-description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
+  version: 0.20.1
+description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.17.6 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
+> **版本**：v0.20.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -40,6 +40,80 @@ CDS 这边您想做什么？
 | 预览 URL 真实入口查询（必须调用 `preview-url`） | |
 | cdscli 命令总览 / 安装位置 / init 向导 | |
 
+## 主备 CDS：先发现、独立接入、明确选择
+
+### 负载偏高时主动告知用户
+
+开始部署、拉取或创建分支前，先检查 `cdscli instance list`。优先读项目根目录
+`cds-instances.json`；没有项目目录时使用技能包自带的公开地址快照，首次安装可直接离线发现主备。
+可用 `instance sync` 从支持该接口的当前站点刷新项目目录；旧站点不支持时保留包内快照，
+不能把目录查询失败解释为授权失败。再执行 `cdscli instance recommend`。它只查询当前站点
+`/api/host-stats`：CPU 一分钟负载占核心数比例达到 80% 判为 `high`；未达到为 `normal`；
+超时、权限失败、维护 503、重定向或响应缺字段为 `unknown`，不能据此宣称过载。
+
+- 返回 `high` 时，**必须在对话里通知用户**当前站点负载偏高、备用名称和访问地址，并明确“不同站点密钥不同，备用需要独立授权”。仅在工具日志里留下提示不算通知。
+- 用户尚未选择时，先说明“可继续当前站点，也可使用备用站点”，等选择后再发起部署；已有明确站点选择则沿用，不重复索要确认。
+- 返回 `alternatives[].authorization=required` 时，在目标站点使用 `instance connect` 走页面批准；不让用户在对话中复制密钥，不把当前 Key、项目 ID 或分支 ID 填到备用。
+- `stored-not-verified` 仅表示本地有目标项目授权，仍需 `instance check` 校验。备用健康状态未被检查，不能说“备用已就绪”。
+- 用户选择备用后按下节的独立接入与选择流程执行；选择继续当前站点则保留原连接。
+- `unknown` 时说明负载未确认，可给出 `instance list` 中的备用入口，不把网络失败归因为负载。
+
+常用部署命令还会在已登记的多站点目录下自动检查一次，并在高负载时输出 stderr 提示和
+JSON `notices[code=cds-load-high]`。这是兜底提示，原命令仍在原站点执行；Agent 必须提前运行
+只读 `instance recommend` 才能在写操作前给用户选择。CLI 不自动切换，不跨站点重放请求。
+负载检查不访问备用站点，也不向它发送任何凭据；结果与脱敏响应证据按次保存到
+`.cds/instance-load-checks/`，正常与失败均可追溯。
+
+
+用户说“用备用 CDS 继续部署”时，先离线运行 `cdscli instance list`，读取仓库根目录
+`cds-instances.json`；没有目录且主站可用时可运行 `cdscli instance sync` 同步公共地址。
+技能包包含与仓库公开目录一致的地址快照；项目根目录可覆盖，目录只描述地址与角色，不表示健康或授权。
+主站故障时直接使用已保存的项目目录或包内快照，不依赖故障主站重新下发地址。
+
+- `cdscli instance connect standby --project <目标项目ID> --agent Codex`：申请目标项目独立授权，保留原实例授权。
+- 目标还没有项目：使用 `instance connect standby --new-project --create-project <名称> --git-url <仓库地址>`，然后走冷路径完成项目接入。
+- `cdscli instance check standby`：校验目标项目授权、项目 ID 和仓库绑定；失败不选择、不部署。
+- `cdscli instance use standby`：校验后保存当前仓库的默认实例；用 `instance use primary` 切回。
+- `cdscli --instance standby <原有命令>`：仅本次使用目标实例，覆盖继承的主用环境凭据并先校验目标项目，不改变默认选择。
+
+全局 `--instance` 不与 `connect` 或 `instance` 子命令组合；接入使用 `instance connect` 或 `connect --host`，避免两个目标来源互相矛盾。
+
+实例目录只包含公开名称、角色和站点根地址，不能放 Key。独立授权保存在本地
+`.cds/instance-credentials.json`；默认选择保存在 `.cds/active-instance.json`，均排除 Git、权限 0600。
+旧 `.cds/credentials.json` 在未选择实例时继续兼容。检查证据按次保存到本地
+`.cds/instance-checks/`，只保留受控项目身份字段和判定，不保存环境变量或密钥。
+
+选择备用后，重新读取该实例的项目、profile、分支和预览地址；不要复用主用的分支 ID。
+确认目标的环境变量、外部依赖和 CI 预构建模式，再走 `cds-deploy-pipeline` 发起新部署。
+遇到超时不自动向另一实例重放写请求，先确认原任务是否已被接受。
+这一版不迁移数据库、不接管流量、不承诺后台 Worker 能安全双跑。
+
+用户入口：控制台顶部“主备 CDS”；断线提示展开后也能打开入口。网页切换进入目标项目列表，
+需要独立登录。可提前“下载备用入口”保存地址；标签页目录快照仅用于故障导航，不代表健康状态。
+
+### 备用继续部署：现有分支的完整验收路径
+
+用户明确选择备用后，沿用已批准的目标项目授权；没有目标授权才运行 `instance connect`。
+不重新申请已保存且校验有效的授权，不复制当前站点 Key，不把主站的项目或分支 ID 当作备用 ID。
+
+1. `instance check standby` → `instance use standby` → `auth inspect --strict`：校验备用项目与仓库，保存选择并确认后续命令使用备用独立授权。继承的主站环境 Key 必须被清除。
+2. `project show <备用项目ID>` → `profile list` → `branch list`：从备用实际返回结果选择现有分支，核对就绪路径、依赖与预构建模式。不要创建同名副本或改项目级默认来代替分支选择。
+3. 固定完整 40 位目标提交，确认同提交 CI 和预构建产物成功；已有同提交的成功产物可以复用，不以另一提交的 CI 代替。
+4. `branch deploy <备用实际分支ID> --commit <完整SHA> --timeout 600`：只向备用发起一次部署。记录返回的 `deploymentRunId`，用 `deployment-run show <runId>` 跟踪本次运行；超时先查该运行，不能自动跨站重放或重复部署。
+5. `branch status <备用实际分支ID>`：本次运行终态为 running，`runningCommitSha` 与 `targetCommitSha` 等于目标提交，`deployRuntime.prebuilt=true`、`sourceProfiles=0`、`drift.hasDrift=false`。不能只凭原有 BranchEntry 显示 running 宣称本次部署成功。
+6. `cdscli --human preview-url` 读取实际入口，按目标 profile 配置的就绪路径检查，并访问公网 HTML 及实际 JS/CSS。核对部署前后的主备控制台可用性；正式控制面、全局代理、共享依赖和其他项目不属于本次验收分支的修改范围。
+
+使用受限 CDS Self Preview 时，原配置就绪路径是 `/api/instance-mode`；它不具备宿主 Docker 权限，
+通用 `/healthz` 的既有异常应如实记录，不能修改探针掩盖，也不能将该例推广成所有项目的默认。
+验收记录只保存目标站点、请求 ID、部署运行、提交和“目标 Key 匹配 / 主站 Key 未携带”等判定，
+不能保存真实 Key、原始认证头或含密钥的完整环境。切换不迁移数据库，也不接管业务流量。
+
+原项目密钥过期或被撤销后，换发审批必须使用该站点已验证的用户身份，以保留主体、授权与有效期约束；本机没有有效用户身份时保留原连接并停止，不将旧项目密钥当作用户身份提交匿名审批。
+
+接入自检兼容性：`setup-check` 保留既有能力；仅在目标提供 `/api/agent/setup.json` 协议时使用。
+旧站点缺少该协议时，按上面的 `auth inspect`、`instance check` 和真实项目查询验证，
+不能因为协议 404 清除凭据、重复申请授权或拿另一站点 Key 兜底。
+
 ## cdscli — 唯一 CLI 入口（其他两个技能也走它）
 
 ```bash
@@ -52,7 +126,7 @@ $CLI init                                # 交互式安全向导
 $CLI init --legacy-env                   # 仅兼容旧用户：写 ~/.cdsrc
 $CLI auth inspect --strict               # 脱敏检查凭据来源；冲突时停止
 $CLI auth check                          # 校验当前项目凭据
-$CLI setup-check --host https://cds.example --project <id> --skills cds  # 实测技能、凭据与目标项目接入
+$CLI setup-check --host https://cds.example --project <id> --skills cds  # 支持该接入协议的站点可实测技能与项目
 
 # 托管交付真相：运行过程与可复用版本
 $CLI deployment-run list --project <id>
@@ -335,7 +409,7 @@ stdout、命令参数、shell profile 或系统环境变量持久配置中。
 $CLI connect --host https://cds.example --new-project --agent <当前 Agent 名称>
 ```
 
-批准后得到一次性 create-only 授权。`project create` / `onboard` 创建项目成功时，CDS 自动
+Agent 自动读取当前 origin 并申报名称和仓库；服务端将一次性 create-only 授权绑定该目标。更改名称或仓库、并发重放及无目标旧申请会被拦截。批准后得到一次性 create-only 授权。`project create` / `onboard` 创建项目成功时，CDS 自动
 吊销该授权并返回新项目专属 Key；CLI 静默保存并切换，不打印明文。
 
 ### 旧版兼容
@@ -414,17 +488,20 @@ $CLI self update --branch <branch>       # 切 + pull + 重启 CDS 进程
 中无需新增参数，仍可直接使用。若目标分支不包含当前提交，服务端会在 checkout
 之前拒绝，避免一个 Agent 的分支整体覆盖另一个 Agent 已上线的修复。
 
-只有经过核对的正式换代或回滚，才允许显式解除非快进门禁：
+正式发布必须先合入当前线上完整提交并验证。仅填写 release 和原因不能证明已有修正被保留，普通自更新仍拒绝非继承发布。确需回滚时显式锁定当前提交并说明原因：
 
 ```bash
 $CLI self update --branch <branch> \
-  --transition-intent release \
+  --transition-intent rollback \
   --expected-from-sha <当前 self-status headSha> \
   --reason "说明为什么目标分支可以替代当前控制面版本"
 ```
 
-`--transition-intent` 只允许 `release` / `rollback`。不得把它作为日常兼容参数；
+人工强制更新仍是既有逃生通道；Agent 不得为绕过继承检查自动改用强制更新。
+`--transition-intent` 保留 `release` / `rollback` 兼容取值，但 release 不解除普通发布的继承要求。不得把它作为日常兼容参数；
 `expected-from-sha` 是乐观锁，生产版本已变化时请求必须失败并重新审计。
+
+自更新、强制同步与仅重启都会先等待其他项目的部署、发布和分支写操作结束（默认 5 分钟）。等待超时取消本次更新与重启，并释放部署入口；原项目继续运行，不自动补发或强制重启。请求 `drainTimeoutMs` / `restartDrainTimeoutMs` 可缩短等待，0 表示忙时立即取消，不能绕过保护。取消发生在切换代码和前端产物之前，历史记录为“已中止”；等其他操作结束后重新执行原命令。
 
 注意：self-update 期间 CDS API 短暂不可用（~10s），CDS 内部 state.json 迁移逻辑会自动跑。
 
@@ -478,4 +555,19 @@ prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变
 
 详见 `.claude/skills/create-visual-test-to-kb/SKILL.md`「报告图片与资产存储」。
 
-自更新 SSE 未收到完成事件且状态仍为 `not_required` 时，CLI 返回未确认错误，不能把之前的更新状态当作本次成功。先用 `self status` 核对运行版本再决定重试，避免重复重启。
+### 凭据恢复
+
+重新运行原 connect 口令即可。CLI 保存无密钥的项目定位信息，丢失 credentials.json 时仍连接原项目，不重复创建。有效凭据直接复用；已有有效身份和授权可补发丢失凭据；失效或撤销的项目凭据需要在原审批入口重新批准一次。网络故障不触发新建或覆盖凭据。整个流程不要求新人查项目编号、复制密钥或修改终端配置。
+
+同一目标的原口令会恢复原项目；明确指定不同项目名称、slug 或仓库的新建任务仍申请新目标，不得默默复用旧项目。旧连接的定位信息由 CLI 从已授权项目自动补齐，不要求新人填写。
+
+账号或主体停用、原项目整体授权被收回时，同一命令只读等待管理员在现有「用户管理」或「项目授权」页面恢复原权限，恢复后自动继续。等待期间不创建匿名申请、不补发凭据、不改写本地文件。管理员恢复账号不复活已明确撤销的密钥；这种密钥仍沿原项目批准更新。已知用户身份失效时不能降级匿名。等待超时保留原连接，恢复后重跑原命令，无需新人查编号或复制密钥。
+
+
+## 首次账号与整份身份恢复
+
+普通账号沿现有用户管理开通，由管理员授予原项目。已有仓库首次接入且没有本地身份时，connect自动把设备申请放到用户管理；管理员核对原账号与原项目后批准，用户身份及项目凭据自动0600落地，新人不复制密钥。
+
+用户身份与整个.cds连接同时丢失时，Agent在原仓库执行 `connect --host <原CDS主机> --recover`，自动读取origin；不能改用new-project猜建副本。仍有有效用户身份则自动从其授权项目查找唯一仓库；停用或撤权等待原权限恢复，已知失效身份不降匿名。多个匹配项目由管理员明确选择。网络/保存中断保留私有恢复票据，原命令继续同一申请，不反复批准；全部文件保存后确认领取。
+
+设备恢复签发的用户身份仅可发现和补回此次原项目，不能建项目、不能借原账号其他授权扩范围。管理员在用户管理核对历史匿名凭据的确切项目、凭据ID与原账号后确认归属；不按Agent名推断，不批量迁移。已撤销和已有归属不可认领，认领保留原范围并立即受账号/项目撤权约束。原授权对话框支持搜索和定位原项目，仅过滤展示，不自动恢复勾选。
