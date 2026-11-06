@@ -317,8 +317,8 @@ public sealed class SpeechGenerationService(
             run.SizeBytes = audio.Length;
             run.Status = SpeechRunStatus.Saving;
             var encrypted = Protector(run).Protect(audio);
-            var domain = $"mcp-speech-{SpeechCapabilityPolicy.Hash(run.Environment)[..16]}";
-            run.AssetKey = storage.TryBuildContentAddressedKey(encrypted, "application/octet-stream", domain, "private-audio", extensionHint: ".bin");
+            var domain = AppDomainPaths.DomainMcpSpeech;
+            run.AssetKey = storage.TryBuildContentAddressedKey(encrypted, "application/octet-stream", domain, AppDomainPaths.TypeBin, extensionHint: ".bin");
             await db.SpeechRuns.UpdateOneAsync(x => x.Id == run.Id && x.WorkerId == workerId,
                 Builders<SpeechRun>.Update.Set(x => x.Status, SpeechRunStatus.Saving).Set(x => x.Stage, "正在保存音频资产")
                     .Set(x => x.AssetKey, run.AssetKey).Set(x => x.Mime, run.Mime).Set(x => x.SizeBytes, run.SizeBytes).Set(x => x.UpdatedAt, DateTime.UtcNow),
@@ -328,7 +328,7 @@ public sealed class SpeechGenerationService(
             {
                 try
                 {
-                    stored = await storage.SaveAsync(encrypted, "application/octet-stream", CancellationToken.None, domain, "private-audio", extensionHint: ".bin");
+                    stored = await storage.SaveAsync(encrypted, "application/octet-stream", CancellationToken.None, domain, AppDomainPaths.TypeBin, extensionHint: ".bin");
                     break;
                 }
                 catch (Exception ex) when (attempt < 2)
