@@ -1,3 +1,4 @@
+import { CodeReviewsSkeleton } from './CodeReviewsSkeleton';
 import { useState } from 'react';
 import { readProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
 import { FolderGit2, LayoutGrid, List, Plus, Search } from 'lucide-react';
@@ -145,6 +146,7 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
 export function pageSkeletonForPath(pathname: string): JSX.Element {
+  if (pathname === '/code-reviews') return <CodeReviewsSkeleton />;
   if (pathname === '/project-list' || pathname === '/project-list/') return <ProjectListSkeleton />;
   if (pathname.startsWith('/branches/') || pathname === '/branch-list') return <BranchListSkeleton />;
   return <ConsoleGenericSkeleton />;
