@@ -83,6 +83,27 @@ describe('代码审查任务完整闭环', () => {
     expect(run.mock.calls[1][0].engineTaskId).toBe('upstream-1');
     expect(service.get(task.id).status).toBe('completed'); expect(state.listAcceptanceReports('a')).toHaveLength(1);
   });
+  it('引擎零文件结果不得伪装成完成或归档质量报告', async () => {
+    run.mockImplementationOnce(async () => ({ ...result(), totalFiles: 0, scannedFiles: 0, findings: [] }));
+    const task = await submit(); await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', progress: { totalFiles: 1, scannedFiles: 0 } });
+    expect(service.get(task.id).error).toContain('已分析 0/1 个文件');
+    expect(service.get(task.id).error).toContain('未形成代码质量结论');
+    expect(service.get(task.id).reportId).toBeUndefined(); expect(state.listAcceptanceReports('a')).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+    await service.retry(task.id); await service.pump();
+    expect(run.mock.calls[1][0].engineTaskId).toBeUndefined();
+    expect(service.get(task.id).status).toBe('completed');
+  });
+  it('部分文件成功的归档明确展示剩余文件未完成分析', async () => {
+    run.mockImplementation(async (input) => {
+      await input.onProgress({ phase: '分析中', totalFiles: 2, scannedFiles: 1, engineTaskId: 'upstream-1' });
+      return { ...result(), totalFiles: 2, scannedFiles: 1, skippedFiles: 1 };
+    });
+    const task = await submit({ zip: buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }, { name: 'src/b.ts', data: 'const b = 2;' }]) }); await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'completed', phase: '部分文件未完成分析，报告已归档', progress: { totalFiles: 2, scannedFiles: 1 } });
+    expect(service.get(task.id).reportId).toBeTruthy();
+  });
   it('并发重复提交幂等且不同项目保持隔离', async () => {
     const [a, b] = await Promise.all([submit({ idempotencyKey: 'same' }), submit({ idempotencyKey: 'same' })]);
     expect(a.id).toBe(b.id); expect(service.list('b')).toEqual([]);

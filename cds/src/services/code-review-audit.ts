@@ -17,6 +17,15 @@ export interface CodeReviewAuditEvent {
 
 export type CodeReviewAudit = (event: CodeReviewAuditEvent) => Promise<void>;
 
+/** Only stable engine business codes are safe to retain; provider text may contain source or credentials. */
+export const CODE_REVIEW_ENGINE_FAILURE_REASONS: Record<string, string> = {
+  MODEL_POOL_ALL_UNAVAILABLE: '模型服务暂时没有可用模型，请联系管理员检查模型服务状态。',
+  MODEL_RATE_LIMITED: '模型服务暂时限流，请稍后重试。',
+  MODEL_TIMEOUT: '模型服务响应超时，请稍后重试或缩小审查范围。',
+  MODEL_AUTH_FAILED: '模型服务认证失败，请联系管理员检查审查服务的模型访问配置。',
+  ANALYSIS_FAILED: '审查引擎未能完成分析，请联系管理员检查引擎日志后重试。',
+};
+
 export class CodeReviewUpstreamHttpError extends Error {
   constructor(operation: string, public readonly status: number) {
     super(`${operation} 失败（HTTP ${status}），请检查上游配置与授权`);
@@ -39,7 +48,8 @@ function safeSnapshot(value: unknown, depth = 0): unknown {
   if (Array.isArray(value)) return value.slice(0, 10).map((entry) => safeSnapshot(entry, depth + 1));
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value).slice(0, 30).map(([key, entry]) => [key,
-      /token|secret|password|cookie|authorization|email|code|snippet|content|prompt|description|suggestion|message|explanation/i.test(key)
+      (key === 'error_code' || key === 'code') && typeof entry === 'string' && Object.hasOwn(CODE_REVIEW_ENGINE_FAILURE_REASONS, entry)
+        ? entry : /token|secret|password|cookie|authorization|email|code|snippet|content|prompt|description|suggestion|message|explanation/i.test(key)
         ? '[omitted private content]' : safeSnapshot(entry, depth + 1),
     ]));
   }
