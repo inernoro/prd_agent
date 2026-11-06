@@ -153,7 +153,10 @@ def test_bootstrap_identity_without_issued_key_fails_loudly(workspace, monkeypat
 
     code, output = run_command(["project", "create", "--name", "demo"])
     assert code == 2, output
-    assert "未返回项目级 Key" in output
+    assert "项目凭据未交付" in output
+    saved = read_credentials(workspace)
+    assert saved["projectId"] == "proj-new" and "bootstrapKey" not in saved
+    assert (workspace / ".cds/connection.json").exists()
     assert "proj-new" in output, "失败信息里要带上已经建出来的项目 id，便于人工收尾"
 
 
@@ -452,6 +455,7 @@ def test_init_migrated_static_key_is_not_treated_as_one_time(workspace, monkeypa
 
 def test_connect_marks_bootstrap_credential_provenance(workspace, monkeypatch):
     """页面批准换来的那把钥匙必须带上来源，否则下游没法把它和静态 key 分开。"""
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
     def fake_request(method, path, body=None, timeout=15, extra_headers=None,
                      fatal_network_errors=True):
         if method == "POST" and path == "/api/bootstrap-access-requests":
