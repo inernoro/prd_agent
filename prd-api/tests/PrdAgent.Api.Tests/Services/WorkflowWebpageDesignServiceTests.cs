@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
@@ -23,6 +24,110 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class WorkflowWebpageDesignServiceTests
 {
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task FailedReportReplayResumesStoredResultWithoutNewModelAndPreservesHistory()
+    {
+        await using var f = await Fixture.CreateAsync(CapsuleTypes.ReportGenerator, savedResultOnly: true);
+        f.HoldQueue = true;
+        var original = f.Service.ExecuteAsync(f.Node, new(), f.Inputs, f.Invocation);
+        DesignArtifactRun? run = null;
+        for (var attempt = 0; run == null && attempt < 1000; attempt++)
+        { run = await f.Db.DesignArtifactRuns.Find(_ => true).FirstOrDefaultAsync(); if (run == null) await Task.Delay(10); }
+        Assert.NotNull(run);
+        await f.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id, Builders<DesignArtifactRun>.Update
+            .Set(item => item.Status, RunStatuses.Running).Set(item => item.Progress, 85));
+        var lifecycle = f.Provider.GetRequiredService<IDesignArtifactLifecycleService>();
+        run = await lifecycle.FailAsync(new(run.Id, run.UserId,
+            new(run.LifecycleVersion, run.WorkspaceRef!.BaseRevision, run.VersionBoundary!.BaseContentHash), "open_design_execution_failed"));
+        await Assert.ThrowsAsync<WorkflowDesignException>(() => original.WaitAsync(TimeSpan.FromSeconds(10)));
+        var packagePath = Environment.GetEnvironmentVariable("WORKFLOW_SAVED_RESULT_PATH");
+        var files = new[] { StubOpenDesign.File("index.html", StubOpenDesign.Html, "text/html"),
+            StubOpenDesign.File("assets/theme.css", "body{color:#123}", "text/css"), StubOpenDesign.File("manifest.json", "{}", "application/json") };
+        var package = string.IsNullOrWhiteSpace(packagePath)
+            ? JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = DesignArtifactWorkspaceBroker.SchemaVersion,
+                sessionId = run.Id, runId = run.Id, baseRevision = run.WorkspaceRef!.BaseRevision,
+                files = DesignArtifactWorkspaceContract.RebuildPublicManifest(files) }, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            : await System.IO.File.ReadAllBytesAsync(packagePath);
+        using var envelope = JsonDocument.Parse(package);
+        var previousId = run.Id;
+        run.Id = envelope.RootElement.GetProperty("runId").GetString()!;
+        foreach (var item in run.LifecycleEvents) item.RunId = run.Id;
+        run.WorkspaceRef!.WorkspaceId = $"webpage-{run.Id}";
+        run.WorkspaceBaseRevision = envelope.RootElement.GetProperty("baseRevision").GetString();
+        run.WorkspaceRef.BaseRevision = run.WorkspaceBaseRevision;
+        var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(package, run.Id, run.WorkspaceBaseRevision!, DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        run.WorkspaceResultAssetKey = "isolated/saved-result.json";
+        run.WorkspaceResultSha256 = Convert.ToHexString(SHA256.HashData(package)).ToLowerInvariant();
+        run.WorkspaceManifestSha256 = parsed.Files.Single(file => file.Path == "manifest.json").Sha256;
+        run.RuntimeModelCallCount = 21;
+        await f.Db.DesignArtifactRuns.DeleteOneAsync(item => item.Id == previousId);
+        await f.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var failedAt = DateTime.UtcNow;
+        await f.Db.WorkflowExecutions.UpdateOneAsync(_ => true, Builders<WorkflowExecution>.Update
+            .Set(item => item.Status, WorkflowExecutionStatus.Failed).Set(item => item.CompletedAt, failedAt)
+            .Set(item => item.ErrorMessage, "保留原失败")
+            .Set("NodeExecutions.0.Status", NodeExecutionStatus.Failed).Set("NodeExecutions.0.DesignRunId", run.Id)
+            .Set("NodeExecutions.0.InputArtifacts", f.Inputs).Set("NodeExecutions.0.ErrorCode", "open_design_execution_failed")
+            .Set("NodeExecutions.0.Logs", "原失败日志").Set("NodeExecutions.1.Status", NodeExecutionStatus.Skipped));
+        byte[] currentBytes = package;
+        f.Storage.Setup(item => item.TryDownloadBytesAsync(run.WorkspaceResultAssetKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => currentBytes);
+        f.Gateway.Invocations.Clear();
+        await f.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Queued));
+        f.FailNextSave = true;
+        await f.ProcessAsync(run.Id);
+        run = await f.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Error, run.Status);
+        Assert.False(string.IsNullOrWhiteSpace(run.LeaseOwnerId));
+        Assert.Null(run.LeaseExpiresAt);
+        currentBytes = [0]; f.HoldQueue = false;
+        Assert.Equal("WORKFLOW_DESIGN_FORBIDDEN", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
+            f.Service.ExecuteAsync(f.Node, new(), f.Inputs, f.Invocation with { UserId = "manager", OperationId = "recovery-owner-check" }))).Code);
+        Assert.Equal("WORKFLOW_DESIGN_CONFLICT", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
+            f.Service.ExecuteAsync(f.Node, new(), [new() { InlineContent = "已变化的输入" }], f.Invocation with { OperationId = "recovery-input-check" }))).Code);
+        var rejected = Assert.IsType<OkObjectResult>(await OwnerApi(f).ReplayNode("workflow-execution", "report"));
+        var rejectedDto = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(rejected.Value).Data,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("failed", rejectedDto.GetProperty("result").GetProperty("status").GetString());
+        Assert.Equal(1, await f.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
+        Assert.Empty(f.Gateway.Invocations);
+        currentBytes = package;
+        var replay = Assert.IsType<OkObjectResult>(await OwnerApi(f).ReplayNode("workflow-execution", "report").WaitAsync(TimeSpan.FromSeconds(20)));
+        var dto = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(replay.Value).Data,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("result");
+        Assert.Equal("completed", dto.GetProperty("status").GetString());
+        Assert.Equal(run.Id, dto.GetProperty("artifacts")[0].GetProperty("designDelivery").GetProperty("runId").GetString());
+        var saved = await f.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Done, saved.Status);
+        Assert.Equal(21, saved.RuntimeModelCallCount);
+        Assert.Equal(run.WorkspaceResultSha256, saved.WorkspaceResultSha256);
+        Assert.Equal(JsonSerializer.Serialize(run.LifecycleEvents), JsonSerializer.Serialize(saved.LifecycleEvents.Take(run.LifecycleEvents.Count)));
+        Assert.Contains(saved.LifecycleEvents, item => item.Type == DesignArtifactLifecycleEventTypes.Recovered);
+        Assert.All(saved.LifecycleEvents.Skip(run.LifecycleEvents.Count), item => Assert.True(item.Progress >= 85));
+        var revision = await f.Db.HostedSiteRevisions.Find(item => item.Id == saved.ProducedArtifactRevisionId).SingleAsync();
+        Assert.Equal(parsed.Files.Count, revision.VerifiedFiles.Count);
+        foreach (var file in parsed.Files)
+            Assert.Equal(Convert.FromBase64String(file.ContentBase64), Assert.Single(revision.VerifiedFiles, item => item.Path == file.Path).Content);
+        Assert.IsType<OkObjectResult>(await OwnerApi(f).ReplayNode("workflow-execution", "publish"));
+        await f.Service.ExecuteAsync(f.Node, new(), f.Inputs, f.Invocation with { OperationId = "repeat-recovery" });
+        var history = await f.Db.WorkflowExecutions.Find(_ => true).SingleAsync();
+        Assert.Equal(WorkflowExecutionStatus.Failed, history.Status);
+        Assert.Equal("保留原失败", history.ErrorMessage);
+        Assert.Equal(failedAt.ToUniversalTime().Ticks / TimeSpan.TicksPerMillisecond, history.CompletedAt!.Value.Ticks / TimeSpan.TicksPerMillisecond);
+        Assert.Equal(NodeExecutionStatus.Failed, history.NodeExecutions[0].Status);
+        Assert.Equal("open_design_execution_failed", history.NodeExecutions[0].ErrorCode);
+        Assert.Equal("原失败日志", history.NodeExecutions[0].Logs);
+        Assert.Equal(NodeExecutionStatus.Skipped, history.NodeExecutions[1].Status);
+        Assert.Single(history.NodeExecutions[0].OutputArtifacts);
+        Assert.Single(history.NodeExecutions[1].InputArtifacts);
+        Assert.Equal(1, await f.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
+        Assert.Equal(1, await f.Db.HostedSites.CountDocumentsAsync(_ => true));
+        Assert.Empty(f.Gateway.Invocations);
+        f.Http.VerifyNoOtherCalls(); f.Grants.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task HtmlNodeWithoutAuthoritativeContextMustNotSendDirectModelRequest()
     {
@@ -296,6 +401,13 @@ public sealed class WorkflowWebpageDesignServiceTests
         public Mock<ILlmGateway> Gateway { get; } = new();
         public Mock<IDesignArtifactProviderCatalog> Catalog { get; } = new();
         public Mock<IRunQueue> Queue { get; } = new();
+        public Mock<IAssetStorage> Storage { get; private set; } = null!;
+        public Mock<IHttpClientFactory> Http { get; } = new(MockBehavior.Strict);
+        public Mock<IDesignArtifactGatewayGrantService> Grants { get; } = new(MockBehavior.Strict);
+        public IDesignArtifactWorkspaceBroker Broker { get; private set; } = null!;
+        public bool HoldQueue { get; set; }
+        public bool FailNextSave { get; set; }
+        public Task ProcessAsync(string id) => worker.ProcessAsync(id, CancellationToken.None);
         public InMemoryRunEventStore Events { get; } = new();
         public ServiceProvider Provider { get; private set; } = null!;
         public WorkflowWebpageDesignService Service { get; private set; } = null!;
@@ -316,7 +428,7 @@ public sealed class WorkflowWebpageDesignServiceTests
             if (!string.IsNullOrWhiteSpace(existingReport))
             { Inputs[0].InlineContent = System.IO.File.ReadAllText(existingReport); Inputs[0].MimeType = "text/html"; }
         }
-        public static async Task<Fixture> CreateAsync(string type)
+        public static async Task<Fixture> CreateAsync(string type, bool savedResultOnly = false)
         {
             var settings = MongoClientSettings.FromConnectionString(Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27017");
             Assert.All(settings.Servers, server => Assert.Contains(server.Host, new[] { "127.0.0.1", "localhost", "::1" }));
@@ -339,6 +451,11 @@ public sealed class WorkflowWebpageDesignServiceTests
                 .Returns(async (string owner, IReadOnlyList<HostedSiteVerifiedFile> files, string? title, string? _, string _, string sourceRun,
                     List<string>? _, string? _, string _, CancellationToken _) =>
                 {
+                    if (f.FailNextSave)
+                    {
+                        f.FailNextSave = false;
+                        throw new InvalidOperationException("隔离保存失败代表");
+                    }
                     var siteId = "site-" + sourceRun;
                     var prefix = "sites/" + siteId + "/.versions/first/";
                     var site = new HostedSite { Id = siteId, OwnerUserId = owner, Title = title ?? "", SourceRef = sourceRun,
@@ -367,15 +484,20 @@ public sealed class WorkflowWebpageDesignServiceTests
             var adapter = new WebPageDesignArtifactLifecycleAdapter(f.Db, lifecycle, Mock.Of<IDesignArtifactWorkspaceBroker>(), NullLogger<WebPageDesignArtifactLifecycleAdapter>.Instance);
             f.cancellation = new DesignArtifactCancellationCoordinator(f.Db, lifecycle, f.Events);
             var storage = new Mock<IAssetStorage>(); storage.Setup(item => item.BuildUrlForKey(It.IsAny<string>())).Returns((string key) => "https://assets.example.test/" + key);
+            f.Storage = storage;
+            f.Broker = new DesignArtifactWorkspaceBroker(f.Db, storage.Object, new EphemeralDataProtectionProvider(),
+                new ConfigurationBuilder().Build(), f.Grants.Object);
             f.Service = new WorkflowWebpageDesignService(f.Db, f.Queue.Object, f.Events, f.Catalog.Object, f.Gateway.Object, sites.Object, revisions.Object, storage.Object,
-                f.cancellation, NullLogger<WorkflowWebpageDesignService>.Instance);
+                f.Broker, lifecycle, f.cancellation, NullLogger<WorkflowWebpageDesignService>.Instance);
             f.Provider = new ServiceCollection().AddSingleton(f.Db).AddSingleton(sites.Object).AddSingleton(revisions.Object)
                 .AddSingleton<IDesignArtifactLifecycleService>(lifecycle).AddSingleton<IWebPageDesignArtifactLifecycleAdapter>(adapter)
                 .AddSingleton(Mock.Of<IDesignKnowledgeSnapshotResolver>()).AddSingleton(Mock.Of<IActivityActionRecorder>())
-                .AddSingleton<IDesignArtifactExecutor>(f.Executor).AddSingleton(f.Gateway.Object).AddSingleton<IWorkflowWebpageDesignService>(f.Service).AddHttpClient().BuildServiceProvider();
+                .AddSingleton<IDesignArtifactExecutor>(savedResultOnly
+                    ? new OpenDesignServiceArtifactExecutor(f.Http.Object, f.Broker, f.Grants.Object, new ConfigurationBuilder().Build(), NullLogger<OpenDesignServiceArtifactExecutor>.Instance)
+                    : f.Executor).AddSingleton(f.Gateway.Object).AddSingleton<IWorkflowWebpageDesignService>(f.Service).AddHttpClient().BuildServiceProvider();
             f.worker = new HostedSiteEditRunWorker(f.Provider.GetRequiredService<IServiceScopeFactory>(), f.Queue.Object, f.Events, NullLogger<HostedSiteEditRunWorker>.Instance);
             f.Queue.Setup(item => item.EnqueueAsync(RunKinds.DesignArtifact, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns((string _, string id, CancellationToken _) => { f.workers.Add(f.worker.ProcessAsync(id, CancellationToken.None)); return Task.CompletedTask; });
+                .Returns((string _, string id, CancellationToken _) => { if (!f.HoldQueue) f.workers.Add(f.worker.ProcessAsync(id, CancellationToken.None)); return Task.CompletedTask; });
             return f;
         }
         public async ValueTask DisposeAsync()
@@ -403,7 +525,7 @@ public sealed class WorkflowWebpageDesignServiceTests
             var files = new[] { File("index.html", Html, "text/html"), File("assets/theme.css", "body{color:#123}", "text/css"), File("manifest.json", "{}", "application/json") };
             yield return new DesignArtifactExecutorChunk("delta", Html, files);
         }
-        private static DesignWorkspaceFile File(string path, string content, string mediaType)
+        public static DesignWorkspaceFile File(string path, string content, string mediaType)
         {
             var bytes = Encoding.UTF8.GetBytes(content);return new(path, Convert.ToBase64String(bytes), Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(), bytes.Length, mediaType);
         }
