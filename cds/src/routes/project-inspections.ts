@@ -3,6 +3,7 @@ import type { Project } from '../types.js';
 import { parseProjectInspection, type ProjectInspection } from '../services/project-inspections.js';
 import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 import { projectScopeOf } from './uptime.js';
+import { assertProjectAccess } from './projects.js';
 
 export function createProjectInspectionsRouter(store: {
   getProject(id: string): Project | undefined;
@@ -11,14 +12,15 @@ export function createProjectInspectionsRouter(store: {
   const router = Router();
   router.get('/projects/:id/inspection-checks', (req, res) => {
     const project = store.getProject(String(req.params.id));
-    const scope = projectScopeOf(req);
-    if (scope && scope !== project?.id) { res.status(403).json({ message: '不能查看其他项目的巡检' }); return; }
+    const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], project?.id || String(req.params.id));
+    if (denied) { res.status(denied.status).json(denied.body); return; }
     if (!project) { res.status(404).json({ message: '项目不存在' }); return; }
     res.json({ projectId: project.id, inspections: project.monitoringInspections ?? [] });
   });
   router.put('/projects/:id/inspection-checks/:inspectionId', (req, res) => {
     const project = store.getProject(String(req.params.id)), scope = projectScopeOf(req);
-    if (scope && scope !== project?.id) { res.status(403).json({ message: '不能回填其他项目的巡检' }); return; }
+    const accessDenied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], project?.id || String(req.params.id));
+    if (accessDenied) { res.status(accessDenied.status).json(accessDenied.body); return; }
     if (!scope) { const denied = assertUnscopedAdmin(req as Parameters<typeof assertUnscopedAdmin>[0]); if (denied) { res.status(denied.status).json(denied.body); return; } }
     if (!project) { res.status(404).json({ message: '项目不存在' }); return; }
     try {

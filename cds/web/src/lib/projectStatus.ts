@@ -47,11 +47,15 @@ export function projectChannels(channels: ChannelStatus[] | undefined, projectId
 }
 
 export function inspectionCheckLabel(inspection: ProjectInspection, check: ProjectInspection['checks'][number], now: number): string {
-  const state = inspectionState(inspection, now);
+  const state = inspectionCheckState(inspection, check, now);
   if (check.outcome === 'pass' && state === 'overdue') return '上次通过，结果已过期';
   if (check.outcome === 'pass' && state === 'paused') return '上次通过，计划已暂停';
   if (!inspection.lastCompletedAt) return '未确认';
   return check.outcome === 'pass' ? '实测通过' : check.outcome === 'fail' ? '实测失败' : check.outcome === 'skipped' ? '未执行' : '未确认';
+}
+
+export function inspectionCheckState(inspection: ProjectInspection, check: ProjectInspection['checks'][number], now: number): CheckState {
+  return inspectionState({ ...inspection, checks: [check] }, now);
 }
 
 const CHECK_TITLES: Record<string, string> = {

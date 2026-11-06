@@ -27,6 +27,44 @@ public sealed class DesignArtifactLifecycleServiceTests
 {
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task FailedWorkflowStoredResultRecoveryPreservesFailureHistoryAndCas()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var service = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        var run = await service.CreateSessionAsync(Session("failed-workflow-result", DesignArtifactTypes.WebPage,
+            DesignArtifactWorkspaceKinds.RemotePackage, "open-design"));
+        var beforeFailure = new DesignArtifactLifecycleExpectation(run.LifecycleVersion, run.WorkspaceRef!.BaseRevision,
+            run.VersionBoundary!.BaseContentHash, Recovery: true);
+        run = await service.FailAsync(new(run.Id, run.UserId, beforeFailure, "open_design_execution_failed"));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id, Builders<DesignArtifactRun>.Update
+            .Set(item => item.WorkspaceResultAssetKey, "isolated/result.json").Set(item => item.WorkspaceResultSha256, new string('a', 64))
+            .Set(item => item.WorkspaceManifestSha256, new string('b', 64)).Set(item => item.WorkspaceBaseRevision, run.WorkspaceRef!.BaseRevision));
+        var expected = beforeFailure with { LifecycleVersion = run.LifecycleVersion };
+        await AssertConflict(() => service.ResumeResultReadyAsync(new(run.Id, run.UserId, expected)));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id, Builders<DesignArtifactRun>.Update
+            .Set(item => item.SourceSurface, DesignArtifactSourceSurfaces.Workflow).Set(item => item.WorkflowSource,
+                new WorkflowDesignSource { ExecutionId = "failed-execution", OperationId = "failed-execution", NodeId = "report",
+                    NodeType = CapsuleTypes.ReportGenerator, InputFingerprint = new string('f', 64) })
+            .Set(item => item.LeaseOwnerId, "terminal-worker").Set(item => item.LeaseExpiresAt, DateTime.UtcNow.AddMinutes(5)));
+        await AssertConflict(() => service.ResumeResultReadyAsync(new(run.Id, run.UserId, beforeFailure)));
+        await AssertConflict(() => service.ResumeResultReadyAsync(new(run.Id, run.UserId, expected)));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.LeaseExpiresAt, null));
+        var recovered = await service.ResumeResultReadyAsync(new(run.Id, run.UserId, expected));
+        Assert.Equal(RunStatuses.Queued, recovered.Status);
+        Assert.Equal(run.Id, recovered.Id);
+        Assert.Null(recovered.LeaseOwnerId);
+        Assert.Null(recovered.LeaseExpiresAt);
+        Assert.Null(recovered.LifecycleFailureCode);
+        Assert.Null(recovered.RuntimeFailure);
+        Assert.Equal(JsonSerializer.Serialize(run.LifecycleEvents), JsonSerializer.Serialize(recovered.LifecycleEvents.Take(run.LifecycleEvents.Count)));
+        Assert.Equal(DesignArtifactLifecycleEventTypes.Recovered, recovered.LifecycleEvents[^1].Type);
+        Assert.Equal(new string('a', 64), recovered.WorkspaceResultSha256);
+        await AssertConflict(() => service.ResumeResultReadyAsync(new(run.Id, run.UserId, expected)));
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task MapEditOfPreviouslyHardenedPage_ShouldCreateReadableDraftWithOneSystemCsp()
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
