@@ -357,10 +357,10 @@ class SpeechSmoke:
                         and hashlib.sha256(owner_audio["raw"]).hexdigest() == self.report["run"]["audio"]["sha256"],
                         status=owner_audio["status"], failure="owner_audio_unavailable_after_revocation")
 
-    def browser_login_url(self, run_id):
+    def browser_login_url(self, run_id=None):
         """Mint another short ticket for the real UI, never inject JWTs or storage state."""
         path = "/api/v1/auth/synthetic/ticket"
-        body = {"returnUrl": "/mcp-console?tab=speech&run=" + run_id, "expiresInSeconds": 180}
+        body = {"returnUrl": "/mcp-console?tab=speech" + ("&run=" + run_id if run_id else ""), "expiresInSeconds": 180}
         wire = json.dumps(body, separators=(",", ":"))
         signed = subprocess.run(["node", str(ROOT / "stable-smoke-signature.mjs"), "--method", "POST", "--url", self.base + path,
                                  "--body", wire, "--username", os.environ.get("STABLE_SMOKE_USER", "")],
@@ -377,13 +377,23 @@ class SpeechSmoke:
             raise CheckFailure("browser_login_target_invalid")
         return url
 
-    def verify_browser(self, output_directory):
+    def can_check_unconfigured_ui(self):
+        return (self.report.get("actualCommit") == self.expected and not self.profiles
+                and self.report.get("configuration", {}).get("profileCount") == 0
+                and self.report.get("permissions", {}).get("speechRead") is True
+                and all(any(x["name"] == name and x["ok"] for x in self.report["checks"])
+                        for name in ("production_commit", "speech_capabilities", "speech_settings")))
+
+    def verify_browser(self, output_directory, *, unconfigured=False):
         """Real network and real one-time login. No interception, traces, HAR, video or saved browser state."""
-        summary = {"checked": True, "realNetwork": True, "ok": False, "screenshots": []}
+        summary = {"checked": True, "realNetwork": True, "ok": False, "screenshots": [],
+                   "scope": "unconfigured_state" if unconfigured else "generated_audio", "synthesisVerified": False}
         self.report["browser"] = summary
         run_id = safe_identifier(self.report["run"].get("runId"))
         title = self.report["run"].get("title")
-        if not run_id or not isinstance(title, str) or not title.startswith("stsmk_prod speech "):
+        if unconfigured and not self.can_check_unconfigured_ui():
+            self.require("production_unconfigured_browser", False, "unconfigured_ui_preconditions_not_met")
+        if not unconfigured and (not run_id or not isinstance(title, str) or not title.startswith("stsmk_prod speech ")):
             self.require("production_browser_verification", False, "browser_run_identity_missing")
         page = None
         stage = "browser_start"
@@ -400,7 +410,7 @@ class SpeechSmoke:
                 page.on("console", lambda message: errors.__setitem__("console", errors["console"] + (1 if message.type == "error" else 0)))
                 try:
                     stage = "signed_browser_login"
-                    login_url = self.browser_login_url(run_id)
+                    login_url = self.browser_login_url(None if unconfigured else run_id)
                     page.goto(login_url, wait_until="domcontentloaded")
                     page.wait_for_function("() => location.pathname === '/mcp-console' && location.hash === ''")
                     page.get_by_role("heading", name="文生语音", exact=True).wait_for()
@@ -414,6 +424,27 @@ class SpeechSmoke:
                         path.parent.mkdir(parents=True, exist_ok=True)
                         page.screenshot(path=str(path), full_page=False)
                         summary["screenshots"].append(name)
+
+                    if unconfigured:
+                        for label, width, height in [("desktop", 1440, 1000), ("mobile", 390, 844)]:
+                            stage = label + "_unconfigured"
+                            page.set_viewport_size({"width": width, "height": height})
+                            empty = page.get_by_role("heading", name="当前环境尚未配置语音能力", exact=True)
+                            empty.wait_for(state="visible")
+                            generate = page.get_by_role("button", name="生成并保存语音", exact=True)
+                            count = generate.count()
+                            unavailable = count == 0 or all(generate.nth(index).is_disabled() for index in range(count))
+                            self.require(label + "_unconfigured_generation_unavailable", unavailable, "unconfigured_generation_enabled")
+                            summary[label] = {"unconfiguredMessageVisible": True, "generationUnavailable": unavailable,
+                                              "generationControl": "absent" if count == 0 else "disabled"}
+                            empty.scroll_into_view_if_needed()
+                            photograph("speech-" + label + "-unconfigured.png")
+                            if page.locator("vite-error-overlay").count() or not page.evaluate("document.documentElement.scrollWidth <= innerWidth"):
+                                raise CheckFailure("unconfigured_browser_layout_invalid")
+                        summary.update({"ok": errors["page"] == 0 and errors["console"] == 0,
+                                        "pageErrorCount": errors["page"], "consoleErrorCount": errors["console"]})
+                        self.require("production_unconfigured_browser", summary["ok"], "unconfigured_browser_runtime_errors")
+                        return
 
                     def play_audio(container):
                         load = container.get_by_role("button", name="加载音频", exact=True)
@@ -454,8 +485,10 @@ class SpeechSmoke:
                             raise CheckFailure("browser_framework_error_overlay")
                         if not page.evaluate("document.documentElement.scrollWidth <= innerWidth"):
                             raise CheckFailure("browser_horizontal_overflow")
-                    summary.update({"ok": True, "pageErrorCount": errors["page"], "consoleErrorCount": errors["console"]})
-                    self.require("production_browser_verification", errors["page"] == 0 and errors["console"] == 0, "browser_runtime_errors")
+                    summary.update({"ok": errors["page"] == 0 and errors["console"] == 0,
+                                    "pageErrorCount": errors["page"], "consoleErrorCount": errors["console"]})
+                    self.require("production_browser_verification", summary["ok"], "browser_runtime_errors")
+                    summary["synthesisVerified"] = True
                 finally:
                     summary.update({"pageErrorCount": errors["page"], "consoleErrorCount": errors["console"]})
                     if not summary["ok"]:
@@ -490,6 +523,7 @@ def main(argv=None):
     parser.add_argument("--gateway-inventory", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--prepare-access", action="store_true", help="Explicitly allow adding only the three speech permissions to the verified stsmk_prod account.")
+    parser.add_argument("--check-unconfigured-ui", action="store_true", help="In readiness mode only, verify the real empty speech UI without creating a task.")
     parser.add_argument("--json-out", required=True)
     args = parser.parse_args(argv)
     smoke = SpeechSmoke(args.map_base, args.expect_commit, args.mode, profile_id=args.profile_id,
@@ -502,10 +536,14 @@ def main(argv=None):
             raise CheckFailure("explicit_production_run_opt_in_required")
         if args.validate_only:
             smoke.check("production_target_validated", True)
-        elif smoke.readiness() and args.mode == "run":
-            smoke.run()
-            if all(x["ok"] for x in smoke.report["checks"] if x["required"]):
-                smoke.verify_browser(Path(args.json_out).parent)
+        else:
+            ready = smoke.readiness()
+            if ready and args.mode == "run":
+                smoke.run()
+                if all(x["ok"] for x in smoke.report["checks"] if x["required"]):
+                    smoke.verify_browser(Path(args.json_out).parent)
+            elif args.mode == "readiness" and args.check_unconfigured_ui and smoke.can_check_unconfigured_ui():
+                smoke.verify_browser(Path(args.json_out).parent, unconfigured=True)
     except CheckFailure as error:
         smoke.check("execution", False, failure=str(error))
     except Exception:

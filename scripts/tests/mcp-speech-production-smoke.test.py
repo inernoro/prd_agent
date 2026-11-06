@@ -203,6 +203,65 @@ class OwnAccessPreparationTests(unittest.TestCase):
         self.assertFalse(fixture.updates)
 
 
+class UnconfiguredUiReadinessTests(unittest.TestCase):
+    def empty_runner(self):
+        fixture = Fixture()
+
+        def http(base, path, token="", method="GET", body=None, **kwargs):
+            if path in ("/api/mcp-speech/capabilities", "/api/mcp-speech/settings"):
+                fixture.calls.append((method, path, body))
+                return response({"profiles": [], "canManage": False})
+            return fixture.http(base, path, token, method, body, **kwargs)
+
+        return fixture, smoke.SpeechSmoke(BASE, COMMIT, http=http, session=lambda *_: ("rsa", CANARY, {}))
+
+    def test_empty_ui_is_eligible_only_after_real_feature_and_read_access_checks(self):
+        fixture, check = self.empty_runner()
+        self.assertFalse(check.readiness())
+        self.assertTrue(check.can_check_unconfigured_ui())
+        self.assertFalse(check.report["run"]["attempted"])
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+        check.report["permissions"]["speechRead"] = False
+        self.assertFalse(check.can_check_unconfigured_ui())
+
+    def test_missing_feature_does_not_attempt_empty_ui_login(self):
+        check = runner(Fixture(missing=True))
+        check.readiness()
+        self.assertFalse(check.can_check_unconfigured_ui())
+
+    def test_explicit_readiness_ui_check_does_not_turn_empty_profile_into_synthesis_pass(self):
+        fixture, check = self.empty_runner()
+
+        def browser_result(*args, **kwargs):
+            check.report["browser"] = {"scope": "unconfigured_state", "ok": True, "synthesisVerified": False}
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"DEFAULT_MAP_BASE": BASE, "STABLE_SMOKE_USER": "stsmk_prod"}), \
+                patch.object(smoke, "SpeechSmoke", return_value=check), patch.object(check, "verify_browser", side_effect=browser_result) as browser, \
+                contextlib.redirect_stdout(io.StringIO()):
+            output = Path(directory) / "report.json"
+            code = smoke.main(["--map-base", BASE, "--expect-commit", COMMIT, "--check-unconfigured-ui", "--json-out", str(output)])
+            self.assertEqual(code, 1)
+            browser.assert_called_once_with(output.parent, unconfigured=True)
+            report = json.loads(output.read_text())
+        self.assertEqual(report["verdict"], "fail")
+        self.assertFalse(report["run"]["attempted"])
+        self.assertFalse(report["browser"]["synthesisVerified"])
+        self.assertTrue(all(method == "GET" for method, _, _ in fixture.calls))
+
+    def test_empty_ui_ticket_does_not_require_or_fabricate_a_run(self):
+        captured = []
+
+        def http(base, path, **kwargs):
+            captured.append(kwargs)
+            return response({"loginUrl": BASE + "/synthetic-login#code=" + CANARY})
+
+        check = smoke.SpeechSmoke(BASE, COMMIT, http=http)
+        with patch.object(smoke.subprocess, "run", return_value=SimpleNamespace(stdout="{}")):
+            check.browser_login_url()
+        self.assertEqual(captured[0]["body"]["returnUrl"], "/mcp-console?tab=speech")
+        self.assertNotIn(CANARY, json.dumps(check.report))
+
+
 class ProductionSpeechTests(unittest.TestCase):
     def test_missing_feature_is_not_a_green_readiness_and_never_writes(self):
         fixture = Fixture(missing=True)

@@ -73,8 +73,8 @@ jobs:
         if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
         run: python3 scripts/tests/mcp-speech-production-smoke.test.py
 
-      - name: Install browser for explicit speech run
-        if: ${{ github.event.inputs.speech_check == 'run' }}
+      - name: Install browser for speech checks
+        if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
         run: |
           python3 -m pip install --disable-pip-version-check playwright==1.56.0
           python3 -m playwright install --with-deps chromium
@@ -145,6 +145,8 @@ jobs:
           fi
           if [ "$SPEECH_CHECK" = run ]; then
             speech_args+=(--allow-production-run)
+          elif [ "$SPEECH_CHECK" = readiness ]; then
+            speech_args+=(--check-unconfigured-ui)
           fi
           python3 scripts/mcp-speech-production-smoke.py \
             --map-base "$map_base" \
