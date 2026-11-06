@@ -72,7 +72,8 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     try { settings = validateCodeReviewSettings(state, req.body); }
     catch (error) { throw new CodeReviewError(400, (error as Error).message); }
     const previous = state.getCodeReviewSettings();
-    if ((previous?.engineBaseUrl !== settings.engineBaseUrl || previous?.engineProjectId !== settings.engineProjectId)
+    if ((previous?.engineBaseUrl !== settings.engineBaseUrl || previous?.engineProjectId !== settings.engineProjectId
+      || previous?.engineBranchId !== settings.engineBranchId || previous?.engineServiceId !== settings.engineServiceId)
       && service.list().some((task) => !['completed', 'failed', 'cancelled'].includes(task.status))) {
       throw new CodeReviewError(409, '存在未结束的审查任务，请完成或取消后再切换审查引擎');
     }

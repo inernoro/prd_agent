@@ -13,6 +13,7 @@ import { buildZip } from '../../src/utils/zip.js';
 describe('持久化审查引擎绑定', () => {
   let dir: string, state: StateService, service: CodeReviewService, server: Server, base: string;
   const binding = { engineProjectId: 'engine', engineBaseUrl: 'http://deepaudit.internal:8000' };
+  const runtimeBinding = { ...binding, engineBranchId: 'engine-branch', engineServiceId: 'backend' };
   const account = { CDS_SERVICE_EMAIL: 'cds-service@example.invalid', CDS_SERVICE_PASSWORD: 'private-service-password' };
   beforeEach(async () => {
     vi.stubEnv('CDS_DEEPAUDIT_BASE_URL', ''); vi.stubEnv('CDS_DEEPAUDIT_TOKEN', '');
@@ -23,6 +24,10 @@ describe('持久化审查引擎绑定', () => {
     for (const id of ['source', 'engine', 'other']) state.addProject({ id, name: id, slug: id, kind: 'manual', dockerNetwork: `cds-${id}`,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     state.setCustomEnv(account, 'engine');
+    for (const [id, projectId] of [['engine-branch', 'engine'], ['other-branch', 'other']]) state.addBranch({
+      id, projectId, branch: 'main', worktreePath: path.join(dir, id), status: 'running', createdAt: new Date().toISOString(),
+      services: { backend: { profileId: 'backend', containerName: `${id}-backend`, hostPort: 47391, status: 'running' } },
+    });
     const blobs = new Map<string, Buffer>();
     const reports = new Map<string, string>();
     state.setReportObjectStore({ isConfigured: () => true,
@@ -91,6 +96,11 @@ describe('持久化审查引擎绑定', () => {
     { ...binding, engineBaseUrl: 'invalid' },
     { ...binding, password: 'client-supplied-secret' },
     { engineProjectId: 'engine' },
+    { ...binding, engineBranchId: 'engine-branch' },
+    { ...binding, engineServiceId: 'backend' },
+    { ...runtimeBinding, engineBranchId: 'other-branch' },
+    { ...runtimeBinding, engineBranchId: 'missing' },
+    { ...runtimeBinding, engineServiceId: 'missing' },
   ])('拒绝无效或含凭据的绑定 %#', async (body) => {
     const response = await put('bootstrap', body);
     expect(response.status).toBe(400);
@@ -102,9 +112,62 @@ describe('持久化审查引擎绑定', () => {
     await put();
     await service.submit({ projectId: 'source', sourceType: 'zip', zip: buildZip([{ name: 'main.ts', data: Buffer.from('const value = 1;') }]), createdBy: 'test' });
     expect((await put('bootstrap', { ...binding, engineBaseUrl: 'http://different.internal' })).status).toBe(409);
+    expect((await put('bootstrap', runtimeBinding)).status).toBe(409);
     expect((await put()).status).toBe(200);
     await service.cancel(service.list()[0].id);
     expect((await put('bootstrap', { ...binding, engineBaseUrl: 'http://different.internal' })).status).toBe(200);
+  });
+  it('分支服务引用归档和查询仅返回引用，不包含账号或运行资源凭据', async () => {
+    const response = await put('owner', runtimeBinding);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ...runtimeBinding, engineConfigured: true });
+    const read = await fetch(`${base}/settings`, { headers: { 'x-auth': 'owner' } });
+    expect(await read.json()).toEqual({ ...runtimeBinding, engineConfigured: true });
+    expect(state.getCodeReviewSettings()).toEqual(runtimeBinding);
+  });
+  it('部署端口改变后，新执行从资源台账解析当前地址，已排队任务不使用保存的旧 URL', async () => {
+    await state.setCodeReviewSettings(runtimeBinding);
+    const zip = buildZip([{ name: 'main.ts', data: Buffer.from('const value = 1;') }]);
+    const submit = () => service.submit({ projectId: 'source', sourceType: 'zip', zip, createdBy: 'test' });
+    const first = await submit();
+    expect(resolveCodeReviewEngineConfig(state)?.baseUrl).toBe('http://127.0.0.1:47391');
+    const hosts: string[] = [];
+    const upstream = vi.fn(async (url: string, init?: RequestInit) => {
+      hosts.push(new URL(url).origin);
+      if (url.endsWith('/auth/login')) {
+        expect((init?.body as URLSearchParams).get('password')).toBe(account.CDS_SERVICE_PASSWORD);
+        return Response.json({ access_token: 'private-login-token' });
+      }
+      if (url.endsWith('/projects/')) return Response.json({ id: 'engine-project' });
+      if (url.endsWith('/scan/upload-zip')) return Response.json({ task_id: 'engine-task' });
+      if (url.endsWith('/issues')) return Response.json([]);
+      return Response.json({ id: 'engine-task', status: 'completed', total_files: 1, scanned_files: 1 });
+    });
+    vi.stubGlobal('fetch', upstream);
+    await service.pump();
+    expect(service.get(first.id).status).toBe('completed');
+    expect(new Set(hosts)).toEqual(new Set(['http://127.0.0.1:47391']));
+    const queued = await submit();
+    state.getBranch('engine-branch')!.services.backend.hostPort = 47425;
+    hosts.length = 0;
+    await service.pump();
+    expect(service.get(queued.id).status).toBe('completed');
+    expect(new Set(hosts)).toEqual(new Set(['http://127.0.0.1:47425']));
+    expect(state.getCodeReviewSettings()?.engineBaseUrl).toBe(binding.engineBaseUrl);
+    expect(JSON.stringify(service.list())).not.toContain(account.CDS_SERVICE_PASSWORD);
+  });
+  it.each(['stopped-service', 'stopped-branch', 'missing-service', 'missing-port', 'wrong-project', 'deleting-branch'])('动态引用 %s 不可用时禁止回退旧端口或环境引擎', async (failure) => {
+    await state.setCodeReviewSettings(runtimeBinding);
+    vi.stubEnv('CDS_DEEPAUDIT_BASE_URL', 'https://fallback.invalid'); vi.stubEnv('CDS_DEEPAUDIT_TOKEN', 'token');
+    const branch = state.getBranch('engine-branch')!;
+    if (failure === 'stopped-service') branch.services.backend.status = 'stopped';
+    if (failure === 'stopped-branch') branch.status = 'idle';
+    if (failure === 'missing-service') delete branch.services.backend;
+    if (failure === 'missing-port') branch.services.backend.hostPort = 0;
+    if (failure === 'wrong-project') branch.projectId = 'other';
+    if (failure === 'deleting-branch') branch.deleting = true;
+    expect(resolveCodeReviewEngineConfig(state)).toBeUndefined();
+    expect(service.capabilities().engineConfigured).toBe(false);
   });
   it('保存和轮换账号后无需重启，实际任务以项目账号登录并完成归档', async () => {
     expect(service.capabilities().engineConfigured).toBe(false);
