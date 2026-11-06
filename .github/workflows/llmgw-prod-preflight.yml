@@ -80,9 +80,10 @@ jobs:
         run: python3 scripts/tests/mcp-speech-production-smoke.test.py
 
       - name: Install browser for speech checks
+        timeout-minutes: 3
         if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
         run: |
-          python3 -m pip install --disable-pip-version-check playwright==1.56.0
+          python3 -m pip install --disable-pip-version-check --timeout 30 --retries 2 playwright==1.56.0
           python3 - <<'PY'
           import importlib.util
           import subprocess
@@ -93,7 +94,7 @@ jobs:
           if module.system_browser_executable():
               print("Using the runner's preinstalled Chromium-compatible browser.")
           else:
-              subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"], check=True)
+              subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"], check=True, timeout=120)
           PY
 
       - name: Run production preflight
@@ -150,7 +151,7 @@ jobs:
             --json-out artifacts/llmgw-prod-preflight/prod-preflight.json
 
       - name: Check production speech
-        if: ${{ always() && github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' && (github.event.inputs.speech_check == 'readiness' || success()) }}
+        if: ${{ !cancelled() && github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' && (github.event.inputs.speech_check == 'readiness' || success()) }}
         shell: bash
         run: |
           set -euo pipefail
