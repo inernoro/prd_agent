@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { marked } from 'marked';
-import { ArrowLeft, ArrowUpRight, Check, Download, FileArchive, FileCode2, GitBranch, Mail, RefreshCw, SearchCode, Upload, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, ChevronLeft, ChevronRight, Download, FileArchive, FileCode2, GitBranch, Mail, Plus, RefreshCw, Search, SearchCode, Upload, X } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { CodeReviewsSkeleton } from '@/components/skeletons/CodeReviewsSkeleton';
 import { apiRequest } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
-import { CODE_REVIEW_STATUS, codeReviewAction, codeReviewReportUrl, downloadCodeReviewReport, listCodeReviews, submitCodeReview, type CodeReviewTask } from '@/lib/codeReviews';
+import { codeReviewAction, codeReviewReportUrl, downloadCodeReviewReport, listCodeReviews, submitCodeReview, type CodeReviewTask } from '@/lib/codeReviews';
+
+import { explainReviewError, isReviewActive, reviewCoverage, reviewPage, reviewTaskExplanation, reviewTaskLabel, summarizeReviews, type ReviewFilter } from '@/lib/codeReviewView';
 
 interface ProjectOption { id: string; name: string; aliasName?: string; }
 interface Capabilities { engineConfigured: boolean; mailConfigured: boolean; }
@@ -17,13 +20,18 @@ const inputClass = 'h-9 w-full rounded-md border border-input bg-background px-3
 const deliveryLabels: Record<CodeReviewTask['delivery']['status'], string> = {
   not_requested: '仅报告中心', pending: '等待邮件投递', sending: '正在发送邮件', sent: '邮件已发送', failed: '邮件发送失败',
 };
-const isActive = (task: CodeReviewTask): boolean => CODE_REVIEW_STATUS[task.status]?.active ?? false;
+const isActive = isReviewActive;
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : '请求失败，请稍后重试';
 
 export function CodeReviewsPage(): JSX.Element {
   const [params, setParams] = useSearchParams();
   const projectFilter = params.get('project') || '';
   const selectedId = params.get('task') || '';
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<ReviewFilter>('all');
+  const [page, setPage] = useState(0);
+  const taskScope = useRef(projectFilter);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [setupError, setSetupError] = useState('');
@@ -77,7 +85,7 @@ export function CodeReviewsPage(): JSX.Element {
     const epoch = ++requestEpoch.current;
     let timer: number | undefined;
     setLoading(true);
-    setTasks([]);
+    if (taskScope.current !== projectFilter) { setTasks([]); taskScope.current = projectFilter; }
     setListError('');
     const load = async (): Promise<void> => {
       try {
@@ -129,6 +137,9 @@ export function CodeReviewsPage(): JSX.Element {
         email: sendEmail ? email.trim() : undefined,
       });
       if (!mounted.current) return;
+      setTasks((current) => [task, ...current.filter((item) => item.id !== task.id)]);
+      setComposerOpen(false);
+      setFile(null);
       setParams({ project: task.projectId, task: task.id });
       setRefresh((value) => value + 1);
       setNotice('审查任务已提交。可离开此页面，任务会继续执行，完成后自动归档报告。');
@@ -143,7 +154,7 @@ export function CodeReviewsPage(): JSX.Element {
     try {
       const result = await codeReviewAction(task.id, action);
       if (!mounted.current) return;
-      setTasks((current) => current.map((item) => item.id === result.id ? result : item));
+      setTasks((current) => current.some((item) => item.id === result.id) ? current.map((item) => item.id === result.id ? result : item) : [result, ...current]);
       selectTask(result);
       setRefresh((value) => value + 1);
       setNotice(action === 'delivery/retry' ? '已提交邮件重试，报告保持原样。' : action === 'cancel' ? '已请求取消审查。' : '已提交重新审查。');
@@ -151,14 +162,19 @@ export function CodeReviewsPage(): JSX.Element {
     finally { if (mounted.current) setPendingAction(''); }
   };
 
-  const selected = selectedId ? tasks.find((task) => task.id === selectedId) : tasks[0];
+  const scopedTasks = useMemo(() => tasks.filter((task) => !projectFilter || task.projectId === projectFilter), [tasks, projectFilter]);
+  const summary = useMemo(() => summarizeReviews(scopedTasks), [scopedTasks]);
+  const visible = useMemo(() => reviewPage(scopedTasks, query, filter, page), [scopedTasks, query, filter, page]);
+  const selected = selectedId ? scopedTasks.find((task) => task.id === selectedId) : undefined;
+  const reportMode = params.get('report') === '1';
   const projectName = (id: string): string => {
     const project = projects.find((item) => item.id === id);
     return project?.aliasName || project?.name || id;
   };
-
+  const changeFilter = (value: ReviewFilter): void => { setFilter(value); setPage(0); };
+  const returnToTasks = (): void => setParams((current) => { const next = new URLSearchParams(current); next.delete('report'); return next; });
   const topbar = <TopBar
-    left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '代码审查报告' }]} />}
+    left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '代码审查报告', href: reportMode ? '/code-reviews' : undefined }, ...(reportMode ? [{ label: '阅读报告' }] : [])]} />}
     right={<Button variant="outline" size="sm" onClick={() => setRefresh((value) => value + 1)} disabled={loading}><RefreshCw />刷新</Button>}
   />;
   const initialLoading = !initialSettled && !setupError && !listError;
@@ -166,23 +182,81 @@ export function CodeReviewsPage(): JSX.Element {
     <Workspace fluid><CodeReviewsSkeleton /></Workspace>
   </AppShell>;
 
+  if (reportMode) return <AppShell active="code-reviews" wide topbar={topbar}>
+    <Workspace wide className="min-h-0 pb-6">
+      {selected?.reportId ? <ReviewReportReader key={selected.id} task={selected} onBack={returnToTasks} /> : <div className="space-y-4 rounded-xl border border-border bg-card p-6">
+        <h1 className="text-lg font-semibold">这份报告暂时无法打开</h1>
+        <p className="text-sm text-muted-foreground">报告可能尚未归档，或当前账号没有访问权限。返回任务列表查看最新状态。</p>
+        {listError ? <ErrorNotice message={listError} /> : null}
+        <Button variant="outline" onClick={returnToTasks}><ArrowLeft />返回任务</Button>
+      </div>}
+    </Workspace>
+  </AppShell>;
+
+  const filters: Array<{ value: ReviewFilter; label: string; count: number }> = [
+    { value: 'all', label: '全部', count: scopedTasks.length },
+    { value: 'active', label: '处理中', count: summary.active },
+    { value: 'attention', label: '需处理', count: summary.attention },
+    { value: 'reports', label: '审查报告', count: summary.reports },
+    { value: 'archives', label: '上传归档', count: summary.archives },
+  ];
   return <AppShell active="code-reviews" wide topbar={topbar}>
-    <Workspace wide className="min-h-0 space-y-6 pb-8">
-      <header className="space-y-2">
-        <div className="flex items-center gap-2"><SearchCode className="size-6 text-muted-foreground" aria-hidden="true" /><h1 className="text-2xl font-semibold tracking-tight">代码审查报告</h1></div>
-        <p className="text-sm leading-6 text-muted-foreground">上传代码或提交 GitHub 地址，检查 Bug、安全、性能、风格与可维护性。报告自动归档，可额外发送至邮箱。</p>
+    <Workspace wide className="min-h-0 space-y-5 pb-8">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 space-y-1.5">
+          <h1 className="text-2xl font-semibold tracking-tight">代码审查报告</h1>
+          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">查看审查进度、处理失败与覆盖不足，阅读已生成的报告。</p>
+        </div>
+        <Button onClick={() => { setActionError(''); setComposerOpen(true); }} disabled={submitting}><Plus />发起审查</Button>
       </header>
-
-      {setupError ? <ErrorNotice message={`暂时无法读取审查配置：${setupError}`} /> : null}
-      {capabilities && !capabilities.engineConfigured ? <div role="status" className="rounded-lg border border-border bg-muted/40 p-4 text-sm">审查引擎尚未配置。管理员接入 DeepAudit 后即可发起审查，已有报告仍可查看。</div> : null}
+      {setupError ? <ErrorNotice message={setupError} title="审查配置读取失败" /> : null}
+      {capabilities && !capabilities.engineConfigured ? <div role="status" className="rounded-lg border border-border bg-muted/40 p-3 text-sm">审查服务尚未接入，暂时无法发起新任务。已有报告仍可查阅，请管理员检查连接配置。</div> : null}
       {notice ? <div role="status" className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"><Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{notice}</div> : null}
-      {actionError ? <ErrorNotice message={actionError} /> : null}
-
-      {params.get('report') === '1' && selected?.reportId ? <ReviewReportReader key={selected.id} task={selected} onBack={() => setParams((current) => { const next = new URLSearchParams(current); next.delete('report'); return next; })} /> : null}
-
-      <section aria-labelledby="review-submit-heading" className="rounded-xl border border-border bg-card p-5">
-        <h2 id="review-submit-heading" className="mb-4 text-base font-semibold">发起代码审查</h2>
-        <form onSubmit={(event) => { void submit(event); }} className="space-y-4" aria-busy={submitting}>
+      {!composerOpen && actionError ? <ErrorNotice message={actionError} /> : null}
+      <section aria-label="审查概况" className="overflow-hidden rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-5 py-4">
+          <p className="text-base font-semibold leading-6">{summary.headline}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{summary.active ? `仍有 ${summary.active} 项任务排队或处理中。` : ''}已出报告也可能覆盖不足，“需处理”与报告数量会重叠；上传档案未计入 AI 审查结果。</p>
+        </div>
+        <div className="grid grid-cols-2 divide-x divide-border sm:grid-cols-4">
+          {filters.slice(1).map((item) => <button type="button" key={item.value} className="min-w-0 px-5 py-3 text-left transition-colors hover:bg-muted/50" onClick={() => changeFilter(item.value)} aria-label={`查看${item.label} ${item.count} 项`}>
+            <span className="block text-xs text-muted-foreground">{item.label}</span><span className={`mt-1 block text-2xl font-semibold tabular-nums ${item.value === 'attention' && item.count ? 'text-destructive' : ''}`}>{item.count}</span>
+          </button>)}
+        </div>
+      </section>
+      <section aria-labelledby="review-history-heading" className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="review-history-heading" className="text-base font-semibold">任务与报告</h2>
+          <label className="flex min-w-0 items-center gap-2 text-sm"><span className="shrink-0 whitespace-nowrap text-muted-foreground">项目</span><select aria-label="筛选审查项目" value={projectFilter} className={`${inputClass} max-w-60`} onChange={(event) => { setPage(0); const next = new URLSearchParams(); if (event.target.value) next.set('project', event.target.value); setParams(next); }}><option value="">全部可访问项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.aliasName || project.name}</option>)}</select></label>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex max-w-full flex-wrap gap-1" role="group" aria-label="筛选任务状态">{filters.map((item) => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => changeFilter(item.value)} className={`rounded-md px-3 py-1.5 text-xs font-medium ${filter === item.value ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}>{item.label}<span className="ml-1.5 tabular-nums opacity-70">{item.count}</span></button>)}</div>
+          <label className="relative block min-w-0 flex-1 sm:max-w-xs"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" aria-hidden="true" /><span className="sr-only">搜索审查任务</span><input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder="搜索名称、来源或任务编号" className={`${inputClass} pl-9`} /></label>
+        </div>
+        {listError ? <ErrorNotice message={listError} title="任务列表刷新失败，当前保留上次结果" /> : null}
+        {!loading && !listError && selectedId && !selected ? <ErrorNotice message="未找到该审查任务，或当前账号没有访问权限。" title="无法打开所选任务" /> : null}
+        <div className={selected ? 'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]' : ''}>
+          <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card">
+            {loading && scopedTasks.length === 0 ? <ContentLoading label="正在读取审查任务" variant="rows" /> : visible.items.length ? <ReviewTaskList items={visible.items} selectedId={selectedId} projectName={projectName} onSelect={selectTask} /> : <div className="px-6 py-10 text-center">
+              <FileCode2 className="mx-auto mb-3 size-7 text-muted-foreground" aria-hidden="true" />
+              <h3 className="text-sm font-medium">{scopedTasks.length ? '没有匹配的任务' : '还没有代码审查任务'}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{scopedTasks.length ? '试试其他状态，或清空搜索条件。' : '上传 ZIP 或提交 GitHub 地址，开始第一项审查。'}</p>
+              {scopedTasks.length ? <Button variant="outline" className="mt-4" onClick={() => { setQuery(''); changeFilter('all'); }}>清空筛选</Button> : <Button variant="outline" className="mt-4" onClick={() => setComposerOpen(true)}>发起审查</Button>}
+            </div>}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3 text-xs text-muted-foreground">
+              <span>{visible.total} 项匹配 · 每页最多 20 项{loading && scopedTasks.length ? ' · 正在刷新' : ''}</span>
+              <div className="flex items-center gap-2"><Button variant="ghost" size="sm" aria-label="上一页任务" disabled={visible.page === 0} onClick={() => setPage(visible.page - 1)}><ChevronLeft /></Button><span className="tabular-nums">{visible.page + 1} / {visible.pages}</span><Button variant="ghost" size="sm" aria-label="下一页任务" disabled={visible.page + 1 >= visible.pages} onClick={() => setPage(visible.page + 1)}><ChevronRight /></Button></div>
+            </div>
+          </div>
+          {selected ? <ReviewDetail task={selected} now={now} pending={Boolean(pendingAction)} onClose={() => setParams((current) => { const next = new URLSearchParams(current); next.delete('task'); return next; })} onAction={(action) => { void act(selected, action); }} /> : null}
+        </div>
+      </section>
+      <Dialog open={composerOpen} onOpenChange={(open) => { setComposerOpen(open); if (!open && !submitting) setFile(null); }}>
+        <DialogContent frame className="max-w-2xl" style={{ width: 'min(42rem, calc(100vw - 2rem))', maxHeight: '90vh', animation: 'none' }}>
+          <DialogHeader className="shrink-0 border-b border-border px-5 py-4"><DialogTitle>发起代码审查</DialogTitle><DialogDescription>选择代码来源，审查结果会自动保存到报告中心。</DialogDescription></DialogHeader>
+          <form onSubmit={(event) => { void submit(event); }} className="flex min-h-0 flex-1 flex-col" aria-busy={submitting}>
+            <DialogBody className="space-y-4">
+              {actionError ? <ErrorNotice message={actionError} /> : null}
           <fieldset disabled={submitting} className="space-y-4">
             <label className="block space-y-1.5 text-sm"><span>归属项目</span><select required className={inputClass} value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">请选择项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.aliasName || project.name}</option>)}</select></label>
             <div role="group" aria-label="源码提交方式" className="flex flex-wrap gap-2">
@@ -207,21 +281,27 @@ export function CodeReviewsPage(): JSX.Element {
               {sendEmail ? <label className="block max-w-lg space-y-1.5 pt-1 text-sm"><span>收件邮箱</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" className={inputClass} /></label> : null}
             </fieldset>
           </fieldset>
-          <div className="flex flex-wrap items-center gap-3"><Button type="submit" disabled={submitting || !projectId || !capabilities?.engineConfigured}><SearchCode />{submitting ? '正在上传并创建任务' : '开始审查'}</Button>{submitting ? <ContentLoading label="正在提交代码审查" variant="inline" /> : <span className="text-xs text-muted-foreground">分析期间可离开页面，结果会持续保存在 CDS。</span>}</div>
-        </form>
-      </section>
-
-      <section aria-labelledby="review-history-heading" className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="review-history-heading" className="text-base font-semibold">审查任务与报告</h2><label className="flex min-w-0 items-center gap-2 text-sm"><span className="shrink-0 whitespace-nowrap text-muted-foreground">项目</span><select aria-label="筛选审查项目" value={projectFilter} className={`${inputClass} max-w-60`} onChange={(event) => { const next = new URLSearchParams(); if (event.target.value) next.set('project', event.target.value); setParams(next); }}><option value="">全部可访问项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.aliasName || project.name}</option>)}</select></label></div>
-        {listError ? <ErrorNotice message={`任务列表刷新失败，保留最近一次结果：${listError}`} /> : null}
-        {!loading && !listError && selectedId && !selected ? <ErrorNotice message="未找到该审查任务，或当前账号没有访问权限。请从下面的列表选择任务。" /> : null}
-        {loading ? <ContentLoading label="正在读取审查任务" variant="rows" /> : tasks.length === 0 ? <div className="rounded-xl border border-dashed border-border p-8 text-center"><FileCode2 className="mx-auto mb-3 size-8 text-muted-foreground" aria-hidden="true" /><h3 className="text-sm font-medium">还没有代码审查报告</h3><p className="mt-2 text-sm text-muted-foreground">在上方选择项目并上传 ZIP，或提交 GitHub 地址，开始第一次审查。</p><Button variant="outline" className="mt-4" onClick={() => { setSourceType('zip'); window.requestAnimationFrame(() => fileInput.current?.click()); }}>选择 ZIP 文件</Button></div> : <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div className="overflow-hidden rounded-xl border border-border bg-card"><ul className="divide-y divide-border">{tasks.map((task) => <li key={task.id}><button type="button" onClick={() => selectTask(task)} aria-pressed={selected?.id === task.id} className={`w-full p-4 text-left transition-colors hover:bg-muted/50 ${selected?.id === task.id ? 'bg-muted/50' : ''}`}><div className="flex flex-wrap items-center justify-between gap-2"><span className="min-w-0 break-all text-sm font-medium">{task.title || task.sourceName}</span><TaskStatus task={task} /></div><p className="mt-1.5 truncate text-xs text-muted-foreground">{projectName(task.projectId)} · {task.sourceName}</p><div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><time dateTime={task.createdAt}>{formatDate(task.createdAt)}</time><span>{deliveryLabels[task.delivery.status]}</span></div>{isActive(task) ? <p className="mt-2 text-xs text-muted-foreground">{task.phase} · 已处理 {task.progress.scannedFiles} / {task.progress.totalFiles || '待统计'} 个文件</p> : null}</button></li>)}</ul></div>
-          {selected ? <ReviewDetail task={selected} now={now} pending={Boolean(pendingAction)} onAction={(action) => { void act(selected, action); }} /> : null}
-        </div>}
-      </section>
+            </DialogBody>
+            <DialogFooter className="shrink-0 items-center gap-3 border-t border-border px-5 py-4">
+              {submitting ? <ContentLoading label="正在提交代码审查" variant="inline" /> : <span className="mr-auto text-xs text-muted-foreground">可离开页面，稍后回来查看结果。</span>}
+              <Button type="submit" disabled={submitting || !projectId || !capabilities?.engineConfigured}><SearchCode />{submitting ? '正在上传并创建任务' : '开始审查'}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Workspace>
   </AppShell>;
+}
+
+export function ReviewTaskList({ items, selectedId, projectName, onSelect }: {
+  items: CodeReviewTask[]; selectedId: string; projectName: (id: string) => string; onSelect: (task: CodeReviewTask) => void;
+}): JSX.Element {
+  return <ul className="divide-y divide-border" aria-label="当前页审查任务">{items.map((task) => <li key={task.id} data-code-review-row>
+    <button type="button" onClick={() => onSelect(task)} aria-pressed={selectedId === task.id} className={`flex w-full min-w-0 items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 ${selectedId === task.id ? 'bg-muted/50' : ''}`}>
+      <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-medium">{task.title || task.sourceName}</h3><p className="mt-1 truncate text-xs text-muted-foreground">{projectName(task.projectId)} · {task.sourceType === 'report' ? '上传档案' : task.sourceType === 'github' ? 'GitHub' : 'ZIP'} · {task.sourceName}</p></div>
+      <div className="min-w-0 shrink-0 text-right"><TaskStatus task={task} /><p className="mt-1 text-xs text-muted-foreground">{formatDate(task.createdAt)}</p></div>
+    </button>
+  </li>)}</ul>;
 }
 
 function ReviewReportReader({ task, onBack }: { task: CodeReviewTask; onBack: () => void }): JSX.Element {
@@ -284,6 +364,7 @@ function ReviewReportReader({ task, onBack }: { task: CodeReviewTask; onBack: ()
   return <section ref={container} aria-label="代码审查报告阅读器" className="scroll-mt-20 overflow-hidden rounded-xl border border-border bg-card">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-3"><div className="flex min-w-0 items-center gap-3"><Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft />返回任务</Button><h2 className="min-w-0 truncate text-sm font-medium">{payload?.report.title || task.title}</h2></div><Button variant="outline" size="sm" disabled={downloading || !payload} onClick={() => { void download(); }}><Download />{downloading ? '正在下载' : payload?.report.format === 'html' ? '下载 HTML' : '下载 Markdown'}</Button></div>
     {downloadError ? <div className="p-3"><ErrorNotice message={downloadError} /></div> : null}
+    {task.sourceType === 'report' || ['partial', 'unknown'].includes(reviewCoverage(task).kind) ? <div role="status" className="border-b border-border bg-muted/30 px-4 py-3 text-sm leading-6">{reviewTaskExplanation(task)}</div> : null}
     {error ? <div className="space-y-3 p-4"><ErrorNotice message={`报告正文读取失败：${error}`} /><Button variant="outline" onClick={() => setAttempt((value) => value + 1)}>重新加载报告</Button></div> : payload ? <iframe title={payload.report.title} srcDoc={html} sandbox="" className="h-[42rem] w-full border-0" /> : <ContentLoading label="正在读取审查报告正文" variant="panel" />}
   </section>;
 }
@@ -292,38 +373,51 @@ export function buildCodeReviewDocument(content: string, format: 'html' | 'md', 
   // Reports are untrusted; the opaque iframe and CSP forbid scripts, external
   // requests and navigation regardless of embedded HTML or Markdown content.
   const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; form-action \'none\'; base-uri \'none\'">';
-  const style = `<style>:root{color-scheme:${theme}}body{background:Canvas;color:CanvasText;font:1rem/1.7 system-ui,sans-serif;margin:0;padding:1.5rem;overflow-wrap:anywhere}pre{padding:1rem;background:color-mix(in srgb,CanvasText 7%,Canvas);overflow:auto;border-radius:.5rem}table{border-collapse:collapse}td,th{padding:.5rem;border:1px solid GrayText}img{max-width:100%}a{color:LinkText}</style>`;
+  const style = `<style>:root{color-scheme:${theme}}*{box-sizing:border-box}body{background:Canvas;color:CanvasText;font:.9375rem/1.75 system-ui,sans-serif;margin:0 auto;max-width:68rem;padding:1.5rem clamp(1rem,4vw,3rem);overflow-wrap:anywhere}h1,h2,h3{line-height:1.4;letter-spacing:-.02em}h1{font-size:1.75rem;margin:0 0 1.25rem}h2{font-size:1.25rem;margin:2rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid color-mix(in srgb,CanvasText 15%,Canvas)}h3{font-size:1.0625rem;margin:1.5rem 0 .5rem}p,ul,ol{max-width:80ch}pre{padding:1rem;background:color-mix(in srgb,CanvasText 7%,Canvas);overflow:auto;border-radius:.5rem}code{font:.875em/1.6 ui-monospace,SFMono-Regular,monospace}table{display:block;max-width:100%;overflow:auto;border-collapse:collapse;font-size:.875rem}td,th{padding:.625rem .75rem;border:1px solid color-mix(in srgb,CanvasText 20%,Canvas);text-align:left;vertical-align:top}th{background:color-mix(in srgb,CanvasText 5%,Canvas)}img{max-width:100%;height:auto}a{color:LinkText}details{margin:1rem 0;padding:.75rem 1rem;border:1px solid color-mix(in srgb,CanvasText 15%,Canvas);border-radius:.5rem}summary{cursor:pointer;font-weight:600}</style>`;
   if (format === 'html') return `${csp}${style}${content}`;
   return `<!doctype html><html><head><meta charset="utf-8">${csp}${style}</head><body>${marked.parse(content, { async: false })}</body></html>`;
 }
 
-function ErrorNotice({ message }: { message: string }): JSX.Element {
-  return <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{message}</div>;
+function ErrorNotice({ message, title }: { message: string; title?: string }): JSX.Element {
+  const explained = explainReviewError(message);
+  return <div role="alert" className="rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm">
+    <p className="font-medium text-destructive">{title || explained.title}</p>
+    <p className="mt-1 text-xs leading-5 text-muted-foreground">{explained.next}</p>
+    <details className="mt-2 text-xs"><summary className="cursor-pointer text-muted-foreground">技术详情</summary><pre className="mt-2 whitespace-pre-wrap break-all rounded-md bg-muted/50 p-2 font-mono">{message}</pre></details>
+  </div>;
 }
 
 function TaskStatus({ task }: { task: CodeReviewTask }): JSX.Element {
-  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs ${task.status === 'failed' ? 'border-destructive/30 text-destructive' : 'border-border text-muted-foreground'}`}>{isActive(task) ? <span className="size-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" /> : null}{CODE_REVIEW_STATUS[task.status]?.label || task.status}</span>;
+  const view = reviewTaskLabel(task);
+  const tone = view.tone === 'error' ? 'border-destructive/30 bg-destructive/5 text-destructive' : view.tone === 'warning' ? 'border-warn/30 bg-warn-soft text-warn' : 'border-border text-muted-foreground';
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs ${tone}`}>{isActive(task) ? <span className="size-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" /> : null}{view.label}</span>;
 }
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-export function ReviewDetail({ task, now, pending, onAction }: {
-  task: CodeReviewTask; now: number; pending: boolean; onAction: (action: 'cancel' | 'retry' | 'delivery/retry') => void;
+const findingLabels: Record<string, string> = { critical: '严重', high: '高风险', medium: '中风险', low: '低风险', info: '提示', p0: '阻断', p1: '高优先级', p2: '一般', p3: '建议' };
+export function ReviewDetail({ task, now, pending, onAction, onClose }: {
+  task: CodeReviewTask; now: number; pending: boolean; onAction: (action: 'cancel' | 'retry' | 'delivery/retry') => void; onClose?: () => void;
 }): JSX.Element {
   const reportUrl = codeReviewReportUrl(task);
   const active = isActive(task);
-  const percent = task.progress.totalFiles > 0 ? Math.min(100, Math.round(task.progress.scannedFiles / task.progress.totalFiles * 100)) : null;
+  const coverage = reviewCoverage(task);
+  const percent = task.progress.totalFiles > 0 && task.progress.scannedFiles <= task.progress.totalFiles ? Math.round(task.progress.scannedFiles / task.progress.totalFiles * 100) : undefined;
   const elapsed = Math.max(0, Math.floor((now - new Date(task.createdAt).getTime()) / 1000));
   return <article aria-label="审查任务详情" className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-5">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="min-w-0 break-all text-base font-semibold">{task.title || task.sourceName}</h3><TaskStatus task={task} /></div>
-    <div aria-live="polite" className="space-y-2"><p className="text-sm">{task.phase}</p>{active ? <><progress className="h-2 w-full accent-primary" aria-label="审查文件进度" max={100} value={percent ?? undefined} /><p className="text-xs text-muted-foreground">已处理 {task.progress.scannedFiles} / {task.progress.totalFiles || '待统计'} 个文件 · 等待 {Math.floor(elapsed / 60)} 分 {elapsed % 60} 秒</p></> : null}</div>
-    {task.error ? <ErrorNotice message={task.error} /> : null}
-    <dl className="space-y-2 text-xs"><div className="flex gap-3"><dt className="shrink-0 text-muted-foreground">源码</dt><dd className="min-w-0 break-all">{task.sourceName}</dd></div>{task.commitSha ? <div className="flex gap-3"><dt className="shrink-0 text-muted-foreground">提交</dt><dd className="min-w-0 break-all font-mono">{task.commitSha}</dd></div> : null}{task.sourceHash ? <div className="flex gap-3"><dt className="shrink-0 text-muted-foreground">快照哈希</dt><dd className="min-w-0 break-all font-mono">{task.sourceHash}</dd></div> : null}<div className="flex gap-3"><dt className="shrink-0 text-muted-foreground">最近更新</dt><dd><time dateTime={task.updatedAt}>{formatDate(task.updatedAt)}</time></dd></div></dl>
-    {task.findingsSummary ? <div className="flex flex-wrap gap-2" aria-label="审查发现摘要">{Object.entries(task.findingsSummary).map(([key, count]) => <span key={key} className="rounded-md bg-muted px-2 py-1 text-xs">{key}：{count}</span>)}</div> : null}
-    <div className="flex items-start gap-2 rounded-lg bg-muted/30 p-3 text-sm"><Mail className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" /><div className="min-w-0 space-y-1"><p>{deliveryLabels[task.delivery.status]}</p>{task.delivery.email ? <p className="break-all text-xs text-muted-foreground">{task.delivery.email}</p> : null}{task.delivery.error ? <p className="text-xs text-destructive">{task.delivery.error}</p> : null}</div></div>
-    <div className="flex flex-wrap gap-2">{reportUrl ? <Button asChild size="sm"><Link to={reportUrl}>阅读审查报告<ArrowUpRight /></Link></Button> : null}{active ? <Button variant="outline" size="sm" disabled={pending} onClick={() => onAction('cancel')}><X />取消审查</Button> : null}{task.status === 'failed' || task.status === 'cancelled' ? <Button variant="outline" size="sm" disabled={pending} onClick={() => onAction('retry')}><RefreshCw />重新审查</Button> : null}{task.delivery.status === 'failed' && task.reportId ? <Button variant="outline" size="sm" disabled={pending} onClick={() => onAction('delivery/retry')}><Mail />重试邮件</Button> : null}{pending ? <ContentLoading label="正在处理审查操作" variant="inline" /> : null}</div>
-    <p className="text-xs leading-5 text-muted-foreground">本次采用静态与 AI 分析。报告会注明覆盖范围和待验证发现，审查结论不替代发布验收。</p>
+    <div className="flex items-start justify-between gap-3"><div className="min-w-0 space-y-2"><TaskStatus task={task} /><h3 className="break-words text-base font-semibold leading-6">{task.title || task.sourceName}</h3></div>{onClose ? <Button variant="ghost" size="icon" aria-label="关闭任务详情" onClick={onClose}><X /></Button> : null}</div>
+    <p className="text-sm leading-6">{reviewTaskExplanation(task)}</p>
+    {task.sourceType !== 'report' ? <div aria-live="polite" className={`space-y-2 rounded-lg p-3 ${coverage.kind === 'partial' || coverage.kind === 'unknown' ? 'bg-warn-soft' : 'bg-muted/30'}`}>
+      <p className="text-sm font-medium">{coverage.text}</p>
+      {active ? <><progress className="h-2 w-full accent-primary" aria-label="审查文件进度" max={100} value={percent} /><p className="text-xs text-muted-foreground">创建后 {Math.floor(elapsed / 60)} 分 {elapsed % 60} 秒 · 排队时间也包含在内</p></> : null}
+      {task.inputSkippedFiles ? <p className="text-xs leading-5 text-muted-foreground">另有 {task.inputSkippedFiles} 项未纳入本次分析，请在报告中核对跳过原因。</p> : null}
+    </div> : null}
+    {task.error ? <ErrorNotice message={task.error} title="本次审查失败" /> : null}
+    {task.findingsSummary && Object.keys(task.findingsSummary).length ? <div><h4 className="mb-2 text-xs font-medium text-muted-foreground">报告中的发现</h4><div className="flex flex-wrap gap-2">{Object.entries(task.findingsSummary).map(([key, count]) => <span key={key} className="rounded-md bg-muted px-2 py-1 text-xs">{findingLabels[key] || key}：{count}</span>)}</div><p className="mt-2 text-xs text-muted-foreground">发现数为工具输出，需结合报告中的证据核实。</p></div> : null}
+    <div className="flex flex-wrap gap-2">{reportUrl ? <Button asChild size="sm"><Link to={reportUrl}>{task.sourceType === 'report' ? '阅读上传档案' : '阅读审查报告'}<ArrowUpRight /></Link></Button> : null}{active ? <Button variant="outline" size="sm" disabled={pending} onClick={() => onAction('cancel')}><X />取消审查</Button> : null}{task.sourceType !== 'report' && (task.status === 'failed' || task.status === 'cancelled') ? <Button variant="outline" size="sm" disabled={pending} onClick={() => onAction('retry')}><RefreshCw />重新审查</Button> : null}{task.delivery.status === 'failed' && task.reportId ? <Button variant="outline" size="sm" disabled={pending} onClick={() => onAction('delivery/retry')}><Mail />重试邮件</Button> : null}{pending ? <ContentLoading label="正在处理审查操作" variant="inline" /> : null}</div>
+    {task.delivery.status !== 'not_requested' ? <div className="rounded-lg border border-border p-3 text-xs"><p className="font-medium">{deliveryLabels[task.delivery.status]}</p>{task.delivery.email ? <p className="mt-1 break-all text-muted-foreground">{task.delivery.email}</p> : null}{task.delivery.error ? <div className="mt-2"><ErrorNotice message={task.delivery.error} title="报告已保存，邮件尚未送达" /></div> : null}</div> : null}
+    <details className="border-t border-border pt-3 text-xs"><summary className="cursor-pointer text-muted-foreground">任务与技术详情</summary><dl className="mt-3 space-y-2"><div><dt className="text-muted-foreground">来源</dt><dd className="mt-1 break-all">{task.sourceName}</dd></div><div><dt className="text-muted-foreground">任务编号</dt><dd className="mt-1 break-all font-mono">{task.id}</dd></div><div><dt className="text-muted-foreground">原始阶段</dt><dd className="mt-1 break-all">{task.phase}</dd></div>{task.commitSha ? <div><dt className="text-muted-foreground">固定提交</dt><dd className="mt-1 break-all font-mono">{task.commitSha}</dd></div> : null}{task.sourceHash ? <div><dt className="text-muted-foreground">快照哈希</dt><dd className="mt-1 break-all font-mono">{task.sourceHash}</dd></div> : null}<div><dt className="text-muted-foreground">最近更新</dt><dd className="mt-1">{formatDate(task.updatedAt)}</dd></div></dl></details>
   </article>;
 }
