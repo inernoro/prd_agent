@@ -405,7 +405,8 @@ def test_created_project_locator_survives_instance_rollback_and_retry(workspace,
 
 
 @pytest.mark.parametrize('approved', [False, True])
-def test_plain_connect_reconciles_selection_only_after_success_across_processes(workspace, approved):
+@pytest.mark.parametrize('mode', ['connect', 'init', 'init-yes'])
+def test_plain_connect_reconciles_selection_only_after_success_across_processes(workspace, approved, mode):
     root, catalog = workspace
     calls = []
     class Target(BaseHTTPRequestHandler):
@@ -436,13 +437,22 @@ def test_plain_connect_reconciles_selection_only_after_success_across_processes(
     save('https://primary.example', 'a', 'cdsp_primary')
     cli._write_instance_private('active-instance.json', {'id': 'primary'})
     env = {k: v for k, v in os.environ.items() if k not in cli._EXPLICIT_CREDENTIAL_ENV}
-    def command(*argv):
-        return subprocess.run([os.sys.executable, str(Path(cli.__file__).resolve()), *argv], cwd=root, env=env, capture_output=True, text=True)
+    def command(*argv, answers=None):
+        return subprocess.run([os.sys.executable, str(Path(cli.__file__).resolve()), *argv], cwd=root, env=env, input=answers, capture_output=True, text=True)
     try:
-        connected = command('connect', '--host', host, '--project', 'b')
-        assert connected.returncode == (0 if approved else 2), connected.stdout + connected.stderr
+        if mode == 'connect':
+            connected = command('connect', '--host', host, '--project', 'b')
+        elif mode == 'init':
+            connected = command('init', answers=f'{host}\nb\n')
+        else:
+            env.update({'CDS_HOST': host, 'CDS_PROJECT_ID': 'b', 'CDS_PROJECT_KEY': 'cdsp_target' if approved else '', 'AI_ACCESS_KEY': ''})
+            connected = command('init', '--yes')
+            for k in cli._EXPLICIT_CREDENTIAL_ENV: env.pop(k, None)
+        assert connected.returncode == (0 if approved else 1 if mode == 'init-yes' else 2), connected.stdout + connected.stderr
         active = root / '.cds/active-instance.json'
         if approved:
+            saved = json.loads((root / '.cds/credentials.json').read_text())
+            assert saved['host'] == host and saved['projectId'] == 'b'
             assert not active.exists()
             listed = command('project', 'list')
             assert listed.returncode == 0, listed.stdout + listed.stderr
@@ -454,3 +464,20 @@ def test_plain_connect_reconciles_selection_only_after_success_across_processes(
         assert 'cdsp_primary' not in repr(calls)
     finally:
         server.shutdown(); server.server_close(); thread.join()
+
+
+def test_explicit_scoped_init_keeps_previous_default_selection(workspace, monkeypatch):
+    root, _ = workspace
+    save('https://primary.example', 'a', 'cdsp_primary')
+    save('https://standby.example', 'b', 'cdsp_standby')
+    save('https://primary.example', 'a', 'cdsp_primary')
+    cli._write_instance_private('active-instance.json', {'id': 'primary'})
+    monkeypatch.setattr(cli, '_request', ready)
+    code, output = run('--instance', 'standby', 'init', '--yes')
+    assert code == 0, output
+    assert json.loads((root / '.cds/active-instance.json').read_text()) == {'id': 'primary'}
+    assert json.loads((root / '.cds/credentials.json').read_text())['host'] == 'https://standby.example'
+    calls = []
+    monkeypatch.setattr(cli, '_call', lambda *a, **kw: (calls.append((cli._cds_base(), cli._auth_headers()['X-AI-Access-Key'])) or {'projects': []}))
+    assert run('project', 'list')[0] == 0
+    assert calls == [('https://primary.example', 'cdsp_primary')]

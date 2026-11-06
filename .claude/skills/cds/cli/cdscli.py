@@ -11057,6 +11057,7 @@ def main(argv: list[str] | None = None) -> None:
     if func is None:
         parser.print_help()
         sys.exit(1)
+    workspace_connection = func in (cmd_connect, cmd_init) and not getattr(args, "legacy_env", False)
     # Discovery and connection must work even if the selected host is unavailable or unconfigured.
     if args.cmd == "instance" and args.instance:
         parser.error("instance 子命令请直接指定实例 ID，不与全局 --instance 混用")
@@ -11065,7 +11066,7 @@ def main(argv: list[str] | None = None) -> None:
         if selected:
             _apply_instance(_instance_entry(selected), require_project=False)
     if args.cmd not in ("instance", "connect"):
-        selected = args.instance or _read_instance_private("active-instance.json", {}).get("id")
+        selected = args.instance or (None if workspace_connection else _read_instance_private("active-instance.json", {}).get("id"))
         if selected:
             entry = _instance_entry(selected)
             _apply_instance(entry, require_project=False)
@@ -11079,8 +11080,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         func(args)
     except SystemExit as exc:
-        if func is cmd_connect and exc.code in (None, 0):
-            # Plain connect adopts the legacy workspace pointer. A previous
+        if workspace_connection and not args.instance and exc.code in (None, 0):
+            # Workspace onboarding adopts the saved pointer. A previous
             # instance choice must not override that newly reported connection.
             _private_instance_file("active-instance.json").unlink(missing_ok=True)
         raise
