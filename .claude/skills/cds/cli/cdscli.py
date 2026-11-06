@@ -11076,7 +11076,14 @@ def main(argv: list[str] | None = None) -> None:
             for key in _EXPLICIT_CREDENTIAL_ENV:
                 _EXPLICIT_CREDENTIAL_ENV[key] = os.environ.get(key, "")
     _deployment_load_preflight(func)
-    func(args)
+    try:
+        func(args)
+    except SystemExit as exc:
+        if func is cmd_connect and exc.code in (None, 0):
+            # Plain connect adopts the legacy workspace pointer. A previous
+            # instance choice must not override that newly reported connection.
+            _private_instance_file("active-instance.json").unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":

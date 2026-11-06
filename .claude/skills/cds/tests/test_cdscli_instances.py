@@ -402,3 +402,55 @@ def test_created_project_locator_survives_instance_rollback_and_retry(workspace,
     assert 'primary-secret' not in output and 'cdsp_target' not in output
     assert 'projectKey' not in json.loads((root / '.cds/connection.json').read_text())
     assert (root / '.cds/instance-credentials.json').stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize('approved', [False, True])
+def test_plain_connect_reconciles_selection_only_after_success_across_processes(workspace, approved):
+    root, catalog = workspace
+    calls = []
+    class Target(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def send(self, body):
+            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
+            self.wfile.write(json.dumps(body).encode())
+        def do_POST(self):
+            calls.append((self.command, self.path, self.headers.get('X-AI-Access-Key')))
+            self.send({'requestId': 'r', 'pollToken': 'poll'})
+        def do_GET(self):
+            key = self.headers.get('X-AI-Access-Key')
+            calls.append((self.command, self.path, key))
+            if self.path.endswith('/access-requests/r'):
+                self.send({'status': 'approved', 'authorizationKey': 'cdsp_target'} if approved else {'status': 'rejected'})
+            elif self.path == '/api/projects/b':
+                assert key == 'cdsp_target'
+                self.send({'id': 'b', 'gitRepoUrl': 'https://github.com/acme/app.git'})
+            elif self.path == '/api/projects':
+                assert key == 'cdsp_target'
+                self.send({'projects': [{'id': 'b'}]})
+            else: self.send({})
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Target)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    host = f'http://127.0.0.1:{server.server_port}'
+    catalog['instances'][1]['url'] = host
+    (root / 'cds-instances.json').write_text(json.dumps(catalog))
+    save('https://primary.example', 'a', 'cdsp_primary')
+    cli._write_instance_private('active-instance.json', {'id': 'primary'})
+    env = {k: v for k, v in os.environ.items() if k not in cli._EXPLICIT_CREDENTIAL_ENV}
+    def command(*argv):
+        return subprocess.run([os.sys.executable, str(Path(cli.__file__).resolve()), *argv], cwd=root, env=env, capture_output=True, text=True)
+    try:
+        connected = command('connect', '--host', host, '--project', 'b')
+        assert connected.returncode == (0 if approved else 2), connected.stdout + connected.stderr
+        active = root / '.cds/active-instance.json'
+        if approved:
+            assert not active.exists()
+            listed = command('project', 'list')
+            assert listed.returncode == 0, listed.stdout + listed.stderr
+            assert json.loads(listed.stdout)['data'] == [{'id': 'b'}]
+            assert calls[-1] == ('GET', '/api/projects', 'cdsp_target')
+        else:
+            assert json.loads(active.read_text()) == {'id': 'primary'}
+            assert json.loads((root / '.cds/credentials.json').read_text())['projectId'] == 'a'
+        assert 'cdsp_primary' not in repr(calls)
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
