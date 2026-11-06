@@ -80,6 +80,37 @@ describe('DeepAudit five-dimension adapter', () => {
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/已分析 37\/40.*重试继续未完成部分/);
   });
 
+  it.each([false, true])('accepts declared native policy skips with truthful coverage, without resuming completed work (retry=%s)', async (retryFailed) => {
+    const calls: Array<{ url: string; method?: string }> = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
+      calls.push({ url: String(url), method: init?.method });
+      return new URL(String(url)).pathname.endsWith('/issues') ? Response.json([])
+        : Response.json({ status: 'completed', checkpoint_version: 1, total_files: 40, scanned_files: 37,
+          skipped_files: 3, failed_files: 0, processed_files: 40, resumable: false, issues_count: 0 });
+    }) as typeof fetch });
+    const result = await engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed,
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+    expect(result).toMatchObject({ totalFiles: 40, scannedFiles: 37, skippedFiles: 3, engineTaskId: 'same-task' });
+    expect(result.notes).toContain('DeepAudit 按引擎政策跳过 3 个文件；跳过不计为分析成功，不能视为审查通过。');
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+  });
+
+  it.each([0, 2])('does not hide pending or failed files behind declared skips (failed_files=%s)', async (failedFiles) => {
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async () =>
+      Response.json({ status: 'completed', checkpoint_version: 1, total_files: 40, scanned_files: 35,
+        skipped_files: 3, failed_files: failedFiles, processed_files: 38 + failedFiles, resumable: false })) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/已分析 35\/40.*重试继续未完成部分/);
+  });
+
+  it.each([41, 4, -1, 1.5, '3'])('rejects invalid native skipped_files=%s instead of fabricating completed coverage', async (skippedFiles) => {
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async () =>
+      Response.json({ status: 'completed', checkpoint_version: 1, total_files: 40, scanned_files: 37,
+        skipped_files: skippedFiles, failed_files: 0, processed_files: 40, resumable: false })) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow('文件覆盖计数无效');
+  });
+
   it.each([undefined, 0])('falls back to the fixed snapshot only for an explicit retry of legacy checkpoint version %s', async (checkpointVersion) => {
     const calls: string[] = [];
     const snapshot = buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]);

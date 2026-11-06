@@ -28,6 +28,18 @@ interface EngineTask { id: string; status: string; total_files: number; scanned_
   resumable?: boolean; checkpoint_version?: number; processed_files?: number; failed_files?: number; skipped_files?: number; issues_count?: number }
 const MAX_FINDINGS = 100_000;
 const MAX_FINDING_BYTES = 128 * 1024 * 1024;
+function hasIncompleteFiles(task: EngineTask): boolean {
+  const skipped = task.checkpoint_version === 1 ? task.skipped_files ?? 0 : 0;
+  const failed = task.failed_files ?? 0;
+  if (task.checkpoint_version === 1) {
+    const counts = [task.total_files, task.scanned_files, skipped, failed, task.processed_files ?? 0];
+    if (counts.some((count) => !Number.isSafeInteger(count) || count < 0)
+      || task.scanned_files + skipped + failed > task.total_files || (task.processed_files ?? 0) > task.total_files) {
+      throw new Error('DeepAudit 文件覆盖计数无效，未归档不完整报告');
+    }
+  }
+  return Number(failed) > 0 || Number(task.scanned_files) + Number(skipped) < Number(task.total_files);
+}
 
 /** DeepAudit v3 five-dimension ZIP scanner. Does not call the Agent/PoC sandbox API. */
 export class CodeReviewEngine {
@@ -82,7 +94,7 @@ export class CodeReviewEngine {
       if (engineTaskId && input.retryFailed) {
         const existing = await request('deepaudit.retry_status', `/tasks/${encodeURIComponent(engineTaskId)}`) as EngineTask;
         if (existing.status === 'failed' || existing.status === 'cancelled'
-          || (existing.status === 'completed' && (Number(existing.failed_files) > 0 || existing.scanned_files < existing.total_files))) {
+          || (existing.status === 'completed' && hasIncompleteFiles(existing))) {
           if (existing.resumable === true) {
             const resumed = await request('deepaudit.resume_task', `/tasks/${encodeURIComponent(engineTaskId)}/resume`, { method: 'POST' }) as { task_id?: string };
             if (resumed.task_id !== engineTaskId) throw new Error('DeepAudit 续跑返回了不同的任务编号');
@@ -130,7 +142,7 @@ export class CodeReviewEngine {
           totalFiles, scannedFiles, engineTaskId,
           processedFiles: task.processed_files, failedFiles: task.failed_files, skippedFiles: task.skipped_files });
         if (task.status === 'completed') {
-          if ((task.resumable === true || task.checkpoint_version === 1) && (Number(task.failed_files) > 0 || scannedFiles < totalFiles)) {
+          if ((task.resumable === true || task.checkpoint_version === 1) && hasIncompleteFiles(task)) {
             throw new Error(`DeepAudit 整仓审查尚未完成（已分析 ${scannedFiles}/${totalFiles} 个文件）。已完成文件的分析结果已保留，请重试继续未完成部分；当前未形成完整代码质量结论。`);
           }
           break;
@@ -194,6 +206,7 @@ export class CodeReviewEngine {
       const scannedFiles = Math.max(0, Number(task.scanned_files) || 0);
       return { findings, totalFiles, scannedFiles, skippedFiles: Math.max(0, totalFiles - scannedFiles), engineTaskId,
         notes: ['采用 DeepAudit 静态与 AI 五维分析；未执行动态 PoC，发现均待人工复核。',
+          ...(task.checkpoint_version === 1 && Number(task.skipped_files) > 0 ? [`DeepAudit 按引擎政策跳过 ${task.skipped_files} 个文件；跳过不计为分析成功，不能视为审查通过。`] : []),
           ...(scannedFiles < totalFiles ? [`DeepAudit 有 ${totalFiles - scannedFiles} 个文件未成功分析，不能视为全量通过。`] : []),
           ...(totalFiles === 0 ? ['DeepAudit 未分析任何文件，检查支持语言、排除规则和模型配置。'] : [])] };
     } catch (error) {
