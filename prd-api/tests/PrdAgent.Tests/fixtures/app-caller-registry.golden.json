@@ -336,6 +336,12 @@
     ]
   },
   {
+    "code": "mcp-speech.synthesize::tts",
+    "modelTypes": [
+      "tts"
+    ]
+  },
+  {
     "code": "md-to-ppt-agent.chat-refine::chat",
     "modelTypes": [
       "chat"
