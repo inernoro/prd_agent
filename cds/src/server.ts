@@ -31,6 +31,7 @@ import { createBootstrapRouter } from './routes/bootstrap.js';
 import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
+import { isHumanSystemOwner } from './services/human-auth.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
@@ -3585,6 +3586,10 @@ export function createServer(deps: ServerDeps): express.Express {
         ? { username: cdsUser, authProvider: 'legacy', isSystemOwner: true }
         : null;
     res.json({
+      approvalCapabilities: {
+        operator: isHumanSystemOwner(req),
+        accessRequests: authMode === 'disabled' || isHumanSystemOwner(req),
+      },
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,

@@ -19,6 +19,7 @@ import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsIns
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
+import { canReadApproval, type ApprovalCapabilities } from '@/hooks/approvalPolling';
 
 /*
  * AppShell — single source of layout truth.
@@ -115,6 +116,7 @@ export interface AppShellProps {
 }
 
 export type ShellAuthStatus = {
+  approvalCapabilities?: ApprovalCapabilities;
   enabled?: boolean;
   mode?: string;
   activeProvider?: string | null;
@@ -313,6 +315,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [authPending, setAuthPending] = useState(true);
   const [authAttempt, setAuthAttempt] = useState(0);
   const canManageSettings = canManageSystemSettings(authStatus);
+  const canPollOperatorApprovals = canReadApproval(authStatus?.approvalCapabilities, 'operator');
+  const canReadAccessRequests = canReadApproval(authStatus?.approvalCapabilities, 'accessRequests');
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const routerLocation = useLocation();
   const agentContext = resolveAgentPageContext(
@@ -478,10 +482,10 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
       {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      {canManageSettings ? <OperatorApprovalModal /> : null}
+      {canPollOperatorApprovals ? <OperatorApprovalModal /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      {canManageSettings ? <SiteNoticeInbox /> : null}
+      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>
