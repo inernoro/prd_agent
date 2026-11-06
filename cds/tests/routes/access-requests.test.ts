@@ -304,6 +304,15 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(stateService.getGlobalAgentKeys()).toHaveLength(0);
   });
 
+  it.each([60, 61, 100])('申请名称长度%s与原建项目60字符界线一致，超长目标不进入审批', async length => {
+    const reply = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'n'.repeat(length), repository: 'https://github.com/acme/demo' },
+    });
+    expect(reply.status).toBe(length <= 60 ? 201 : 400);
+    expect(stateService.listAccessRequests()).toHaveLength(length <= 60 ? 1 : 0);
+    expect(stateService.getGlobalAgentKeys()).toHaveLength(0);
+  });
+
   it('拒绝路径:发起方凭 token 轮询看到 rejected + 原因', async () => {
     const init = await request(server, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'x' });
     const reqId = init.body.requestId as string;

@@ -2,7 +2,7 @@ import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-pl
 import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { addressWriteLocked } from '../services/preview-address-settings.js';
-import { bootstrapRepository } from '../services/bootstrap-target.js';
+import { bootstrapRepository, MAX_PROJECT_NAME_LENGTH } from '../services/bootstrap-target.js';
 /**
  * Projects API router.
  *
@@ -134,7 +134,7 @@ export const LEGACY_PROJECT_ID = 'default';
  * Maximum length of `Project.name` we accept on POST. Long names would
  * overflow the UI card and the docker network name derivation.
  */
-const MAX_NAME_LENGTH = 60;
+const MAX_NAME_LENGTH = MAX_PROJECT_NAME_LENGTH;
 
 /**
  * Regex for acceptable slugs. Matches kebab/alphanumeric and forbids

@@ -159,7 +159,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       ? body.purpose.trim().slice(0, 500) : '申请一次性创建新项目权限。';
     const target = bootstrapTarget(body.requestedProject);
     if (!target) {
-      res.status(400).json({ error: 'bootstrap_target_required', message: '请让 Agent 自动读取项目名称和 Git 仓库，再提交接入申请；不需要复制密钥。' });
+      res.status(400).json({ error: 'bootstrap_target_required', message: '请让 Agent 提供1至60字符的项目名称和完整 Git 仓库，再提交接入申请；不需要复制密钥。' });
       return;
     }
     const pollToken = randomBytes(24).toString('base64url');

@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createProjectsRouter, assertUnscopedAdmin, assertScopedSweep } from '../../src/routes/projects.js';
+import { createAccessRequestsRouter } from '../../src/routes/access-requests.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
@@ -124,6 +125,33 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it.each(['ssh://git@ssh.github.com:443/acme/demo.git', 'http://gitbox:443/acme/demo',
+    'https://gitbox:8443/acme/demo'])('原仓库申请、批准、票据交付再创建完整往返保持目标：%s', async repository => {
+    const app = express(); app.use(express.json());
+    app.use((req, _res, next) => {
+      const key = req.headers['x-ai-access-key'];
+      const match = typeof key === 'string' ? stateService.findGlobalAgentKeyForAuth(key) : null;
+      if (match) (req as any).cdsAccess = { keyId: match.keyId, access: match.access };
+      next();
+    });
+    app.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled' }));
+    app.use('/api', createProjectsRouter({ stateService, shell, config: { reposBase: tmpDir } as any }));
+    const combined = listenLoopbackFixture(app);
+    if (!combined.address()) await once(combined, 'listening');
+    try {
+      const name = 'n'.repeat(60);
+      const started = await request(combined, 'POST', '/api/bootstrap-access-requests', { requestedProject: { name, repository } });
+      expect(started.status).toBe(201);
+      expect((await request(combined, 'POST', `/api/access-requests/${started.body.requestId}/approve`, {})).status).toBe(200);
+      const delivered = await request(combined, 'GET', `/api/bootstrap-access-requests/${started.body.requestId}`, undefined, { 'X-Poll-Token': started.body.pollToken });
+      expect(delivered.body.authorizationKey).toMatch(/^cdsg_/);
+      const result = await request(combined, 'POST', '/api/projects', { name, gitRepoUrl: repository }, { 'X-AI-Access-Key': delivered.body.authorizationKey });
+      expect(result.status).toBe(201);
+      expect(result.body.project.name).toBe(name);
+      expect(stateService.findGlobalAgentKeyForAuth(delivered.body.authorizationKey)).toBeNull();
+    } finally { await new Promise<void>(resolve => combined.close(() => resolve())); }
   });
 
   it('sign + list + revoke happy path for cdsg_ keys', async () => {

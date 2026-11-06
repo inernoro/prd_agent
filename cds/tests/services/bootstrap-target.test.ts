@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { bootstrapRepository, bootstrapTarget } from '../../src/services/bootstrap-target.js';
 
 describe('建项目仓库身份绑定', () => {
+  it.each(['ssh://git@ssh.github.com:443/acme/demo.git', 'http://gitbox:443/acme/demo',
+    'ssh://git@gitbox:80/acme/demo', 'https://gitbox:8443/acme/demo',
+    'https://github.com:443/acme/demo', 'ssh://git@github.com:22/acme/demo'])('规范仓库身份再次校验保持幂等：%s', value => {
+    const requested = bootstrapTarget({ name: 'Demo', repository: value });
+    expect(requested).not.toBeNull();
+    expect(bootstrapTarget(requested)).toEqual(requested);
+  });
+
   it('同一 GitHub 仓库的 HTTPS、SSH、大小写和 .git 等价且不存凭据', () => {
     for (const value of ['https://github.com/Acme/Demo.git', 'git@github.com:acme/demo',
       'ssh://git@github.com:22/ACME/demo.git', 'https://user:secret@github.com/acme/demo?token=secret#fragment']) {
