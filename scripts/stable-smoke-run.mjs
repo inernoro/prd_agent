@@ -13,6 +13,8 @@ import {
   summarizeCoverage,
 } from './stable-smoke-results.mjs';
 import { renderVisualPlan } from './stable-smoke-visual-plan.mjs';
+import { isValidationOnlyPath, normalizeProductCommits, productCommitForEnvironment, sameProductCommits, validateInspectionSourceContext } from './stable-smoke-runtime-identity.mjs';
+export { isValidationOnlyPath };
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -431,7 +433,7 @@ export async function runCdsGatewayPersistenceProbe({
   const branchIdResult = commandFn('python3', [
     '.claude/skills/cds/cli/cdscli.py',
     'branch-id',
-  ]);
+  ], { cwd: productRepoRoot(values) });
   const branchIdPayload = readJsonFromText(branchIdResult.stdout);
   const branchId = branchIdPayload?.data?.branchId;
   if (branchIdResult.status !== 0 || !branchId) {
@@ -444,7 +446,7 @@ export async function runCdsGatewayPersistenceProbe({
       '.claude/skills/cds/cli/cdscli.py',
       'branch', 'deploy', branchId,
       '--timeout', '900',
-    ]);
+    ], { cwd: productRepoRoot(values) });
     if (deployment.status !== 0) {
       throw new Error(`CDS 第 ${sequence} 次固定版本重新部署失败`);
     }
@@ -458,7 +460,7 @@ export async function runCdsGatewayPersistenceProbe({
       throw new Error('CDS 两次重新部署返回了同一个 DeploymentRun，拒绝误记为两次重启');
     }
     deploymentRunIds.add(deploymentRunId);
-    const readiness = await waitFn(commit);
+    const readiness = await waitFn(commit, values);
     const oldSession = await fetchFn(
       `${withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL)}/gw/auth/context`,
       {
@@ -498,31 +500,6 @@ export async function runCdsGatewayPersistenceProbe({
   };
   writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   return record;
-}
-
-const validationOnlyPrefixes = [
-  '.agents/skills/',
-  '.claude/skills/create-visual-test-to-kb/',
-  '.claude/skills/stable-smoke/',
-  '.Codex/',
-  'changelogs/',
-  'doc/',
-  'e2e/',
-  'scripts/tests/',
-];
-
-const validationOnlyFiles = new Set([
-  'scripts/compose-stable-smoke-supervisor-report.mjs',
-  'scripts/prepare-stable-smoke-archive-report.mjs',
-  'scripts/render-stable-smoke-report.mjs',
-  'scripts/split-stable-smoke-report.mjs',
-]);
-
-export function isValidationOnlyPath(path) {
-  const normalized = String(path || '').replaceAll('\\', '/');
-  return validationOnlyFiles.has(normalized)
-    || normalized.startsWith('scripts/stable-smoke-')
-    || validationOnlyPrefixes.some((prefix) => normalized.startsWith(prefix));
 }
 
 export function deployedRuntimeCommit(branch) {
@@ -657,22 +634,42 @@ function runtimeExpectationForBranch(branch, expectedCommit) {
   );
 }
 
-function readCdsBranchStatus() {
-  const branchIdResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
+function productRepoRoot(values = {}) {
+  return resolve(values.STABLE_SMOKE_CDS_PRODUCT_REPO_ROOT || repoRoot);
+}
+
+function readInspectionSourceContext(values) {
+  const source = command('git', ['rev-parse', 'HEAD']);
+  const product = command('git', ['rev-parse', 'HEAD'], { cwd: productRepoRoot(values) });
+  if (source.status !== 0 || product.status !== 0) throw new Error('无法读取巡检源码或业务工作区版本');
+  const sourceCommit = String(source.stdout).trim();
+  const productCommit = String(product.stdout).trim();
+  if (values.STABLE_SMOKE_CDS_PRODUCT_COMMIT && values.STABLE_SMOKE_CDS_PRODUCT_COMMIT !== productCommit) throw new Error('CDS 声明版本与业务工作区不一致');
+  const diff = command('git', ['diff', '--name-only', `${productCommit}..${sourceCommit}`]);
+  if (diff.status !== 0) throw new Error('无法核对巡检源码与业务运行版本');
+  return validateInspectionSourceContext({ sourceCommit, productCommit, changedFiles: String(diff.stdout || '').split(/\r?\n/).filter(Boolean) });
+}
+
+function runtimeCommits(values) {
+  return normalizeProductCommits({ cds: values.STABLE_SMOKE_CDS_PRODUCT_COMMIT || values.STABLE_SMOKE_COMMIT, production: values.STABLE_SMOKE_PROD_PRODUCT_COMMIT || values.STABLE_SMOKE_COMMIT });
+}
+
+function readCdsBranchStatus(values = {}) {
+  const branchIdResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id'], { cwd: productRepoRoot(values) });
   const branchIdPayload = branchIdResult.status === 0 ? JSON.parse(String(branchIdResult.stdout || '{}')) : null;
   const branchId = branchIdPayload?.data?.branchId;
   if (!branchId) throw new Error('CDS 权威分支标识读取失败，拒绝在未知部署版本上开测');
-  const statusResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
+  const statusResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId], { cwd: productRepoRoot(values) });
   const statusPayload = statusResult.status === 0 ? JSON.parse(String(statusResult.stdout || '{}')) : null;
   if (!statusPayload?.data) throw new Error('CDS 分支部署状态读取失败，拒绝在未知部署版本上开测');
   return statusPayload.data;
 }
 
-async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) {
+async function waitForCdsDeployment(expectedCommit, values = {}, timeoutMs = 15 * 60 * 1000) {
   const startedAt = Date.now();
   let readiness = { ready: false, reasons: ['尚未检查'], versionId: '', commit: '' };
   while (Date.now() - startedAt < timeoutMs) {
-    const branch = readCdsBranchStatus();
+    const branch = readCdsBranchStatus(values);
     readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
     if (readiness.ready) return { ...readiness, waitedMs: Date.now() - startedAt };
     await delay(10_000);
@@ -698,7 +695,7 @@ function runPlaywright(environment, values, runDir, grep = '') {
     STABLE_SMOKE_GW_USER: values[`${prefix}_GW_USER`] || '',
     STABLE_SMOKE_GW_PASSWORD: values[`${prefix}_GW_PASSWORD`] || '',
     STABLE_SMOKE_RUN_ID: values.STABLE_SMOKE_RUN_ID,
-    STABLE_SMOKE_COMMIT: values.STABLE_SMOKE_COMMIT,
+    STABLE_SMOKE_COMMIT: runtimeCommits(values)[environment],
     STABLE_SMOKE_RUN: '1',
     STABLE_SMOKE_JSON_OUTPUT: resultPath,
     STABLE_SMOKE_HTML_OUTPUT: htmlPath,
@@ -914,7 +911,7 @@ export function buildRunNotificationTarget(targets, runId) {
   };
 }
 
-export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 'full' }) {
+export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 'full', productCommits = {} }) {
   const expectedEnvironments = [...environments].sort();
   const actualEnvironments = Array.isArray(plan?.environments) ? [...plan.environments].sort() : [];
   const hasEnvironmentOrigins = scope === 'production-read-only' || expectedEnvironments.every((environment) => (
@@ -930,6 +927,7 @@ export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 
   return plan?.schemaVersion === '3.0'
     && String(plan.runId || '') === String(runId || '')
     && String(plan.commit || '') === String(commit || '')
+    && sameProductCommits(plan, { commit, productCommits }, environments)
     && String(plan.scope || 'full') === String(scope || 'full')
     && Number.isFinite(Date.parse(String(plan.captureStartedAt || '')))
     && (scope === 'production-read-only' ? plan.slots?.length === 0 : plan.slots?.length > 0)
@@ -937,11 +935,12 @@ export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 
     && JSON.stringify(actualEnvironments) === JSON.stringify(expectedEnvironments);
 }
 
-export function validateProductionVisualUnlock(record, { runId, commit }) {
+export function validateProductionVisualUnlock(record, { runId, commit, productCommits = {} }) {
   const reasons = [];
   if (record?.status !== 'unlocked') reasons.push('正式环境视觉门禁尚未解锁');
   if (String(record?.runId || '') !== String(runId || '')) reasons.push('正式环境视觉解锁记录不属于本轮运行');
   if (String(record?.commit || '') !== String(commit || '')) reasons.push('正式环境视觉解锁记录不属于本轮提交');
+  if (!sameProductCommits(record || {}, { commit, productCommits })) reasons.push('正式环境视觉解锁的运行版本已改变');
   if (record?.cdsFunctionalGate !== 'pass') reasons.push('CDS 功能与清理门禁未通过');
   if (record?.cdsVisualVerdict !== '通过') reasons.push('CDS 视觉门禁未通过');
   if (!Number.isFinite(Date.parse(String(record?.unlockedAt || '')))) reasons.push('正式环境视觉解锁时间无效');
@@ -953,6 +952,9 @@ export function mergeVisualPlans(cdsPlan, productionPlan) {
   if (cdsPlan.runId !== productionPlan.runId || cdsPlan.commit !== productionPlan.commit) {
     throw new Error('CDS 与正式环境视觉计划不属于同一轮运行和提交');
   }
+  if (productionPlan.productCommits?.cds && !sameProductCommits(cdsPlan, productionPlan, ['cds'])) {
+    throw new Error('正式环境视觉计划绑定的 CDS 运行版本不一致');
+  }
   const slots = [...(cdsPlan.slots || []), ...(productionPlan.slots || [])];
   const moduleIds = [...new Set([...(cdsPlan.modules || []), ...(productionPlan.modules || [])].map((item) => item.id))];
   return {
@@ -963,6 +965,9 @@ export function mergeVisualPlans(cdsPlan, productionPlan) {
     runId: cdsPlan.runId,
     commit: cdsPlan.commit,
     captureStartedAt: cdsPlan.captureStartedAt,
+    productCommits: { cds: productCommitForEnvironment(cdsPlan, 'cds'), production: productCommitForEnvironment(productionPlan, 'production') },
+    gatewayEnvironmentOrigins: { ...(cdsPlan.gatewayEnvironmentOrigins || {}), ...(productionPlan.gatewayEnvironmentOrigins || {}) },
+    gatewayEnvironmentBasePaths: { ...(cdsPlan.gatewayEnvironmentBasePaths || {}), ...(productionPlan.gatewayEnvironmentBasePaths || {}) },
     environmentOrigins: { ...(cdsPlan.environmentOrigins || {}), ...(productionPlan.environmentOrigins || {}) },
     plannedScreenshotTarget: slots.length,
     modules: moduleIds.map((id) => {
@@ -1504,6 +1509,14 @@ async function main() {
     registry,
     readKeychainSecret,
   );
+  const sourceContext = readInspectionSourceContext(values);
+  const sourceStatus = command('git', ['status', '--porcelain']);
+  if (sourceStatus.status !== 0) throw new Error('无法确认巡检源码工作区状态');
+  sourceContext.sourceDirty = Boolean(String(sourceStatus.stdout || '').trim());
+  if (sourceContext.sourceDirty && !options.has('--dry-run')) throw new Error('巡检源码工作区未提交，拒绝将未冻结代码用于正式实测');
+  values.STABLE_SMOKE_CDS_PRODUCT_COMMIT = sourceContext.productCommit;
+  values.STABLE_SMOKE_TEST_SOURCE_COMMIT = sourceContext.sourceCommit;
+  if (values.STABLE_SMOKE_PROD_PRODUCT_COMMIT) normalizeProductCommits({ production: values.STABLE_SMOKE_PROD_PRODUCT_COMMIT });
   const preflightBlockers = [];
   const cdsAddressBlockers = [];
   if (selected.includes('cds')) {
@@ -1511,6 +1524,7 @@ async function main() {
       const cdsUrls = resolveCdsPreviewUrls(
         values.STABLE_SMOKE_CDS_BASE_URL || '',
         values.STABLE_SMOKE_CDS_GW_BASE_URL || '',
+        () => command('python3', ['.claude/skills/cds/cli/cdscli.py', '--human', 'preview-url'], { cwd: productRepoRoot(values) }),
       );
       values.STABLE_SMOKE_CDS_BASE_URL = cdsUrls.appUrl;
       values.STABLE_SMOKE_CDS_GW_BASE_URL = cdsUrls.gatewayUrl;
@@ -1537,12 +1551,12 @@ async function main() {
       && cdsAddressBlockers.length === 0
       && validateEnvironmentConfig('cds', values).length === 0) {
       const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const expectedCommit = String(commitResult.stdout || '').trim();
+      const expectedCommit = sourceContext.productCommit;
       if (commitResult.status !== 0 || !expectedCommit) {
         preflightBlockers.push('无法读取待验收提交');
       } else {
         try {
-          const branch = readCdsBranchStatus();
+          const branch = readCdsBranchStatus(values);
           const readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
           preflightBlockers.push(...readiness.reasons);
         } catch (error) {
@@ -1577,9 +1591,9 @@ async function main() {
       && cdsAddressBlockers.length === 0
       && validateEnvironmentConfig('cds', values).length === 0) {
       const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const expectedCommit = String(commitResult.stdout || '').trim();
+      const expectedCommit = sourceContext.productCommit;
       if (commitResult.status !== 0 || !expectedCommit) throw new Error('无法读取待验收提交，拒绝开测');
-      const readiness = await waitForCdsDeployment(expectedCommit);
+      const readiness = await waitForCdsDeployment(expectedCommit, values);
       writeFileSync(resolve(runDir, 'cds-readiness.json'), `${JSON.stringify({
         checkedAt: new Date().toISOString(),
         expectedCommit,
@@ -1590,7 +1604,7 @@ async function main() {
     const planPath = resolve(runDir, 'plan.json');
     const planMarkdownPath = resolve(runDir, 'plan.md');
     const planResult = command('node', [
-      'scripts/stable-smoke-plan.mjs', '--mode', 'scheduled',
+      'scripts/stable-smoke-plan.mjs', '--mode', 'scheduled', '--commit', sourceContext.productCommit,
       '--output-json', planPath, '--output-md', planMarkdownPath, '--strict',
     ]);
     if (planResult.status !== 0) throw new Error('稳定冒烟计划生成失败，请检查业务功能台账和未映射变更');
@@ -1598,6 +1612,7 @@ async function main() {
     values.STABLE_SMOKE_COMMIT = String(plan?.commit || '').trim();
     if (!values.STABLE_SMOKE_COMMIT) throw new Error('稳定冒烟计划缺少待验收提交，拒绝生成无版本绑定的视觉证据');
 
+    writeFileSync(resolve(runDir, 'source-runtime-context.json'), `${JSON.stringify(sourceContext, null, 2)}\n`, 'utf8');
     const executions = [];
     const grep = options.read('--grep');
     let gatewayPersistenceProbe = null;
@@ -1629,6 +1644,7 @@ async function main() {
       commit: values.STABLE_SMOKE_COMMIT,
       environments: initialVisualEnvironments,
       scope: visualScope,
+      productCommits: runtimeCommits(values),
     });
     const visualCaptureStartedAt = new Date().toISOString();
     const visualPlanResult = reuseVisualPlan ? { status: 0 } : command('node', [
@@ -1638,6 +1654,8 @@ async function main() {
       '--environments', initialVisualEnvironments.join(','),
       '--run-id', runId,
       '--commit', values.STABLE_SMOKE_COMMIT,
+      '--test-source-commit', sourceContext.sourceCommit,
+      ...initialVisualEnvironments.flatMap(environment => [environment === 'cds' ? '--cds-commit' : '--production-commit', runtimeCommits(values)[environment]]),
       '--capture-started-at', visualCaptureStartedAt,
       '--scope', visualScope,
       '--cds-origin', values.STABLE_SMOKE_CDS_BASE_URL || '',
@@ -1759,11 +1777,13 @@ async function main() {
           const reusableUnlock = validateProductionVisualUnlock(existingUnlock, {
             runId,
             commit: values.STABLE_SMOKE_COMMIT,
+            productCommits: runtimeCommits(values),
           }).valid && canReuseVisualPlan(existingProductionPlan, {
             runId,
             commit: values.STABLE_SMOKE_COMMIT,
             environments: ['production'],
             scope: 'full',
+            productCommits: runtimeCommits(values),
           });
           if (!reusableUnlock) {
             const unlockedAt = new Date().toISOString();
@@ -1774,9 +1794,13 @@ async function main() {
               '--environments', 'production',
               '--run-id', runId,
               '--commit', values.STABLE_SMOKE_COMMIT,
+              '--test-source-commit', sourceContext.sourceCommit,
+              '--cds-commit', runtimeCommits(values).cds,
+              '--production-commit', runtimeCommits(values).production,
               '--capture-started-at', unlockedAt,
               '--scope', 'full',
               '--production-origin', values.STABLE_SMOKE_PROD_BASE_URL || '',
+              '--production-gateway-origin', values.STABLE_SMOKE_PROD_GW_BASE_URL || '',
             ]);
             if (productionVisualPlanResult.status !== 0) {
               throw new Error('正式环境视觉取证计划生成失败');
@@ -1785,6 +1809,7 @@ async function main() {
               status: 'unlocked',
               runId,
               commit: values.STABLE_SMOKE_COMMIT,
+              productCommits: runtimeCommits(values),
               unlockedAt,
               cdsFunctionalGate: 'pass',
               cdsVisualVerdict: '通过',
@@ -1878,6 +1903,7 @@ async function main() {
       const unlockValidation = validateProductionVisualUnlock(unlock, {
         runId,
         commit: values.STABLE_SMOKE_COMMIT,
+        productCommits: runtimeCommits(values),
       });
       if (!unlockValidation.valid) {
         throw new Error(`正式环境视觉取证未通过 CDS 前置门禁：${unlockValidation.reasons.join('；')}`);
@@ -1910,6 +1936,8 @@ async function main() {
     const visualGateExitCode = finalVisualGate.exitCode;
     const summary = {
       ...functionalSummary,
+      testSourceCommit: sourceContext.sourceCommit,
+      productCommits: runtimeCommits(values),
       verdict: foldVisualGateVerdict(functionalSummary.verdict, visualResult),
       visual: {
         verdict: visualResult.verdict,

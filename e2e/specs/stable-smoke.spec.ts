@@ -2219,7 +2219,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-003] 大文件上传和解析持续反馈，正式环境使用安全小文件', { tag: '@cleanup' }, async ({ page, request }) => {
+  test.describe('文件上传受控网络', () => {
+  // 仅这个 CDS 网络夹具禁用 Worker，确保请求和响应都由当前页面会话截获。
+  // 其他真实业务与正式环境仍沿用默认 Worker 行为。
+  test.use({ serviceWorkers: process.env.STABLE_SMOKE_ENVIRONMENT === 'cds' ? 'block' : 'allow' });
+  test('[FILE-003] 大文件上传和解析持续反馈，正式环境使用安全小文件', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
     test.setTimeout(90_000);
     const token = await loginAndReadToken(page, request, '/');
@@ -2233,6 +2237,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let progressObserver: import('@playwright/test').JSHandle<{ seen: { value: boolean }; stop: () => void }> | null = null;
     let pendingUpload: Promise<import('@playwright/test').Response> | null = null;
     let uploadStarted = false;
+    const fetchEvents: Array<{ stage: string; status?: number; at: string }> = [];
     const observeUpload = (item: import('@playwright/test').Request) => {
       if (storeId && new URL(item.url()).pathname === `/api/document-store/stores/${storeId}/upload`) uploadStarted = true;
     };
@@ -2263,6 +2268,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         page.off('request', countUpload);
         // 只暂停本轮真实请求与响应，不替换回执、正文或页面状态。
         session.on('Fetch.requestPaused', (event) => {
+          fetchEvents.push({ stage: event.responseStatusCode === undefined ? 'request' : 'response', status: event.responseStatusCode, at: new Date().toISOString() });
           if (event.responseStatusCode !== undefined) pausedRequestId = event.requestId;
           else requestPausedId = event.requestId;
         });
@@ -2298,7 +2304,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await expect(page.getByText(/^\d+%$/)).toBeVisible();
         const transferStatus = page.getByTestId('document-upload-status');
         const initialPercent = await transferStatus.innerText();
-        await session.send('Fetch.continueRequest', { requestId: requestPausedId }); requestPausedId = '';
+        await session.send('Fetch.continueRequest', { requestId: requestPausedId, interceptResponse: true }); requestPausedId = '';
         await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(initialPercent);
         await expect(transferStatus).toHaveText(/^\d+%$/);
         const nextPercent = await transferStatus.innerText();
@@ -2338,6 +2344,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await session.detach();
       }
       page.off('request', observeUpload);
+      await testInfo.attach('file-native-interception-stages', { body: JSON.stringify({ fetchEvents, serviceWorkers: page.context().serviceWorkers().map(worker => new URL(worker.url()).pathname) }), contentType: 'application/json' });
       if (pendingUpload && uploadStarted) {
         // 请求已放行也可能仍在写正文；必须等真实响应完整收敛后再级联删除。
         try {
@@ -2353,6 +2360,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
     }
+  });
   });
 
   test('[LIT-001] 文学作品可新建、保存、刷新回读并清理', { tag: '@cleanup' }, async ({ page, request }) => {
@@ -5695,7 +5703,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }));runIds.push(created.runId);
       const first = await waitForImageRun(page, token, created.runId);await assertImageArtifact(page, first.detail);
       const oldImage = first.detail.items.find(item => item.url)?.url;expect(oldImage).toBeTruthy();
-      const oldBytes = await (await request.get(oldImage!)).body();
+      const oldBytes = await (await request.get(oldImage!, { timeout: 60_000 })).body();
       await page.reload({ waitUntil: 'domcontentloaded' });await dismissBlockingTutorial(page);await dismissCdsPreviewWidget(page);
       const retry = page.getByTitle('使用相同提示词重新生成', { exact: true });await expect(retry).toBeVisible();
       const response = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, { timeout: 90_000 });
@@ -5703,7 +5711,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const second = await waitForImageRun(page, token, next.runId);await assertImageArtifact(page, second.detail);
       expect(second.detail.run.expectedImageRefCount).toBe(1);expect(second.detail.run.imageRefs?.map(ref => ref.assetSha256)).toEqual([reference.sha256]);
       const oldRun = await readEnvelope<ImageRunDetail>(await request.get(`/api/visual-agent/image-gen/runs/${created.runId}?includeItems=true`, { headers: authHeaders(token) }));expect(oldRun.run.status).toBe('Completed');
-      const oldAgain = await request.get(oldImage!);expect(oldAgain.ok()).toBe(true);expect(createHash('sha256').update(await oldAgain.body()).digest('hex')).toBe(createHash('sha256').update(oldBytes).digest('hex'));
+      const readbackStartedAt = Date.now();
+      const oldAgain = await request.get(oldImage!, { timeout: 60_000 });expect(oldAgain.ok()).toBe(true);expect(createHash('sha256').update(await oldAgain.body()).digest('hex')).toBe(createHash('sha256').update(oldBytes).digest('hex'));
+      await testInfo.attach('old-image-byte-readback-duration', { body: JSON.stringify({ elapsedMs: Date.now() - readbackStartedAt, timeoutMs: 60_000 }), contentType: 'application/json' });
       const messages = await readEnvelope<{ messages?: Array<{ role: string; content: string }>; items?: Array<{ role: string; content: string }> } | Array<{ role: string; content: string }>>(await request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/messages`, { headers: authHeaders(token) }));
       const rows = Array.isArray(messages) ? messages : messages.messages || messages.items || [];
       const userMessages = rows.filter(row => row.role.toLowerCase() === 'user');expect(userMessages.length).toBeGreaterThanOrEqual(2);expect(userMessages.every(row => row.content.replace(/^(?:\(@(?:size|model):[^)]*\)\s*)+/, '').trim() === prompt)).toBe(true);expect(userMessages.every(row => !row.content.includes('【引用图片】'))).toBe(true);

@@ -307,8 +307,10 @@ async function main() {
     visualRegressionCaseIds,
     matrixCases,
     mode,
-    commit: gitCommit(),
+    commit: readArg(argv, '--commit', gitCommit()),
   });
+  if (!/^[0-9a-f]{40}$/.test(plan.commit)) throw new Error('待验收版本必须为完整提交');
+  plan.testSourceCommit = gitCommit();
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');
   if (outputJson) writeFileSync(outputJson, `${JSON.stringify(plan, null, 2)}\n`, 'utf8');

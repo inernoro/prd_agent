@@ -268,3 +268,9 @@ Verdict: pass | conditional | fail
 | Examples | 9.0/10 |
 | Ecosystem | 9.5/10 |
 | 加权总分 | 9.1/10 |
+
+## 巡检源码与环境运行版本
+
+巡检客户端只改验收脚本时，可通过 `STABLE_SMOKE_CDS_PRODUCT_REPO_ROOT` 指向实际 CDS 业务提交工作区；运行器核对两份 Git 提交之间仅含验收相关文件，业务代码有差异即拒绝执行。CDS 地址仍由该业务工作区的 cdscli 零参数读取，不允许推算。源码工作区必须干净并记录 `testSourceCommit`。
+
+正式环境独立发版时，通过 `STABLE_SMOKE_PROD_PRODUCT_COMMIT` 声明已经发布并实测的完整提交。每张截图的 `commit` 必须匹配其环境的 `productCommits`，不能重写已有截图的版本。正式版本变化会使原正式取证计划与解锁记录失效；CDS 版本未变的已有取证计划可以保留。全部模块的数量、状态、逐图回读、清理和先 CDS 后正式的门禁保持原要求。

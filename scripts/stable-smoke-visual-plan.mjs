@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { normalizeProductCommits, productCommitForEnvironment } from './stable-smoke-runtime-identity.mjs';
+
 const DEFAULT_CATALOG = '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json';
 
 function readArg(argv, name, fallback = '') {
@@ -54,7 +56,7 @@ function normalizeOrigin(value) {
   }
 }
 
-function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmentOrigins, environment) {
+function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmentOrigins, environment, gatewayBasePaths = {}) {
   const binding = module.stateBindings?.[state] || {};
   if (binding.theme && !['light', 'dark'].includes(binding.theme)) {
     throw new Error(`${module.name} 的页面主题必须是产品实际支持的明暗主题`);
@@ -64,7 +66,7 @@ function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmen
     pageOrigin: originKind === 'gateway'
       ? gatewayEnvironmentOrigins[environment]
       : environmentOrigins[environment],
-    entryPath: binding.entryPath || module.entryPath,
+    entryPath: `${originKind === 'gateway' ? gatewayBasePaths[environment] || '' : ''}${binding.entryPath || module.entryPath}`,
     theme: binding.theme,
   };
 }
@@ -85,6 +87,9 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
   const runId = String(runIdentity.runId || '').trim();
   const commit = String(runIdentity.commit || '').trim();
   const captureStartedAt = String(runIdentity.captureStartedAt || '').trim();
+  const productCommits = normalizeProductCommits(runIdentity.productCommits || {});
+  if (runIdentity.testSourceCommit && !/^[0-9a-f]{40}$/.test(runIdentity.testSourceCommit)) throw new Error('巡检源码版本必须为完整提交');
+  const versionIdentity = { ...(Object.keys(productCommits).length ? { productCommits } : {}), ...(runIdentity.testSourceCommit ? { testSourceCommit: runIdentity.testSourceCommit } : {}) };
   const environmentOrigins = Object.fromEntries(environments.map((environment) => [
     environment,
     normalizeOrigin(runIdentity.environmentOrigins?.[environment]),
@@ -93,6 +98,13 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
     environment,
     normalizeOrigin(runIdentity.gatewayEnvironmentOrigins?.[environment]),
   ]).filter(([, origin]) => origin));
+  const gatewayEnvironmentBasePaths = Object.fromEntries(environments.map(environment => {
+    const value = runIdentity.gatewayEnvironmentOrigins?.[environment];
+    if (!value) return [environment, ''];
+    const parsed = new URL(value);
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error('模型网关入口必须是无内嵌凭据的基础地址');
+    return [environment, parsed.pathname.replace(/\/+$/, '')];
+  }));
   const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
   if (hasRunIdentity) {
     for (const environment of environments) {
@@ -114,9 +126,11 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
       environments,
       runId: runId || undefined,
       commit: commit || undefined,
+      ...versionIdentity,
       captureStartedAt: captureStartedAt || undefined,
       environmentOrigins,
       gatewayEnvironmentOrigins,
+      gatewayEnvironmentBasePaths,
       plannedScreenshotTarget: 0,
       modules: [],
       slots: [],
@@ -140,6 +154,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           environmentOrigins,
           gatewayEnvironmentOrigins,
           environment,
+          gatewayEnvironmentBasePaths,
         );
         slots.push({
           slotId: qualifySlotId(slotId(module.id, sequence++)),
@@ -169,6 +184,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           environmentOrigins,
           gatewayEnvironmentOrigins,
           environment,
+          gatewayEnvironmentBasePaths,
         );
         slots.push({
           slotId: qualifySlotId(slotId(module.id, sequence++)),
@@ -210,9 +226,11 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
     environments,
     runId: runId || undefined,
     commit: commit || undefined,
+    ...versionIdentity,
     captureStartedAt: captureStartedAt || undefined,
     environmentOrigins,
     gatewayEnvironmentOrigins,
+    gatewayEnvironmentBasePaths,
     plannedScreenshotTarget: slots.length,
     modules: (catalog.modules || []).map((module) => ({
       id: module.id,
@@ -232,6 +250,8 @@ export function renderVisualPlan(plan) {
       '',
       `运行标识：${plan.runId}`,
       `提交版本：${plan.commit}`,
+      ...plan.environments.map(environment => `${environmentLabel(environment)}运行版本：${productCommitForEnvironment(plan, environment)}`),
+      ...(plan.testSourceCommit ? [`巡检源码版本：${plan.testSourceCommit}`] : []),
       `取证开始：${plan.captureStartedAt}`,
       '',
       '计划：0 张。本轮为正式环境只读健康检查，不进入业务创作页面，完整视觉门禁不适用。',
@@ -254,6 +274,8 @@ export function renderVisualPlan(plan) {
     ...(plan.runId ? [
       `运行标识：${plan.runId}`,
       `提交版本：${plan.commit}`,
+      ...plan.environments.map(environment => `${environmentLabel(environment)}运行版本：${productCommitForEnvironment(plan, environment)}`),
+      ...(plan.testSourceCommit ? [`巡检源码版本：${plan.testSourceCommit}`] : []),
       `取证开始：${plan.captureStartedAt}`,
       '',
     ] : []),
@@ -293,6 +315,8 @@ async function main() {
     runId: readArg(argv, '--run-id'),
     commit: readArg(argv, '--commit'),
     captureStartedAt: readArg(argv, '--capture-started-at'),
+    productCommits: Object.fromEntries([['cds', readArg(argv, '--cds-commit')], ['production', readArg(argv, '--production-commit')]].filter(([, commit]) => commit)),
+    testSourceCommit: readArg(argv, '--test-source-commit'),
     scope: readArg(argv, '--scope', 'full'),
     environmentOrigins: {
       cds: readArg(argv, '--cds-origin'),

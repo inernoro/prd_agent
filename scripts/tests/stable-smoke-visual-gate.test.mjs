@@ -474,3 +474,17 @@ test('证据需要补证时模块不得判为通过', () => {
   assert.equal(result.modules[0].verdict, '部分通过');
   assert.equal(result.verdict, '不通过');
 });
+
+
+test('双环境截图必须逐环境匹配真实运行版本，禁止交换提交或借用旧正式截图', () => {
+ const plan = buildVisualPlan(catalog, ['cds','production'], {runId:'stsmk-current',commit:'a'.repeat(40),productCommits:{cds:'a'.repeat(40),production:'b'.repeat(40)},captureStartedAt:'2026-08-11T14:00:00.000Z',environmentOrigins:{cds:'https://cds.example.test',production:'https://prod.example.test'}});
+ const rows = plan.slots.map((slot,index)=>evidence({...slot,name:slot.slotId,commit:slot.environment==='cds'?'a'.repeat(40):'b'.repeat(40),sha256:'env-'+index,pagePath:slot.entryPath,coverageStates:[slot.primaryState],testType:slot.testType,status:'通过',manualStatus:'通过',automatedStatus:'通过'}));
+ const now=new Date('2026-08-11T14:05:00.000Z');
+ const qualified=validateVisualEvidence(catalog,rows,['cds','production'],plan,now);
+ assert.equal(qualified.verdict,'通过',JSON.stringify(qualified.modules));
+ for(const commit of ['a'.repeat(40),'c'.repeat(40)]) {
+  const stale=rows.map(row=>row.environment==='production'?{...row,commit}:row);
+  const result=validateVisualEvidence(catalog,stale,['cds','production'],plan,now);
+  assert.equal(result.verdict,'不通过');assert.match(result.modules.flatMap(x=>x.fieldErrors).join('；'),/commit/);
+ }
+});

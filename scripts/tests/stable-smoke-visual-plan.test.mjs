@@ -49,8 +49,8 @@ test('本轮视觉计划固化运行标识、提交和取证开始时间', () =>
   assert.ok(plan.slots.filter((slot) => slot.moduleId === 'image-model-routing')
     .filter((slot) => !['前台选择', '真实调用'].includes(slot.scenario))
     .every((slot) => slot.pageOrigin === 'https://gateway-preview.example.test'));
-  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '登录')?.entryPath, '/login');
-  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '调用日志对应')?.entryPath, '/logs');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '登录')?.entryPath, '/path/login');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '调用日志对应')?.entryPath, '/path/logs');
   const report = renderVisualPlan(plan);
   assert.match(report, /运行标识：stsmk-20260811/);
   assert.match(report, /取证开始：2026-08-11T14:00:00.000Z/);
@@ -143,4 +143,14 @@ test('网关流程回到仅支持暗色的 MAP 页面时保留真实页面主题
   const invalid = structuredClone(catalog);
   invalid.modules.find((item) => item.id === 'image-model-routing').stateBindings['前台选择'].theme = 'invented';
   assert.throws(() => buildVisualPlan(invalid, ['cds']), /产品实际支持/);
+});
+
+
+test('独立运行版本保持296个验收位，同域网关保留入口前缀',()=>{
+ const plan=buildVisualPlan(catalog,['cds','production'],{runId:'stsmk-runtime',commit:'a'.repeat(40),productCommits:{cds:'a'.repeat(40),production:'b'.repeat(40)},testSourceCommit:'c'.repeat(40),captureStartedAt:'2026-11-06T00:00:00Z',environmentOrigins:{cds:'https://cds.example.test',production:'https://map.example.test'},gatewayEnvironmentOrigins:{cds:'https://gw.example.test',production:'https://map.example.test/llmgw/'}});
+ assert.equal(plan.slots.length,296);assert.deepEqual(plan.productCommits,{cds:'a'.repeat(40),production:'b'.repeat(40)});
+ const gateway=plan.slots.filter(x=>x.environment==='production'&&x.moduleId==='image-model-routing'&&!['前台选择','真实调用'].includes(x.primaryState));
+ assert.ok(gateway.every(x=>x.pageOrigin==='https://map.example.test'&&x.entryPath.startsWith('/llmgw/')));
+ assert.ok(plan.slots.filter(x=>x.environment==='production'&&x.primaryState==='前台选择').every(x=>x.entryPath==='/visual-agent'));
+ assert.match(renderVisualPlan(plan),/bbbbbbbb/);
 });

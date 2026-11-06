@@ -1,3 +1,4 @@
+import { normalizeProductCommits, productCommitForEnvironment } from './stable-smoke-runtime-identity.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -206,6 +207,7 @@ export function validateVisualEvidence(
   const plan = expectedPlan || buildVisualPlan(catalog, environments);
   const expectedRunId = String(plan.runId || '').trim();
   const expectedCommit = String(plan.commit || '').trim();
+  normalizeProductCommits(plan.productCommits || {});
   const captureStartedAt = String(plan.captureStartedAt || '').trim();
   const validationNowMs = validationNow instanceof Date ? validationNow.getTime() : Date.parse(validationNow);
 
@@ -266,7 +268,8 @@ export function validateVisualEvidence(
         fieldErrors.push(message);
         itemErrors.push(message);
       }
-      if (expectedCommit && evidenceCommit && evidenceCommit !== expectedCommit) {
+      const environmentCommit = productCommitForEnvironment(plan, evidenceEnvironment);
+      if (environmentCommit && evidenceCommit && evidenceCommit !== environmentCommit) {
         const message = `${item.name || '未命名截图'} 的 commit 不属于本轮待验收版本`;
         fieldErrors.push(message);
         itemErrors.push(message);
