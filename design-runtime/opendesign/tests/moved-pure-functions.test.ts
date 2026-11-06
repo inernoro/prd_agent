@@ -796,8 +796,10 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
   });
 
   it('allows interaction only through files in the verified package and keeps network egress closed', () => {
-    const html = '<!doctype html><html><head><link rel="stylesheet" href="assets/app.css"></head><body><button id="next">下一页</button><img src="assets/cover.png"><script src="assets/app.js"></script></body></html>';
-    const paths = ['index.html', 'assets/app.css', 'assets/app.js', 'assets/cover.png'];
+    // The real failed report used these local download helpers, not CSS url() resources.
+    const downloadScript = '<script>const blob = new Blob(["report"]); const url = URL.createObjectURL(blob); URL.revokeObjectURL(url);</script>';
+    const html = `<!doctype html><html><head><link rel="stylesheet" href="assets/app.css"><style>.cover{background-image:url("assets/cover.png")}</style></head><body><button id="next">下一页</button><img src="assets/cover.png"><svg><rect fill="url(assets/paint.svg#paint)" filter="url(#shade)"/></svg><script src="assets/app.js"></script>${downloadScript}</body></html>`;
+    const paths = ['index.html', 'assets/app.css', 'assets/app.js', 'assets/cover.png', 'assets/paint.svg'];
     const hardened = hardenVerifiedPackageHtml(html, paths);
 
     expect(hardened).toContain("script-src 'self' 'unsafe-inline'");
@@ -805,6 +807,8 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     expect(hardened).toContain('src="assets/app.js"');
     expect(hardened).toContain('href="assets/app.css"');
     expect(hardened).toContain('<button id="next">下一页</button>');
+    expect(hardened).toContain(downloadScript);
+    expect(hardened).toContain('fill="url(assets/paint.svg#paint)"');
 
     for (const unsafe of [
       html.replace('assets/app.js', 'https://tracker.example/app.js'),
@@ -813,6 +817,10 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
       html.replace('<body>', '<body><iframe src="assets/app.js"></iframe>'),
       html.replace('<head>', '<head><meta http-equiv="refresh" content="0;url=https://tracker.example">'),
       html.replace('<body>', '<body><a href="https://tracker.example">离开</a>'),
+      html.replace('</head>', '<style>body{background:url("https://tracker.example/p.png")}</style></head>'),
+      html.replace('<body>', '<body style="background:url(assets/missing.png)">'),
+      html.replace('assets/paint.svg#paint', 'assets/missing.svg#paint'),
+      html.replace('url(#shade)', 'url(https://tracker.example/filter.svg#shade)'),
     ]) {
       expect(() => hardenVerifiedPackageHtml(unsafe, paths)).toThrowError(
         expect.objectContaining({ code: 'design_output_not_self_contained' }),
