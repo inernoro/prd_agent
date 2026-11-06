@@ -29,6 +29,7 @@ interface AccessRequest {
   id: string;
   kind?: 'project' | 'bootstrap';
   projectId: string;
+  projectName?: string;
   agentName: string;
   purpose: string;
   status: 'pending' | 'approved' | 'rejected';
@@ -38,6 +39,7 @@ interface AccessRequest {
   receiptArchived?: boolean;
   deliveredAt?: string;
   requestedProject?: { name: string; repository?: string };
+  targetBound?: boolean;
   createdProject?: { id: string; name: string; createdAt: string };
 }
 
@@ -52,7 +54,7 @@ function RequestTarget({ request }: { request: AccessRequest }): JSX.Element | n
     <div className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5 break-all">
       <p>申请目标：{request.requestedProject?.name || '未提供项目名称'}</p>
       <p>仓库：{request.requestedProject?.repository || '未提供仓库'}</p>
-      <p className="mt-1 text-muted-foreground">以上由 Agent 申报。权限仅限创建一个项目，建成后转为该项目权限。</p>
+      <p className="mt-1 text-muted-foreground">{request.targetBound ? '授权仅限以上项目和仓库；目标变更会被拦截，建成后转为该项目权限。' : '历史申请未绑定目标；尚未批准的申请请让 Agent 更新技能后重新提交。'}</p>
     </div>
   );
 }
@@ -196,7 +198,7 @@ export function AccessRequestInbox({
               <strong className="text-foreground">{primary.agentName || '未知 Agent'}</strong>
               {' '}申请
               {primary.kind === 'bootstrap' ? '创建一个新项目' : (
-                <>访问项目 <code className="font-mono text-foreground">{primary.projectId}</code></>
+                <>访问项目 <code className="font-mono text-foreground">{primary.projectName || primary.projectId}</code></>
               )}
             </p>
             <RequestTarget request={primary} />
@@ -227,7 +229,7 @@ export function AccessRequestInbox({
             variant="default"
             className="min-h-10"
             onClick={() => { void approve(primary.id); }}
-            disabled={primaryBusy}
+            disabled={primaryBusy || (primary.kind === 'bootstrap' && !primary.targetBound)}
           >
             {primaryBusy ? <Loader2 className="animate-spin" /> : <KeyRound />}
             {primary.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
@@ -306,7 +308,7 @@ export function AccessRequestInbox({
                         {isBusy ? <Loader2 className="animate-spin" /> : null}
                         拒绝
                       </Button>
-                      <Button type="button" variant="default" size="sm" onClick={() => approve(item.id)} disabled={isBusy}>
+                      <Button type="button" variant="default" size="sm" onClick={() => approve(item.id)} disabled={isBusy || (item.kind === 'bootstrap' && !item.targetBound)}>
                         {isBusy ? <Loader2 className="animate-spin" /> : null}
                         {item.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
                       </Button>
