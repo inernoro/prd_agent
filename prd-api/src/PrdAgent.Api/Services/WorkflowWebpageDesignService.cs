@@ -38,6 +38,7 @@ public sealed class WorkflowWebpageDesignService(
     MongoDbContext db, IRunQueue queue, IRunEventStore events,
     IDesignArtifactProviderCatalog providers, ILlmGateway gateway,
     IHostedSiteService sites, IHostedSiteRevisionService revisions, IAssetStorage storage,
+    IDesignArtifactWorkspaceBroker workspace, IDesignArtifactLifecycleService lifecycle,
     IDesignArtifactCancellationCoordinator cancellation,
     ILogger<WorkflowWebpageDesignService> logger) : IWorkflowWebpageDesignService
 {
@@ -71,6 +72,29 @@ public sealed class WorkflowWebpageDesignService(
             slots = node.OutputSlots.Select(slot => new { slot.SlotId, slot.Name, slot.DataType }) }));
         var runId = Hash($"workflow-design-v1\n{invocation.UserId}\n{invocation.OperationId}\n{node.NodeId}")[..32];
         var run = await db.DesignArtifactRuns.Find(item => item.Id == runId).FirstOrDefaultAsync(CancellationToken.None);
+        WorkflowExecution? recovery = null;
+        if (invocation.ExecutionId != null && invocation.OperationId != invocation.ExecutionId)
+        {
+            var history = await db.WorkflowExecutions.Find(item => item.Id == invocation.ExecutionId)
+                .SingleAsync(CancellationToken.None);
+            var failed = history.NodeExecutions.SingleOrDefault(item => item.NodeId == node.NodeId);
+            if (failed?.Status == NodeExecutionStatus.Failed && !string.IsNullOrWhiteSpace(failed.DesignRunId))
+            {
+                // 失败节点已有关联任务时只承接原结果；任何校验失败均不得落入下方新模型分支。
+                if (history.TriggeredBy != invocation.UserId || history.Status != WorkflowExecutionStatus.Failed)
+                    throw Error("WORKFLOW_DESIGN_FORBIDDEN", "只能由原所有者恢复已保存的报告结果");
+                run = await db.DesignArtifactRuns.Find(item => item.Id == failed.DesignRunId
+                    && item.UserId == invocation.UserId && item.DeploymentSlug == DeploymentScope.Current)
+                    .FirstOrDefaultAsync(CancellationToken.None)
+                    ?? throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "原报告任务不可读取，未重新生成");
+                if (run.WorkflowSource?.ExecutionId != history.Id || run.WorkflowSource.OperationId != history.Id
+                    || run.SourceSurface != DesignArtifactSourceSurfaces.Workflow
+                    || run.ArtifactType != DesignArtifactTypes.WebPage || run.Operation != DesignArtifactOperations.Generate)
+                    throw Error("WORKFLOW_DESIGN_CONFLICT", "原报告来源已变化，未重新生成");
+                recovery = history;
+                runId = run.Id;
+            }
+        }
         var created = false;
         if (run == null)
         {
@@ -108,10 +132,11 @@ public sealed class WorkflowWebpageDesignService(
             catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
             { run = await db.DesignArtifactRuns.Find(item => item.Id == runId).SingleAsync(CancellationToken.None); }
         }
-        if (run.UserId != invocation.UserId || run.WorkflowSource?.OperationId != invocation.OperationId
+        if (run.UserId != invocation.UserId || run.WorkflowSource?.OperationId != (recovery?.Id ?? invocation.OperationId)
             || run.WorkflowSource.NodeId != node.NodeId || run.WorkflowSource.InputFingerprint != fingerprint
             || run.WorkflowSource.NodeType != node.NodeType || run.Runtime != DesignArtifactRuntimes.OpenDesign)
             throw Error("WORKFLOW_DESIGN_CONFLICT", "该报告操作的输入或来源已变化，未新发模型请求");
+        if (recovery != null) run = await ResumeSavedResultAsync(run);
         if (invocation.ExecutionId != null && invocation.OperationId == invocation.ExecutionId)
             await db.WorkflowExecutions.UpdateOneAsync(item => item.Id == invocation.ExecutionId
                     && item.TriggeredBy == invocation.ExecutionOwnerUserId && item.NodeExecutions.Any(n => n.NodeId == node.NodeId),
@@ -141,11 +166,64 @@ public sealed class WorkflowWebpageDesignService(
                 elapsedSeconds = (int)(DateTime.UtcNow - run.CreatedAt).TotalSeconds,
                 model = run.ResolvedModel, platform = run.ResolvedPlatform, status = run.Status });
             if (run.Status == RunStatuses.Done && run.PublishBindingOperationId != null)
-                return await ProjectAsync(run, node);
+            {
+                var result = await ProjectAsync(run, node);
+                if (recovery == null) return result;
+                await ProjectRecoveredDeliveryAsync(recovery, node, run, result.Artifacts);
+                return new(result.Artifacts, $"已恢复原任务的已保存结果，未重新生成。{result.Logs}");
+            }
             if (run.Status is RunStatuses.Error or RunStatuses.Cancelled)
                 throw Error(run.Status == RunStatuses.Cancelled ? "WORKFLOW_DESIGN_CANCELLED" : run.LifecycleFailureCode ?? "WORKFLOW_DESIGN_FAILED",
                     run.Status == RunStatuses.Cancelled ? "网页报告任务已取消，原输入和历史报告仍保留" : "网页报告设计未完成，原输入和历史报告仍保留，请查看任务诊断");
             await Task.Delay(1000, CancellationToken.None);
+        }
+    }
+
+    private async Task<DesignArtifactRun> ResumeSavedResultAsync(DesignArtifactRun run)
+    {
+        if (run.ContractVersion != DesignArtifactContractVersions.Current
+            || run.Status is not (RunStatuses.Error or RunStatuses.Queued or RunStatuses.Running or RunStatuses.Committing or RunStatuses.Done)
+            || run.CancelRequestedAt != null || run.CleanupStartedAt != null || run.CleanupLeaseOwnerId != null
+            || string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey) || string.IsNullOrWhiteSpace(run.WorkspaceResultSha256)
+            || run.WorkspaceRef?.BaseRevision != run.WorkspaceBaseRevision)
+            throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "原报告没有可恢复的完整结果，未重新生成");
+        try
+        {
+            var package = await workspace.ReadResultAsync(run.Id, CancellationToken.None);
+            if (package.Files.Single(file => file.Path == "manifest.json").Sha256 != run.WorkspaceManifestSha256)
+                throw new InvalidOperationException("已保存清单身份不一致");
+            HostedSiteRevisionRules.HardenVerifiedPackageHtml(package.IndexHtml, package.Files.Select(file => file.Path).ToArray());
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException)
+        {
+            logger.LogWarning("工作流已存结果校验失败 runId={RunId} errorType={ErrorType}", run.Id, ex.GetType().Name);
+            throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "原报告结果未通过读取与安全校验，未重新生成，请查看任务诊断");
+        }
+        return run.Status != RunStatuses.Error ? run : await lifecycle.ResumeResultReadyAsync(new(run.Id, run.UserId,
+            new(run.LifecycleVersion, run.WorkspaceRef!.BaseRevision, run.VersionBoundary?.BaseContentHash, Recovery: true)), CancellationToken.None);
+    }
+
+    private async Task ProjectRecoveredDeliveryAsync(WorkflowExecution history, WorkflowNode node,
+        DesignArtifactRun run, List<ExecutionArtifact> artifacts)
+    {
+        foreach (var artifact in artifacts) artifact.CreatedAt = run.CompletedAt ?? run.CreatedAt;
+        var owner = Builders<WorkflowExecution>.Filter.Where(item => item.Id == history.Id
+            && item.TriggeredBy == run.UserId && item.Status == WorkflowExecutionStatus.Failed);
+        var source = owner & Builders<WorkflowExecution>.Filter.ElemMatch(item => item.NodeExecutions,
+            item => item.NodeId == node.NodeId && item.DesignRunId == run.Id && item.Status == NodeExecutionStatus.Failed);
+        var updated = await db.WorkflowExecutions.UpdateOneAsync(source,
+            Builders<WorkflowExecution>.Update.AddToSetEach("NodeExecutions.$.OutputArtifacts", artifacts), cancellationToken: CancellationToken.None);
+        if (updated.MatchedCount != 1) throw Error("WORKFLOW_DESIGN_CONFLICT", "原失败记录已变化，已保存报告仍保留");
+        foreach (var edge in history.EdgeSnapshot.Where(edge => edge.SourceNodeId == node.NodeId
+                     && history.NodeSnapshot.Any(item => item.NodeId == edge.TargetNodeId && item.NodeType == CapsuleTypes.SitePublisher)))
+        {
+            var selected = artifacts.Where(item => item.SlotId == edge.SourceSlotId).ToList();
+            var target = owner & Builders<WorkflowExecution>.Filter.ElemMatch(item => item.NodeExecutions,
+                item => item.NodeId == edge.TargetNodeId && item.Status == NodeExecutionStatus.Skipped);
+            updated = await db.WorkflowExecutions.UpdateOneAsync(target,
+                Builders<WorkflowExecution>.Update.AddToSetEach("NodeExecutions.$.InputArtifacts", selected.Count > 0 ? selected : artifacts),
+                cancellationToken: CancellationToken.None);
+            if (updated.MatchedCount != 1) throw Error("WORKFLOW_DESIGN_CONFLICT", "原发布节点已变化，已保存报告仍保留");
         }
     }
 
