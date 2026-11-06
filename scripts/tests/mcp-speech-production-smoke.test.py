@@ -263,6 +263,18 @@ class UnconfiguredUiReadinessTests(unittest.TestCase):
 
 
 class ProductionSpeechTests(unittest.TestCase):
+    def test_preinstalled_chrome_is_used_without_dropping_real_browser_checks(self):
+        with patch.object(smoke.shutil, "which", side_effect=lambda name: "/usr/bin/google-chrome" if name == "google-chrome" else None):
+            options = smoke.browser_launch_options()
+        self.assertEqual(options["executable_path"], "/usr/bin/google-chrome")
+        self.assertTrue(options["headless"])
+        self.assertIn("--autoplay-policy=no-user-gesture-required", options["args"])
+
+    def test_missing_system_browser_keeps_bundled_headless_shell_selection(self):
+        with patch.object(smoke.shutil, "which", return_value=None):
+            self.assertIsNone(smoke.system_browser_executable())
+            self.assertNotIn("executable_path", smoke.browser_launch_options())
+
     def test_missing_feature_is_not_a_green_readiness_and_never_writes(self):
         fixture = Fixture(missing=True)
         check = runner(fixture)

@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -100,6 +101,19 @@ def safe_browser_page(url, base):
     return ((parsed.scheme, parsed.netloc) == (trusted.scheme, trusted.netloc) and not parsed.fragment
             and parsed.path in {"/mcp-console", "/my-assets"}
             and set(urllib.parse.parse_qs(parsed.query)).issubset({"tab", "run"}))
+
+
+def system_browser_executable():
+    """Hosted Ubuntu runners already include Chrome; avoid redundant browser/dependency downloads."""
+    return next((path for name in ("google-chrome", "google-chrome-stable", "chromium") if (path := shutil.which(name))), None)
+
+
+def browser_launch_options():
+    result = {"headless": True, "args": ["--autoplay-policy=no-user-gesture-required"]}
+    executable = system_browser_executable()
+    if executable:
+        result["executable_path"] = executable
+    return result
 
 
 class SpeechSmoke:
@@ -402,7 +416,7 @@ class SpeechSmoke:
             from playwright.sync_api import sync_playwright
 
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, args=["--autoplay-policy=no-user-gesture-required"])
+                browser = playwright.chromium.launch(**browser_launch_options())
                 context = browser.new_context(viewport={"width": 1440, "height": 1000}, accept_downloads=False)
                 page = context.new_page()
                 page.set_default_timeout(45_000)

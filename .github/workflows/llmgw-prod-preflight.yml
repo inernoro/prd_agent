@@ -83,7 +83,18 @@ jobs:
         if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
         run: |
           python3 -m pip install --disable-pip-version-check playwright==1.56.0
-          python3 -m playwright install --with-deps chromium
+          python3 - <<'PY'
+          import importlib.util
+          import subprocess
+          import sys
+          spec = importlib.util.spec_from_file_location("speech_browser_setup", "scripts/mcp-speech-production-smoke.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          if module.system_browser_executable():
+              print("Using the runner's preinstalled Chromium-compatible browser.")
+          else:
+              subprocess.run([sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"], check=True)
+          PY
 
       - name: Run production preflight
         shell: bash
