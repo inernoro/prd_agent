@@ -63,6 +63,8 @@ public sealed class McpCapability
 public static class McpCapabilityCatalog
 {
     public const string ScopeVisualUse = "visual-agent:use";
+    public const string ScopeSpeechRead = "mcp-speech:read";
+    public const string ScopeSpeechGenerate = "mcp-speech:generate";
     public const string ScopeLiteraryUse = "literary-agent:use";
     public const string ScopeWebPagesRead = "web-pages:read";
     public const string ScopeWebPagesWrite = "web-pages:write";
@@ -79,6 +81,13 @@ public static class McpCapabilityCatalog
 
     public static readonly IReadOnlyList<McpCapability> All = new List<McpCapability>
     {
+        new()
+        {
+            Key = "speech", Title = "基础语音",
+            Summary = "查询当前环境的音色和上游特性，生成语音、保存声音预设；成品可在我的资产中播放下载。",
+            ReadScope = ScopeSpeechRead, WriteScope = ScopeSpeechGenerate,
+            WriteNeedsApproval = false, WriteImpliesRead = true,
+        },
         new()
         {
             Key = "visual",
@@ -163,6 +172,7 @@ public static class McpCapabilityCatalog
     {
         ScopeVisualUse, ScopeLiteraryUse, ScopeWebPagesRead, ScopeWebPagesWrite,
         ScopeTasksUse, ScopeTasksManage,
+        ScopeSpeechRead, ScopeSpeechGenerate,
     };
 
     /// <summary>

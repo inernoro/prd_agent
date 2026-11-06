@@ -93,10 +93,12 @@ export interface SpeechRun {
   actualPlatformName?: string;
   environment?: string;
   characterCount?: number;
+  providerUsage?: Record<string, number>;
 }
 
 export interface SpeechSettings extends SpeechCapabilities {
   canManage: boolean;
   revision: number;
+  directoryError?: string;
   modelPools?: Array<{ id: string; name: string; protocol?: string; model?: string }>;
 }

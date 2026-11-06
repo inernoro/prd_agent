@@ -208,14 +208,50 @@ public class McpConsoleController : ControllerBase
             f.Eq(x => x.DeploymentSlug, DeploymentScope.CurrentDurable));
         if (!string.IsNullOrWhiteSpace(keyId)) filter = f.And(filter, f.Eq(x => x.KeyId, keyId));
         if (!string.IsNullOrWhiteSpace(capability)) filter = f.And(filter, f.Eq(x => x.Capability, capability));
-        if (!string.IsNullOrWhiteSpace(status)) filter = f.And(filter, f.Eq(x => x.Status, status));
-
-        var total = await _db.McpCallLogs.CountDocumentsAsync(filter, cancellationToken: ct);
-        var items = await _db.McpCallLogs.Find(filter)
-            .SortByDescending(x => x.CreatedAt)
-            .Skip(resolvedSkip)
-            .Limit(resolvedLimit)
-            .ToListAsync(ct);
+        long total;
+        List<McpCallLog> items;
+        if (status is "error" or "success")
+        {
+            // 异步语音的HTTP受理成功不代表成品成功。分页与计数必须读取任务当前状态，
+            // 不能先按HTTP调用状态筛掉失败任务，再让客户端按产物状态补判。
+            var lookup = new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", "speech_runs" },
+                { "let", new BsonDocument { { "runId", "$ArtifactId" }, { "owner", "$OwnerUserId" } } },
+                { "pipeline", new BsonArray
+                    {
+                        new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$and", new BsonArray
+                        {
+                            new BsonDocument("$eq", new BsonArray { "$_id", "$$runId" }),
+                            new BsonDocument("$eq", new BsonArray { "$OwnerUserId", "$$owner" }),
+                        }))),
+                        new BsonDocument("$project", new BsonDocument("Status", 1)),
+                    }
+                },
+                { "as", "speechOutcome" },
+            });
+            var outcome = status == "error"
+                ? new BsonDocument("$or", new BsonArray
+                {
+                    new BsonDocument("Status", "error"),
+                    new BsonDocument { { "ArtifactKind", "audio-run" }, { "speechOutcome.Status", new BsonDocument("$in", new BsonArray { SpeechRunStatus.Failed, SpeechRunStatus.Unknown }) } },
+                })
+                : new BsonDocument { { "Status", "success" }, { "$or", new BsonArray
+                {
+                    new BsonDocument("ArtifactKind", new BsonDocument("$ne", "audio-run")),
+                    new BsonDocument("speechOutcome.Status", SpeechRunStatus.Completed),
+                } } };
+            var pipeline = _db.McpCallLogs.Aggregate().Match(filter).AppendStage<McpCallLog>(lookup).Match(outcome);
+            total = (await pipeline.Count().FirstOrDefaultAsync(ct))?.Count ?? 0;
+            items = await pipeline.SortByDescending(x => x.CreatedAt).Skip(resolvedSkip).Limit(resolvedLimit).ToListAsync(ct);
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(status)) filter = f.And(filter, f.Eq(x => x.Status, status));
+            total = await _db.McpCallLogs.CountDocumentsAsync(filter, cancellationToken: ct);
+            items = await _db.McpCallLogs.Find(filter).SortByDescending(x => x.CreatedAt).Skip(resolvedSkip).Limit(resolvedLimit).ToListAsync(ct);
+        }
+        await EnrichSpeechArtifactsAsync(items, userId, ct);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -450,10 +486,27 @@ public class McpConsoleController : ControllerBase
     }
 
     private async Task<List<McpCallLog>> RecentLogsAsync(string userId, DateTime since, int limit, CancellationToken ct)
-        => await _db.McpCallLogs.Find(TodayFilter(userId, since))
-            .SortByDescending(x => x.CreatedAt)
-            .Limit(limit)
-            .ToListAsync(ct);
+    {
+        var logs = await _db.McpCallLogs.Find(TodayFilter(userId, since))
+            .SortByDescending(x => x.CreatedAt).Limit(limit).ToListAsync(ct);
+        await EnrichSpeechArtifactsAsync(logs, userId, ct);
+        return logs;
+    }
+
+    private async Task EnrichSpeechArtifactsAsync(List<McpCallLog> logs, string userId, CancellationToken ct)
+    {
+        var ids = logs.Where(x => x.ArtifactKind == "audio-run" && x.ArtifactId != null).Select(x => x.ArtifactId!).Distinct().ToList();
+        if (ids.Count == 0) return;
+        // IDs来自已按当前部署过滤的调用记录，查询再按用户归属限制；不依赖客户端是否轮询过任务。
+        var runs = await _db.SpeechRuns.Find(x => x.OwnerUserId == userId && ids.Contains(x.Id)).ToListAsync(ct);
+        var byId = runs.ToDictionary(x => x.Id, StringComparer.Ordinal);
+        foreach (var log in logs)
+        {
+            if (log.ArtifactKind != "audio-run" || log.ArtifactId == null || !byId.TryGetValue(log.ArtifactId, out var run)) continue;
+            log.ArtifactStatus = McpInputBounds.ForAudit(run.Status, 32);
+            if (run.ErrorMessage != null) log.ErrorMessage = run.ErrorMessage;
+        }
+    }
 
     private static object ToLogDto(McpCallLog l) => new
     {
@@ -477,6 +530,7 @@ public class McpConsoleController : ControllerBase
             id = l.ArtifactId,
             url = l.ArtifactUrl,
             title = l.ArtifactTitle,
+            status = l.ArtifactStatus,
         },
         createdAt = l.CreatedAt,
     };

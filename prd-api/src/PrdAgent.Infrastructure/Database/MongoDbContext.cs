@@ -63,6 +63,10 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<SpeechSettings> SpeechSettings => _database.GetCollection<SpeechSettings>("speech_settings");
+    public IMongoCollection<SpeechPreset> SpeechPresets => _database.GetCollection<SpeechPreset>("speech_presets");
+    public IMongoCollection<SpeechRun> SpeechRuns => _database.GetCollection<SpeechRun>("speech_runs");
+    public IMongoCollection<SpeechQuotaLedger> SpeechQuotaLedgers => _database.GetCollection<SpeechQuotaLedger>("speech_quota_ledgers");
     public IMongoCollection<ProductPermissionConfiguration> ProductPermissionConfigurations =>
         _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>

@@ -1737,6 +1737,18 @@ for (const [keys, options] of designRunV2Indexes) {
   verifyCatalogIndex("design_artifact_runs_v2", options.name, keys, options)
 }
 
+// collection: speech_runs
+// 语音队列、过期租约恢复、终态额度补偿以及个人资产历史。仅DBA手动执行。
+db.speech_runs.createIndex({ Environment: 1, Status: 1, CreatedAt: 1 }, { name: "idx_speech_runs_queue" });
+db.speech_runs.createIndex({ Environment: 1, Status: 1, LeaseUntil: 1 }, { name: "idx_speech_runs_lease" });
+db.speech_runs.createIndex({ Environment: 1, QuotaReleased: 1, Status: 1 }, { name: "idx_speech_runs_settlement" });
+db.speech_runs.createIndex({ OwnerUserId: 1, Environment: 1, CreatedAt: -1 }, { name: "idx_speech_runs_owner_history" });
+// end collection: speech_runs
+
+// collection: speech_presets
+db.speech_presets.createIndex({ OwnerUserId: 1, Environment: 1, UpdatedAt: -1 }, { name: "idx_speech_presets_owner_environment" });
+// end collection: speech_presets
+
 // collection: mcp_call_logs
 // 智能体接入台的调用记录。两个读法都很热：
 //   1. 面板按「我的 + 本部署 + 时间倒序」翻页（Overview 与 calls 列表）
