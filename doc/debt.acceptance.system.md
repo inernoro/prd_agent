@@ -91,4 +91,6 @@
 
 原始模型调用失败、投稿撤回后首页仍展示、刷新后开关恢复属于产品缺陷，必须以真实业务路径验证；不能放入上述扩充功能债务。视频额度、待发布修复和备份异常也不得伪装成扩充功能。
 
-结果入口为[检查与通知总览](https://cds.miduo.org/status/prd-agent#inspections)。[CDS原轮验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=dda0753c27c24231a66dea4db2c98ce3&report=7f9cb08f603344b7b5b0b8203b416fbd)保留143张证据与原结论；[手机按钮双主题专项](https://cds.miduo.org/reports?project=prd-agent&folder=dda0753c27c24231a66dea4db2c98ce3&report=862f49377d414542bd90d363bc72137b)仅证明该CDS修复，未声明正式版发布。
+结果入口为[检查与通知总览](https://cds.miduo.org/status/prd-agent#inspections)。[CDS原轮验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=dda0753c27c24231a66dea4db2c98ce3&report=7f9cb08f603344b7b5b0b8203b416fbd)保留143张证据与原结论；[手机按钮双主题专项](https://cds.miduo.org/reports?project=prd-agent&folder=dda0753c27c24231a66dea4db2c98ce3&report=862f49377d414542bd90d363bc72137b)保留原CDS证据；手机布局与网关停用原因已于本日通过原生发布上线MAP a377118c并正式专项验收，Redis与报告空白已上线CDS 898d3e823并实测。本次四项4/4=100%，不改写原143项覆盖与历史失败。
+
+本次收尾不再追加扩充功能或覆盖补测。原视频成片额度限制继续按用户要求暂缓，OpenRouter不动；周期任务既有记录与通知回执保留，不以专项完成时间冒充全量巡检时间。
