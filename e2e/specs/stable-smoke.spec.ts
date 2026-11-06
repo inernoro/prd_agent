@@ -5600,4 +5600,40 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await expect(page.getByRole('link', { name: '模型', exact: true }), '无效一次性票据不能使已有有效会话退出').toBeVisible();
   });
 
+
+  test('[REG-literary-marker-stream-001] 网页流式生成标记只展示增量，服务端保存前不发出编辑写回', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.setTimeout(180_000);
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-真实配图标记`;
+    const article = ['清晨，公园里的蓝色长椅被阳光照亮。', '读者沿着小路走来，在长椅上翻开书。', '午后，树叶的影子落在白色陶瓷杯旁。', '傍晚，读者收起书本，沿着小路离开。'].join('\n\n');
+    let workspaceId = '';
+    const prematureWrites: string[] = [];
+    let streaming = false;
+    const observe = (r: import('@playwright/test').Request) => {
+      if (streaming && r.method() === 'PATCH' && new URL(r.url()).pathname.includes('/article/markers/')) prematureWrites.push(new URL(r.url()).pathname);
+    };
+    try {
+      await page.locator('[data-tour-id="literary-create"]').click();await page.getByPlaceholder('未命名').fill(title);
+      await page.getByRole('button', { name: '创建', exact: true }).click();
+      await page.waitForURL(/\/literary-agent\/[^/?#]+/);workspaceId = new URL(page.url()).pathname.split('/').at(-1)!;
+      const chooser = page.waitForEvent('filechooser');await page.getByRole('button', { name: '选择文件', exact: true }).click();
+      await (await chooser).setFiles({ name: title + '.txt', mimeType: 'text/plain', buffer: Buffer.from(article) });
+      await expect(page.getByRole('button', { name: '生成配图标记', exact: true })).toBeEnabled();
+      const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/article/generate-markers'));
+      page.on('request', observe);streaming = true;
+      await page.getByRole('button', { name: '生成配图标记', exact: true }).click();
+      await expect(page.getByTestId('literary-busy-button')).toBeVisible();
+      const stream = await (await response).text();streaming = false;
+      expect(stream).toContain('"type":"done"');expect(stream).not.toContain('"type":"error"');
+      expect(prematureWrites, '尚未落库的增量标记不能由前端提前写回').toEqual([]);
+      const detail = await readEnvelope<{ workspace: { articleContent: string; articleWorkflow: { phase: number; markers: unknown[] } } }>(await request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      expect(detail.workspace.articleContent).toBe(article);expect(detail.workspace.articleWorkflow.phase).toBe(2);expect(detail.workspace.articleWorkflow.markers.length).toBeGreaterThan(0);
+      await expect(page.getByRole('button', { name: '生成图片', exact: true }).first()).toBeEnabled();
+      await page.reload({ waitUntil: 'domcontentloaded' });await expect(page.locator('[data-tour-id="literary-editor-content"]')).toContainText('蓝色长椅');
+    } finally {
+      page.off('request', observe);
+      if (workspaceId) { await expectDeleteSucceeded(await request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) }), '真实标记生成工作区清理失败');expect((await request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) })).status()).toBe(404); }
+    }
+  });
+
 });

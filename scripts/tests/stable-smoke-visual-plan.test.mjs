@@ -113,3 +113,34 @@ test('主管清单不展示内部源码路径或执行命令', () => {
   assert.equal((report.match(/需要执行并取证/g) || []).length, 148);
   assert.doesNotMatch(report, /node scripts|prd-admin\/|e2e\//);
 });
+
+
+test('正式环境用安全输入和只读权限取证，仍保留每个模块的全部主状态与148个唯一验收位', () => {
+  const plan = buildVisualPlan(catalog, ['cds', 'production']);
+  const prod = plan.slots.filter((slot) => slot.environment === 'production');
+  assert.equal(prod.length, 148);
+  assert.ok(prod.some((slot) => slot.moduleId === 'file-parsing' && slot.scenario === '空文件在上传前被拦截' && slot.primaryState === '无效文件'));
+  assert.ok(prod.some((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '只读身份的编辑权限边界' && slot.primaryState === '添加或编辑'));
+  assert.ok(plan.slots.filter((slot) => slot.environment === 'cds').some((slot) => slot.scenario === '部分失败与继续处理'));
+  for (const module of catalog.modules) {
+    const states = new Set(prod.filter((slot) => slot.moduleId === module.id).map((slot) => slot.primaryState));
+    assert.ok(module.requiredStates.every((state) => states.has(state)));
+  }
+  const invalid = structuredClone(catalog);
+  invalid.modules.find((module) => module.id === 'file-parsing').evidenceOverrides.production['8'].primaryState = '入口';
+  assert.throws(() => buildVisualPlan(invalid, ['production']), /只声明场景/);
+});
+
+
+test('网关流程回到仅支持暗色的 MAP 页面时保留真实页面主题', () => {
+  const plan = buildVisualPlan(catalog, ['cds', 'production']);
+  for (const slot of plan.slots.filter((item) => item.moduleId === 'image-model-routing' && ['前台选择', '真实调用'].includes(item.primaryState))) {
+    assert.equal(slot.theme, 'dark');
+  }
+  const gateway = plan.slots.filter((item) => item.moduleId === 'image-model-routing');
+  assert.ok(gateway.some((item) => item.theme === 'light'));
+  assert.ok(gateway.some((item) => item.theme === 'dark'));
+  const invalid = structuredClone(catalog);
+  invalid.modules.find((item) => item.id === 'image-model-routing').stateBindings['前台选择'].theme = 'invented';
+  assert.throws(() => buildVisualPlan(invalid, ['cds']), /产品实际支持/);
+});

@@ -1611,11 +1611,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           ];
         });
 
-        void updateMarkerStatus(markerIndex, {
-          status: 'parsed',
-          draftText: markerText,
-          planItem: { prompt: markerText, count: 1, size },
-        });
+        // 流式增量尚未落库；服务端完成事件保存整份标记后，编辑与生图才能写回。
       };
 
       for await (const chunk of stream) {
@@ -4096,7 +4092,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   planItem: { prompt: updatedPlanItem.prompt, count: updatedPlanItem.count ?? 1, size: s },
                                 });
                               }}
-                              disabled={it.status === 'running' || it.status === 'parsing'}
+                              disabled={markerStreaming || it.status === 'running' || it.status === 'parsing'}
                             />
                           )}
                           <div
@@ -4142,7 +4138,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           className="marker-card-prompt-overlay"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setEditingMarkerIdx(it.markerIndex);
+                            if (!markerStreaming) setEditingMarkerIdx(it.markerIndex);
                           }}
                           title="点击编辑提示词"
                         >
@@ -4160,7 +4156,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           size="sm"
                           variant="ghost"
                           className="!px-2"
-                          disabled={it.status === 'running' || it.status === 'parsing'}
+                          disabled={markerStreaming || it.status === 'running' || it.status === 'parsing'}
                           onClick={() => void handleDeleteMarker(it.markerIndex)}
                           title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
                         >
@@ -4226,7 +4222,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       <Button
                         size="sm"
                         variant="secondary"
-                        disabled={it.status === 'running' || it.status === 'parsing' || !imageGenModel}
+                        disabled={markerStreaming || it.status === 'running' || it.status === 'parsing' || !imageGenModel}
                         onClick={() => void handleRegenerateOne(it.markerIndex)}
                         title={genTitle}
                       >

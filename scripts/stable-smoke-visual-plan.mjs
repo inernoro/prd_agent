@@ -56,13 +56,27 @@ function normalizeOrigin(value) {
 
 function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmentOrigins, environment) {
   const binding = module.stateBindings?.[state] || {};
+  if (binding.theme && !['light', 'dark'].includes(binding.theme)) {
+    throw new Error(`${module.name} 的页面主题必须是产品实际支持的明暗主题`);
+  }
   const originKind = binding.originKind || module.originKind || 'app';
   return {
     pageOrigin: originKind === 'gateway'
       ? gatewayEnvironmentOrigins[environment]
       : environmentOrigins[environment],
     entryPath: binding.entryPath || module.entryPath,
+    theme: binding.theme,
   };
+}
+
+function environmentScenario(module, environment, sequence, scenario, expectedProof) {
+  const override = module.evidenceOverrides?.[environment]?.[String(sequence)];
+  if (!override) return { scenario, expectedProof };
+  if (!override.scenario || !override.expectedProof || !override.reason
+      || Object.keys(override).some((key) => !['scenario', 'expectedProof', 'reason'].includes(key))) {
+    throw new Error(`${module.name} 的环境取证调整必须只声明场景、证明内容和原因`);
+  }
+  return { scenario: override.scenario, expectedProof: override.expectedProof, policyReason: override.reason };
 }
 
 export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity = {}) {
@@ -136,11 +150,11 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           primaryState: state,
           coverageStates: [state],
           testType: index === 0 ? '冒烟' : '视觉',
-          theme: stateTheme(module, index),
+          theme: binding.theme || stateTheme(module, index),
           viewportClass,
           ...mobileMetadata(module, state, state, viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${state}`),
-          expectedProof: `页面处于“${state}”状态，关键内容和操作完整可见`,
+          ...environmentScenario(module, environment, sequence - 1, state, `页面处于“${state}”状态，关键内容和操作完整可见`),
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
           pageOrigin: binding.pageOrigin || undefined,
@@ -165,11 +179,11 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           primaryState: extra.primaryState,
           coverageStates: [extra.primaryState],
           testType: '视觉',
-          theme: extra.theme,
+          theme: binding.theme || extra.theme,
           viewportClass: extra.viewportClass,
           ...mobileMetadata(module, extra.label, extra.primaryState, extra.viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${extra.label}`),
-          expectedProof: extra.expectedProof,
+          ...environmentScenario(module, environment, sequence - 1, extra.label, extra.expectedProof),
           methodAnchor: `#visual-method-${module.id}`,
           status: '未执行',
           pageOrigin: binding.pageOrigin || undefined,

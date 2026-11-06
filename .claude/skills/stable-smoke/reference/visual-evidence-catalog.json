@@ -49,7 +49,21 @@
         {"label": "移动端权限拒绝", "primaryState": "权限拒绝", "theme": "dark", "viewportClass": "mobile", "expectedProof": "拒绝麦克风后仍可改用音频上传"},
         {"label": "移动端转录进度", "primaryState": "转录进度", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏进度持续变化且无遮挡"},
         {"label": "失败后再次转录", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "失败信息说明恢复动作，原音频仍保留"}
-      ]
+      ],
+      "evidenceOverrides": {
+        "production": {
+          "10": {
+            "scenario": "麦克风权限拒绝后的恢复指引",
+            "expectedProof": "真实浏览器拒绝麦克风后，页面说明权限类别并提供设置指引和上传出口",
+            "reason": "正式环境只验证专用账号的安全输入边界和恢复入口，不注入服务或模型故障。"
+          },
+          "16": {
+            "scenario": "空音频输入被拒后重新选择真实语音完成转写",
+            "expectedProof": "空文件在客户端被拦截且没有发起解析；重新选择合成语音后真实转写成功并保存原文",
+            "reason": "用安全的客户端校验验证失败后的恢复，不在正式环境主动制造服务故障。"
+          }
+        }
+      }
     },
     {
       "id": "file-parsing",
@@ -66,7 +80,26 @@
         {"label": "移动端损坏文件", "primaryState": "无效文件", "theme": "dark", "viewportClass": "mobile", "expectedProof": "损坏文件在移动端给出用户可读提示"},
         {"label": "超长中文文件名", "primaryState": "类型识别", "theme": "dark", "viewportClass": "desktop", "expectedProof": "超长文件名不挤压状态与操作按钮"},
         {"label": "移动端重试与回读", "primaryState": "重试", "theme": "dark", "viewportClass": "mobile", "expectedProof": "重试成功后刷新仍能读取解析结果"}
-      ]
+      ],
+      "evidenceOverrides": {
+        "production": {
+          "8": {
+            "scenario": "空文件在上传前被拦截",
+            "expectedProof": "零字节文件在发起上传前被拒绝，并说明重新选择非空文件",
+            "reason": "正式环境只验证专用账号的安全输入边界和恢复入口，不注入服务或模型故障。"
+          },
+          "9": {
+            "scenario": "空文件错误的重新选择动作",
+            "expectedProof": "空文件未写入，重新选择文件入口保持可用",
+            "reason": "正式环境只验证专用账号的安全输入边界和恢复入口，不注入服务或模型故障。"
+          },
+          "14": {
+            "scenario": "移动端空文件拦截",
+            "expectedProof": "手机选择空文件后不发起上传，错误与重新选择动作可见",
+            "reason": "正式环境只验证专用账号的安全输入边界和恢复入口，不注入服务或模型故障。"
+          }
+        }
+      }
     },
     {
       "id": "short-video-parsing",
@@ -81,7 +114,7 @@
       "additionalEvidenceSlots": [
         {"label": "暗色桌面链接输入", "primaryState": "链接输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下输入、提交与校验信息完整"},
         {"label": "移动端视频上传", "primaryState": "视频上传", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端可选择并上传短视频"},
-        {"label": "超长错误提示", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "错误长文案不溢出并给出恢复动作"},
+        {"label": "超长链接输入的可读失败", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "超长无效分享文本被实际入口拒绝；错误提示简洁并说明恢复动作，不回显大段内部细节"},
         {"label": "移动端转写原文", "primaryState": "转写原文结果", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏真实转写可滚动且内容不裁切"}
       ]
     },
@@ -99,7 +132,16 @@
         {"label": "暗色桌面创作完成态", "primaryState": "完成", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下正文、保存状态与操作区完整"},
         {"label": "移动端流式中间态", "primaryState": "流式中间态", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端持续显示新增内容"},
         {"label": "超长正文滚动与保存", "primaryState": "保存", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长文滚动时工具区可用且保存结果明确"}
-      ]
+      ],
+      "evidenceOverrides": {
+        "production": {
+          "10": {
+            "scenario": "不支持的文章文件与重新选择",
+            "expectedProof": "不支持的文件在浏览器内被拒绝，原文不变，选择文件入口仍可使用",
+            "reason": "正式环境只验证专用账号的安全输入边界和恢复入口，不注入服务或模型故障。"
+          }
+        }
+      }
     },
     {
       "id": "single-image-creation",
@@ -150,7 +192,21 @@
         {"label": "移动端阶段进度", "primaryState": "阶段进度", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏长任务阶段持续变化且无遮挡"},
         {"label": "超长脚本输入", "primaryState": "脚本输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "长脚本滚动与生成动作保持可用"},
         {"label": "部分失败与继续处理", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "局部失败明确指出影响并允许继续或重试"}
-      ]
+      ],
+      "evidenceOverrides": {
+        "production": {
+          "10": {
+            "scenario": "镜头输入校验与恢复",
+            "expectedProof": "空提示词不能保存或生成，重新填写后恢复操作，不提交无效模型任务",
+            "reason": "正式环境只验证专用账号的安全输入边界和恢复入口，不注入服务或模型故障。"
+          },
+          "16": {
+            "scenario": "成片后的输入校验与继续编辑",
+            "expectedProof": "清空提示词时阻止保存，恢复有效输入后可继续编辑，先前成片仍可播放",
+            "reason": "正式环境只验证专用账号的安全输入边界和恢复入口，不注入服务或模型故障。"
+          }
+        }
+      }
     },
     {
       "id": "image-model-routing",
@@ -165,11 +221,13 @@
         },
         "前台选择": {
           "originKind": "app",
-          "entryPath": "/visual-agent"
+          "entryPath": "/visual-agent",
+          "theme": "dark"
         },
         "真实调用": {
           "originKind": "app",
-          "entryPath": "/visual-agent"
+          "entryPath": "/visual-agent",
+          "theme": "dark"
         },
         "调用日志对应": {
           "originKind": "gateway",
@@ -184,7 +242,21 @@
       "additionalEvidenceSlots": [
         {"label": "暗色桌面路由配置", "primaryState": "路由启用", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下路由状态、优先级和保存动作完整"},
         {"label": "Offering 失败与恢复", "primaryState": "失败提示", "theme": "light", "viewportClass": "desktop", "expectedProof": "不可用 Offering 提示可理解且可切换恢复"}
-      ]
+      ],
+      "evidenceOverrides": {
+        "production": {
+          "4": {
+            "scenario": "只读身份的编辑权限边界",
+            "expectedProof": "专用只读账号可查看模型详情，并被正确限制新增和编辑操作",
+            "reason": "正式网关巡检身份保持只读权限，不为取证提升为管理员。"
+          },
+          "12": {
+            "scenario": "查看已停用线路与可用替代",
+            "expectedProof": "只读查看现有停用线路及其状态，并从前台选择可用线路，不改动正式配置",
+            "reason": "正式环境不主动停用或破坏线路。"
+          }
+        }
+      }
     },
     {
       "id": "errors-progress-responsive",
