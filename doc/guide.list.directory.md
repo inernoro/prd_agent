@@ -44,6 +44,7 @@
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
 - [给设计方的画板请求（录音交付页）](./spec.prd-admin.recording-design-demo-request.md) `spec.prd-admin.recording-design-demo-request`
 - [毒舌秘书（PA Agent）产品规格 · 规格](./spec.product-agent.pa.md) `spec.product-agent.pa`
+- [产品管理正式申领与历史追溯 · 规格](./spec.product-agent.version-claims.md) `spec.product-agent.version-claims`
 - [项目愿景与背景 · 规格](./spec.project-vision.md) `spec.project-vision`
 - [周报 Agent Phase 5 — 用户故事 · 规格](./spec.report-agent.phase5.md) `spec.report-agent.phase5`
 - [周报 Agent v2.0 产品需求 · 规格](./spec.report-agent.v2.md) `spec.report-agent.v2`
@@ -153,7 +154,7 @@
 - [公共藏书阁 · 精读稿 · 设计](./design.prd-agent.bookshelf-digest.md) `design.prd-agent.bookshelf-digest`
 - [公共藏书阁 · 结业考 · 判定口径](./design.prd-agent.bookshelf.exam.md) `design.prd-agent.bookshelf.exam`
 - [文档再加工智能体调用路由 · 设计](./design.prd-agent.reprocess-chat-routing.md) `design.prd-agent.reprocess-chat-routing`
-- [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
+- [产品管理智能体：产品结构与承重契约 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
 - [周报管理 Agent (Report Agent) · 设计](./design.report-agent.md) `design.report-agent`
 - [周报管理 Agent · 月报 · 设计](./design.report-agent.monthly.md) `design.report-agent.monthly`
@@ -449,3 +450,4 @@
 
 - [PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策](./pdr.platform.001.product-foundation.md) `pdr.platform.001.product-foundation`
 - [PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策](./pdr.product-agent.001.rule-evolution.md) `pdr.product-agent.001.rule-evolution`
+- [PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策](./pdr.product-agent.002.version-claim-boundary.md) `pdr.product-agent.002.version-claim-boundary`

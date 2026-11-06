@@ -35,7 +35,7 @@
   },
   "source_refs": {
     "spec": 15,
-    "design": 178,
+    "design": 177,
     "plan": 21,
     "rule": 41,
     "guide": 101,
@@ -424,12 +424,6 @@
       "bare": 0,
       "impl": 0,
       "src": 3
-    },
-    "design.product-agent.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 1
     },
     "design.skill.marketplace-open-api.md": {
       "missing": 0,
