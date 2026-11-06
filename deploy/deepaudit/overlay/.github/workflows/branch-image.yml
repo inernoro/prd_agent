@@ -44,6 +44,18 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-only
           cache-from: type=gha,scope=cds-${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=cds-${{ matrix.component }}
+      - name: 验证平台迁移命令可执行
+        if: matrix.component == 'backend'
+        run: docker run --rm deepaudit-cds-backend:test sh -c 'command -v alembic && alembic --help >/dev/null'
+      - name: 验证全新归属卷写入与运行时降权
+        if: matrix.component == 'backend'
+        run: |
+          uploads="deepaudit-ci-uploads-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          data="deepaudit-ci-data-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker volume rm "$uploads" "$data" >/dev/null' EXIT
+          docker volume create "$uploads" >/dev/null
+          docker volume create "$data" >/dev/null
+          docker run --rm --mount "type=volume,source=$uploads,target=/app/uploads,volume-nocopy" --mount "type=volume,source=$data,target=/app/data,volume-nocopy" deepaudit-cds-backend:test /app/cds-entrypoint.sh check-storage
       - name: 验证真实后端路由
         if: matrix.component == 'backend'
         run: >-
@@ -54,6 +66,13 @@ jobs:
           -e LLM_MODEL=ci-model -e LLM_API_KEY=ci-validation-key
           -e PYTHONPATH=/app deepaudit-cds-backend:test
           .venv/bin/python tests/test_cds_runtime.py
+      - name: 验证扫描失败持久化与脱敏接口
+        if: matrix.component == 'backend'
+        run: >-
+          docker run --rm -e SECRET_KEY=ci-only-validation-secret-01234567890123456789
+          -e DATABASE_URL=postgresql+asyncpg://ci:ci@127.0.0.1/ci
+          -e PYTHONPATH=/app deepaudit-cds-backend:test
+          .venv/bin/python tests/test_scan_errors.py
       - name: 发布同提交不可变镜像
         if: github.event_name != 'pull_request'
         env:

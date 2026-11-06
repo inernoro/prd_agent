@@ -3,15 +3,21 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.endpoints import auth, config, members, projects, prompts, rules, scan, tasks, users
 from app.core.config import settings
 from app.core.security import get_password_hash
-from app.db.session import AsyncSessionLocal
+from app.db.session import AsyncSessionLocal, get_db
 from app.models.audit import AuditTask
 from app.models.user import User
+from app.schemas.token import Token
+from app.services.scan_errors import ERROR_MESSAGES
+
+CDS_ADMIN_EMAIL = "cds-admin@example.com"
 
 
 def validate_runtime_config(environ=None):
@@ -22,7 +28,7 @@ def validate_runtime_config(environ=None):
     password = env.get("CDS_SERVICE_PASSWORD", "")
     if len(secret) < 32 or secret.startswith("changethis"):
         raise RuntimeError("SECRET_KEY must be an independently generated secret of at least 32 characters")
-    if "@" not in email or email.lower() == "demo@example.com":
+    if "@" not in email or email.lower() in ("demo@example.com", "cds-admin@example.com"):
         raise RuntimeError("CDS_SERVICE_EMAIL must identify the dedicated CDS service account")
     if len(password) < 20:
         raise RuntimeError("CDS_SERVICE_PASSWORD must contain at least 20 characters")
@@ -46,7 +52,8 @@ async def lifespan(app):
         # Upstream regular scans are in-process BackgroundTasks, not durable workers.
         # Surface an interrupted scan as failed so CDS can offer an explicit retry.
         await db.execute(update(AuditTask).where(AuditTask.status.in_(["pending", "running"]))
-                         .values(status="failed", completed_at=datetime.now(timezone.utc)))
+                         .values(status="failed", completed_at=datetime.now(timezone.utc),
+                                 error_code="ANALYSIS_FAILED", error_message=ERROR_MESSAGES["ANALYSIS_FAILED"]))
         await db.commit()
         from app.services.init_templates import init_templates_and_rules
         await init_templates_and_rules(db)
@@ -64,8 +71,18 @@ for prefix, router in (
     ("config", config.router), ("prompts", prompts.router), ("rules", rules.router),
 ):
     app.include_router(router, prefix=f"{settings.API_V1_STR}/{prefix}")
-app.router.routes[:] = [route for route in app.router.routes
-                       if getattr(route, "path", "") != f"{settings.API_V1_STR}/auth/register"]
+app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", "") not in {
+    f"{settings.API_V1_STR}/auth/register", f"{settings.API_V1_STR}/auth/login",
+}]
+
+
+@app.post(f"{settings.API_V1_STR}/auth/login", response_model=Token)
+async def cds_login(form_data: OAuth2PasswordRequestForm = Depends(),
+                    db: AsyncSession = Depends(get_db)):
+    # The human alias uses its own account; machine service emails stay unchanged.
+    if form_data.username == "admin":
+        form_data.username = CDS_ADMIN_EMAIL
+    return await auth.login(db=db, form_data=form_data)
 
 
 @app.get("/health")

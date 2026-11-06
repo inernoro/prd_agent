@@ -24,6 +24,7 @@ class StaticRuntimePolicy(unittest.TestCase):
                     validate({**valid, key: ""})
         for key, value in [("SECRET_KEY", "changethis" + "x" * 40),
                            ("CDS_SERVICE_EMAIL", "demo@example.com"),
+                           ("CDS_SERVICE_EMAIL", "cds-admin@example.com"),
                            ("CDS_SERVICE_PASSWORD", "demo123")]:
             with self.subTest(key=key):
                 with self.assertRaises(RuntimeError):
