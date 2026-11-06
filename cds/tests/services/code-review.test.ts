@@ -128,7 +128,7 @@ describe('代码审查任务完整闭环', () => {
     const overview = buildReportsOverview([report], []);
     expect(overview.totals.counted).toBe(0); expect(overview.reports).toHaveLength(1);
     expect(overview.releaseGate.state).toBe('unknown'); expect(overview.passRate.denominator).toBe(0);
-    expect(buildPipelineOverview(state.getProjects(), [], [], [report])).toEqual(buildPipelineOverview(state.getProjects(), [], [], []));
+    expect(buildPipelineOverview(state.getProjects(), [], [], [report], { now })).toEqual(buildPipelineOverview(state.getProjects(), [], [], [], { now }));
     expect(buildPipelineSeries(state.getProjects(), [], [report], { now })).toEqual(buildPipelineSeries(state.getProjects(), [], [], { now }));
   });
   async function serve() {
