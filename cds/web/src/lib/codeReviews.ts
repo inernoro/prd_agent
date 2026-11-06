@@ -6,10 +6,12 @@ export interface CodeReviewTask {
   id: string;
   projectId: string;
   title: string;
-  sourceType: 'zip' | 'github';
+  sourceType: 'zip' | 'github' | 'report';
   sourceName: string;
   commitSha?: string;
   sourceHash?: string;
+  inputSkippedFiles?: number;
+  engineCompleted?: boolean;
   status: CodeReviewStatus;
   phase: string;
   progress: { totalFiles: number; scannedFiles: number };

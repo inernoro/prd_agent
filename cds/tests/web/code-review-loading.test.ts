@@ -13,7 +13,7 @@ describe('代码审查首屏只有一副骨架', () => {
       .toBe(renderToStaticMarkup(createElement(CodeReviewsSkeleton)));
   });
 
-  it('等待轮廓包括提交表单和报告列表，使用无交互的共享动画骨架', () => {
+  it('等待轮廓包括概览与紧凑列表，使用无交互的共享动画骨架', () => {
     const html = renderToStaticMarkup(createElement(CodeReviewsSkeleton));
     expect(html).toContain('data-code-reviews-skeleton');
     expect(html).toContain('role="status"');
