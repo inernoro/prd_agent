@@ -1,67 +1,67 @@
 <p align="center">
-  <img src="assets/readme/map-hero.svg" width="100%" alt="MAP — Midoo Agentic Platform. Create, freely. One desk for specialist agents, with model execution and branch delivery underneath." />
+  <img src="assets/readme/map-hero.svg?v=light-1" width="100%" alt="MAP — Midoo Agentic Platform. Create, freely. One desk for specialist agents, with model execution and branch delivery underneath." />
 </p>
 
 <p align="center">
   <a href="https://map.ebcone.net/home"><strong>Explore MAP</strong></a> &nbsp; / &nbsp;
   <a href="https://github.com/inernoro/prd_agent/releases/latest">Download desktop</a> &nbsp; / &nbsp;
-  <a href="#the-work-you-can-do">Product tour</a> &nbsp; / &nbsp;
-  <a href="#build-delivery--health">Project status</a> &nbsp; / &nbsp;
-  <a href="#start-with-one-useful-thing">Start here</a>
+  <a href="#product-tour">Product tour</a> &nbsp; / &nbsp;
+  <a href="#project-status">Project status</a> &nbsp; / &nbsp;
+  <a href="#get-started">Start here</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/inernoro/prd_agent/releases/latest"><img src="https://img.shields.io/github/v/release/inernoro/prd_agent?style=flat-square&amp;label=release&amp;color=326959" alt="Latest published release" /></a>
-  <a href="https://github.com/inernoro/prd_agent/releases"><img src="https://img.shields.io/github/downloads/inernoro/prd_agent/total?style=flat-square&amp;label=downloads&amp;color=b66e50" alt="Total GitHub release asset downloads" /></a>
-  <a href="https://github.com/inernoro/prd_agent/commits/main/"><img src="https://img.shields.io/github/last-commit/inernoro/prd_agent/main?style=flat-square&amp;label=last%20commit&amp;color=686b62" alt="Latest commit on main" /></a>
+  <a href="https://github.com/inernoro/prd_agent/releases/latest"><img src="https://img.shields.io/github/v/release/inernoro/prd_agent?style=flat-square&amp;label=release&amp;color=A94F36&amp;labelColor=26322B" alt="Latest published release" /></a>
+  <a href="https://github.com/inernoro/prd_agent/releases"><img src="https://img.shields.io/github/downloads/inernoro/prd_agent/total?style=flat-square&amp;label=downloads&amp;color=A94F36&amp;labelColor=26322B" alt="Total GitHub release asset downloads" /></a>
+  <a href="https://github.com/inernoro/prd_agent/commits/main/"><img src="https://img.shields.io/github/last-commit/inernoro/prd_agent/main?style=flat-square&amp;label=last+commit&amp;color=A94F36&amp;labelColor=26322B" alt="Latest commit on main" /></a>
 </p>
 
 **MAP brings specialist agents into one shared workspace.** Create and refine images on an infinite canvas. Write an article and illustrate it by paragraph. Read, rewrite, and connect knowledge in place. Turn repeatable work into a workflow, with model execution and branch delivery handled by dedicated layers underneath.
 
 This repository, `prd_agent`, contains three products: **MAP**, the Midoo Agentic Platform; **LLMGW**, the model gateway; and **CDS**, Cloud Dev Suite.
 
-## The work you can do
+## Product tour
 
-### 01 / A canvas, with a designer alongside.
+### 01 / Create on a canvas
 
 Generate, select, refine, and combine images in the same workspace. The infinite canvas keeps the variations in view; the assistant stays beside them. Image actions include upscaling, background removal, expansion, inpainting, and AI layers.
 
 <picture>
-  <source media="(max-width: 640px)" srcset="assets/readme/visual-workspace-mobile.svg" />
-  <img src="assets/readme/visual-workspace.svg" width="100%" alt="Visual creation interface study: an infinite canvas with image variations, a floating toolbar and an AI designer on the right." />
+  <source media="(max-width: 640px)" srcset="assets/readme/visual-workspace-mobile.svg?v=light-1" />
+  <img src="assets/readme/visual-workspace.svg?v=light-1" width="100%" alt="Visual creation interface study: an infinite canvas with image variations, a floating toolbar and an AI designer on the right." />
 </picture>
 
-<sub>Interface studies use example content and follow the admin homepage scenes. [Visual scene source](prd-admin/src/pages/home/scenes/VisualCanvasScene.tsx).</sub>
+<sub>Interface studies use the shared visual theme of this README and example content based on the admin homepage. [Visual scene source](prd-admin/src/pages/home/scenes/VisualCanvasScene.tsx).</sub>
 
 <br />
 
-### 02 / Write with illustrations. Read in context.
+### 02 / Write and retain
 
 The writing workspace keeps the article on the left and its illustration bench on the right. Generate illustrations by paragraph meaning; change their style while keeping the text intact.
 
 The knowledge reader keeps files, document, and outline together. Select a passage to comment, rewrite, or illustrate it. Review the suggested edit before confirming it; explore relationships between documents in the knowledge galaxy.
 
 <picture>
-  <source media="(max-width: 640px)" srcset="assets/readme/writing-knowledge-mobile.svg" />
-  <img src="assets/readme/writing-knowledge.svg" width="100%" alt="Writing and knowledge interface studies: an article with a separate illustration bench, and a three-pane reader with in-place editing and a document relationship graph." />
+  <source media="(max-width: 640px)" srcset="assets/readme/writing-knowledge-mobile.svg?v=light-1" />
+  <img src="assets/readme/writing-knowledge.svg?v=light-1" width="100%" alt="Writing and knowledge interface studies: an article with a separate illustration bench, and a three-pane reader with in-place editing and a document relationship graph." />
 </picture>
 
 <sub>[Writing scene](prd-admin/src/pages/home/scenes/LiteraryScene.tsx) &nbsp; / &nbsp; [Knowledge scene](prd-admin/src/pages/home/scenes/KnowledgeScene.tsx)</sub>
 
 <br />
 
-### 03 / Give repeatable work a workflow.
+### 03 / Connect the work
 
 Connect trigger, process, control, and output capsules on a canvas. Start from a template, inspect one capsule's input and output, then connect the next. Workflows can run on a timer or respond to a webhook.
 
 <picture>
-  <source media="(max-width: 640px)" srcset="assets/readme/workflow-strip-mobile.svg" />
-  <img src="assets/readme/workflow-strip.svg" width="100%" alt="Example workflow from the admin homepage: manual trigger, TAPD collector, defect statistics, HTML rendering, export HTML and completion notice." />
+  <source media="(max-width: 640px)" srcset="assets/readme/workflow-strip-mobile.svg?v=light-1" />
+  <img src="assets/readme/workflow-strip.svg?v=light-1" width="100%" alt="Example workflow from the admin homepage: manual trigger, TAPD collector, defect statistics, HTML rendering, export HTML and completion notice." />
 </picture>
 
 <sub>The illustrated chain comes from the [homepage's TAPD template](prd-admin/src/pages/home/i18n/landing.ts). [Workflow scene source](prd-admin/src/pages/home/scenes/WorkflowScene.tsx).</sub>
 
-## A toolbox organized around the work
+## Agent toolbox
 
 The registry contains **30+ agents and tools**, grouped here by the work they help with. Preview entries retain their product labels.
 
@@ -74,13 +74,13 @@ The registry contains **30+ agents and tools**, grouped here by the work they he
 
 Search the Toolbox by the task you need to finish. The [tool registry](prd-admin/src/stores/toolboxStore.ts) and [homepage catalog](prd-admin/src/pages/home/i18n/landing.ts) define the entries and their availability.
 
-## Three layers, one connected system
+## Product architecture
 
 **MAP is the desk. LLMGW handles model execution. CDS delivers a working branch.** Each product can be used independently; together they connect the work, the compute, and the environment where the result can be reviewed.
 
 <picture>
-  <source media="(max-width: 640px)" srcset="assets/readme/platform-layers-mobile.svg" />
-  <img src="assets/readme/platform-layers.svg" width="100%" alt="MAP takes work from a prompt through agents to an artifact. LLMGW routes a caller through its model pool and provider members. CDS turns a code branch into services and a preview address." />
+  <source media="(max-width: 640px)" srcset="assets/readme/platform-layers-mobile.svg?v=light-1" />
+  <img src="assets/readme/platform-layers.svg?v=light-1" width="100%" alt="MAP takes work from a prompt through agents to an artifact. LLMGW routes a caller through its model pool and provider members. CDS turns a code branch into services and a preview address." />
 </picture>
 
 The gateway manages member selection, health, and retries within the selected model pool. Cross-pool substitution requires explicit authorization. CDS handles branch builds, preview routing, reusable versions, deployment records, and rollback.
@@ -105,14 +105,14 @@ The gateway manages member selection, health, and retries within the selected mo
 
 </details>
 
-## Build, delivery & health
+## Project status
 
 <table>
   <tr><th width="33%">Build &amp; test</th><th width="33%">Container delivery</th><th width="34%">Operations</th></tr>
   <tr>
-    <td align="center" valign="top"><a href="https://github.com/inernoro/prd_agent/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/ci.yml?branch=main&amp;style=flat-square&amp;label=CI" alt="CI — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/cds.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds.yml?branch=main&amp;style=flat-square&amp;label=CDS%20tests" alt="CDS tests — latest main-branch workflow result" /></a></td>
-    <td align="center" valign="top"><a href="https://github.com/inernoro/prd_agent/actions/workflows/server-deploy.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/server-deploy.yml?branch=main&amp;style=flat-square&amp;label=server%20image" alt="server image — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/branch-image.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/branch-image.yml?branch=main&amp;style=flat-square&amp;label=branch%20image" alt="branch image — latest main-branch workflow result" /></a></td>
-    <td align="center" valign="top"><a href="https://map.ebcone.net"><img src="https://img.shields.io/website?url=https%3A%2F%2Fmap.ebcone.net&amp;style=flat-square&amp;label=web%20HTTP&amp;up_message=reachable&amp;down_message=unreachable" alt="Public web entry — external HTTP reachability" /></a><br /><br /><a href="https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/cds-independent-status/watchdog.yml?branch=main&amp;style=flat-square&amp;label=watchdog" alt="watchdog — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/cds-external-port-audit.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds-external-port-audit.yml?branch=main&amp;style=flat-square&amp;label=port%20audit" alt="port audit — latest main-branch workflow result" /></a></td>
+    <td align="center" valign="top"><a href="https://github.com/inernoro/prd_agent/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/ci.yml?branch=main&amp;style=flat-square&amp;label=CI&amp;labelColor=26322B" alt="CI — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/cds.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds.yml?branch=main&amp;style=flat-square&amp;label=CDS+tests&amp;labelColor=26322B" alt="CDS tests — latest main-branch workflow result" /></a></td>
+    <td align="center" valign="top"><a href="https://github.com/inernoro/prd_agent/actions/workflows/server-deploy.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/server-deploy.yml?branch=main&amp;style=flat-square&amp;label=server+image&amp;labelColor=26322B" alt="server image — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/branch-image.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/branch-image.yml?branch=main&amp;style=flat-square&amp;label=branch+image&amp;labelColor=26322B" alt="branch image — latest main-branch workflow result" /></a></td>
+    <td align="center" valign="top"><a href="https://map.ebcone.net"><img src="https://img.shields.io/website?url=https%3A%2F%2Fmap.ebcone.net&amp;style=flat-square&amp;label=web+HTTP&amp;up_message=reachable&amp;down_message=unreachable&amp;labelColor=26322B" alt="Public web entry — external HTTP reachability" /></a><br /><br /><a href="https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/cds-independent-status/watchdog.yml?branch=main&amp;style=flat-square&amp;label=watchdog&amp;labelColor=26322B" alt="watchdog — latest main-branch workflow result" /></a><br /><br /><a href="https://github.com/inernoro/prd_agent/actions/workflows/cds-external-port-audit.yml?query=branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds-external-port-audit.yml?branch=main&amp;style=flat-square&amp;label=port+audit&amp;labelColor=26322B" alt="port audit — latest main-branch workflow result" /></a></td>
   </tr>
 </table>
 
@@ -124,7 +124,7 @@ Build badges show the latest matching `main` run. Container badges track image p
   <a href="https://github.com/inernoro/prd_agent/actions/workflows/preview-acceptance.yml">Preview acceptance</a>
 </p>
 
-## Start with one useful thing
+## Get started
 
 ### Open the web workspace
 
@@ -238,7 +238,7 @@ Use the deployment entrypoint with the environment configuration for your intend
 
 </details>
 
-## Explore the project
+## Documentation
 
 | For | Start here |
 | :--- | :--- |
@@ -266,6 +266,8 @@ The root keeps project entrypoints and top-level documentation. Supporting mater
 | `deploy/` | Deployment support files |
 
 Documentation uses the prefixes `spec.`, `design.`, `plan.`, `rule.`, `guide.`, `report.`, and `debt.`. See [AGENTS.md](AGENTS.md) for naming, directory, change-record, and quality requirements.
+
+README illustrations follow a shared [visual specification](assets/readme/design-system.json) for color, typography, geometry, and badge treatment.
 
 </details>
 

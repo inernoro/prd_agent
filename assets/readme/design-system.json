@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "assetVersion": "light-1",
+  "palette": {
+    "background": "#F5F3EE",
+    "surface": "#FFFFFF",
+    "surfaceMuted": "#ECE9E2",
+    "ink": "#26322B",
+    "muted": "#59645B",
+    "border": "#D8D6CE",
+    "accent": "#A94F36",
+    "accentSoft": "#F0E2D8",
+    "mediaCoolSky": "#E9E7E0",
+    "mediaCoolMid": "#C5BDAF",
+    "mediaCoolNear": "#9C8D7B",
+    "mediaWarmSky": "#EAD4C5",
+    "mediaWarmMid": "#C5A18A",
+    "mediaWarmNear": "#906D55",
+    "mediaFogSky": "#DCD4C5",
+    "mediaFogMid": "#B8AB95",
+    "mediaFogNear": "#8D7B62"
+  },
+  "typography": {
+    "family": "Arial, Helvetica, sans-serif",
+    "displayWeight": "700",
+    "bodyWeight": "400"
+  },
+  "geometry": {
+    "outerRadius": 16,
+    "panelRadius": 8,
+    "spacingUnit": 8,
+    "borderWidth": 1
+  },
+  "badges": {
+    "style": "flat-square",
+    "labelColor": "26322B",
+    "metricColor": "A94F36",
+    "workflowColor": "provider-defined semantic status"
+  }
+}

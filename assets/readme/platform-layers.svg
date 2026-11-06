@@ -1,4 +1,75 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="498" viewBox="0 0 1200 498" role="img" aria-labelledby="title">
-<title id="title">Three independent products form one chain: MAP turns work into artifacts; LLMGW routes callers through model pools and providers; CDS builds branch environments and previews.</title>
-<defs><pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r=".75" fill="#777" opacity=".24"/></pattern></defs>
-<rect x="0" y="0" width="1200" height="498" rx="16" fill="#f6f1e8"/><text x="36" y="38" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="2.1">THE PLATFORM UNDERNEATH</text><text x="36" y="85" font-size="34" fill="#292b28" font-weight="500" font-family="Georgia, DejaVu Serif, serif">Three products. One connected workflow.</text><path d="M35 115H1165" fill="none" stroke="#d8cebf" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M35 239H1165" fill="none" stroke="#d8cebf" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M35 363H1165" fill="none" stroke="#d8cebf" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><text x="36" y="159" font-size="11" fill="#9b513b" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.6">01</text><text x="69" y="161" font-size="24" fill="#292b28" font-weight="700" font-family="Arial, Helvetica, sans-serif">MAP</text><text x="69" y="187" font-size="13" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">The shared desk</text><text x="36" y="283" font-size="11" fill="#45666c" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.6">02</text><text x="69" y="285" font-size="24" fill="#292b28" font-weight="700" font-family="Arial, Helvetica, sans-serif">LLMGW</text><text x="69" y="311" font-size="13" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">Model execution</text><text x="36" y="407" font-size="11" fill="#326959" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.6">03</text><text x="69" y="409" font-size="24" fill="#292b28" font-weight="700" font-family="Arial, Helvetica, sans-serif">CDS</text><text x="69" y="435" font-size="13" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">Branch delivery</text><rect x="300" y="139" width="245" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="300" y="139" width="3" height="58" rx="1" fill="#D97757"/><text x="314" y="163" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">You</text><text x="314" y="183" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">describe the work</text><path d="M557 168H579m-7-5 7 5-7 5" fill="none" stroke="#D97757" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="595" y="139" width="245" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="595" y="139" width="3" height="58" rx="1" fill="#D97757"/><text x="609" y="163" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Agents</text><text x="609" y="183" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">create &amp; refine</text><path d="M852 168H874m-7-5 7 5-7 5" fill="none" stroke="#D97757" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="890" y="139" width="245" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="890" y="139" width="3" height="58" rx="1" fill="#D97757"/><text x="904" y="163" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Artifact</text><text x="904" y="183" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">canvas or document</text><rect x="300" y="263" width="183" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="300" y="263" width="3" height="58" rx="1" fill="#6f9da5"/><text x="314" y="287" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Caller</text><text x="314" y="307" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">business identity</text><path d="M492 292H508m-7-5 7 5-7 5" fill="none" stroke="#6f9da5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="520" y="263" width="183" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="520" y="263" width="3" height="58" rx="1" fill="#6f9da5"/><text x="534" y="287" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Pool</text><text x="534" y="307" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">allowed model pool</text><path d="M712 292H728m-7-5 7 5-7 5" fill="none" stroke="#6f9da5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="740" y="263" width="183" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="740" y="263" width="3" height="58" rx="1" fill="#6f9da5"/><text x="754" y="287" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Members</text><text x="754" y="307" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">priority &amp; failover</text><path d="M932 292H948m-7-5 7 5-7 5" fill="none" stroke="#6f9da5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="960" y="263" width="183" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="960" y="263" width="3" height="58" rx="1" fill="#6f9da5"/><text x="974" y="287" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Provider</text><text x="974" y="307" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">upstream execution</text><path d="M305 417H430Q450 417 470 397H533" fill="none" stroke="#326959" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="306" y="399" font-size="12" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">main</text><text x="479" y="381" font-size="11" fill="#326959" font-weight="400" font-family="Arial, Helvetica, sans-serif">feature branch</text><rect x="542" y="388" width="247" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="542" y="388" width="3" height="58" rx="1" fill="#326959"/><text x="556" y="412" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Services</text><text x="556" y="432" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">app + dependencies</text><path d="M804 417H865m-7-5 7 5-7 5" fill="none" stroke="#326959" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="880" y="388" width="260" height="58" rx="9" fill="#fffcf5" stroke="#d9d2c4"/><rect x="880" y="388" width="3" height="58" rx="1" fill="#326959"/><text x="894" y="412" font-size="15" fill="#292b28" font-weight="600" font-family="Arial, Helvetica, sans-serif">Preview</text><text x="894" y="432" font-size="11" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">an address you can open</text><text x="36" y="478" font-size="14" fill="#656b61" font-weight="400" font-family="Arial, Helvetica, sans-serif">Work in MAP. Route through LLMGW. Deliver with CDS.</text></svg>
+  <title id="title">Three independent products form one chain: MAP turns work into artifacts; LLMGW routes callers through model pools and providers; CDS builds branch environments and previews.</title>
+  <defs>
+    <clipPath id="frame">
+      <rect x="0" y="0" width="1200" height="498" rx="16" />
+    </clipPath>
+    <pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r=".75" fill="#D8D6CE" opacity=".24" />
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="1200" height="498" rx="16" fill="#F5F3EE" />
+  <g clip-path="url(#frame)">
+    <rect x="0" y="0" width="1200" height="498" rx="16" fill="#F5F3EE" />
+    <text x="36" y="38" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="2.1">THE PLATFORM UNDERNEATH</text>
+    <text x="36" y="85" font-size="34" fill="#26322B" font-weight="700" font-family="Arial, Helvetica, sans-serif">Three products. One connected workflow.</text>
+    <path d="M35 115H1165" fill="none" stroke="#D8D6CE" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M35 239H1165" fill="none" stroke="#D8D6CE" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M35 363H1165" fill="none" stroke="#D8D6CE" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="36" y="159" font-size="11" fill="#A94F36" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.6">01</text>
+    <text x="69" y="161" font-size="24" fill="#26322B" font-weight="700" font-family="Arial, Helvetica, sans-serif">MAP</text>
+    <text x="69" y="187" font-size="13" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">The shared desk</text>
+    <text x="36" y="283" font-size="11" fill="#A94F36" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.6">02</text>
+    <text x="69" y="285" font-size="24" fill="#26322B" font-weight="700" font-family="Arial, Helvetica, sans-serif">LLMGW</text>
+    <text x="69" y="311" font-size="13" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Model execution</text>
+    <text x="36" y="407" font-size="11" fill="#A94F36" font-weight="400" font-family="Arial, Helvetica, sans-serif" letter-spacing="1.6">03</text>
+    <text x="69" y="409" font-size="24" fill="#26322B" font-weight="700" font-family="Arial, Helvetica, sans-serif">CDS</text>
+    <text x="69" y="435" font-size="13" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Branch delivery</text>
+    <rect x="300" y="139" width="245" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="300" y="139" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="314" y="163" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">You</text>
+    <text x="314" y="183" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">describe the work</text>
+    <path d="M557 168H579m-7-5 7 5-7 5" fill="none" stroke="#A94F36" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="595" y="139" width="245" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="595" y="139" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="609" y="163" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Agents</text>
+    <text x="609" y="183" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">create &amp; refine</text>
+    <path d="M852 168H874m-7-5 7 5-7 5" fill="none" stroke="#A94F36" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="890" y="139" width="245" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="890" y="139" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="904" y="163" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Artifact</text>
+    <text x="904" y="183" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">canvas or document</text>
+    <rect x="300" y="263" width="183" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="300" y="263" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="314" y="287" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Caller</text>
+    <text x="314" y="307" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">business identity</text>
+    <path d="M492 292H508m-7-5 7 5-7 5" fill="none" stroke="#A94F36" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="520" y="263" width="183" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="520" y="263" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="534" y="287" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Pool</text>
+    <text x="534" y="307" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">allowed model pool</text>
+    <path d="M712 292H728m-7-5 7 5-7 5" fill="none" stroke="#A94F36" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="740" y="263" width="183" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="740" y="263" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="754" y="287" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Members</text>
+    <text x="754" y="307" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">priority &amp; failover</text>
+    <path d="M932 292H948m-7-5 7 5-7 5" fill="none" stroke="#A94F36" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="960" y="263" width="183" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="960" y="263" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="974" y="287" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Provider</text>
+    <text x="974" y="307" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">upstream execution</text>
+    <path d="M305 417H430Q450 417 470 397H533" fill="none" stroke="#A94F36" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="306" y="399" font-size="12" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">main</text>
+    <text x="479" y="381" font-size="11" fill="#A94F36" font-weight="400" font-family="Arial, Helvetica, sans-serif">feature branch</text>
+    <rect x="542" y="388" width="247" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="542" y="388" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="556" y="412" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Services</text>
+    <text x="556" y="432" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">app + dependencies</text>
+    <path d="M804 417H865m-7-5 7 5-7 5" fill="none" stroke="#A94F36" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="880" y="388" width="260" height="58" rx="8" fill="#FFFFFF" stroke="#D8D6CE" />
+    <rect x="880" y="388" width="3" height="58" rx="8" fill="#A94F36" />
+    <text x="894" y="412" font-size="15" fill="#26322B" font-weight="600" font-family="Arial, Helvetica, sans-serif">Preview</text>
+    <text x="894" y="432" font-size="11" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">an address you can open</text>
+    <text x="36" y="478" font-size="14" fill="#59645B" font-weight="400" font-family="Arial, Helvetica, sans-serif">Work in MAP. Route through LLMGW. Deliver with CDS.</text>
+  </g>
+</svg>
