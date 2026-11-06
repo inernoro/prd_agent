@@ -17,6 +17,13 @@ export interface CodeReviewAuditEvent {
 
 export type CodeReviewAudit = (event: CodeReviewAuditEvent) => Promise<void>;
 
+export class CodeReviewUpstreamHttpError extends Error {
+  constructor(operation: string, public readonly status: number) {
+    super(`${operation} 失败（HTTP ${status}），请检查上游配置与授权`);
+    this.name = 'CodeReviewUpstreamHttpError';
+  }
+}
+
 export function redactReviewEvidence(value: string): string {
   return value
     .replace(/(?:Bearer|token)\s+[A-Za-z0-9_.~+/=-]+/gi, '[credential]')
@@ -98,6 +105,6 @@ export async function reviewJsonRequest(
     outcome: response.ok ? 'success' : 'http_error', status: response.status,
     upstreamRequestId: response.headers.get('x-github-request-id') ?? response.headers.get('x-request-id') ?? undefined,
     responseBytes: content.length, ...reviewEvidence(parsed) });
-  if (!response.ok) throw new Error(`${operation} 失败（HTTP ${response.status}），请检查上游配置与授权`);
+  if (!response.ok) throw new CodeReviewUpstreamHttpError(operation, response.status);
   return parsed;
 }

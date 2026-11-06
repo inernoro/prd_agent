@@ -44,6 +44,14 @@ function shouldInclude(name: string, patterns: string[]): boolean {
 export async function validateCodeReviewZip(zip: Buffer, excludePatterns: string[] = []): Promise<{
   zip: Buffer; totalFiles: number; skippedFiles: number;
 }> {
+  const result = await readCodeReviewSnapshot(zip, excludePatterns);
+  return { zip: result.zip, totalFiles: result.totalFiles, skippedFiles: result.skippedFiles };
+}
+
+/** Shared validation for the fixed static scanner; files have passed path, size and CRC checks. */
+export async function readCodeReviewSnapshot(zip: Buffer, excludePatterns: string[] = []): Promise<{
+  zip: Buffer; totalFiles: number; skippedFiles: number; files: Array<{ name: string; data: Buffer }>;
+}> {
   if (!Buffer.isBuffer(zip) || !zip.length || zip.length > CODE_REVIEW_ZIP_LIMITS.compressed) {
     throw new Error('ZIP 为空或超过 100 MiB');
   }
@@ -109,7 +117,7 @@ export async function validateCodeReviewZip(zip: Buffer, excludePatterns: string
     modifiedAt: new Date(1980, 0, 1, 0, 0, 0) }));
   const sanitized = buildZip(clean);
   if (sanitized.length > CODE_REVIEW_ZIP_LIMITS.compressed) throw new Error('过滤后的源码 ZIP 超过 100 MiB');
-  return { zip: sanitized, totalFiles: clean.length, skippedFiles };
+  return { zip: sanitized, totalFiles: clean.length, skippedFiles, files: clean.map(({ name, data }) => ({ name, data })) };
 }
 
 export function parseCodeReviewGithubUrl(input: string): { owner: string; repo: string } {
