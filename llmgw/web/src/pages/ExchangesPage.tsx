@@ -54,6 +54,7 @@ type ExchangeFormState = {
   apiKey: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId: string;
   enabled: boolean;
   description: string;
   models: ExchangeModelWriteRequest[];
@@ -74,6 +75,7 @@ const emptyForm = (): ExchangeFormState => ({
   apiKey: '',
   targetAuthScheme: 'Bearer',
   transformerType: 'passthrough',
+  resourceId: '',
   enabled: true,
   description: '',
   models: [emptyModel()],
@@ -207,6 +209,7 @@ export function ExchangesPage() {
       apiKey: '',
       targetAuthScheme: item.targetAuthScheme || 'Bearer',
       transformerType: item.transformerType || 'passthrough',
+      resourceId: item.resourceId || '',
       enabled: item.enabled,
       description: item.description || '',
       models: item.models.length ? item.models.map((model) => ({ ...model })) : [emptyModel()],
@@ -246,6 +249,10 @@ export function ExchangesPage() {
       setNotice('每条模型映射都必须填写上游模型标识');
       return;
     }
+    if (form.transformerType === 'doubao-tts' && !/^[A-Za-z0-9._-]{1,160}$/.test(form.resourceId.trim())) {
+      setNotice('请填写账号实际开通的语音资源 resourceId，只支持字母、数字、点、下划线或短横线');
+      return;
+    }
     const modelRows = new Map<string, number>();
     for (const [index, model] of form.models.entries()) {
       const normalizedModelId = model.modelId.trim().toLowerCase();
@@ -274,6 +281,7 @@ export function ExchangesPage() {
       targetUrl: form.targetUrl.trim(),
       targetAuthScheme: form.targetAuthScheme,
       transformerType: form.transformerType,
+      resourceId: form.transformerType === 'doubao-tts' ? form.resourceId.trim() : null,
       enabled: form.enabled,
       description: form.description.trim() || null,
     };
@@ -644,6 +652,7 @@ export function ExchangesPage() {
                               { label: '上游接口类型', value: meta.transformerTypes.find((option) => option.value === item.transformerType)?.label || item.transformerType || 'passthrough' },
                               { label: '目标地址', value: <code>{item.targetUrl || '未配置'}</code>, hint: item.targetUrl?.includes('{model}') ? '运行时会把 {model} 替换为当前模型标识。' : '请求按此完整地址发送。' },
                               { label: '认证方式', value: meta.authSchemes.find((option) => option.value === item.targetAuthScheme)?.label || item.targetAuthScheme || 'Bearer' },
+                              ...(item.transformerType === 'doubao-tts' ? [{ label: 'resourceId', value: item.resourceId || '未配置' }] : []),
                               { label: '配置来源', value: item.authority === 'llm_gateway' ? '当前租户 Gateway 配置' : '旧 MAP 配置，需先导入' },
                             ],
                           },
@@ -746,6 +755,7 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
     'fal-image-edit': 'https://fal.run/fal-ai/nano-banana-pro/edit',
     'doubao-asr': 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit',
     'doubao-asr-stream': 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel',
+    'doubao-tts': 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
     'volcengine-video': 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks',
   } as Record<string, string>)[form.transformerType] || 'https://provider.example.com/v1/invoke';
   const transformerOptions = meta.transformerTypes;
@@ -754,10 +764,12 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
       ? 'x-goog-api-key'
       : transformerType === 'fal-image' || transformerType === 'fal-image-edit'
         ? 'Key'
-        : transformerType === 'doubao-asr' || transformerType === 'doubao-asr-stream'
+        : transformerType === 'doubao-asr' || transformerType === 'doubao-asr-stream' || transformerType === 'doubao-tts'
           ? 'XApiKey'
           : 'Bearer';
-    onChange({ ...form, transformerType, targetAuthScheme });
+    onChange({ ...form, transformerType, targetAuthScheme,
+      models: transformerType === 'doubao-tts' ? form.models.map((model) => ({ ...model, modelType: 'tts' })) : form.models,
+    });
   };
 
   return (
@@ -798,6 +810,12 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
           </span>
           <input value={form.targetUrl} onChange={(event) => onChange({ ...form, targetUrl: event.target.value })} placeholder={targetPlaceholder} style={FIELD_INPUT} />
         </label>
+        {form.transformerType === 'doubao-tts' ? (
+          <label style={{ ...FIELD_LABEL, gridColumn: '1 / -1', maxWidth: 660 }}>
+            <span>resourceId<HelpPopover label="语音资源">请填写必填的实际开通资源。资源决定可用音色、版本与计费方式；此处不要填写密钥。保存后可读回核对，其他协议配置保持原值。</HelpPopover></span>
+            <input required value={form.resourceId} maxLength={160} onChange={(event) => onChange({ ...form, resourceId: event.target.value })} placeholder="填写账号实际开通的语音资源" style={FIELD_INPUT} />
+          </label>
+        ) : null}
         {mode === 'create' ? (
           <label style={{ ...FIELD_LABEL, gridColumn: '1 / -1', maxWidth: 660 }}>
             <span>

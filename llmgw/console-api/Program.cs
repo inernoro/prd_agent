@@ -14890,6 +14890,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
                 { "modelIds", new BsonArray(draft.Models.Select(item => item.ModelId)) },
                 { "targetAuthScheme", draft.TargetAuthScheme },
                 { "transformerType", draft.TransformerType },
+                { "hasResourceId", draft.ResourceId is not null },
                 { "enabled", draft.Enabled },
                 { "hasKey", true },
                 { "authority", "llm_gateway" },
@@ -15035,18 +15036,8 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
         ? fb.Eq("Version", currentVersion)
         : fb.Exists("Version", false);
     var nextVersion = currentVersion + 1;
-    var update = Builders<BsonDocument>.Update
-        .Set("Name", draft.Name)
-        .Set("NameNormalized", draft.NameNormalized)
-        .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(
-            draft.Models, TenantAccess.GetRequired(http).Username, DateTime.UtcNow))
-        .Set("TargetUrl", draft.TargetUrl)
-        .Set("TargetAuthScheme", draft.TargetAuthScheme)
-        .Set("TransformerType", draft.TransformerType)
-        .Set("Enabled", draft.Enabled)
-        .Set("Description", ToBsonAuditValue(draft.Description))
-        .Set("UpdatedAt", DateTime.UtcNow)
-        .Set("Version", nextVersion);
+    var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(
+        draft, document, TenantAccess.GetRequired(http).Username, DateTime.UtcNow, nextVersion);
     string requiredAuditId;
     try
     {
@@ -15065,6 +15056,7 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
                 { "targetUrlChanged", !string.Equals(document.AsNullableString("TargetUrl"), draft.TargetUrl, StringComparison.Ordinal) },
                 { "targetAuthScheme", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TargetAuthScheme")) }, { "to", draft.TargetAuthScheme } } },
                 { "transformerType", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableString("TransformerType")) }, { "to", draft.TransformerType } } },
+                { "resourceIdChanged", draft.ResourceId is not null && !string.Equals(GatewayConfigurationProvisioning.ReadExchangeResourceId(document), draft.ResourceId, StringComparison.Ordinal) },
                 { "enabled", new BsonDocument { { "from", ToBsonAuditValue(document.AsNullableBool("Enabled")) }, { "to", draft.Enabled } } },
                 { "authority", "llm_gateway" },
             });
@@ -18757,6 +18749,7 @@ static ExchangeItem MapExchange(BsonDocument d)
         TargetUrl = d.GetStringOrEmpty("TargetUrl"),
         TargetAuthScheme = d.AsNullableString("TargetAuthScheme") ?? "Bearer",
         TransformerType = d.AsNullableString("TransformerType") ?? "passthrough",
+        ResourceId = GatewayConfigurationProvisioning.ReadExchangeResourceId(d),
         Enabled = d.AsNullableBool("Enabled") ?? true,
         Description = d.AsNullableString("Description"),
         HasKey = !string.IsNullOrEmpty(d.AsNullableString("TargetApiKeyEncrypted")),
