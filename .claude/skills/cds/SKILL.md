@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.20.0
+  version: 0.20.1
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.20.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
+> **版本**：v0.20.1 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -309,20 +309,40 @@ curl -sSL "$CDS_HOST/api/bootstrap/pm-project" -o init.sh   # 取引导脚本（
 
 ## MCP 协作边界
 
-CDS 当前正式可用的 Agent 通道是“技能 + cdscli + REST”。尚未发布 CDS MCP Server，
-因此任何提示词不得声称已存在 MCP Tool。
+CDS 的通用 Agent 通道仍为“技能 + cdscli + REST”。代码审查另提供项目级本地 stdio
+桥接，安装与配置见仓库 `cds/mcp/README.md`；不提供远程 HTTP MCP 或通用部署工具。
 
-后续 MCP 必须消费同一能力注册表，并遵循：
+已提供的四个工具：`cds_code_review_submit`、`cds_code_review_get`、
+`cds_code_review_list`、`cds_code_review_report_upload`。
 
-1. 第一阶段只提供认证摘要、能力发现、项目/分支状态、部署诊断、观测和预览地址等只读工具。
-2. 每个工具单独声明项目作用域、只读/写入/破坏性、是否幂等和是否需要人类批准。
-3. MCP 从当前仓库 `.cds/credentials.json` 读取凭据，密钥不进入 MCP 配置、参数或对话。
-4. 不提供 `call_any_api`、`run_any_cli`、`execute_shell` 等万能工具。
-5. Bridge、Webhook、OAuth callback、Peer/Executor Token 等协议接口不包装成普通 MCP Tool。
-6. 写操作只能在能力注册表有明确输入、验证、回滚和审批合同后逐项开放。
+1. MCP 仅从当前 Git 项目根目录 `.cds/credentials.json` 读取版本 1 的 host、projectId、projectKey；
+   必须先通过 `cdscli connect` 获得项目级凭据，不接受 bootstrapKey 或工具参数中的凭据、主机和项目覆盖。
+2. submit 与 report_upload 是非破坏性写入。每次提交默认归档 CDS；仅显式提供 email 时额外发信。
+   失败的任务和投递分别重试；可用 idempotencyKey 避免同次上传被重复处理。
+3. 文件路径指本机工作区内文件，桥接读取后上传字节；拒绝目录穿越、工作区外软链接及凭据目录。
+   ZIP 上限 100 MiB，HTML/Markdown 报告上限 10 MiB；后端仍独立验证文件。
+4. 所有工具复用能力注册表对应的 REST 接口与项目权限，读取结果再次核对项目归属。
+5. 不提供 `call_any_api`、`run_any_cli`、`execute_shell` 等万能工具。
+   Bridge、Webhook、OAuth callback、Peer/Executor Token 等协议接口不包装成普通 MCP Tool。
+6. 其他未发布能力仍不得编造工具或绕过 human-only、protocol-only、internal-only 边界。
 
-在 MCP 落地前，CLI 未覆盖的能力只能按 `reference/api.md` 做受限的只读检查；不得编造
-CLI 命令，也不得因为 REST 接口存在就绕过 human-only、protocol-only 或 internal-only 边界。
+## 代码审查与报告上传
+
+```bash
+$CLI code-review submit --github https://github.com/owner/repo --ref main --project <id>
+$CLI code-review submit --zip-file source.zip --exclude 'vendor/**' --project <id>
+$CLI code-review submit --zip-file source.zip --email owner@example.com --idempotency-key <same-submission>
+$CLI code-review list --project <id>
+$CLI code-review show <taskId>
+$CLI code-review cancel <taskId>
+$CLI code-review retry <taskId>
+$CLI code-review mail-retry <taskId>
+$CLI code-review upload-report --file review.md --title "代码审查报告" --project <id>
+```
+
+省略 `--project` 时读取项目凭据中的 projectId；项目级 key 不能覆盖为另一个项目。
+submit 返回异步任务，不代表扫描完成。用 show 查询到完成状态与 reportId 后，才能声称报告已归档。
+所有报告在 CDS《代码审查报告》栏目留档，邮件失败不影响已归档的结果，也不重新扫描代码。
 
 ## Agent 使用任务调度口令的标准流程
 
