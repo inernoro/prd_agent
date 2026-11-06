@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { InstanceSwitcher } from '../../web/src/components/InstanceSwitcher.js';
 import {
   AGENT_MISSION_CAPABILITY_BINDINGS,
   AGENT_MISSION_CATEGORY_DEFINITIONS,
@@ -21,6 +24,11 @@ import {
 } from '../../web/src/lib/agent-onboarding.js';
 
 describe('CDS Agent 接入口令', () => {
+  it('主备目录请求完成前不误报未配置', () => {
+    const html = renderToStaticMarkup(createElement(InstanceSwitcher));
+    expect(html).not.toContain('请在仓库根目录 cds-instances.json 登记主备地址。');
+    expect(html).toContain('aria-busy="true"');
+  });
   it('默认短接入能从零创建项目，认证页面仍保留系统范围', () => {
     expect(initialAgentConnectSelection([], createAgentMissionContext('projects'))).toEqual({ kind: 'new' });
     expect(initialAgentConnectSelection([{ id: 'cds-self' }], createAgentMissionContext('projects'))).toEqual({ kind: 'new' });
@@ -229,9 +237,11 @@ describe('CDS Agent 接入口令', () => {
     //    + user-project-access（人类账号项目授权，仅系统所有者，2026-10-03）
     //    + cds-system-diagnostics（主线程诊断与按需 CPU 采样，只读观测，2026-10-08）
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(59);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(60);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'identity-connections'))
       .toMatchObject({ access: 'public', risk: 'write', agentUse: 'direct' });
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'instance-catalog'))
+      .toMatchObject({ risk: 'read-only', agentUse: 'direct', cliFamily: 'instance' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'preview-address'))
       .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'user-project-access'))
