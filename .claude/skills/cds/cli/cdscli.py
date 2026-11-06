@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.20.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -135,6 +135,8 @@ def _repository_identity(raw: str) -> str:
     try:
         url = urllib.parse.urlparse(raw if "://" in raw else "https://" + raw)
         host, path = (scp.group(1), scp.group(2)) if scp else (url.hostname or "", url.path)
+        if not scp and url.port and (url.scheme, url.port) not in (("http", 80), ("https", 443), ("ssh", 22)):
+            host += ":" + str(url.port)
         path = path.strip("/")
         if path.lower().endswith(".git"):
             path = path[:-4]

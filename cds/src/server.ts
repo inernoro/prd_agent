@@ -33,6 +33,7 @@ import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
+import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
@@ -1570,6 +1571,9 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (method === 'POST' && path === '/api/identity-connections') return true;
+  if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && /^\/api\/identity-connections\/[^/]+\/ack$/.test(path)) return true;
   if (isPublicAgentSetupRoute(method, path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-status$/.test(path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
@@ -4597,6 +4601,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
   app.use('/api', createIdentityRouter({ stateService: deps.stateService, authService: authService ?? undefined }));
+  if (authService) app.use('/api', createIdentityConnectionsRouter({ stateService: deps.stateService, authService }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
