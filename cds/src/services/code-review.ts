@@ -143,7 +143,8 @@ export class CodeReviewService {
     const task = this.get(id); this.assertOwned(task);
     if (!['failed', 'cancelled'].includes(task.status) || this.active.has(id)) throw new CodeReviewError(409, '仅可重试已停止的失败或取消任务');
     if (task.reportId) throw new CodeReviewError(409, '报告已归档，请单独重试邮件投递');
-    task.status = 'queued'; task.phase = '等待重试'; task.error = undefined; task.engineTaskId = undefined;
+    task.status = 'queued'; task.phase = '等待重试'; task.error = undefined;
+    if (!task.engineCompleted) task.engineTaskId = undefined;
     task.progress.scannedFiles = 0;
     await this.save(task); if (this.deps.autoStart !== false) void this.pump(); return task;
   }
@@ -216,6 +217,7 @@ export class CodeReviewService {
           await this.save(current);
         }, audit: async (e) => this.audit(id, e) });
       task = this.get(id); this.checkActive(task, controller.signal);
+      task.engineCompleted = true; task.engineTaskId = result.engineTaskId;
       task.phase = '汇总静态检查与 AI 分析'; await this.save(task);
       const staticResult = await runCodeReviewStaticAnalysis({ zip, signal: controller.signal });
       result.findings.push(...staticResult.findings); result.notes.push(...staticResult.notes);

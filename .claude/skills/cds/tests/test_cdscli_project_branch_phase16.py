@@ -522,6 +522,8 @@ class _FakeHttpResponse:
 def test_smoke_uses_api_primary_preview_url(monkeypatch):
     """smoke 只探测 CDS 返回的主入口，不用 slug 或 host 重建。"""
     monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.setenv("MAP_AI_ACCESS_KEY", "app-key-not-real")
+    monkeypatch.setenv("MAP_AI_USER", "fixture-user")
     monkeypatch.setattr(
         cdscli,
         "_call_safe",
@@ -597,6 +599,8 @@ def test_smoke_rejects_api_html_200(monkeypatch):
 def test_smoke_accepts_any_valid_l2_candidate(monkeypatch):
     """L2 候选是替代关系；保留失败探测，但任一合法端点即可通过。"""
     monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.setenv("MAP_AI_ACCESS_KEY", "app-key-not-real")
+    monkeypatch.setenv("MAP_AI_USER", "fixture-user")
     monkeypatch.delenv("AI_ACCESS_KEY", raising=False)
     monkeypatch.setattr(
         cdscli,
@@ -610,6 +614,10 @@ def test_smoke_accepts_any_valid_l2_candidate(monkeypatch):
     )
 
     def fake_urlopen(req, timeout=10):
+        if req.full_url.endswith("/api/users?pageSize=1"):
+            assert req.get_header("X-ai-access-key") == "app-key-not-real"
+            assert req.get_header("X-ai-impersonate") == "fixture-user"
+            return _FakeHttpResponse(b'{"items":[]}', "application/json")
         if req.full_url.endswith("/api/health"):
             return _FakeHttpResponse(b'{"status":"ok"}', "application/json")
         return _FakeHttpResponse(
@@ -623,10 +631,11 @@ def test_smoke_accepts_any_valid_l2_candidate(monkeypatch):
 
     assert code == 0, out
     payload = parse_ok(out)
-    assert payload["data"]["passed"] == "2/2"
+    assert payload["data"]["passed"] == "3/3"
     assert payload["data"]["layers"] == [
         {"layer": "L1", "pass": True},
         {"layer": "L2", "pass": True},
+        {"layer": "L3", "pass": True, "skipped": False},
     ]
     l2_probes = [
         probe for probe in payload["data"]["probes"]
