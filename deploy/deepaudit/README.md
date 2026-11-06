@@ -32,4 +32,6 @@ CDS 的新归属卷使用 nocopy，初始根目录由 root 持有。镜像启动
 
 管理员登录验收（2026-11-06）：Fork `64f1cfaa0fe5ca97ee3f98ac65a19800b2f4c51b` 通过 [Branch Image CI](https://github.com/inernoro/DeepAudit/actions/runs/42228895599)，CDS 已正式运行此版本。网页登录支持固定别名 `admin`，映射到独立真人账户 `cds-admin@example.com`；密码仍由原认证接口校验并签发 JWT。该账户与 `CDS_SERVICE_EMAIL/PASSWORD` 的机器账户相互独立。管理员外层 Basic、应用账户及项目密钥管理保管字段使用部署方指定密码，文档和仓库不记录密码。后端七项真实认证/路由测试、三项策略测试、覆盖层五项安装边界测试、前端类型检查及镜像构建通过。
 
-真实 Chromium 使用正常表单登录后，通过网页创建 `prd_agent（视觉验收）` 项目并展示 `https://github.com/inernoro/prd_agent.git`；桌面项目页、仪表盘及 390px 手机布局实读通过，未触发审查执行。静态管理页匿名返回 401，匿名项目 API 返回 401，Agent 与注册 API 返回 404，机器账号正常登录且身份与真人账户不同。当前项目页无控制台错误；上游仪表盘仍尝试查询关闭的 `/api/v1/agent-tasks/?limit=10` 并收到预期 404，页面其余数据正常显示，没有脚本异常。上游默认首页仍展示 Agent 欢迎界面；动态验证后端保持关闭。业务审查入口与执行结论以 CDS 任务和归档报告为准。
+静态界面最终验收（2026-11-06）：Fork `50de6003765cd7da3932d7ceaa23f7d98a37573c` 通过 [Branch Image CI](https://github.com/inernoro/DeepAudit/actions/runs/42230759130)，CDS 已正式运行此版本。仅 `Dockerfile.cds` 开启 `VITE_CDS_STATIC_REVIEW=true`：主页跳转项目列表，Agent 导航、快捷操作与任务卡片隐藏，Agent 深链跳转项目列表，仪表盘和普通审计任务页不请求动态接口；普通上游构建在 flag 为 false 或缺省时保留原行为。七项双模式页面/路由测试、前端类型检查与构建通过，并作为 CDS 镜像构建必经步骤。被覆盖的上游页面均以固定提交和逐文件 SHA-256 保护，安装器拒绝覆盖操作员已有修改。
+
+真实 Chromium 在正式 URL 使用 `admin` 正常表单登录后进入项目列表，显示 `https://github.com/inernoro/prd_agent.git`，并逐页访问仪表盘和普通审计页；脚本异常、控制台错误、失败 HTTP 请求和 Agent 请求均为零。390px 手机布局无横向溢出。此次仅建立视觉验收项目，未触发审查执行。静态管理页匿名返回 401，匿名项目 API 返回 401，Agent 与注册 API 返回 404，机器账号正常登录且身份与真人账户不同。业务审查执行和结论以 CDS 任务与归档报告为准。
