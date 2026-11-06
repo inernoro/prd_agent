@@ -29,3 +29,7 @@ CDS 的新归属卷使用 nocopy，初始根目录由 root 持有。镜像启动
 线上验收记录（2026-11-06）：独立项目 `f9cd30ef1696` 的 `feat/cds-integration` 已运行 Fork 提交 `b300c10092289c27da98519a2094004c35d529d2`，对应 [Branch Image CI](https://github.com/inernoro/DeepAudit/actions/runs/42203069192) 成功。管理员入口由 CDS 实际返回为 [DeepAudit 管理页](https://cds-integration-feat-deepaudit.miduo.org)，匿名 401、正常认证 HTML 与 6 个入口资源读取通过。API 服务账号登录、模型目录与真实对话探针成功；已知问题 ZIP 样本完成 1/1 个支持文件分析，29.8 秒得到 10 项发现，涵盖五个维度，源码未执行。该记录证明部署和分析路径，当前项目结论以 CDS 归档报告的覆盖说明为准。
 
 通过 CDS 官方原地重启接口验收后，已完成任务全文、10 条发现的校验和、ZIP 元数据及 ZIP 内文件清单、服务账号模型与 1ms 请求间隔配置均保持一致；容器与端口保持原值。实际后端进程 `/proc/1/status` 的 UID/GID 均为 10001。重新部署后的内部端口可能变化，调用方应从 CDS 运行时资源读取实际地址。
+
+管理员登录验收（2026-11-06）：Fork `64f1cfaa0fe5ca97ee3f98ac65a19800b2f4c51b` 通过 [Branch Image CI](https://github.com/inernoro/DeepAudit/actions/runs/42228895599)，CDS 已正式运行此版本。网页登录支持固定别名 `admin`，映射到独立真人账户 `cds-admin@example.com`；密码仍由原认证接口校验并签发 JWT。该账户与 `CDS_SERVICE_EMAIL/PASSWORD` 的机器账户相互独立。管理员外层 Basic、应用账户及项目密钥管理保管字段使用部署方指定密码，文档和仓库不记录密码。后端七项真实认证/路由测试、三项策略测试、覆盖层五项安装边界测试、前端类型检查及镜像构建通过。
+
+真实 Chromium 使用正常表单登录后，通过网页创建 `prd_agent（视觉验收）` 项目并展示 `https://github.com/inernoro/prd_agent.git`；桌面项目页、仪表盘及 390px 手机布局实读通过，未触发审查执行。静态管理页匿名返回 401，匿名项目 API 返回 401，Agent 与注册 API 返回 404，机器账号正常登录且身份与真人账户不同。当前项目页无控制台错误；上游仪表盘仍尝试查询关闭的 `/api/v1/agent-tasks/?limit=10` 并收到预期 404，页面其余数据正常显示，没有脚本异常。上游默认首页仍展示 Agent 欢迎界面；动态验证后端保持关闭。业务审查入口与执行结论以 CDS 任务和归档报告为准。
