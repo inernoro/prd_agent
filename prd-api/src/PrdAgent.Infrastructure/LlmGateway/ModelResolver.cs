@@ -1356,7 +1356,7 @@ public class ModelResolver : IModelResolver
             halfOpen = null;
             foreach (var offering in available.Where(x => x.Enabled && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
                     x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
-                .OrderBy(x => x.Priority).ThenBy(x => x.Id))
+                .OrderBy(x => x.Priority).ThenBy(x => x.Id, StringComparer.Ordinal))
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
                 if (candidate is null || !await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
@@ -1815,7 +1815,7 @@ public class ModelResolver : IModelResolver
         foreach (var offering in available.Where(x => x.Enabled
             && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
                 x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
-            .OrderBy(x => x.Priority).ThenBy(x => x.Id))
+            .OrderBy(x => x.Priority).ThenBy(x => x.Id, StringComparer.Ordinal))
         {
             var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
             if (candidate is null || !await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))

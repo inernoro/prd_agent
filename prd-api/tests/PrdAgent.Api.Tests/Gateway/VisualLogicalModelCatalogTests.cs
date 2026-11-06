@@ -234,7 +234,7 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.Equal("image2-offering", recoveryMetadata.OfferingId);
             await Insert("llmgw_model_offerings", new GatewayModelOffering
             {
-                Id = "later-probe", LogicalModelId = "image2", TargetId = "unneeded-later-target", Protocol = "openai", Priority = int.MaxValue,
+                Id = "é-later-probe", LogicalModelId = "image2", TargetId = "unneeded-later-target", Protocol = "openai", Priority = 100,
                 HealthStatus = ModelHealthStatus.Unavailable, LastFailedAt = DateTime.UtcNow.AddHours(-1),
             });
             await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 2));
