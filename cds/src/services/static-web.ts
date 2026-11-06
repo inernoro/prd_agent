@@ -185,6 +185,8 @@ export class StaticWebService {
         if (!upstream) { res.status(503).send('接口服务暂不可用，请稍后重试'); return; }
         const proxy = http.request({ hostname: upstream.host, port: upstream.port, path: req.originalUrl,
           method: req.method, headers: { ...req.headers, host: req.headers.host || `${upstream.host}:${upstream.port}` } }, reply => {
+          reply.once('aborted', () => res.destroy());
+          reply.once('error', () => res.destroy());
           res.writeHead(reply.statusCode || 502, reply.headers); reply.pipe(res);
         });
         proxy.on('error', () => { if (!res.headersSent) res.status(502).send('接口连接暂不可用，请稍后重试'); else res.destroy(); });

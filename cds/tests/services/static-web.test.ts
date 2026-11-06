@@ -109,4 +109,47 @@ describe('非容器静态预览实际HTTP行为', () => {
       expect((await fetch(`http://127.0.0.1:${port}/api/items`)).status).toBe(503);
     } finally { await proxy.close(); await new Promise<void>(resolve => backend.close(() => resolve())); }
   });
+
+  it('后端在响应头与首块之后中断时，真实下游响应及时中断而不悬挂', async () => {
+    let upstreamReply: http.ServerResponse | undefined;
+    const backend = http.createServer((_req, res) => {
+      upstreamReply = res;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: first-chunk\n\n');
+    });
+    await new Promise<void>(resolve => backend.listen(0, '127.0.0.1', resolve));
+    const backendPort = (backend.address() as import('node:net').AddressInfo).port;
+    const proxy = new StaticWebService({ rootDirectory: path.join(directory, 'aborted-proxy'),
+      exportFiles: async (_i, _p, destination) => bundle(destination),
+      resolveUpstream: () => ({ host: '127.0.0.1', port: backendPort }) });
+    let request: http.ClientRequest | undefined;
+    try {
+      const runtime = await proxy.prepare({ identity, serviceName: 'aborted-proxy', image, revision,
+        config: { imagePath: '/dist', proxyRules: [{ pathPrefix: '/api', profileId: 'backend' }] }, env: {}, check: () => {} });
+      const port = await proxy.start(runtime, 0);
+      const outcome = await new Promise<{ result: string; status?: number; body: string }>(resolve => {
+        let body = '';
+        let status: number | undefined;
+        request = http.get(`http://127.0.0.1:${port}/api/stream`, response => {
+          status = response.statusCode;
+          response.on('data', chunk => {
+            body += chunk.toString();
+            if (body.includes('data: first-chunk\n\n')) upstreamReply!.destroy();
+          });
+          response.once('aborted', () => resolve({ result: 'aborted', status, body }));
+          response.once('end', () => resolve({ result: 'ended', status, body }));
+          response.on('error', () => resolve({ result: 'aborted', status, body }));
+        });
+        request.on('error', () => resolve({ result: 'request-error', status, body }));
+        request.setTimeout(1_000, () => {
+          resolve({ result: 'client-deadline', status, body });
+          request!.destroy();
+        });
+      });
+      expect(outcome).toEqual({ result: 'aborted', status: 200, body: 'data: first-chunk\n\n' });
+    } finally {
+      request?.destroy(); upstreamReply?.destroy();
+      await proxy.close(); await new Promise<void>(resolve => backend.close(() => resolve()));
+    }
+  });
 });
