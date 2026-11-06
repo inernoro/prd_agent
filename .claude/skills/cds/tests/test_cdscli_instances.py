@@ -356,7 +356,9 @@ def test_bundled_standby_without_its_grant_never_uses_primary_key(workspace, mon
     assert not (root / '.cds/active-instance.json').exists()
 
 
-def test_created_project_locator_survives_instance_rollback_and_retry(workspace, monkeypatch):
+@pytest.mark.parametrize("issued", [False, True])
+@pytest.mark.parametrize("named", [False, True])
+def test_created_project_locator_survives_instance_rollback_and_retry(workspace, monkeypatch, issued, named):
     root, _ = workspace
     save('https://primary.example', 'a', 'primary-secret')
     previous = {n: (root / '.cds' / n).read_bytes() for n in ('credentials.json', 'connection.json')}
@@ -364,29 +366,39 @@ def test_created_project_locator_survives_instance_rollback_and_retry(workspace,
     monkeypatch.setattr(cli, '_load_user_credential', lambda host: '')
     monkeypatch.setattr(cli, 'try_self_heal_project_credential', lambda *a: None)
     calls = []
+    project_reads = []
     def request(method, path, **kwargs):
         calls.append((method, path))
+        headers = {k.lower(): v for k, v in {**cli._auth_headers(), **(kwargs.get('extra_headers') or {})}.items()}
+        assert 'primary-secret' not in headers.values()
+        if method == 'GET' and path == '/api/projects/created':
+            project_reads.append(headers)
+            if issued and len(project_reads) == 2:
+                return 0, {'error': 'timeout'}, {}
         if path == '/api/bootstrap-access-requests':
             return 201, {'requestId': 'create', 'pollToken': 'poll'}, {}
         if path.endswith('/bootstrap-access-requests/create'):
             return 200, {'status': 'approved', 'authorizationKey': 'cdsg_once'}, {}
         if method == 'POST' and path == '/api/projects':
-            return 201, {'project': {'id': 'created', 'name': 'Demo', 'slug': 'demo', 'gitRepoUrl': 'https://github.com/acme/app.git'}}, {}
+            return 201, {'project': {'id': 'created', **({'name': 'Demo'} if named else {}), 'slug': 'demo', 'gitRepoUrl': 'https://github.com/acme/app.git'},
+                         **({'issuedProjectKey': {'plaintext': 'cdsp_target'}} if issued else {})}, {}
         if path == '/api/projects/created/access-requests':
             return 201, {'requestId': 'restore', 'pollToken': 'poll'}, {}
         if path.endswith('/access-requests/restore'):
             return 200, {'status': 'approved', 'authorizationKey': 'cdsp_target'}, {}
         return 200, {'id': 'created', 'gitRepoUrl': 'https://github.com/acme/app.git'}, {}
     monkeypatch.setattr(cli, '_request', request)
-    argv = ('instance', 'connect', 'standby', '--new-project', '--create-project', 'Demo', '--slug', 'demo')
+    argv = ('instance', 'connect', 'standby', '--new-project', '--create-project', 'Demo')
     code, output = run(*argv)
-    assert code == 2 and 'created' in output
+    assert code != 0, output
     assert all(json.loads((root / '.cds' / n).read_text()) == json.loads(b) for n, b in previous.items())
     assert json.loads((root / '.cds/active-instance.json').read_text()) == {'id': 'primary'}
     code, output = run(*argv)
     assert code == 0, output
     assert calls.count(('POST', '/api/projects')) == 1
     assert calls.count(('POST', '/api/bootstrap-access-requests')) == 1
-    assert ('POST', '/api/projects/created/access-requests') in calls
+    assert (('POST', '/api/projects/created/access-requests') in calls) is (not issued)
     assert json.loads((root / '.cds/credentials.json').read_text())['projectId'] == 'created'
     assert 'primary-secret' not in output and 'cdsp_target' not in output
+    assert 'projectKey' not in json.loads((root / '.cds/connection.json').read_text())
+    assert (root / '.cds/instance-credentials.json').stat().st_mode & 0o777 == 0o600

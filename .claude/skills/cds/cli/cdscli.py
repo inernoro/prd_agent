@@ -166,6 +166,9 @@ def _origin_repository() -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+_CONNECTION_FIELDS = ("version", "host", "projectId", "repository", "projectName", "projectSlug", "creationName", "creationSlug")
+
+
 def _connection_context() -> dict[str, Any]:
     try:
         value = json.loads(Path(_workspace_root(), ".cds", "connection.json").read_text())
@@ -239,10 +242,9 @@ def _save_local_credentials(*, host: str, project_id: str | None = None,
             json.dump(context, f, ensure_ascii=False, indent=2)
         os.chmod(context_path + ".tmp", 0o600)
         os.replace(context_path + ".tmp", context_path)
-        if not project_key and not bootstrap_key:
-            # A created project can outlive failed key delivery. Keep its keyless
-            # locator per host even when instance connect restores the old pointer.
-            _archive_instance_credentials({**payload, **context})
+        # Creation and key delivery can both succeed before a later check fails.
+        # Preserve matching creation metadata alongside this host's credentials.
+        _archive_instance_credentials({**payload, **context})
         _exclude_local_path(root, "/.cds/connection.json")
     return target
 
@@ -4318,7 +4320,9 @@ def cmd_connect(args: argparse.Namespace) -> None:
     if new_project and known.get("projectId") and str(known.get("host") or "").rstrip("/") == host:
         same_repository = bool(context.get("repository")) and context["repository"] == _repository_identity(git_url)
         # 旧连接没有名称时先自动补定位信息；明确换名/换slug的任务仍走新建审批。
-        if same_repository and not known.get("projectName") and local.get("projectKey"):
+        if (same_repository and not known.get("projectName") and local.get("projectKey")
+                and str(local.get("host") or "").rstrip("/") == host
+                and local.get("projectId") == known["projectId"]):
             previous_host = os.environ.get("CDS_HOST")
             os.environ["CDS_HOST"] = host
             try:
@@ -10046,11 +10050,15 @@ def _archive_instance_credentials(payload: dict[str, Any]) -> None:
     store = _read_instance_private("instance-credentials.json", {"version": 1, "hosts": {}})
     if not isinstance(store.get("hosts"), dict):
         die("实例凭据格式无效，未覆盖原有授权", code=1)
+    existing = store["hosts"].get(host, {})
+    if isinstance(existing, dict) and payload.get("projectId") and existing.get("projectId") == payload["projectId"]:
+        # Legacy pointers omit creation metadata; archiving one must not erase it.
+        payload = {**{k: existing[k] for k in _CONNECTION_FIELDS if k in existing}, **payload}
     store["hosts"][host] = payload
     _write_instance_private("instance-credentials.json", store)
 
 
-def _instance_credentials(entry: dict[str, Any]) -> dict[str, Any] | None:
+def _instance_credentials(entry: dict[str, Any], *, archived_only: bool = False) -> dict[str, Any] | None:
     store = _read_instance_private("instance-credentials.json", {"hosts": {}})
     current = _read_local_credentials_file()
     # Legacy credential remains usable until the next successful connect archives it.
@@ -10058,7 +10066,7 @@ def _instance_credentials(entry: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(hosts, dict):
         die("本地实例凭据格式无效，请恢复 instance-credentials.json", code=1)
     candidate = hosts.get(entry["url"])
-    if current.get("host") and _credential_origin(current["host"]) == entry["url"]:
+    if not archived_only and current.get("host") and _credential_origin(current["host"]) == entry["url"]:
         candidate = current
     if not isinstance(candidate, dict) or not candidate.get("host"):
         return None
@@ -10274,9 +10282,13 @@ def cmd_instance_connect(args: argparse.Namespace) -> None:
     args.host = entry["url"]
     try:
         if getattr(args, "new_project", False) and getattr(args, "create_project", None):
-            pending = _instance_credentials(entry) or {}
-            if pending.get("projectId") and not pending.get("projectKey") and not pending.get("bootstrapKey"):
-                _write_instance_private("connection.json", pending)
+            pending = _instance_credentials(entry, archived_only=True) or {}
+            if pending.get("projectId") and not pending.get("bootstrapKey"):
+                # Restore a coherent target-host pair for cmd_connect. Never put a
+                # secret in the keyless locator or combine it with another host's key.
+                _write_instance_private("connection.json", {k: pending[k] for k in _CONNECTION_FIELDS if k in pending})
+                _write_instance_private("credentials.json", {k: pending[k] for k in
+                    ("version", "host", "projectId", "projectKey") if k in pending})
         # Existing command exits through ok(); collect that result before checking/selection.
         connect_code = 0
         with _nested_call():

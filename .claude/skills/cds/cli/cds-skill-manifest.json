@@ -16,7 +16,7 @@
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "5e884bd43388003ae9183c24c8556e4471b28880af009d9bac1554861b55bd21",
+    "cds/cli/cdscli.py": "25b352bbb2790fd33644a51caf2052d19d0371b2011b10c920774d9f2d6d87b6",
     "cds/reference/acceptance-reports.md": "dfc32f7d6975a357edc234ae3d95aec7a196c8b4f8ec54353c215d586b1b92ea",
     "cds/reference/api.md": "0941f2a742bc1b4f42add9973fbfd1d559dd4d57acb74e5011dd23593019921b",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -35,7 +35,7 @@
     "cds/tests/test_cdscli_deployment_version.py": "9acc9773bba8fe93d1b57781c1b8e6a142820e284d4629e6168ee7ecf20883bf",
     "cds/tests/test_cdscli_env.py": "1556d0403f60d6f6695f33f96b52db324ce62fe18d4e8fd20ad8c4906c8bfa99",
     "cds/tests/test_cdscli_extra_services.py": "0e211964883584e7168db2662668e681287e688cfd1dc5519cb6f75d9e1679ce",
-    "cds/tests/test_cdscli_instances.py": "1467fdf69ec19b82f5dc4c516fd6f1b0eabb19c984c9d5fa9a358659a27dceca",
+    "cds/tests/test_cdscli_instances.py": "fcd172ff1653a894e026cdbbcc1c3bd624074c175bbcbc33aab0bb9ed236de4d",
     "cds/tests/test_cdscli_load_advice.py": "3cd55f0a0fd53a1b01b36c4a9c968008d360d013a2a0db3c13c02d140359c883",
     "cds/tests/test_cdscli_profile_prebuilt_modes.py": "a269f862607531666f6a667dcd49ce2bbf889e23879851b325b611c3f10dc27b",
     "cds/tests/test_cdscli_project_branch_phase16.py": "db90f35ac6b99db15ba5e2324b0d945203f797e145a67f00d8decdece8b69b47",
@@ -63,5 +63,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-06T10:49:21.492743+00:00"
+  "generatedAt": "2026-11-06T11:02:49.578754+00:00"
 }
