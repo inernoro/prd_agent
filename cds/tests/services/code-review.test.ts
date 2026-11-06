@@ -150,6 +150,11 @@ describe('代码审查任务完整闭环', () => {
     const first = await submit({ idempotencyKey: 'transport-first' });
     const second = await submit({ idempotencyKey: 'transport-second' });
     const third = await submit({ idempotencyKey: 'transport-third' });
+    // 同毫秒提交仍应按原提交顺序执行，不能因列表反转先处理第三单。
+    for (const task of [first, second, third]) {
+      task.createdAt = '2026-01-01T00:00:00.000Z';
+      await state.putCodeReviewTask(task);
+    }
     const originals = [second, third].map(({ id, sourceHash, inputKey }) => ({ id, sourceHash, inputKey }));
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {
