@@ -9,11 +9,22 @@ import { maskSecretsInObject, maskSecrets } from './secret-masker.js';
 import { CDS_AGENT_CAPABILITY_DEFINITIONS } from '../shared/agent-mission-registry.js';
 import { runCodeReviewStaticAnalysis } from './code-review-static.js';
 import { resolveCodeReviewEngineConfig } from './code-review-settings.js';
+import { CodeReviewUpstreamHttpError } from './code-review-audit.js';
 
 export class CodeReviewError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 const terminal = new Set(['completed', 'failed', 'cancelled']);
+function isTransportFailure(error: unknown): boolean {
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 4; depth++) {
+    if (current instanceof CodeReviewUpstreamHttpError) return [502, 503, 504].includes(current.status);
+    if (current instanceof TypeError && current.message === 'fetch failed') return true;
+    const { code, cause } = current as { code?: unknown; cause?: unknown };
+    if (typeof code === 'string' && ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET'].includes(code)) return true;
+    current = cause;
+  }
+  return false;
+}
 const clean = (value: unknown) => {
   let message = maskSecrets(String(value));
   for (const key of ['CDS_DEEPAUDIT_TOKEN', 'CDS_DEEPAUDIT_PASSWORD', 'CDS_REVIEW_SMTP_PASSWORD']) {
@@ -56,6 +67,7 @@ export class CodeReviewService {
   private started = false;
   private submissions = Promise.resolve();
   private engineProbeTimer?: ReturnType<typeof setTimeout>;
+  private dispatchNotBefore = 0;
   constructor(readonly deps: CodeReviewDeps) {}
   private engine() {
     if (this.deps.engine) return this.deps.engine;
@@ -199,16 +211,21 @@ export class CodeReviewService {
         if (this.stopped) return;
         const next = this.list().reverse().find((t) => t.ownerScope === this.deps.ownerScope && !terminal.has(t.status));
         if (!next) return;
+        const cooldownMs = this.dispatchNotBefore - Date.now();
+        if (cooldownMs > 0) { this.probeAfter(cooldownMs); return; }
         // A branch update can temporarily remove its runtime between tasks. Keep those tasks intact.
         const engine = this.engine();
         if (!engine) {
-          this.engineProbeTimer = setTimeout(() => { this.engineProbeTimer = undefined; void this.pump(); }, 5000);
-          this.engineProbeTimer.unref();
+          this.probeAfter(5000);
           return;
         }
         await this.execute(next.id, engine);
       }
     } finally { this.pumping = false; }
+  }
+  private probeAfter(delayMs: number) {
+    this.engineProbeTimer = setTimeout(() => { this.engineProbeTimer = undefined; void this.pump(); }, delayMs);
+    this.engineProbeTimer.unref();
   }
   private async execute(id: string, engine: Pick<CodeReviewEngine, 'run'>) {
     const controller = new AbortController(); this.active.set(id, controller);
@@ -271,7 +288,11 @@ export class CodeReviewService {
     } catch (error) {
       const task = this.get(id);
       if (this.stopped) return; // persisted upstream id lets the next process resume safely
-      if (task.status !== 'cancelled') { task.status = 'failed'; task.phase = '审查失败'; task.error = clean(error instanceof Error ? error.message : error); await this.save(task); }
+      if (task.status !== 'cancelled') {
+        task.status = 'failed'; task.phase = '审查失败'; task.error = clean(error instanceof Error ? error.message : error); await this.save(task);
+        // A stale serving-runtime URL can still be marked running during replacement. Avoid draining its queue.
+        if (!controller.signal.aborted && isTransportFailure(error)) this.dispatchNotBefore = Date.now() + 30_000;
+      }
     } finally { clearTimeout(timeout); this.active.delete(id); }
   }
   private checkActive(task: CodeReviewTask, signal: AbortSignal) {

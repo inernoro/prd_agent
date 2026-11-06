@@ -13,6 +13,7 @@ import { buildPipelineOverview, buildPipelineSeries } from '../../src/services/a
 import type { CodeReviewEngineResult } from '../../src/services/code-review-engine.js';
 import type { CodeReviewTask } from '../../src/shared/code-review.js';
 import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
+import { CodeReviewUpstreamHttpError } from '../../src/services/code-review-audit.js';
 
 describe('代码审查任务完整闭环', () => {
   let dir: string, state: StateService, service: CodeReviewService, server: Server | undefined;
@@ -140,6 +141,54 @@ describe('代码审查任务完整闭环', () => {
       service.stop(); available = true;
       await vi.advanceTimersByTimeAsync(15_000);
       expect(service.get(queued.id).status).toBe('queued'); expect(run).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { service.stop(); vi.useRealTimers(); }
+  });
+  it('连续连接失败每次冷却30秒，保护后续原任务并在恢复后继续而不自动重试失败单', async () => {
+    run.mockRejectedValueOnce(new TypeError('fetch failed', { cause: Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' }) }))
+      .mockRejectedValueOnce(new CodeReviewUpstreamHttpError('deepaudit.task_status', 503));
+    const first = await submit({ idempotencyKey: 'transport-first' });
+    const second = await submit({ idempotencyKey: 'transport-second' });
+    const third = await submit({ idempotencyKey: 'transport-third' });
+    const originals = [second, third].map(({ id, sourceHash, inputKey }) => ({ id, sourceHash, inputKey }));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      await service.pump();
+      expect(service.get(first.id).status).toBe('failed');
+      for (const original of originals) expect(service.get(original.id)).toMatchObject({ ...original, status: 'queued' });
+      await service.pump(); await vi.advanceTimersByTimeAsync(29_999);
+      expect(run).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(service.get(second.id).status).toBe('failed'));
+      expect(service.get(third.id)).toMatchObject({ ...originals[1], status: 'queued' });
+      expect(run).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() => expect(service.get(third.id).status).toBe('completed'));
+      expect(service.get(third.id)).toMatchObject(originals[1]);
+      expect(run.mock.calls.map(([input]) => input.taskId)).toEqual([first.id, second.id, third.id]);
+    } finally { service.stop(); vi.useRealTimers(); }
+  });
+  it.each([
+    new Error('ZIP 含不安全路径'),
+    new CodeReviewUpstreamHttpError('deepaudit.task_status', 403),
+    new Error('DeepAudit 审查引擎执行失败：模型任务未完成'),
+  ])('文件、权限或模型任务失败不触发网络冷却：%s', async (error) => {
+    run.mockRejectedValueOnce(error);
+    const failed = await submit({ idempotencyKey: 'isolated-error' });
+    const next = await submit({ idempotencyKey: 'next-after-isolated-error' });
+    await service.pump();
+    expect(service.get(failed.id).status).toBe('failed'); expect(service.get(next.id).status).toBe('completed');
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+  it('停止服务清理连接故障冷却，不再派发队列', async () => {
+    run.mockRejectedValueOnce(new CodeReviewUpstreamHttpError('deepaudit.task_status', 504));
+    const failed = await submit({ idempotencyKey: 'cooldown-stop-first' });
+    const queued = await submit({ idempotencyKey: 'cooldown-stop-queued' });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      await service.pump(); expect(service.get(failed.id).status).toBe('failed');
+      service.stop(); await vi.advanceTimersByTimeAsync(60_000);
+      expect(service.get(queued.id).status).toBe('queued'); expect(run).toHaveBeenCalledTimes(1);
       expect(vi.getTimerCount()).toBe(0);
     } finally { service.stop(); vi.useRealTimers(); }
   });
