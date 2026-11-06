@@ -41,8 +41,17 @@ interface HtmlTagToken {
   isComment?: boolean;
 }
 
+const SVG_HTML_BREAKOUT_TAGS = new Set([
+  'b', 'big', 'blockquote', 'body', 'br', 'center', 'code', 'dd', 'div', 'dl', 'dt', 'em', 'embed',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'hr', 'i', 'img', 'li', 'listing', 'menu', 'meta',
+  'nobr', 'ol', 'p', 'pre', 'ruby', 's', 'small', 'span', 'strong', 'strike', 'sub', 'sup',
+  'table', 'tt', 'u', 'ul', 'var',
+]);
+
 export function* iterateHtmlTags(html: string): Generator<HtmlTagToken> {
   let rawTextElement = '';
+  // Track only SVG roots and their standard HTML integration points, not a second DOM tree.
+  const svgContexts: string[] = [];
   for (let index = 0; index < html.length; index += 1) {
     if (html[index] !== '<' || index + 1 >= html.length) continue;
     if (!rawTextElement && html.startsWith('<!--', index)) {
@@ -78,15 +87,32 @@ export function* iterateHtmlTags(html: string): Generator<HtmlTagToken> {
         quote = current;
       } else if (current === '>') {
         const attributes = html.slice(attributesStart, cursor);
+        const lowerName = name.toLowerCase();
+        const breaksOutOfSvg = isClosing
+          ? lowerName === 'br' || lowerName === 'p'
+          : SVG_HTML_BREAKOUT_TAGS.has(lowerName)
+            || (lowerName === 'font' && ['color', 'face', 'size'].some((key) => hasHtmlAttribute(attributes, key)));
+        if (svgContexts.at(-1) === 'svg' && breaksOutOfSvg) {
+          while (svgContexts.at(-1) === 'svg') svgContexts.pop();
+        }
+        const namespace = svgContexts.at(-1) === 'svg' ? 'svg' : 'html';
         const token = {
           name,
           attributes,
           start: index,
           end: cursor + 1,
           isClosing,
-          isSelfClosing: attributes.trimEnd().endsWith('/'),
+          // HTML style ignores the slash; a foreign SVG style can really be empty.
+          isSelfClosing: attributes.trimEnd().endsWith('/') && !(lowerName === 'style' && namespace === 'html'),
         };
         yield token;
+        if (isClosing) {
+          const contextIndex = svgContexts.lastIndexOf(lowerName);
+          if (contextIndex >= 0) svgContexts.length = contextIndex;
+        } else if (!token.isSelfClosing && (lowerName === 'svg'
+          || (namespace === 'svg' && /^(?:foreignobject|desc|title)$/.test(lowerName)))) {
+          svgContexts.push(lowerName);
+        }
         if (isClosing && name.toLowerCase() === rawTextElement) rawTextElement = '';
         else if (!isClosing && !token.isSelfClosing && /^(?:script|style|textarea|title)$/i.test(name)) {
           rawTextElement = name.toLowerCase();

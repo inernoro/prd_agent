@@ -14,6 +14,7 @@ import {
   computePublicArtifactRevision,
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
+import { extractVisibleHtmlText } from '../src/quality/html.js';
 import {
   buildPlatformRules,
   buildReviewMessage,
@@ -487,9 +488,10 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     const html = '<!doctype html><html lang="zh-CN"><head><title>产品说明</title><style>:root{--brand:#123456;--space:16px}body{font-family:Inter, sans-serif}@media(max-width:720px){main{padding:8px}}</style></head><body><header></header><main><h1 id="top">产品说明</h1><h2>核心能力</h2><img src="data:image/png;base64,AA==" alt="示意图"><a href="#top">返回</a></main><footer></footer></body></html>';
 
     const first = buildGeneratedArtifactFiles(html);
-    const second = buildGeneratedArtifactFiles(html);
+    const second = buildGeneratedArtifactFiles(html.replace('<style>', '<style/>'));
 
     expect(second).toEqual(first);
+    expect(extractVisibleHtmlText(html.replace('<style>', '<style/>'))).toBe(extractVisibleHtmlText(html));
     const decoded = Object.fromEntries(first.map((file) => [
       file.path,
       JSON.parse(Buffer.from(file.contentBase64, 'base64').toString('utf8')),
@@ -798,7 +800,7 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
   it('allows interaction only through files in the verified package and keeps network egress closed', () => {
     // The real failed report used these local download helpers, not CSS url() resources.
     const downloadScript = '<script>const blob = new Blob(["report"]); const url = URL.createObjectURL(blob); URL.revokeObjectURL(url);</script>';
-    const html = `<!doctype html><html><head><link rel="stylesheet" href="assets/app.css"><style>.cover{background-image:url("assets/cover.png")}</style></head><body><button id="next">下一页</button><img src="assets/cover.png"><svg><rect fill="url(assets/paint.svg#paint)" filter="url(#shade)"/></svg><script src="assets/app.js"></script>${downloadScript}</body></html>`;
+    const html = `<!doctype html><html><head><link rel="stylesheet" href="assets/app.css"><style>.cover{background-image:url("assets/cover.png")}</style></head><body><button id="next">下一页</button><img src="assets/cover.png"><svg><style/><rect fill="url(assets/paint.svg#paint)" filter="url(#shade)"/></svg><script src="assets/app.js"></script>${downloadScript}</body></html>`;
     const paths = ['index.html', 'assets/app.css', 'assets/app.js', 'assets/cover.png', 'assets/paint.svg'];
     const hardened = hardenVerifiedPackageHtml(html, paths);
 
@@ -821,6 +823,7 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
       html.replace('<body>', '<body style="background:url(assets/missing.png)">'),
       html.replace('assets/paint.svg#paint', 'assets/missing.svg#paint'),
       html.replace('url(#shade)', 'url(https://tracker.example/filter.svg#shade)'),
+      html.replace('<head>', '<head><style/>body{background:url(assets/missing.png)}'),
     ]) {
       expect(() => hardenVerifiedPackageHtml(unsafe, paths)).toThrowError(
         expect.objectContaining({ code: 'design_output_not_self_contained' }),

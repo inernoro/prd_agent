@@ -418,7 +418,7 @@ function hardenHtmlWithFactRetention(
       if (tag.isClosing && styleContentStart !== undefined) {
         cssSources.push(html.slice(styleContentStart, tag.start));
         styleContentStart = undefined;
-      } else if (!tag.isClosing) {
+      } else if (!tag.isClosing && !tag.isSelfClosing && styleContentStart === undefined) {
         styleContentStart = tag.end;
       }
     }
