@@ -403,6 +403,7 @@ export function ReviewDetail({ task, now, pending, onAction, onClose }: {
   const elapsed = Math.max(0, Math.floor((now - new Date(task.createdAt).getTime()) / 1000));
   return <article aria-label="审查任务详情" className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-5">
     <div className="flex items-start justify-between gap-3"><div className="min-w-0 space-y-2"><TaskStatus task={task} /><h3 className="break-words text-base font-semibold leading-6">{task.title || task.sourceName}</h3></div>{onClose ? <Button variant="ghost" size="icon" aria-label="关闭任务详情" onClick={onClose}><X /></Button> : null}</div>
+    <p className="break-words text-sm text-muted-foreground">{task.sourceName}{task.commitSha ? ` · ${task.commitSha.slice(0, 12)}` : ''}</p>
     <p className="text-sm leading-6">{reviewTaskExplanation(task)}</p>
     {task.sourceType !== 'report' ? <div aria-live="polite" className={`space-y-2 rounded-lg p-3 ${coverage.kind === 'partial' || coverage.kind === 'unknown' ? 'bg-warn-soft' : 'bg-muted/30'}`}>
       <p className="text-sm font-medium">{coverage.text}</p>
