@@ -308,15 +308,78 @@ def test_original_command_waits_for_admin_then_resumes_without_new_approval(work
 @pytest.mark.parametrize("status,state", [(401, ""), (503, ""), (200, "unknown"), (200, "credential-unusable")])
 def test_unusable_saved_identity_never_downgrades_to_anonymous(workspace, monkeypatch, status, state):
     monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "cdsu_expired")
+    clock = [0.0]
+    monkeypatch.setattr(cdscli.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
     calls = []
     def fake_request(method, url, **kwargs):
         calls.append((method, url))
+        if status == 503:
+            clock[0] = 601.0
         return status, {"state": state}, {}
     monkeypatch.setattr(cdscli, "_request", fake_request)
     code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
     assert code == 2
     assert calls == [("GET", "/api/projects/p/access-status")]
     assert not (workspace / ".cds/credentials.json").exists()
+
+
+@pytest.mark.parametrize("transient", [0, 503])
+def test_original_recovery_wait_survives_transient_read_failure(workspace, monkeypatch, transient):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_original")
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "cdsu_original")
+    states = iter([(200, {"state": "account-disabled"}), (transient, {}), (200, {"state": "ready"})])
+    reads = 0
+    calls = []
+    def fake_request(method, url, **kwargs):
+        nonlocal reads
+        calls.append((method, url))
+        assert method == "GET"
+        if url.endswith("/access-status"):
+            status, body = next(states)
+            return status, body, {}
+        assert url == "/api/projects/p"
+        reads += 1
+        return (401 if reads == 1 else 200), {"id": "p"}, {}
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
+    code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
+    assert code == 0, output
+    assert sum(url.endswith("/access-status") for _, url in calls) == 3
+    assert json.loads((workspace / ".cds/credentials.json").read_text())["projectKey"] == "cdsp_original"
+    assert "cdsp_original" not in output and "cdsu_original" not in output
+
+
+@pytest.mark.parametrize("user_status", [200, 401])
+def test_unknown_local_key_recovery_uses_saved_identity_without_anonymous_fallback(workspace, monkeypatch, user_status):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_unknown")
+    path = workspace / ".cds/credentials.json"
+    before = path.read_bytes()
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "cdsu_saved")
+    calls = []
+    def fake_request(method, url, extra_headers=None, **kwargs):
+        calls.append((method, url))
+        if url.endswith("/access-status"):
+            if extra_headers == {"x-ai-access-key": "cdsp_unknown"}:
+                return 401, {}, {}
+            assert extra_headers == {"x-ai-access-key": "cdsu_saved"}
+            return user_status, {"state": "ready"}, {}
+        if url == "/api/identity/project-credentials":
+            assert method == "POST" and user_status == 200
+            return 201, {"plaintext": "cdsp_recovered"}, {}
+        assert method == "GET" and url == "/api/projects/p"
+        return 401, {}, {}
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
+    assert code == (0 if user_status == 200 else 2), output
+    assert not any("access-requests" in url or "bootstrap" in url for _, url in calls)
+    if user_status == 200:
+        assert json.loads(path.read_text())["projectKey"] == "cdsp_recovered"
+        assert sum(method == "POST" for method, _ in calls) == 1
+    else:
+        assert path.read_bytes() == before
+        assert all(method == "GET" for method, _ in calls)
+    assert all(secret not in output for secret in ["cdsp_unknown", "cdsu_saved", "cdsp_recovered"])
 
 
 def test_suspended_ticket_waits_without_creating_another_approval(workspace, monkeypatch):

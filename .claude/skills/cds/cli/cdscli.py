@@ -48,7 +48,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.7"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.8"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3992,7 +3992,7 @@ def _restore_auth_env(previous: dict[str, str | None]) -> None:
 
 
 def _wait_for_original_project_access(project_id: str, proof: str, deadline: float,
-                                      interval: int) -> bool:
+                                      interval: int) -> bool | None:
     """只读等待原身份/原授权恢复；绝不改成匿名申请或签发替代权限。"""
     last_progress = 0.0
     waited = False
@@ -4001,6 +4001,15 @@ def _wait_for_original_project_access(project_id: str, proof: str, deadline: flo
             "GET", f"/api/projects/{urllib.parse.quote(project_id)}/access-status",
             timeout=10, extra_headers={"x-ai-access-key": proof}, fatal_network_errors=False,
         )
+        if status == 0 or 500 <= status < 600:
+            now = time.monotonic()
+            if now - last_progress >= 10:
+                print("网络或服务短暂不可用，保留原身份并继续等待恢复。", file=sys.stderr)
+                last_progress = now
+            time.sleep(interval)
+            continue
+        if status == 401 and proof.startswith("cdsp_"):
+            return None  # 未识别的旧项目凭据；调用方必须先核验已保存的用户身份。
         if status != 200 or not isinstance(body, dict):
             die(f"原访问身份暂时无法核对（HTTP {status}），未创建匿名申请、未覆盖凭据。", code=2)
         state = body.get("state")
@@ -4094,6 +4103,11 @@ def cmd_connect(args: argparse.Namespace) -> None:
             except SystemExit:
                 _restore_auth_env(previous)
                 raise
+            if waited is None:
+                if not saved_user_cred:
+                    _restore_auth_env(previous)
+                    die("原项目凭据无法识别，且没有已保存的用户身份；未匿名申请或覆盖凭据。", code=2)
+                local_key = ""
             if waited:
                 check_status, check_body, _ = _request(
                     "GET", f"/api/projects/{urllib.parse.quote(project_id)}", timeout=10,
@@ -4112,7 +4126,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
                     _restore_auth_env(previous)
                     die(f"恢复后原项目暂时无法核对（HTTP {check_status}），未改变凭据。", code=2)
             print("原项目凭据已失效，正在申请恢复原项目访问；不会重新建项目。", file=sys.stderr)
-        else:
+        if not local_key:
             if saved_user_cred:
                 try:
                     _wait_for_original_project_access(project_id, saved_user_cred, recovery_deadline, interval_seconds)
