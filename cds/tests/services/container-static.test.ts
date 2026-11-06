@@ -21,16 +21,17 @@ afterEach(async () => {
 
 function fixture(options: { startup?: ObservationStreamExecutor; logs?: ContainerLogStreamHub } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-native-static-')); directories.push(directory);
+  let content = 'version-A';
   const image = `sha256:${'a'.repeat(64)}`, revision = 'b'.repeat(40), id = 'c'.repeat(64);
   const shell = new MockShellExecutor(); let exporterName = '';
   const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
   shell.addResponsePattern(/docker image inspect.*json .Id/, () => ok(JSON.stringify([image, null])));
-  shell.addResponsePattern(/^docker create .*/, match => { exporterName = /--name '([^']+)'/.exec(match[0])![1]; return ok(id); });
+  shell.addResponsePattern(/^docker create .*/, match => { const name = /--name (?:'([^']+)'|([^\s]+))/.exec(match[0])!; exporterName = name[1] || name[2]; return ok(id); });
   shell.addResponsePattern(/^docker inspect.*json .Mounts/, () => ok(JSON.stringify([id, `/${exporterName}`, image, 0, 'created', [], null])));
   shell.addResponsePattern(/^docker cp .*/, match => {
     const destination = /'([^']+)'$/.exec(match[0])![1];
     fs.mkdirSync(path.join(destination, 'assets'));
-    fs.writeFileSync(path.join(destination, 'index.html'), '<html><script type="module" src="/assets/index-12345678.js"></script></html>');
+    fs.writeFileSync(path.join(destination, 'index.html'), `<html><main>${content}</main><script type="module" src="/assets/index-12345678.js"></script></html>`);
     fs.writeFileSync(path.join(destination, 'assets/index-12345678.js'), 'export default 42');
     return ok();
   });
@@ -45,7 +46,7 @@ function fixture(options: { startup?: ObservationStreamExecutor; logs?: Containe
     prebuiltImage: true, staticWeb: { imagePath: '/usr/share/nginx/html' } };
   const service: ServiceState = { profileId: 'web', containerName: 'cds-branch-web', hostPort: 0, status: 'building' };
   const entry = { id: 'branch', projectId: 'project', worktreePath: directory, githubCommitSha: revision, services: { web: service } } as BranchEntry;
-  return { manager, shell, config, profile, service, entry };
+  return { manager, shell, config, profile, service, entry, setContent: (value: string) => { content = value; } };
 }
 
 describe('正常部署入口的非容器前端', () => {
@@ -218,6 +219,54 @@ describe('正常部署入口的非容器前端', () => {
     const before = f.shell.commands.length;
     expect(await f.manager.getEnv(f.service.containerName)).toContain('没有独立容器环境变量');
     expect(f.shell.commands.length).toBe(before);
+  });
+
+  it('静态站A冷停后重新部署B，再停启必须保持当前B身份与内容', async () => {
+    const f = fixture();
+    await f.manager.runService(f.entry, f.profile, f.service);
+    const original = f.service.staticWeb!;
+    f.service.status = 'running';
+    await f.manager.stopRuntimeGroup(f.service);
+    f.service.status = 'stopped';
+    f.setContent('version-B');
+    await f.manager.runService(f.entry, f.profile, f.service);
+    const current = f.service.staticWeb!;
+    expect(current.id).not.toBe(original.id);
+    expect(await (await fetch(`http://127.0.0.1:${f.service.hostPort}/`)).text()).toContain('version-B');
+    f.service.status = 'running';
+    await f.manager.stopRuntimeGroup(f.service);
+    f.service.status = 'stopped';
+    expect(await f.manager.restartServiceInPlace(f.service.containerName)).toBe(true);
+    expect(await (await fetch(`http://127.0.0.1:${f.service.hostPort}/`)).text()).toContain('version-B');
+    expect(f.service.staticWeb!.id).toBe(current.id);
+    expect(fs.existsSync(original.rootDirectory)).toBe(true);
+  });
+
+  it('已冷停静态站切回真实容器创建路径后，不以旧静态身份拒绝容器启动', async () => {
+    const exec = vi.fn(async (_command, options) => { options.onData('container-ready'); return { stdout: '', stderr: '', exitCode: 0 }; });
+    const f = fixture({ startup: { exec } as unknown as ObservationStreamExecutor });
+    await f.manager.runService(f.entry, f.profile, f.service);
+    await f.manager.stopRuntimeGroup(f.service);
+    f.service.status = 'stopped';
+    f.shell.addResponsePattern(/^docker pull /, () => ({ stdout: 'pulled', stderr: '', exitCode: 0 }));
+    f.shell.addResponsePatternFirst(/docker inspect.*json .Mounts/, () => ({
+      stdout: JSON.stringify(['c'.repeat(64), `/${f.service.containerName}`, `sha256:${'a'.repeat(64)}`, 0, 'created', [], { '/tmp': '' }]), stderr: '', exitCode: 0,
+    }));
+    f.shell.addResponsePattern(/^docker run /, () => ({ stdout: 'c'.repeat(64), stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/^docker network /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/^docker start /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/^docker inspect --format="/, () => ({ stdout: 'running|0', stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/^docker logs --timestamps --tail /, () => ({ stdout: 'container-output', stderr: '', exitCode: 0 }));
+    vi.useFakeTimers();
+    try {
+      const deploying = f.manager.runService(f.entry, { ...f.profile, dockerImage: `repo/web:sha-${'b'.repeat(40)}`, staticWeb: undefined, cacheMounts: [] }, f.service);
+      await vi.advanceTimersByTimeAsync(7000);
+      await deploying;
+    } finally { vi.useRealTimers(); }
+    expect(f.service.staticWeb).toBeUndefined();
+    expect(await f.manager.waitForStartupSignal(f.service.containerName, 'container-ready', undefined, 1)).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(await f.manager.getLogs(f.service.containerName)).toBe('container-output');
   });
 
   it('选择静态模式才启用文件托管，切回 express 时没有静态运行声明', () => {

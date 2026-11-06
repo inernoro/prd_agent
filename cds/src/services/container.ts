@@ -715,6 +715,10 @@ export class ContainerService {
   private staticSites?: StaticWebService;
   private readonly stoppedStaticSites = new Map<string, { runtime: import('../types.js').StaticWebRuntime; port: number }>();
 
+  private forgetStoppedStaticSiteName(name: string): void {
+    for (const [id, site] of this.stoppedStaticSites) if (site.runtime.serviceName === name) this.stoppedStaticSites.delete(id);
+  }
+
   private staticWebService(): StaticWebService {
     return this.staticSites ??= new StaticWebService({
       rootDirectory: path.join(this.config.repoRoot, '.cds-static-previews'),
@@ -1668,6 +1672,7 @@ export class ContainerService {
         check();
         service.hostPort = await this.staticWebService().start(runtime, service.hostPort);
         check();
+        this.forgetStoppedStaticSiteName(service.containerName);
       } catch (error) {
         await this.staticWebService().stop(runtime.id);
         await this.staticWebService().discard(runtime);
@@ -2257,7 +2262,10 @@ export class ContainerService {
       const acknowledgedId = result.stdout.trim();
       if (mustCreateBeforeStart && !/^[a-f0-9]{64}$/.test(acknowledgedId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
       if (mustCreateBeforeStart) await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
-      if (/^[a-f0-9]{64}$/.test(acknowledgedId)) service.containerId = acknowledgedId;
+      if (/^[a-f0-9]{64}$/.test(acknowledgedId)) {
+        service.containerId = acknowledgedId;
+        this.forgetStoppedStaticSiteName(service.containerName);
+      }
       // 2026-06-24（Bugbot Medium「Fallback mode not recorded」）：在 runService 内
       // 权威钉住**实际**启动用的 deploy mode —— profile 此刻已是回退后的真实 profile
       // （极速版镜像缺失自动回退源码时 = static）。否则上层用未变的 effectiveProfile.

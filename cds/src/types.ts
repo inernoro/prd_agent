@@ -1463,6 +1463,7 @@ export interface DeploymentVersionProfile {
   artifactImage: string;
   /** 版本创建时的完整CI输入范围；历史重放不得借当前配置缩窄等价证明。 */
   buildScope?: string[];
+  staticWeb?: StaticWebConfig;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   reusable: boolean;
   reuseBlockedReason?: string;
