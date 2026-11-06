@@ -8,8 +8,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/inernoro/prd_agent/releases/latest"><img src="https://img.shields.io/github/v/release/inernoro/prd_agent?style=flat-square&amp;label=release&amp;color=174d43" alt="Latest published release" /></a>
+  <a href="https://github.com/inernoro/prd_agent/releases"><img src="https://img.shields.io/github/downloads/inernoro/prd_agent/total?style=flat-square&amp;label=downloads&amp;color=cc6c4b" alt="Total GitHub release asset downloads" /></a>
+  <a href="https://github.com/inernoro/prd_agent/commits/main/"><img src="https://img.shields.io/github/last-commit/inernoro/prd_agent/main?style=flat-square&amp;label=last%20commit&amp;color=635a4f" alt="Latest commit on main" /></a>
+</p>
+
+<p align="center">
+  <a href="#build--operations">Status</a> &nbsp; / &nbsp;
   <a href="#what-you-can-do">Capabilities</a> &nbsp; / &nbsp;
   <a href="#how-it-fits-together">Architecture</a> &nbsp; / &nbsp;
+  <a href="https://github.com/inernoro/prd_agent/releases/latest">Download</a> &nbsp; / &nbsp;
   <a href="#get-started">Get started</a> &nbsp; / &nbsp;
   <a href="#go-deeper">Documentation</a>
 </p>
@@ -19,6 +27,28 @@
 PRD Agent brings product documents, knowledge, defects, reports, reviews, and visual work into a shared workspace. Its supporting infrastructure handles model requests and branch previews, so teams can work with both the product context and the systems that turn it into action.
 
 This repository includes the application, its web and desktop clients, the LLM gateway, Cloud Dev Suite, and the automation that supports them.
+
+## Build & operations
+
+The badges below update from GitHub Actions and an external HTTP probe. Build and audit badges follow `main`; each badge opens its underlying workflow or service.
+
+| Signal | Current result | What it measures |
+| :--- | :--- | :--- |
+| Application CI | [![Application CI](https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/inernoro/prd_agent/actions/workflows/ci.yml?query=branch%3Amain) | The application CI workflow, including its applicable build, test, and contract checks. |
+| CDS build & tests | [![CDS build and tests](https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds.yml?branch=main&style=flat-square&label=CDS)](https://github.com/inernoro/prd_agent/actions/workflows/cds.yml?query=branch%3Amain) | CDS build, tests, and workflow-defined verification. |
+| Server image | [![Server image publication](https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/server-deploy.yml?branch=main&style=flat-square&label=server%20image)](https://github.com/inernoro/prd_agent/actions/workflows/server-deploy.yml?query=branch%3Amain) | Building and publishing the server container image. |
+| Branch image | [![Branch image build](https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/branch-image.yml?branch=main&style=flat-square&label=branch%20image)](https://github.com/inernoro/prd_agent/actions/workflows/branch-image.yml?query=branch%3Amain) | The branch image workflow and its build artifacts. |
+| Public web entry | [![Public web HTTP reachability](https://img.shields.io/website?url=https%3A%2F%2Fmap.ebcone.net&style=flat-square&label=web%20HTTP&up_message=reachable&down_message=unreachable)](https://map.ebcone.net) | An external HTTP reachability probe of the web entry. |
+| External watchdog | [![External watchdog execution](https://img.shields.io/github/actions/workflow/status/inernoro/cds-independent-status/watchdog.yml?branch=main&style=flat-square&label=watchdog)](https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml) | The independent heartbeat-check job, scheduled every five minutes. |
+| External port audit | [![Daily external port audit](https://img.shields.io/github/actions/workflow/status/inernoro/prd_agent/cds-external-port-audit.yml?branch=main&style=flat-square&label=port%20audit)](https://github.com/inernoro/prd_agent/actions/workflows/cds-external-port-audit.yml) | The scheduled daily external-port audit. |
+
+Workflow badges show the latest matching run. The web probe measures HTTP reachability; workflow details include run timestamps and execution logs. Schedules and badge refreshes can be delayed.
+
+<p align="center">
+  <a href="https://github.com/inernoro/prd_agent/actions">All workflow runs</a> &nbsp; / &nbsp;
+  <a href="https://github.com/inernoro/cds-independent-status/actions/workflows/watchdog.yml">Heartbeat check history</a> &nbsp; / &nbsp;
+  <a href="https://github.com/inernoro/prd_agent/actions/workflows/preview-acceptance.yml">Preview acceptance runs</a>
+</p>
 
 ## What you can do
 
@@ -98,6 +128,10 @@ flowchart TB
 | Agent SDK sidecar | Supporting Agent SDK service | [`claude-sdk-sidecar/`](claude-sdk-sidecar/) |
 
 ## Get started
+
+### Download the desktop app
+
+The [latest release](https://github.com/inernoro/prd_agent/releases/latest) includes installers for **macOS, Windows, and Linux**. Open the release assets to choose your operating system and architecture. See [all releases](https://github.com/inernoro/prd_agent/releases) for previous versions and published assets.
 
 ### Run the development stack
 
