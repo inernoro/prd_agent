@@ -645,9 +645,9 @@ function readInspectionSourceContext(values) {
   const sourceCommit = String(source.stdout).trim();
   const productCommit = String(product.stdout).trim();
   if (values.STABLE_SMOKE_CDS_PRODUCT_COMMIT && values.STABLE_SMOKE_CDS_PRODUCT_COMMIT !== productCommit) throw new Error('CDS 声明版本与业务工作区不一致');
-  const diff = command('git', ['diff', '--name-only', `${productCommit}..${sourceCommit}`]);
+  const diff = command('git', ['diff', '--name-only', '-z', `${productCommit}..${sourceCommit}`]);
   if (diff.status !== 0) throw new Error('无法核对巡检源码与业务运行版本');
-  return validateInspectionSourceContext({ sourceCommit, productCommit, changedFiles: String(diff.stdout || '').split(/\r?\n/).filter(Boolean) });
+  return validateInspectionSourceContext({ sourceCommit, productCommit, changedFiles: String(diff.stdout || '').split('\0').filter(Boolean) });
 }
 
 function runtimeCommits(values) {
