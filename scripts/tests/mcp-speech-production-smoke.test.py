@@ -77,6 +77,132 @@ def runner(fixture):
     return smoke.SpeechSmoke(BASE, COMMIT, http=fixture.http, session=lambda *_: ("rsa", CANARY, {"detail": CANARY}))
 
 
+class AccessFixture(Fixture):
+    def __init__(self):
+        super().__init__()
+        self.username = "stsmk_prod"
+        self.grants = ["access", "authz.manage", "unrelated.read"]
+        self.catalog = list(smoke.SPEECH_PERMISSIONS)
+        self.snapshot = {"userId": "user_own", "username": "stsmk_prod", "systemRoleKey": "qa-inspector",
+                         "permAllow": ["unrelated.read", CANARY], "permDeny": ["unrelated.delete"]}
+        self.changed_snapshot = False
+        self.changed_commit = False
+        self.snapshot_reads = self.version_reads = 0
+        self.updates = []
+
+    def http(self, base, path, token="", method="GET", body=None, **kwargs):
+        if path == "/api/version":
+            self.version_reads += 1
+            if self.changed_commit and self.version_reads > 1:
+                self.calls.append((method, path, body))
+                return {**response(), "payload": {"commit": "e" * 40}}
+        if path == "/api/authz/me":
+            self.calls.append((method, path, body))
+            return response({"userId": "user_own", "username": self.username, "isRoot": False, "effectivePermissions": self.grants})
+        if path == "/api/authz/catalog":
+            self.calls.append((method, path, body))
+            return response({"items": [{"key": key} for key in self.catalog]})
+        if path == "/api/authz/users/user_own/authz":
+            self.calls.append((method, path, body))
+            if method == "PUT":
+                self.updates.append(body)
+                self.snapshot = {**self.snapshot, **body}
+                self.grants = self.grants + [key for key in smoke.SPEECH_PERMISSIONS if key not in self.grants]
+            else:
+                self.snapshot_reads += 1
+                if self.changed_snapshot and self.snapshot_reads > 1:
+                    return response({**self.snapshot, "permAllow": [*self.snapshot["permAllow"], "concurrent.change"]})
+            return response(self.snapshot.copy())
+        return super().http(base, path, token, method, body, **kwargs)
+
+
+def access_runner(fixture, enabled=True):
+    return smoke.SpeechSmoke(BASE, COMMIT, http=fixture.http, session=lambda *_: ("rsa", CANARY, {}), prepare_access=enabled)
+
+
+class OwnAccessPreparationTests(unittest.TestCase):
+    def test_default_does_not_read_or_modify_user_authorization_snapshot(self):
+        fixture = AccessFixture()
+        access_runner(fixture, enabled=False).readiness()
+        self.assertFalse(fixture.updates)
+        self.assertFalse(any(path.startswith("/api/authz/users/") for _, path, _ in fixture.calls))
+
+    def test_explicit_grant_adds_only_own_speech_permissions_and_preserves_other_state(self):
+        fixture = AccessFixture()
+        before = fixture.snapshot.copy()
+        check = access_runner(fixture)
+        self.assertTrue(check.readiness())
+        self.assertEqual(len(fixture.updates), 1)
+        update = fixture.updates[0]
+        self.assertEqual(set(update), {"systemRoleKey", "permAllow", "permDeny"})
+        self.assertEqual(update["systemRoleKey"], before["systemRoleKey"])
+        self.assertEqual(update["permDeny"], before["permDeny"])
+        self.assertEqual(update["permAllow"], before["permAllow"] + smoke.SPEECH_PERMISSIONS)
+        self.assertNotIn("super", update["permAllow"])
+        self.assertTrue(all(path == "/api/authz/users/user_own/authz" for method, path, _ in fixture.calls if method == "PUT"))
+        report = check.finish()
+        self.assertEqual(report["accessPreparation"], {"grantedOwnSpeechAccess": True, "permissions": {"read": True, "generate": True, "manage": True}})
+        self.assertNotIn(CANARY, json.dumps(report))
+        self.assertNotIn("qa-inspector", json.dumps(report))
+
+    def test_existing_effective_permissions_are_idempotent_without_put(self):
+        fixture = AccessFixture()
+        fixture.grants += smoke.SPEECH_PERMISSIONS
+        check = access_runner(fixture)
+        self.assertTrue(check.readiness())
+        self.assertFalse(fixture.updates)
+        self.assertFalse(check.report["accessPreparation"]["grantedOwnSpeechAccess"])
+
+    def test_explicit_speech_deny_is_not_removed(self):
+        fixture = AccessFixture()
+        fixture.snapshot["permDeny"].append("mcp-speech.generate")
+        with self.assertRaisesRegex(smoke.CheckFailure, "explicit_speech_deny"):
+            access_runner(fixture).readiness()
+        self.assertFalse(fixture.updates)
+        self.assertIn("mcp-speech.generate", fixture.snapshot["permDeny"])
+
+    def test_wrong_real_username_is_rejected_before_snapshot_access(self):
+        fixture = AccessFixture()
+        fixture.username = "another_user"
+        with self.assertRaisesRegex(smoke.CheckFailure, "identity_mismatch"):
+            access_runner(fixture).readiness()
+        self.assertFalse(fixture.updates)
+        self.assertEqual(fixture.snapshot_reads, 0)
+
+    def test_missing_manage_authority_or_catalog_permission_never_writes(self):
+        for change in ("authority", "catalog"):
+            fixture = AccessFixture()
+            if change == "authority":
+                fixture.grants.remove("authz.manage")
+            else:
+                fixture.catalog.remove("mcp-speech.manage")
+            with self.subTest(change=change), self.assertRaises(smoke.CheckFailure):
+                access_runner(fixture).readiness()
+            self.assertFalse(fixture.updates)
+
+    def test_snapshot_identity_cannot_redirect_an_update_to_other_user(self):
+        fixture = AccessFixture()
+        fixture.snapshot["userId"] = "someone_else"
+        with self.assertRaisesRegex(smoke.CheckFailure, "snapshot_identity_mismatch"):
+            access_runner(fixture).readiness()
+        self.assertFalse(fixture.updates)
+
+    def test_changed_snapshot_or_commit_stops_before_put(self):
+        for change in ("snapshot", "commit"):
+            fixture = AccessFixture()
+            setattr(fixture, "changed_" + change, True)
+            with self.subTest(change=change), self.assertRaises(smoke.CheckFailure):
+                access_runner(fixture).readiness()
+            self.assertFalse(fixture.updates)
+
+    def test_noncanonical_role_is_not_silently_normalized_by_put(self):
+        fixture = AccessFixture()
+        fixture.snapshot["systemRoleKey"] = "LegacyRole"
+        with self.assertRaisesRegex(smoke.CheckFailure, "snapshot_not_preservable"):
+            access_runner(fixture).readiness()
+        self.assertFalse(fixture.updates)
+
+
 class ProductionSpeechTests(unittest.TestCase):
     def test_missing_feature_is_not_a_green_readiness_and_never_writes(self):
         fixture = Fixture(missing=True)

@@ -5,6 +5,7 @@ name: LLM Gateway Production Preflight
 #
 # 业务只读预检：发布前确认 MAP 与网关可达、凭据可用、commit 符合预期、MAP 没有绕过网关的直连调用。
 # 不部署；默认不改业务数据。只有显式 speech_check=run 会创建短语音任务和自有预设。
+# speech_prepare_access 默认关闭，显式开启时只为 stsmk_prod 自身补齐三项语音权限。
 # RSA 认证会创建短会话并对齐专用巡检身份权限。
 # 正式发布仍是 fast.sh --commit X && exec_dep.sh --commit X。
 
@@ -32,6 +33,11 @@ on:
           - "off"
           - "readiness"
           - "run"
+      speech_prepare_access:
+        description: "Explicitly allow preparing only stsmk_prod's own three speech permissions; never removes denies or changes roles. Requires readiness or run."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -57,6 +63,7 @@ jobs:
       STABLE_SMOKE_USER: ${{ vars.STABLE_SMOKE_PROD_USER }}
       LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
       SPEECH_CHECK: ${{ github.event.inputs.speech_check || 'off' }}
+      SPEECH_PREPARE_ACCESS: ${{ github.event.inputs.speech_prepare_access || 'false' }}
 
     steps:
       - name: Checkout
@@ -80,6 +87,11 @@ jobs:
           map_base="$(printf '%s' "${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}" | xargs)"
           gw_base="$(printf '%s' "${INPUT_GW_BASE:-$DEFAULT_GW_BASE}" | xargs)"
           expect_commit="$(printf '%s' "${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}" | xargs)"
+
+          if [ "$SPEECH_PREPARE_ACCESS" = true ] && [ "$SPEECH_CHECK" = off ]; then
+            echo "ERROR: speech_prepare_access requires an explicit readiness or run check." >&2
+            exit 1
+          fi
 
           # Validate the trusted production origin before either check signs a request.
           if [ "$SPEECH_CHECK" != off ]; then
@@ -128,6 +140,9 @@ jobs:
           map_base="${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}"
           expect_commit="${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}"
           speech_args=(--mode "$SPEECH_CHECK")
+          if [ "$SPEECH_PREPARE_ACCESS" = true ]; then
+            speech_args+=(--prepare-access)
+          fi
           if [ "$SPEECH_CHECK" = run ]; then
             speech_args+=(--allow-production-run)
           fi

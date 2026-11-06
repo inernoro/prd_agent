@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production speech checks. Readiness is read-only; run needs an explicit opt-in.
+"""Production speech checks. Readiness is read-only unless prepare-access is explicit.
 
 RSA credentials stay in the Actions runner. Reports use an explicit allowlist:
 never write authentication responses, tickets, signatures, tokens, key material,
@@ -28,6 +28,7 @@ SPEC = importlib.util.spec_from_file_location("speech_preflight_auth", ROOT / "l
 AUTH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AUTH)
 SPEECH_SCOPES = ["mcp-speech:read", "mcp-speech:generate"]
+SPEECH_PERMISSIONS = ["mcp-speech.read", "mcp-speech.generate", "mcp-speech.manage"]
 PROTOCOLS = {"openai", "doubao-tts"}
 MIMES = {"mp3": "audio/mpeg", "wav": "audio/wav", "aac": "audio/aac", "flac": "audio/flac",
          "opus": "audio/ogg", "ogg_opus": "audio/ogg", "pcm": "audio/pcm"}
@@ -102,10 +103,11 @@ def safe_browser_page(url, base):
 
 
 class SpeechSmoke:
-    def __init__(self, base, expected, mode="readiness", *, http=request, session=None, wait_seconds=180, profile_id="", inventory=False):
+    def __init__(self, base, expected, mode="readiness", *, http=request, session=None, wait_seconds=180, profile_id="", inventory=False, prepare_access=False):
         self.base, self.expected, self.mode = base.rstrip("/"), expected.lower(), mode
         self.http, self.session = http, session or AUTH._stable_smoke_session
         self.wait_seconds, self.profile_id, self.inventory = wait_seconds, profile_id, inventory
+        self.prepare_access = prepare_access
         self.token = ""
         self.profiles = []
         self.report = {"schemaVersion": 1, "mode": mode, "expectedCommit": self.expected,
@@ -144,6 +146,8 @@ class SpeechSmoke:
         if not self.check("signed_map_session", bool(self.token), failure="signed_session_unavailable"):
             return False
         auth = self.probe("owner_authorization", "/api/authz/me")
+        if self.prepare_access:
+            auth = self.prepare_own_speech_access(auth)
         grants = auth.get("effectivePermissions", []) if auth else []
         grants = grants if isinstance(grants, list) else []
         super_user = "super" in grants
@@ -167,6 +171,58 @@ class SpeechSmoke:
         if self.inventory:
             self.gateway_inventory()
         return all(item["ok"] for item in self.report["checks"] if item["required"])
+
+    def prepare_own_speech_access(self, auth):
+        """Only the three registered speech permissions, only on the verified caller's own account."""
+        summary = {"grantedOwnSpeechAccess": False}
+        self.report["accessPreparation"] = summary
+        self.require("access_prepare_verified_commit", self.report.get("actualCommit") == self.expected
+                     and any(x["name"] == "production_commit" and x["ok"] for x in self.report["checks"]), "access_prepare_commit_not_verified")
+        uid = auth.get("userId") if isinstance(auth, dict) else None
+        valid_uid = isinstance(uid, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", uid) and uid != "root"
+        self.require("access_prepare_own_identity", bool(valid_uid) and auth.get("username") == "stsmk_prod"
+                     and auth.get("isRoot") is not True, "access_prepare_identity_mismatch")
+        grants = auth.get("effectivePermissions", [])
+        self.require("access_prepare_authority", isinstance(grants, list) and "authz.manage" in grants, "access_prepare_authority_missing")
+        catalog = self.probe("access_prepare_permission_catalog", "/api/authz/catalog")
+        registered = {x.get("key") for x in (catalog or {}).get("items", []) if isinstance(x, dict) and isinstance(x.get("key"), str)}
+        self.require("access_prepare_registered_permissions", set(SPEECH_PERMISSIONS).issubset(registered), "access_prepare_permission_not_registered")
+        path = "/api/authz/users/" + urllib.parse.quote(uid, safe="") + "/authz"
+        snapshot = self.probe("access_prepare_own_snapshot", path)
+        self.require("access_prepare_snapshot_identity", bool(snapshot) and snapshot.get("userId") == uid
+                     and snapshot.get("username") == "stsmk_prod", "access_prepare_snapshot_identity_mismatch")
+        allow, deny, role = snapshot.get("permAllow"), snapshot.get("permDeny"), snapshot.get("systemRoleKey")
+        # The official PUT normalizes these fields. Reject noncanonical snapshots instead of altering unrelated state.
+        def preserved_list(value):
+            return isinstance(value, list) and all(isinstance(x, str) and x and x == x.strip() for x in value) and len(set(value)) == len(value)
+        self.require("access_prepare_snapshot_preservable", preserved_list(allow) and preserved_list(deny)
+                     and (role is None or isinstance(role, str) and bool(role) and role == role.strip().lower()), "access_prepare_snapshot_not_preservable")
+        self.require("access_prepare_no_explicit_speech_deny", not set(deny).intersection(SPEECH_PERMISSIONS), "access_prepare_explicit_speech_deny")
+        summary["permissions"] = {key.rsplit(".", 1)[1]: key in grants for key in SPEECH_PERMISSIONS}
+        if set(SPEECH_PERMISSIONS).issubset(grants):
+            self.check("access_prepare_already_granted", True)
+            return auth
+        # Do not overwrite a concurrently edited role or permission snapshot.
+        current = self.probe("access_prepare_snapshot_rechecked", path)
+        fields = ("userId", "username", "systemRoleKey", "permAllow", "permDeny")
+        self.require("access_prepare_snapshot_unchanged", bool(current) and all(current.get(key) == snapshot.get(key) for key in fields), "access_prepare_snapshot_changed")
+        version = self.get("/api/version", token="")
+        version_payload = version.get("payload")
+        self.require("access_prepare_commit_rechecked", version["status"] == 200 and isinstance(version_payload, dict)
+                     and version_payload.get("commit") == self.expected, "access_prepare_commit_changed")
+        updated_allow = list(allow) + [permission for permission in SPEECH_PERMISSIONS if permission not in allow]
+        result = self.get(path, method="PUT", body={"systemRoleKey": role, "permAllow": updated_allow, "permDeny": list(deny)})
+        updated = data_of(result)
+        self.require("access_prepare_update_preserved", bool(updated) and updated.get("userId") == uid and updated.get("username") == "stsmk_prod"
+                     and updated.get("systemRoleKey") == role and set(updated.get("permAllow", [])) == set(updated_allow)
+                     and updated.get("permDeny") == deny, "access_prepare_update_not_verified")
+        fresh = self.probe("access_prepare_authorization_rechecked", "/api/authz/me")
+        fresh_grants = fresh.get("effectivePermissions", []) if fresh else []
+        self.require("access_prepare_effective_permissions", bool(fresh) and fresh.get("userId") == uid and fresh.get("username") == "stsmk_prod"
+                     and isinstance(fresh_grants, list) and set(SPEECH_PERMISSIONS).issubset(fresh_grants), "access_prepare_effective_permissions_missing")
+        summary.update({"grantedOwnSpeechAccess": True,
+                        "permissions": {key.rsplit(".", 1)[1]: key in fresh_grants for key in SPEECH_PERMISSIONS}})
+        return fresh
 
     def gateway_inventory(self):
         """Optional viewer-only inventory; no role changes, raw names, keys or offering config are reported."""
@@ -433,10 +489,11 @@ def main(argv=None):
     parser.add_argument("--wait-seconds", type=int, default=180)
     parser.add_argument("--gateway-inventory", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--prepare-access", action="store_true", help="Explicitly allow adding only the three speech permissions to the verified stsmk_prod account.")
     parser.add_argument("--json-out", required=True)
     args = parser.parse_args(argv)
     smoke = SpeechSmoke(args.map_base, args.expect_commit, args.mode, profile_id=args.profile_id,
-                        wait_seconds=min(max(args.wait_seconds, 3), 300), inventory=args.gateway_inventory)
+                        wait_seconds=min(max(args.wait_seconds, 3), 300), inventory=args.gateway_inventory, prepare_access=args.prepare_access)
     try:
         validate_target(args.map_base, args.expect_commit, os.environ.get("DEFAULT_MAP_BASE", ""))
         if os.environ.get("STABLE_SMOKE_USER", "") != "stsmk_prod":
