@@ -144,6 +144,8 @@ Docs in `doc/` use strict prefixes:
 
 Good entry points:
 
+- [Pri(Principles).ADR.md](<Pri(Principles).ADR.md>) for decision-record principles and reusable templates.
+- [Decision governance guide](doc/guide.platform.decision-records.md) for project gaps, product methods, and cross-project adoption.
 - [AGENTS.md](AGENTS.md) for repository rules.
 - [cds/README.md](cds/README.md) for the CDS managed-delivery quick start and user acceptance checklist.
 - [doc/design.platform.peer-sync.md](doc/design.platform.peer-sync.md) for system interconnection.

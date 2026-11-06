@@ -24,6 +24,8 @@ ALLOWED_ROOT_FILES = {
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "LICENSE",
+    # User-designated, project-wide entrypoint for decision-record principles.
+    "Pri(Principles).ADR.md",
     "README.md",
     "SECURITY.md",
     "cds-compose.yml",
