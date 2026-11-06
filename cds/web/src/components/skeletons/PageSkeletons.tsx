@@ -70,7 +70,7 @@ export function ProjectListSkeleton(): JSX.Element {
   return (
     <div aria-busy="true" aria-live="polite" aria-label="加载项目列表">
       <div aria-hidden>
-        <ProjectInventoryLayout count={<span className="cds-loading-skeleton-line inline-block h-3 w-3 align-middle" />}
+        <ProjectInventoryLayout canManageProjects count={<span className="cds-loading-skeleton-line inline-block h-3 w-3 align-middle" />}
           actions={<>
             <Button disabled variant="outline" size="sm" className="cds-loading-skeleton-panel"><FolderGit2 className="invisible" /><span className="invisible">导入仓库</span></Button>
             <Button disabled size="sm" className="cds-loading-skeleton-panel"><Plus className="invisible" /><span className="invisible">新建项目</span></Button>

@@ -64,11 +64,12 @@ export function selectInventoryProjects(
 }
 
 /** Loading and ready states share the same typography, spacing and responsive rows. */
-export function ProjectInventoryLayout({ count, actions, filters, tools }: {
+export function ProjectInventoryLayout({ count, actions, filters, tools, canManageProjects }: {
   count: ReactNode;
   actions: ReactNode;
   filters: ReactNode;
   tools: ReactNode;
+  canManageProjects: boolean;
 }): JSX.Element {
   return <>
     <header className="cds-project-inventory-heading">
@@ -76,7 +77,7 @@ export function ProjectInventoryLayout({ count, actions, filters, tools }: {
         <div className="cds-project-inventory-title"><h1>项目</h1><span>{count}</span></div>
         <p>管理项目、分支环境与部署。</p>
       </div>
-      {actions ? <div className="cds-project-inventory-actions">{actions}</div> : null}
+      {canManageProjects ? <div className="cds-project-inventory-actions">{actions}</div> : null}
     </header>
     <div className="cds-project-inventory-toolbar">
       <div className="cds-project-status-filters" role="group" aria-label="项目状态筛选">{filters}</div>
@@ -119,11 +120,11 @@ export function ProjectInventoryHeader({ projects, selection, onChange, targets,
   const environments = [...new Set(targets.filter(target => visibleIds.has(target.projectId) && target.isEnabled !== false && target.environment)
     .map(target => target.environment!))].sort();
   return (
-    <ProjectInventoryLayout count={projects.length}
-      actions={canManageProjects ? <>
+    <ProjectInventoryLayout count={projects.length} canManageProjects={canManageProjects}
+      actions={<>
         <Button variant="outline" size="sm" onClick={onImport} aria-expanded={importOpen} aria-controls="project-repository-import"><FolderGit2 />导入仓库</Button>
         <Button size="sm" onClick={onCreate}><Plus />新建项目</Button>
-      </> : null}
+      </>}
       filters={filters.map(filter => <button key={filter.value} type="button" aria-pressed={selection.status === filter.value}
         onClick={() => onChange({ ...selection, status: filter.value })}>
         {filter.label}<span>{filter.value === 'all' ? projects.length : projects.filter(project => projectInventoryStatus(project) === filter.value).length}</span>
