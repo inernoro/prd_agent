@@ -82,6 +82,20 @@ def test_unregistered_host_does_not_probe_or_change_normal_schema(workspace, mon
     assert calls == ['/api/branches']
 
 
+@pytest.mark.parametrize('bad', ['{', '{"version":1,"instances":[{"id":"bad","url":"https://bad/path"}]}',
+    '{"version":1,"instances":[{"id":"a","name":"a","role":"primary","url":"https://same.example"},{"id":"b","name":"b","role":"standby","url":"https://same.example"}]}'])
+def test_invalid_optional_catalog_cannot_abort_or_pollute_original_write(workspace, monkeypatch, bad):
+    root, _ = workspace
+    save('https://primary.example', 'a', 'primary-secret')
+    (root / 'cds-instances.json').write_text(bad)
+    calls = []
+    monkeypatch.setattr(cli, '_request', lambda method, path, **kw: (calls.append((method, path)) or (200, {'id': 'branch'}, {})))
+    code, output = run('branch', 'create', '--branch', 'feature')
+    assert code == 0 and json.loads(output)['ok'] is True
+    assert calls == [('POST', '/api/branches')]
+    assert run('instance', 'list')[0] == 1  # Explicit discovery still rejects invalid configuration.
+
+
 def test_real_http_advice_contacts_no_standby_and_selection_uses_own_key(workspace):
     root, catalog = workspace
     calls = []

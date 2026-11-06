@@ -239,6 +239,10 @@ def _save_local_credentials(*, host: str, project_id: str | None = None,
             json.dump(context, f, ensure_ascii=False, indent=2)
         os.chmod(context_path + ".tmp", 0o600)
         os.replace(context_path + ".tmp", context_path)
+        if not project_key and not bootstrap_key:
+            # A created project can outlive failed key delivery. Keep its keyless
+            # locator per host even when instance connect restores the old pointer.
+            _archive_instance_credentials({**payload, **context})
         _exclude_local_path(root, "/.cds/connection.json")
     return target
 
@@ -4312,7 +4316,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
     local = _read_local_credentials_file()
     known = context if context else local
     if new_project and known.get("projectId") and str(known.get("host") or "").rstrip("/") == host:
-        same_repository = not context.get("repository") or context["repository"] == _repository_identity(git_url)
+        same_repository = bool(context.get("repository")) and context["repository"] == _repository_identity(git_url)
         # 旧连接没有名称时先自动补定位信息；明确换名/换slug的任务仍走新建审批。
         if same_repository and not known.get("projectName") and local.get("projectKey"):
             previous_host = os.environ.get("CDS_HOST")
@@ -4431,9 +4435,18 @@ def cmd_connect(args: argparse.Namespace) -> None:
         if new_project
         else "申请恢复或连接原项目访问；项目由 CDS 自动核对，批准后自动保存凭据，不会重新建项目。"
     )
-    # 优先沿用原项目凭据的身份；丢文件时才用已保存的用户身份。
-    # 不把停用、撤权或失效身份降级成匿名申请。
-    request_proof = local_key or saved_user_cred
+    # The shipped approval endpoint resolves user credentials only. A project key
+    # cannot preserve principal/expiry policy when requesting a replacement key.
+    if local_key:
+        identity_status, identity, _ = _request(
+            "GET", "/api/credentials/self-check", timeout=10,
+            extra_headers={"x-ai-access-key": saved_user_cred}, fatal_network_errors=False,
+        ) if saved_user_cred else (0, {}, {})
+        if (identity_status != 200 or not isinstance(identity, dict)
+                or identity.get("kind") != "user" or identity.get("status") != "active"):
+            _restore_auth_env(previous)
+            die("原项目凭据已失效，需先恢复本机用户身份后再申请原项目授权；未降为匿名申请、未覆盖原连接。", code=2)
+    request_proof = saved_user_cred
     status, body, _ = _request(
         "POST",
         request_path,
@@ -9947,7 +9960,7 @@ def _instance_origin(raw: str) -> str:
     return f"{url.scheme}://{url.netloc.lower()}".rstrip("/")
 
 
-def _instance_catalog(value: Any = None) -> dict[str, Any]:
+def _instance_catalog(value: Any = None, *, strict: bool = True) -> dict[str, Any]:
     file = Path(_workspace_root()) / "cds-instances.json"
     if value is None and not file.exists():
         # Public release snapshot supports fresh installations even when the current
@@ -9972,9 +9985,10 @@ def _instance_catalog(value: Any = None) -> dict[str, Any]:
             hosts.add(host)
             entries.append({"id": ident, "name": name.strip(), "role": entry["role"], "url": host})
         return {"version": 1, "instances": entries}
-    except (ValueError, KeyError, TypeError, AttributeError):
-        die("cds-instances.json 无效，请检查实例标识、名称和 HTTPS 根地址", code=1)
-        return {}
+    except (ValueError, KeyError, TypeError, AttributeError, OSError):
+        if strict:
+            die("cds-instances.json 无效，请检查实例标识、名称和 HTTPS 根地址", code=1)
+        return {"version": 1, "instances": []}
 
 
 def _instance_entry(ident: str) -> dict[str, Any]:
@@ -10229,7 +10243,7 @@ def _deployment_load_preflight(handler: Any) -> None:
                        cmd_project_clone, cmd_deployment_version_deploy):
         return
     # Optional advice must not add requests when no matching local multi-site catalog exists.
-    entries = _instance_catalog()["instances"]
+    entries = _instance_catalog(strict=False)["instances"]
     if len(entries) < 2:
         return
     try:
@@ -10259,6 +10273,10 @@ def cmd_instance_connect(args: argparse.Namespace) -> None:
     }
     args.host = entry["url"]
     try:
+        if getattr(args, "new_project", False) and getattr(args, "create_project", None):
+            pending = _instance_credentials(entry) or {}
+            if pending.get("projectId") and not pending.get("projectKey") and not pending.get("bootstrapKey"):
+                _write_instance_private("connection.json", pending)
         # Existing command exits through ok(); collect that result before checking/selection.
         connect_code = 0
         with _nested_call():

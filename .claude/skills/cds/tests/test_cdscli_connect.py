@@ -105,19 +105,21 @@ def test_fresh_clone_with_origin_uses_supported_project_approval(workspace, monk
 
 
 @pytest.mark.parametrize("missing_status", [401, 403, 404, 405])
-def test_missing_access_status_keeps_supported_approval_and_original_proof(workspace, monkeypatch, missing_status):
+def test_missing_access_status_preserves_project_and_validated_user_proof(workspace, monkeypatch, missing_status):
     cdscli._save_local_credentials(host="https://cds.example", project_id="proj-a", project_key="cdsp_original_private")
-    monkeypatch.setattr(cdscli, "_load_user_credential", lambda _host: "")
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda _host: "cdsu_original_private")
     calls = []
     def request(method, path, **kwargs):
         calls.append((method, path, kwargs.get("extra_headers")))
         if path.endswith("/access-status"):
             return missing_status, {"error": "not_found"}, {}
         if path == "/api/credentials/self-check":
+            if kwargs["extra_headers"] == {"x-ai-access-key": "cdsu_original_private"}:
+                return 200, {"kind": "user", "status": "active"}, {}
             assert kwargs["extra_headers"] == {"x-ai-access-key": "cdsp_original_private"}
             return 200, {"kind": "project", "status": "expired"}, {}
         if path.endswith("/access-requests"):
-            assert kwargs["extra_headers"] == {"x-ai-access-key": "cdsp_original_private"}
+            assert kwargs["extra_headers"] == {"x-ai-access-key": "cdsu_original_private"}
             return 201, {"requestId": "restore", "pollToken": "private-poll"}, {}
         if path.endswith("/access-requests/restore"):
             return 200, {"status": "approved", "authorizationKey": "cdsp_new_private"}, {}
@@ -213,9 +215,11 @@ def test_same_new_project_command_recovers_original_project(workspace, monkeypat
     if loss:
         (workspace / ".cds/credentials.json").unlink()
     calls = []
-    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "")
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "" if loss else "cdsu_original")
     def fake_request(method, path, body=None, extra_headers=None, **kwargs):
         calls.append((method, path))
+        if path == "/api/credentials/self-check":
+            return 200, {"kind": "user", "status": "active"}, {}
         if path.endswith("/access-status"):
             return 200, {"state": "credential-unusable"}, {}
         if path == "/api/projects/proj-demo" and extra_headers:
@@ -674,3 +678,55 @@ def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interr
     assert all(method in ("POST", "GET") for method, _, _ in calls)
     assert "仍可能待审批" in capsys.readouterr().err
     assert not (workspace / ".cds/credentials.json").exists()
+
+
+@pytest.mark.parametrize("saved_user", [True, False])
+def test_replacement_approval_never_loses_validated_user_identity(workspace, monkeypatch, saved_user):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="proj-a", project_key="cdsp_expired_private")
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "cdsu_valid_private" if saved_user else "")
+    posts = []
+    def request(method, path, **kwargs):
+        proof = (kwargs.get("extra_headers") or {}).get("x-ai-access-key")
+        if path.endswith("/access-status"):
+            return 404, {}, {}
+        if path == "/api/credentials/self-check":
+            return 200, {"kind": "user" if proof == "cdsu_valid_private" else "project",
+                         "status": "active" if proof == "cdsu_valid_private" else "expired"}, {}
+        if method == "POST":
+            posts.append(proof)
+            assert proof == "cdsu_valid_private"
+            return 201, {"requestId": "r", "pollToken": "private-poll"}, {}
+        if path.endswith("/access-requests/r"):
+            return 200, {"status": "approved", "authorizationKey": "cdsp_new_private"}, {}
+        if kwargs.get("extra_headers"):
+            return 401, {}, {}
+        return 200, {"id": "proj-a"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    code, output = run_command(["connect", "--host", "cds.example", "--project", "proj-a"])
+    assert code == (0 if saved_user else 2), output
+    assert posts == (["cdsu_valid_private"] if saved_user else [])
+    assert all(key not in output for key in ("cdsp_expired_private", "cdsu_valid_private", "cdsp_new_private"))
+    if not saved_user:
+        assert json.loads((workspace / '.cds/credentials.json').read_text())["projectKey"] == "cdsp_expired_private"
+
+
+@pytest.mark.parametrize("repository", [None, ""])
+def test_unknown_stored_repository_cannot_reuse_different_explicit_target(workspace, monkeypatch, repository):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="old", project_key="cdsp_old",
+                                   project_name="Demo", project_slug="demo")
+    path = workspace / '.cds/connection.json'
+    context = json.loads(path.read_text())
+    if repository is None: context.pop("repository")
+    else: context["repository"] = repository
+    path.write_text(json.dumps(context))
+    calls = []
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        assert path.startswith('/api/bootstrap-access-requests')
+        if method == 'POST': return 201, {'requestId': 'new', 'pollToken': 'poll'}, {}
+        return 200, {'status': 'rejected'}, {}
+    monkeypatch.setattr(cdscli, '_request', request)
+    code, _ = run_command(['connect', '--host', 'cds.example', '--new-project', '--create-project', 'Demo',
+                           '--slug', 'demo', '--git-url', 'https://github.com/other/target.git'])
+    assert code == 2
+    assert calls[0] == ('POST', '/api/bootstrap-access-requests')
