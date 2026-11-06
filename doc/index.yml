@@ -17,6 +17,10 @@ folders:
     name: 六、技术债务台账
   - prefix: report
     name: 七、报告与周报
+  - prefix: adr
+    name: 八、架构决策
+  - prefix: pdr
+    name: 九、产品决策
 
 docs:
   plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
@@ -256,7 +260,7 @@ docs:
   rule.doc.maintenance: "文档维护与收敛 · 规则"
   rule.doc.readability: "文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则"
   rule.doc.naming: "文档命名规则（doc/） · 规则"
-  rule.doc.templates: "七类文档内容模板 · 规则"
+  rule.doc.templates: "文档内容与决策记录模板 · 规则"
   rule.frontend.default-editable: "默认可编辑原则 · 规则"
   rule.frontend.frontend-component-reuse: "前端组件复用 · 规则"
   rule.frontend.frontend-modal: "前端浮层布局 · 规则"
@@ -429,3 +433,9 @@ docs:
   report.gw-test-matrix: "网关测试矩阵全量报告（grandfather 保留） · 报告"
   report.platform.llm-gateway.resilience-acceptance: "LLM Gateway 故障隔离与恢复 · 测试环境验收报告"
   report.web-hosting.ask-dock-handoff: "「向我提问」形变坞 · 交接清单"
+  # 八、架构决策
+  adr.doc.001.document-roles: "ADR-DOC-001 文档原则与决策记录分层 · 架构决策"
+  adr.platform.001.llm-boundary: "ADR-PLATFORM-001 大模型调用统一归口 · 架构决策"
+  # 九、产品决策
+  pdr.platform.001.product-foundation: "PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策"
+  pdr.product-agent.001.rule-evolution: "PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策"

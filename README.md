@@ -132,19 +132,24 @@ Full contributor rules are in [AGENTS.md](AGENTS.md).
 
 Docs in `doc/` use strict prefixes:
 
-| Prefix | Purpose |
-| --- | --- |
-| `spec.*` | Product and feature requirements |
-| `design.*` | Architecture and implementation design |
-| `plan.*` | Execution plans |
-| `rule.*` | Engineering rules |
-| `guide.*` | Operating guides |
-| `report.*` | Reports and validation records |
-| `debt.*` | Known gaps and follow-up debt |
+`pri` abbreviates Principles. Root-level `pri.<type>.md` files explain each document type; individual documents live in `doc/`. Current specifications and designs evolve, while accepted or rejected decisions preserve their rationale and use successor records for substantive changes.
+
+| Prefix | Purpose | Principles |
+| --- | --- | --- |
+| `spec.*` | Current product behavior and acceptance criteria | [pri.spec.md](pri.spec.md) |
+| `design.*` | Current structure, responsibilities, and data flow | [pri.design.md](pri.design.md) |
+| `plan.*` | Delivery sequence, ownership, and completion criteria | [pri.plan.md](pri.plan.md) |
+| `rule.*` | Current business and engineering constraints | [pri.rule.md](pri.rule.md) |
+| `guide.*` | Task-oriented operating instructions | [pri.guide.md](pri.guide.md) |
+| `report.*` | Time-bounded evidence; new repository reports are weekly reports | [pri.report.md](pri.report.md) |
+| `debt.*` | Known gaps, impact, and closure conditions | [pri.debt.md](pri.debt.md) |
+| `adr.*` | Important architecture and engineering decisions | [pri.adr.md](pri.adr.md) |
+| `pdr.*` | Important product choices and business commitments | [pri.pdr.md](pri.pdr.md) |
 
 Good entry points:
 
-- [Pri(Principles).ADR.md](<Pri(Principles).ADR.md>) for decision-record principles and reusable templates.
+- [pri.adr.md](pri.adr.md) for ADR principles and the eight core principles for future maintainers.
+- [pri.pdr.md](pri.pdr.md) for product foundations, structural commitments, and product decision records.
 - [Decision governance guide](doc/guide.platform.decision-records.md) for project gaps, product methods, and cross-project adoption.
 - [AGENTS.md](AGENTS.md) for repository rules.
 - [cds/README.md](cds/README.md) for the CDS managed-delivery quick start and user acceptance checklist.

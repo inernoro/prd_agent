@@ -1,8 +1,8 @@
 # MAP 平台文档索引 · 指南
 
-> **版本**：v2.1 | **日期**：2026-07-18 | **状态**：已落地
+> **版本**：v2.2 | **日期**：2026-11-06 | **状态**：已落地
 
-**一句话**：全部长期文档的清单，按七类前缀排好，用来确认「有没有这么一篇」并拿到准确文件名。
+**一句话**：全部长期文档按职责分类，架构和产品决策单独收录，用来确认有没有目标文章并拿到准确入口。
 **谁该读**：已经知道自己要找哪一类文档、想扫一眼有哪些的人。
 **读完能做什么**：找到目标文档的准确文件名。不知道该找哪一类时，先看[百科全书导读](./guide.doc.reading-map.md)。
 
@@ -12,7 +12,7 @@
 
 ## 使用方式
 
-- 产品和研发按下列七类浏览长期文档。
+- 产品和研发按下列类型浏览长期文档；每类作用见 [README 的原则入口](../README.md#documentation)。
 - 外部同步工具读取 `doc/index.yml`。
 - 标有 `grandfather 保留` 的非周报报告只因存量契约引用暂留，解除引用后回收。
 
@@ -261,7 +261,7 @@
 - [文档维护与收敛 · 规则](./rule.doc.maintenance.md) `rule.doc.maintenance`
 - [文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则](./rule.doc.readability.md) `rule.doc.readability`
 - [文档命名规则（doc/） · 规则](./rule.doc.naming.md) `rule.doc.naming`
-- [七类文档内容模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
+- [文档内容与决策记录模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
 - [默认可编辑原则 · 规则](./rule.frontend.default-editable.md) `rule.frontend.default-editable`
 - [前端组件复用 · 规则](./rule.frontend.frontend-component-reuse.md) `rule.frontend.frontend-component-reuse`
 - [前端浮层布局 · 规则](./rule.frontend.frontend-modal.md) `rule.frontend.frontend-modal`
@@ -439,3 +439,13 @@
 - [网关测试矩阵全量报告（grandfather 保留） · 报告](./report.gw-test-matrix.md) `report.gw-test-matrix`
 - [LLM Gateway 故障隔离与恢复 · 测试环境验收报告](./report.platform.llm-gateway.resilience-acceptance.md) `report.platform.llm-gateway.resilience-acceptance`
 - [「向我提问」形变坞 · 交接清单](./report.web-hosting.ask-dock-handoff.md) `report.web-hosting.ask-dock-handoff`
+
+### 八、架构决策
+
+- [ADR-DOC-001 文档原则与决策记录分层 · 架构决策](./adr.doc.001.document-roles.md) `adr.doc.001.document-roles`
+- [ADR-PLATFORM-001 大模型调用统一归口 · 架构决策](./adr.platform.001.llm-boundary.md) `adr.platform.001.llm-boundary`
+
+### 九、产品决策
+
+- [PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策](./pdr.platform.001.product-foundation.md) `pdr.platform.001.product-foundation`
+- [PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策](./pdr.product-agent.001.rule-evolution.md) `pdr.product-agent.001.rule-evolution`
