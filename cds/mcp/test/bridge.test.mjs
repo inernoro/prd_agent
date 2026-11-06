@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { createBridge, readProjectCredentials, MAX_ZIP_BYTES } from '../src/bridge.mjs';
+import { readProjectCredentials, MAX_ZIP_BYTES, TOOLS } from '../src/bridge.mjs';
 
 const serverPath = fileURLToPath(new URL('../src/server.mjs', import.meta.url));
 let root;
@@ -16,6 +16,8 @@ let host;
 const requests = [];
 const key = 'cdsp_test_not_a_real_credential';
 const task = { id: 'task-1', projectId: 'project-one', status: 'running', reportId: 'report-1' };
+const completeCatalog = TOOLS.map((tool) => tool.name);
+let catalog = completeCatalog;
 
 before(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-review-mcp-'));
@@ -31,6 +33,10 @@ before(async () => {
     requests.push({ method: req.method, url: req.url, headers: req.headers, body });
     res.setHeader('content-type', 'application/json');
     if (req.headers['x-ai-access-key'] !== key) { res.writeHead(401); res.end('{}'); return; }
+    if (req.url === '/api/code-reviews/capabilities') {
+      res.end(JSON.stringify({ engineConfigured: true, mailConfigured: false, storageConfigured: true, tools: catalog }));
+      return;
+    }
     if (req.url.includes('redirect')) { res.writeHead(302, { location: host + '/credential-sink' }); res.end('{}'); return; }
     if (req.url.endsWith('/wrong-project')) { res.end(JSON.stringify({ task: { ...task, projectId: 'other' } })); return; }
     if (req.url.endsWith('/secret-error')) { res.writeHead(502); res.end(JSON.stringify({ message: `upstream ${key} SMTP_PASSWORD=private-password` })); return; }
@@ -89,6 +95,7 @@ test('real stdio client discovers and calls all four project-scoped tools', asyn
 
 test('rejects project overrides, mismatched responses, ambiguous inputs and non-GitHub URLs', async () => {
   await withClient(async (client) => {
+    await client.listTools();
     let count = requests.length;
     const override = await client.callTool({ name: 'cds_code_review_list', arguments: { projectId: 'other' } });
     assert.equal(override.isError, true);
@@ -110,6 +117,7 @@ test('rejects external files and symlink escapes before sending HTTP', async () 
     await fs.writeFile(path.join(outside, 'secret.md'), 'must not upload');
     await fs.symlink(path.join(outside, 'secret.md'), path.join(root, 'escape.md'));
     await withClient(async (client) => {
+      await client.listTools();
       const count = requests.length;
       for (const filePath of [path.join(outside, 'secret.md'), 'escape.md', '.cds/credentials.json']) {
         const result = await client.callTool({ name: 'cds_code_review_report_upload', arguments: { filePath, title: 'forbidden' } });
@@ -126,11 +134,57 @@ test('oversized ZIP is refused without reading or uploading it', async () => {
   await handle.truncate(MAX_ZIP_BYTES + 1);
   await handle.close();
   await withClient(async (client) => {
+    await client.listTools();
     const count = requests.length;
     const result = await client.callTool({ name: 'cds_code_review_submit', arguments: { zipPath: 'large.zip' } });
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /100 MiB/);
     assert.equal(requests.length, count);
+  });
+});
+
+test('backend capability subset controls both tools/list and tools/call', async () => {
+  catalog = ['cds_code_review_get', 'cds_code_review_list'];
+  try {
+    await withClient(async (client) => {
+      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), catalog);
+      const count = requests.length;
+      const result = await client.callTool({ name: 'cds_code_review_submit', arguments: { githubUrl: 'https://github.com/inernoro/prd_agent' } });
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, /能力目录未开放/);
+      assert.equal(requests.length, count);
+      assert.deepEqual(parsed(await client.callTool({ name: 'cds_code_review_list', arguments: {} })), { tasks: [task] });
+    });
+  } finally { catalog = completeCatalog; }
+});
+
+test('missing, unknown or duplicate backend catalog fails closed for discovery and calls', async () => {
+  for (const invalid of [undefined, 'all', ['execute_shell'], ['cds_code_review_get', 'cds_code_review_get']]) {
+    catalog = invalid;
+    try {
+      await withClient(async (client) => {
+        await assert.rejects(client.listTools(), /能力目录无效/);
+        const count = requests.length;
+        const result = await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'task-1' } });
+        assert.equal(result.isError, true);
+        assert.match(result.content[0].text, /能力目录无效/);
+        assert.equal(requests.length, count + 1);
+        assert.equal(requests.at(-1).url, '/api/code-reviews/capabilities');
+      });
+    } finally { catalog = completeCatalog; }
+  }
+});
+
+test('an invalid catalog refresh revokes previously discovered tools', async () => {
+  await withClient(async (client) => {
+    await client.listTools();
+    catalog = ['unknown_tool'];
+    try {
+      await assert.rejects(client.listTools(), /能力目录无效/);
+      const result = await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'task-1' } });
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, /能力目录无效/);
+    } finally { catalog = completeCatalog; }
   });
 });
 

@@ -41,6 +41,10 @@ cwd = "/absolute/path/project"
 | `cds_code_review_list` | 无 | 查询凭据绑定项目的任务与报告关联 |
 | `cds_code_review_report_upload` | `filePath`、`title`；可选 `idempotencyKey` | 上传已有 HTML/Markdown 报告，无需重新审查 |
 
+工具发现读取 CDS `/api/code-reviews/capabilities` 的共享能力目录，只展示服务端登记的工具。
+工具调用同样校验该目录；服务端未开放的工具不能调用。缺少目录、格式错误或版本不兼容时明确失败，
+不会将本地工具定义当作后端已经支持的证据。客户端再次发现工具时刷新目录并撤销失效能力。
+
 上传路径必须位于当前项目内，拒绝指向工作区外的软链接及 `.cds`、`.git` 目录。
 ZIP 最大 100 MiB，报告最大 10 MiB。文件只在本机读取，以 multipart 字节上传；服务器不读取客户端路径。
 所有报告默认受 CDS 项目权限保护，不开启匿名分享。通过任务返回的报告 ID 打开 CDS 报告阅读器。
