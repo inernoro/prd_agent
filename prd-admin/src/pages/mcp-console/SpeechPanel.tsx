@@ -140,9 +140,9 @@ export function SpeechPanel({ refreshToken }: { refreshToken: number }) {
 
   if (loading) return <div className="flex min-h-0 flex-1 items-center justify-center"><MapSectionLoader text="正在读取当前环境的语音能力" /></div>;
   return <div className="flex min-h-0 flex-1 flex-col gap-4 pb-3 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain', paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 12px)' : undefined }}>
-    <div className="flex flex-wrap items-center gap-3"><div className="flex-1"><h2 className="flex items-center gap-2 text-base font-semibold"><Headphones size={18} aria-hidden />文生语音</h2><p className="mt-1 text-xs leading-6" style={{ color: 'var(--text-muted)' }}>按原文朗读，成品自动保存到我的资产。当前环境：{capabilities?.environment || '暂未读取'}</p></div><Button size="sm" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} aria-hidden />}刷新</Button><Link to="/my-assets?tab=audio" className="mcp-button">我的音频资产<ArrowRight size={13} aria-hidden /></Link></div>
+    <div className="flex flex-wrap items-center gap-3"><div className="flex-1"><h2 className="flex items-center gap-2 text-base font-semibold"><Headphones size={18} aria-hidden />文生语音</h2><p className="mt-1 text-xs leading-6" style={{ color: 'var(--text-muted)' }}>按原文朗读，成品自动保存到我的资产。当前环境：{capabilities?.environment || '暂未读取'}</p></div><Button size="sm" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} aria-hidden />}刷新</Button><Link to="/my-assets?tab=audio" className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium" style={speechCardStyle}>我的音频资产<ArrowRight size={13} aria-hidden /></Link></div>
     {error && <SpeechAlert>{error}</SpeechAlert>}
-    {!capabilities?.profiles.length ? <div className="mcp-empty"><Volume2 size={30} aria-hidden /><h3>当前环境尚未配置语音能力</h3><p>{settings?.canManage ? '在下方添加语音能力，并绑定模型网关中的语音模型池和实际可用音色。' : '请联系管理员配置语音模型与音色。已有历史和音频资产仍可查阅。'}</p></div> : <section className="rounded-xl border p-4" style={speechCardStyle}>
+    {!capabilities?.profiles.length ? <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-8 text-center" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}><Volume2 size={30} aria-hidden /><h3>当前环境尚未配置语音能力</h3><p>{settings?.canManage ? '在下方添加语音能力，并绑定模型网关中的语音模型池和实际可用音色。' : '请联系管理员配置语音模型与音色。已有历史和音频资产仍可查阅。'}</p></div> : <section className="rounded-xl border p-4" style={speechCardStyle}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-3">
           <Field label="需要朗读的文字"><textarea aria-label="需要朗读的文字" rows={9} className={`${speechInputClass} resize-y`} style={speechInputStyle} value={draft.text} onChange={event => setDraft(current => ({ ...current, text: event.target.value }))} placeholder="粘贴讲稿、产品介绍或希望朗读的文字。生成时保留原文。" /></Field>
@@ -199,7 +199,7 @@ function SpeechRunCard({ run, focused, onRepeat }: { run: SpeechRun; focused: bo
     {run.status === 'unknown' && <p className="mt-2 text-xs leading-6" style={{ color: 'var(--text-muted)' }}>上游是否完成尚未确认，请联系管理员核查此任务，避免重复生成和计费。</p>}
     <details className="mt-2 text-xs"><summary className="cursor-pointer" style={{ color: 'var(--text-muted)' }}>查看朗读文字与声音配置</summary><p className="mt-2 whitespace-pre-wrap break-words leading-6">{run.text}</p>{run.instructions && <p className="mt-2 leading-6">声音指令：{run.instructions}</p>}{run.emotion && <p className="mt-2">情绪：{run.emotion}</p>}{run.actualModel && <p className="mt-2">实际模型：{run.actualModel}{run.actualPlatformName ? ` · ${run.actualPlatformName}` : ''}</p>}{run.profileRevision !== undefined && <p className="mt-2">声音配置版本：{run.profileRevision}{run.environment ? ` · 环境：${run.environment}` : ''}</p>}</details>
     {run.status === 'completed' && run.audioUrl && <div className="mt-3"><AudioAssetPlayer url={run.audioUrl} title={run.title || '生成的语音'} /></div>}
-    <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={active || run.status === 'unknown'} onClick={onRepeat}>按此配置再次生成</Button>{run.assetId && <Link className="mcp-button" to="/my-assets?tab=audio">在我的资产中查看<ArrowRight size={12} aria-hidden /></Link>}</div>
+    <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={active || run.status === 'unknown'} onClick={onRepeat}>按此配置再次生成</Button>{run.assetId && <Link className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium" style={speechCardStyle} to="/my-assets?tab=audio">在我的资产中查看<ArrowRight size={12} aria-hidden /></Link>}</div>
   </article>;
 }
 
@@ -207,5 +207,5 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="flex min-w-0 flex-col gap-1.5 text-xs"><span style={{ color: 'var(--text-secondary)' }}>{label}</span>{children}</label>;
 }
 function SpeechAlert({ children }: { children: React.ReactNode }) {
-  return <div className="mcp-alert" role="status"><AlertTriangle size={15} className="shrink-0" aria-hidden /><span>{children}</span></div>;
+  return <div className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed" style={{ background: 'var(--semantic-warning-soft)', borderColor: 'var(--semantic-warning-border)', color: 'var(--semantic-warning-text)' }} role="status"><AlertTriangle size={15} className="shrink-0" aria-hidden /><span>{children}</span></div>;
 }

@@ -6,7 +6,7 @@ import { AudioAssetPlayer } from './AudioAssetPlayer';
 
 const { download, auth } = vi.hoisted(() => ({
   download: vi.fn(),
-  auth: { user: { userId: 'user-a' }, authSessionEpoch: 1 },
+  auth: { user: { userId: 'user-a' }, sessionKey: 'session-1', token: 'token-1' },
 }));
 vi.mock('@/services/real/apiClient', () => ({ apiDownload: download }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (selector: (state: typeof auth) => unknown) => selector(auth) }));
@@ -26,7 +26,8 @@ const load = () => act(async () => host.querySelector('button')!.click());
 beforeEach(() => {
   vi.clearAllMocks();
   auth.user = { userId: 'user-a' };
-  auth.authSessionEpoch = 1;
+  auth.sessionKey = 'session-1';
+  auth.token = 'token-1';
   download.mockResolvedValue({ blob: new Blob(['audio']), fileName: '旁白.mp3' });
   createObjectURL.mockReturnValue('blob:private-audio');
   vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
@@ -63,7 +64,8 @@ describe('受控音频资产播放与下载', () => {
     await render();
     await load();
     auth.user = { userId };
-    auth.authSessionEpoch = 2;
+    auth.sessionKey = 'session-2';
+    auth.token = 'token-2';
     await render();
     expect(host.querySelector('audio')).toBeNull();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:private-audio');

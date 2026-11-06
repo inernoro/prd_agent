@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/authStore';
  * 点击后才取文件，避免资产列表一次下载所有语音；凭据不放进 URL。
  */
 export function AudioAssetPlayer({ url, title }: { url: string; title: string }) {
-  const session = useAuthStore((state) => `${state.user?.userId ?? ''}:${state.authSessionEpoch}`);
+  const session = useAuthStore((state) => `${state.user?.userId ?? ''}:${state.sessionKey ?? ''}:${state.token ?? ''}`);
   const [source, setSource] = useState<{ url: string; original: string; session: string; fileName: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
