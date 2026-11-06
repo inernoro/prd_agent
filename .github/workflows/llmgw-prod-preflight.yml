@@ -121,7 +121,7 @@ jobs:
             --json-out artifacts/llmgw-prod-preflight/prod-preflight.json
 
       - name: Check production speech
-        if: ${{ always() && github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
+        if: ${{ always() && github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' && (github.event.inputs.speech_check == 'readiness' || success()) }}
         shell: bash
         run: |
           set -euo pipefail

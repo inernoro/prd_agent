@@ -330,6 +330,7 @@ class SpeechSmoke:
         if not run_id or not isinstance(title, str) or not title.startswith("stsmk_prod speech "):
             self.require("production_browser_verification", False, "browser_run_identity_missing")
         page = None
+        stage = "browser_start"
         errors = {"page": 0, "console": 0}
         try:
             from playwright.sync_api import sync_playwright
@@ -342,6 +343,7 @@ class SpeechSmoke:
                 page.on("pageerror", lambda _: errors.__setitem__("page", errors["page"] + 1))
                 page.on("console", lambda message: errors.__setitem__("console", errors["console"] + (1 if message.type == "error" else 0)))
                 try:
+                    stage = "signed_browser_login"
                     login_url = self.browser_login_url(run_id)
                     page.goto(login_url, wait_until="domcontentloaded")
                     page.wait_for_function("() => location.pathname === '/mcp-console' && location.hash === ''")
@@ -369,6 +371,7 @@ class SpeechSmoke:
                         return {"durationSeconds": round(duration, 3), "currentTimeProgressed": True}
 
                     for label, width, height in [("desktop", 1440, 1000), ("mobile", 390, 844)]:
+                        stage = label + "_history"
                         page.set_viewport_size({"width": width, "height": height})
                         if label == "mobile":
                             page.go_back(wait_until="domcontentloaded")
@@ -378,6 +381,7 @@ class SpeechSmoke:
                         summary[label + "HistoryPlayback"] = play_audio(card)
                         card.scroll_into_view_if_needed()
                         photograph("speech-" + label + "-history.png")
+                        stage = label + "_assets"
                         card.get_by_role("link", name="在我的资产中查看", exact=True).click()
                         page.wait_for_function("() => location.pathname === '/my-assets' && new URLSearchParams(location.search).get('tab') === 'audio'")
                         asset_title = page.get_by_text(title, exact=True).first
@@ -397,11 +401,20 @@ class SpeechSmoke:
                     summary.update({"ok": True, "pageErrorCount": errors["page"], "consoleErrorCount": errors["console"]})
                     self.require("production_browser_verification", errors["page"] == 0 and errors["console"] == 0, "browser_runtime_errors")
                 finally:
+                    summary.update({"pageErrorCount": errors["page"], "consoleErrorCount": errors["console"]})
+                    if not summary["ok"]:
+                        summary["failureStage"] = stage
+                        if safe_browser_page(page.url, self.base):
+                            try:
+                                photograph("speech-browser-failure.png")
+                            except Exception:
+                                pass
                     context.close()
                     browser.close()
         except CheckFailure:
             raise
         except Exception:
+            summary["failureStage"] = stage
             self.require("production_browser_verification", False, "browser_verification_failed")
 
     def finish(self):
