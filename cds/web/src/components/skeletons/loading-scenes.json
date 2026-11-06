@@ -80,7 +80,7 @@
     "route": "/code-reviews",
     "name": "代码审查报告",
     "page": "pages/CodeReviewsPage.tsx",
-    "kind": "rows",
+    "kind": "code-reviews",
     "workspace": "fluid"
   },
   {

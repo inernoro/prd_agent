@@ -4,6 +4,7 @@ import { AgentRequestsSkeleton, ReleaseCenterSkeleton, TopologyPageSkeleton } fr
 import { loadingSceneForPath } from './loadingScenes';
 import { ReleaseConsoleSkeleton } from './ReleaseConsoleSkeleton';
 import { ContentLoading } from './ContentLoading';
+import { CodeReviewsSkeleton } from './CodeReviewsSkeleton';
 import { SettingsPageSkeleton } from './SettingsSkeleton';
 import { BranchDetailLoadingSkeleton, LoadingBlock } from '@/pages/cds-settings/components';
 import { MonitorCenterSkeleton } from '@/pages/status/primitives';
@@ -156,6 +157,7 @@ export function pageSkeletonForPath(pathname: string): JSX.Element {
     case 'settings': return <SettingsPageSkeleton />;
     case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;
     case 'release-console': return <ReleaseConsoleSkeleton />;
+    case 'code-reviews': return <CodeReviewsSkeleton />;
     case 'rows': return <LoadingBlock />;
     default: return <ConsoleGenericSkeleton />;
   }

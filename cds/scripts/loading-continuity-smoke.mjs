@@ -25,6 +25,7 @@ const selectors = {
   'agent-table': '[data-agent-requests-skeleton]', 'topology': '[data-topology-page-skeleton]', 'release-center': '[data-release-center-skeleton]', monitor: '[aria-label="正在读取监控数据"]',
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
+  'code-reviews': '[data-code-reviews-skeleton]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
 const browser = await chromium.launch({ headless: true });
@@ -32,7 +33,7 @@ const results = [];
 try {
   for (const scene of scenes.filter(s => s.scope !== 'standalone' && s.route !== '/branch-panel' && (!only || only.includes(s.route)))) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
-    const code = gate(), data = gate();
+    const code = gate(), data = gate(), reviewSetup = gate();
     const errors = [], requests = [];
     let authRequests = 0;
     const chunk = path.basename(scene.page, '.tsx');
@@ -46,6 +47,7 @@ try {
         return route.fulfill({ json: { authenticated: true, enabled: true, mode: 'basic', user: { id: 'fixture-owner', name: '合成验收账号', isSystemOwner: true } } });
       }
       if (!p.startsWith('/api/auth/')) { requests.push(p); await data.promise; }
+      if (scene.kind === 'code-reviews' && ['/api/projects', '/api/code-reviews/capabilities'].includes(p)) await reviewSetup.promise;
       let payload = resolveFixture(p) ?? {};
       if (p === '/api/auth/sso/config') payload = { enabled: false, providerId: 'fixture', label: '使用 SSO 登录', authorizationUrl: '', tokenUrl: '', clientId: '', defaultRedirect: '/project-list', hasClientSecret: false };
       if (p === '/api/overview/topology') payload = {generatedAt: new Date().toISOString(),summary:{errors:0,warnings:0,infos:0},projects:[]};
@@ -53,6 +55,8 @@ try {
       if (p === '/api/reports/pipeline') payload = {pipeline:{generatedAt:new Date().toISOString(),recentDays:null,total:{changes:0,deployed:0,accepted:0,merged:0,pass:0,conditional:0,fail:0,undetermined:0},totalLeaks:{'deployed-not-accepted':0,'merged-not-accepted':0,'merged-while-failing':0,'report-missing-change-key':0},projects:[],staleReports:0,leaks:[]},series:null};
       if (/\/agent-requests$/.test(p)) payload = {items:[],users:[],apps:[],liveCount:0,historyCount:0};
       if (p === '/api/reports') payload = {reports:[]};
+      if (p === '/api/code-reviews') payload = {tasks:[]};
+      if (p === '/api/code-reviews/capabilities') payload = {engineConfigured:true,mailConfigured:false};
       if (p === '/api/report-folders') payload = {folders:[]};
       if (/\/identity-history$/.test(p)) payload = {records:[],nextCursor:null,coverage:'complete'};
       if (p === '/api/cds-system/connections') payload = {connections:[]};
@@ -75,7 +79,7 @@ try {
         return { present: true, x: r.x - w.x, y: r.y - w.y, width: r.width, height: r.height,
           shape: e.outerHTML.replace(/aria-label="[^"]*"/g, '').replace(/id="[^"]*"/g, '').replace(/class="([^"]*)"/g, (_, cls) => `class="${cls.split(/\s+/).sort().join(' ')}"`) };
       });
-      if (['settings', 'project-settings', 'release-console'].includes(scene.kind)) await page.screenshot({ path: path.join(out, `${before ? 'before' : 'after'}-${scene.kind}-${label}.jpg`) });
+      if (['settings', 'project-settings', 'release-console', 'code-reviews'].includes(scene.kind)) await page.screenshot({ path: path.join(out, `${before ? 'before' : 'after'}-${scene.kind}-${label}.jpg`) });
       return measured;
     }
     try {
@@ -92,7 +96,7 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'code-reviews', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});
@@ -100,13 +104,20 @@ try {
         await page.setViewportSize({width:390,height:844});
         assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${route}: horizontal overflow at 390`);
         assert.equal(await page.locator('main .cds-loading-skeleton-line').first().evaluate(e=>getComputedStyle(e).animationName),'none');
-        if (['settings','project-settings','release-console','topology','release-center','agent-table'].includes(scene.kind)) await page.screenshot({path:path.join(out,`after-${scene.kind}-dark390.jpg`)});
+        if (['settings','project-settings','release-console','code-reviews','topology','release-center','agent-table'].includes(scene.kind)) await page.screenshot({path:path.join(out,`after-${scene.kind}-dark390.jpg`)});
         result.dark390ReducedMotion = true;
         await page.setViewportSize({width:1440,height:940});
         await page.emulateMedia({reducedMotion:'no-preference'});
         await page.getByRole('button',{name:'切换到白天主题',exact:true}).click();
       }
-      data.release();
+      if (scene.kind === 'code-reviews') {
+        const listReturned = page.waitForResponse(response => new URL(response.url()).pathname === '/api/code-reviews');
+        data.release();
+        await listReturned;
+        assert(await page.locator(`main .cds-workspace ${selector}`).first().isVisible(), 'review skeleton must remain while project/config requests are pending');
+        reviewSetup.release();
+        result.waitsForAllInitialRequests = true;
+      } else data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
       if (scene.kind === 'branch-detail') {
@@ -116,7 +127,7 @@ try {
       }
       assert.deepEqual(errors, []);
     } catch (e) { await page.screenshot({path:path.join(out,`failure-${scene.kind}.jpg`)}); result.failure = String(e); result.requests = [...new Set(requests)]; await fs.writeFile(path.join(out, `failed-${scene.kind}.html`), await page.content()); }
-    finally { code.release(); data.release(); await context.close(); }
+    finally { code.release(); data.release(); reviewSetup.release(); await context.close(); }
     results.push(result);
     console.log(`${result.failure ? 'FAIL' : 'PASS'} ${route} same=${result.sameShape} geometry=${result.maxGeometryDelta}`);
     if (result.failure) console.log(result.failure.slice(0,2000));
