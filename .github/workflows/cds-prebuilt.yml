@@ -49,9 +49,11 @@ jobs:
           node-version: "20"
 
       - name: Install CDS deps
+        timeout-minutes: 10
         run: |
           pnpm -C cds install --frozen-lockfile
           pnpm -C cds/web install --frozen-lockfile
+          pnpm -C cds exec playwright install --with-deps chromium
 
       # 类型门：把 self-update 现有的 tsc --noEmit 校验挪到 CI。两端都过才出产物，
       # 等于「预构建产物天生已通过类型检查」，本机自更新不必再花 52s 跑 tsc。
@@ -77,7 +79,6 @@ jobs:
       - name: Verify loading continuity in a real browser
         timeout-minutes: 10
         run: |
-          pnpm -C cds exec playwright install --with-deps chromium
           pnpm -C cds/web exec vite preview --host 127.0.0.1 --port 8870 --strictPort > "$RUNNER_TEMP/cds-loading-preview.log" 2>&1 &
           CDS_LOADING_PREVIEW_PID=$!
           trap 'kill "$CDS_LOADING_PREVIEW_PID" 2>/dev/null || true' EXIT
