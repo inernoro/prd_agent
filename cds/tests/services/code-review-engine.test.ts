@@ -42,6 +42,7 @@ describe('DeepAudit five-dimension adapter', () => {
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
     expect(result.engineTaskId).toBe('upstream');
     expect(urls).toHaveLength(2);
+    expect(urls[1]).toBe('http://deepaudit:8000/api/v1/tasks/upstream/issues'); // Legacy keeps the original single-array endpoint.
     expect(urls.every((url) => url.includes('/tasks/upstream'))).toBe(true);
   });
 
@@ -72,19 +73,19 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(calls).toEqual(['http://deepaudit/api/v1/tasks/same-task']);
   });
 
-  it('keeps native partial completion retryable instead of returning a final report result', async () => {
+  it.each([true, false])('keeps checkpointed partial completion retryable even when resumable is %s during worker cleanup', async (resumable) => {
     const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async () =>
-      Response.json({ status: 'completed', total_files: 40, scanned_files: 37, failed_files: 3, resumable: true })) as typeof fetch });
+      Response.json({ status: 'completed', total_files: 40, scanned_files: 37, failed_files: 3, resumable, checkpoint_version: 1 })) as typeof fetch });
     await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task',
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/已分析 37\/40.*重试继续未完成部分/);
   });
 
-  it('falls back to the same fixed snapshot only for an explicit retry of a legacy failed task', async () => {
+  it.each([undefined, 0])('falls back to the fixed snapshot only for an explicit retry of legacy checkpoint version %s', async (checkpointVersion) => {
     const calls: string[] = [];
     const snapshot = buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]);
     const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
       calls.push(String(url));
-      if (String(url).endsWith('/tasks/legacy')) return Response.json({ status: 'failed', total_files: 1, scanned_files: 0 });
+      if (String(url).endsWith('/tasks/legacy')) return Response.json({ status: 'failed', total_files: 1, scanned_files: 0, checkpoint_version: checkpointVersion });
       if (String(url).endsWith('/projects/')) return Response.json({ id: 'project' });
       if (String(url).endsWith('/scan/upload-zip')) {
         expect(Buffer.from(await ((init!.body as FormData).get('file') as Blob).arrayBuffer())).toEqual(snapshot);
@@ -97,15 +98,78 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(result.engineTaskId).toBe('replacement'); expect(calls.some((url) => url.endsWith('/resume'))).toBe(false);
   });
 
+  it.each(['failed', 'cancelled', 'completed'])('keeps a checkpointed %s task when native resume is temporarily unavailable', async (status) => {
+    const calls: Array<{ url: string; method?: string }> = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
+      calls.push({ url: String(url), method: init?.method });
+      return Response.json({ status, total_files: 40, scanned_files: 37, failed_files: 3, resumable: false, checkpoint_version: 1 });
+    }) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/原生任务暂不可续跑.*已保留原任务编号/);
+    expect(calls).toEqual([{ url: 'http://deepaudit/api/v1/tasks/same-task', method: undefined }]);
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+  });
+
   it('does not create a duplicate task when native resume is still busy', async () => {
     const calls: string[] = [];
     const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) => {
       calls.push(String(url)); return String(url).endsWith('/resume') ? Response.json({ detail: 'busy' }, { status: 409 })
-        : Response.json({ status: 'cancelled', total_files: 40, scanned_files: 37, resumable: true });
+        : Response.json({ status: 'cancelled', total_files: 40, scanned_files: 37, resumable: true, checkpoint_version: 1 });
     }) as typeof fetch });
     await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
       signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow('409');
     expect(calls).toHaveLength(2); expect(calls.every((url) => url.includes('/tasks/same-task'))).toBe(true);
+  });
+
+  it('retrieves every native finding in stable pages rather than sampling a large repository report', async () => {
+    const detail = 'x'.repeat(45_000); // The full result exceeds the 16 MiB per-response bound; each page remains below it.
+    const issues = Array.from({ length: 401 }, (_, index) => ({ id: `issue-${String(index).padStart(4, '0')}`, file_path: `module-${index % 4}/file.ts`,
+      issue_type: 'bug', severity: 'medium', title: `发现 ${index}`, description: `${detail}完整原因 ${index}`, suggestion: `修复建议 ${index}` }));
+    expect(Buffer.byteLength(JSON.stringify(issues))).toBeGreaterThan(16 * 1024 * 1024);
+    const offsets: number[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) => {
+      const target = new URL(String(url));
+      if (target.pathname.endsWith('/issues')) {
+        expect(target.searchParams.get('limit')).toBe('200');
+        const offset = Number(target.searchParams.get('offset')); offsets.push(offset);
+        return Response.json(issues.slice(offset, offset + 200));
+      }
+      return Response.json({ status: 'completed', checkpoint_version: 1, total_files: 40, scanned_files: 40, issues_count: issues.length });
+    }) as typeof fetch });
+    const result = await engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'native',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+    expect(offsets).toEqual([0, 200, 400]); expect(result.findings).toHaveLength(401);
+    expect(result.findings.at(-1)?.message.length).toBe('发现 400\n\n完整原因 400'.length + detail.length);
+    expect(result.findings.at(-1)?.message.endsWith('完整原因 400')).toBe(true);
+    expect(result.findings.at(-1)?.suggestion).toBe('修复建议 400');
+  });
+
+  it.each([
+    { expected: 2, page: [{ id: 'one', message: '发现' }], error: '与总数不一致' },
+    { expected: 1, page: [{ id: 'one' }, { id: 'two' }], error: '与总数不一致' },
+    { expected: 2, page: [{ id: 'one' }, { id: 'one' }], error: '编号缺失或重复' },
+    { expected: 1, page: [{ message: 'missing id' }], error: '编号缺失或重复' },
+    { expected: 201, page: Array.from({ length: 201 }, (_, id) => ({ id: String(id) })), error: '格式无效' },
+    { expected: 100001, page: [], error: '安全处理上限' },
+  ])('fails explicitly for unsafe native pagination instead of archiving a truncated result: $error', async ({ expected, page, error }) => {
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) =>
+      new URL(String(url)).pathname.endsWith('/issues') ? Response.json(page)
+        : Response.json({ status: 'completed', checkpoint_version: 1, total_files: 40, scanned_files: 40, issues_count: expected })) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'native',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(error);
+  });
+
+  it('rejects an upstream that repeats a full page instead of looping forever', async () => {
+    const offsets: number[] = [];
+    const page = Array.from({ length: 200 }, (_, id) => ({ id: String(id), message: '发现' }));
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) => {
+      const target = new URL(String(url));
+      if (target.pathname.endsWith('/issues')) { offsets.push(Number(target.searchParams.get('offset'))); return Response.json(page); }
+      return Response.json({ status: 'completed', checkpoint_version: 1, total_files: 40, scanned_files: 40 });
+    }) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'native',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow('编号缺失或重复');
+    expect(offsets).toEqual([0, 200]);
   });
 
   it('sends the fixed snapshot unchanged without replaying boundary-based exclusions as upstream substrings', async () => {

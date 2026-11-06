@@ -25,7 +25,9 @@ export interface CodeReviewEngineResult {
 }
 
 interface EngineTask { id: string; status: string; total_files: number; scanned_files: number; error_code?: string; error_message?: string;
-  resumable?: boolean; processed_files?: number; failed_files?: number; skipped_files?: number }
+  resumable?: boolean; checkpoint_version?: number; processed_files?: number; failed_files?: number; skipped_files?: number; issues_count?: number }
+const MAX_FINDINGS = 100_000;
+const MAX_FINDING_BYTES = 128 * 1024 * 1024;
 
 /** DeepAudit v3 five-dimension ZIP scanner. Does not call the Agent/PoC sandbox API. */
 export class CodeReviewEngine {
@@ -84,6 +86,9 @@ export class CodeReviewEngine {
           if (existing.resumable === true) {
             const resumed = await request('deepaudit.resume_task', `/tasks/${encodeURIComponent(engineTaskId)}/resume`, { method: 'POST' }) as { task_id?: string };
             if (resumed.task_id !== engineTaskId) throw new Error('DeepAudit 续跑返回了不同的任务编号');
+          } else if (existing.checkpoint_version === 1) {
+            // A checkpointed scan may still have in-flight workers or an unavailable snapshot. Never replay it as legacy.
+            throw new Error('DeepAudit 原生任务暂不可续跑；已保留原任务编号，请等待当前分析收尾后重试，若仍不可用请联系管理员检查固定源码快照。');
           } else {
             // Legacy scans have no file ledger. Their explicit retries keep the fixed CDS snapshot but start a new scan.
             engineTaskId = undefined;
@@ -125,7 +130,7 @@ export class CodeReviewEngine {
           totalFiles, scannedFiles, engineTaskId,
           processedFiles: task.processed_files, failedFiles: task.failed_files, skippedFiles: task.skipped_files });
         if (task.status === 'completed') {
-          if (task.resumable === true && (Number(task.failed_files) > 0 || scannedFiles < totalFiles)) {
+          if ((task.resumable === true || task.checkpoint_version === 1) && (Number(task.failed_files) > 0 || scannedFiles < totalFiles)) {
             throw new Error(`DeepAudit 整仓审查尚未完成（已分析 ${scannedFiles}/${totalFiles} 个文件）。已完成文件的分析结果已保留，请重试继续未完成部分；当前未形成完整代码质量结论。`);
           }
           break;
@@ -138,8 +143,37 @@ export class CodeReviewEngine {
         if (task.status === 'cancelled') throw new Error(`DeepAudit 任务已取消（已分析 ${scannedFiles}/${totalFiles} 个文件），未形成代码质量结论。`);
         await delay(this.options.pollIntervalMs ?? 2000, undefined, { signal: input.signal });
       }
-      const rawIssues = await request('deepaudit.task_findings', `${taskPath}/issues`);
-      if (!Array.isArray(rawIssues)) throw new Error('DeepAudit 问题列表格式无效');
+      let rawIssues: unknown[];
+      if (task.checkpoint_version === 1) {
+        const expected = task.issues_count;
+        if (expected !== undefined && (!Number.isInteger(expected) || expected < 0 || expected > MAX_FINDINGS)) {
+          throw new Error('DeepAudit 问题总数无效或超过安全处理上限，未归档不完整报告');
+        }
+        rawIssues = [];
+        const ids = new Set<string>();
+        let bytes = 0;
+        for (;;) {
+          const page = await request('deepaudit.task_findings', `${taskPath}/issues?offset=${rawIssues.length}&limit=200`);
+          if (!Array.isArray(page) || page.length > 200) throw new Error('DeepAudit 分页问题列表格式无效');
+          bytes += Buffer.byteLength(JSON.stringify(page));
+          if (rawIssues.length + page.length > MAX_FINDINGS || bytes > MAX_FINDING_BYTES) {
+            throw new Error('DeepAudit 问题列表超过安全处理上限，未归档不完整报告');
+          }
+          for (const issue of page) {
+            const id = issue && typeof issue === 'object' ? (issue as Record<string, unknown>).id : undefined;
+            if (typeof id !== 'string' || !id || ids.has(id)) throw new Error('DeepAudit 分页问题编号缺失或重复，未归档不完整报告');
+            ids.add(id);
+          }
+          rawIssues.push(...page);
+          if (expected !== undefined && rawIssues.length > expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
+          if (page.length < 200) break;
+        }
+        if (expected !== undefined && rawIssues.length !== expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
+      } else {
+        const legacy = await request('deepaudit.task_findings', `${taskPath}/issues`);
+        if (!Array.isArray(legacy)) throw new Error('DeepAudit 问题列表格式无效');
+        rawIssues = legacy;
+      }
       const categories = ['bug', 'security', 'performance', 'style', 'maintainability'];
       const severities = ['critical', 'high', 'medium', 'low', 'info'];
       const findings = rawIssues.map((raw): CodeReviewFinding => {
