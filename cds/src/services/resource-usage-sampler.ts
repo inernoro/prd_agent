@@ -87,11 +87,12 @@ export function countReservedContainers(branches: ReadonlyArray<BranchEntry>): n
   const names = new Set<string>(observedBranchRunningNames);
   for (const branch of branches) {
     for (const [id, svc] of Object.entries(branch.services || {})) {
-      if (['running', 'building', 'starting', 'restarting'].includes(svc.status)
-        || (svc.containerName && observedRunningNames?.has(svc.containerName))) {
+      if (!svc.staticWeb && svc.runtimeKind !== 'static' && (['running', 'building', 'starting', 'restarting'].includes(svc.status)
+        || (svc.containerName && observedRunningNames?.has(svc.containerName)))) {
         names.add(svc.containerName || `${branch.id}::${id}`);
       }
       for (const runtime of serviceRuntimeRefs(svc).filter(runtime => runtime !== svc)) {
+        if (runtime.staticWeb || runtime.runtimeKind === 'static') continue;
         if (!['idle', 'stopped', 'stopping'].includes(svc.status) || observedRunningNames?.has(runtime.containerName)) names.add(runtime.containerName);
       }
     }
@@ -148,6 +149,7 @@ export function computeResourceSnapshot(
     const projectId = branch.projectId || 'default';
     for (const svc of Object.values(branch.services || {})) {
       for (const runtime of serviceRuntimeRefs(svc)) {
+        if (runtime.staticWeb || runtime.runtimeKind === 'static') continue;
         if (actualRunningNames ? !actualRunningNames.has(runtime.containerName) : runtime !== svc || svc.status !== 'running') continue;
         const stat = runtime.containerName ? statsByContainer.get(runtime.containerName) : undefined;
         const entry = ensure(projectId);

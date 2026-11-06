@@ -752,7 +752,7 @@ export function buildWidgetScript(
     var compactNow=compact&&!expanded&&!syncState.visible;
     root.setAttribute('data-cds-layout',compactNow?'compact':'full');
     root.setAttribute('data-cds-connection',branchConnectionState);
-    var connectionLabel=branchConnectionState==='connected'?'':branchConnectionState==='forbidden'?'状态读取无权限':branchConnectionState==='unavailable'?'状态暂不可用':branchConnectionState==='refreshing'?'正在核对状态':'状态重连中';
+    var connectionLabel=branchConnectionState==='connected'||branchConnectionState==='connecting'?'':branchConnectionState==='forbidden'?'状态读取无权限':branchConnectionState==='unavailable'?'状态暂不可用':branchConnectionState==='refreshing'?'正在核对状态':'状态重连中';
     if(connectionLabel&&!compactNow)h+='<div role="status" style="color:#f0883e;font-size:11px;padding:3px 0">'+connectionLabel+'，当前信息可能过期</div>';
 
     if(compactNow){

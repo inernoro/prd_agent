@@ -1,17 +1,18 @@
 import type { ServiceState, ServiceRuntimeRef } from '../types.js';
-const pendingPublication = new WeakMap<ServiceState, { runtime: ServiceRuntimeRef; token: symbol }>();
+const pendingPublication = new WeakMap<ServiceState, { runtime: ServiceRuntimeRef | null; token: symbol }>();
 
 /** 临界保存期间路由继续读已确认身份；冷进程只读已经落盘的新身份。 */
 export function pinServingRuntimeDuringCommit(service: ServiceState): () => void {
   const runtime = servingRuntime(service);
-  if (!runtime) return () => {};
   const token = Symbol('runtime-publication');
-  pendingPublication.set(service, { runtime: runtimeRef(runtime), token });
+  pendingPublication.set(service, { runtime: runtime ? runtimeRef(runtime) : null, token });
   return () => { if (pendingPublication.get(service)?.token === token) pendingPublication.delete(service); };
 }
 
 export function runtimeRef(service: ServiceRuntimeRef): ServiceRuntimeRef {
   return { containerName: service.containerName, hostPort: service.hostPort, networkName: service.networkName,
+    runtimeKind: service.runtimeKind,
+    staticWeb: service.staticWeb ? structuredClone(service.staticWeb) : undefined,
     containerId: service.containerId, creationIssued: service.creationIssued,
     connectedNetworks: service.connectedNetworks ? [...service.connectedNetworks] : undefined,
     aliasNetworks: service.aliasNetworks ? [...service.aliasNetworks] : undefined,
@@ -22,7 +23,8 @@ export function runtimeRef(service: ServiceRuntimeRef): ServiceRuntimeRef {
 export function servingRuntime(service: ServiceState | undefined): ServiceRuntimeRef | null {
   if (!service) return null;
   if (['idle', 'stopped', 'stopping'].includes(service.status)) return null;
-  const runtime = pendingPublication.get(service)?.runtime || service.servingRuntime || (service.status === 'running' ? service : null);
+  const publication = pendingPublication.get(service);
+  const runtime = publication ? publication.runtime : service.servingRuntime || (service.status === 'running' ? service : null);
   return runtime && runtime.hostPort > 0 ? runtime : null;
 }
 

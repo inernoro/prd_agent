@@ -44,6 +44,19 @@ function client(bootFromActualEntry = false) {
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
+it.each(['connecting', 'connected', 'reconnecting'])('实际角标首次渲染%s状态不混淆初连和重连', connection => {
+  const script = buildWidgetScript('owned', 'main', 'a'.repeat(40));
+  const start = script.indexOf('function render(){');
+  const end = script.indexOf('    if(compactNow){', start);
+  expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+  const state = { compact: false, expanded: false, syncState: { visible: false },
+    branchConnectionState: connection, root: { setAttribute: vi.fn() }, result: '' };
+  vm.runInNewContext(script.slice(start, end) + 'return h;} result=render();', state);
+  expect(state.root.setAttribute).toHaveBeenCalledWith('data-cds-connection', connection);
+  if (connection === 'reconnecting') expect(state.result).toContain('状态重连中，当前信息可能过期');
+  else expect(state.result).not.toMatch(/重连|过期/);
+});
+
 it('首屏按真实初始化入口执行，流尚无快照时仍采用成功的权威读取', async () => {
   const { state } = client(true);
   await vi.advanceTimersByTimeAsync(1);

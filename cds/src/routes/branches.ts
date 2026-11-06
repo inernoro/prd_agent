@@ -7,7 +7,8 @@ import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
 import { createPreviewAddressRouter } from './preview-address.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
-import { buildCdsSkillManifest } from '../services/cds-skill-manifest.js';
+import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
+import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { remoteProxyOwner, readOwnedRemoteChunk, type RemoteDeploymentIdentity } from '../services/remote-deployment-owner.js';
@@ -5371,7 +5372,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // membership check is O(1) against the set. Single docker round-trip
     // regardless of project size.
     if (live) {
-      const runningNames = await containerService.getRunningContainerNames();
+      const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
       for (const b of branches) {
         for (const [profileId, svc] of Object.entries(b.services)) {
           if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
@@ -5666,7 +5667,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = stateService.getAllBranches().filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
-    const runningNames = await containerService.getRunningContainerNames();
+    const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
     const discoveredApps = await containerService.discoverAppContainers();
     const issues: Array<{
       severity: 'warn' | 'info';
@@ -5856,7 +5857,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = Object.values(stateService.getState().branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
-    const runningNames = await containerService.getRunningContainerNames();
+    const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
     const removed: Array<{ branchId: string; branch: string; profileId: string; containerName: string }> = [];
     const skippedRunning: Array<{ branchId: string; profileId: string; containerName: string }> = [];
     const skippedBusy: Array<{ branchId: string; reason: string }> = [];
@@ -6679,7 +6680,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const live = req.query.live === 'true' || req.query.live === '1';
     const infraServices = stateService.getInfraServicesForProject(projectId);
     if (live) {
-      const runningNames = await containerService.getRunningContainerNames();
+      const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
       for (const [profileId, svc] of Object.entries(branch.services || {})) {
         if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
           svc.status = 'stopped';
@@ -14312,7 +14313,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
-      reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+      reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), staticProfileIds: profiles.filter(profile => acceptedProfiles.get(profile.id)?.staticWeb).map(profile => profile.id), state: stateService,
         portStart: config.portStart, operationId: branchOperationLease?.operationId });
       await stateService.flush();
       // ── Execute layer by layer (parallel within each layer) ──
@@ -15467,7 +15468,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const svc = entry.services[profile.id];
       preserveServingRuntime(svc);
-      reserveServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
+      reserveServiceReplacements({ entry, profileIds: [profile.id], staticProfileIds: effectiveProfile.staticWeb ? [profile.id] : [], state: stateService,
         portStart: config.portStart, operationId: branchOperationLease?.operationId });
       svc.status = 'building';
       // 分支本身不在运行（停止 / 出错后重试）时，聚合状态跟着进入部署中间态，结束时照常重算。
@@ -16356,6 +16357,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 变更时用）；/restart 只对已构建好的容器做 docker restart（没 bug、只是
   // 服务被停了，直接拉起来，秒级，不动代码）。复用 containerService
   // .restartServiceInPlace（docker restart + 存活探测）。
+  router.post('/branches/:id/recover-runtime', async (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) { res.status(404).json({ error: '分支不存在' }); return; }
+    const mismatch = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+    if (isRemoteExecutorOwned(entry.executorId)) { res.status(409).json({ error: '远端执行器恢复请在所属执行器执行' }); return; }
+    const { expectedCommitSha, expectedContainers } = req.body || {};
+    if (typeof expectedCommitSha !== 'string' || !expectedContainers || typeof expectedContainers !== 'object' || Array.isArray(expectedContainers)) {
+      res.status(400).json({ error: '必须提供完整提交和逐服务完整容器身份' }); return;
+    }
+    const lease = beginBranchOperation(req, res, entry, { kind: 'restart', source: 'api.recover-runtime', reason: '验证并恢复同批当前容器；保留数据库与历史部署结果' });
+    if (branchOperationCoordinator && !lease) return;
+    let outcome: 'completed' | 'failed' | 'cancelled' = 'failed';
+    initSSE(res);
+    res.flushHeaders();
+    const heartbeat = setInterval(() => {
+      try { if (!res.writableEnded) res.write(': heartbeat\n\n'); } catch { /* client disconnected */ }
+    }, 5000);
+    try {
+      const profiles = stateService.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry));
+      const result = await recoverBranchRuntime({ entry, profiles, state: stateService, container: containerService,
+        expectedCommitSha, expectedContainers,
+        // 项目声明的应用刷新连接；分支额外数据库/缓存/存储保留进程和数据。
+        restartProfiles: stateService.getBuildProfilesForProject(entry.projectId || 'default').map(p => p.id).filter(id => Boolean(entry.services[id])),
+        assertCurrent: step => assertBranchOperationCurrent(lease, step),
+        onProgress: message => sendSSE(res, 'progress', { message }),
+      });
+      outcome = 'completed';
+      stateService.appendActivityLog(entry.projectId, { type: 'restart', branchId: entry.id, branchName: entry.branch,
+        actor: resolveActorFromRequest(req), note: '当前容器归属、独占网络与逐服务就绪均已验证；恢复入口，不改写旧失败运行' });
+      stateService.save();
+      sendSSE(res, 'complete', { ...result, commitSha: expectedCommitSha, operationId: lease?.operationId });
+    } catch (error) {
+      outcome = error instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+      sendSSE(res, 'error', { message: (error as Error).message, operationStatus: outcome });
+    } finally { clearInterval(heartbeat); completeBranchOperation(lease, outcome); res.end(); }
+  });
+
   router.post('/branches/:id/restart', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
@@ -18767,6 +18806,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (expectedContainerId !== undefined && svc.containerId !== expectedContainerId) {
       res.status(409).json({ error: '当前容器身份已变化，拒绝执行' }); return;
+    }
+    if (svc.staticWeb || svc.runtimeKind === 'static') {
+      res.status(409).json({ error: '该前端由静态文件托管，无可执行命令的容器；请通过预览入口检查页面或重新部署产物' }); return;
     }
 
     try {
@@ -22688,7 +22730,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         if (!fs.existsSync(skillDir)) continue;
         const targetSkillDir = path.join(packDir, 'skills', skillName);
         await fs.promises.mkdir(targetSkillDir, { recursive: true });
-        await fs.promises.cp(skillDir, targetSkillDir, { recursive: true });
+        await copyCdsSkillSource(skillDir, targetSkillDir);
         copiedCount++;
       }
 
@@ -23136,7 +23178,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         }
         stateService.save();
 
-        reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+        reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), staticProfileIds: profiles.filter(profile => importProfiles.get(profile.id)?.staticWeb).map(profile => profile.id), state: stateService,
           portStart: config.portStart });
         await stateService.flush();
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);

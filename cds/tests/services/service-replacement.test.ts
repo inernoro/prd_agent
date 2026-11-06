@@ -290,3 +290,26 @@ describe('就绪切换与保旧回退', () => {
   });
 
 });
+
+describe('静态预览版本切换', () => {
+  it('静态候选只预约端口，不创建替换网络，也不继承旧容器身份', () => {
+    const f = fixture();
+    reserveServiceReplacements({ ...f, profileIds: ['api'], staticProfileIds: ['api'], portStart: 10000, operationId: 'static-operation' });
+    expect(f.entry.replacementNetwork).toBeUndefined();
+    expect(f.service.pendingRuntime).toMatchObject({ runtimeKind: 'static', hostPort: 10010 });
+    expect(f.service.pendingRuntime?.containerId).toBeUndefined();
+    expect(replacementLaunchEntry(f.entry).services.api.runtimeKind).toBe('static');
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+  });
+
+  it('旧静态监听器在新版持久化后回收；当前和候选身份始终保护', async () => {
+    const f = fixture(); f.service.status = 'running'; f.service.runtimeKind = 'static';
+    const old = { ...f.service.servingRuntime!, networkName: undefined, staticWeb: { id: 'static:old' } };
+    f.service.servingRuntime = old as ServiceState;
+    f.service.retainedRuntimes = [{ ...f.service, staticWeb: { id: 'static:current' } } as ServiceState];
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(1);
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledWith(f.entry, 'api', expect.objectContaining({ containerName: 'old-api' }), expect.any(Object));
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+  });
+});

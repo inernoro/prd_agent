@@ -190,6 +190,7 @@ export async function restoreDeploymentMemoryReservations(
   for (const branch of branches) {
     const hints = new Map(profiles(branch).map(profile => [profile.id, profile.resources?.memoryMB || 512]));
     for (const service of Object.values(branch.services)) for (const runtime of serviceRuntimeRefs(service)) {
+      if (runtime.staticWeb || runtime.runtimeKind === 'static') continue;
       const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
       if (incomplete) candidates.push({ branch, profileId: service.profileId, runtime, memoryMB: hints.get(service.profileId) || 512 });

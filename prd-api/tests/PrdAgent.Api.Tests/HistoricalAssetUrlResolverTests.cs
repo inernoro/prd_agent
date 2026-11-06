@@ -80,8 +80,13 @@ public class HistoricalAssetUrlResolverTests(ITestOutputHelper output)
         var database = new MongoDbContext(connection, databaseName);
         try
         {
-            // 真实 Controller 在调用 resolver 前已查询业务库；此处同样先建立数据库连接。
+            // ping 只证明连接可用；测试新库先显式验证该类型的审计写路径。
+            // 预备记录精确回读并删除后，仍按原 200ms 业务审计预算验证六种结果。
             await database.Database.RunCommandAsync<MongoDB.Bson.BsonDocument>(new MongoDB.Bson.BsonDocument("ping", 1));
+            var readiness = new ApiRequestLog { Id = Guid.NewGuid().ToString("N"), RequestId = "audit-fixture-readiness", Direction = "outbound" };
+            await database.ApiRequestLogs.InsertOneAsync(readiness);
+            (await database.ApiRequestLogs.Find(x => x.Id == readiness.Id).ToListAsync()).ShouldHaveSingleItem();
+            (await database.ApiRequestLogs.DeleteOneAsync(x => x.Id == readiness.Id)).DeletedCount.ShouldBe(1);
             foreach (var reason in new[] { "matched", "length_mismatch", "http_status", "network_failure", "upstream_timeout", "caller_cancelled" })
             {
                 var context = new DefaultHttpContext();
@@ -98,7 +103,7 @@ public class HistoricalAssetUrlResolverTests(ITestOutputHelper output)
 
                 // 真正从持久化集合按与现有入口相同的 requestId/direction 过滤回查。
                 var row = (await database.ApiRequestLogs.Find(x => x.RequestId == $"audit-business-{reason}" && x.Direction == "outbound")
-                    .ToListAsync()).ShouldHaveSingleItem();
+                    .ToListAsync()).ShouldHaveSingleItem($"审计业务判据 reason={reason}，不能用预备记录替代");
                 var evidence = row.ResponseBody ?? throw new InvalidOperationException("审计证据缺失");
                 evidence.ShouldNotContain("raw-inbound-secret");
                 evidence.ShouldNotContain("raw-upstream-secret");
