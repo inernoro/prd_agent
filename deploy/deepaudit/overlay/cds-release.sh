@@ -7,7 +7,8 @@ case "${1:-}" in
     test -s backend/app/cds_runtime.py
     test -s frontend/nginx.cds.conf.template
     python3 -m py_compile backend/app/cds_runtime.py
-    sh -n backend/cds-entrypoint.sh frontend/cds-auth.sh
+    sh -n backend/cds-entrypoint.sh
+    sh -n frontend/cds-auth.sh
     python3 backend/tests/test_cds_policy.py
     ;;
   deploy)
@@ -19,6 +20,11 @@ case "${1:-}" in
     command -v curl >/dev/null
     docker compose -p deepaudit -f docker-compose.cds-release.yml config --quiet
     docker compose -p deepaudit -f docker-compose.cds-release.yml pull --quiet
+    for component in backend frontend; do
+      image="ghcr.io/inernoro/deepaudit-cds-${component}:sha-${CDS_COMMIT_SHA}"
+      revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+      [ "$revision" = "$CDS_COMMIT_SHA" ] || { echo "Image revision mismatch: $component" >&2; exit 1; }
+    done
     docker compose -p deepaudit -f docker-compose.cds-release.yml up -d postgres redis
     docker compose -p deepaudit -f docker-compose.cds-release.yml run --rm db-migrate
     docker compose -p deepaudit -f docker-compose.cds-release.yml up -d --wait backend frontend
