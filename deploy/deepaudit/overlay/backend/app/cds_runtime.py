@@ -15,6 +15,7 @@ from app.db.session import AsyncSessionLocal, get_db
 from app.models.audit import AuditTask
 from app.models.user import User
 from app.schemas.token import Token
+from app.services.scan_errors import ERROR_MESSAGES
 
 CDS_ADMIN_EMAIL = "cds-admin@example.com"
 
@@ -51,7 +52,8 @@ async def lifespan(app):
         # Upstream regular scans are in-process BackgroundTasks, not durable workers.
         # Surface an interrupted scan as failed so CDS can offer an explicit retry.
         await db.execute(update(AuditTask).where(AuditTask.status.in_(["pending", "running"]))
-                         .values(status="failed", completed_at=datetime.now(timezone.utc)))
+                         .values(status="failed", completed_at=datetime.now(timezone.utc),
+                                 error_code="ANALYSIS_FAILED", error_message=ERROR_MESSAGES["ANALYSIS_FAILED"]))
         await db.commit()
         from app.services.init_templates import init_templates_and_rules
         await init_templates_and_rules(db)

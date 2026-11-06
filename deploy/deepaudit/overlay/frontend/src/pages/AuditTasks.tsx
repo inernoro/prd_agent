@@ -350,7 +350,7 @@ export default function AuditTasks() {
       <div className="absolute inset-0 cyber-grid-subtle pointer-events-none" />
 
       {/* Tab 切换 - 卡片式设计 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
+      <div className={`grid grid-cols-1 ${isCdsStaticReview ? "" : "md:grid-cols-2"} gap-4 relative z-10`}>
         {/* Agent任务卡片 */}
         {!isCdsStaticReview && <button
           onClick={() => setActiveTab("agent")}
@@ -462,7 +462,7 @@ export default function AuditTasks() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <h3 className={`text-lg font-mono font-bold uppercase tracking-[0.15em] transition-colors duration-300 ${activeTab === "regular" ? "text-cyan-400 text-glow-cyan" : "text-foreground group-hover:text-cyan-400"}`}>
-                  快速扫描任务
+                  {isCdsStaticReview ? "静态代码审查" : "快速扫描任务"}
                 </h3>
                 {regularStats.running > 0 && (
                   <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-cyan-500/30 text-cyan-400 border border-cyan-500/50 animate-pulse">
@@ -477,7 +477,7 @@ export default function AuditTasks() {
               </div>
               <p className={`text-sm transition-colors duration-300 ${activeTab === "regular" ? "text-foreground" : "text-muted-foreground group-hover:text-muted-foreground"
                 }`}>
-                传统规则引擎驱动的快速代码扫描，适合大规模批量检测
+                {isCdsStaticReview ? "逐文件静态与 AI 分析，检查 Bug、安全、性能、风格和可维护性。" : "传统规则引擎驱动的快速代码扫描，适合大规模批量检测"}
               </p>
 
               {/* 统计数据 */}

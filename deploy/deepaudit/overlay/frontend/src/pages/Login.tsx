@@ -7,6 +7,7 @@ import { useState, FormEvent, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/shared/context/AuthContext";
 import { apiClient } from "@/shared/api/serverClient";
+import { isCdsStaticReview } from "@/shared/config/runtime";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,6 +80,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center cyber-bg-elevated relative overflow-hidden">
+      {!isCdsStaticReview && <>
       {/* Scanline overlay */}
       <div className="absolute inset-0 pointer-events-none z-20">
         <div
@@ -139,6 +141,8 @@ export default function Login() {
         {new Date().toISOString().split("T")[0]}
       </div>
 
+      </>}
+
       {/* Main Card */}
       <div className="w-full max-w-md relative z-30 px-4">
         {/* Logo & Title */}
@@ -159,7 +163,7 @@ export default function Login() {
             <span className="text-foreground">AUDIT</span>
           </div>
           <p className="text-base font-mono text-muted-foreground">
-            // Autonomous Security Agent
+            {isCdsStaticReview ? "代码审查管理" : "// Autonomous Security Agent"}
           </p>
         </div>
 
@@ -174,11 +178,14 @@ export default function Login() {
               <div className="w-3 h-3 rounded-full bg-green-500/80" />
             </div>
             <span className="ml-2 font-mono text-sm text-muted-foreground tracking-wider">
-              authentication@deepaudit
+              {isCdsStaticReview ? "管理员登录" : "authentication@deepaudit"}
             </span>
           </div>
 
           <div className="p-6">
+            {isCdsStaticReview && <p className="text-sm leading-6 text-muted-foreground mb-5">
+              管理员账号用于浏览器身份验证及本页登录。日常提交和阅读报告请使用 CDS《代码审查报告》。
+            </p>}
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               <div className="space-y-2">
                 <Label
@@ -272,7 +279,7 @@ export default function Login() {
         {/* Version Info */}
         <div className="mt-6 text-center">
           <p className="font-mono text-sm text-muted-foreground uppercase">
-            Version {version} · Secure Connection
+            {isCdsStaticReview ? `版本 ${version}` : `Version ${version} · Secure Connection`}
           </p>
         </div>
       </div>

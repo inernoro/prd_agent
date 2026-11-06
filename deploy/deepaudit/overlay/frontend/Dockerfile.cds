@@ -10,7 +10,7 @@ RUN --mount=type=secret,id=proxy_ca \
     pnpm install --frozen-lockfile
 COPY . .
 ENV VITE_API_BASE_URL=/api/v1 VITE_CDS_STATIC_REVIEW=true
-RUN pnpm exec vitest run src/shared/config/__tests__/cdsStaticReview.test.tsx --maxWorkers=1 --minWorkers=1 \
+RUN pnpm exec vitest run src/shared/config/__tests__/cdsStaticReview.test.tsx src/shared/config/__tests__/cdsStaticFlow.test.tsx --maxWorkers=1 --minWorkers=1 \
     && pnpm type-check && pnpm build
 FROM nginx:1.27-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
