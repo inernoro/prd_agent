@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CodeReviewEngine } from '../../src/services/code-review-engine.js';
+import { CodeReviewEngine, CodeReviewWorkerStoppedError } from '../../src/services/code-review-engine.js';
 import { reviewJsonRequest, type CodeReviewAuditEvent } from '../../src/services/code-review-audit.js';
 import { validateCodeReviewZip } from '../../src/services/code-review-source.js';
 import { buildZip } from '../../src/utils/zip.js';
@@ -17,7 +17,7 @@ describe('DeepAudit five-dimension adapter', () => {
     ];
     const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit.internal:8000', username: 'service@internal.test', password: 'password',
       pollIntervalMs: 1, fetchImpl: (async (url, init) => { calls.push({ url: String(url), init }); return Response.json(responses.shift()); }) as typeof fetch });
-    const result = await engine.run({ taskId: 'cds-id', zip: Buffer.from('zip'), excludePatterns: ['vendor'],
+    const result = await engine.run({ taskId: 'cds-id', zip: buildZip([{ name: 'a.ts', data: 'const a = 1;' }]), excludePatterns: ['vendor'],
       signal: new AbortController().signal, audit: async (event) => { events.push(event); }, onProgress: async (value) => { progress.push(value); } });
     expect(result.findings[0]).toMatchObject({ filePath: 'a.ts', line: 7, category: 'security', severity: 'high', verified: false });
     expect(result.scannedFiles).toBe(2);
@@ -44,6 +44,69 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(urls.every((url) => url.includes('/tasks/upstream'))).toBe(true);
   });
 
+  it.each(['failed', 'cancelled', 'completed'])('explicitly retries a resumable %s task using the same native ID', async (status) => {
+    const calls: Array<{ url: string; method?: string }> = [];
+    let resumed = false;
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
+      calls.push({ url: String(url), method: init?.method });
+      if (String(url).endsWith('/resume')) { resumed = true; return Response.json({ task_id: 'same-task', status: 'started' }); }
+      if (String(url).endsWith('/issues')) return Response.json([{ file_path: 'module/a.ts', message: '已保留的发现' }]);
+      return Response.json(resumed ? { status: 'completed', total_files: 40, scanned_files: 40, resumable: false, failed_files: 0 }
+        : { status, total_files: 40, scanned_files: 37, resumable: true, failed_files: 3 });
+    }) as typeof fetch });
+    const result = await engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+    expect(result).toMatchObject({ engineTaskId: 'same-task', scannedFiles: 40 });
+    expect(calls.filter((call) => call.url.endsWith('/resume'))).toEqual([{ url: 'http://deepaudit/api/v1/tasks/same-task/resume', method: 'POST' }]);
+    expect(calls.every((call) => call.url.includes('/tasks/same-task'))).toBe(true);
+  });
+
+  it('does not implicitly resume a failed native scan during normal restart tracking', async () => {
+    const calls: string[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) => {
+      calls.push(String(url)); return Response.json({ status: 'failed', total_files: 40, scanned_files: 37, resumable: true });
+    }) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow('已完成文件的分析结果已保留');
+    expect(calls).toEqual(['http://deepaudit/api/v1/tasks/same-task']);
+  });
+
+  it('keeps native partial completion retryable instead of returning a final report result', async () => {
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async () =>
+      Response.json({ status: 'completed', total_files: 40, scanned_files: 37, failed_files: 3, resumable: true })) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow(/已分析 37\/40.*重试继续未完成部分/);
+  });
+
+  it('falls back to the same fixed snapshot only for an explicit retry of a legacy failed task', async () => {
+    const calls: string[] = [];
+    const snapshot = buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }]);
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/tasks/legacy')) return Response.json({ status: 'failed', total_files: 1, scanned_files: 0 });
+      if (String(url).endsWith('/projects/')) return Response.json({ id: 'project' });
+      if (String(url).endsWith('/scan/upload-zip')) {
+        expect(Buffer.from(await ((init!.body as FormData).get('file') as Blob).arrayBuffer())).toEqual(snapshot);
+        return Response.json({ task_id: 'replacement' });
+      }
+      return String(url).endsWith('/issues') ? Response.json([]) : Response.json({ status: 'completed', total_files: 1, scanned_files: 1 });
+    }) as typeof fetch });
+    const result = await engine.run({ taskId: 'task', zip: snapshot, excludePatterns: [], engineTaskId: 'legacy', retryFailed: true,
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+    expect(result.engineTaskId).toBe('replacement'); expect(calls.some((url) => url.endsWith('/resume'))).toBe(false);
+  });
+
+  it('does not create a duplicate task when native resume is still busy', async () => {
+    const calls: string[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) => {
+      calls.push(String(url)); return String(url).endsWith('/resume') ? Response.json({ detail: 'busy' }, { status: 409 })
+        : Response.json({ status: 'cancelled', total_files: 40, scanned_files: 37, resumable: true });
+    }) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'same-task', retryFailed: true,
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} })).rejects.toThrow('409');
+    expect(calls).toHaveLength(2); expect(calls.every((url) => url.includes('/tasks/same-task'))).toBe(true);
+  });
+
   it('sends the fixed snapshot unchanged without replaying boundary-based exclusions as upstream substrings', async () => {
     const excludePatterns = ['cds/src/util'];
     const snapshot = await validateCodeReviewZip(buildZip([
@@ -59,6 +122,8 @@ describe('DeepAudit five-dimension adapter', () => {
         const form = init!.body as FormData;
         const scanConfig = JSON.parse(String(form.get('scan_config')));
         expect(scanConfig.exclude_patterns).toEqual([]);
+        expect(scanConfig.max_analyze_files).toBe(0);
+        expect(scanConfig.file_paths).toEqual(['cds/src/utils/zip.ts']);
         const file = form.get('file');
         expect(file).toBeInstanceOf(Blob);
         expect(Buffer.from(await (file as Blob).arrayBuffer())).toEqual(snapshot.zip);
@@ -74,6 +139,34 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(result.totalFiles).toBe(1);
     expect(result.scannedFiles).toBe(1);
     expect(excludePatterns).toEqual(['cds/src/util']); // The task keeps its original configuration as provenance.
+  });
+
+  it('submits all repository modules in one native task even when the service account samples twelve files', async () => {
+    const files = Array.from({ length: 40 }, (_, index) => ({ name: `${['cds', 'prd-api', 'llmgw', 'prd-admin'][index % 4]}/src/file-${index}.ts`, data: `export const file${index} = ${index};` }));
+    const snapshot = await validateCodeReviewZip(buildZip(files));
+    let submissions = 0;
+    let paths: string[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
+      if (String(url).endsWith('/projects/')) return Response.json({ id: 'project' });
+      if (String(url).endsWith('/scan/upload-zip')) {
+        submissions++;
+        const form = init!.body as FormData;
+        const config = JSON.parse(String(form.get('scan_config')));
+        expect(config.max_analyze_files).toBe(0);
+        paths = config.file_paths;
+        expect(paths).toEqual(files.map((file) => file.name));
+        expect(Buffer.from(await (form.get('file') as Blob).arrayBuffer())).toEqual(snapshot.zip);
+        return Response.json({ task_id: 'whole-repository' });
+      }
+      if (String(url).endsWith('/issues')) return Response.json([]);
+      // Actual upstream selection: explicit file_paths take precedence over maxAnalyzeFiles=12.
+      const selected = paths.length ? paths : files.slice(0, 12).map((file) => file.name);
+      return Response.json({ status: 'completed', total_files: selected.length, scanned_files: selected.length });
+    }) as typeof fetch });
+    const result = await engine.run({ taskId: 'one-visible-task', zip: snapshot.zip, excludePatterns: [], signal: new AbortController().signal,
+      audit: async () => {}, onProgress: async () => {} });
+    expect(submissions).toBe(1);
+    expect(result).toMatchObject({ engineTaskId: 'whole-repository', totalFiles: 40, scannedFiles: 40, skippedFiles: 0 });
   });
 
   it('preserves detailed causes from the real ZIP-scanner issue shape without repeating its title', async () => {
@@ -132,6 +225,18 @@ describe('DeepAudit five-dimension adapter', () => {
     await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'upstream',
       signal: controller.signal, audit: async () => {}, onProgress: async () => { controller.abort(); } })).rejects.toThrow();
     expect(urls.at(-1)).toMatch(/\/tasks\/upstream\/cancel$/);
+  });
+
+  it('stops local polling without cancelling the upstream task when the CDS worker shuts down', async () => {
+    const controller = new AbortController();
+    const urls: string[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) => {
+      urls.push(String(url)); return Response.json({ status: 'running', total_files: 40, scanned_files: 7 });
+    }) as typeof fetch });
+    await expect(engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'existing-whole-repository',
+      signal: controller.signal, audit: async () => {}, onProgress: async () => { controller.abort(new CodeReviewWorkerStoppedError('worker stopped')); } })).rejects.toThrow();
+    expect(urls.some((url) => url.endsWith('/cancel'))).toBe(false);
+    expect(urls.every((url) => url.endsWith('/tasks/existing-whole-repository'))).toBe(true);
   });
 
   it('persists distinct evidence for HTTP error, invalid JSON and timeout', async () => {

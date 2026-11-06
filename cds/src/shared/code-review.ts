@@ -18,6 +18,8 @@ export interface CodeReviewTask {
   progress: { totalFiles: number; scannedFiles: number };
   engineTaskId?: string;
   engineCompleted?: boolean;
+  /** Internal persisted intent: only an explicit user retry may resume a failed upstream scan. */
+  engineRetryRequested?: boolean;
   reportId?: string;
   findingsSummary?: Record<string, number>;
   error?: string;
@@ -33,8 +35,8 @@ export interface CodeReviewTask {
   auditHeadKey?: string;
   auditCount?: number;
 }
-export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'ownerScope' | 'idempotencyKey' | 'audit' | 'auditHeadKey' | 'auditCount'>;
+export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'ownerScope' | 'idempotencyKey' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested'>;
 export function publicCodeReviewTask(task: CodeReviewTask): PublicCodeReviewTask {
-  const { inputKey: _i, ownerScope: _o, idempotencyKey: _k, audit: _a, auditHeadKey: _h, auditCount: _c, ...visible } = task;
+  const { inputKey: _i, ownerScope: _o, idempotencyKey: _k, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, ...visible } = task;
   return visible;
 }
