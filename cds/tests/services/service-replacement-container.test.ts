@@ -18,6 +18,19 @@ function fixture() {
 }
 
 describe('替换运行身份与回收证明', () => {
+  it('恢复阶段保留旧入口需要的分支网络，不对数据库发出断开命令', async () => {
+    const f = fixture(); const prefix = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-`;
+    const previous = prefix + 'c'.repeat(32), network = prefix + 'd'.repeat(32);
+    f.entry.replacementNetworks = [network]; f.runtime.networkName = previous;
+    f.identity.networks = { [previous]: { Aliases: ['api'] }, [network]: { Aliases: ['api'] } } as any;
+    f.shell.addResponsePattern(/docker network inspect/, () => ({ stdout: JSON.stringify({ 'cds.branch.id': 'branch', 'cds.project.id': 'project' }), stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/docker network disconnect/, () => { delete (f.identity.networks as any)[previous]; return { stdout: '', stderr: '', exitCode: 0 }; });
+    const service = { ...f.runtime, profileId: 'api', status: 'running' as const };
+    await f.container.isolateReplacementPeer(f.entry, service, network, () => {}, [previous]);
+    expect(f.shell.commands.filter(command => command.startsWith('docker network disconnect'))).toEqual([]);
+    expect(service.networkName).toBe(network);
+  });
+
   it.each(['owned', 'foreign'] as const)('恢复网络只摘除当前容器的本分支旧网，保留共享网与其他项目（%s）', async mode => {
     const f = fixture(); const prefix = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-`;
     const old = prefix + 'c'.repeat(32), network = prefix + 'd'.repeat(32);

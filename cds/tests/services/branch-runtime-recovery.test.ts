@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { recoverBranchRuntime } from '../../src/services/branch-runtime-recovery.js';
 import { servingRuntime } from '../../src/services/service-runtime.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
+import { branchAppNetworkName } from '../../src/services/branch-network.js';
 
 function fixture() {
   const sha = 'a'.repeat(40), cid = 'b'.repeat(64);
@@ -13,6 +14,7 @@ function fixture() {
     inspectOwnedRuntime: vi.fn().mockImplementation(async (_entry, _id, runtime) => runtime),
     connectReplacementPeer: vi.fn().mockResolvedValue(undefined), isolateReplacementPeer: vi.fn().mockResolvedValue(undefined),
     restartServiceInPlace: vi.fn().mockResolvedValue(true), waitForReadiness: vi.fn().mockResolvedValue(true), waitForStartupSignal: vi.fn(),
+    cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined),
   };
   const profiles = [{ id: 'api', name: 'API', readinessProbe: { path: '/health' } }] as BuildProfile[];
   const options = { entry, profiles, state: state as any, container, expectedCommitSha: sha, expectedContainers: { api: cid }, restartProfiles: ['api'], assertCurrent: vi.fn() };
@@ -20,6 +22,49 @@ function fixture() {
 }
 
 describe('当前同批容器恢复', () => {
+  it.each(['restart', 'readiness', 'persistence'])('%s失败不摘掉仍被旧入口使用的数据库网络，并回收本次未发布网络', async failure => {
+    const f = fixture();
+    const databaseNetworks = new Set(['old-network', 'candidate-network']);
+    f.entry.services.db = { profileId: 'db', containerName: 'database', containerId: 'd'.repeat(64), hostPort: 3000, status: 'running', networkName: 'old-network' };
+    f.options.profiles.push({ id: 'db', name: 'DB' } as BuildProfile);
+    (f.options.expectedContainers as Record<string, string>).db = 'd'.repeat(64);
+    f.container.isolateReplacementPeer.mockImplementation(async (_entry, service, _network, _check, protectedNetworks = []) => {
+      if (service.profileId === 'db' && !protectedNetworks.includes('old-network')) databaseNetworks.delete('old-network');
+    });
+    if (failure === 'restart') f.container.restartServiceInPlace.mockResolvedValueOnce(false);
+    if (failure === 'readiness') f.container.waitForReadiness.mockResolvedValueOnce(false);
+    if (failure === 'persistence') f.state.flush.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('disk'));
+    await expect(recoverBranchRuntime(f.options)).rejects.toThrow();
+    expect(databaseNetworks.has('old-network')).toBe(true);
+    expect(servingRuntime(f.entry.services.api)?.containerName).toBe('old');
+    expect(f.container.cleanupUnusedReplacementNetworks).toHaveBeenCalledOnce();
+    expect(f.container.cleanupUnusedReplacementNetworks.mock.calls[0][0].replacementNetworks).toHaveLength(1);
+  });
+
+  it('成功发布后复用已有归属核验的共同网络，不为同批当前容器反复分配网络', async () => {
+    const f = fixture();
+    const existing = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-${'e'.repeat(32)}`;
+    f.entry.replacementNetworks = [existing]; f.entry.services.api.networkName = existing;
+    const result = await recoverBranchRuntime(f.options);
+    expect(result.network).toBe(existing);
+    expect(f.entry.replacementNetworks).toEqual([existing]);
+    expect(f.container.cleanupUnusedReplacementNetworks).toHaveBeenCalledOnce();
+  });
+
+  it('已有其他空预约网络在发布后交给原归属核验回收，清理失败保留责任', async () => {
+    const f = fixture();
+    const unused = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-${'f'.repeat(32)}`;
+    f.entry.replacementNetworks = [unused];
+    f.container.cleanupUnusedReplacementNetworks.mockImplementation(async view => {
+      expect(view.replacementNetworks).toContain(unused);
+      expect(servingRuntime(f.entry.services.api)?.containerName).toBe('current');
+      throw new Error('network ownership unknown');
+    });
+    await expect(recoverBranchRuntime(f.options)).rejects.toThrow('network ownership unknown');
+    expect(f.entry.replacementNetworks).toContain(unused);
+    expect(servingRuntime(f.entry.services.api)?.containerName).toBe('current');
+  });
+
   it.each(['sha', 'scope', 'container', 'foreign', 'missing'])('%s前置失败时不连网、不重启、不发布', async mode => {
     const f = fixture();
     if (mode === 'sha') f.options.expectedCommitSha = 'd'.repeat(40);

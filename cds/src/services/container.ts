@@ -770,7 +770,7 @@ export class ContainerService {
   }
 
   async isolateReplacementPeer(entry: BranchEntry, service: ServiceState, network: string,
-    assertCurrent: (step: string) => void): Promise<void> {
+    assertCurrent: (step: string) => void, protectedNetworks: readonly string[] = []): Promise<void> {
     const actual = await this.inspectOwnedRuntime(entry, service.profileId, service);
     assertCurrent('recovery isolation identity');
     if (!actual || actual.containerId !== service.containerId) throw new Error('恢复网络前容器身份已变化');
@@ -779,7 +779,7 @@ export class ContainerService {
     if (!entry.replacementNetworks?.includes(network) || !network.startsWith(prefix)) throw new Error('恢复网络不属于当前分支');
     const shell = this.qualifiedShell(assertCurrent);
     for (const previous of new Set([actual.networkName, ...(actual.connectedNetworks || [])])) {
-      if (!previous || previous === network) continue;
+      if (!previous || previous === network || protectedNetworks.includes(previous)) continue;
       if (previous !== canonical && !(previous.startsWith(prefix) && /^[a-f0-9]{32}$/.test(previous.slice(prefix.length)))) continue;
       if (previous !== canonical) {
         const ownership = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(previous)}`);
