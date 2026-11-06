@@ -8,7 +8,9 @@ CDS 把“准备部署环境”变成“选择项目、批准 Agent、确认方�
 私有仓库使用该项目绑定的 GitHub App 授权；未授权时可改用 ZIP。任务进度、取消、重试、
 报告阅读和下载都在同一页面。报告独立分类，不参与功能验收通过率、发布门禁或合并覆盖统计。
 
-管理员先部署 [DeepAudit 独立引擎](../deploy/deepaudit/README.md)，然后在 CDS 控制进程的密钥配置中设置：
+管理员先部署 [DeepAudit 独立引擎](../deploy/deepaudit/README.md)，将专用 `CDS_SERVICE_EMAIL` 和 `CDS_SERVICE_PASSWORD` 保存在该引擎项目的环境配置中。系统所有者或全权运维凭据可通过 `GET/PUT /api/code-reviews/settings` 绑定 `engineBaseUrl`（后端内部地址）和 `engineProjectId`；接口只保存引用，不接收或返回账号密码。新配置和凭据轮换无需重启 CDS，有未结束任务时禁止切换引擎。
+
+也可沿用 CDS 控制进程环境配置。存储、邮件与静态检查使用以下配置：
 
 | 配置项 | 用途 |
 |---|---|
