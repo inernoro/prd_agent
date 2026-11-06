@@ -1,3 +1,4 @@
+import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
@@ -916,6 +917,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/integrations/bug-report/authorize': '接收 MAP 缺陷转发授权',
     'POST /cds-system/integrations/bug-report/test': '测试缺陷转发接入',
     'GET /cds-system/connections': '列出配对连接',
+    'GET /instance-catalog': '查看主备 CDS 实例目录',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/offsite-backup': '查询离机备份配置',
     'PUT /cds-system/offsite-backup': '保存离机备份配置',
@@ -3493,6 +3495,8 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     }),
   );
+
+  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot));
 
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
