@@ -1034,9 +1034,9 @@ describe('Redis 快照路径取运行时真值', () => {
     // start 是 mtime 下界：0 等于只考察「解析到哪个路径」，1 用来验「文件不在就判失败」
     // （文件缺失时 stat 失败 → mt=0，0 >= 1 不成立）。
     const tail = SCRIPT.split('\n');
-    const cut = tail.findIndex((l) => l.startsWith('dirOut=$(redis-cli CONFIG GET dir'));
+    const cut = tail.findIndex((l) => l.startsWith('dirOut='));
     expect(cut).toBeGreaterThan(0);
-    const script = `start=${opts.start ?? 0}\n${tail.slice(cut).join('\n')}`;
+    const script = `${REDIS_CONNECT_LINES.join('\n')}\nstart=${opts.start ?? 0}\n${tail.slice(cut).join('\n')}`;
     try {
       const stdout = execFileSync('/bin/sh', ['-s'], {
         input: script,

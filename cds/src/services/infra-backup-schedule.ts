@@ -694,10 +694,10 @@ export const REDIS_RDB_PATH_LINES: readonly string[] = [
   // 「猜一个默认路径」正好在最危险的场景里给出最坏结果：恢复流程会把上传的快照写到
   // 一个 redis 不读的文件，重启，然后报「已恢复」——用户以为数据回来了，其实没有。
   // 默认值只在「问到了、但值确实是默认」时才出现，那由 redis 自己回答，不由我们假设。
-  'dirOut=$(redis-cli CONFIG GET dir 2>&1) || { echo "CONFIG GET dir 调用失败: $dirOut" >&2; exit 27; }',
+  'dirOut=$(cds_redis_cli CONFIG GET dir 2>&1) || { echo "CONFIG GET dir 调用失败: $dirOut" >&2; exit 27; }',
   `D=$(printf '%s\\n' "$dirOut" | sed -n '2p' | tr -d '\\r')`,
   '[ -n "$D" ] || { echo "CONFIG GET dir 返回空，拒绝猜默认路径" >&2; exit 28; }',
-  'fileOut=$(redis-cli CONFIG GET dbfilename 2>&1) || { echo "CONFIG GET dbfilename 调用失败: $fileOut" >&2; exit 29; }',
+  'fileOut=$(cds_redis_cli CONFIG GET dbfilename 2>&1) || { echo "CONFIG GET dbfilename 调用失败: $fileOut" >&2; exit 29; }',
   `F=$(printf '%s\\n' "$fileOut" | sed -n '2p' | tr -d '\\r')`,
   '[ -n "$F" ] || { echo "CONFIG GET dbfilename 返回空，拒绝猜默认路径" >&2; exit 30; }',
   'RDB="$D/$F"',
@@ -731,7 +731,9 @@ export const REDIS_CONNECT_LINES: readonly string[] = [
   // 在这个位置被赋值。没送就是空，整段照常走。
   'CDS_STDIN_AUTH="${CDS_STDIN_AUTH:-}"',
   "cds_is_pong() { printf '%s\\n' \"$1\" | grep -qx PONG; }",
-  'cds_try_auth() { [ -n "$1" ] || return 1; REDISCLI_AUTH="$1" redis-cli PING 2>&1 | grep -qx PONG; }',
+  'CDS_STDIN_USER="${CDS_STDIN_USER:-${REDIS_USERNAME:-}}"',
+  'cds_redis_cli() { if [ -n "$CDS_STDIN_USER" ]; then command redis-cli --user "$CDS_STDIN_USER" "$@"; else command redis-cli "$@"; fi; }',
+  'cds_try_auth() { [ -n "$1" ] || return 1; REDISCLI_AUTH="$1" cds_redis_cli PING 2>&1 | grep -qx PONG; }',
   // 从进程命令行里扫 --requirepass。**这条路只在少数情况下有效，别把它当主力**：
   // redis 默认 `set-proc-title yes`，启动后会把自己的 argv 整个改写成 `redis-server *:6379`，
   // 命令行里的口令连同其它参数一起消失（拿真 redis 量过：默认配置扫不到，
@@ -820,11 +822,12 @@ export function redisAuthFromServiceDefinition(svc: {
  *
  * 没有口令时返回脚本本身——行为与从前完全一致，不为「统一形状」引入新语义。
  */
-export function redisProbeStdin(script: string, password: string): string {
-  if (!password) return script;
+export function redisProbeStdin(script: string, password: string, username = ''): string {
+  if (!password && !username) return script;
   // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 换行）都是字面量。
   const quoted = `'${password.replace(/'/g, `'"'"'`)}'`;
-  return `CDS_STDIN_AUTH=${quoted}\n${script}`;
+  const user = `'${username.replace(/'/g, `'"'"'`)}'`;
+  return `${username ? `CDS_STDIN_USER=${user}\n` : ''}CDS_STDIN_AUTH=${quoted}\n${script}`;
 }
 
 /**
@@ -837,7 +840,7 @@ export function redisProbeStdin(script: string, password: string): string {
 export function buildRedisAppendOnlyScript(): string {
   return [
     ...REDIS_CONNECT_LINES,
-    'out=$(redis-cli CONFIG GET appendonly 2>&1) || { echo "CONFIG GET appendonly 调用失败: $out" >&2; exit 31; }',
+    'out=$(cds_redis_cli CONFIG GET appendonly 2>&1) || { echo "CONFIG GET appendonly 调用失败: $out" >&2; exit 31; }',
     `v=$(printf '%s\\n' "$out" | sed -n '2p' | tr -d '\\r')`,
     '[ -n "$v" ] || { echo "CONFIG GET appendonly 返回空" >&2; exit 32; }',
     'printf "%s" "$v"',
@@ -893,10 +896,10 @@ export function buildRedisBackupProbeScript(): string {
   ...REDIS_CONNECT_LINES,
   // 落盘时间的下界。容器自己的时钟，避免宿主与容器时钟不一致。
   'start=$(date +%s)',
-  'redis-cli BGSAVE >/dev/null 2>&1 || { echo "BGSAVE 调用失败" >&2; exit 23; }',
+  'cds_redis_cli BGSAVE >/dev/null 2>&1 || { echo "BGSAVE 调用失败" >&2; exit 23; }',
   'i=0; ip=""',
   'while [ "$i" -lt 90 ]; do',
-  `  info=$(redis-cli INFO persistence 2>/dev/null | tr -d '\\r')`,
+  `  info=$(cds_redis_cli INFO persistence 2>/dev/null | tr -d '\\r')`,
   `  ip=$(echo "$info" | awk -F: '/^rdb_bgsave_in_progress:/{print $2}')`,
   `  st=$(echo "$info" | awk -F: '/^rdb_last_bgsave_status:/{print $2}')`,
   '  if [ "$ip" = "0" ]; then',

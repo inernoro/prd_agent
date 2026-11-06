@@ -878,7 +878,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               `docker exec -i ${shq(t.containerName)} sh -s`,
               {
                 timeout: 120_000,
-                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t)),
+                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t), t.env?.REDIS_USERNAME),
               },
             );
             if (redisProbe.exitCode !== 0) {

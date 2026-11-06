@@ -386,7 +386,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           `docker exec -i ${shq(svc.containerName)} sh -s`,
           {
             timeout: 120_000,
-            stdin: redisProbeStdin(buildRedisBackupProbeScript(), redisAuthFromServiceDefinition(svc)),
+            stdin: redisProbeStdin(buildRedisBackupProbeScript(), redisAuthFromServiceDefinition(svc), svc.env?.REDIS_USERNAME),
           },
         );
         if (probe.exitCode !== 0) {
@@ -609,7 +609,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const auth = redisAuthFromServiceDefinition(svc);
         const pathProbe = await shell.exec(
           `docker exec -i ${shq(svc.containerName)} sh -s`,
-          { timeout: 30_000, stdin: redisProbeStdin(buildRedisRdbPathScript(), auth) },
+          { timeout: 30_000, stdin: redisProbeStdin(buildRedisRdbPathScript(), auth, svc.env?.REDIS_USERNAME) },
         );
         const rdbTarget = (pathProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
         if (pathProbe.exitCode !== 0 || !rdbTarget.startsWith('/')) {
@@ -623,7 +623,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 「已恢复」。这种情况明确拒绝，不假装成功（E35）。
         const aofProbe = await shell.exec(
           `docker exec -i ${shq(svc.containerName)} sh -s`,
-          { timeout: 30_000, stdin: redisProbeStdin(buildRedisAppendOnlyScript(), auth) },
+          { timeout: 30_000, stdin: redisProbeStdin(buildRedisAppendOnlyScript(), auth, svc.env?.REDIS_USERNAME) },
         );
         const aof = (aofProbe.stdout || '').trim().split('\n').pop()?.trim().toLowerCase() || '';
         if (aofProbe.exitCode !== 0) {
