@@ -769,6 +769,34 @@ export class ContainerService {
     service.aliasNetworks = [...new Set([...(service.aliasNetworks || []), ...(service.networkName ? [service.networkName] : []), network])];
   }
 
+  async isolateReplacementPeer(entry: BranchEntry, service: ServiceState, network: string,
+    assertCurrent: (step: string) => void, protectedNetworks: readonly string[] = []): Promise<void> {
+    const actual = await this.inspectOwnedRuntime(entry, service.profileId, service);
+    assertCurrent('recovery isolation identity');
+    if (!actual || actual.containerId !== service.containerId) throw new Error('恢复网络前容器身份已变化');
+    const canonical = branchAppNetworkName(entry.id);
+    const prefix = `${canonical.slice(0, 27)}-r-`;
+    if (!entry.replacementNetworks?.includes(network) || !network.startsWith(prefix)) throw new Error('恢复网络不属于当前分支');
+    const shell = this.qualifiedShell(assertCurrent);
+    for (const previous of new Set([actual.networkName, ...(actual.connectedNetworks || [])])) {
+      if (!previous || previous === network || protectedNetworks.includes(previous)) continue;
+      if (previous !== canonical && !(previous.startsWith(prefix) && /^[a-f0-9]{32}$/.test(previous.slice(prefix.length)))) continue;
+      if (previous !== canonical) {
+        const ownership = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(previous)}`);
+        if (ownership.exitCode !== 0) throw new Error('旧分支网络归属读取失败');
+        const labels = JSON.parse(ownership.stdout);
+        if (labels?.['cds.branch.id'] !== entry.id || labels?.['cds.project.id'] !== (entry.projectId || '_unknown'))
+          throw new Error('旧网络属于其他分支，拒绝摘除');
+      }
+      const result = await shell.exec(`docker network disconnect ${this.shellQuote(previous)} ${this.shellQuote(actual.containerId!)}`);
+      if (result.exitCode !== 0) throw new Error('当前容器旧分支网络摘除失败；未发布恢复结果');
+    }
+    const after = await this.inspectOwnedRuntime(entry, service.profileId, { ...service, networkName: network });
+    assertCurrent('recovery isolation verified');
+    if (!after || after.networkName !== network || !after.aliasNetworks?.includes(network)) throw new Error('恢复网络未确认');
+    Object.assign(service, after);
+  }
+
   private async ensureReplacementNetwork(entry: BranchEntry, network: string, assertCurrent?: (step: string) => void): Promise<void> {
     const prefix = `${branchAppNetworkName(entry.id).slice(0, 27)}-r-`;
     if (!network.startsWith(prefix) || !/^[a-f0-9]{32}$/.test(network.slice(prefix.length))) throw new Error('新服务网络身份不属于本分支');
