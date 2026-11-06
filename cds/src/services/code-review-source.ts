@@ -44,12 +44,12 @@ function shouldInclude(name: string, patterns: string[]): boolean {
 export async function validateCodeReviewZip(zip: Buffer, excludePatterns: string[] = []): Promise<{
   zip: Buffer; totalFiles: number; skippedFiles: number;
 }> {
-  const result = await readCodeReviewSnapshot(zip, excludePatterns);
+  const result = await readCodeReviewSnapshot(zip, excludePatterns, true);
   return { zip: result.zip, totalFiles: result.totalFiles, skippedFiles: result.skippedFiles };
 }
 
 /** Shared validation for the fixed static scanner; files have passed path, size and CRC checks. */
-export async function readCodeReviewSnapshot(zip: Buffer, excludePatterns: string[] = []): Promise<{
+export async function readCodeReviewSnapshot(zip: Buffer, excludePatterns: string[] = [], normalizeWrapper = false): Promise<{
   zip: Buffer; totalFiles: number; skippedFiles: number; files: Array<{ name: string; data: Buffer }>;
 }> {
   if (!Buffer.isBuffer(zip) || !zip.length || zip.length > CODE_REVIEW_ZIP_LIMITS.compressed) {
@@ -111,7 +111,8 @@ export async function readCodeReviewSnapshot(zip: Buffer, excludePatterns: strin
   // GitHub archives and common uploaded ZIPs have a single wrapper directory.
   const firstParts = selected[0].name.split('/');
   const prefix = firstParts.length > 1 ? `${firstParts[0]}/` : '';
-  const stripPrefix = prefix && selected.every((entry) => entry.name.startsWith(prefix));
+  const sourceRoots = new Set(['src', 'app', 'apps', 'lib', 'libs', 'test', 'tests', 'api', 'web', 'backend', 'frontend', 'packages']);
+  const stripPrefix = normalizeWrapper && prefix && !sourceRoots.has(firstParts[0]) && selected.every((entry) => entry.name.startsWith(prefix));
   const clean = selected.map((entry) => ({ ...entry, name: stripPrefix ? entry.name.slice(prefix.length) : entry.name,
     // Fixed local DOS timestamp makes snapshot hashes reproducible across retries and host timezones.
     modifiedAt: new Date(1980, 0, 1, 0, 0, 0) }));

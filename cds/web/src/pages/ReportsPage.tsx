@@ -900,7 +900,7 @@ function ReportsHome({
   const pageRows = ledgerRows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
   const hiddenSuperseded = useMemo(() => reports.filter((r) => supersededIds.has(r.id)).length, [reports, supersededIds]);
   const kindTabs = useMemo(() => {
-    const order = ['功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练', '其他'];
+    const order = ['功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练', '代码审查报告', '其他'];
     return order.filter((k) => (kindCounts.get(k) ?? 0) > 0).map((k) => ({ kind: k, count: kindCounts.get(k) ?? 0 }));
   }, [kindCounts]);
   const allCount = useMemo(() => Array.from(kindCounts.values()).reduce((a, b) => a + b, 0), [kindCounts]);
