@@ -5405,7 +5405,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       workspaceId = (await readEnvelope<{ workspace: { id: string } }>(await request.post('/api/literary-agent/workspaces', {
         headers: authHeaders(token), data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学实际配图`, scenarioType: 'article-illustration', articleContent: article },
       }))).workspace.id;
-      await readEnvelope(await request.put(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token), data: { articleContent: article, suppressAutoSubmit: true } }));
+      const privateWorkspace = await readEnvelope<{ workspace: { suppressAutoSubmit: boolean; isPublic: boolean } }>(await request.put(`/api/visual-agent/image-master/workspaces/${workspaceId}`, { headers: authHeaders(token), data: { articleContent: article, suppressAutoSubmit: true } }));
+      expect(privateWorkspace.workspace.suppressAutoSubmit, '文学巡检夹具必须实际关闭自动投稿').toBe(true);expect(privateWorkspace.workspace.isPublic).toBe(false);
       const chat = (await readEnvelope<BusinessModelPool[]>(await request.get('/api/literary-agent/config/models/chat', { headers: authHeaders(token) }))).find(x => x.isDefault)!;
       const stream = await request.post(`/api/visual-agent/image-master/workspaces/${workspaceId}/article/generate-markers`, {
         headers: { ...authHeaders(token), Accept: 'text/event-stream', 'Idempotency-Key': `${workspaceId}-markers` },
@@ -5510,7 +5511,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let workspaceId = '';
     try {
       workspaceId = (await readEnvelope<{ workspace: { id: string } }>(await request.post('/api/literary-agent/workspaces', { headers: authHeaders(token), data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-模型不可用`, scenarioType: 'article-illustration', articleContent: article } }))).workspace.id;
-      await readEnvelope(await request.put(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token), data: { articleContent: article, suppressAutoSubmit: true } }));
+      const privateWorkspace = await readEnvelope<{ workspace: { suppressAutoSubmit: boolean; isPublic: boolean } }>(await request.put(`/api/visual-agent/image-master/workspaces/${workspaceId}`, { headers: authHeaders(token), data: { articleContent: article, suppressAutoSubmit: true } }));
+      expect(privateWorkspace.workspace.suppressAutoSubmit, '文学巡检夹具必须实际关闭自动投稿').toBe(true);expect(privateWorkspace.workspace.isPublic).toBe(false);
       await page.goto(`/literary-agent/${workspaceId}`, { waitUntil: 'domcontentloaded' });
       await dismissCdsPreviewWidget(page);
       const generate = page.getByRole('button', { name: '生成配图标记', exact: true });
@@ -5641,7 +5643,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 390, height: 844 });
     const token = await loginAndReadToken(page, request, '/literary-agent');
-    const created = await readEnvelope<{ workspace: { id: string } }>(await request.post('/api/literary-agent/workspaces', { headers: authHeaders(token), data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-迟到读取回归`, scenarioType: 'article-illustration', suppressAutoSubmit: true } }));
+    const created = await readEnvelope<{ workspace: { id: string } }>(await request.post('/api/literary-agent/workspaces', { headers: authHeaders(token), data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-迟到读取回归`, scenarioType: 'article-illustration' } }));
     const id = created.workspace.id;
     const article = '新上传的蓝色长椅文章必须保留，旧初始化响应不得覆盖。';
     let release: (() => void) | undefined;
