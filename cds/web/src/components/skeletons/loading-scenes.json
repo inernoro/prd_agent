@@ -77,6 +77,13 @@
     "workspace": "fluid"
   },
   {
+    "route": "/code-reviews",
+    "name": "代码审查报告",
+    "page": "pages/CodeReviewsPage.tsx",
+    "kind": "rows",
+    "workspace": "fluid"
+  },
+  {
     "route": "/status",
     "name": "监控中心",
     "page": "pages/StatusPage.tsx",

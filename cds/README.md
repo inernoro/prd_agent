@@ -2,6 +2,34 @@
 
 CDS 把“准备部署环境”变成“选择项目、批准 Agent、确认方案、打开预览”。它负责理解项目、准备运行方式、持续记录部署过程，并在新版本有问题时帮助用户恢复到成功版本。
 
+## 代码审查报告
+
+登录后从左侧“代码审查报告”进入，选择有权限的项目，上传 ZIP 或填写 GitHub 仓库地址与版本。
+私有仓库使用该项目绑定的 GitHub App 授权；未授权时可改用 ZIP。任务进度、取消、重试、
+报告阅读和下载都在同一页面。报告独立分类，不参与功能验收通过率、发布门禁或合并覆盖统计。
+
+管理员先部署 [DeepAudit 独立引擎](../deploy/deepaudit/README.md)，然后在 CDS 控制进程的密钥配置中设置：
+
+| 配置项 | 用途 |
+|---|---|
+| `CDS_DEEPAUDIT_BASE_URL` | DeepAudit 后端内部地址，不是管理员前端地址 |
+| `CDS_DEEPAUDIT_USERNAME` / `CDS_DEEPAUDIT_PASSWORD` | DeepAudit 独立服务邮箱与密码；也支持专用 `CDS_DEEPAUDIT_TOKEN` |
+| 现有 `R2_*` / `CDS_REPORTS_R2_*` | 源码快照、响应证据和报告正文的持久化存储；凭据不全时拒绝受理扫描 |
+| `CDS_PUBLIC_BASE_URL` | 邮件中的实际 CDS 登录入口，部署时必须配置 |
+| `CDS_REVIEW_SMTP_HOST` / `CDS_REVIEW_SMTP_FROM` | 启用额外邮件投递；未配置仍可使用报告中心 |
+| `CDS_REVIEW_SMTP_PORT` / `CDS_REVIEW_SMTP_SECURE` | 默认 587/STARTTLS；465 使用 TLS |
+| `CDS_REVIEW_SMTP_USER` / `CDS_REVIEW_SMTP_PASSWORD` | SMTP 认证凭据 |
+| `CDS_CODE_REVIEW_SEMGREP_BIN` | 可选的管理员安装 Semgrep 路径；未安装时报告明确注明静态检查未执行 |
+| `CDS_CODE_REVIEW_OWNER` | 可选的稳定实例作用域；预览默认按 CDS 项目与分支隔离，恢复时保持一致 |
+
+源码 ZIP 上限 100MiB、展开体积 1GiB、条目 20,000；单文件最多 200KiB，超限文件在覆盖说明中计为跳过。
+检查不执行上传项目的脚本，不提供动态 PoC。报告默认需登录读取，选择邮箱后额外发送摘要、链接和 Markdown 附件。
+投递失败单独重试，不重新扫描。上游响应证据从受项目权限保护的任务审计接口分页查询。
+
+本地 stdio MCP 与 CLI 用法见 [MCP 安装说明](mcp/README.md)。
+固定提交的静态基线可运行 `pnpm --dir cds exec tsx ../scripts/deepaudit-review-baseline.mts <commit> <工作区输出目录>`；
+它只读 Git blob，按模块执行固定规则，输出报告会明确标注尚未执行 AI 五维分析。
+
 ## 2026-07 重大升级：从配置部署到授权后自动交付
 
 这不是在原流程上增加几个按钮，而是重新调整了第一次使用 CDS 的主流程。

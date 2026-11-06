@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildZip } from '../../src/utils/zip.js';
-import { fetchCodeReviewGithubSnapshot, parseCodeReviewGithubUrl, validateCodeReviewZip } from '../../src/services/code-review-source.js';
+import { fetchCodeReviewGithubSnapshot, parseCodeReviewGithubUrl, validateCodeReviewZip, readCodeReviewSnapshot } from '../../src/services/code-review-source.js';
 import type { CodeReviewAuditEvent } from '../../src/services/code-review-audit.js';
 
 function rename(zip: Buffer, before: string, after: string): Buffer {
@@ -12,6 +12,12 @@ function rename(zip: Buffer, before: string, after: string): Buffer {
 }
 
 describe('code review source snapshots', () => {
+  it('preserves real source directory paths when a sanitized snapshot is checked again', async () => {
+    const first = await validateCodeReviewZip(buildZip([{ name: 'repository/src/a.ts', data: 'const a = 1' }]));
+    const second = await readCodeReviewSnapshot(first.zip);
+    expect(second.files.map((file) => file.name)).toEqual(['src/a.ts']);
+    expect((await validateCodeReviewZip(first.zip)).zip).toEqual(first.zip);
+  });
   it('removes dependencies, credentials, unsupported and oversized files and common wrapper', async () => {
     const result = await validateCodeReviewZip(buildZip([
       { name: 'repository/src/a.ts', data: 'const a = 1' },

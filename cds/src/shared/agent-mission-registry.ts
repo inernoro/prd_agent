@@ -1,4 +1,5 @@
 import { releaseCenterHref } from './release-center-links.js';
+import { CODE_REVIEW_MCP_TOOLS } from './code-review.js';
 import type { AgentRoleId, CdsConnectTarget } from './agent-setup.js';
 
 export type AgentMissionScope = 'system' | 'project';
@@ -90,7 +91,7 @@ export interface AgentPageContext extends Omit<AgentMissionDefinition, 'pagePath
 
 export type CdsCapabilityRisk = 'read-only' | 'write' | 'destructive' | 'protocol';
 export type CdsCapabilityAccess = 'public' | 'project' | 'system' | 'human-only' | 'protocol-token';
-export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed';
+export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed' | 'available';
 
 export interface CdsAgentSkillDefinition {
   id: 'cds' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
@@ -110,6 +111,7 @@ export interface CdsAgentCapabilityDefinition {
   preferredSkill: CdsAgentSkillDefinition['id'];
   cliFamily?: string;
   mcpExposure: CdsMcpExposure;
+  mcpTools?: readonly string[];
   note: string;
 }
 
@@ -153,6 +155,7 @@ type CapabilitySeed = readonly [
 ];
 
 const CDS_AGENT_CAPABILITY_SEEDS = [
+  ['code-reviews', '代码审查任务与报告上传', 'code-reviews.ts', 'project', 'project', 'write', 'direct', 'cds', 'code-review', 'ZIP/GitHub 固定快照；本地 stdio MCP 仅暴露明确工具，复用项目权限；取消可停止任务，报告上传按内容去重，邮件仅在提交者指定时发送'],
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
   ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
@@ -248,7 +251,8 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
     agentUse,
     preferredSkill,
     ...(cliFamily ? { cliFamily } : {}),
-    mcpExposure: deriveMcpExposure(risk, agentUse),
+    mcpExposure: id === 'code-reviews' ? 'available' : deriveMcpExposure(risk, agentUse),
+    ...(id === 'code-reviews' ? { mcpTools: CODE_REVIEW_MCP_TOOLS } : {}),
     note,
   }));
 

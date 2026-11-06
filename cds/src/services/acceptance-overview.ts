@@ -15,9 +15,12 @@ export type OverviewVerdict = 'pass' | 'conditional' | 'fail';
 
 /** 标题合同的九类前缀（§4.1.2）。不在此列的标题归「其他」。 */
 export const REPORT_KINDS = [
-  '功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练',
+  '功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练', '代码审查报告',
 ] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number] | '其他';
+export function isCodeReviewReport(report: AcceptanceReportMeta): boolean {
+  return report.reportType === 'code-review' || parseReportTitle(report.title).kind === '代码审查报告';
+}
 
 export interface ParsedReportTitle {
   kind: ReportKind;
@@ -451,6 +454,8 @@ export function buildReportsOverview(
   tombstones: BranchTombstone[],
   options: BuildOverviewOptions = {},
 ): ReportsOverview {
+  const ledger = foldReportVersions(reports);
+  reports = reports.filter((r) => !isCodeReviewReport(r));
   const days = Math.max(1, Math.min(90, options.days ?? 7));
   const toMs = (options.to ?? new Date()).getTime();
   const fromMs = toMs - days * DAY_MS;
@@ -473,6 +478,8 @@ export function buildReportsOverview(
   const kindCounts = new Map<ReportKind, number>();
   for (const r of windowReports) kindCounts.set(r.kind, (kindCounts.get(r.kind) ?? 0) + 1);
   const kinds = Array.from(kindCounts, ([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count);
+  const reviewCount = ledger.latest.filter((r) => r.kind === '代码审查报告' && inWindow(r.createdAt, fromMs, toMs)).length;
+  if (reviewCount) kinds.push({ kind: '代码审查报告', count: reviewCount });
 
   const clusters = buildClusters(windowReports, allLatest, days, toMs);
   const daily = buildDaily(allLatest, toMs, Math.max(1, Math.min(90, options.dailyDays ?? 14)), tz);
@@ -585,7 +592,7 @@ export function buildReportsOverview(
     clusters,
     daily,
     mergeCoverage,
-    reports: allLatest,
-    supersededReports: allSuperseded,
+    reports: ledger.latest,
+    supersededReports: ledger.superseded,
   };
 }

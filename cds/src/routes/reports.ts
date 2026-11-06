@@ -599,6 +599,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
 
     const meta = await stateService.createAcceptanceReportAsync({
+      reportType: (req.body?.reportType === 'code-review' || cleanTitle.startsWith('代码审查报告 ·')) ? 'code-review' : undefined,
       title: cleanTitle,
       format,
       content: normalizedContent,
