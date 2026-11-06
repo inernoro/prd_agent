@@ -176,7 +176,7 @@ export function ScheduledNotifications() {
                       {task.canEdit && <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'edit', task })}>编辑</Button>}
                       {task.canEdit && <Button size="sm" variant="ghost" disabled={debugging !== null || task.debugLastResult === 'sending'}
                         onClick={() => void debug(task)}>{debugging === task.id ? '调试发送中…' : '立即调试'}</Button>}
-                      <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'copy', task })}>复制为新任务</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'copy', task })}>复制</Button>
                     </div>
                     {enableActions[task.id]?.error && <p role="alert" className="mt-1 text-xs text-semantic-danger">
                       {enableActions[task.id].error}

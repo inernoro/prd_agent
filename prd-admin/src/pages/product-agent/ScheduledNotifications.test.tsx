@@ -60,7 +60,7 @@ describe('定时通知真实组件交互', () => {
     expect(buttons('启用')).toHaveLength(0);
     expect(host.querySelector('[role=switch]')).toBeNull();
     expect(host.querySelectorAll('tbody td')[2].textContent).toBe('已发送');
-    await click('复制为新任务');
+    await click('复制');
     expect((host.querySelector('input[name=name]') as HTMLInputElement).value).toBe(completed.name);
     expect((host.querySelector('select') as HTMLSelectElement).value).toBe('once');
     expect((host.querySelector('input[name=time]') as HTMLInputElement).value).toBe(completed.time);
@@ -124,7 +124,7 @@ describe('定时通知真实组件交互', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(host.textContent).toContain('发送成功');
     expect(buttons('编辑')).toHaveLength(0);
-    expect(buttons('复制为新任务')).toHaveLength(1);
+    expect(buttons('复制')).toHaveLength(1);
     expect(api.list).toHaveBeenCalledTimes(2);
   });
 });
