@@ -43,8 +43,10 @@ import {
 
 export interface ProxyHandlerOptions {
   widgetStreamRecovery?: WidgetStreamRecoveryOptions;
-  /** upstream 连接超时 ms,默认 5000(connect 5s 无应答 → 504) */
+  /** upstream socket 空闲超时 ms，默认 5000(5s 无应答 → 504) */
   upstreamTimeoutMs?: number;
+  /** 标准 POST 模型生成端点的有界空闲超时 ms，默认 300000(5 分钟)。 */
+  llmUpstreamTimeoutMs?: number;
   /** 等候页文案 */
   waitingPageHtml?: string;
   /** keepalive agent(可注入测试) */
@@ -78,9 +80,14 @@ export interface ProxyHandlerOptions {
 
 const DEFAULT_WAITING_HTML = 'CDS waiting';
 const LONG_RUNNING_IMAGE_TIMEOUT_MS = 600_000;
+const DEFAULT_LLM_UPSTREAM_TIMEOUT_MS = 300_000;
 
 function isLongRunningImageRequest(path: string): boolean {
   return /^\/v1\/images\/(?:generations|edits)(?:\/|\?|$)/i.test(path);
+}
+
+function isLlmGenerationRequest(method: string | undefined, path: string): boolean {
+  return method === 'POST' && /^\/v1\/(?:chat\/completions|responses|completions|messages)(?:\?|$)/.test(path);
 }
 
 /** 滑动窗口最近 60 秒的请求时间戳 + 最近 N 条延迟。 */
@@ -136,6 +143,7 @@ class StatsCollector {
 
 interface ResolvedProxyOptions {
   upstreamTimeoutMs: number;
+  llmUpstreamTimeoutMs: number;
   waitingPageHtml: string;
   masterPassthroughHost: string;
   masterPassthroughPort: number;
@@ -157,6 +165,8 @@ export class ProxyHandler {
     this.widgetStreams = new ControlPlaneStreams(opts.widgetStreamRecovery);
     this.opts = {
       upstreamTimeoutMs: opts.upstreamTimeoutMs ?? 5000,
+      llmUpstreamTimeoutMs: opts.llmUpstreamTimeoutMs != null && Number.isFinite(opts.llmUpstreamTimeoutMs) && opts.llmUpstreamTimeoutMs > 0
+        ? opts.llmUpstreamTimeoutMs : DEFAULT_LLM_UPSTREAM_TIMEOUT_MS,
       waitingPageHtml: opts.waitingPageHtml ?? DEFAULT_WAITING_HTML,
       masterPassthroughHost: opts.masterPassthroughHost ?? '127.0.0.1',
       masterPassthroughPort: opts.masterPassthroughPort ?? 9900,
@@ -486,11 +496,15 @@ export class ProxyHandler {
       const acceptHdr = String(req.headers['accept'] || '').toLowerCase();
       const isLikelySSE = acceptHdr.includes('text/event-stream') ||
         /\/(stream|events|sse)(\?|$|\/)/i.test(outgoingPath);
+      // 非流式模型可能在完整推理结束前一直没有响应字节；标准生成端点
+      // 使用独立的有界窗口，避免被普通 API 的 30 秒空闲超时提前终止。
       const requestTimeoutMs = isLikelySSE
         ? 0
         : isLongRunningImageRequest(outgoingPath)
           ? Math.max(this.opts.upstreamTimeoutMs, LONG_RUNNING_IMAGE_TIMEOUT_MS)
-          : this.opts.upstreamTimeoutMs;
+          : isLlmGenerationRequest(req.method, outgoingPath)
+            ? Math.max(this.opts.upstreamTimeoutMs, this.opts.llmUpstreamTimeoutMs)
+            : this.opts.upstreamTimeoutMs;
 
       const upstream = http.request(
         {
