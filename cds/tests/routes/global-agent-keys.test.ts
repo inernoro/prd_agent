@@ -11,7 +11,7 @@
  * that would be privilege escalation. We assert that boundary here.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import { once } from 'node:events';
@@ -337,6 +337,7 @@ describe('Global Agent Keys — 统一授权作用域', () => {
       scope: 'rw',
       access: { canCreateProjects: true, projects: [] },
       oneTime: true,
+      creationTarget: { name: 'One Time Project', repository: 'github.com/acme/once' },
       createdAt: new Date().toISOString(),
     });
 
@@ -359,7 +360,20 @@ describe('Global Agent Keys — 统一授权作用域', () => {
     expect(stateService.getAccessRequest('req-once')?.createdProject).toBeUndefined();
     expect(stateService.findGlobalAgentKeyForAuth(plaintext)).not.toBeNull();
 
-    const create = await request(server, 'POST', '/api/projects', { name: 'One Time Project' }, {
+    const before = stateService.getState().projects?.length || 0;
+    for (const target of [
+      { name: 'Other', gitRepoUrl: 'https://github.com/acme/once' },
+      { name: 'One Time Project', gitRepoUrl: 'https://github.com/acme/other' },
+      { name: 'One Time Project', gitRepoUrl: 'https://gitlab.com/acme/once' },
+      { name: 'One Time Project', composeYaml: 'services: {}' },
+    ]) {
+      const rejected = await request(server, 'POST', '/api/projects', target, { 'X-AI-Access-Key': plaintext });
+      expect(rejected.status).toBe(403);
+      expect(rejected.body.error).toBe('bootstrap_target_mismatch');
+      expect(stateService.getState().projects?.length || 0).toBe(before);
+      expect(stateService.findGlobalAgentKeyForAuth(plaintext)).not.toBeNull();
+    }
+    const create = await request(server, 'POST', '/api/projects', { name: 'One Time Project', gitRepoUrl: 'https://github.com/acme/once.git' }, {
       'X-AI-Access-Key': plaintext,
     });
     expect(create.status).toBe(201);
@@ -370,6 +384,62 @@ describe('Global Agent Keys — 统一授权作用域', () => {
       id: create.body.project.id, name: 'One Time Project', createdAt: create.body.project.createdAt,
     });
     expect(stateService.getAccessRequest('unrelated')?.createdProject).toBeUndefined();
+  });
+
+  it('项目保存后签项目密钥失败仍持久消费一次授权', async () => {
+    const crypto = await import('node:crypto');
+    const plaintext = 'cdsg_scoped-key-save-failure';
+    stateService.addGlobalAgentKey({ id: 'scoped-key-failure', label: '一次创建', scope: 'rw',
+      hash: crypto.createHash('sha256').update(plaintext).digest('hex'),
+      access: { canCreateProjects: true, projects: [] }, oneTime: true,
+      creationTarget: { name: 'Saved Project', repository: 'github.com/acme/saved' },
+      createdAt: new Date().toISOString() });
+    const spy = vi.spyOn(stateService, 'addAgentKey').mockImplementation(() => { throw new Error('合成项目密钥保存失败'); });
+    try {
+      const payload = { name: 'Saved Project', gitRepoUrl: 'https://github.com/acme/saved' };
+      const created = await request(server, 'POST', '/api/projects', payload, { 'X-AI-Access-Key': plaintext });
+      expect(created.status).toBe(201);
+      expect(created.body.issuedProjectKey).toBeUndefined();
+      expect(stateService.getProject(created.body.project.id)?.name).toBe('Saved Project');
+      expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
+      const before = stateService.getState().projects.length;
+      await flushAllJsonStateStores();
+      stateService.load();
+      expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
+      expect(stateService.getProject(created.body.project.id)?.name).toBe('Saved Project');
+      expect(stateService.getState().projects).toHaveLength(before);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('同一授权并发创建只允许一次，HTTPS与SSH目标等价', async () => {
+    const crypto = await import('node:crypto');
+    const plaintext = 'cdsg_parallel';
+    stateService.addGlobalAgentKey({ id: 'parallel', label: 'parallel', scope: 'rw',
+      hash: crypto.createHash('sha256').update(plaintext).digest('hex'),
+      access: { canCreateProjects: true, projects: [] }, oneTime: true,
+      creationTarget: { name: 'Demo', repository: 'github.com/acme/demo' }, createdAt: new Date().toISOString() });
+    let release!: () => void;
+    let entered!: () => void;
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const block = new Promise<void>((resolve) => { release = resolve; });
+    let blocked = false;
+    const originalExec = shell.exec.bind(shell);
+    const spy = vi.spyOn(shell, 'exec').mockImplementation(async (command, options) => {
+      if (!blocked && command.startsWith('docker network create ')) { blocked = true; entered(); await block; }
+      return originalExec(command, options);
+    });
+    const payload = { name: 'Demo', gitRepoUrl: 'git@github.com:Acme/Demo.git' };
+    const first = request(server, 'POST', '/api/projects', payload, { 'X-AI-Access-Key': plaintext });
+    await reached;
+    let firstResult: { status: number; body: any };
+    try {
+      const second = await request(server, 'POST', '/api/projects', payload, { 'X-AI-Access-Key': plaintext });
+      expect(second.status).toBe(409);
+      expect(second.body.error).toBe('bootstrap_in_progress');
+    } finally { release(); firstResult = await first; spy.mockRestore(); }
+    expect(firstResult.status).toBe(201);
+    expect(stateService.getState().projects).toHaveLength(1);
+    expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
   });
 
   it("projects:'all' key = 全权 admin：可操作现有项目，且建项目不再另发 key", async () => {
