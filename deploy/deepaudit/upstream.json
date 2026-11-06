@@ -3,5 +3,8 @@
   "branch": "v3.0.0",
   "commit": "551cf2565fa1e8d21cae7bf4d4cc85d0d0abcfa9",
   "fork": "https://github.com/inernoro/DeepAudit.git",
-  "license": "AGPL-3.0-only"
+  "license": "AGPL-3.0-only",
+  "overwrittenUpstreamFiles": {
+    "frontend/src/pages/Login.tsx": "075d3b994bb0a5680ce6c58c1eb82e33f42007683e72a212c9fd488e6edaf0bc"
+  }
 }

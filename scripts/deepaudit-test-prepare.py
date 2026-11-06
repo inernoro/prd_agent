@@ -46,6 +46,13 @@ class OverlayInstallation(unittest.TestCase):
             module.prepare(self.checkout)
         self.assertEqual(target.read_text(), "operator work\n")
 
+    def test_refuses_modified_reviewed_upstream_file(self):
+        target = self.checkout / "frontend/src/pages/Login.tsx"
+        target.write_text(target.read_text() + "\n// operator work\n")
+        with self.assertRaisesRegex(ValueError, "overwrite"):
+            module.prepare(self.checkout)
+        self.assertIn("// operator work", target.read_text())
+
     def test_refuses_symlink_escape(self):
         target = self.checkout / "backend/app/cds_runtime.py"
         outside = pathlib.Path(self.temp.name) / "outside.py"

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install the reviewed CDS overlay into the pinned DeepAudit fork checkout."""
 import argparse
+import hashlib
 import json
 import pathlib
 import shutil
@@ -30,7 +31,9 @@ def prepare(checkout: pathlib.Path) -> list[str]:
         if checkout not in target.resolve().parents:
             raise ValueError("Overlay path leaves checkout")
         if target.exists() and target.read_bytes() != source.read_bytes():
-            raise ValueError(f"Refusing to overwrite existing file: {relative}")
+            reviewed_base = manifest.get("overwrittenUpstreamFiles", {}).get(str(relative))
+            if not reviewed_base or hashlib.sha256(target.read_bytes()).hexdigest() != reviewed_base:
+                raise ValueError(f"Refusing to overwrite existing file: {relative}")
     installed = []
     for source in files:
         relative = source.relative_to(bundle / "overlay")
