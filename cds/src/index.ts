@@ -57,6 +57,7 @@ import {
   buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
+  redisUsernameFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
   shouldSkipOffsiteThisRound, INFRA_BACKUP_HEALTH_FILE, INFRA_BACKUP_INTERVAL_MS, backupFailureReason,
@@ -876,7 +877,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               `docker exec -i ${shq(t.containerName)} sh -s`,
               {
                 timeout: 120_000,
-                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t)),
+                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t), redisUsernameFromServiceDefinition(t, stateService.getCustomEnv(t.projectId))),
               },
             );
             if (redisProbe.exitCode !== 0) {

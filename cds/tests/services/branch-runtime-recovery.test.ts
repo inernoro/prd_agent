@@ -22,6 +22,30 @@ function fixture() {
 }
 
 describe('当前同批容器恢复', () => {
+  it('旧日志中的启动信号不能替代当前HTTP就绪失败，保留原入口', async () => {
+    const f = fixture(), original = f.entry.services.api; f.options.profiles[0].startupSignal = 'ready';
+    f.container.waitForStartupSignal.mockResolvedValue(true); f.container.waitForReadiness.mockResolvedValue(false);
+    await expect(recoverBranchRuntime(f.options)).rejects.toThrow('未通过就绪验证');
+    expect(f.container.waitForReadiness).toHaveBeenCalledOnce();
+    expect(f.entry.services.api).toBe(original); expect(servingRuntime(original)?.containerName).toBe('old');
+  });
+
+  it('启动信号后仍等当前探测确认，原入口在等待期间持续服务且预算不放宽', async () => {
+    const f = fixture(), original = f.entry.services.api; f.options.profiles[0].startupSignal = 'ready';
+    f.container.waitForStartupSignal.mockResolvedValue(true);
+    let release!: (ready: boolean) => void, entered!: () => void;
+    const pending = new Promise<boolean>(resolve => { release = resolve; }), probing = new Promise<void>(resolve => { entered = resolve; });
+    f.container.waitForReadiness.mockImplementation(async () => { entered(); return pending; });
+    const recovery = recoverBranchRuntime(f.options);
+    try {
+      expect(await Promise.race([probing.then(() => 'probing'), recovery.then(() => 'published')])).toBe('probing');
+      expect(f.entry.services.api).toBe(original); expect(servingRuntime(original)?.containerName).toBe('old');
+      const budget = f.container.waitForReadiness.mock.calls[0][1].timeoutSeconds;
+      expect(budget).toBeGreaterThan(0); expect(budget).toBeLessThanOrEqual(120);
+    } finally { release(true); await recovery; }
+    expect(f.entry.status).toBe('running');
+  });
+
   it.each(['stopping', 'stopped'] as const)('发布落盘期间手动停止到%s后，迟到恢复不得覆盖继任状态', async status => {
     const f = fixture(); let current = true, entered!: () => void, release!: () => void;
     const saving = new Promise<void>(resolve => { entered = resolve; });

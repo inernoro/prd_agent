@@ -90,12 +90,15 @@ export async function recoverBranchRuntime(options: {
       check(`runtime recovery readiness ${profile.id}`);
       const service = candidates.get(profile.id)!;
       options.onProgress?.(`验证实际就绪: ${profile.name}`);
-      const ready = profile.startupSignal
-        ? await container.waitForStartupSignal(service.containerName, profile.startupSignal, undefined, 120)
-        : await container.waitForReadiness(service.hostPort,
-          { ...profile.readinessProbe, timeoutSeconds: 120, intervalSeconds: 2 }, undefined, undefined, service.containerName);
+      const started = performance.now();
+      const signalReady = !profile.startupSignal
+        || await container.waitForStartupSignal(service.containerName, profile.startupSignal, undefined, 120);
+      check(`runtime recovery signal ${profile.id}`);
+      const remaining = 120 - (performance.now() - started) / 1000;
+      const ready = signalReady && remaining >= 2 && await container.waitForReadiness(service.hostPort,
+        { ...profile.readinessProbe, timeoutSeconds: remaining, intervalSeconds: 2 }, undefined, undefined, service.containerName);
       check(`runtime recovery ready ${profile.id}`);
-      if (!ready) throw new Error(`当前容器未通过就绪验证: ${profile.id}`);
+      if (!ready || performance.now() - started > 120_000) throw new Error(`当前容器未通过就绪验证: ${profile.id}`);
     }
     const previousStatus = entry.status, previousError = entry.errorMessage;
     const releases: Array<() => void> = [];
