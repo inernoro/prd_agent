@@ -1,6 +1,6 @@
 # 产品管理正式申领与历史追溯 · 规格
 
-> **版本**：v1.0 | **日期**：2026-11-06 | **状态**：源码现状说明；运行验收待补
+> **版本**：v1.1 | **日期**：2026-11-06 | **状态**：关联与请求修复已完成聚焦验证；预览验收待补
 
 **一句话**：说明常规正式版本如何继承立项、校验申领与保留后续公告，并用具体业务实例区分编号、状态和交付证据。
 **谁该读**：使用版本申领、解释历史记录、实现关联流程或验收产品规则的产品、工程与测试人员。
@@ -8,7 +8,7 @@
 
 ## 一、范围与依据
 
-本规格记录工作区基线 `c0ec71f15` 中已有的行为，选取 2026-10 的正式申领简化作为决策方法的回放试点。它不是新增业务改动，不触发真实发号、部署或历史数据迁移。产品结构见[现状设计](./design.product-agent.md)，理由与代价见[决策补录](./pdr.product-agent.002.version-claim-boundary.md)。
+本规格从工作区基线 `c0ec71f15` 中已有的正式申领变化开始回放，后续已针对发现的需求版本引用和流转请求缺陷实施修复。正式申领与公告后补的业务选择保持原有语义；修复不回收编号、不迁移历史资料。产品结构见[现状设计](./design.product-agent.md)，申领理由与代价见[决策补录](./pdr.product-agent.002.version-claim-boundary.md)。
 
 本规格区分“源码中可确认的行为”“已有测试表达的要求”“本轮执行的检查”和“待验证的用户效果”。对未来生效规则的选择仍由对应决策说明，不能用本页将实现现状自动批准为永久业务承诺。
 
@@ -42,9 +42,9 @@
 | S05 临时优化边界 | 临时路径带 T，或不带 T 但无功能清单 | 按专用条件拒绝，不能套用常规简化规则 | 服务端判断；运行待验 |
 | S06 公告后补 | 对既有 V 后补合法地址 | 保留 V 号及原发号时间，只补相关资料 | 现有服务端测试有断言；本轮未执行 |
 | S07 公告冲突 | 同应用同完整 V 号出现多个候选或原地址不同 | 不猜测覆盖，保留原资料并计入冲突 | 匹配服务与模块既有边界；运行待验 |
-| S08 需求排期 | 手动转已排期但没有归属版本 | 前端要求补字段，服务端闸门拒绝缺失 | 前端既有非空判定本轮已测；跨产品与失效引用检查另见债务 |
+| S08 需求排期 | 手动转已排期但版本缺失、不存在、已删除或属于另一产品 | 前端要求补字段，服务端拒绝无效依据，原状态与引用不被部分改写 | 新增真实数据库测试覆盖非法请求及既有失效引用；其它引用与并发边界另见债务 |
 | S09 自动状态推进 | V 保存成功，某关联需求没有对应流程边 | 该需求可被跳过，不能报告全部已推进 | 服务端路径；需运行证据确认实际覆盖 |
-| S10 已填写关联的流转请求 | 弹窗填写有效立项或上线关联后提交 | 完整用户路径应保留已填写依据；当前发送条件有静态疑点 | 记录为待复现风险；已有 guard 测试不覆盖完整弹窗请求 |
+| S10 已填写关联的流转请求 | 弹窗填写有效立项、上线关联、版本或缺失标题后提交 | 控件填写后仍可见，发送内容保留填写值；功能对象不被错误要求需求专用依据 | 新增6项真实组件交互测试，先复现失败再修复；浏览器组件诊断确认三类关联实际发送，完整预览用户路径另验 |
 
 ## 四、一次变更应检查的影响
 
@@ -54,9 +54,7 @@
 
 ## 五、验证层次与当前边界
 
-本轮执行了四个已有前端测试文件，共 14 项通过：流转角色与字段判断 6 项、版本基础信息目录 5 项、申领来源与历史对照源码契约 2 项、功能规则与验收字段源码契约 1 项。后两组包含源码断言，不能冒充浏览器交互或服务端集成验收。
-
-服务端用例只做了源码核对，没有标记为本轮运行通过；前端判断、源码契约、服务端运行和用户真实操作是四种不同证据。
+现有前端字段与源码契约检查继续保留；新增组件测试通过实际渲染、选择与提交验证请求内容，新增服务端测试使用隔离数据库验证真实查询、写入与拒绝时的存储结果。浏览器组件诊断也核对了关联控件和发送内容。它们分别提供不同层次的证据，不能合并冒充预览环境完整用户验收。
 
 下一层业务验收需要在明确授权的隔离数据与登录态中执行 S01—S09，核对返回记录、实际存储和状态联动；S10 需要捕获真实发送内容。用户价值观察再请未参与原讨论的人完成同一任务，记录查找时间、错误与追问次数。本轮不预填效果改善数字，也不因整理完成就关闭这些待办。
 
@@ -65,3 +63,4 @@
 - [常规申领、完成补录与需求联动](../prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs)、[版本号来源与占用](../prd-api/src/PrdAgent.Infrastructure/Services/ProductVersionClaimGuard.cs)、[公告匹配](../prd-api/src/PrdAgent.Api/Services/ProductAgent/ProductAnnouncementSyncService.cs)。
 - [正式版本页面](../prd-admin/src/pages/product-agent/ReleaseWorkflowDetail.tsx)、[流转弹窗](../prd-admin/src/pages/product-agent/WorkflowTransitionDialog.tsx)、[流转字段判断](../prd-admin/src/pages/product-agent/workflowTransitionGuard.ts)。
 - [服务端正式申领断言](../prd-api/tests/PrdAgent.Api.Tests/Services/ProductVersionClaimGuardTests.cs)、[流转测试](../prd-admin/src/pages/product-agent/workflowTransitionGuard.test.ts)、[版本基础信息测试](../prd-admin/src/pages/product-agent/versionBasicInfoCatalog.test.ts)、[申领来源与历史对照测试](../prd-admin/src/pages/product-agent/versionClaimScope.test.ts)、[功能字段测试](../prd-admin/src/pages/product-agent/FeatureSpecificationFields.test.ts)。
+- [流转弹窗组件回归](../prd-admin/src/pages/product-agent/WorkflowTransitionDialog.test.tsx)、[需求版本引用集成回归](../prd-api/tests/PrdAgent.Api.Tests/Controllers/ProductVersionReferenceTests.cs)。
