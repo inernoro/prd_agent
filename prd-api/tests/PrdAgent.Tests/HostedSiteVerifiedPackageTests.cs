@@ -127,6 +127,39 @@ public sealed class HostedSiteVerifiedPackageTests
         Assert.Contains("connect-src 'none'", hardened, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void VerifiedHtml_ShouldUseOnlyCssSourcesAndPreserveLiteralContent()
+    {
+        var paths = new[] { "index.html", "assets/texture.png" };
+        const string html = """
+            <!doctype html><html><head><style>body { background-image: url('assets/texture.png'); }</style></head>
+            <body><main>原始内容</main><svg><defs><linearGradient id="paint"/></defs><rect fill="url(#paint)"/></svg>
+            <script>const blobUrl = URL.createObjectURL(new Blob(["report"])); URL.revokeObjectURL(blobUrl);</script></body></html>
+            """;
+
+        var hardened = HostedSiteRevisionRules.HardenVerifiedPackageHtml(html, paths);
+
+        Assert.Contains("URL.createObjectURL", hardened, StringComparison.Ordinal);
+        Assert.Contains("URL.revokeObjectURL", hardened, StringComparison.Ordinal);
+        Assert.Contains("script-src 'self' 'unsafe-inline'", hardened, StringComparison.Ordinal);
+        Assert.Contains("connect-src 'none'", hardened, StringComparison.Ordinal);
+        var literalContent = html.Replace("原始内容", "[replace] [email protected]", StringComparison.Ordinal);
+        Assert.Contains("[replace] [email protected]",
+            HostedSiteRevisionRules.HardenVerifiedPackageHtml(literalContent, paths), StringComparison.Ordinal);
+        foreach (var unsafeBody in new[]
+        {
+            "<style>@import 'https://outside.invalid/style.css';</style>",
+            "<style>body { background: url(assets/missing.png); }</style>",
+            "<div style=\"background: url(https://outside.invalid/image.png)\"></div>",
+            "<svg><rect fill=\"url(assets/missing.svg#paint)\" filter=\"url(#local)\"/></svg>",
+        })
+        {
+            Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+                $"<!doctype html><html><body>{unsafeBody}</body></html>", paths));
+        }
+        Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(html));
+    }
+
     [Theory]
     [InlineData("https://tracker.example/app.js")]
     [InlineData("assets/missing.js")]

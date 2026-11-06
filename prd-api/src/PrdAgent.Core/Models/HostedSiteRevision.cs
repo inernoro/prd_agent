@@ -1,4 +1,6 @@
 using System.Text.Json.Serialization;
+using AngleSharp.Dom;
+using AngleSharp.Html.Parser;
 
 namespace PrdAgent.Core.Models;
 
@@ -333,7 +335,6 @@ public static class HostedSiteRevisionRules
 
         var html = NormalizeGeneratedHtml(raw);
         ValidateHtml(html);
-        EnsureNoUnresolvedTemplatePlaceholders(html);
         html = ConvertRelativeKnowledgeAnchors(html);
 
         foreach (var tag in ScanHtmlStartTags(html).Where(item => !item.IsClosing))
@@ -362,18 +363,21 @@ public static class HostedSiteRevisionRules
             }
         }
 
-        if (System.Text.RegularExpressions.Regex.IsMatch(html, @"@import\s+(?:url\s*\()?", RegexOptions))
-            throw new InvalidOperationException("生成页面不能通过 CSS 导入其他资源");
-        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
-                     html,
-                     @"url\(\s*([""']?)(.*?)\1\s*\)",
-                     RegexOptions))
+        foreach (var css in CollectVerifiedPackageCssSources(html))
         {
-            var value = match.Groups[2].Value.Trim();
-            if (value.Length == 0 || value.StartsWith('#') || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!TryResolveVerifiedPackagePath(value, allowedPaths, out _))
-                throw new InvalidOperationException("生成页面的 CSS 引用了资源包以外的文件");
+            if (System.Text.RegularExpressions.Regex.IsMatch(css, @"@import\s+(?:url\s*\()?", RegexOptions))
+                throw new InvalidOperationException("生成页面不能通过 CSS 导入其他资源");
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                         css,
+                         @"url\(\s*([""']?)(.*?)\1\s*\)",
+                         RegexOptions))
+            {
+                var value = match.Groups[2].Value.Trim();
+                if (value.Length == 0 || value.StartsWith('#') || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!TryResolveVerifiedPackagePath(value, allowedPaths, out _))
+                    throw new InvalidOperationException("生成页面的 CSS 引用了资源包以外的文件");
+            }
         }
 
         var root = System.Text.RegularExpressions.Regex.Match(
@@ -393,6 +397,34 @@ public static class HostedSiteRevisionRules
             return html.Insert(insertionIndex, TrustedVerifiedPackageCspMeta);
         }
         return html.Insert(afterRoot, TrustedVerifiedPackageCspEnvelope);
+    }
+
+    private static IReadOnlyList<string> CollectVerifiedPackageCssSources(string html)
+    {
+        var elements = new List<IElement>();
+        var parser = new HtmlParser(new HtmlParserOptions
+        {
+            IsScripting = true,
+            OnCreated = (element, _) => elements.Add(element),
+        });
+        using var document = parser.ParseDocument(html);
+        var sources = new List<string>();
+        var svgAttributes = new[] { "fill", "stroke", "filter", "clip-path", "mask", "cursor", "marker-start", "marker-mid", "marker-end" };
+        // 标准解析器创建的 DOM 引用也覆盖 template/foreign 子树；不扫描脚本文本、不重写原稿。
+        foreach (var element in elements)
+        {
+            var isSvg = element.NamespaceUri == "http://www.w3.org/2000/svg";
+            if (element.LocalName == "style" && (isSvg || element.NamespaceUri == "http://www.w3.org/1999/xhtml"))
+                sources.Add(element.TextContent);
+            if (element.GetAttribute("style") is { } inlineStyle)
+                sources.Add(inlineStyle);
+            if (isSvg)
+            {
+                foreach (var attribute in svgAttributes)
+                    if (element.GetAttribute(attribute) is { } value) sources.Add(value);
+            }
+        }
+        return sources;
     }
 
     /// <summary>
