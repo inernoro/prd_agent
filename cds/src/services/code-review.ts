@@ -8,6 +8,7 @@ import { validateCodeReviewZip, fetchCodeReviewGithubSnapshot, parseCodeReviewGi
 import { maskSecretsInObject, maskSecrets } from './secret-masker.js';
 import { CDS_AGENT_CAPABILITY_DEFINITIONS } from '../shared/agent-mission-registry.js';
 import { runCodeReviewStaticAnalysis } from './code-review-static.js';
+import { resolveCodeReviewEngineConfig } from './code-review-settings.js';
 
 export class CodeReviewError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -31,6 +32,7 @@ export interface CodeReviewDeps {
   ownerScope: string;
   githubToken?: (projectId: string, githubUrl: string) => Promise<string | undefined>;
   autoStart?: boolean;
+  resolveEngine?: () => Pick<CodeReviewEngine, 'run'> | undefined;
 }
 export interface SubmitCodeReview {
   projectId: string;
@@ -54,8 +56,14 @@ export class CodeReviewService {
   private started = false;
   private submissions = Promise.resolve();
   constructor(readonly deps: CodeReviewDeps) {}
+  private engine() {
+    if (this.deps.engine) return this.deps.engine;
+    if (this.deps.resolveEngine) return this.deps.resolveEngine();
+    const config = resolveCodeReviewEngineConfig(this.deps.state);
+    return config ? new CodeReviewEngine(config) : undefined;
+  }
   capabilities() {
-    return { engineConfigured: Boolean(this.deps.engine), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(),
+    return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(),
       tools: CDS_AGENT_CAPABILITY_DEFINITIONS.find((capability) => capability.id === 'code-reviews')?.mcpTools || [] };
   }
   list(projectId?: string) { return this.deps.state.listCodeReviewTasks(projectId); }
@@ -81,7 +89,7 @@ export class CodeReviewService {
     try { return await this.submitLocked(input); } finally { release(); }
   }
   private async submitLocked(input: SubmitCodeReview): Promise<CodeReviewTask> {
-    if (!this.deps.engine) throw new CodeReviewError(503, 'DeepAudit 尚未配置，请联系管理员接入审查引擎');
+    if (!this.engine()) throw new CodeReviewError(503, 'DeepAudit 尚未配置，请联系管理员接入审查引擎');
     if (!this.deps.inputs.configured()) throw new CodeReviewError(503, '尚未配置审查源码的持久化对象存储');
     if (!this.deps.state.getProject(input.projectId)) throw new CodeReviewError(404, '项目不存在');
     if (input.email && (!/^[^\s@<>\r\n]+@[^\s@<>\r\n]+\.[^\s@<>\r\n]+$/.test(input.email) || input.email.length > 254)) throw new CodeReviewError(400, '收件邮箱格式不正确');
@@ -176,7 +184,7 @@ export class CodeReviewService {
     return { events, nextBefore };
   }
   async pump(): Promise<void> {
-    if (this.pumping || this.stopped || !this.deps.engine) return;
+    if (this.pumping || this.stopped || !this.engine()) return;
     this.pumping = true;
     try {
       for (;;) {
@@ -192,6 +200,8 @@ export class CodeReviewService {
     const timeout = setTimeout(() => controller.abort(new Error('审查超过 2 小时，请缩小范围后重试')), 2 * 60 * 60 * 1000);
     timeout.unref();
     try {
+      const engine = this.engine();
+      if (!engine) throw new CodeReviewError(503, 'DeepAudit 尚未配置，请联系管理员接入审查引擎');
       let task = this.get(id);
       task.status = 'preparing'; task.phase = '准备固定源码快照'; await this.save(task);
       if (!task.inputKey) {
@@ -208,7 +218,7 @@ export class CodeReviewService {
       }
       const zip = await this.deps.inputs.get(task.inputKey!);
       const selectedFiles = task.progress.totalFiles;
-      const result = await this.deps.engine!.run({ taskId: id, zip, signal: controller.signal, excludePatterns: task.excludePatterns,
+      const result = await engine.run({ taskId: id, zip, signal: controller.signal, excludePatterns: task.excludePatterns,
         engineTaskId: task.engineTaskId,
         onProgress: async (p) => {
           const current = this.get(id); this.checkActive(current, controller.signal);

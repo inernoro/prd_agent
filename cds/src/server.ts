@@ -45,7 +45,6 @@ import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
 import { CodeReviewService } from './services/code-review.js';
-import { CodeReviewEngine } from './services/code-review-engine.js';
 import { createCodeReviewInputs } from './services/code-review-inputs.js';
 import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
@@ -4908,12 +4907,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
-  const reviewEngineBase = process.env.CDS_DEEPAUDIT_BASE_URL?.trim();
   const reviews = new CodeReviewService({
     state: deps.stateService, inputs: createCodeReviewInputs(), mail: createCodeReviewMail(),
-    engine: reviewEngineBase ? new CodeReviewEngine({ baseUrl: reviewEngineBase,
-      username: process.env.CDS_DEEPAUDIT_USERNAME, password: process.env.CDS_DEEPAUDIT_PASSWORD,
-      token: process.env.CDS_DEEPAUDIT_TOKEN }) : undefined,
     publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
     ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID
       ? `${process.env.CDS_PROJECT_ID}::${process.env.VITE_GIT_BRANCH || 'default'}` : 'cds-master'),
