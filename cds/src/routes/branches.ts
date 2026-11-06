@@ -16370,9 +16370,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const lease = beginBranchOperation(req, res, entry, { kind: 'restart', source: 'api.recover-runtime', reason: '验证并恢复同批当前容器；保留数据库与历史部署结果' });
     if (branchOperationCoordinator && !lease) return;
     let outcome: 'completed' | 'failed' | 'cancelled' = 'failed';
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+    initSSE(res);
     res.flushHeaders();
-    const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': heartbeat\n\n'); }, 5000);
+    const heartbeat = setInterval(() => {
+      try { if (!res.writableEnded) res.write(': heartbeat\n\n'); } catch { /* client disconnected */ }
+    }, 5000);
     try {
       const profiles = stateService.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry));
       const result = await recoverBranchRuntime({ entry, profiles, state: stateService, container: containerService,

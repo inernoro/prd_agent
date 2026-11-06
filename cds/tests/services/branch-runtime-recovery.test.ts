@@ -22,6 +22,35 @@ function fixture() {
 }
 
 describe('当前同批容器恢复', () => {
+  it.each(['restart', 'readiness', 'persistence'])('未公开服务%s失败后保留原连接，原身份可以继续恢复', async failure => {
+    const f = fixture(), originalNetwork = branchAppNetworkName('branch'), connected = new Set([originalNetwork]);
+    f.entry.services.api.status = 'error'; f.entry.services.api.servingRuntime = undefined; f.entry.services.api.networkName = originalNetwork;
+    f.container.connectReplacementPeer.mockImplementation(async (_entry, _profile, _service, network) => { connected.add(network); });
+    f.container.isolateReplacementPeer.mockImplementation(async (_entry, service, network, _check, protectedNetworks = []) => {
+      if (!protectedNetworks.includes(originalNetwork)) connected.delete(originalNetwork);
+      service.networkName = network;
+    });
+    f.container.cleanupUnusedReplacementNetworks.mockImplementation(async view => { for (const network of view.replacementNetworks) connected.delete(network); });
+    if (failure === 'restart') f.container.restartServiceInPlace.mockResolvedValueOnce(false);
+    if (failure === 'readiness') f.container.waitForReadiness.mockResolvedValueOnce(false);
+    if (failure === 'persistence') f.state.flush.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('disk'));
+    await expect(recoverBranchRuntime(f.options)).rejects.toThrow();
+    expect(connected.has(originalNetwork)).toBe(true);
+    expect(f.entry.services.api.networkName).toBe(originalNetwork);
+    expect(servingRuntime(f.entry.services.api)).toBeNull();
+  });
+
+  it('未公开服务在落盘确认前继续不可见，确认后才发布', async () => {
+    const f = fixture(); f.entry.services.api.status = 'error'; f.entry.services.api.servingRuntime = undefined;
+    let release!: () => void, entered!: () => void;
+    const saving = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    f.state.flush.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => { entered(); await pending; });
+    const recovery = recoverBranchRuntime(f.options); await saving;
+    try { expect(servingRuntime(f.entry.services.api)).toBeNull(); } finally { release(); await recovery; }
+    expect(servingRuntime(f.entry.services.api)?.containerName).toBe('current');
+  });
+
   it.each(['restart', 'readiness', 'persistence'])('%s失败不摘掉仍被旧入口使用的数据库网络，并回收本次未发布网络', async failure => {
     const f = fixture();
     const databaseNetworks = new Set(['old-network', 'candidate-network']);

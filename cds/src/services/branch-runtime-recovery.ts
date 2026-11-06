@@ -37,10 +37,11 @@ export async function recoverBranchRuntime(options: {
   }
   const prefix = `${branchAppNetworkName(entry.id).slice(0, 27)}-r-`;
   const networks = (service: Pick<ServiceState, 'networkName' | 'aliasNetworks' | 'connectedNetworks'>) => [service.networkName, ...(service.aliasNetworks || []), ...(service.connectedNetworks || [])].filter((name): name is string => Boolean(name));
-  const protectedNetworks = new Set([...original.values()].flatMap(service => {
+  const servingNetworks = new Set([...original.values()].flatMap(service => {
     const active = servingRuntime(service);
     return active ? networks(active) : [];
   }));
+  const protectedNetworks = new Set([...servingNetworks, ...[...candidates.values()].flatMap(networks)]);
   // 共同归属仍由connectReplacementPeer逐容器实读核验；同批恢复复用现网，不重复分配。
   const firstCandidate = candidates.values().next().value;
   const common = firstCandidate && networks(firstCandidate).find(name => name.startsWith(prefix)
@@ -51,7 +52,7 @@ export async function recoverBranchRuntime(options: {
   const cleanupNetworks = async (failed: boolean) => {
     check('runtime recovery network cleanup');
     const selected = failed ? (common ? [] : [network])
-      : (entry.replacementNetworks || []).filter(name => !protectedNetworks.has(name));
+      : (entry.replacementNetworks || []).filter(name => !servingNetworks.has(name));
     if (!selected.length && failed) return;
     const view = { ...entry, replacementNetworks: selected,
       services: failed ? Object.fromEntries([...original].map(([id, service]) => [id, { ...service,
