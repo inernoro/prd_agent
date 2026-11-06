@@ -17,6 +17,7 @@ public partial class ProductAgentController
 
     public sealed record ScheduledNotificationWebhookInput(int? ExistingIndex, string? Url,
         string? GroupId = null, string? GroupRevision = null);
+    public sealed record ScheduledNotificationEnablementRequest(bool Enabled, string? Revision);
 
     private const int MaxScheduledNotificationWebhooks = 10;
 
@@ -43,6 +44,37 @@ public partial class ProductAgentController
         [FromServices] IDataProtectionProvider protection, [FromServices] IConfiguration configuration) =>
         SaveScheduledNotification(id, request, protection, configuration);
 
+    [HttpPatch("settings/scheduled-notifications/{id}/enabled")]
+    public async Task<IActionResult> SetScheduledNotificationEnabled(string id, ScheduledNotificationEnablementRequest request,
+        [FromServices] IConfiguration configuration)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!ProductScheduledNotificationWorker.CanManage(configuration))
+            return Conflict(ApiResponse<object>.Fail("NOTIFICATION_PRODUCTION_ONLY", "请在正式环境管理定时通知。"));
+
+        var current = await _db.ProductScheduledNotifications.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (current == null)
+            return NotFound(ApiResponse<object>.Fail("NOTIFICATION_NOT_FOUND", "任务不存在，请刷新列表。"));
+        if (current.IsScheduleEnabled() == request.Enabled)
+            return Ok(ApiResponse<object>.Ok(ScheduledNotificationView(current)));
+
+        var now = DateTime.UtcNow;
+        DateTime? next = null;
+        if (request.Enabled && !current.HasCompletedOneTimeSchedule())
+            ProductScheduledNotificationTiming.TryGetNext(current.Frequency, current.Time, current.Date, current.Day, now, out next);
+
+        var update = Builders<ProductScheduledNotification>.Update
+            .Set(x => x.Enabled, request.Enabled).Set(x => x.EnablementExplicit, true).Set(x => x.NextRunAt, next)
+            .Set(x => x.UpdatedAt, now).Set(x => x.Revision, Guid.NewGuid().ToString("N"));
+        var saved = await _db.ProductScheduledNotifications.FindOneAndUpdateAsync(
+            x => x.Id == id && x.Revision == request.Revision, update,
+            new FindOneAndUpdateOptions<ProductScheduledNotification> { ReturnDocument = ReturnDocument.After });
+        return saved == null
+            ? Conflict(ApiResponse<object>.Fail("NOTIFICATION_CHANGED", "任务已更新，请刷新列表后重试。"))
+            : Ok(ApiResponse<object>.Ok(ScheduledNotificationView(saved)));
+    }
+
     private async Task<IActionResult> SaveScheduledNotification(string? id, ScheduledNotificationRequest request,
         IDataProtectionProvider protection, IConfiguration configuration)
     {
@@ -57,8 +89,8 @@ public partial class ProductAgentController
             current = await _db.ProductScheduledNotifications.Find(x => x.Id == id).FirstOrDefaultAsync();
             if (current == null)
                 return NotFound(ApiResponse<object>.Fail("NOTIFICATION_NOT_FOUND", "任务不存在，请刷新列表。"));
-            if (current.HasCompletedOneTimeSchedule())
-                return Conflict(ApiResponse<object>.Fail("ONE_TIME_NOTIFICATION_LOCKED", "这条单次通知已执行，请复制为新任务。"));
+            if (current.LeaseId != null)
+                return Conflict(ApiResponse<object>.Fail("NOTIFICATION_IN_PROGRESS", "这条通知正在发送，请发送结束后再编辑。"));
         }
 
         var now = DateTime.UtcNow;
@@ -66,10 +98,12 @@ public partial class ProductAgentController
         var message = request.Message?.Trim() ?? "";
         if (name.Length is 0 or > 100 || message.Length == 0 || Encoding.UTF8.GetByteCount(message) > 2048)
             return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_TEXT", "请输入任务名称和通知内容，名称最多 100 字，内容最多 2048 字节。"));
-        if (!ProductScheduledNotificationTiming.TryGetNext(request.Frequency, request.Time, request.Date, request.Day, now, out var next)
-            || (request.Enabled && next == null))
-            return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_SCHEDULE", "请填写有效的北京时间与周期，启用单次通知时请选择未来时间。"));
+        if (!ProductScheduledNotificationTiming.TryGetNext(request.Frequency, request.Time, request.Date, request.Day, now, out var next))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_NOTIFICATION_SCHEDULE", "请填写有效的北京时间与周期。"));
+        var date = request.Frequency == "once" ? request.Date : null;
+        var day = request.Frequency is "weekly" or "monthly" ? request.Day : null;
 
+        var original = current;
         var existingWebhooks = current?.GetProtectedWebhooks() ?? [];
         var existingGroupNames = current?.WebhookGroupNames;
         if (id == null && !string.IsNullOrEmpty(request.SourceTaskId))
@@ -79,6 +113,7 @@ public partial class ProductAgentController
                 return Conflict(ApiResponse<object>.Fail("NOTIFICATION_SOURCE_CHANGED", "原任务已更新，请关闭后重新复制。"));
             existingWebhooks = source.GetProtectedWebhooks();
             existingGroupNames = source.WebhookGroupNames;
+            original = source;
         }
 
         var requestedWebhooks = request.Webhooks;
@@ -141,6 +176,16 @@ public partial class ProductAgentController
         if (protectedWebhooks.Length == 0)
             return BadRequest(ApiResponse<object>.Fail("NOTIFICATION_WEBHOOK_UNAVAILABLE", "请至少配置一个企业微信群机器人 Webhook。"));
 
+        var sameSchedule = original != null && original.Frequency == request.Frequency && original.Time == request.Time
+            && original.Date == date && original.Day == day;
+        ProductNotificationOneTimeRunState? oneTimeRunState = request.Frequency == "once"
+            ? (sameSchedule ? original!.GetOneTimeRunState() : ProductNotificationOneTimeRunState.Pending)
+            : null;
+        var enabled = id == null && original != null ? original.IsScheduleEnabled() : request.Enabled;
+        if (sameSchedule && current?.NextRunAt is { } existingNext) next = existingNext;
+        if (!enabled || oneTimeRunState is ProductNotificationOneTimeRunState.Attempted or ProductNotificationOneTimeRunState.Sent)
+            next = null;
+
         var task = new ProductScheduledNotification
         {
             Name = name,
@@ -151,10 +196,12 @@ public partial class ProductAgentController
             WebhookGroupNames = groupNames,
             Frequency = request.Frequency!,
             Time = request.Time!,
-            Date = request.Frequency == "once" ? request.Date : null,
-            Day = request.Frequency is "weekly" or "monthly" ? request.Day : null,
-            Enabled = request.Enabled,
-            NextRunAt = request.Enabled ? next : null,
+            Date = date,
+            Day = day,
+            Enabled = enabled,
+            EnablementExplicit = true,
+            OneTimeRunState = oneTimeRunState,
+            NextRunAt = next,
             UpdatedAt = now,
         };
         if (id == null)
@@ -168,13 +215,13 @@ public partial class ProductAgentController
             .Set(x => x.Frequency, task.Frequency).Set(x => x.Time, task.Time)
             .Set(x => x.Date, task.Date).Set(x => x.Day, task.Day)
             .Set(x => x.Enabled, task.Enabled).Set(x => x.NextRunAt, task.NextRunAt)
+            .Set(x => x.EnablementExplicit, true).Set(x => x.OneTimeRunState, task.OneTimeRunState)
             .Set(x => x.UpdatedAt, task.UpdatedAt).Set(x => x.Revision, task.Revision);
         if (requestedWebhooks != null)
             update = update.Set(x => x.ProtectedWebhook, task.ProtectedWebhook).Set(x => x.ProtectedWebhooks, task.ProtectedWebhooks)
                 .Set(x => x.WebhookGroupNames, task.WebhookGroupNames);
         if (request.MentionAll.HasValue) update = update.Set(x => x.MentionAll, request.MentionAll.Value);
-        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision && x.LeaseId == null
-            && (x.Frequency != "once" || x.LastRunAt == null || x.NextRunAt != null));
+        var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id && x.Revision == request.Revision && x.LeaseId == null);
         var saved = await _db.ProductScheduledNotifications.FindOneAndUpdateAsync(
             filter, update,
             new FindOneAndUpdateOptions<ProductScheduledNotification> { ReturnDocument = ReturnDocument.After });
@@ -186,8 +233,10 @@ public partial class ProductAgentController
     private static object ScheduledNotificationView(ProductScheduledNotification task) => new
     {
         task.Id, task.Revision, task.Name, task.Message, task.Frequency, task.Time, task.Date, task.Day,
-        task.Enabled, task.MentionAll, task.NextRunAt, task.LastRunAt, task.LastResult, task.LastDelivery,
-        canEdit = !task.HasCompletedOneTimeSchedule(),
+        enabled = task.IsScheduleEnabled(), task.MentionAll, task.NextRunAt, task.LastRunAt, task.LastResult, task.LastDelivery,
+        scheduleSent = task.Frequency == "once" && task.GetOneTimeRunState() == ProductNotificationOneTimeRunState.Sent,
+        canEdit = true,
+        canDebug = !task.HasCompletedOneTimeSchedule(),
         webhookCount = task.GetProtectedWebhooks().Length,
         webhookConfigured = task.GetProtectedWebhooks().Length > 0,
         task.WebhookGroupNames,

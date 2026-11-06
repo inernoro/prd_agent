@@ -5,7 +5,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { NotificationGroupsDialog } from './NotificationGroupsDialog';
 import {
-  listScheduledNotifications, saveScheduledNotification, listNotificationGroups,
+  listScheduledNotifications, saveScheduledNotification, setScheduledNotificationEnabled, listNotificationGroups,
   getNotificationDebugSettings, saveNotificationDebugSettings, debugScheduledNotification,
   type NotificationFrequency, type ScheduledNotification, type ScheduledNotificationInput,
   type NotificationDebugSettings, type NotificationGroup,
@@ -32,7 +32,8 @@ function scheduleLabel(task: ScheduledNotification) {
 }
 
 function notificationStatus(task: ScheduledNotification) {
-  return task.lastResult === 'sent' || task.lastResult === 'partial' ? '已发送' : '待发送';
+  if (!task.enabled) return '禁用';
+  return !task.nextRunAt && task.scheduleSent ? '已发送' : '待发送';
 }
 
 export function ScheduledNotifications() {
@@ -61,7 +62,7 @@ export function ScheduledNotifications() {
           setCanManage(res.data.canManage);
           setError('');
           shouldPoll = res.data.canManage && res.data.items.some((task) =>
-            task.enabled || task.lastResult === 'sending' || task.debugLastResult === 'sending');
+            (task.enabled && task.nextRunAt !== null) || task.lastResult === 'sending' || task.debugLastResult === 'sending');
         } else {
           setError(res.error.message);
           shouldPoll = false;
@@ -90,11 +91,10 @@ export function ScheduledNotifications() {
 
   async function changeEnabled(task: ScheduledNotification, enabled: boolean) {
     if (enableActions[task.id]?.pending) return;
-    const { name, message, frequency, time, date, day, mentionAll, revision } = task;
     setEnableActions((current) => ({ ...current, [task.id]: { pending: true } }));
     let error: string | undefined;
     try {
-      const response = await saveScheduledNotification({ name, message, frequency, time, date, day, mentionAll, enabled, revision }, task.id);
+      const response = await setScheduledNotificationEnabled(task.id, enabled, task.revision);
       if (response.success) {
         setItems((current) => current.map((item) => item.id === task.id ? response.data : item));
       } else {
@@ -163,7 +163,9 @@ export function ScheduledNotifications() {
                   <td className="whitespace-nowrap px-4 py-3">{notificationStatus(task)}</td>
                   <td className="whitespace-nowrap px-4 py-3">{task.nextRunAt ? beijing.format(new Date(task.nextRunAt)) : '—'}</td>
                   <td className="min-w-36 px-4 py-3">
-                    {task.lastResult ? resultLabel[task.lastResult] : task.enabled ? '等待到点发送' : '—'}
+                    {task.lastResult ? resultLabel[task.lastResult] : task.enabled && task.nextRunAt ? '等待到点发送' : '—'}
+                    {task.enabled && task.frequency === 'once' && !task.nextRunAt && !task.scheduleSent && task.lastResult !== 'sending'
+                      && <div className="mt-1 text-xs text-token-muted">未安排下次发送，可编辑发送时间。</div>}
                     {task.lastDelivery && <div className="mt-1 text-xs text-token-muted">
                       成功 {task.lastDelivery.sent} · 失败 {task.lastDelivery.failed} · 未知 {task.lastDelivery.unknown}
                     </div>}
@@ -172,12 +174,12 @@ export function ScheduledNotifications() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex whitespace-nowrap gap-1">
-                      {task.canEdit && <Button size="sm" variant="ghost" disabled={enableActions[task.id]?.pending}
+                      <Button size="sm" variant="ghost" disabled={enableActions[task.id]?.pending}
                         onClick={() => void changeEnabled(task, !task.enabled)}>
                         {enableActions[task.id]?.pending ? '保存中…' : task.enabled ? '禁用' : '启用'}
-                      </Button>}
+                      </Button>
                       {task.canEdit && <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'edit', task })}>编辑</Button>}
-                      {task.canEdit && <Button size="sm" variant="ghost" disabled={debugging !== null || task.debugLastResult === 'sending'}
+                      {(task.canDebug ?? task.canEdit) && <Button size="sm" variant="ghost" disabled={debugging !== null || task.debugLastResult === 'sending'}
                         onClick={() => void debug(task)}>{debugging === task.id ? '调试发送中…' : '立即调试'}</Button>}
                       <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'copy', task })}>复制</Button>
                     </div>

@@ -74,7 +74,7 @@ public partial class ProductAgentController
         var now = DateTime.UtcNow;
         var run = new ProductNotificationDebugRun { Id = request.RequestId!, RequestedAt = now, LeaseUntil = now.AddMinutes(2) };
         var filter = Builders<ProductScheduledNotification>.Filter.Where(x => x.Id == id
-            && (x.Frequency != "once" || x.LastRunAt == null || x.NextRunAt != null)
+            && x.Revision == task.Revision
             && (x.DebugRun == null || (x.DebugRun.Id != request.RequestId
                 && (x.DebugRun.Status != "sending" || x.DebugRun.LeaseUntil <= now))));
         var claimed = await _db.ProductScheduledNotifications.UpdateOneAsync(filter,

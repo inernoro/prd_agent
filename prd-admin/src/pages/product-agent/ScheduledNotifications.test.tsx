@@ -6,11 +6,12 @@ import { ScheduledNotifications } from './ScheduledNotifications';
 import type { ScheduledNotification } from '@/services/real/productScheduledNotifications';
 
 const api = vi.hoisted(() => ({
-  list: vi.fn(), save: vi.fn(), debug: vi.fn(), getSettings: vi.fn(), saveSettings: vi.fn(),
+  list: vi.fn(), save: vi.fn(), setEnabled: vi.fn(), debug: vi.fn(), getSettings: vi.fn(), saveSettings: vi.fn(),
   listGroups: vi.fn(), saveGroup: vi.fn(), removeGroup: vi.fn(),
 }));
 vi.mock('@/services/real/productScheduledNotifications', () => ({
   listScheduledNotifications: api.list, saveScheduledNotification: api.save, debugScheduledNotification: api.debug,
+  setScheduledNotificationEnabled: api.setEnabled,
   getNotificationDebugSettings: api.getSettings, saveNotificationDebugSettings: api.saveSettings,
   listNotificationGroups: api.listGroups, saveNotificationGroup: api.saveGroup, removeNotificationGroup: api.removeGroup,
 }));
@@ -23,10 +24,10 @@ vi.mock('@/components/ui/Dialog', () => ({
 const completed: ScheduledNotification = {
   id: 'completed', revision: 'revision', name: '原通知', message: '原通知内容',
   frequency: 'once', time: '09:00', date: '2026-11-01', day: null,
-  enabled: false, mentionAll: true, nextRunAt: null, lastRunAt: '2026-11-01T01:00:00Z', lastResult: 'sent',
+  enabled: true, mentionAll: true, nextRunAt: null, lastRunAt: '2026-11-01T01:00:00Z', lastResult: 'sent', scheduleSent: true,
   lastDelivery: null,
   webhookMasked: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=********',
-  webhookConfigured: true, webhookCount: 2, canEdit: false, debugLastResult: null, debugLastRunAt: null,
+  webhookConfigured: true, webhookCount: 2, canEdit: true, canDebug: false, debugLastResult: null, debugLastRunAt: null,
 };
 
 let host: HTMLDivElement;
@@ -94,13 +95,13 @@ describe('定时通知真实组件交互', () => {
     }), undefined);
   });
 
-  it('已发送单次仅能复制，副本保留原日期、时间、启用设置和全部已填写的 Webhook', async () => {
+  it('已发送单次可以编辑和禁用，复制保留原时间、启用设置和全部 Webhook', async () => {
     api.list.mockResolvedValue({ success: true, data: { canManage: true, items: [completed] } });
     api.save.mockResolvedValue({ success: true, data: { ...completed, id: 'new-copy' } });
     await render();
-    expect(buttons('编辑')).toHaveLength(0);
+    expect(buttons('编辑')).toHaveLength(1);
     expect(buttons('立即调试')).toHaveLength(0);
-    expect(buttons('启用')).toHaveLength(0);
+    expect(buttons('禁用')).toHaveLength(1);
     expect(host.querySelector('[role=switch]')).toBeNull();
     expect(host.querySelectorAll('tbody td')[2].textContent).toBe('已发送');
     await click('复制');
@@ -118,56 +119,66 @@ describe('定时通知真实组件交互', () => {
       host.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
     expect(api.save).toHaveBeenCalledWith(expect.objectContaining({
-      sourceTaskId: completed.id, sourceRevision: completed.revision, enabled: false,
+      sourceTaskId: completed.id, sourceRevision: completed.revision, enabled: true,
       name: completed.name, message: completed.message, time: completed.time, date: completed.date, mentionAll: true,
       webhooks: [{ existingIndex: 0 }, { existingIndex: 1 }],
     }), undefined);
   });
 
-  it('操作列的文字启停各行独立，过期启用错误显示在当前行', async () => {
-    const scheduled = { ...completed, canEdit: true, enabled: true, lastResult: null, lastRunAt: null };
-    const disabled = { ...scheduled, enabled: false, revision: 'disabled-revision' };
-    const past = { ...disabled, id: 'past' };
-    let visible = [scheduled, past];
+  it('禁用已发送任务与启用过期任务可独立提交', async () => {
+    const disabled = { ...completed, enabled: false, revision: 'disabled-revision' };
+    const past: ScheduledNotification = { ...disabled, id: 'past', scheduleSent: false, lastRunAt: null, lastResult: null };
+    const enabledPast = { ...past, enabled: true };
+    let visible = [completed, past];
     let finishDisable!: (response: { success: true; data: ScheduledNotification }) => void;
     const pendingDisable = new Promise<{ success: true; data: ScheduledNotification }>((resolve) => { finishDisable = resolve; });
-    const errorMessage = '启用单次通知时请选择未来时间。';
     api.list.mockImplementation(async () => ({ success: true, data: { canManage: true, items: visible } }));
-    api.save.mockReturnValueOnce(pendingDisable)
-      .mockResolvedValueOnce({ success: false, error: { code: 'INVALID_NOTIFICATION_SCHEDULE', message: errorMessage } });
+    api.setEnabled.mockReturnValueOnce(pendingDisable)
+      .mockResolvedValueOnce({ success: true, data: enabledPast });
     await render();
     const [scheduledRow, pastRow] = host.querySelectorAll<HTMLTableRowElement>('tbody tr');
-    expect(pastRow.cells[2].textContent).toBe('待发送');
+    expect(pastRow.cells[2].textContent).toBe('禁用');
     expect(scheduledRow.cells[5].contains(buttons('禁用')[0])).toBe(true);
     expect(pastRow.cells[5].contains(buttons('启用')[0])).toBe(true);
     await click('禁用');
     expect(buttons('保存中…')[0].disabled).toBe(true);
     expect(buttons('启用')[0].disabled).toBe(false);
+    visible = [completed, enabledPast];
     await click('启用');
-    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, date: past.date }), past.id);
-    expect(pastRow.cells[5].querySelector('[role=alert]')?.textContent).toBe(errorMessage);
-    visible = [disabled, past];
+    expect(api.setEnabled).toHaveBeenCalledWith(past.id, true, past.revision);
+    expect(pastRow.cells[2].textContent).toBe('待发送');
+    expect(pastRow.textContent).toContain('可编辑发送时间');
+    visible = [disabled, enabledPast];
     await act(async () => finishDisable({ success: true, data: disabled }));
-    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({
-      revision: scheduled.revision, enabled: false, time: scheduled.time, date: scheduled.date,
-    }), scheduled.id);
-    expect(api.save.mock.calls[0][0]).not.toHaveProperty('webhooks');
-    expect(scheduledRow.cells[2].textContent).toBe('待发送');
-    expect(buttons('启用')).toHaveLength(2);
+    expect(api.setEnabled).toHaveBeenCalledWith(completed.id, false, completed.revision);
+    expect(api.save).not.toHaveBeenCalled();
+    expect(scheduledRow.cells[2].textContent).toBe('禁用');
+    expect(buttons('启用')).toHaveLength(1);
   });
 
-  it('到点发送结果自动刷新，完成后隐藏编辑入口', async () => {
+  it('到点显示已发送，改到新时间后显示待发送并保留最近发送结果', async () => {
     vi.useFakeTimers();
+    const rescheduled = { ...completed, date: '2026-11-12', scheduleSent: false, nextRunAt: '2026-11-12T01:00:00Z' };
     api.list.mockResolvedValueOnce({ success: true, data: {
-      canManage: true, items: [{ ...completed, enabled: true, canEdit: true, lastRunAt: null, lastResult: null }],
-    } }).mockResolvedValue({ success: true, data: { canManage: true, items: [completed] } });
+      canManage: true, items: [{ ...rescheduled, lastRunAt: null, lastResult: null }],
+    } }).mockResolvedValueOnce({ success: true, data: { canManage: true, items: [completed] } })
+      .mockResolvedValue({ success: true, data: { canManage: true, items: [rescheduled] } });
+    api.save.mockResolvedValue({ success: true, data: rescheduled });
     await render();
     expect(host.textContent).toContain('等待到点发送');
     expect(buttons('编辑')).toHaveLength(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(host.textContent).toContain('发送成功');
-    expect(buttons('编辑')).toHaveLength(0);
+    expect(host.querySelectorAll('tbody td')[2].textContent).toBe('已发送');
+    expect(buttons('编辑')).toHaveLength(1);
     expect(buttons('复制')).toHaveLength(1);
     expect(api.list).toHaveBeenCalledTimes(2);
+    await click('编辑');
+    const form = host.querySelector<HTMLFormElement>('#scheduled-notification-form')!;
+    form.querySelector<HTMLInputElement>('[name=date]')!.value = rescheduled.date;
+    await act(async () => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ date: rescheduled.date, enabled: true }), completed.id);
+    expect(host.querySelectorAll('tbody td')[2].textContent).toBe('待发送');
+    expect(host.textContent).toContain('发送成功');
   });
 });

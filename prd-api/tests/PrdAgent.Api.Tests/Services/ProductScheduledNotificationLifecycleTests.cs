@@ -37,7 +37,7 @@ public class ProductScheduledNotificationLifecycleTests
         await fixture.Worker().ProcessNextAsync(CancellationToken.None);
 
         var saved = await fixture.Saved(task.Id);
-        Assert.False(saved.Enabled);
+        Assert.True(saved.Enabled);
         Assert.Null(saved.NextRunAt);
         Assert.NotNull(saved.LastRunAt);
         Assert.Equal("sent", saved.LastResult);
@@ -45,10 +45,33 @@ public class ProductScheduledNotificationLifecycleTests
         using var body = JsonDocument.Parse(Assert.Single(fixture.Http.Bodies));
         Assert.Equal("@all", Assert.Single(body.RootElement.GetProperty("text").GetProperty("mentioned_list").EnumerateArray()).GetString());
 
-        var changed = fixture.Input() with { Name = "不应修改已发送任务", Revision = saved.Revision, Frequency = "daily" };
-        Assert.IsType<ConflictObjectResult>(await fixture.Controller().UpdateScheduledNotification(task.Id, changed, fixture.Protection, fixture.Configuration));
-        Assert.Equal(task.Name, (await fixture.Saved(task.Id)).Name);
+        var controller = fixture.Controller();
+        Assert.IsType<OkObjectResult>(await controller.SetScheduledNotificationEnabled(task.Id, new(false, saved.Revision), fixture.Configuration));
+        var disabled = await fixture.Saved(task.Id);
+        Assert.False(disabled.IsScheduleEnabled());
+        Assert.IsType<OkObjectResult>(await controller.SetScheduledNotificationEnabled(task.Id, new(true, disabled.Revision), fixture.Configuration));
+        var reenabled = await fixture.Saved(task.Id);
+        Assert.True(reenabled.IsScheduleEnabled());
+        Assert.Null(reenabled.NextRunAt);
+
+        var unchanged = fixture.Input() with { Name = "只编辑标题", Revision = reenabled.Revision };
+        Assert.IsType<OkObjectResult>(await controller.UpdateScheduledNotification(task.Id, unchanged, fixture.Protection, fixture.Configuration));
+        var stillSent = await fixture.Saved(task.Id);
+        Assert.Null(stillSent.NextRunAt);
+        Assert.Equal(ProductNotificationOneTimeRunState.Sent, stillSent.GetOneTimeRunState());
         Assert.Single(fixture.Http.Bodies);
+
+        var changed = unchanged with { Time = "19:30", Revision = stillSent.Revision };
+        Assert.IsType<OkObjectResult>(await controller.UpdateScheduledNotification(task.Id, changed, fixture.Protection, fixture.Configuration));
+        var rescheduled = await fixture.Saved(task.Id);
+        Assert.True(rescheduled.NextRunAt > DateTime.UtcNow);
+        Assert.Equal(ProductNotificationOneTimeRunState.Pending, rescheduled.GetOneTimeRunState());
+        Assert.Equal("sent", rescheduled.LastResult);
+        await fixture.Db.ProductScheduledNotifications.UpdateOneAsync(x => x.Id == task.Id,
+            Builders<ProductScheduledNotification>.Update.Set(x => x.NextRunAt, DateTime.UtcNow.AddMinutes(-1)));
+        await fixture.Worker().ProcessNextAsync(CancellationToken.None);
+        Assert.Equal(2, fixture.Http.Bodies.Count);
+        Assert.True((await fixture.Saved(task.Id)).IsScheduleEnabled());
     }
 
     [Fact]
@@ -77,18 +100,18 @@ public class ProductScheduledNotificationLifecycleTests
         Assert.Equal(source.Name, copy.Name);
         Assert.Equal(source.Date, copy.Date);
         Assert.Equal(source.GetProtectedWebhooks(), copy.GetProtectedWebhooks());
-        Assert.False(copy.Enabled);
+        Assert.True(copy.Enabled);
         Assert.Null(copy.NextRunAt);
         Assert.Null(copy.LastRunAt);
         Assert.Null(copy.LastResult);
-        Assert.False(copy.HasCompletedOneTimeSchedule());
+        Assert.Equal(ProductNotificationOneTimeRunState.Sent, copy.GetOneTimeRunState());
         var response = JsonSerializer.Serialize(created.Value);
         Assert.DoesNotContain(TestUrl, response);
         Assert.All(copy.GetProtectedWebhooks(), encrypted => Assert.DoesNotContain(encrypted, response));
         Assert.Contains("key=********", response);
 
         var replacement = TestUrl + "-replacement";
-        var updated = fixture.Input() with { Revision = copy.Revision, Webhooks = [new(0, null), new(null, replacement)] };
+        var updated = fixture.Input() with { Date = copy.Date, Revision = copy.Revision, Webhooks = [new(0, null), new(null, replacement)] };
         Assert.IsType<OkObjectResult>(await fixture.Controller().UpdateScheduledNotification(copy.Id, updated, fixture.Protection, fixture.Configuration));
         var stored = await fixture.Saved(copy.Id);
         Assert.Equal(new[] { TestUrl, replacement }, stored.GetProtectedWebhooks().Select(value => protector.Unprotect(value)));
@@ -112,10 +135,7 @@ public class ProductScheduledNotificationLifecycleTests
         await fixture.Worker().ProcessNextAsync(CancellationToken.None);
         Assert.Empty(fixture.Http.Urls);
 
-        Assert.IsType<OkObjectResult>(await controller.UpdateScheduledNotification(saved.Id, input with
-        {
-            Enabled = true, Webhooks = null, Revision = saved.Revision,
-        }, fixture.Protection, fixture.Configuration));
+        Assert.IsType<OkObjectResult>(await controller.SetScheduledNotificationEnabled(saved.Id, new(true, saved.Revision), fixture.Configuration));
         Assert.True((await fixture.Saved(saved.Id)).NextRunAt > DateTime.UtcNow);
         await fixture.Db.ProductScheduledNotifications.UpdateOneAsync(x => x.Id == saved.Id,
             Builders<ProductScheduledNotification>.Update.Set(x => x.NextRunAt, DateTime.UtcNow.AddMinutes(-1)));
@@ -125,6 +145,33 @@ public class ProductScheduledNotificationLifecycleTests
         Assert.Equal("partial", completed.LastResult);
         Assert.Equal(new ProductNotificationDelivery(1, 1, 1), completed.LastDelivery);
         Assert.True(completed.HasCompletedOneTimeSchedule());
+    }
+
+    [Fact]
+    public async Task ExpiredTaskCanBeEnabledAndCopiedAfterExplicitDisableWithoutSending()
+    {
+        await using var fixture = new Fixture();
+        var controller = fixture.Controller();
+        var input = fixture.Input() with
+        {
+            Date = DateTime.UtcNow.AddHours(8).AddDays(-1).ToString("yyyy-MM-dd"), Enabled = false, WebhookUrl = TestUrl,
+        };
+        Assert.IsType<OkObjectResult>(await controller.CreateScheduledNotification(input, fixture.Protection, fixture.Configuration));
+        var task = await fixture.Db.ProductScheduledNotifications.Find(FilterDefinition<ProductScheduledNotification>.Empty).SingleAsync();
+        Assert.IsType<OkObjectResult>(await controller.SetScheduledNotificationEnabled(task.Id, new(true, task.Revision), fixture.Configuration));
+        var enabled = await fixture.Saved(task.Id);
+        Assert.True(enabled.IsScheduleEnabled());
+        Assert.Null(enabled.NextRunAt);
+        Assert.IsType<OkObjectResult>(await controller.SetScheduledNotificationEnabled(task.Id, new(false, enabled.Revision), fixture.Configuration));
+        var disabled = await fixture.Saved(task.Id);
+        Assert.IsType<OkObjectResult>(await controller.CreateScheduledNotification(input with
+        {
+            Enabled = true, SourceTaskId = task.Id, SourceRevision = disabled.Revision, WebhookUrl = null,
+        }, fixture.Protection, fixture.Configuration));
+        var copy = await fixture.Db.ProductScheduledNotifications.Find(x => x.Id != task.Id).SingleAsync();
+        Assert.False(copy.IsScheduleEnabled());
+        await fixture.Worker().ProcessNextAsync(CancellationToken.None);
+        Assert.Empty(fixture.Http.Bodies);
     }
 
     [Fact]
@@ -155,7 +202,7 @@ public class ProductScheduledNotificationLifecycleTests
 
         var copied = fixture.Input() with
         {
-            Enabled = false, SourceTaskId = saved.Id, SourceRevision = saved.Revision, Webhooks = [new(0, null)],
+            SourceTaskId = saved.Id, SourceRevision = saved.Revision, Webhooks = [new(0, null)],
         };
         Assert.IsType<OkObjectResult>(await controller.CreateScheduledNotification(copied, fixture.Protection, fixture.Configuration));
         var copy = await fixture.Db.ProductScheduledNotifications.Find(x => x.Id != saved.Id).SingleAsync();

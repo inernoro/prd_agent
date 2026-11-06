@@ -25,12 +25,14 @@ export type ScheduledNotification = Omit<ScheduledNotificationInput, 'webhooks' 
   nextRunAt: string | null;
   lastRunAt: string | null;
   lastResult: 'sending' | 'sent' | 'failed' | 'unknown' | 'partial' | null;
+  scheduleSent?: boolean;
   lastDelivery: { sent: number; failed: number; unknown: number } | null;
   webhookMasked: string;
   webhookConfigured: boolean;
   webhookCount?: number;
   webhookGroupNames?: (string | null)[] | null;
   canEdit: boolean;
+  canDebug?: boolean;
   debugLastResult: 'sending' | 'sent' | 'failed' | 'unknown' | null;
   debugLastRunAt: string | null;
 };
@@ -61,6 +63,11 @@ export const saveScheduledNotification = (input: ScheduledNotificationInput, id?
     method: id ? 'PUT' : 'POST',
     body: input,
     timeoutMs: 15_000,
+  });
+
+export const setScheduledNotificationEnabled = (id: string, enabled: boolean, revision: string) =>
+  apiRequest<ScheduledNotification>(`${endpoint}/${encodeURIComponent(id)}/enabled`, {
+    method: 'PATCH', body: { enabled, revision }, timeoutMs: 15_000,
   });
 
 export type NotificationDebugSettings = { configured: boolean; webhookMasked: string | null; canManage: boolean };

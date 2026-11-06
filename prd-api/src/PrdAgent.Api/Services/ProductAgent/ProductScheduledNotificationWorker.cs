@@ -46,12 +46,14 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
         if (due.Frequency != "once")
             ProductScheduledNotificationTiming.TryGetNext(due.Frequency, due.Time, due.Date, due.Day, now, out next);
         var lease = Guid.NewGuid().ToString("N");
+        var claim = updates.Set(x => x.LeaseId, lease).Set(x => x.LeaseUntil, now.AddMinutes(2))
+            .Set(x => x.LastRunAt, now).Set(x => x.LastResult, "sending").Set(x => x.Revision, lease)
+            .Set(x => x.LastDelivery, null).Set(x => x.NextRunAt, next);
+        if (due.Frequency == "once")
+            claim = claim.Set(x => x.OneTimeRunState, ProductNotificationOneTimeRunState.Attempted);
         var claimed = await tasks.UpdateOneAsync(
-            x => x.Id == due.Id && x.Revision == due.Revision && x.NextRunAt == due.NextRunAt && x.LeaseId == null,
-            updates.Set(x => x.LeaseId, lease).Set(x => x.LeaseUntil, now.AddMinutes(2))
-                .Set(x => x.LastRunAt, now).Set(x => x.LastResult, "sending").Set(x => x.Revision, lease)
-                .Set(x => x.LastDelivery, null)
-                .Set(x => x.Enabled, next != null).Set(x => x.NextRunAt, next),
+            x => x.Id == due.Id && x.Enabled && x.Revision == due.Revision && x.NextRunAt == due.NextRunAt && x.LeaseId == null,
+            claim,
             cancellationToken: CancellationToken.None);
         if (claimed.ModifiedCount == 0) return;
 
@@ -62,10 +64,11 @@ public sealed class ProductScheduledNotificationWorker(MongoDbContext db, IDataP
         var result = delivery.Sent > 0
             ? (delivery.Sent == outcomes.Length ? "sent" : "partial")
             : (delivery.Unknown > 0 ? "unknown" : "failed");
-        await tasks.UpdateOneAsync(x => x.Id == due.Id && x.LeaseId == lease,
-            updates.Set(x => x.LastResult, result).Set(x => x.LastDelivery, delivery)
-                .Set(x => x.LeaseUntil, null).Set(x => x.LeaseId, null),
-            cancellationToken: CancellationToken.None);
+        var finish = updates.Set(x => x.LastResult, result).Set(x => x.LastDelivery, delivery)
+            .Set(x => x.LeaseUntil, null).Set(x => x.LeaseId, null);
+        if (due.Frequency == "once" && delivery.Sent > 0)
+            finish = finish.Set(x => x.OneTimeRunState, ProductNotificationOneTimeRunState.Sent);
+        await tasks.UpdateOneAsync(x => x.Id == due.Id && x.LeaseId == lease, finish, cancellationToken: CancellationToken.None);
     }
 
     internal static async Task<string> DeliverAsync(ProductScheduledNotification task, string protectedWebhook,
