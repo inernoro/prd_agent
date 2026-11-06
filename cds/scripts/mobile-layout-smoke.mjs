@@ -18,6 +18,7 @@
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 
 import { startViteDevServer } from './lib/vite-dev-server.mjs';
 import { resolveFixture, isEventStream, FIXTURE_PROJECT_ID } from './fixtures/mobile-layout-fixtures.mjs';
@@ -439,6 +440,57 @@ async function runViewport(browser, project, viewport) {
   await context.close();
 }
 
+async function checkInstanceOutage(browser, mobile, pinned) {
+  const context = await browser.newContext({ viewport: { width: mobile ? 390 : 1440, height: 844 }, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
+  const name = `instance-outage-${mobile ? 'mobile' : 'desktop'}-${pinned ? 'pinned' : 'hover'}`;
+  const page = await context.newPage();
+  try {
+    await installFixtures(context);
+    await context.route('**/api/**', route => isEventStream(new URL(route.request().url()).pathname) ? route.abort('failed') : route.fallback());
+    await page.goto(`${baseUrl}/project-list`);
+    const inbox = page.getByRole('button', { name: /^信息中心/ });
+    if (mobile) await inbox.tap(); else await inbox.click();
+    const badge = page.getByRole('button', { name: /^无法确认是重启、网络还是服务退出/ });
+    // 三次真实断线要经过原 5s + 10s 退避，另给首次页面编译留出准备时间。
+    await badge.waitFor({ timeout: 25000 });
+    const root = badge.locator('xpath=..').locator('xpath=..');
+    if (!pinned) await root.getByRole('button', { name: '取消钉住(切换到鼠标移开自动收起)' }).click();
+    const summary = root.getByLabel('切换 CDS 实例');
+    if (mobile) await summary.tap(); else await summary.click();
+    const link = root.getByRole('link', { name: '合成备用实例 · 打开控制台' });
+    await link.waitFor({ timeout: 5000 });
+    const download = root.getByRole('button', { name: '下载备用入口' });
+    for (const target of [link, download]) {
+      const measured = await target.evaluate(el => {
+        const r = el.getBoundingClientRect(); const x = r.left + r.width / 2; const y = r.top + r.height / 2;
+        const top = document.elementFromPoint(x, y);
+        return { width: r.width, height: r.height, x, y, hit: !!top && (top === el || el.contains(top)), viewport: innerWidth, touchPoints: navigator.maxTouchPoints };
+      });
+      console.log(`MEASURE ${name} ${JSON.stringify(measured)}`);
+      assertOk(measured.hit && measured.x >= 0 && measured.x <= measured.viewport, `${name}: 备用入口被裁切或遮挡`, measured);
+      if (mobile) assertOk(measured.touchPoints >= 1 && measured.viewport <= 480, `${name}: 必须是独立触控环境`, measured);
+    }
+    if (!mobile && !pinned) {
+      const rect = await link.boundingBox();
+      await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await page.waitForTimeout(350);
+      assertOk(await link.isVisible(), `${name}: 移向菜单不能触发自动收起`);
+    }
+    const downloaded = page.waitForEvent('download', { timeout: 5000 });
+    if (mobile) await download.tap(); else await download.click();
+    const file = await downloaded; const stream = await file.createReadStream(); let text = '';
+    for await (const chunk of stream) text += chunk.toString();
+    assertOk(file.suggestedFilename() === 'cds-instance-addresses.txt' && text.includes('https://standby.example.invalid/project-list'), `${name}: 备用地址快照未交付`);
+    console.log(`PASS ${name}`);
+  } finally {
+    if (process.env.CDS_OUTAGE_EVIDENCE) {
+      fs.mkdirSync(process.env.CDS_OUTAGE_EVIDENCE, { recursive: true });
+      await page.screenshot({ path: `${process.env.CDS_OUTAGE_EVIDENCE}/${name}.png` });
+    }
+    await context.close();
+  }
+}
+
 async function main() {
   // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
   const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
@@ -458,6 +510,10 @@ async function main() {
   let browser = null;
   try {
     browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
+    if (only === 'instance-outage') {
+      assertOk(OFFLINE, '断线回归仅在离线合成环境运行，不向实际服务注入断线');
+      for (const mobile of [true, false]) for (const pinned of [true, false]) await checkInstanceOutage(browser, mobile, pinned);
+    } else {
     if (only !== 'task-schedule') {
       const probe = await browser.newPage();
       const project = await getFirstProject(probe);
@@ -468,6 +524,8 @@ async function main() {
     }
     for (const viewport of TASK_SCHEDULE_VIEWPORTS) {
       await checkTaskScheduleAction(browser, viewport);
+    }
+    if (OFFLINE && !only) for (const mobile of [true, false]) for (const pinned of [true, false]) await checkInstanceOutage(browser, mobile, pinned);
     }
   } finally {
     if (browser) await browser.close();

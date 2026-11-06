@@ -11,7 +11,7 @@ function cachedCatalog(): InstanceCatalog | null {
   catch { return null; }
 }
 
-export function InstanceSwitcher({ above = false }: { above?: boolean }): JSX.Element {
+export function InstanceSwitcher({ embedded = false }: { embedded?: boolean }): JSX.Element {
   const [catalog, setCatalog] = useState(cachedCatalog);
   const [stale, setStale] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -52,12 +52,12 @@ export function InstanceSwitcher({ above = false }: { above?: boolean }): JSX.El
   };
 
   return (
-    <details className="relative shrink-0 text-sm">
-      <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md border border-border px-2 py-1.5" aria-label="切换 CDS 实例">
+    <details className={`relative shrink-0 text-sm ${embedded ? 'w-full' : ''}`}>
+      <summary className={`flex cursor-pointer list-none items-center gap-1 rounded-md border border-border px-2 py-1.5 ${embedded ? 'ml-auto w-fit' : ''}`} aria-label="切换 CDS 实例">
         <Server className="h-4 w-4" aria-hidden />
         <span className="max-w-24 truncate">{current?.name || 'CDS 实例'}</span>
       </summary>
-      <div className={`absolute right-0 z-50 w-72 max-w-[90vw] space-y-3 rounded-lg border border-border bg-background p-4 shadow-lg ${above ? 'bottom-full mb-2' : 'top-full mt-2'}`}>
+      <div className={`space-y-3 rounded-lg border border-border bg-background p-4 shadow-lg ${embedded ? 'mt-2 w-full' : 'absolute right-0 top-full z-50 mt-2 w-72 max-w-[90vw]'}`}>
         <p className="font-medium">主备 CDS</p>
         <p className="break-all text-xs text-muted-foreground">当前：{typeof window !== 'undefined' ? window.location.host : '当前实例'}</p>
         {catalog?.instances.map(instance => (

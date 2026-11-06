@@ -499,11 +499,12 @@ export function GlobalUpdateBadge({
     <div
       className="w-full max-w-full select-none"
       style={{ pointerEvents: 'auto' }}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
     >
+      {expanded && state.kind === 'unreachable' ? <div className="mb-2"><InstanceSwitcher embedded /></div> : null}
       <div
         className={`flex w-full min-w-0 items-stretch gap-0 overflow-hidden rounded-md border shadow-sm transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-warn/40' : ''} ${expanded ? '' : 'h-9'}`}
-        onMouseEnter={handleEnter}
-        onMouseLeave={handleLeave}
       >
         <button
           type="button"
@@ -520,7 +521,6 @@ export function GlobalUpdateBadge({
             <span className="truncate pr-1 text-xs font-medium">{visual.label}</span>
           ) : null}
         </button>
-        {expanded && state.kind === 'unreachable' ? <InstanceSwitcher above /> : null}
         {expanded && state.kind === 'updateAvailable' ? (
           <button
             type="button"

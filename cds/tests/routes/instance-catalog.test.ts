@@ -37,7 +37,11 @@ describe('主备 CDS 目录', () => {
     fs.writeFileSync(bundled, JSON.stringify({ version: 1, instances: [entry] }));
     expect(await (await fetch(url)).json()).toEqual({ version: 1, instances: [entry] });
   });
-  it.each(['https://user:secret@backup.example', 'javascript:alert(1)', 'https://backup.example/project-list', 'https://backup.example/?key=secret', 'http://backup.example'])('拒绝不安全或有歧义的地址 %s', url => {
+  it.each(['http://[::1]/', 'http://127.0.0.1/'])('保持已有本机 HTTP 地址 %s 可用', url => {
+    const catalog = parseInstanceCatalog({ version: 1, instances: [{ ...entry, url }] });
+    expect(catalog.instances[0].url).toBe(new URL(url).origin);
+  });
+  it.each(['https://user:secret@backup.example', 'javascript:alert(1)', 'https://backup.example/project-list', 'https://backup.example/?key=secret', 'http://backup.example', 'http://[2001:db8::1]/'])('拒绝不安全或有歧义的地址 %s', url => {
     expect(() => parseInstanceCatalog({ version: 1, instances: [{ ...entry, url }] })).toThrow();
   });
   it('拒绝重复标识或地址；不把源实例项目 ID 带到目标', () => {
