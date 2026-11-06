@@ -367,6 +367,11 @@ export function buildWidgetScript(
     },delay);
   }
 
+  function invalidateBranchInfoRefresh(){
+    branchInfoFetchSequence++;
+    if(branchInfoFetchTimer){clearTimeout(branchInfoFetchTimer);branchInfoFetchTimer=null;}
+  }
+
   function queueBranchInfoRefresh(delay){
     if(branchInfoFetchTimer)clearTimeout(branchInfoFetchTimer);
     branchInfoFetchTimer=setTimeout(function(){
@@ -461,7 +466,7 @@ export function buildWidgetScript(
   }
 
   function initBranchStream(){
-    branchInfoFetchSequence++;
+    invalidateBranchInfoRefresh();
     if(branchStreamRetryTimer){clearTimeout(branchStreamRetryTimer);branchStreamRetryTimer=null;}
     if(branchEventSource)branchEventSource.close();
     var source;
@@ -471,7 +476,7 @@ export function buildWidgetScript(
       if(branchEventSource!==source)return;
       try{
         var transport=JSON.parse(msg.data);
-        if(transport.state!=='connected')branchInfoFetchSequence++;
+        if(transport.state!=='connected')invalidateBranchInfoRefresh();
         if(transport.state==='connected')branchConnectionState='refreshing';
         else if(transport.state==='forbidden'||transport.state==='unavailable')branchConnectionState=transport.state;
         else if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
@@ -551,7 +556,7 @@ export function buildWidgetScript(
       if(branchEventSource!==source)return;
       if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
       render();
-      branchInfoFetchSequence++;
+      invalidateBranchInfoRefresh();
       source.close();
       if(branchStreamRetryTimer)return;
       branchStreamRetryTimer=setTimeout(function(){
@@ -2095,8 +2100,8 @@ export function buildWidgetScript(
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
   scheduleMobileCompact(4000);
-  fetchBranchInfo();
   initBranchStream();
+  fetchBranchInfo();
   initAiStream();
 })();
 </script>`;

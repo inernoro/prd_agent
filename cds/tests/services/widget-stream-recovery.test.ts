@@ -13,7 +13,7 @@ class Source {
   emit(name: string, data: unknown) { this.handlers.get(name)?.({ data: JSON.stringify(data) }); }
 }
 
-function client() {
+function client(bootFromActualEntry = false) {
   Source.instances = [];
   vi.useFakeTimers();
   const script = buildWidgetScript('owned', 'main');
@@ -34,11 +34,37 @@ function client() {
   vm.createContext(state);
   vm.runInContext(script.slice(script.indexOf('function shortSha('), script.indexOf('  var root=document.createElement')), state);
   vm.runInContext(script.slice(script.indexOf('function fetchBranchInfo(){'), script.indexOf('function fetchContainerLog(')), state);
-  state.initBranchStream();
+  if (bootFromActualEntry) {
+    state.scheduleMobileCompact = () => {};
+    state.initAiStream = () => {};
+    vm.runInContext(script.slice(script.indexOf('// ── Initial:'), script.lastIndexOf('})();')), state);
+  } else state.initBranchStream();
   return { state, terminal };
 }
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+it('首屏按真实初始化入口执行，流尚无快照时仍采用成功的权威读取', async () => {
+  const { state } = client(true);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(Source.instances).toHaveLength(1);
+  expect(state.branchStatus).toBe('error');
+  expect(state.commitSha).toBe('a'.repeat(40));
+  expect(state.branchConnectionState).toBe('connected');
+});
+
+it.each(['disconnect', 'reconnecting', 'forbidden', 'unavailable'])('已排队补读遇到%s必须取消，不能在流断开后把连接刷绿', async reason => {
+  const { state } = client();
+  state.fetch = vi.fn(state.fetch);
+  const source = Source.instances[0];
+  source.emit('snapshot', {});
+  if (reason === 'disconnect') source.onerror?.();
+  else source.emit('cds.transport', { state: reason });
+  await vi.advanceTimersByTimeAsync(1);
+  expect(state.fetch).not.toHaveBeenCalled();
+  expect(state.branchStatus).toBe('building');
+  expect(state.branchConnectionState).toBe(reason === 'disconnect' ? 'reconnecting' : reason);
+});
 
 it.each(['forbidden', 'unavailable'])('已知%s随后真实连接关闭的onerror不能抹去原因，下一次授权补读成功才恢复', async reason => {
   const { state } = client();

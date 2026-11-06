@@ -143,6 +143,11 @@ export class ControlPlaneStreams {
         });
         upstream = attempt;
         connect = setTimeout(() => attempt.destroy(Object.assign(new Error('control plane stream connect deadline'), { code: 'ETIMEDOUT' })), this.connectMs);
+        const connectionDeadline = connect;
+        attempt.once('socket', socket => {
+          if (!socket.connecting) clearTimeout(connectionDeadline);
+          else socket.once('connect', () => clearTimeout(connectionDeadline));
+        });
         attempt.once('error', error => { if (upstream === attempt) fail((error as NodeJS.ErrnoException).code || 'UNKNOWN'); });
         attempt.end();
       };

@@ -6,12 +6,15 @@ import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 
-async function fixture(options: { reject?: boolean; known?: boolean; partial?: boolean; maxAttempts?: number; maxConnections?: number } = {}) {
+async function fixture(options: { reject?: boolean; known?: boolean; partial?: boolean; idle?: boolean; maxAttempts?: number; maxConnections?: number } = {}) {
   const requests: http.IncomingHttpHeaders[] = [];
+  const responses: http.ServerResponse[] = [];
   const upstream = http.createServer((req, res) => {
     requests.push(req.headers);
+    responses.push(res);
     if (options.reject) { res.writeHead(403); res.end('denied'); return; }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
+    if (options.idle) return; // 与没有历史活动的真实上游一样，等首个心跳才发送 headers。
     res.write('event: snapshot\ndata: {"branches":[{"id":"owned","status":"error"}]}\n\n');
     if (options.partial) res.write('event: branch.status\ndata: {"status":');
   });
@@ -28,10 +31,26 @@ async function fixture(options: { reject?: boolean; known?: boolean; partial?: b
   }); });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   cleanups.push(async () => { proxy.destroy(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  return { upstream, upstreamPort, requests, proxy, log: settings.httpLogStore.record,
+  return { upstream, upstreamPort, requests, responses, proxy, log: settings.httpLogStore.record,
     start: () => new Promise<void>(resolve => upstream.listen(upstreamPort, '127.0.0.1', resolve)),
     port: (server.address() as AddressInfo).port };
 }
+
+it('TCP已连接的空活动流允许等待首个心跳，不将首事件等待误记为连接失败', async () => {
+  const f = await fixture({ idle: true });
+  await f.start();
+  const pending = stream(f.port, '/_cds/api/activity-stream');
+  await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+  await new Promise(resolve => setTimeout(resolve, 120)); // 原连接预算50ms，未修改生产或用例期限。
+  expect(f.requests).toHaveLength(1);
+  expect(f.proxy.getStats().widgetStreams?.upstreamFailures).toBe(0);
+  f.responses[0].write('event: heartbeat\ndata: {}\n\n');
+  const s = await pending;
+  await s.first;
+  expect(s.chunks.join('')).toContain('event: heartbeat');
+  expect(s.chunks.join('')).not.toContain('reconnecting');
+  s.res.destroy(); s.req.destroy();
+}, 5000);
 
 async function stream(port: number, path = '/_cds/api/branches/stream') {
   return new Promise<{ req: http.ClientRequest; res: http.IncomingMessage; chunks: string[]; first: Promise<void>; ended: Promise<void> }>((resolve, reject) => {

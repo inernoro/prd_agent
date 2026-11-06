@@ -1019,6 +1019,12 @@ public class ModelResolver : IModelResolver
             && string.Equals(member.PlatformId, resolution.ActualPlatformId, StringComparison.Ordinal)
             && string.Equals(member.ModelId, resolution.ActualModel, StringComparison.Ordinal)));
 
+    private async Task<bool> IsLogicalOfferingAllowedForRequestAsync(
+        ModelResolutionResult resolution, IReadOnlyCollection<ModelGroup>? allowedGroups, CancellationToken ct)
+        => IsLogicalOfferingAllowed(resolution, allowedGroups)
+            && (await JudgeAsync(resolution.ActualModel, resolution.ActualPlatformId, ct) != CatalogVerdict.Blocked
+                || !await CatalogGateEnforcesAsync(ct));
+
     private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync(
         string appCallerCode,
         string modelType,
@@ -1098,7 +1104,7 @@ public class ModelResolver : IModelResolver
             foreach (var offering in catalogOfferings)
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
-                if (candidate is null || !IsLogicalOfferingAllowed(candidate, allowedGroups)) continue;
+                if (candidate is null) continue;
                 // 名录门也要过一遍。
                 //
                 // 上面那句注释说的是「目录与执行链路采用同一规则」，但它只覆盖了「解析得出来」
@@ -1106,11 +1112,8 @@ public class ModelResolver : IModelResolver
                 // ApplyCatalogGateAsync 会拒掉。少了这一道，选择器里列出来的模型选中即失败
                 // （MODEL_NOT_IN_CATALOG），而用户没做错任何事。
                 // 对外的 /v1/models 上一轮已经补了这一道，应用侧这条清单是它的同类，一起补。
-                if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct) == CatalogVerdict.Blocked
-                    && await CatalogGateEnforcesAsync(ct))
-                {
+                if (!await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
                     continue;
-                }
                 catalogResolution = candidate;
                 catalogOffering = offering;
                 break;
@@ -1350,12 +1353,20 @@ public class ModelResolver : IModelResolver
             var now = DateTime.UtcNow;
             var cutoff = now.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
                 _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
-            halfOpen = available.Where(x => x.Enabled && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+            halfOpen = null;
+            foreach (var offering in available.Where(x => x.Enabled && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
                     x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
-                .OrderBy(x => x.Priority).FirstOrDefault();
+                .OrderBy(x => x.Priority).ThenBy(x => x.Id, StringComparer.Ordinal))
+            {
+                var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
+                if (candidate is null || !await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
+                    continue;
+                halfOpen = offering;
+                break;
+            }
         }
         else
-            halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
+            halfOpen = await TryClaimHalfOpenOfferingAsync(logical, available, allowedGroups, ct);
         if (halfOpen is not null)
         {
             var probe = await TryBuildLogicalOfferingResolutionAsync(logical, halfOpen, expectedModel, ct);
@@ -1786,6 +1797,8 @@ public class ModelResolver : IModelResolver
     /// </summary>
     private async Task<GatewayModelOffering?> TryClaimHalfOpenOfferingAsync(
         GatewayLogicalModel logical,
+        List<GatewayModelOffering> available,
+        IReadOnlyCollection<ModelGroup>? allowedGroups,
         CancellationToken ct)
     {
         if (_gatewayDb is null) return null;
@@ -1799,8 +1812,27 @@ public class ModelResolver : IModelResolver
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
         var fb = Builders<GatewayModelOffering>.Filter;
-        var claimed = await offerings.FindOneAndUpdateAsync(
+        foreach (var offering in available.Where(x => x.Enabled
+            && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff))
+            .OrderBy(x => x.Priority).ThenBy(x => x.Id, StringComparer.Ordinal))
+        {
+            var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
+            if (candidate is null || !await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
+                continue;
+            var claimed = await ClaimOfferingAsync(offering.Id);
+            if (claimed is null) continue;
+
+            _logger.LogInformation(
+                "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
+                logical.PublicId, claimed.Id, leaseSeconds);
+            return claimed;
+        }
+        return null;
+
+        Task<GatewayModelOffering> ClaimOfferingAsync(string offeringId) => offerings.FindOneAndUpdateAsync(
             fb.And(
+                fb.Eq(x => x.Id, offeringId),
                 fb.Eq(x => x.TenantId, CurrentTenantId),
                 fb.Eq(x => x.LogicalModelId, logical.Id),
                 fb.Eq(x => x.Enabled, true),
@@ -1819,15 +1851,9 @@ public class ModelResolver : IModelResolver
             new FindOneAndUpdateOptions<GatewayModelOffering>
             {
                 ReturnDocument = ReturnDocument.After,
-                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority),
+                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority).Ascending(x => x.Id),
             },
             ct);
-        if (claimed is null) return null;
-
-        _logger.LogInformation(
-            "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
-            logical.PublicId, claimed.Id, leaseSeconds);
-        return claimed;
     }
 
     /// <summary>
