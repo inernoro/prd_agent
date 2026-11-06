@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import {
-  codeReviewAction, codeReviewReportUrl, listCodeReviews, submitCodeReview,
+  codeReviewAction, codeReviewReportUrl, downloadCodeReviewReport, listCodeReviews, submitCodeReview,
   type CodeReviewTask,
 } from '../../web/src/lib/codeReviews.js';
 import { buildCodeReviewDocument, ReviewDetail } from '../../web/src/pages/CodeReviewsPage.js';
@@ -21,6 +21,29 @@ const task: CodeReviewTask = {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('code review API client', () => {
+  it('fetches report downloads with credentials and preserves the exact archived bytes', async () => {
+    const body = '# 审查报告\n\n固定提交：abc123\n';
+    const fetcher = vi.fn().mockResolvedValue(new Response(body, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } }));
+    vi.stubGlobal('fetch', fetcher);
+    const controller = new AbortController();
+    const blob = await downloadCodeReviewReport(task.id, controller.signal);
+    expect(fetcher).toHaveBeenCalledWith('/api/code-reviews/review%2F123/report/download', {
+      credentials: 'include', signal: controller.signal,
+    });
+    expect(await blob.text()).toBe(body);
+    expect(blob.size).toBe(Buffer.byteLength(body));
+  });
+
+  it('rejects authentication and server failures instead of saving error bodies as reports', async () => {
+    const denied = new Response(JSON.stringify({ message: '请重新登录' }), { status: 401 });
+    const readBlob = vi.spyOn(denied, 'blob');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(denied));
+    await expect(downloadCodeReviewReport(task.id)).rejects.toThrow('请重新登录');
+    expect(readBlob).not.toHaveBeenCalled();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('upstream unavailable', { status: 502 })));
+    await expect(downloadCodeReviewReport(task.id)).rejects.toThrow('报告下载失败（HTTP 502）');
+  });
+
   it('keeps GitHub submissions structured and omits browser file fields', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ task }), { status: 202 }));
     vi.stubGlobal('fetch', fetcher);

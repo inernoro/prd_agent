@@ -98,3 +98,19 @@ export async function codeReviewAction(id: string, action: 'cancel' | 'retry' | 
   const { task } = await apiRequest<{ task: CodeReviewTask }>(`/api/code-reviews/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
   return task;
 }
+
+/** Fetch before saving so downloads retain the same authentication as API reads. */
+export async function downloadCodeReviewReport(id: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(apiUrl(`/api/code-reviews/${encodeURIComponent(id)}/report/download`), {
+    credentials: 'include', signal,
+  });
+  if (!response.ok) {
+    let message = `报告下载失败（HTTP ${response.status}），请重试`;
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string') message = body.message;
+    } catch { /* Non-JSON errors retain the HTTP failure message. */ }
+    throw new Error(message);
+  }
+  return response.blob();
+}
