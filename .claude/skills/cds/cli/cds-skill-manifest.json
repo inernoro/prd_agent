@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.17.6",
+  "version": "0.17.7",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -15,7 +15,7 @@
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "c8ffbca8c5683ba60dc127caf18a0137adce0a4e6e2370112fba8798f8cbb932",
+    "cds/cli/cdscli.py": "c2f62ed6c1b064f4055e1a80a8d6bc4fc8942ca0a9ccfdbd9ce5d4cb117de44f",
     "cds/reference/acceptance-reports.md": "dfc32f7d6975a357edc234ae3d95aec7a196c8b4f8ec54353c215d586b1b92ea",
     "cds/reference/api.md": "9ea67369fd5edbaad9ccbbd1556c6eab05c3d80c13478b5a04cb9739d873baad",
     "cds/reference/auth.md": "d2eb4ce62edae97902a0f940cfd91adca516869554d0efbf7af78da775dc5405",
@@ -24,9 +24,9 @@
     "cds/reference/maintainer.md": "f9abb426b271b0563db1ba2fb3346864c846d638854fa85b4f33c4d32b17eecf",
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
-    "cds/SKILL.md": "ab50a57053034c945cfe8adb15351b2c5e95ea863a666c7e1ae2e7df79a2b7fa",
+    "cds/SKILL.md": "17bda16ef166a75230e10805e7b3837750d458a6b4c710958ebb55857ec7f2d0",
     "cds/tests/test_cdscli_agent_identity.py": "e4b4720081c6e997d1f12e620455288cb4b39f5d8b2f7f537a0b579cb29be116",
-    "cds/tests/test_cdscli_connect.py": "e232852dd0d8c790dd141ca68a98fc1ef1c01c815fc7566b24bd1654d6fa5d8f",
+    "cds/tests/test_cdscli_connect.py": "d7c110c44739720c5ef509daae85d970b9261b4076496c78260cd5262a8831ea",
     "cds/tests/test_cdscli_deploy_branch_resolution.py": "c3b9a15fb33f9dc5193b59283f5e569c745bb0c075f3680f8bfc211e194c3576",
     "cds/tests/test_cdscli_deploy_trigger_failure_reason.py": "e0723fdd5f734d6de38b4a6886a5450d94320ba4a40a4bb7ddb91bbd7a5898e3",
     "cds/tests/test_cdscli_deployment_run.py": "f4a4522456d3aeb60b36c30d259c34b1ee09de3f0afb5bc65c5bf15a468e34f1",
@@ -59,5 +59,5 @@
     "cds-release/SKILL.md": "b217521e6148899a80422d46eb7234bc4949438fad981a5b555ae39e1efac267",
     "preview-url/SKILL.md": "fd3547c99e4accfe3a67292ea1e971bdc767386dad3bd1b4fc85fbf9b29cfb2b"
   },
-  "generatedAt": "2026-10-20T19:20:56.673Z"
+  "generatedAt": "2026-11-06T03:06:18.520Z"
 }
