@@ -119,6 +119,7 @@ async function checkLayout(page, label, anchor) {
     const squeezed = [];
     const textNodes = Array.from(root.querySelectorAll('button,a,h1,h2,h3,span,[role="button"],[role="tab"]'));
     for (const el of textNodes) {
+      if (!el.checkVisibility()) continue;
       const rect = el.getBoundingClientRect();
       const text = (el.textContent || '').trim().replace(/\s+/g, '');
       if (!text || text.length < 2 || text.length > 12) continue;
@@ -136,6 +137,8 @@ async function checkLayout(page, label, anchor) {
     const covered = [];
     const targets = Array.from(root.querySelectorAll('button:not([disabled]),a[href],[role="button"],[role="tab"]'));
     for (const el of targets) {
+      // 原生关闭的 details 子项可能仍返回几何尺寸，但并未绘制或参与点击。
+      if (!el.checkVisibility()) continue;
       const rect = el.getBoundingClientRect();
       const text = (el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim().slice(0, 30);
       if (rect.width < 28 || rect.height < 28) continue;
@@ -440,6 +443,37 @@ async function runViewport(browser, project, viewport) {
   await context.close();
 }
 
+async function checkNativeDetailsVisibility(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  try {
+    await page.setContent(`<main><p>原生折叠内容不属于当前可点击区域，但真实可见控件被覆盖仍须失败。这是离线布局测量的固定正反控制，不请求任何实际服务或业务数据。</p>
+      <details style="position:absolute;left:10px;top:90px;width:250px"><summary style="padding:16px">展开原生菜单</summary><div style="position:absolute;top:50px;width:250px"><a href="#target" style="display:block;padding:16px">原生菜单入口</a></div></details>
+      <button style="position:absolute;left:10px;top:230px;width:250px;height:44px">真实点击控件</button></main>`);
+    await checkLayout(page, 'native-details-closed');
+    await page.getByText('展开原生菜单', { exact: true }).tap();
+    await checkLayout(page, 'native-details-open');
+    await page.evaluate(() => {
+      const cover = document.createElement('div'); cover.id = 'visibility-control-cover';
+      cover.textContent = '合成遮挡'; cover.style.cssText = 'position:absolute;left:10px;top:230px;width:250px;height:44px;z-index:100;background:white';
+      document.body.appendChild(cover);
+    });
+    let covered = false;
+    try { await checkLayout(page, 'native-details-real-covered-control'); }
+    catch (error) { covered = error.message.includes('clickable target is covered') && error.message.includes('真实点击控件'); }
+    assertOk(covered, '真实可见控件被遮挡时，原布局判据必须仍然失败');
+    console.log('PASS native-details-real-covered-control');
+    await installFixtures(context);
+    await page.goto(`${baseUrl}/project-list`, { waitUntil: 'networkidle' });
+    const hidden = await page.locator('details:not([open]) a').evaluateAll(links => links.map(el => ({
+      text: el.textContent, painted: el.checkVisibility(), height: el.getBoundingClientRect().height,
+    })));
+    console.log(`MEASURE native-details-real-closed-menu ${JSON.stringify(hidden)}`);
+    assertOk(hidden.length === 2 && hidden.every(el => !el.painted), '两个关闭菜单入口必须确实未绘制');
+    await checkLayout(page, 'native-details-real-closed-menu', '窄屏样例项目');
+  } finally { await context.close(); }
+}
+
 async function checkInstanceOutage(browser, mobile, pinned) {
   const context = await browser.newContext({ viewport: { width: mobile ? 390 : 1440, height: 844 }, isMobile: mobile, hasTouch: mobile, acceptDownloads: true });
   const name = `instance-outage-${mobile ? 'mobile' : 'desktop'}-${pinned ? 'pinned' : 'hover'}`;
@@ -510,10 +544,14 @@ async function main() {
   let browser = null;
   try {
     browser = await chromium.launch({ args: ['--no-sandbox'], executablePath });
-    if (only === 'instance-outage') {
+    if (only === 'layout-visibility') {
+      assertOk(OFFLINE, '原生折叠测量控制仅在离线合成环境运行');
+      await checkNativeDetailsVisibility(browser);
+    } else if (only === 'instance-outage') {
       assertOk(OFFLINE, '断线回归仅在离线合成环境运行，不向实际服务注入断线');
       for (const mobile of [true, false]) for (const pinned of [true, false]) await checkInstanceOutage(browser, mobile, pinned);
     } else {
+    if (OFFLINE && !only) await checkNativeDetailsVisibility(browser);
     if (only !== 'task-schedule') {
       const probe = await browser.newPage();
       const project = await getFirstProject(probe);
