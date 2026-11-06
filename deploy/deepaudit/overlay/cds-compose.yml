@@ -30,9 +30,6 @@ x-cds-env-meta:
   DEEPAUDIT_ADMIN_PASSWORD_HASH:
     kind: required
     hint: 管理界面的 htpasswd bcrypt 哈希，由管理员通过密钥管理配置。
-  DEEPAUDIT_BACKEND_URL:
-    kind: required
-    hint: 当前分支后端的内部 URL，仅供管理界面代理，使用 CDS 返回的实际服务地址。
   LLM_BASE_URL:
     kind: required
     hint: 已授权 LLM 网关的 OpenAI 兼容接口地址。
@@ -82,8 +79,8 @@ services:
     working_dir: /app
     volumes:
       - ./backend:/source:ro
-      - backend-uploads:/app/uploads
-      - backend-data:/app/data
+      # Allocate /app/uploads and /app/data explicitly using cds-storage-plan.json
+      # after config import. CDS publishes owned branch-private volume bindings.
     ports: ["8000"]
     depends_on: [postgres, redis]
     environment:
@@ -111,7 +108,7 @@ services:
     ports: ["80"]
     depends_on: [backend]
     environment:
-      DEEPAUDIT_BACKEND_URL: "${DEEPAUDIT_BACKEND_URL}"
+      DEEPAUDIT_BACKEND_URL: http://backend:8000
       DEEPAUDIT_ADMIN_USERNAME: "${DEEPAUDIT_ADMIN_USERNAME}"
       DEEPAUDIT_ADMIN_PASSWORD_HASH: "${DEEPAUDIT_ADMIN_PASSWORD_HASH}"
     labels:
@@ -126,5 +123,3 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  backend-uploads:
-  backend-data:

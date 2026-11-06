@@ -47,7 +47,13 @@ class StaticRuntimePolicy(unittest.TestCase):
             self.assertNotIn("privileged:", source)
             self.assertNotIn(":latest", source)
             self.assertIn("sha-${CDS_COMMIT_SHA", source)
-            self.assertIn("backend-uploads", source)
+            if name == "docker-compose.cds-release.yml":
+                self.assertIn("backend-uploads", source)
+        import json
+        plan = json.loads((ROOT / "cds-storage-plan.json").read_text())
+        self.assertEqual({item["containerPath"] for item in plan["backend"]},
+                         {"/app/uploads", "/app/data"})
+        self.assertTrue(all(item["purpose"] == "persistent" for item in plan["backend"]))
 
 
 if __name__ == "__main__":
