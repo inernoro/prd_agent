@@ -15,6 +15,8 @@ import { parseProjectInspection, inspectionHealthDocument } from '../../src/serv
 import * as inspectionService from '../../src/services/project-inspections.js';
 import { discoverMonitors } from '../../src/services/monitor-discovery.js';
 import { reconcileDiscoveredMonitors } from '../../src/services/monitor-reconcile.js';
+import { classifyAlert } from '../../src/services/alarm-route.js';
+import { createScheduledJobsRouter } from '../../src/routes/scheduled-jobs.js';
 import type { Project } from '../../src/types.js';
 import { checkPurpose, inspectionState, inspectionCheckState, inspectionCheckLabel, projectChannels } from '../../web/src/lib/projectStatus.js';
 
@@ -22,6 +24,75 @@ const now = Date.parse('2026-11-05T14:00:00Z');
 const input = () => ({ name: '模型全量实测', executor: '外部巡检执行器', enabled: true, intervalSeconds: 172800, lastCompletedAt: '2026-11-05T14:00:00Z', runKind: 'manual', checks: [{ id: 'image-a', name: '生图甲', purpose: '确认可生成图片', outcome: 'pass', checkedAt: '2026-11-05T14:00:00Z', result: '图片已解码', evidenceUrl: '/reports?project=a&report=one' }], notification: { channel: 'MAP 站内通知', recipient: '巡检接收人', policy: '仅异常和恢复时通知', outcome: 'not-triggered' } });
 const servers: Array<ReturnType<express.Express['listen']>> = [];
 afterEach(() => { for (const server of servers.splice(0)) server.close(); });
+
+describe('项目总览实际通知分类与调度请求', () => {
+  it.each([
+    { source: 'release' as const, event: 'business-down', covered: false },
+    { source: 'release' as const, event: 'infra-down', covered: true },
+    { source: 'custom' as const, event: 'business-down', covered: true },
+    { source: 'custom' as const, event: 'infra-down', covered: false },
+  ])('真实检查区块的$source来源和$event订阅与投递分类一致', ({ source, event, covered }) => {
+    expect(event === classifyAlert('uptime.target.down', source)).toBe(covered);
+    const page = path.resolve('web/src/pages/ProjectStatusPage.tsx');
+    const text = fs.readFileSync(page, 'utf8'), block = text.match(/<section id="checks"[\s\S]*?<\/section>/)?.[0];
+    expect(block).toBeTruthy();
+    const file = ts.createSourceFile(page, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const classification = file.statements.find(node => ts.isImportDeclaration(node)
+      && node.importClause?.namedBindings?.getText(file).includes('classifyAlert')) as ts.ImportDeclaration | undefined;
+    let actualPageClassifier: unknown;
+    if (classification) {
+      const specifier = (classification.moduleSpecifier as ts.StringLiteral).text;
+      const sharedPath = path.resolve(path.dirname(page), specifier.replace(/\.js$/, '') + '.ts');
+      expect(sharedPath).toBe(path.resolve('src/shared/alarm-classification.ts'));
+      const shared = { exports: {} as { classifyAlert?: unknown } };
+      vm.runInNewContext(ts.transpileModule(fs.readFileSync(sharedPath, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText, shared);
+      actualPageClassifier = shared.exports.classifyAlert;
+    }
+    const target = { id: 'release-a', source, name: '正式入口', environmentLabel: '正式环境', intervalSeconds: 60 };
+    const context = { createElement, classifyAlert: actualPageClassifier, rows: [target], checks: [target],
+      liveChannels: [{ events: [event] }], channels: [], data: { summary: {} }, now,
+      onlyIssues: false, query: '', setOnlyIssues: () => {}, setQuery: () => {},
+      homeState: () => 'up', checkTitle: () => '入口检查', checkPurpose: () => '确认入口可用', frequency: () => '每分钟',
+      timestamp: String, detailUrl: (id: string) => `/status?target=${id}`,
+      HomeStateBadge: () => createElement('span', null, '正常'),
+      Button: (props: { children: unknown }) => createElement('button', null, props.children as never),
+      Link: (props: { to: string; children: unknown }) => createElement('a', { href: props.to }, props.children as never), result: null };
+    vm.runInNewContext(ts.transpileModule(`result = (${block});`, {
+      compilerOptions: { jsx: ts.JsxEmit.React, jsxFactory: 'createElement' },
+    }).outputText, context);
+    const rendered = renderToStaticMarkup(context.result);
+    expect(rendered.includes('异常时按下方规则通知')).toBe(covered);
+    expect(rendered.includes('未发现已验证的异常通知通道')).toBe(!covered);
+  });
+
+  it.each(['a', '项目 &/x'])('真实页面调度请求通过实际HTTP路由只返回项目%s', async projectId => {
+    const source = fs.readFileSync(path.resolve('web/src/pages/ProjectStatusPage.tsx'), 'utf8');
+    const file = ts.createSourceFile('ProjectStatusPage.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const expressions: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.expression.getText(file) === 'apiRequest'
+        && node.arguments[0]?.getText(file).includes('/api/scheduled-jobs?')) expressions.push(node.arguments[0].getText(file));
+      ts.forEachChild(node, visit);
+    };
+    visit(file); expect(expressions).toHaveLength(1);
+    const page = { project: { id: projectId }, encodeURIComponent, url: '' };
+    vm.runInNewContext(ts.transpileModule(`url = (${expressions[0]});`, {}).outputText, page);
+    const allJobs = [{ id: 'mine', projectId, name: '本项目计划', enabled: false },
+      { id: 'other', projectId: 'other-project', name: '其他项目计划', enabled: false }];
+    let receivedScope: string | undefined;
+    const app = express();
+    app.use('/api', createScheduledJobsRouter({ stateService: { listScheduledJobs: (id?: string) => {
+      receivedScope = id; return allJobs.filter(job => !id || job.projectId === id);
+    } } as never, scheduledJobService: {} as never, assertProjectAccess: () => null }));
+    const server = app.listen(0); servers.push(server); const port = (server.address() as { port: number }).port;
+    const response = await fetch(`http://127.0.0.1:${port}${page.url}`);
+    expect(response.status).toBe(200);
+    expect((await response.json()).jobs.map((job: { id: string }) => job.id)).toEqual(['mine']);
+    expect(receivedScope).toBe(projectId);
+  });
+});
 async function setup(scope?: string, globalProjects?: string[] | 'all') {
   const project = { id: 'a', slug: 'alias-a', name: '甲项目' } as Project;
   const app = express(); app.use(express.json());
