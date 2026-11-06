@@ -150,6 +150,7 @@ public sealed class HostedSiteVerifiedPackageTests
         {
             "<style>@import 'https://outside.invalid/style.css';</style>",
             "<style>body { background: url(assets/missing.png); }</style>",
+            "<noscript><style>body { background: url(assets/missing.png); }</style></noscript>",
             "<div style=\"background: url(https://outside.invalid/image.png)\"></div>",
             "<svg><rect fill=\"url(assets/missing.svg#paint)\" filter=\"url(#local)\"/></svg>",
         })

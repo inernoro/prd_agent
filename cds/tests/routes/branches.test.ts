@@ -1127,12 +1127,13 @@ describe('Branch Routes', () => {
     it('机器凭据排队重放仍保留极速版限制，不因内部派发失去身份而允许源码回退', async () => {
       seedGateProject(true); stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
       readyArtifactFixture();
-      let release!: () => void, started!: () => void, replayed!: () => void;
+      let release!: () => void, started!: () => void, replayed!: () => void, replayStarted!: () => void;
       const hold = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });
       const done = new Promise<void>((resolve) => { replayed = resolve; });
+      const replayExecution = new Promise<void>((resolve) => { replayStarted = resolve; });
       const executed: any[] = [];
       const run = vi.spyOn(containerService, 'runService').mockImplementation(async (_entry, profile, service) => {
-        executed.push(profile); if (executed.length === 1) { started(); await hold; }
+        executed.push(profile); if (executed.length === 1) { started(); await hold; } else { replayStarted(); }
         service.status = 'running'; service.deployedMode = 'express';
       });
       let replayStatus = 0;
@@ -1145,7 +1146,7 @@ describe('Branch Routes', () => {
         await start;
         const queued = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: 'b'.repeat(40) }, { 'X-Test-Key': 'A' });
         expect(deploymentRunService.get(String(queued.headers['x-cds-deployment-run-id']))?.status).toBe('queued');
-        release(); await first; await done;
+        release(); await first; await done; await replayExecution;
         expect(replayStatus).toBe(200); expect(executed).toHaveLength(2);
         expect(executed.every((profile) => profile.prebuiltImage === true && profile.sourceFallbackProfile === undefined)).toBe(true);
       } finally { release(); await first; run.mockRestore(); vi.unstubAllGlobals(); }
