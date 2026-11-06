@@ -12,7 +12,7 @@
  *   - 显示 caller 来源 / op danger 等级 / args / 估时
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Bot, ShieldCheck, ShieldX, Wrench } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import { createApprovalPollingGate } from '@/hooks/approvalPolling';
 
 interface PendingRequest {
   id: string;
@@ -44,18 +45,26 @@ export function OperatorApprovalModal(): JSX.Element | null {
   const events = useCdsEvents();
   const [pending, setPending] = useState<PendingRequest | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
+  const [refreshGate] = useState(() => createApprovalPollingGate<{ pending: PendingRequest[] }>());
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   // 拿当前所有 pending request,选最新一条展示
   const refresh = useCallback(async () => {
     try {
-      const data = await apiRequest<{ pending: PendingRequest[] }>('/api/cds-system/operator/requests');
+      const result = await refreshGate.run(() => apiRequest<{ pending: PendingRequest[] }>('/api/cds-system/operator/requests'));
+      if (!mounted.current) return;
+      setRefreshError('');
+      if (result.kind === 'forbidden') { setPending(null); return; }
+      const data = result.data;
       const list = (data.pending || []).filter((r) => r.status === 'pending');
       if (list.length > 0) setPending(list[0]);
       else setPending(null);
-    } catch {
-      // 静默 — 服务不可达不应弹错
+    } catch (error) {
+      if (mounted.current) setRefreshError(error instanceof Error ? error.message : '请求失败，请稍后重试');
     }
-  }, []);
+  }, [refreshGate]);
 
   // 初始进页面拉一次
   useEffect(() => { void refresh(); }, [refresh]);
@@ -97,6 +106,9 @@ export function OperatorApprovalModal(): JSX.Element | null {
     }
   }, [pending, busy]);
 
+  if (refreshError) return <section role="alert" className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-lg border border-destructive/30 bg-background p-3 text-sm shadow-lg">
+    <p>运维审批请求读取失败：{refreshError}</p><Button variant="outline" size="sm" className="mt-2" onClick={() => void refresh()}>重试</Button>
+  </section>;
   if (!pending) return null;
   const meta = DANGER_META[pending.opDanger] ?? DANGER_META.safe;
 
