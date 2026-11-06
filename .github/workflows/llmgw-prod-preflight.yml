@@ -22,6 +22,15 @@ on:
         description: "Production commit to verify. Defaults to vars.LLMGW_PROD_EXPECT_COMMIT; empty skips the commit comparison."
         required: false
         default: ""
+      speech_check:
+        description: "Optional production speech check. readiness is read-only; run explicitly creates one short task and a temporary scoped key."
+        type: choice
+        required: false
+        default: "off"
+        options:
+          - "off"
+          - "readiness"
+          - "run"
 
 permissions:
   contents: read
@@ -32,7 +41,7 @@ concurrency:
 
 jobs:
   preflight:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       INPUT_MAP_BASE: ${{ github.event.inputs.map_base || '' }}
       DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}
@@ -45,10 +54,15 @@ jobs:
       STABLE_SMOKE_SIGNING_PRIVATE_KEY: ${{ secrets.STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY }}
       STABLE_SMOKE_USER: ${{ vars.STABLE_SMOKE_PROD_USER }}
       LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
+      SPEECH_CHECK: ${{ github.event.inputs.speech_check || 'off' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Verify speech smoke safety contracts
+        if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
+        run: python3 scripts/tests/mcp-speech-production-smoke.test.py
 
       - name: Run production preflight
         shell: bash
@@ -58,6 +72,14 @@ jobs:
           map_base="$(printf '%s' "${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}" | xargs)"
           gw_base="$(printf '%s' "${INPUT_GW_BASE:-$DEFAULT_GW_BASE}" | xargs)"
           expect_commit="$(printf '%s' "${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}" | xargs)"
+
+          # Validate the trusted production origin before either check signs a request.
+          if [ "$SPEECH_CHECK" != off ]; then
+            python3 scripts/mcp-speech-production-smoke.py \
+              --map-base "$map_base" --expect-commit "$expect_commit" \
+              --validate-only \
+              --json-out artifacts/llmgw-prod-preflight/speech-target-validation.json
+          fi
 
           if [ -z "$map_base" ]; then
             echo "ERROR: missing MAP base URL. Set vars.PRD_AGENT_PROD_BASE or workflow_dispatch input map_base." >&2
@@ -89,6 +111,24 @@ jobs:
             --gw-base "$gw_base" \
             --expect-commit "$expect_commit" \
             --json-out artifacts/llmgw-prod-preflight/prod-preflight.json
+
+      - name: Check production speech
+        if: ${{ always() && github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          map_base="${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}"
+          expect_commit="${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}"
+          speech_args=(--mode "$SPEECH_CHECK")
+          if [ "$SPEECH_CHECK" = run ]; then
+            speech_args+=(--allow-production-run)
+          fi
+          python3 scripts/mcp-speech-production-smoke.py \
+            --map-base "$map_base" \
+            --expect-commit "$expect_commit" \
+            --gateway-inventory \
+            --json-out artifacts/llmgw-prod-preflight/speech-production-smoke.json \
+            "${speech_args[@]}"
 
       - name: Upload production preflight report
         if: always()
