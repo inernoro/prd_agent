@@ -14,6 +14,18 @@ import {
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
 describe('build-gate 全局构建并发闸', () => {
+  it('三个项目合格时，积压项目不能使其他项目超过三个释放轮次才准入', async () => {
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+    const first = await acquireBuildSlot({ holder: { projectId: 'a' } });
+    const order: string[] = [];
+    const jobs = [...Array(8).fill('a'), ...Array(8).fill('b'), 'c'].map(projectId =>
+      acquireBuildSlot({ holder: { projectId } }).then(slot => { order.push(projectId); slot.release(); }));
+    first.release(); await Promise.all(jobs);
+    expect(order.indexOf('c')).toBeLessThan(3);
+    expect(order.slice(0, 3).sort()).toEqual(['a', 'b', 'c']);
+    expect(buildGateStatus().active).toBe(0);
+  });
+
   const savedEnv = process.env.CDS_MAX_CONCURRENT_BUILDS;
 
   beforeEach(() => {

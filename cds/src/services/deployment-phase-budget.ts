@@ -2,6 +2,7 @@ import os from 'node:os';
 import { readFile } from 'node:fs/promises';
 import type { BranchEntry, BuildProfile, IShellExecutor, ServiceRuntimeRef } from '../types.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import { ProjectAdmissionOrder } from './project-admission-order.js';
 
 let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
 let memoryRead: Promise<void> | undefined;
@@ -63,7 +64,7 @@ export class DeploymentPhaseBudget {
   private nextWaitId = 0;
   private readonly active = new Map<DeploymentPhase, Set<Request>>();
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
-  private readonly lastProject = new Map<DeploymentPhase, string>();
+  private readonly projectOrders = new Map<DeploymentPhase, ProjectAdmissionOrder>();
   private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner }>();
   private timer?: NodeJS.Timeout;
   private readonly limits: Record<DeploymentPhase, number>;
@@ -155,14 +156,14 @@ export class DeploymentPhaseBudget {
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
       while (active.size < this.limits[phase] && queue.length) {
-        const previous = this.lastProject.get(phase);
-        let index = queue.findIndex(request => (request.owner.projectId || '_unknown') !== previous
-          && (phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request)));
-        if (index < 0) index = queue.findIndex(request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request));
+        const order = this.projectOrders.get(phase) || new ProjectAdmissionOrder();
+        this.projectOrders.set(phase, order);
+        const index = order.next(queue, request => request.owner.projectId,
+          request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request));
         if (index < 0) break;
         const [request] = queue.splice(index, 1);
         request.signal?.removeEventListener('abort', request.abort!);
-        active.add(request); this.lastProject.set(phase, request.owner.projectId || '_unknown');
+        active.add(request); order.grant(request.owner.projectId);
         if (phase === 'start' && request.reservationKey) this.reserveKnownMemory(request.reservationKey, request.memoryMB, request.owner, request.pids);
         let released = false;
         request.resolve(() => { if (released) return; released = true; active.delete(request); this.pump(); });

@@ -5,6 +5,17 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry } from '../../src/types.js';
 
 describe('部署阶段容量准入', () => {
+  it('三个项目都有资格时，单项目积压不能使第三项目超过三个释放轮次才获准', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000, { pull: 1 });
+    const first = await budget.acquire('pull', { projectId: 'a' });
+    const order: string[] = [];
+    const jobs = [...Array(8).fill('a'), ...Array(8).fill('b'), 'c'].map(projectId =>
+      budget.run('pull', { projectId }, async () => { order.push(projectId); }));
+    first(); await Promise.all(jobs);
+    expect(order.indexOf('c')).toBeLessThan(3);
+    expect(order.slice(0, 3).sort()).toEqual(['a', 'b', 'c']);
+  });
+
   it('拉取满额不阻塞就绪和清理；失败及重复归还不会泄漏名额', async () => {
     const budget = new DeploymentPhaseBudget(() => 10000, { pull: 1, start: 1, ready: 1, cleanup: 1 });
     const pull = await budget.acquire('pull', { projectId: 'a' });
@@ -21,7 +32,7 @@ describe('部署阶段容量准入', () => {
     const order: string[] = [];
     const jobs = ['a', 'a', 'b', 'c'].map((projectId, index) => budget.run('pull', { projectId }, async () => { order.push(`${projectId}${index}`); }));
     first(); await Promise.all(jobs);
-    expect(order).toEqual(['b2', 'a0', 'c3', 'a1']);
+    expect(order).toEqual(['b2', 'c3', 'a0', 'a1']);
   });
 
   it('内存不足保持等待；新增预留一起计入，资源恢复后推进，取消仍立即退队', async () => {
