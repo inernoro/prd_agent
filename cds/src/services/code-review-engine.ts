@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
+import { CodeReviewUpstreamHttpError, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
 
 export interface CodeReviewFinding {
   filePath: string;
@@ -40,23 +40,35 @@ export class CodeReviewEngine {
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
+  private async login(signal: AbortSignal, audit: CodeReviewAudit): Promise<void> {
+    if (!this.options.username || !this.options.password) throw new Error('DeepAudit 服务账号未配置');
+    const form = new URLSearchParams({ username: this.options.username, password: this.options.password });
+    const login = await reviewJsonRequest('deepaudit.login', `${this.base}/auth/login`,
+      { method: 'POST', body: form, signal }, audit, this.fetchImpl) as { access_token?: string };
+    if (!login.access_token || typeof login.access_token !== 'string') throw new Error('DeepAudit 登录未返回服务令牌');
+    this.token = login.access_token;
+  }
+
   async run(input: {
     taskId: string; zip: Buffer; signal: AbortSignal; excludePatterns: string[]; engineTaskId?: string;
     onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string }) => Promise<void>;
     audit: CodeReviewAudit;
   }): Promise<CodeReviewEngineResult> {
     input.signal.throwIfAborted();
-    if (!this.token) {
-      if (!this.options.username || !this.options.password) throw new Error('DeepAudit 服务账号未配置');
-      const form = new URLSearchParams({ username: this.options.username, password: this.options.password });
-      const login = await reviewJsonRequest('deepaudit.login', `${this.base}/auth/login`,
-        { method: 'POST', body: form, signal: input.signal }, input.audit, this.fetchImpl) as { access_token?: string };
-      if (!login.access_token || typeof login.access_token !== 'string') throw new Error('DeepAudit 登录未返回服务令牌');
-      this.token = login.access_token;
-    }
-    const headers = { Authorization: `Bearer ${this.token}` };
-    const request = (operation: string, path: string, init: RequestInit = {}) => reviewJsonRequest(operation, `${this.base}${path}`,
-      { ...init, headers: { ...headers, ...init.headers }, signal: input.signal }, input.audit, this.fetchImpl);
+    if (!this.token) await this.login(input.signal, input.audit);
+    const request = async (operation: string, path: string, init: RequestInit = {}): Promise<unknown> => {
+      const attempt = () => reviewJsonRequest(operation, `${this.base}${path}`, {
+        ...init, headers: { Authorization: `Bearer ${this.token}`, ...init.headers }, signal: input.signal,
+      }, input.audit, this.fetchImpl);
+      const attemptedToken = this.token;
+      try { return await attempt(); } catch (error) {
+        // An explicit token remains an administrator-owned credential. Only service logins can refresh.
+        if (!(error instanceof CodeReviewUpstreamHttpError) || error.status !== 401 || this.options.token
+          || !this.options.username || !this.options.password) throw error;
+        if (this.token === attemptedToken) await this.login(input.signal, input.audit);
+        return attempt(); // One retry, with independent audit evidence for every HTTP attempt.
+      }
+    };
     let engineTaskId = input.engineTaskId;
     if (!engineTaskId) {
       // Separate upstream project per task prevents concurrent ZIP overwrites and isolates snapshots.
@@ -116,7 +128,7 @@ export class CodeReviewEngine {
       if (input.signal.aborted) {
         // Best-effort upstream cancellation uses an independent short timeout.
         await reviewJsonRequest('deepaudit.cancel_task', `${this.base}${taskPath}/cancel`,
-          { method: 'POST', headers, signal: AbortSignal.timeout(5000) }, input.audit, this.fetchImpl).catch(() => undefined);
+          { method: 'POST', headers: { Authorization: `Bearer ${this.token}` }, signal: AbortSignal.timeout(5000) }, input.audit, this.fetchImpl).catch(() => undefined);
       }
       throw error;
     }

@@ -73,4 +73,33 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(events[0].evidence).toContain('not authorized');
     expect(events[2].evidence).toContain('未收到响应');
   });
+
+  it('refreshes service login once on HTTP 401 and audits both attempts', async () => {
+    const statuses = [Response.json({ access_token: 'expired-token' }), Response.json({ detail: 'expired' }, { status: 401 }),
+      Response.json({ access_token: 'new-token' }), Response.json({ status: 'completed', total_files: 1, scanned_files: 1 }), Response.json([])];
+    const calls: Array<{ url: string; authorization?: string }> = [];
+    const events: CodeReviewAuditEvent[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', username: 'service@internal.test', password: 'private',
+      fetchImpl: (async (url, init) => { calls.push({ url: String(url), authorization: new Headers(init?.headers).get('Authorization') ?? undefined }); return statuses.shift()!; }) as typeof fetch });
+    await engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'upstream',
+      signal: new AbortController().signal, audit: async (event) => { events.push(event); }, onProgress: async () => {} });
+    expect(calls.filter((call) => call.url.endsWith('/auth/login'))).toHaveLength(2);
+    expect(calls[1].authorization).toBe('Bearer expired-token');
+    expect(calls[3].authorization).toBe('Bearer new-token');
+    expect(events.map((event) => event.status)).toEqual([200, 401, 200, 200, 200]);
+  });
+
+  it('does not refresh explicit tokens or loop after a second HTTP 401', async () => {
+    let logins = 0;
+    const fetchImpl = (async (url) => {
+      if (String(url).endsWith('/auth/login')) { logins++; return Response.json({ access_token: `token-${logins}` }); }
+      return Response.json({ detail: 'expired' }, { status: 401 });
+    }) as typeof fetch;
+    const run = (engine: CodeReviewEngine) => engine.run({ taskId: 'task', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'upstream',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+    await expect(run(new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'explicit', username: 'user', password: 'pass', fetchImpl }))).rejects.toThrow(/401/);
+    expect(logins).toBe(0);
+    await expect(run(new CodeReviewEngine({ baseUrl: 'http://deepaudit', username: 'user', password: 'pass', fetchImpl }))).rejects.toThrow(/401/);
+    expect(logins).toBe(2);
+  });
 });
