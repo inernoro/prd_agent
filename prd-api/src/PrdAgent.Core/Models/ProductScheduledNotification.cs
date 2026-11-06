@@ -12,11 +12,30 @@ public sealed class ProductScheduledNotification
     public string? Date { get; set; }
     public int? Day { get; set; }
     public string ProtectedWebhook { get; set; } = "";
+    public string[]? ProtectedWebhooks { get; set; }
     public bool Enabled { get; set; }
     public DateTime? NextRunAt { get; set; }
     public DateTime? LastRunAt { get; set; }
     public string? LastResult { get; set; }
+    public ProductNotificationDelivery? LastDelivery { get; set; }
     public DateTime? LeaseUntil { get; set; }
     public string? LeaseId { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public ProductNotificationDebugRun? DebugRun { get; set; }
+
+    public string[] GetProtectedWebhooks() =>
+        ProtectedWebhooks is { Length: > 0 } webhooks ? webhooks : string.IsNullOrEmpty(ProtectedWebhook) ? [] : [ProtectedWebhook];
+
+    public bool HasCompletedOneTimeSchedule() =>
+        Frequency == "once" && LastRunAt != null && NextRunAt == null;
+}
+
+public sealed record ProductNotificationDelivery(int Sent, int Failed, int Unknown);
+
+public sealed class ProductNotificationDebugRun
+{
+    public string Id { get; set; } = "";
+    public string Status { get; set; } = "sending";
+    public DateTime RequestedAt { get; set; }
+    public DateTime LeaseUntil { get; set; }
 }

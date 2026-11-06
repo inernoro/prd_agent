@@ -100,7 +100,7 @@ public class DataSyncScopeCoverageTests
         var required = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["users"] = new[] { "PasswordHash", "NotificationIdentityProtected" },
-            ["product_agent_settings"] = new[] { "ClaimWebhook" },
+            ["product_agent_settings"] = new[] { "ClaimWebhook", "ScheduledNotificationDebugWebhook" },
             ["product_initiations"] = new[] { "ClaimNotification" },
             ["product_releases"] = new[] { "ClaimNotification" },
             ["llmplatforms"] = new[] { "ApiKeyEncrypted" },

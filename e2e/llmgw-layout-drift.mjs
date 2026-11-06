@@ -425,7 +425,12 @@ await page.waitForURL('**/llmgw/logs');
 // 只用本机假数据验证模型页合同；不创建真实模型、授权或计费记录。
 if (process.env.LLMGW_MODEL_CONTRACT_ONLY === '1') {
   try {
-    const fixtures = LOGICAL_MODELS.slice(0, 3);
+    const allowedBefore = ['demo.web-create::chat', 'demo.web-edit::chat', 'demo.ppt-plan::chat', 'demo.ppt-create::chat', 'demo.ppt-edit::chat'];
+    const fixtures = LOGICAL_MODELS.slice(0, 3).map((model, index) => index === 0
+      ? { ...model, allowedAppCallerCodes: allowedBefore, defaultForAppCallerCodes: allowedBefore.slice(2) } : model);
+    const originalModel = structuredClone(fixtures[0]);
+    let allowlistSubmitted = null;
+    let allowlistRequests = 0;
     const usage = fixtures.map((model, index) => ({
       publicId: model.publicId, days: ['2026-11-06'], dailyCalls: [736],
       totalCalls: 736, totalTokens: 1000,
@@ -445,6 +450,13 @@ if (process.env.LLMGW_MODEL_CONTRACT_ONLY === '1') {
     await page.route(/\/llmgw\/gw\/logical-models\/usage(?:\?.*)?$/, (route) => route.fulfill({
       json: { success: true, error: null, data: { days: 30, items: usage } },
     }));
+    await page.route('**/llmgw/gw/logical-models/lm1', async (route) => {
+      if (route.request().method() !== 'PUT') return route.fallback();
+      allowlistRequests += 1;
+      allowlistSubmitted = route.request().postDataJSON();
+      fixtures[0] = { ...fixtures[0], ...allowlistSubmitted, updatedAt: new Date().toISOString() };
+      return route.fulfill({ json: { success: true, error: null, data: fixtures[0] } });
+    });
     activeProbe = '模型Code选择与缺价费用';
     await page.goto(`${base}/logical-models`);
     const rows = page.locator('.lg-logical-model-grid').filter({ has: page.locator('[aria-label="近 30 天用量"]') });
@@ -466,6 +478,29 @@ if (process.env.LLMGW_MODEL_CONTRACT_ONLY === '1') {
       await page.getByRole('button', { name: '保存逻辑模型', exact: true }).click();
       await page.getByText('逻辑模型「本机Code合同」已创建', { exact: false }).waitFor();
     }
+    await rows.filter({ has: page.getByText(fixtures[0].name, { exact: true }) })
+      .getByRole('button', { name: '展开', exact: true }).click();
+    const allowButton = page.getByRole('button', { name: '允许调用方', exact: true });
+    let allowlistOnlyUpdate = false;
+    if (await allowButton.count() === 1) {
+      await allowButton.click();
+      const editor = page.getByTestId('logical-model-allowlist');
+      const input = editor.getByRole('textbox');
+      const prepopulated = await input.inputValue() === allowedBefore.join(', ');
+      const emptyMeaningVisible = (await editor.innerText()).includes('留空表示当前租户全部调用方可用');
+      const expected = [...allowedBefore, 'workflow-agent.report-generator::chat'];
+      await input.fill(expected.join(', '));
+      await editor.getByRole('button', { name: '保存', exact: true }).click();
+      await page.getByText('允许调用方已更新：限 6 个 appCaller', { exact: false }).waitFor();
+      await allowButton.click();
+      const saved = await page.getByTestId('logical-model-allowlist').getByRole('textbox').inputValue();
+      allowlistOnlyUpdate = prepopulated && emptyMeaningVisible && allowlistRequests === 1
+        && Object.keys(allowlistSubmitted || {}).join(',') === 'allowedAppCallerCodes'
+        && JSON.stringify(allowlistSubmitted.allowedAppCallerCodes) === JSON.stringify(expected)
+        && saved === expected.join(', ')
+        && JSON.stringify({ ...fixtures[0], allowedAppCallerCodes: originalModel.allowedAppCallerCodes,
+          updatedAt: originalModel.updatedAt }) === JSON.stringify(originalModel);
+    }
     const checks = {
       codeAvailable,
       originalCreateContract: submitted?.modelType === 'code'
@@ -475,6 +510,7 @@ if (process.env.LLMGW_MODEL_CONTRACT_ONLY === '1') {
       partialEstimateExplicit: costs[1].includes('已计价部分') && costs[1].includes('$2.50') && costs[1].includes('20'),
       genuineZeroRetained: costs[2].includes('$0.00') && !costs[2].includes('费用未知'),
       headerPartialEstimateExplicit: header.includes('已计价部分') && header.includes('$2.50'),
+      allowlistOnlyUpdate,
       noRuntimeErrors: runtimeErrors.length === 0,
     };
     console.log(JSON.stringify({ checks, costs, header, localFakeDataOnly: true, productionWrites: 0, modelCalls: 0 }));

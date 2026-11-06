@@ -63,6 +63,8 @@ public sealed class WorkflowWebpageDesignServiceTests
         Assert.Equal(run.ProducedArtifactRevisionId, delivery.RevisionId);
         var revision = await f.Db.HostedSiteRevisions.Find(item => item.Id == delivery.RevisionId).SingleAsync();
         var firstSite = await f.Db.HostedSites.Find(item => item.Id == delivery.SiteId).SingleAsync();
+        Assert.Equal(HostedSiteRevisionSources.Baseline, revision.Source);
+        Assert.Null(firstSite.PublishedRevisionId);
         Assert.Equal(run.Id, revision.SourceRunId);
         Assert.Equal(run.UserId, revision.CreatedByUserId);
         Assert.Equal(firstSite.ContentVersion, revision.PublishedContentVersion);
@@ -95,6 +97,10 @@ public sealed class WorkflowWebpageDesignServiceTests
             new WorkflowNode { NodeId = "publish", NodeType = CapsuleTypes.SitePublisher, Config = new() { ["title"] = "继承整包" } },
             new(), result.Artifacts, new("workflow-owner", resumedExecution.Id, "publish", resumedExecution.Id, "workflow-owner"));
         Assert.Contains(delivery.SiteId, resumedPublish.Artifacts[0].InlineContent);
+        Assert.Equal(1, f.Executor.Calls);
+        await f.Db.WorkflowExecutions.UpdateOneAsync(item => item.Id == "workflow-execution",
+            Builders<WorkflowExecution>.Update.Set("NodeExecutions.1.InputArtifacts", result.Artifacts));
+        Assert.IsType<OkObjectResult>(await OwnerApi(f).ReplayNode("workflow-execution", "publish"));
         Assert.Equal(1, f.Executor.Calls);
 
         Assert.Equal(1, await f.Db.HostedSites.CountDocumentsAsync(_ => true));
@@ -133,6 +139,18 @@ public sealed class WorkflowWebpageDesignServiceTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("result").GetProperty("artifacts")[0];
         Assert.False(string.IsNullOrWhiteSpace(dto.GetProperty("cosUrl").GetString()));
         Assert.False(string.IsNullOrWhiteSpace(dto.GetProperty("designDelivery").GetProperty("downloadPath").GetString()));
+        var snapshotCount = await f.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true);
+        await f.Db.HostedSites.UpdateOneAsync(item => item.Id == delivery.SiteId,
+            Builders<HostedSite>.Update.Set(item => item.CreatedAt, revision.PublishedContentVersion!.Value)
+                .Set(item => item.ContentVersion, default(DateTime)));
+        Assert.Equal(delivery.SiteId, (await f.Service.ResolveDeliveryAsync(output, f.Invocation with { NodeId = "publish" })).Id);
+        Assert.Equal(snapshotCount, await f.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        await f.Db.HostedSites.UpdateOneAsync(item => item.Id == delivery.SiteId,
+            Builders<HostedSite>.Update.Set(item => item.ContentVersion, firstSite.ContentVersion.AddSeconds(1)));
+        Assert.Equal("WORKFLOW_DESIGN_CONFLICT", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
+            f.Service.ResolveDeliveryAsync(output, f.Invocation with { NodeId = "publish" }))).Code);
+        Assert.Equal(snapshotCount, await f.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        Assert.Null((await f.Db.HostedSites.Find(item => item.Id == delivery.SiteId).SingleAsync()).PublishedRevisionId);
         await f.Db.HostedSites.UpdateOneAsync(item => item.Id == delivery.SiteId,
             Builders<HostedSite>.Update.Set(item => item.SiteUrl, "https://assets.example.test/later/index.html")
                 .Set(item => item.PublishedRevisionId, "later-revision")
@@ -329,7 +347,7 @@ public sealed class WorkflowWebpageDesignServiceTests
                     await f.Db.HostedSites.InsertOneAsync(site); return site;
                 });
             sites.Setup(item => item.GetEditableEntryHtmlAsync(It.IsAny<string>(), "workflow-owner", It.IsAny<CancellationToken>()))
-                .Returns(async (string id, string _, CancellationToken _) => { var site = await f.Db.HostedSites.Find(item => item.Id == id).SingleAsync(); return new HostedSiteEditableEntry(site, StubOpenDesign.Html, site.ContentVersion); });
+                .Returns(async (string id, string _, CancellationToken _) => { var site = await f.Db.HostedSites.Find(item => item.Id == id).SingleAsync(); return new HostedSiteEditableEntry(site, StubOpenDesign.Html, site.ContentVersion == default ? site.CreatedAt : site.ContentVersion); });
             sites.Setup(item => item.GetByIdAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .Returns(async (string id, string owner, CancellationToken _) => (HostedSite?)await f.Db.HostedSites.Find(item => item.Id == id && item.OwnerUserId == owner).FirstOrDefaultAsync());
             sites.Setup(item => item.UpdateAsync(It.IsAny<string>(), "workflow-owner", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<List<string>?>(), It.IsAny<string?>(), null, It.IsAny<CancellationToken>()))
@@ -341,7 +359,6 @@ public sealed class WorkflowWebpageDesignServiceTests
                 {
                     var revision = await new HostedSiteRevisionService(f.Db, sites.Object).EnsureGeneratedVerifiedSnapshotAsync(
                         siteId, owner, entry, files, runtime, runId, references, cancellation);
-                    await f.Db.HostedSites.UpdateOneAsync(item => item.Id == siteId, Builders<HostedSite>.Update.Set(item => item.PublishedRevisionId, revision.Id));
                     return revision;
                 });
             revisions.Setup(item => item.GetAsync(It.IsAny<string>(), It.IsAny<string>(), "workflow-owner", It.IsAny<CancellationToken>()))

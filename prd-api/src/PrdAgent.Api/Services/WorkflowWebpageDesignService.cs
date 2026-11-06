@@ -240,9 +240,23 @@ public sealed class WorkflowWebpageDesignService(
         if (origin.Id != run.WorkflowSource.ExecutionId || run.WorkflowSource.OperationId != origin.Id)
             throw Error("WORKFLOW_DESIGN_DELIVERY_INVALID", "报告来源任务不匹配，未发布内容");
         var site = await sites.GetByIdAsync(delivery.SiteId, invocation.UserId, CancellationToken.None);
-        if (site == null || site.PublishedRevisionId != delivery.RevisionId || site.SourceRef != run.Id)
+        if (site == null || site.SourceRef != run.Id
+            || (!string.IsNullOrEmpty(site.PublishedRevisionId) && site.PublishedRevisionId != delivery.RevisionId))
             throw Error("WORKFLOW_DESIGN_CONFLICT", "报告线上版本已变化，未覆盖当前内容");
-        return site;
+        var publications = new MongoHostedSitePrivateSourceStore(db);
+        var revision = await publications.FindRevisionAsync(site.Id, delivery.RevisionId, CancellationToken.None);
+        if (revision == null
+            || revision.Status != HostedSiteRevisionStatuses.Published || revision.SourceRunId != run.Id
+            || revision.CreatedByUserId != run.UserId
+            || (string.IsNullOrEmpty(site.PublishedRevisionId) && revision.Source != HostedSiteRevisionSources.Baseline))
+            throw Error("WORKFLOW_DESIGN_CONFLICT", "报告线上版本已变化，未覆盖当前内容");
+        // 入口服务给出有效内容版本（含旧站点回退值）；只读查询不创建快照或修补指针。
+        var entry = await sites.GetEditableEntryHtmlAsync(site.Id, invocation.UserId, CancellationToken.None);
+        var current = await publications.FindCurrentRevisionAsync(site.Id, entry.ContentVersion, CancellationToken.None);
+        if (current?.Id != revision.Id || entry.Site.SourceRef != run.Id
+            || (!string.IsNullOrEmpty(entry.Site.PublishedRevisionId) && entry.Site.PublishedRevisionId != revision.Id))
+            throw Error("WORKFLOW_DESIGN_CONFLICT", "报告线上版本已变化，未覆盖当前内容");
+        return entry.Site;
     }
 
     private static bool SameDelivery(WorkflowDesignDelivery? left, WorkflowDesignDelivery right) =>
