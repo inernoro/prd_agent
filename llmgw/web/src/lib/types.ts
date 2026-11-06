@@ -1192,6 +1192,7 @@ export type ExchangeItem = {
   targetUrl: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
   hasKey: boolean;
@@ -1223,6 +1224,7 @@ export type CreateExchangeRequest = {
   apiKey: string;
   targetAuthScheme: string;
   transformerType: string;
+  resourceId?: string | null;
   enabled: boolean;
   description?: string | null;
 };
