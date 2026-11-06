@@ -31,6 +31,9 @@ SPEC.loader.exec_module(AUTH)
 SPEECH_SCOPES = ["mcp-speech:read", "mcp-speech:generate"]
 SPEECH_PERMISSIONS = ["mcp-speech.read", "mcp-speech.generate", "mcp-speech.manage"]
 PROTOCOLS = {"openai", "doubao-tts"}
+SPEECH_TOOL_REQUIRED = {"map_speech_capabilities": set(), "map_speech_generate": {"text"},
+                        "map_speech_get_run": {"runId"}, "map_speech_list_runs": set(),
+                        "map_speech_list_presets": set(), "map_speech_save_preset": {"name", "profileId"}}
 MIMES = {"mp3": "audio/mpeg", "wav": "audio/wav", "aac": "audio/aac", "flac": "audio/flac",
          "opus": "audio/ogg", "ogg_opus": "audio/ogg", "pcm": "audio/pcm"}
 TEXT = "MAP生产语音验收，请保持声音自然清晰。"
@@ -303,6 +306,94 @@ class SpeechSmoke:
         if not self.check(name, ok, failure=failure):
             raise CheckFailure(failure)
 
+    def check_mcp_contract(self):
+        """Explicit temporary credential plus read-only MCP calls; never generate or save a preset."""
+        summary = {"checked": True, "ok": False, "temporaryCredential": True, "readOnlyTools": True,
+                   "synthesisVerified": False, "temporaryKeyRevoked": False, "revokedKeyRejected": False}
+        self.report["mcpContract"] = summary
+        verified = all(any(item["name"] == name and item["ok"] for item in self.report["checks"])
+                       for name in ("production_commit", "owner_authorization", "speech_capabilities", "speech_settings"))
+        permissions = self.report.get("permissions", {})
+        self.require("mcp_contract_preconditions", verified and self.report.get("actualCommit") == self.expected
+                     and permissions.get("speechRead") is True and permissions.get("speechGenerate") is True,
+                     "mcp_contract_version_or_authorization_not_verified")
+        key_id, key = None, ""
+
+        def rpc(method, params):
+            response = self.get("/api/mcp", token=key, method="POST",
+                                body={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+            payload = response.get("payload")
+            valid = (response["status"] == 200 and isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"
+                     and payload.get("id") == 1 and "error" not in payload and isinstance(payload.get("result"), dict))
+            self.require("mcp_contract_" + method.replace("/", "_"), valid, "mcp_contract_rpc_rejected")
+            return payload["result"]
+
+        completed = False
+        try:
+            created = data_of(self.get("/api/agent-api-keys", method="POST", body={
+                "name": "stsmk_prod speech contract " + uuid.uuid4().hex[:8],
+                "description": "Read-only MCP speech contract verification; revoked in finally.",
+                "ttlDays": 1, "scopeMode": "manual", "scopes": SPEECH_SCOPES}))
+            item = created.get("item", {}) if created else {}
+            key_id = safe_identifier(item.get("id"))
+            key = created.get("apiKey", "") if created else ""
+            self.require("mcp_contract_temporary_key_created", bool(key_id and isinstance(key, str) and key), "temporary_key_unavailable")
+            expires = datetime.fromisoformat(str(item.get("expiresAt", "")).replace("Z", "+00:00"))
+            self.require("mcp_contract_temporary_key_least_privilege", item.get("scopeMode") == "manual"
+                         and set(item.get("scopes", [])) == set(SPEECH_SCOPES)
+                         and datetime.now(timezone.utc) < expires <= datetime.now(timezone.utc) + timedelta(days=1, minutes=2),
+                         "temporary_key_contract_mismatch")
+            summary["leastPrivilege"] = True
+            initialized = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                             "clientInfo": {"name": "stsmk_prod speech contract", "version": "1"}})
+            summary["initialized"] = (initialized.get("protocolVersion") == "2025-06-18"
+                                      and isinstance(initialized.get("capabilities", {}).get("tools"), dict))
+            self.require("mcp_contract_initialized", summary["initialized"], "mcp_initialize_contract_invalid")
+            tools = rpc("tools/list", {}).get("tools")
+            self.require("mcp_contract_tool_list_shape", isinstance(tools, list) and all(isinstance(x, dict) for x in tools), "mcp_tool_list_invalid")
+            speech = [x for x in tools if x.get("name") in SPEECH_TOOL_REQUIRED]
+            summary.update({"toolCount": len(tools), "speechToolCount": len(speech), "unexpectedToolCount": len(tools) - len(speech)})
+            self.require("mcp_contract_six_speech_tools", len(tools) == len(speech) == 6
+                         and {x.get("name") for x in speech} == set(SPEECH_TOOL_REQUIRED), "mcp_speech_tool_set_invalid")
+            strict_count = 0
+            for tool in speech:
+                schema = tool.get("inputSchema", {})
+                properties, required = schema.get("properties"), schema.get("required", [])
+                if (schema.get("type") == "object" and schema.get("additionalProperties") is False
+                        and isinstance(properties, dict) and isinstance(required, list)
+                        and set(required) == SPEECH_TOOL_REQUIRED[tool["name"]]
+                        and set(required).issubset(properties)
+                        and all(isinstance(value, dict) and value.get("type") in {"string", "integer", "number", "boolean", "array", "object"}
+                                for value in properties.values())):
+                    strict_count += 1
+            summary["strictSchemaCount"] = strict_count
+            self.require("mcp_contract_strict_schemas", strict_count == 6, "mcp_speech_schema_not_strict")
+            offered = self.tool(key, "map_speech_capabilities", {})
+            profiles = offered.get("profiles")
+            summary["productionEnvironment"] = offered.get("environment") == "Production"
+            self.require("mcp_contract_production_capabilities", summary["productionEnvironment"] and isinstance(profiles, list)
+                         and len(profiles) == self.report["capabilities"]["profileCount"], "mcp_capabilities_environment_or_count_mismatch")
+            summary.update({"profileCount": len(profiles), "configurationEmpty": len(profiles) == 0})
+            history = self.tool(key, "map_speech_list_runs", {"limit": 30})
+            owner = data_of(self.get("/api/mcp-speech/runs?limit=30"))
+            items, own_items = history.get("items"), owner.get("items") if owner else None
+            same_owner = (isinstance(items, list) and isinstance(own_items, list)
+                          and all(isinstance(x, dict) and safe_identifier(x.get("id") or x.get("runId")) for x in items + own_items)
+                          and {x.get("id") or x.get("runId") for x in items} == {x.get("id") or x.get("runId") for x in own_items})
+            self.require("mcp_contract_owner_history", same_owner, "mcp_owner_history_mismatch")
+            summary.update({"historyReadable": True, "historyCount": len(items), "ownerHistoryMatches": True})
+            completed = True
+        finally:
+            if key_id:
+                revoked = self.get("/api/agent-api-keys/" + key_id + "/revoke", method="POST", body={})
+                summary["temporaryKeyRevoked"] = data_of(revoked) is not None and revoked["status"] == 200
+                self.check("mcp_contract_key_revoked", summary["temporaryKeyRevoked"], status=revoked["status"], failure="temporary_key_revocation_failed")
+                if key:
+                    rejected = self.get("/api/mcp", token=key, method="POST", body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+                    summary["revokedKeyRejected"] = rejected["status"] == 401
+                    self.check("mcp_contract_revoked_key_unauthorized", summary["revokedKeyRejected"], status=rejected["status"], failure="revoked_key_still_accepted")
+            summary["ok"] = completed and summary["temporaryKeyRevoked"] and summary["revokedKeyRejected"]
+
     def run(self):
         """Generate one short task; the second identical submit only verifies idempotency after completion."""
         selected = [p for p in self.profiles if isinstance(p, dict) and p.get("available") is True
@@ -538,6 +629,7 @@ def main(argv=None):
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--prepare-access", action="store_true", help="Explicitly allow adding only the three speech permissions to the verified stsmk_prod account.")
     parser.add_argument("--check-unconfigured-ui", action="store_true", help="In readiness mode only, verify the real empty speech UI without creating a task.")
+    parser.add_argument("--check-mcp-contract", action="store_true", help="Explicitly create and revoke a one-day scoped key for read-only MCP contract checks; never synthesize.")
     parser.add_argument("--json-out", required=True)
     args = parser.parse_args(argv)
     smoke = SpeechSmoke(args.map_base, args.expect_commit, args.mode, profile_id=args.profile_id,
@@ -552,6 +644,8 @@ def main(argv=None):
             smoke.check("production_target_validated", True)
         else:
             ready = smoke.readiness()
+            if args.check_mcp_contract:
+                smoke.check_mcp_contract()
             if ready and args.mode == "run":
                 smoke.run()
                 if all(x["ok"] for x in smoke.report["checks"] if x["required"]):

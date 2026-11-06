@@ -77,6 +77,123 @@ def runner(fixture):
     return smoke.SpeechSmoke(BASE, COMMIT, http=fixture.http, session=lambda *_: ("rsa", CANARY, {"detail": CANARY}))
 
 
+class ContractFixture(Fixture):
+    def __init__(self, *, loose_schema=False, fail_initialize=False, revoked_status=401, extra_scope=False):
+        super().__init__()
+        self.loose_schema, self.fail_initialize = loose_schema, fail_initialize
+        self.revoked_status, self.extra_scope, self.revoked = revoked_status, extra_scope, False
+        self.mcp_methods, self.tool_calls = [], []
+
+    def http(self, base, path, token="", method="GET", body=None, **kwargs):
+        if path == "/api/mcp":
+            self.calls.append((method, path, body))
+            rpc_method = body["method"]
+            self.mcp_methods.append(rpc_method)
+            if self.revoked:
+                return response(status=self.revoked_status)
+            if rpc_method == "initialize":
+                if self.fail_initialize:
+                    return response(status=403)
+                result = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "secret": CANARY}
+            elif rpc_method == "tools/list":
+                result = {"tools": [{"name": name, "description": CANARY, "inputSchema": {
+                    "type": "object", "additionalProperties": self.loose_schema,
+                    "properties": {key: {"type": "string"} for key in required}, "required": sorted(required)}}
+                    for name, required in smoke.SPEECH_TOOL_REQUIRED.items()]}
+            else:
+                name = body["params"]["name"]
+                self.tool_calls.append(name)
+                if name == "map_speech_capabilities":
+                    data = {"environment": "Production", "profiles": [], "secret": CANARY}
+                elif name == "map_speech_list_runs":
+                    data = {"items": [{"id": RUN_ID, "text": CANARY}]}
+                else:
+                    raise AssertionError("Contract check attempted a tool outside the read-only allowlist")
+                result = {"content": [{"type": "text", "text": json.dumps({"success": True, "data": data})}]}
+            return {**response(), "payload": {"jsonrpc": "2.0", "id": 1, "result": result}}
+        if path in ("/api/mcp-speech/capabilities", "/api/mcp-speech/settings"):
+            self.calls.append((method, path, body))
+            return response({"profiles": []})
+        if path.endswith("/revoke"):
+            self.revoked = True
+        result = super().http(base, path, token, method, body, **kwargs)
+        if path == "/api/agent-api-keys" and self.extra_scope:
+            result["payload"]["data"]["item"]["scopes"] = smoke.SPEECH_SCOPES + ["unrelated:write"]
+        return result
+
+
+class McpContractTests(unittest.TestCase):
+    def test_explicit_contract_discovers_strict_tools_reads_owner_and_always_revokes_without_synthesis(self):
+        fixture = ContractFixture()
+        check = runner(fixture)
+        self.assertFalse(check.readiness())  # Empty profiles must remain not ready for synthesis.
+        check.check_mcp_contract()
+        report = check.finish()
+        summary = report["mcpContract"]
+        self.assertTrue(summary["ok"])
+        self.assertEqual((summary["toolCount"], summary["speechToolCount"], summary["strictSchemaCount"]), (6, 6, 6))
+        self.assertTrue(summary["configurationEmpty"])
+        self.assertTrue(summary["productionEnvironment"])
+        self.assertTrue(summary["ownerHistoryMatches"])
+        self.assertEqual(summary["historyCount"], 1)
+        self.assertEqual(fixture.tool_calls, ["map_speech_capabilities", "map_speech_list_runs"])
+        self.assertEqual(fixture.mcp_methods, ["initialize", "tools/list", "tools/call", "tools/call", "initialize"])
+        self.assertFalse(report["run"]["attempted"])
+        self.assertFalse(summary["synthesisVerified"])
+        self.assertNotIn(CANARY, json.dumps(report))
+        created = next(body for method, path, body in fixture.calls if path == "/api/agent-api-keys")
+        self.assertEqual(created["ttlDays"], 1)
+        self.assertEqual(created["scopeMode"], "manual")
+        self.assertEqual(created["scopes"], smoke.SPEECH_SCOPES)
+        self.assertTrue(all(method == "GET" or path in {"/api/mcp", "/api/agent-api-keys", "/api/agent-api-keys/" + KEY_ID + "/revoke"}
+                            for method, path, _ in fixture.calls))
+
+    def test_contract_rejects_loose_schema_and_revokes_without_calling_any_tool(self):
+        fixture = ContractFixture(loose_schema=True)
+        check = runner(fixture); check.readiness()
+        with self.assertRaises(smoke.CheckFailure): check.check_mcp_contract()
+        self.assertTrue(fixture.revoked)
+        self.assertFalse(fixture.tool_calls)
+        self.assertFalse(check.report["mcpContract"]["ok"])
+
+    def test_contract_initialize_failure_still_revokes_and_verifies_401(self):
+        fixture = ContractFixture(fail_initialize=True)
+        check = runner(fixture); check.readiness()
+        with self.assertRaises(smoke.CheckFailure): check.check_mcp_contract()
+        self.assertTrue(fixture.revoked)
+        self.assertTrue(check.report["mcpContract"]["revokedKeyRejected"])
+        self.assertFalse(fixture.tool_calls)
+
+    def test_contract_rejects_broader_key_scope_and_still_revokes(self):
+        fixture = ContractFixture(extra_scope=True)
+        check = runner(fixture); check.readiness()
+        with self.assertRaises(smoke.CheckFailure): check.check_mcp_contract()
+        self.assertTrue(fixture.revoked)
+        self.assertFalse(fixture.tool_calls)
+
+    def test_contract_requires_revoked_key_to_receive_exact_401(self):
+        fixture = ContractFixture(revoked_status=200)
+        check = runner(fixture); check.readiness(); check.check_mcp_contract()
+        self.assertFalse(check.report["mcpContract"]["ok"])
+        self.assertFalse(check.report["mcpContract"]["revokedKeyRejected"])
+
+    def test_contract_preconditions_fail_before_creating_any_key(self):
+        fixture = ContractFixture()
+        check = runner(fixture)
+        with self.assertRaises(smoke.CheckFailure): check.check_mcp_contract()
+        self.assertFalse(fixture.calls)
+        self.assertFalse(fixture.revoked)
+
+    def test_contract_is_not_executed_without_explicit_flag(self):
+        fixture = ContractFixture()
+        check = runner(fixture)
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"DEFAULT_MAP_BASE": BASE, "STABLE_SMOKE_USER": "stsmk_prod"}), \
+                patch.object(smoke, "SpeechSmoke", return_value=check), patch.object(check, "check_mcp_contract") as contract, \
+                contextlib.redirect_stdout(io.StringIO()):
+            smoke.main(["--map-base", BASE, "--expect-commit", COMMIT, "--json-out", str(Path(directory) / "report.json")])
+            contract.assert_not_called()
+
+
 class AccessFixture(Fixture):
     def __init__(self):
         super().__init__()
