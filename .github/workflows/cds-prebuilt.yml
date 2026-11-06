@@ -49,9 +49,11 @@ jobs:
           node-version: "20"
 
       - name: Install CDS deps
+        timeout-minutes: 10
         run: |
           pnpm -C cds install --frozen-lockfile
           pnpm -C cds/web install --frozen-lockfile
+          pnpm -C cds exec playwright install --with-deps chromium
 
       - name: Install design runtime test dependencies
         run: pnpm -C design-runtime/opendesign install --frozen-lockfile
@@ -80,7 +82,6 @@ jobs:
       - name: Verify loading continuity in a real browser
         timeout-minutes: 10
         run: |
-          pnpm -C cds exec playwright install --with-deps chromium
           pnpm -C cds/web exec vite preview --host 127.0.0.1 --port 8870 --strictPort > "$RUNNER_TEMP/cds-loading-preview.log" 2>&1 &
           CDS_LOADING_PREVIEW_PID=$!
           trap 'kill "$CDS_LOADING_PREVIEW_PID" 2>/dev/null || true' EXIT
