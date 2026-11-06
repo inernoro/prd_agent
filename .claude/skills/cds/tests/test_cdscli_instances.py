@@ -137,6 +137,58 @@ def test_failed_checks_do_not_select_or_deploy_and_are_audited(workspace, monkey
     assert len(list((root / '.cds/instance-checks').glob('*.json'))) == 1
 
 
+@pytest.mark.parametrize('origin,target', [
+    ('https://github.com/acme/app.git', {'gitRepoUrl': 'https://gitlab.com/unrelated/acme/app.git'}),
+    ('https://github.com/acme/app.git', {'gitRepoUrl': 'https://gitlab.com/acme/app.git'}),
+    ('https://gitlab.com/team-a/acme/app.git', {'gitRepoUrl': 'https://gitlab.com/team-b/acme/app.git'}),
+    ('https://github.com/acme/app.git', {'gitRepoUrl': 'https://gitlab.com/acme/app.git', 'githubRepoFullName': 'acme/app'}),
+])
+@pytest.mark.parametrize('operation', ['connect', 'use', 'scoped-write'])
+def test_complete_repository_identity_rejects_foreign_target(workspace, monkeypatch, origin, target, operation):
+    root, _ = workspace
+    subprocess.run(['git', 'remote', 'set-url', 'origin', origin], check=True)
+    save('https://standby.example', 'b', 'standby-private')
+    save('https://primary.example', 'a', 'primary-private')
+    cli._write_instance_private('active-instance.json', {'id': 'primary'})
+    names = ('credentials.json', 'connection.json', 'active-instance.json')
+    before = {name: json.loads((root / '.cds' / name).read_text()) for name in names}
+    writes = []
+    def request(method, path, **kwargs):
+        if path.endswith('/access-requests'):
+            return 201, {'requestId': 'repo-check', 'pollToken': 'private-poll'}, {}
+        if path.endswith('/access-requests/repo-check'):
+            return 200, {'status': 'approved', 'authorizationKey': 'standby-private'}, {}
+        if path == '/api/host-stats':
+            return 200, {'cpu': {'cores': 4, 'loadAvg1': 1, 'loadPercent': 25}}, {}
+        return 200, {'id': 'b', **target}, {}
+    monkeypatch.setattr(cli, '_load_user_credential', lambda _host: '')
+    monkeypatch.setattr(cli, '_request', request)
+    monkeypatch.setattr(cli, '_call', lambda *a, **kw: (writes.append((a, kw)) or {}))
+    argv = ('--instance', 'standby', 'branch', 'create', '--branch', 'feature') if operation == 'scoped-write' else (
+        ('instance', 'connect', 'standby', '--project', 'b') if operation == 'connect' else ('instance', 'use', 'standby'))
+    code, output = run(*argv)
+    assert code != 0, output
+    assert not writes
+    assert {name: json.loads((root / '.cds' / name).read_text()) for name in names} == before
+    evidence = [json.loads(p.read_text()) for p in (root / '.cds/instance-checks').glob('*.json')]
+    assert evidence and all(not e['repositoryMatched'] and not e['ready'] for e in evidence)
+
+
+@pytest.mark.parametrize('origin,target', [
+    ('https://github.com/ACME/App.git', {'gitRepoUrl': 'git@github.com:acme/app.git'}),
+    ('git@gitlab.com:group/nested/app.git', {'gitRepoUrl': 'https://gitlab.com/group/nested/app.git'}),
+    ('https://github.com/acme/app.git', {'githubRepoFullName': 'Acme/App'}),
+])
+def test_complete_repository_identity_preserves_supported_same_repository(workspace, monkeypatch, origin, target):
+    root, _ = workspace
+    subprocess.run(['git', 'remote', 'set-url', 'origin', origin], check=True)
+    save('https://standby.example', 'b', 'standby-private')
+    monkeypatch.setattr(cli, '_request', lambda *a, **kw: (200, {'id': 'b', **target}, {}))
+    code, output = run('instance', 'use', 'standby')
+    assert code == 0 and json.loads(output)['data']['repositoryMatched'] is True
+    assert json.loads((root / '.cds/active-instance.json').read_text()) == {'id': 'standby'}
+
+
 def test_missing_credentials_never_send_primary_key_to_standby(workspace, monkeypatch):
     save('https://primary.example', 'a', 'primary-secret')
     monkeypatch.setattr(cli, '_request', lambda *a, **kw: pytest.fail('must not contact target without its credential'))

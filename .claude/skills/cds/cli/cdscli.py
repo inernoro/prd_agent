@@ -10079,11 +10079,12 @@ def _check_instance(entry: dict[str, Any]) -> dict[str, Any]:
         project = body.get("project", body) if isinstance(body, dict) else {}
         if not isinstance(project, dict):
             project = {}
-        repo = _git_repo_full_name(_workspace_root()).lower()
-        remote_repo = str(project.get("githubRepoFullName") or "").lower()
-        if not remote_repo and project.get("gitRepoUrl"):
-            remote_repo = str(project["gitRepoUrl"]).removesuffix(".git").rstrip("/").rsplit(":", 1)[-1]
-            remote_repo = "/".join(remote_repo.split("/")[-2:]).lower()
+        repo = _repository_identity(_origin_repository())
+        remote_url = str(project.get("gitRepoUrl") or "").strip()
+        github_name = str(project.get("githubRepoFullName") or "").strip()
+        # gitRepoUrl is the configured repository; provider metadata may be stale.
+        remote_repo = _repository_identity(remote_url) if remote_url else (
+            _repository_identity("https://github.com/" + github_name) if github_name else "")
         matched = bool(repo and remote_repo and repo == remote_repo)
         ready = 200 <= status < 300 and project.get("id") == project_id and matched
         result = {"instance": entry["id"], "host": entry["url"], "projectId": project_id,
