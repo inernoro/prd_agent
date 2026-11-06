@@ -12,7 +12,7 @@
   "inactiveCases": [
     {
       "caseId": "PARSE-001",
-      "label": "上传短视频",
+      "label": "自动时间轴（原上传组合项）",
       "reason": "上传、抽取音轨和真实转写均为现有能力，已单独实测；原检查还要求自动时间轴，超出了当前流程。",
       "sourcePaths": [
         "prd-admin/src/pages/document-store/DocumentStorePage.tsx",
@@ -25,7 +25,7 @@
     },
     {
       "caseId": "FILE-008",
-      "label": "文件上传取消与重试",
+      "label": "取消运行中的文件上传",
       "reason": "现有上传流程没有取消已提交任务的入口；重选损坏文件另由重试用例验证。",
       "sourcePaths": [
         "prd-admin/src/pages/document-store/DocumentStorePage.tsx"
@@ -37,7 +37,7 @@
     },
     {
       "caseId": "PARSE-006",
-      "label": "短视频解析取消与恢复",
+      "label": "取消运行中的短视频解析",
       "reason": "现有短视频任务由服务器持续执行，运行中没有取消接口；刷新回读和终态清理由独立用例验证。",
       "sourcePaths": [
         "prd-api/src/PrdAgent.Api/Controllers/Api/ShortVideoMaterialController.cs"
@@ -49,7 +49,7 @@
     },
     {
       "caseId": "PARSE-007",
-      "label": "视频、音频、字幕与时间轴时长一致",
+      "label": "自动音轨、字幕与时间轴一致性",
       "reason": "当前默认只保存原始视频和真实转写；时间轴是后续加工内容，不由本流程自动生成。",
       "sourcePaths": [
         "prd-api/src/PrdAgent.Core/Models/ShortVideoMaterialRun.cs",
@@ -61,7 +61,7 @@
     },
     {
       "caseId": "VIDEO-003",
-      "label": "关键帧生成",
+      "label": "自动生成关键帧",
       "reason": "现有故事分镜支持文字分镜、手动首末帧参考与视频生成，没有自动生成关键帧功能。",
       "sourcePaths": [
         "prd-admin/src/pages/video-agent/VideoStoryboardEditor.tsx"
@@ -73,7 +73,7 @@
     },
     {
       "caseId": "LIT-003",
-      "label": "停止与续写",
+      "label": "正文停止与续写",
       "reason": "文学创作当前是已有文章的配图流程，不提供正文续写；配图流式反馈另行验证。",
       "sourcePaths": [
         "prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx"
@@ -85,7 +85,7 @@
     },
     {
       "caseId": "LIT-004",
-      "label": "改写与扩写",
+      "label": "正文选区改写与扩写",
       "reason": "当前文章配图流程不提供选区正文改写或扩写，不把配图模型输出冒充正文写作。",
       "sourcePaths": [
         "prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx"
