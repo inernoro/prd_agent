@@ -1,18 +1,50 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
 import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 
-async function fixture(options: { reject?: boolean; known?: boolean; partial?: boolean; idle?: boolean; maxAttempts?: number; maxConnections?: number } = {}) {
+function productionActivityRoute() {
+  const source = readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
+  const parsed = ts.createSourceFile('server.ts', source, ts.ScriptTarget.Latest, true);
+  const registrations: ts.CallExpression[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && node.expression.getText(parsed) === 'app.get'
+      && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === '/api/activity-stream') registrations.push(node);
+    if (!registrations.length) ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  const registration = registrations[0];
+  if (!registration) throw new Error('Missing production activity stream route');
+  type Request = http.IncomingMessage & { query: Record<string, string> };
+  let handler: ((req: Request, res: http.ServerResponse) => void) | undefined;
+  const clients = new Set<http.ServerResponse>();
+  const heartbeats: Array<{ tick: () => void; delay: number }> = [];
+  vm.runInNewContext(ts.transpileModule(registration.getText(parsed), {}).outputText, {
+    app: { get: (_path: string, route: typeof handler) => { handler = route; } },
+    activityClients: clients, activityBuffer: [], clearInterval,
+    setInterval: (tick: () => void, delay: number) => { heartbeats.push({ tick, delay }); return setInterval(tick, delay); },
+  });
+  return { clients, heartbeats, serve(req: http.IncomingMessage, res: http.ServerResponse) {
+    (req as Request).query = Object.fromEntries(new URL(req.url || '/', 'http://localhost').searchParams);
+    handler!(req as Request, res);
+  } };
+}
+
+async function fixture(options: { reject?: boolean; known?: boolean; partial?: boolean; idle?: boolean; activityRoute?: boolean; maxAttempts?: number; maxConnections?: number } = {}) {
   const requests: http.IncomingHttpHeaders[] = [];
   const responses: http.ServerResponse[] = [];
+  const activity = options.activityRoute ? productionActivityRoute() : undefined;
   const upstream = http.createServer((req, res) => {
     requests.push(req.headers);
     responses.push(res);
     if (options.reject) { res.writeHead(403); res.end('denied'); return; }
+    if (activity) { activity.serve(req, res); return; }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     if (options.idle) return; // 与没有历史活动的真实上游一样，等首个心跳才发送 headers。
     res.write('event: snapshot\ndata: {"branches":[{"id":"owned","status":"error"}]}\n\n');
@@ -31,10 +63,30 @@ async function fixture(options: { reject?: boolean; known?: boolean; partial?: b
   }); });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   cleanups.push(async () => { proxy.destroy(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  return { upstream, upstreamPort, requests, responses, proxy, log: settings.httpLogStore.record,
+  return { upstream, upstreamPort, requests, responses, proxy, activity, log: settings.httpLogStore.record,
     start: () => new Promise<void>(resolve => upstream.listen(upstreamPort, '127.0.0.1', resolve)),
     port: (server.address() as AddressInfo).port };
 }
+
+it('真实空活动路由在停机恢复后及时确认连接，不等首个30秒心跳耗尽恢复预算', async () => {
+  const f = await fixture({ activityRoute: true });
+  const s = await stream(f.port, '/_cds/api/activity-stream');
+  await s.first;
+  expect(s.chunks.join('')).toContain('reconnecting');
+  const failures = f.proxy.getStats().widgetStreams!.upstreamFailures;
+  expect(failures).toBeGreaterThanOrEqual(1);
+  await f.start();
+  await vi.waitFor(() => expect(f.requests).toHaveLength(1));
+  expect(f.activity!.heartbeats.map(timer => timer.delay)).toEqual([30_000]);
+  await new Promise(resolve => setTimeout(resolve, 600)); // 超过原夹具500ms恢复预算；生产预算与心跳不改。
+  expect(s.chunks.join('')).toContain('"state":"connected"');
+  expect(s.chunks.join('')).not.toContain('unavailable');
+  expect(f.proxy.getStats().widgetStreams).toMatchObject({ active: 1, recovering: 0, upstreamFailures: failures });
+  f.activity!.heartbeats[0].tick(); // 执行真实路由心跳回调，不等待30秒，也不改它的周期。
+  await vi.waitFor(() => expect(s.chunks.join('')).toContain(': keepalive'));
+  s.res.destroy(); s.req.destroy();
+  await vi.waitFor(() => expect(f.activity!.clients.size).toBe(0));
+}, 5000);
 
 it('TCP已连接的空活动流允许等待首个心跳，不将首事件等待误记为连接失败', async () => {
   const f = await fixture({ idle: true });
