@@ -22,7 +22,7 @@ RUN groupadd --gid 10001 deepaudit && useradd --uid 10001 --gid 10001 --no-creat
     && mkdir -p /app/uploads/zip_files /app/data /app/.cache \
     && chown -R 10001:10001 /app/uploads /app/data /app/.cache \
     && chmod 755 /app/cds-entrypoint.sh
-ENV HOME=/app/.cache
+ENV HOME=/app/.cache PATH="/app/.venv/bin:${PATH}"
 USER 10001:10001
 EXPOSE 8000
 CMD ["/app/cds-entrypoint.sh"]

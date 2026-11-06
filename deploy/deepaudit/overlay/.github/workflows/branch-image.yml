@@ -44,6 +44,9 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-only
           cache-from: type=gha,scope=cds-${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=cds-${{ matrix.component }}
+      - name: 验证平台迁移命令可执行
+        if: matrix.component == 'backend'
+        run: docker run --rm deepaudit-cds-backend:test sh -c 'command -v alembic && alembic --help >/dev/null'
       - name: 验证真实后端路由
         if: matrix.component == 'backend'
         run: >-
