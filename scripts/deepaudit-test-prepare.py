@@ -22,7 +22,8 @@ class OverlayInstallation(unittest.TestCase):
         self.checkout = pathlib.Path(self.temp.name) / "fork"
         subprocess.run(["git", "clone", "--shared", str(args.source_checkout), str(self.checkout)],
                        check=True, capture_output=True)
-        manifest = json.loads((pathlib.Path(__file__).resolve().parents[1] / "deploy/deepaudit/upstream.json").read_text())
+        manifest = json.loads((pathlib.Path(__file__).resolve().parents[1] /
+                               "deploy/deepaudit/upstream.json").read_text())
         subprocess.run(["git", "-C", str(self.checkout), "checkout", "--detach", manifest["commit"]],
                        check=True, capture_output=True)
         subprocess.run(["git", "-C", str(self.checkout), "remote", "set-url", "origin",

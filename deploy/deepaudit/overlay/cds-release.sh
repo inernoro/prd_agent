@@ -4,6 +4,7 @@ cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 case "${1:-}" in
   check)
     test -s cds-compose.yml
+    test -s cds-storage-plan.json
     test -s backend/app/cds_runtime.py
     test -s frontend/nginx.cds.conf.template
     python3 -m py_compile backend/app/cds_runtime.py
