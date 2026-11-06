@@ -1,4 +1,9 @@
 import { CodeReviewsSkeleton } from './CodeReviewsSkeleton';
+import { useState } from 'react';
+import { readProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
+import { FolderGit2, LayoutGrid, List, Plus, Search } from 'lucide-react';
+import { ProjectInventoryLayout } from '@/components/project/ProjectInventoryHeader';
+import { Button } from '@/components/ui/button';
 
 /**
  * 页面级加载骨架的 SSOT（2026-09-17）。
@@ -57,47 +62,63 @@ export function BranchListSkeleton(): JSX.Element {
  * 项目列表骨架屏 —— 用「即将出现的内容形状」占位,而不是一个孤零零的居中 logo。
  * 骨架卡逐张镜像真实 ProjectCard（项目标识 + 服务模块 + 运行指标 + 环境分支行），
  * 加载完成时视觉无缝切换到真数据。节点分片错相位 shimmer,整片"活着"不发呆。
- * 顶部保留一行带品牌 loader 的说明,让用户明确"在加载什么"(预期管理)。
+ * 页头和工具条复用正文布局，代码和数据两段加载都保持相同垂直位置。
  */
 const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const;
 
 export function ProjectListSkeleton(): JSX.Element {
+  const [view] = useState(() => readProjectInventoryPreferences().view);
   return (
     <div aria-busy="true" aria-live="polite" aria-label="加载项目列表">
-      <div className="cds-project-inventory-heading" aria-hidden>
-        <div><div className="cds-loading-skeleton-line h-6 w-20" /><div className="cds-loading-skeleton-line mt-3 h-3 w-52" /></div>
-        <div className="cds-loading-skeleton-panel h-8 w-44 rounded" />
+      <div aria-hidden>
+        <ProjectInventoryLayout canManageProjects count={<span className="cds-loading-skeleton-line inline-block h-3 w-3 align-middle" />}
+          actions={<>
+            <Button disabled variant="outline" size="sm" className="cds-loading-skeleton-panel"><FolderGit2 className="invisible" /><span className="invisible">导入仓库</span></Button>
+            <Button disabled size="sm" className="cds-loading-skeleton-panel"><Plus className="invisible" /><span className="invisible">新建项目</span></Button>
+          </>}
+          filters={['全部项目', '运行中', '已暂停', '已就绪'].map(label => <button key={label} type="button" disabled>
+            {label}<span><i className="cds-loading-skeleton-line inline-block h-2 w-2" /></span>
+          </button>)}
+          tools={<>
+            <label className="cds-project-inventory-search cds-loading-skeleton-panel"><Search className="invisible" /><input type="search" disabled /><kbd className="invisible">/</kbd></label>
+            <select disabled className="cds-loading-skeleton-panel"><option>全部环境</option><option>未配置发布环境</option></select>
+            <select disabled className="cds-loading-skeleton-panel"><option>默认排序</option><option>最近更新</option><option>项目名称</option></select>
+            <div className="cds-project-view-switch cds-loading-skeleton-panel">
+              <button type="button" disabled><LayoutGrid className="invisible" /></button>
+              <button type="button" disabled><List className="invisible" /></button>
+            </div>
+          </>}
+        />
       </div>
-      <div className="cds-project-inventory-toolbar" aria-hidden>
-        <div className="cds-loading-skeleton-line h-4 w-72 max-w-full" />
-        <div className="cds-loading-skeleton-panel h-8 w-72 max-w-full rounded" />
-      </div>
-      <div className="cds-card-grid cds-project-inventory-grid">
+      <div className={`cds-card-grid cds-project-inventory-grid ${view === 'list' ? 'cds-project-inventory--list' : ''}`}>
         {SKELETON_CARD_WIDTHS.map((width, index) => (
           <article key={index} className="cds-project-card">
-            <header className="cds-project-card-heading">
-              <div className="cds-loading-skeleton-panel h-[2.125rem] w-[2.125rem] shrink-0 rounded" />
-              <div className="cds-loading-skeleton-line h-3 flex-1" style={{ maxWidth: width }} />
-              <div className="cds-loading-skeleton-line h-2 w-9" />
-            </header>
-            <div className="cds-project-services" aria-hidden>
-              <div className="cds-loading-skeleton-panel rounded" />
-              <div className="grid min-h-0 gap-1">
-                {[0, 1, 2].map((node) => (
-                  <div key={node} className="cds-loading-skeleton-panel rounded" style={{ animationDelay: `${node * 0.14}s` }} />
-                ))}
+            <div className="cds-project-card-link">
+              <header className="cds-project-card-heading">
+                <div className="cds-loading-skeleton-panel h-[2.125rem] w-[2.125rem] shrink-0 rounded" />
+                <div className="cds-loading-skeleton-line h-3 flex-1" style={{ maxWidth: width }} />
+                <div className="cds-loading-skeleton-line h-2 w-9" />
+              </header>
+              <div className="cds-project-services" aria-hidden>
+                <div className="cds-loading-skeleton-panel rounded" />
+                <div className="grid min-h-0 gap-1">
+                  {[0, 1, 2].map((node) => (
+                    <div key={node} className="cds-loading-skeleton-panel rounded" style={{ animationDelay: `${node * 0.14}s` }} />
+                  ))}
+                </div>
               </div>
+              <div className="cds-project-metrics" aria-hidden>
+                <div className="cds-loading-skeleton-line h-2 w-16" />
+                <div className="cds-loading-skeleton-line h-2 w-10" />
+                <div className="cds-loading-skeleton-line ml-auto h-2 w-16" />
+              </div>
+              <footer className="cds-project-card-footer" aria-hidden>
+                <div className="cds-loading-skeleton-line h-2 w-14" />
+                <div className="cds-loading-skeleton-line h-2 w-12" />
+                <div className="cds-loading-skeleton-line h-2 w-9" />
+                <div className="cds-loading-skeleton-line ml-auto h-2 w-14" />
+              </footer>
             </div>
-            <div className="cds-project-metrics" aria-hidden>
-              <div className="cds-loading-skeleton-line h-2 w-16" />
-              <div className="cds-loading-skeleton-line h-2 w-10" />
-              <div className="cds-loading-skeleton-line ml-auto h-2 w-16" />
-            </div>
-            <footer className="cds-project-card-footer" aria-hidden>
-              <div className="cds-loading-skeleton-line h-2 w-14" />
-              <div className="cds-loading-skeleton-line h-2 w-12" />
-              <div className="cds-loading-skeleton-line ml-auto h-2 w-14" />
-            </footer>
           </article>
         ))}
       </div>

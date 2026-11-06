@@ -3976,6 +3976,8 @@
     min-width: 0;
   }
 
+  /* The chunk skeleton is already visible; replaying main's entrance moves the same layout again. */
+  .cds-page-enter:has(> .cds-project-inventory-workspace) { animation: none; }
   .cds-project-inventory-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.75rem; }
   .cds-project-inventory-title { display: flex; align-items: center; gap: 0.75rem; }
   .cds-project-inventory-title h1 { margin: 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.025em; }
@@ -4015,7 +4017,7 @@
   .cds-project-inventory--list .cds-project-service-item { padding-block: 0.125rem; }
   .cds-project-inventory--list .cds-project-service-list[data-service-count='1'] .cds-project-service-item { flex-direction: row; gap: 0.5rem; }
   .cds-project-inventory--list .cds-project-service-list[data-service-count='1'] .cds-project-service-glyph { width: 1.1875rem; height: 1.1875rem; }
-  .cds-project-inventory--list .cds-project-metrics { padding: 0; gap: 0.375rem 0.75rem; }
+  .cds-project-inventory--list .cds-project-metrics { min-height: 2.625rem; padding: 0; gap: 0.375rem 0.75rem; }
   .cds-project-inventory--list .cds-project-build-rate { margin-left: 0; }
   .cds-project-inventory--list .cds-project-card-footer { margin: 0; padding: 0; border: 0; flex-wrap: wrap; gap: 0.375rem 0.75rem; }
   .cds-project-inventory--list .cds-project-card-footer time { margin-left: 0; }
