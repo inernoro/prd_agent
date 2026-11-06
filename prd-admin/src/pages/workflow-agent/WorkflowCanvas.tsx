@@ -617,6 +617,7 @@ function CanvasInner({
     const version = observerVersion.current;
     let inFlight = false;
     let observing = false;
+    let activeRunIds = new Set<string>();
     setDesignProgress([]);
     pollFailCount.current = 0;
     pollingRef.current = setInterval(async () => {
@@ -625,9 +626,13 @@ function CanvasInner({
       try {
         const res = await getExecution(execId);
         if (version !== observerVersion.current) return;
+        if (!res.success || !res.data) throw new Error('execution_observation_unavailable');
         pollFailCount.current = 0;
         if (res.success && res.data) {
           const exec = res.data.execution;
+          const activeDesigns = exec.nodeExecutions.filter(ne => ne.status === 'running' && ne.designRunId);
+          activeRunIds = new Set(activeDesigns.map(ne => ne.designRunId!));
+          setDesignProgress(prev => prev.filter(run => activeRunIds.has(run.runId)));
           setLatestExec(exec);
 
           // 增量日志 + 更新画布节点状态
@@ -676,7 +681,7 @@ function CanvasInner({
           }
           if (!observing) {
             observing = true;
-            void Promise.all(exec.nodeExecutions.filter(ne => ne.status === 'running' && ne.designRunId).map(async ne => {
+            void Promise.all(activeDesigns.map(async ne => {
               const observed: CanvasDesignProgress = { nodeName: ne.nodeName, runId: ne.designRunId! };
               try {
                 const result = await getDesignArtifactRun(observed.runId);
@@ -686,7 +691,7 @@ function CanvasInner({
               } catch { /* 阶段读取失败不改变工作流权威状态。 */ }
               return observed;
             })).then(observations => {
-              if (version === observerVersion.current) setDesignProgress(observations);
+              if (version === observerVersion.current) setDesignProgress(observations.filter(run => activeRunIds.has(run.runId)));
             }).finally(() => { observing = false; });
           }
         }
