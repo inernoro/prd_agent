@@ -51,13 +51,15 @@ afterEach(async () => {
 });
 
 describe('定时通知真实组件交互', () => {
-  it('已发送单次仅能复制，副本保留原日期、时间、开关和全部已填写的 Webhook', async () => {
+  it('已发送单次仅能复制，副本保留原日期、时间、启用设置和全部已填写的 Webhook', async () => {
     api.list.mockResolvedValue({ success: true, data: { canManage: true, items: [completed] } });
     api.save.mockResolvedValue({ success: true, data: { ...completed, id: 'new-copy' } });
     await render();
     expect(buttons('编辑')).toHaveLength(0);
     expect(buttons('立即调试')).toHaveLength(0);
+    expect(buttons('启用')).toHaveLength(0);
     expect(host.querySelector('[role=switch]')).toBeNull();
+    expect(host.querySelectorAll('tbody td')[2].textContent).toBe('已发送');
     await click('复制为新任务');
     expect((host.querySelector('input[name=name]') as HTMLInputElement).value).toBe(completed.name);
     expect((host.querySelector('select') as HTMLSelectElement).value).toBe('once');
@@ -79,21 +81,36 @@ describe('定时通知真实组件交互', () => {
     }), undefined);
   });
 
-  it('列表禁用任务时保留计划和已保存的 Webhook', async () => {
+  it('操作列的文字启停各行独立，过期启用错误显示在当前行', async () => {
     const scheduled = { ...completed, canEdit: true, enabled: true, lastResult: null, lastRunAt: null };
     const disabled = { ...scheduled, enabled: false, revision: 'disabled-revision' };
-    api.list.mockResolvedValueOnce({ success: true, data: { canManage: true, items: [scheduled] } })
-      .mockResolvedValue({ success: true, data: { canManage: true, items: [disabled] } });
-    api.save.mockResolvedValue({ success: true, data: disabled });
+    const past = { ...disabled, id: 'past' };
+    let visible = [scheduled, past];
+    let finishDisable!: (response: { success: true; data: ScheduledNotification }) => void;
+    const pendingDisable = new Promise<{ success: true; data: ScheduledNotification }>((resolve) => { finishDisable = resolve; });
+    const errorMessage = '启用单次通知时请选择未来时间。';
+    api.list.mockImplementation(async () => ({ success: true, data: { canManage: true, items: visible } }));
+    api.save.mockReturnValueOnce(pendingDisable)
+      .mockResolvedValueOnce({ success: false, error: { code: 'INVALID_NOTIFICATION_SCHEDULE', message: errorMessage } });
     await render();
-    const toggle = host.querySelector<HTMLButtonElement>('[role=switch]')!;
-    expect(toggle.getAttribute('aria-checked')).toBe('true');
-    await act(async () => toggle.click());
+    const [scheduledRow, pastRow] = host.querySelectorAll<HTMLTableRowElement>('tbody tr');
+    expect(pastRow.cells[2].textContent).toBe('待发送');
+    expect(scheduledRow.cells[5].contains(buttons('禁用')[0])).toBe(true);
+    expect(pastRow.cells[5].contains(buttons('启用')[0])).toBe(true);
+    await click('禁用');
+    expect(buttons('保存中…')[0].disabled).toBe(true);
+    expect(buttons('启用')[0].disabled).toBe(false);
+    await click('启用');
+    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, date: past.date }), past.id);
+    expect(pastRow.cells[5].querySelector('[role=alert]')?.textContent).toBe(errorMessage);
+    visible = [disabled, past];
+    await act(async () => finishDisable({ success: true, data: disabled }));
     expect(api.save).toHaveBeenCalledWith(expect.objectContaining({
       revision: scheduled.revision, enabled: false, time: scheduled.time, date: scheduled.date,
     }), scheduled.id);
     expect(api.save.mock.calls[0][0]).not.toHaveProperty('webhooks');
-    expect(host.querySelector('[role=switch]')?.getAttribute('aria-checked')).toBe('false');
+    expect(scheduledRow.cells[2].textContent).toBe('待发送');
+    expect(buttons('启用')).toHaveLength(2);
   });
 
   it('到点发送结果自动刷新，完成后隐藏编辑入口', async () => {

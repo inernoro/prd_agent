@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/design/Button';
-import { Switch } from '@/components/design/Switch';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
@@ -32,10 +31,7 @@ function scheduleLabel(task: ScheduledNotification) {
 }
 
 function notificationStatus(task: ScheduledNotification) {
-  if (task.lastResult === 'sending') return '发送中';
-  if (task.enabled) return '待发送';
-  if (!task.canEdit) return task.lastResult === 'sent' ? '已发送' : '已执行';
-  return '已禁用';
+  return task.lastResult === 'sent' || task.lastResult === 'partial' ? '已发送' : '待发送';
 }
 
 export function ScheduledNotifications() {
@@ -47,7 +43,7 @@ export function ScheduledNotifications() {
   const [editing, setEditing] = useState<EditorSelection | null>(null);
   const [debugSettingsOpen, setDebugSettingsOpen] = useState(false);
   const [debugging, setDebugging] = useState<string | null>(null);
-  const [switching, setSwitching] = useState<string | null>(null);
+  const [enableActions, setEnableActions] = useState<Record<string, { pending: boolean; error?: string }>>({});
   const [actionMessage, setActionMessage] = useState('');
 
   useEffect(() => {
@@ -91,22 +87,21 @@ export function ScheduledNotifications() {
   }
 
   async function changeEnabled(task: ScheduledNotification, enabled: boolean) {
-    if (switching) return;
+    if (enableActions[task.id]?.pending) return;
     const { name, message, frequency, time, date, day, mentionAll, revision } = task;
-    setSwitching(task.id);
-    setActionMessage('');
+    setEnableActions((current) => ({ ...current, [task.id]: { pending: true } }));
+    let error: string | undefined;
     try {
       const response = await saveScheduledNotification({ name, message, frequency, time, date, day, mentionAll, enabled, revision }, task.id);
       if (response.success) {
         setItems((current) => current.map((item) => item.id === task.id ? response.data : item));
-        setActionMessage(enabled ? '任务已启用，将按计划发送。' : '任务已禁用。');
       } else {
-        setActionMessage(response.error.message);
+        error = response.error.message;
       }
     } catch {
-      setActionMessage('状态更新失败，请刷新列表后重试。');
+      error = '状态更新失败，请刷新列表后重试。';
     } finally {
-      setSwitching(null);
+      setEnableActions((current) => ({ ...current, [task.id]: { pending: false, error } }));
       setReload((value) => value + 1);
     }
   }
@@ -162,14 +157,7 @@ export function ScheduledNotifications() {
                     <div className="mt-1 text-xs text-token-muted">{webhookCount(task)} 个 Webhook</div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">{scheduleLabel(task)}</td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    {notificationStatus(task)}
-                    {task.canEdit && <div className="mt-1">
-                      <Switch checked={task.enabled} ariaLabel={`${task.name}的定时发送`}
-                        disabled={switching !== null || task.lastResult === 'sending'}
-                        onCheckedChange={(enabled) => changeEnabled(task, enabled)} />
-                    </div>}
-                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">{notificationStatus(task)}</td>
                   <td className="whitespace-nowrap px-4 py-3">{task.nextRunAt ? beijing.format(new Date(task.nextRunAt)) : '—'}</td>
                   <td className="min-w-36 px-4 py-3">
                     {task.lastResult ? resultLabel[task.lastResult] : task.enabled ? '等待到点发送' : '—'}
@@ -181,11 +169,18 @@ export function ScheduledNotifications() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex whitespace-nowrap gap-1">
+                      {task.canEdit && <Button size="sm" variant="ghost" disabled={enableActions[task.id]?.pending}
+                        onClick={() => void changeEnabled(task, !task.enabled)}>
+                        {enableActions[task.id]?.pending ? '保存中…' : task.enabled ? '禁用' : '启用'}
+                      </Button>}
                       {task.canEdit && <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'edit', task })}>编辑</Button>}
                       {task.canEdit && <Button size="sm" variant="ghost" disabled={debugging !== null || task.debugLastResult === 'sending'}
                         onClick={() => void debug(task)}>{debugging === task.id ? '调试发送中…' : '立即调试'}</Button>}
                       <Button size="sm" variant="ghost" onClick={() => setEditing({ mode: 'copy', task })}>复制为新任务</Button>
                     </div>
+                    {enableActions[task.id]?.error && <p role="alert" className="mt-1 text-xs text-semantic-danger">
+                      {enableActions[task.id].error}
+                    </p>}
                   </td>
                 </tr>
               ))}
@@ -275,7 +270,7 @@ function NotificationEditor({ selection, onClose, onSaved }: {
   const [webhookRows, setWebhookRows] = useState<WebhookRow[]>(() => initialWebhookCount
     ? Array.from({ length: initialWebhookCount }, (_, index) => ({ id: index, existingIndex: index }))
     : [{ id: 0 }]);
-  const [enabled, setEnabled] = useState(source?.enabled ?? true);
+  const enabled = source?.enabled ?? true;
   const [frequency, setFrequency] = useState<NotificationFrequency>(source?.frequency ?? 'once');
   const [creationDate] = useState(() => {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -369,8 +364,7 @@ function NotificationEditor({ selection, onClose, onSaved }: {
                 aria-label={`Webhook ${index + 1} 链接`} required maxLength={512} placeholder="粘贴企业微信机器人链接" />}
             </div>)}
           </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={saving} label={enabled ? '已启用' : '已禁用'} />
-          {!enabled && <p className="text-xs text-token-muted">保存为禁用状态，启用后才会按计划发送。</p>}
+          {!enabled && <p className="text-xs text-token-muted">保存后可在操作列点击「启用」。</p>}
           <label className="flex items-center gap-2"><input name="mentionAll" type="checkbox" defaultChecked={source?.mentionAll ?? true} />@全部人</label>
           {error && <p role="alert" className="text-semantic-danger">{error}</p>}
         </form>

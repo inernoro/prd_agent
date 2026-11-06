@@ -42,6 +42,7 @@ export const saveScheduledNotification = (input: ScheduledNotificationInput, id?
   apiRequest<ScheduledNotification>(id ? `${endpoint}/${encodeURIComponent(id)}` : endpoint, {
     method: id ? 'PUT' : 'POST',
     body: input,
+    timeoutMs: 15_000,
   });
 
 export type NotificationDebugSettings = { configured: boolean; webhookMasked: string | null; canManage: boolean };
