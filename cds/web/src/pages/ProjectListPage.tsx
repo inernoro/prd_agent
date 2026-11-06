@@ -51,6 +51,7 @@ import { useNowTick } from '@/hooks/useNowTick';
 import { readProjectInventoryPreferences, writeProjectInventoryPreferences, type ProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
+import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
@@ -694,6 +695,25 @@ export function ProjectListPage(): JSX.Element {
     [project.id, uniqueProjectBrands(project).map(brand => brand.label)])), [projects]);
   const visibleProjects = selectInventoryProjects(projects, inventorySelection, environmentTargets, serviceLabels, inventoryPreferences.pinnedProjectIds);
 
+  function renderProjectCard(project: ProjectSummary): JSX.Element {
+    return (
+      <ProjectCard
+        key={project.id}
+        project={project}
+        canManageProjects={canManageProjects}
+        pinned={inventoryPreferences.pinnedProjectIds.includes(project.id)}
+        onTogglePin={() => toggleProjectPin(project)}
+        onCopyName={() => void copyProjectName(project)}
+        environments={environmentStatus === 'ready' ? projectEnvironmentNames(project.id, environmentTargets) : undefined}
+        onClone={() => setCloneTarget(project)}
+        onAgentKeys={() => setAgentKeyProject(project)}
+        onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
+        onDelete={() => setDeleteTarget(project)}
+        onTogglePause={() => (project.paused ? void applyPause(project, false) : setPauseTarget(project))}
+      />
+    );
+  }
+
   async function createProjectFromRepoUrl(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const gitRepoUrl = quickRepoUrl.trim();
@@ -897,24 +917,11 @@ export function ProjectListPage(): JSX.Element {
             visibleProjects.length === 0 ? <div className="cds-project-inventory-empty" role="status">
               <h2>没有匹配的项目</h2><p>试试其他名称、服务或筛选条件。</p>
               <Button variant="outline" size="sm" onClick={() => setInventorySelection({ ...INITIAL_PROJECT_SELECTION, view: inventorySelection.view })}>清除筛选</Button>
-            </div> : <div className={`cds-card-grid cds-project-inventory-grid ${inventorySelection.view === 'list' ? 'cds-project-inventory--list' : ''}`}>
-              {visibleProjects.map((project) => (
-                <ProjectCard
-                  key={project.id}
-                  project={project}
-                  canManageProjects={canManageProjects}
-                  pinned={inventoryPreferences.pinnedProjectIds.includes(project.id)}
-                  onTogglePin={() => toggleProjectPin(project)}
-                  onCopyName={() => void copyProjectName(project)}
-                  environments={environmentStatus === 'ready' ? projectEnvironmentNames(project.id, environmentTargets) : undefined}
-                  onClone={() => setCloneTarget(project)}
-                  onAgentKeys={() => setAgentKeyProject(project)}
-                  onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
-                  onDelete={() => setDeleteTarget(project)}
-                  onTogglePause={() => (project.paused ? void applyPause(project, false) : setPauseTarget(project))}
-                />
-              ))}
-            </div>
+            </div> : <ProjectInventorySections
+              projects={visibleProjects} view={inventorySelection.view} separatePaused={inventorySelection.status === 'all'}
+              filterKey={JSON.stringify([inventorySelection.status, inventorySelection.query.trim(), inventorySelection.environment])}
+              renderProject={renderProjectCard}
+            />
           ) : null}
         </section>
         {state.status === 'ok' && projects.length > 0 ? <footer className="cds-project-inventory-footer" aria-live="polite">
