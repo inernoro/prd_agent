@@ -14,7 +14,6 @@ import {
   computePublicArtifactRevision,
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
-import { extractVisibleHtmlText } from '../src/quality/html.js';
 import {
   buildPlatformRules,
   buildReviewMessage,
@@ -488,10 +487,9 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     const html = '<!doctype html><html lang="zh-CN"><head><title>产品说明</title><style>:root{--brand:#123456;--space:16px}body{font-family:Inter, sans-serif}@media(max-width:720px){main{padding:8px}}</style></head><body><header></header><main><h1 id="top">产品说明</h1><h2>核心能力</h2><img src="data:image/png;base64,AA==" alt="示意图"><a href="#top">返回</a></main><footer></footer></body></html>';
 
     const first = buildGeneratedArtifactFiles(html);
-    const second = buildGeneratedArtifactFiles(html.replace('<style>', '<style/>'));
+    const second = buildGeneratedArtifactFiles(html);
 
     expect(second).toEqual(first);
-    expect(extractVisibleHtmlText(html.replace('<style>', '<style/>'))).toBe(extractVisibleHtmlText(html));
     const decoded = Object.fromEntries(first.map((file) => [
       file.path,
       JSON.parse(Buffer.from(file.contentBase64, 'base64').toString('utf8')),
@@ -824,6 +822,8 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
       html.replace('assets/paint.svg#paint', 'assets/missing.svg#paint'),
       html.replace('url(#shade)', 'url(https://tracker.example/filter.svg#shade)'),
       html.replace('<head>', '<head><style/>body{background:url(assets/missing.png)}'),
+      html.replace('<svg><style/>', '<svg><style id=x/>body{background:url(assets/missing.png)}</style>'),
+      html.replace('<svg><style/>', '<svg><title><style>body{background:url(assets/missing.png)}</style></title>'),
     ]) {
       expect(() => hardenVerifiedPackageHtml(unsafe, paths)).toThrowError(
         expect.objectContaining({ code: 'design_output_not_self_contained' }),

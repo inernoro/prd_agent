@@ -3,6 +3,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { parse, type DefaultTreeAdapterMap } from 'parse5';
 
 import { assertPublicArtifactPath } from '../artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../errors.js';
@@ -64,6 +65,31 @@ const SVG_CSS_URL_ATTRIBUTES = [
   'fill', 'stroke', 'filter', 'clip-path', 'mask', 'cursor',
   'marker-start', 'marker-mid', 'marker-end',
 ] as const;
+
+function collectVerifiedPackageCssSources(html: string): string[] {
+  const sources: string[] = [];
+  const pending: DefaultTreeAdapterMap['node'][] = [parse(html)];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if ('tagName' in node) {
+      if (node.tagName === 'style' && (node.namespaceURI === 'http://www.w3.org/1999/xhtml'
+        || node.namespaceURI === 'http://www.w3.org/2000/svg')) {
+        sources.push(node.childNodes.flatMap((child) => 'value' in child ? [child.value] : []).join(''));
+      }
+      for (const attribute of node.attrs) {
+        if (attribute.name === 'style' || (node.namespaceURI === 'http://www.w3.org/2000/svg'
+          && SVG_CSS_URL_ATTRIBUTES.some((name) => name === attribute.name))) {
+          sources.push(attribute.value);
+        }
+      }
+      if ('content' in node) pending.push(node.content);
+    }
+    if ('childNodes' in node) {
+      for (let index = node.childNodes.length - 1; index >= 0; index -= 1) pending.push(node.childNodes[index]);
+    }
+  }
+  return sources;
+}
 
 export function canAcceptUntrackedWorkspaceEdit(
   deliverableValidation: string | undefined,
@@ -410,18 +436,10 @@ function hardenHtmlWithFactRetention(
     ? undefined
     : validateVerifiedPackagePaths(packagePaths);
   html = convertRelativeKnowledgeAnchors(html);
-  const cssSources: string[] = [];
-  let styleContentStart: number | undefined;
+  // Keep the legacy declarative path unchanged; only verified packages allow scripted interaction.
+  const cssSources = verifiedPackagePaths === undefined ? [html] : collectVerifiedPackageCssSources(html);
   for (const tag of iterateHtmlTags(html)) {
     const name = tag.name.toLowerCase();
-    if (name === 'style') {
-      if (tag.isClosing && styleContentStart !== undefined) {
-        cssSources.push(html.slice(styleContentStart, tag.start));
-        styleContentStart = undefined;
-      } else if (!tag.isClosing && !tag.isSelfClosing && styleContentStart === undefined) {
-        styleContentStart = tag.end;
-      }
-    }
     if (tag.isClosing) continue;
     if (verifiedPackagePaths === undefined && name === 'script') {
       throw new AgentWorkspaceRuntimeError(
@@ -436,13 +454,6 @@ function hardenHtmlWithFactRetention(
       );
     }
     const attributes = parseHtmlAttributes(tag.attributes);
-    const inlineStyle = attributes.get('style');
-    if (inlineStyle !== undefined) cssSources.push(decodeHtmlText(inlineStyle));
-    // SVG presentation attributes carry CSS resources without a style attribute.
-    for (const attribute of SVG_CSS_URL_ATTRIBUTES) {
-      const value = attributes.get(attribute);
-      if (value !== undefined) cssSources.push(decodeHtmlText(value));
-    }
     for (const attribute of ['src', 'href', 'poster', 'background']) {
       const rawValue = attributes.get(attribute);
       if (rawValue === undefined) continue;
@@ -474,7 +485,6 @@ function hardenHtmlWithFactRetention(
       );
     }
   }
-  if (styleContentStart !== undefined) cssSources.push(html.slice(styleContentStart));
   // JavaScript object-URL helpers and page text are not CSS resource declarations.
   for (const css of cssSources) {
     if (/@import\s+(?:url\s*\()?/i.test(css)) {
