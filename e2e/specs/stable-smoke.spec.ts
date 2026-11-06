@@ -2067,7 +2067,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-001][FILE-002][FILE-006][FILE-007][FILE-009][FILE-010] 文件格式、下载、重复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[FILE-001][FILE-002][FILE-006][FILE-007][FILE-009][FILE-010] 文件格式、下载、重复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/transcript-agent');
     const runKey = `stsmk-${Date.now()}`;
     let storeId = '';
@@ -2121,13 +2122,20 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect((content.content || '').trim().length).toBeGreaterThan(5);
         if (fixture.expected) expect(content.content).toContain(fixture.expected);
 
+        const downloadStartedAt = Date.now();
         const original = await page.request.get(`/api/document-store/entries/${uploaded.entry.id}/download`, {
           headers: authHeaders(token),
+          timeout: 60_000,
         });
         expect(original.ok()).toBe(true);
         expect(original.headers()['content-type'] || '').toContain(fixture.mime.split(';')[0]);
         expect(downloadFileName(original.headers()['content-disposition'] || '')).toBe(expectedFileName);
-        expect((await original.body()).byteLength).toBe(fixture.buffer.byteLength);
+        const originalBytes = await original.body();
+        expect(originalBytes.byteLength).toBe(fixture.buffer.byteLength);
+        await testInfo.attach(`file-download-${fixture.suffix}`, {
+          body: JSON.stringify({ durationMs: Date.now() - downloadStartedAt, byteLength: originalBytes.byteLength, status: original.status() }),
+          contentType: 'application/json',
+        });
       }
 
       const duplicate = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
@@ -2225,7 +2233,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test.use({ serviceWorkers: process.env.STABLE_SMOKE_ENVIRONMENT === 'cds' ? 'block' : 'allow' });
   test('[FILE-003] 大文件上传和解析持续反馈，正式环境使用安全小文件', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
-    test.setTimeout(90_000);
+    test.setTimeout(150_000);
     const token = await loginAndReadToken(page, request, '/');
     await page.getByRole('button', { name: '知识库', exact: true }).click();
     await page.waitForURL((url) => url.pathname === '/document-store');
@@ -2310,7 +2318,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         const nextPercent = await transferStatus.innerText();
         await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(nextPercent);
         await expect(transferStatus).toHaveText(/^\d+%$/);
-        await expect.poll(() => pausedRequestId, { timeout: 20_000 }).not.toBe('');
+        // 2MB 在 128KiB/s 的主动限速下至少传输16秒，响应还需要真实网络往返。
+        // 这里只放宽夹具等待回包的预算，百分比变化与解析计时的断言保持不变。
+        await expect.poll(() => pausedRequestId, { timeout: 60_000 }).not.toBe('');
         await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeVisible();
         const status = page.getByTestId('document-upload-status');
         await expect(status).toContainText('解析中 · 已等待');
