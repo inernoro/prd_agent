@@ -1,3 +1,5 @@
+import { inspectionHealthDocument } from './services/project-inspections.js';
+import { createProjectInspectionsRouter } from './routes/project-inspections.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
 import { AlarmRelay, registerAlarmRelayRoutes } from './services/alarm-relay.js';
@@ -6406,6 +6408,14 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       return;
     }
     try {
+      if (req.query.projectInspection !== undefined) {
+        if (typeof req.query.projectInspection !== 'string') { res.status(400).json({ error: 'invalid_project' }); return; }
+        const project = stateService.getProject(req.query.projectInspection);
+        if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+        res.setHeader('content-type', 'application/health+json; charset=utf-8');
+        res.status(200).json(inspectionHealthDocument(project.monitoringInspections || []));
+        return;
+      }
       const doc = await cachedSelfCheck();
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
       res.status(200).json(doc);
@@ -6429,6 +6439,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   setInterval(() => { void runDiscovery().catch(() => undefined); }, discoveryIntervalMs).unref?.();
   void runDiscovery().catch(() => undefined);
 
+  app.use('/api', createProjectInspectionsRouter({
+    getProject: (id) => stateService.getProject(id),
+    save: (id, monitoringInspections) => { stateService.updateProject(id, { monitoringInspections }); },
+  }));
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
     listProjectPreviewHosts,

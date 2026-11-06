@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowRight, AlertTriangle, CheckCircle2, Search, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -39,7 +40,7 @@ export function BusinessHome({ targets, now, summary, onOpen, onProject, onManag
       </section>
       <section>
         <div className="status-home-section-heading"><h2>我的业务</h2><span className="status-home-muted">按项目查看，异常优先</span></div>
-        <div className="status-home-projects">
+        <div className="mb-3 flex flex-wrap gap-3">{projects.map(project => <Link key={project.id} className="status-home-link" to={`/status/${encodeURIComponent(project.id)}`}>{project.name}：检查与通知总览 <ArrowRight className="h-4 w-4" /></Link>)}</div><div className="status-home-projects">
           {projects.map((project) => <button key={project.id} className="status-home-panel status-home-project" onClick={() => onProject(project.id)}>
             <div className="flex items-start justify-between gap-3"><h3>{project.name}</h3><HomeStateBadge state={project.state} /></div>
             <p className="status-home-muted">{project.targets.length} 项检查 · {project.counts.up} 项正常</p>

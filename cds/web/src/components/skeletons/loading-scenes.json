@@ -84,6 +84,13 @@
     "workspace": "fill"
   },
   {
+    "route": "/status/:projectId",
+    "name": "项目检查与通知",
+    "page": "pages/ProjectStatusPage.tsx",
+    "kind": "monitor",
+    "workspace": "fill"
+  },
+  {
     "route": "/task-schedule",
     "name": "任务调度",
     "page": "pages/TaskSchedulePage.tsx",
