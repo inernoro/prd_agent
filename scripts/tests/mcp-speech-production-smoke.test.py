@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("speech_smoke", ROOT / "scripts/mcp-speech-production-smoke.py")
@@ -91,7 +92,7 @@ class ProductionSpeechTests(unittest.TestCase):
         check = runner(Fixture())
         self.assertTrue(check.readiness())
         report = check.finish()
-        self.assertEqual(report["permissions"], {"speechRead": True, "speechGenerate": True, "speechConfigure": False, "authorizationManage": False})
+        self.assertEqual(report["permissions"], {"speechRead": True, "speechGenerate": True, "speechConfigure": False, "authorizationManage": False, "super": False})
         self.assertNotIn(CANARY, json.dumps(report))
         self.assertEqual(report["capabilities"]["availableCount"], 1)
 
@@ -151,6 +152,53 @@ class ProductionSpeechTests(unittest.TestCase):
             self.assertEqual(smoke.main(["--map-base", BASE, "--expect-commit", COMMIT, "--mode", "run", "--json-out", str(output)]), 1)
             session.assert_not_called()
             self.assertIn("explicit_production_run_opt_in_required", output.read_text())
+
+    def test_viewer_inventory_reports_only_tts_counts_and_not_ticket_or_resource_material(self):
+        fixture = Fixture()
+        calls = []
+
+        def http(base, path, token="", method="GET", **kwargs):
+            calls.append((method, path))
+            if path == "/api/v1/auth/synthetic/gateway-ticket":
+                return response({"code": CANARY, "ticketId": CANARY})
+            if path == "/llmgw/gw/auth/stable-smoke-sso":
+                return response({"token": CANARY, "tenant": {"role": "viewer"}})
+            if path.startswith("/llmgw/gw/logical-models"):
+                return response({"items": [{"name": CANARY, "offerings": [{"protocol": "openai"}, {"protocol": "doubao-tts"}]}]})
+            if path == "/llmgw/gw/exchanges":
+                return response({"items": [{"id": CANARY, "name": CANARY, "transformerType": "doubao-tts", "enabled": True, "hasKey": True, "resourceId": CANARY}]})
+            return fixture.http(base, path, token, method, **kwargs)
+
+        check = smoke.SpeechSmoke(BASE, COMMIT, http=http, session=lambda *_: ("rsa", CANARY, {}), inventory=True)
+        with patch.object(smoke.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps({"signature": CANARY}))):
+            self.assertTrue(check.readiness())
+        report = check.finish()
+        self.assertEqual(report["gatewayInventory"]["enabledDoubaoTtsResourcesWithCredentials"], 1)
+        self.assertEqual(report["gatewayInventory"]["protocols"], ["doubao-tts", "openai"])
+        self.assertNotIn(CANARY, json.dumps(report))
+        self.assertEqual([path for method, path in calls if method != "GET"], ["/api/v1/auth/synthetic/gateway-ticket", "/llmgw/gw/auth/stable-smoke-sso"])
+
+    def test_gateway_inventory_refuses_non_viewer_session_without_changing_role(self):
+        called = []
+
+        def http(base, path, **kwargs):
+            called.append(path)
+            return response({"code": CANARY}) if path.endswith("gateway-ticket") else response({"token": CANARY, "tenant": {"role": "owner"}})
+
+        check = smoke.SpeechSmoke(BASE, COMMIT, http=http)
+        with patch.object(smoke.subprocess, "run", return_value=SimpleNamespace(stdout="{}")):
+            check.gateway_inventory()
+        self.assertFalse(check.report["gatewayInventory"]["ok"])
+        self.assertFalse(check.report["gatewayInventory"]["privilegeChanged"])
+        self.assertEqual(len(called), 2)
+
+    def test_validate_only_never_requests_a_session_or_any_endpoint(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"DEFAULT_MAP_BASE": BASE, "STABLE_SMOKE_USER": "stsmk_prod"}), \
+                patch.object(smoke.AUTH, "_stable_smoke_session") as session, patch.object(smoke, "request") as http, contextlib.redirect_stdout(io.StringIO()):
+            output = Path(directory) / "report.json"
+            self.assertEqual(smoke.main(["--map-base", BASE, "--expect-commit", COMMIT, "--validate-only", "--json-out", str(output)]), 0)
+            session.assert_not_called()
+            http.assert_not_called()
 
     def test_redirect_does_not_forward_authorization(self):
         received = []

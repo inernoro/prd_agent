@@ -143,7 +143,7 @@ class SpeechSmoke:
         generate = manage or "mcp-speech.generate" in grants
         self.report["permissions"] = {"speechRead": generate or "mcp-speech.read" in grants,
                                       "speechGenerate": generate, "speechConfigure": manage,
-                                      "authorizationManage": super_user or "authz.manage" in grants}
+                                      "authorizationManage": super_user or "authz.manage" in grants, "super": super_user}
         capabilities = self.probe("speech_capabilities", "/api/mcp-speech/capabilities")
         settings = self.probe("speech_settings", "/api/mcp-speech/settings")
         profiles = capabilities.get("profiles") if capabilities else None
@@ -187,10 +187,19 @@ class SpeechSmoke:
             if not isinstance(items, list):
                 raise CheckFailure("gateway_inventory_unavailable")
             offerings = [o for model in items if isinstance(model, dict) for o in model.get("offerings", []) if isinstance(o, dict)]
+            exchanges_response = self.http(self.base, "/llmgw/gw/exchanges", console_token)
+            exchanges = data_of(exchanges_response)
+            exchange_items = exchanges.get("items") if exchanges else None
+            typed = [item for item in exchange_items or [] if isinstance(item, dict)
+                     and (item.get("transformerType") == "doubao-tts" or any(model.get("modelType") == "tts" for model in item.get("models", []) if isinstance(model, dict)))]
             known = {"openai", "openai-compatible", "exchange", "doubao-tts"}
             summary.update({"ok": True, "viewer": True, "ttsLogicalModelCount": len(items), "ttsOfferingCount": len(offerings),
                             "protocols": sorted({o["protocol"] for o in offerings if o.get("protocol") in known}),
-                            "hasExplicitDoubaoTtsProtocol": any(o.get("protocol") == "doubao-tts" for o in offerings)})
+                            "hasExplicitDoubaoTtsProtocol": any(o.get("protocol") == "doubao-tts" for o in offerings),
+                            "exchangeInventoryAvailable": isinstance(exchange_items, list), "ttsExchangeCount": len(typed),
+                            "doubaoTtsExchangeCount": sum(x.get("transformerType") == "doubao-tts" for x in typed),
+                            "enabledDoubaoTtsResourcesWithCredentials": sum(x.get("transformerType") == "doubao-tts" and x.get("enabled") is True
+                                and x.get("hasKey") is True and bool(x.get("resourceId")) for x in typed)})
         except Exception:
             summary["failureCode"] = "viewer_inventory_unavailable"
         self.check("gateway_viewer_inventory", summary["ok"], failure="viewer_inventory_unavailable", required=False)
