@@ -96,3 +96,14 @@ export function reviewPage(tasks: CodeReviewTask[], query: string, filter: Revie
   const current = Math.min(Math.max(0, Number.isFinite(page) ? Math.floor(page) : 0), pages - 1);
   return { items: filtered.slice(current * REVIEW_PAGE_SIZE, (current + 1) * REVIEW_PAGE_SIZE), total: filtered.length, pages, page: current };
 }
+
+/** Explicit links win. Polling updates must never promote an older manual batch. */
+export function selectReviewFocus(tasks: CodeReviewTask[], selectedId = ''): CodeReviewTask | undefined {
+  if (selectedId) return tasks.find(task => task.id === selectedId);
+  return tasks.reduce<CodeReviewTask | undefined>((latest, task) => {
+    if (task.sourceType === 'report') return latest;
+    const created = Date.parse(task.createdAt);
+    const previous = latest ? Date.parse(latest.createdAt) : Number.NEGATIVE_INFINITY;
+    return !latest || Number.isFinite(created) && (!Number.isFinite(previous) || created > previous) ? task : latest;
+  }, undefined);
+}

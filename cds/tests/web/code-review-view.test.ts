@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { CodeReviewTask } from '../../web/src/lib/codeReviews.js';
-import { explainReviewError, needsReviewAttention, reviewCoverage, reviewPage, reviewTaskLabel, summarizeReviews } from '../../web/src/lib/codeReviewView.js';
+import { explainReviewError, needsReviewAttention, reviewCoverage, reviewPage, reviewTaskLabel, selectReviewFocus, summarizeReviews } from '../../web/src/lib/codeReviewView.js';
 import { ReviewDetail, ReviewTaskList } from '../../web/src/pages/CodeReviewsPage.js';
 
 function task(input: Partial<CodeReviewTask> = {}): CodeReviewTask {
@@ -70,5 +70,37 @@ describe('大批量审查任务的筛选和分页', () => {
     expect(reviewPage(tasks, '', 'attention', 0).total).toBe(20);
     expect(reviewPage(tasks, '', 'active', 0).total).toBe(504);
     expect(reviewPage(tasks, 'missing', 'all', 8)).toMatchObject({ total: 0, pages: 1, page: 0 });
+  });
+});
+
+
+describe('整仓审查首页的单任务焦点', () => {
+  it('选择优先于最新任务，缺失深链不退回其他任务，上传报告仍可显式选中', () => {
+    const old = task({ id: 'old' });
+    const current = task({ id: 'new', createdAt: '2026-11-07T00:00:00Z' });
+    const archive = task({ id: 'archive', sourceType: 'report', createdAt: '2026-11-08T00:00:00Z' });
+    expect(selectReviewFocus([old, current, archive])?.id).toBe('new');
+    expect(selectReviewFocus([old, current], 'old')?.id).toBe('old');
+    expect(selectReviewFocus([old, current], 'missing')).toBeUndefined();
+    expect(selectReviewFocus([old, current, archive], 'archive')?.id).toBe('archive');
+    expect(selectReviewFocus([archive])).toBeUndefined();
+  });
+
+  it('513 项历史批次的轮询更新时间不抢占较新的整仓审查，也不合并或改动原记录', () => {
+    const history = Array.from({ length: 513 }, (_, i) => task({ id: `manual-${i}`, updatedAt: '2026-11-09T00:00:00Z' }));
+    const current = task({ id: 'whole-repository', createdAt: '2026-11-08T00:00:00Z' });
+    const rows = [...history, current];
+    expect(selectReviewFocus(rows)?.id).toBe(current.id);
+    expect(selectReviewFocus([...rows].reverse())?.id).toBe(current.id);
+    expect(reviewPage(rows, '', 'all', 0).total).toBe(514);
+    expect(selectReviewFocus(rows, 'manual-500')?.id).toBe('manual-500');
+    expect(rows).toHaveLength(514);
+  });
+
+  it('同一创建时间保留原有顺序，不按更新时间或状态选任务', () => {
+    const first = task({ id: 'first', status: 'failed' });
+    const second = task({ id: 'second', updatedAt: '2026-11-09T00:00:00Z' });
+    expect(selectReviewFocus([first, second])?.id).toBe('first');
+    expect(selectReviewFocus([])).toBeUndefined();
   });
 });
