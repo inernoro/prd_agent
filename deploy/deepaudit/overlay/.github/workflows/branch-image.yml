@@ -47,6 +47,15 @@ jobs:
       - name: 验证平台迁移命令可执行
         if: matrix.component == 'backend'
         run: docker run --rm deepaudit-cds-backend:test sh -c 'command -v alembic && alembic --help >/dev/null'
+      - name: 验证全新归属卷写入与运行时降权
+        if: matrix.component == 'backend'
+        run: |
+          uploads="deepaudit-ci-uploads-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          data="deepaudit-ci-data-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker volume rm "$uploads" "$data" >/dev/null' EXIT
+          docker volume create "$uploads" >/dev/null
+          docker volume create "$data" >/dev/null
+          docker run --rm --mount "type=volume,source=$uploads,target=/app/uploads,volume-nocopy" --mount "type=volume,source=$data,target=/app/data,volume-nocopy" deepaudit-cds-backend:test /app/cds-entrypoint.sh check-storage
       - name: 验证真实后端路由
         if: matrix.component == 'backend'
         run: >-

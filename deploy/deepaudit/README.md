@@ -22,4 +22,6 @@
 
 CDS 配置导入后、部署前，读取 `cds-storage-plan.json`，对后端 profile 调用 `POST /api/branches/:id/storage/provision`，请求包含 `profileId`、`initializeStorage: new-only` 和该文件 `backend` 数组作为 `freshMounts`。两个目标为 `/app/uploads` 与 `/app/data`，均为 `persistent`。CDS 分配的实际卷名与实例、项目、分支和服务绑定；预检发现已有挂载或已有出生记录时停止，禁止接管旧卷或改名重试。预构建镜像本身没有 Docker VOLUME 隐式持久卷。
 
+CDS 的新归属卷使用 nocopy，初始根目录由 root 持有。镜像启动入口只初始化固定的上传、数据与缓存目录权限，然后通过 gosu 切换为 UID/GID 10001 执行迁移和分析服务。CI 使用两个真实 root-owned nocopy 卷验证写入与降权；不通过宿主临时 chmod、不挂 Docker socket、不以 root 分析上传源码。
+
 网关专用服务密钥使用 `sourceSystem: external`、`clientCode: deepaudit`、`purpose: external-platform`，仅绑定一个新用途（如 `deepaudit.code-review::chat`），协议为 `openai-compatible`，权限为 `invoke`、`stream:invoke`、`route:read`。兼容入口可从单用途密钥推断 appCaller，DeepAudit 使用标准 Bearer 即可；无需额外来源头。`LLM_MODEL` 填该用途已获权的逻辑模型 publicId，`LLM_BASE_URL` 填平台实际返回的网关 OpenAI 入口（以 `/v1` 结尾）。控制台真人 SSO 与 CDS 配置审批仍由用户完成。
