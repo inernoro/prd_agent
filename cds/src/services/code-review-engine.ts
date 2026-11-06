@@ -80,7 +80,9 @@ export class CodeReviewEngine {
       const form = new FormData();
       form.set('project_id', project.id);
       form.set('file', new Blob([new Uint8Array(input.zip)], { type: 'application/zip' }), 'snapshot.zip');
-      form.set('scan_config', JSON.stringify({ exclude_patterns: input.excludePatterns }));
+      // CDS already applied user exclusions to this fixed snapshot with directory boundaries.
+      // DeepAudit uses substring exclusions, so replaying them would silently remove different files.
+      form.set('scan_config', JSON.stringify({ exclude_patterns: [] }));
       const scan = await request('deepaudit.submit_scan', '/scan/upload-zip', { method: 'POST', body: form }) as { task_id?: string };
       if (!scan.task_id || typeof scan.task_id !== 'string') throw new Error('DeepAudit 未返回审查任务 ID');
       engineTaskId = scan.task_id;

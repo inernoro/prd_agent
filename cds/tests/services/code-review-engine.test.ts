@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CodeReviewEngine } from '../../src/services/code-review-engine.js';
 import { reviewJsonRequest, type CodeReviewAuditEvent } from '../../src/services/code-review-audit.js';
+import { validateCodeReviewZip } from '../../src/services/code-review-source.js';
+import { buildZip } from '../../src/utils/zip.js';
 
 describe('DeepAudit five-dimension adapter', () => {
   it('creates ZIP project and scan, reports progress and preserves incomplete coverage', async () => {
@@ -40,6 +42,38 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(result.engineTaskId).toBe('upstream');
     expect(urls).toHaveLength(2);
     expect(urls.every((url) => url.includes('/tasks/upstream'))).toBe(true);
+  });
+
+  it('sends the fixed snapshot unchanged without replaying boundary-based exclusions as upstream substrings', async () => {
+    const excludePatterns = ['cds/src/util'];
+    const snapshot = await validateCodeReviewZip(buildZip([
+      { name: 'repository/cds/src/utils/zip.ts', data: 'export const selected = true;' },
+      { name: 'repository/cds/src/util/omitted.ts', data: 'const excluded = true;' },
+    ]), excludePatterns);
+    expect(snapshot.totalFiles).toBe(1);
+    let upstreamTotal = 0;
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
+      if (String(url).endsWith('/projects/')) return Response.json({ id: 'project' });
+      if (String(url).endsWith('/scan/upload-zip')) {
+        expect(init?.body).toBeInstanceOf(FormData);
+        const form = init!.body as FormData;
+        const scanConfig = JSON.parse(String(form.get('scan_config')));
+        expect(scanConfig.exclude_patterns).toEqual([]);
+        const file = form.get('file');
+        expect(file).toBeInstanceOf(Blob);
+        expect(Buffer.from(await (file as Blob).arrayBuffer())).toEqual(snapshot.zip);
+        // This is DeepAudit's actual substring contract, which must not reinterpret CDS's util rule.
+        upstreamTotal = scanConfig.exclude_patterns.some((pattern: string) => 'cds/src/utils/zip.ts'.includes(pattern)) ? 0 : 1;
+        return Response.json({ task_id: 'upstream' });
+      }
+      if (String(url).endsWith('/issues')) return Response.json([]);
+      return Response.json({ status: 'completed', total_files: upstreamTotal, scanned_files: upstreamTotal });
+    }) as typeof fetch });
+    const result = await engine.run({ taskId: 'cds-id', zip: snapshot.zip, excludePatterns,
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+    expect(result.totalFiles).toBe(1);
+    expect(result.scannedFiles).toBe(1);
+    expect(excludePatterns).toEqual(['cds/src/util']); // The task keeps its original configuration as provenance.
   });
 
   it('preserves detailed causes from the real ZIP-scanner issue shape without repeating its title', async () => {
