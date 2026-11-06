@@ -813,8 +813,12 @@ export class ContainerService {
     if (runtime.staticWeb) {
       await this.inspectOwnedRuntime(entry, profileId, runtime, false);
       context.assertCurrent?.('before static runtime retirement');
+      await context.beforeRemove?.();
+      context.assertCurrent?.('after static retirement prerequisite');
       await this.staticWebService().stop(runtime.staticWeb.id);
       context.assertCurrent?.('after static runtime stop');
+      await context.beforeRemove?.();
+      context.assertCurrent?.('before static runtime artifact discard');
       await this.staticWebService().discard(runtime.staticWeb);
       return;
     }
@@ -3162,8 +3166,12 @@ export class ContainerService {
       context.assertCurrent?.('before static site removal');
       const runtime = this.staticSites?.inspect(containerName)?.runtime
         || [...this.stoppedStaticSites.values()].find(site => site.runtime.id === containerName || site.runtime.serviceName === containerName)?.runtime;
+      await context.beforeRemove?.();
+      context.assertCurrent?.('after static site removal prerequisite');
       await this.staticSites?.stop(containerName);
       context.assertCurrent?.('after static site stop');
+      await context.beforeRemove?.();
+      context.assertCurrent?.('before static site artifact discard');
       if (runtime) await this.staticWebService().discard(runtime);
       for (const [id, site] of this.stoppedStaticSites) if (id === containerName || site.runtime.serviceName === containerName) this.stoppedStaticSites.delete(id);
       return;

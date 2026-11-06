@@ -50,6 +50,50 @@ function fixture(options: { startup?: ObservationStreamExecutor; logs?: Containe
 }
 
 describe('正常部署入口的非容器前端', () => {
+  it.each(['owned', 'direct'] as const)('删除前旧入口前置条件拒绝时，保留真实静态监听器与产物 %s', async mode => {
+    const f = fixture(); await f.manager.runService(f.entry, f.profile, f.service);
+    const runtime = f.service.staticWeb!;
+    const beforeRemove = vi.fn(async () => { throw new Error('old-serving-unavailable'); });
+    const context = { beforeRemove };
+    const error = await (mode === 'owned'
+      ? f.manager.removeOwnedRuntime(f.entry, 'web', f.service, context)
+      : f.manager.remove(runtime.id, context)).then(() => null, error => error.message);
+    const listening = await f.manager.isRunning(runtime.id);
+    expect({ error, calls: beforeRemove.mock.calls.length, listening,
+      files: fs.existsSync(runtime.rootDirectory),
+      status: listening ? (await fetch(`http://127.0.0.1:${f.service.hostPort}/`)).status : null,
+    }).toEqual({ error: 'old-serving-unavailable', calls: 1, listening: true, files: true, status: 200 });
+  });
+
+  it.each(['owned', 'direct'] as const)('静态监听关闭后旧入口失效时，仍保留待回收产物责任 %s', async mode => {
+    const f = fixture(); await f.manager.runService(f.entry, f.profile, f.service);
+    const runtime = f.service.staticWeb!;
+    let checks = 0;
+    const beforeRemove = vi.fn(async () => {
+      if (++checks === 2) throw new Error('old-serving-lost-after-stop');
+    });
+    const context = { beforeRemove };
+    const error = await (mode === 'owned'
+      ? f.manager.removeOwnedRuntime(f.entry, 'web', f.service, context)
+      : f.manager.remove(runtime.id, context)).then(() => null, error => error.message);
+    expect({ error, calls: beforeRemove.mock.calls.length, listening: await f.manager.isRunning(runtime.id),
+      files: fs.existsSync(runtime.rootDirectory),
+    }).toEqual({ error: 'old-serving-lost-after-stop', calls: 2, listening: false, files: true });
+  });
+
+  it.each(['owned', 'direct'] as const)('删除前置条件等待期间代次变化时，不停止或删除当前静态运行 %s', async mode => {
+    const f = fixture(); await f.manager.runService(f.entry, f.profile, f.service);
+    const runtime = f.service.staticWeb!; let superseded = false;
+    const beforeRemove = vi.fn(async () => { superseded = true; });
+    const context = { beforeRemove, assertCurrent: () => { if (superseded) throw new Error('operation superseded'); } };
+    const error = await (mode === 'owned'
+      ? f.manager.removeOwnedRuntime(f.entry, 'web', f.service, context)
+      : f.manager.remove(runtime.id, context)).then(() => null, error => error.message);
+    expect({ error, calls: beforeRemove.mock.calls.length, listening: await f.manager.isRunning(runtime.id),
+      files: fs.existsSync(runtime.rootDirectory),
+    }).toEqual({ error: 'operation superseded', calls: 1, listening: true, files: true });
+  });
+
   it('产物已准备但尚未交付运行身份时被取消，自己的未发布目录也必须收回', async () => {
     const f = fixture(); let superseded = false;
     const prepare = StaticWebService.prototype.prepare;
