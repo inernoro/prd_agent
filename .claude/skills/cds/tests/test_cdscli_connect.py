@@ -505,15 +505,15 @@ def test_display_rename_keeps_original_creation_command_reusable(workspace, monk
     assert context["projectName"] == "Renamed" and context["creationName"] == "Demo"
     assert context["creationSlug"] == "demo"
 
-@pytest.mark.parametrize('explicit', [True, False])
+@pytest.mark.parametrize('explicit', [True, False, 'empty-ticket'])
 def test_original_identity_recovery_saves_both_credentials_without_user_input(workspace, monkeypatch, explicit):
     monkeypatch.setattr(cdscli, '_USER_CREDENTIALS_PATH', str(workspace / 'private/user.json'))
     monkeypatch.setattr(cdscli, '_origin_repository', lambda: 'git@github.com:example/original.git')
     monkeypatch.setattr(cdscli.time, 'sleep', lambda _: None)
-    if not explicit:
+    if explicit is not True:
         cdscli._write_private_json(str(workspace / '.cds/identity-recovery.json'), {
             'host': 'https://cds.example', 'repository': 'github.com/example/original',
-            'projectHint': 'project-a', 'requestId': 'ic_test', 'pollToken': 'ticket-secret',
+            'projectHint': '' if explicit == 'empty-ticket' else 'project-a', 'requestId': 'ic_test', 'pollToken': 'ticket-secret',
             'expires': time.time() + 300,
         })
     calls = []
@@ -530,7 +530,7 @@ def test_original_identity_recovery_saves_both_credentials_without_user_input(wo
             return 200, {'status': 'approved', 'projectId': 'project-a', 'projectName': '原项目', 'projectSlug': 'original', 'authorizationKey': 'cdsp_original_secret', 'userCredential': 'cdsu_original_secret'}, {}
         return 200, {'id': 'project-a'}, {}
     monkeypatch.setattr(cdscli, '_request', request)
-    code, output = run_command(['connect', '--host', 'https://cds.example'] + (['--recover'] if explicit else ['--project', 'project-a']))
+    code, output = run_command(['connect', '--host', 'https://cds.example'] + (['--recover'] if explicit is True else ['--project', 'project-a']))
     assert code == 0
     assert 'cdsu_original_secret' not in output and 'cdsp_original_secret' not in output and 'ticket-secret' not in output
     assert cdscli._load_user_credential('https://cds.example') == 'cdsu_original_secret'
@@ -569,12 +569,13 @@ def test_identity_recovery_keeps_ticket_until_both_files_saved_and_resumes_witho
     assert not ticket.exists()
 
 
-def test_original_identity_recovery_rejects_wrong_project_without_saving(workspace, monkeypatch):
+@pytest.mark.parametrize("hint", ["", "project-a", "other"])
+def test_original_identity_recovery_rejects_wrong_project_without_saving(workspace, monkeypatch, hint):
     monkeypatch.setattr(cdscli, '_USER_CREDENTIALS_PATH', str(workspace / 'private/user.json'))
     monkeypatch.setattr(cdscli, '_origin_repository', lambda: 'https://github.com/example/original')
     cdscli._write_private_json(str(workspace / '.cds/identity-recovery.json'), {
         'host': 'https://cds.example', 'repository': 'github.com/example/original',
-        'projectHint': 'project-a', 'requestId': 'ic_test', 'pollToken': 'secret-ticket',
+        'projectHint': hint, 'requestId': 'ic_test', 'pollToken': 'secret-ticket',
         'expires': time.time() + 300,
     })
     def request(method, path, **kwargs):
@@ -730,3 +731,66 @@ def test_unknown_stored_repository_cannot_reuse_different_explicit_target(worksp
                            '--slug', 'demo', '--git-url', 'https://github.com/other/target.git'])
     assert code == 2
     assert calls[0] == ('POST', '/api/bootstrap-access-requests')
+
+
+@pytest.mark.parametrize("mode", ["project", "instance"])
+@pytest.mark.parametrize("bad", ["json", "hosts", "unreadable"])
+def test_corrupt_archive_is_rejected_before_one_time_approval_can_be_consumed(workspace, monkeypatch, mode, bad):
+    cdscli._save_local_credentials(host="https://primary.example", project_id="primary", project_key="primary-private")
+    original = (workspace / '.cds/credentials.json').read_bytes()
+    archive = workspace / '.cds/instance-credentials.json'
+    archive.write_text('{' if bad == 'json' else '{"version":1,"hosts":[]}' if bad == 'hosts' else '{"version":1,"hosts":{}}')
+    if bad == 'unreadable':
+        read = Path.read_text
+        def denied(path, *args, **kwargs):
+            if path == archive: raise PermissionError('fixture')
+            return read(path, *args, **kwargs)
+        monkeypatch.setattr(Path, 'read_text', denied)
+    calls = []
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        if method == 'POST': return 201, {'requestId': 'r', 'pollToken': 'poll'}, {}
+        if path.endswith('/r'): return 200, {'status': 'approved', 'authorizationKey': 'cdsp_once'}, {}
+        return 200, {'id': 'target'}, {}
+    monkeypatch.setattr(cdscli, '_request', request)
+    if mode == 'instance':
+        (workspace / 'cds-instances.json').write_text(json.dumps({'version': 1, 'instances': [
+            {'id': 'standby', 'name': '备用', 'role': 'standby', 'url': 'https://standby.example'}]}))
+        argv = ['instance', 'connect', 'standby', '--project', 'target']
+    else: argv = ['connect', '--host', 'https://standby.example', '--project', 'target']
+    code, output = run_command(argv)
+    assert code == 1, output
+    assert calls == []  # No request creation or one-time result claim.
+    assert (workspace / '.cds/credentials.json').read_bytes() == original
+    assert 'cdsp_once' not in output and 'primary-private' not in output
+
+
+def test_archive_failure_during_wait_stops_before_one_time_claim(workspace, monkeypatch):
+    calls = []
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        if method == 'POST':
+            (workspace / '.cds').mkdir(exist_ok=True)
+            (workspace / '.cds/instance-credentials.json').write_text('{')
+            return 201, {'requestId': 'r', 'pollToken': 'poll'}, {}
+        return 200, {'status': 'approved', 'authorizationKey': 'cdsp_once'}, {}
+    monkeypatch.setattr(cdscli, '_request', request)
+    code, _ = run_command(['connect', '--host', 'cds.example', '--project', 'p'])
+    assert code == 1
+    assert calls == [('POST', '/api/projects/p/access-requests')]
+
+
+def test_corrupt_archive_cannot_consume_bootstrap_create_grant(workspace, monkeypatch):
+    cdscli._save_local_credentials(host='https://cds.example', bootstrap_key='cdsg_once',
+                                   bootstrap_source=cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL)
+    original = (workspace / '.cds/credentials.json').read_bytes()
+    (workspace / '.cds/instance-credentials.json').write_text('{')
+    calls = []
+    def request(method, path, **kwargs):
+        calls.append((method, path))
+        return 201, {'project': {'id': 'created'}, 'issuedProjectKey': {'plaintext': 'cdsp_once'}}, {}
+    monkeypatch.setattr(cdscli, '_request', request)
+    code, _ = run_command(['project', 'create', '--name', 'Demo'])
+    assert code == 1
+    assert calls == []
+    assert (workspace / '.cds/credentials.json').read_bytes() == original

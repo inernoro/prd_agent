@@ -1025,6 +1025,7 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
         and str(_creds.get("bootstrapSource") or "").strip() == BOOTSTRAP_SOURCE_PAGE_APPROVAL
     )
 
+    _instance_store()
     body = _call("POST", "/api/projects", body=payload, timeout=timeout)
     proj = body.get("project") if isinstance(body, dict) else None
     pid = str((proj or {}).get("id") or "").strip()
@@ -4154,7 +4155,7 @@ def _connect_original_identity(args: argparse.Namespace, host: str, repository: 
     try:
         body = _pending_identity_request(host, repository)
         ticket_path = os.path.join(_workspace_root(), ".cds", "identity-recovery.json")
-        if body and body.get("projectHint", "") != project_hint and project_hint:
+        if body and body.get("projectHint") and body["projectHint"] != project_hint and project_hint:
             die("本地未完成申请对应不同项目，未覆盖原申请。", code=2)
         if not body:
             status, body, _ = _request("POST", "/api/identity-connections", body={
@@ -4193,6 +4194,7 @@ def _connect_original_identity(args: argparse.Namespace, host: str, repository: 
 
         last = 0.0
         while time.monotonic() < deadline:
+            _instance_store()
             code, result, _ = _request("GET", path, timeout=10, extra_headers=headers, fatal_network_errors=False)
             if code == 0:
                 result = {"status": "pending"}
@@ -4257,6 +4259,9 @@ def cmd_connect(args: argparse.Namespace) -> None:
     recover = bool(getattr(args, "recover", False))
     if sum((bool(project_id), new_project, recover)) != 1:
         die("请选择项目接入、新建或原身份恢复中的一项", code=1)
+    # Reject an already broken local archive before creating an approval or
+    # consuming a one-time delivery. Do not discover it only while saving the key.
+    _instance_store()
     if recover:
         repo = _safe_repository_url(_origin_repository())
         pending = _pending_identity_request(host, repo)
@@ -4491,6 +4496,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
     authorization_key: str | None = None
     try:
         while time.monotonic() < deadline:
+            _instance_store()
             poll_status, poll_body, _ = _request(
                 "GET",
                 poll_path,
@@ -10043,13 +10049,18 @@ def _credential_origin(raw: str) -> str:
     return f"{url.scheme}://{url.netloc.lower()}"
 
 
+def _instance_store() -> dict[str, Any]:
+    store = _read_instance_private("instance-credentials.json", {"version": 1, "hosts": {}})
+    if not isinstance(store.get("hosts"), dict):
+        die("实例凭据格式无效，未覆盖原有授权", code=1)
+    return store
+
+
 def _archive_instance_credentials(payload: dict[str, Any]) -> None:
     if not payload.get("host"):
         return
     host = _credential_origin(payload["host"])
-    store = _read_instance_private("instance-credentials.json", {"version": 1, "hosts": {}})
-    if not isinstance(store.get("hosts"), dict):
-        die("实例凭据格式无效，未覆盖原有授权", code=1)
+    store = _instance_store()
     existing = store["hosts"].get(host, {})
     if isinstance(existing, dict) and payload.get("projectId") and existing.get("projectId") == payload["projectId"]:
         # Legacy pointers omit creation metadata; archiving one must not erase it.
@@ -10059,13 +10070,10 @@ def _archive_instance_credentials(payload: dict[str, Any]) -> None:
 
 
 def _instance_credentials(entry: dict[str, Any], *, archived_only: bool = False) -> dict[str, Any] | None:
-    store = _read_instance_private("instance-credentials.json", {"hosts": {}})
+    store = _instance_store()
     current = _read_local_credentials_file()
     # Legacy credential remains usable until the next successful connect archives it.
-    hosts = store.get("hosts", {})
-    if not isinstance(hosts, dict):
-        die("本地实例凭据格式无效，请恢复 instance-credentials.json", code=1)
-    candidate = hosts.get(entry["url"])
+    candidate = store["hosts"].get(entry["url"])
     if not archived_only and current.get("host") and _credential_origin(current["host"]) == entry["url"]:
         candidate = current
     if not isinstance(candidate, dict) or not candidate.get("host"):
