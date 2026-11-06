@@ -42,6 +42,23 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(urls.every((url) => url.includes('/tasks/upstream'))).toBe(true);
   });
 
+  it('preserves detailed causes from the real ZIP-scanner issue shape without repeating its title', async () => {
+    // process_zip_task stores message=title, description=the detailed explanation, suggestion separately.
+    const title = '命令拼接可能导致注入';
+    const description = '外部输入未经参数化直接拼接到 shell 命令，攻击者可插入额外命令并以服务权限执行。';
+    const suggestion = '改用 execFile 并通过参数数组传递外部输入。';
+    const issues = [{ file_path: 'server.ts', line_number: 12, issue_type: 'security', severity: 'high',
+      title, message: title, description, suggestion },
+    { file_path: 'other.ts', issue_type: 'bug', severity: 'low', title: '重复说明', message: ' 重复说明 ', description: '重复说明' }];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url) =>
+      String(url).endsWith('/issues') ? Response.json(issues)
+        : Response.json({ status: 'completed', total_files: 2, scanned_files: 2 })) as typeof fetch });
+    const result = await engine.run({ taskId: 'cds-id', zip: Buffer.alloc(0), excludePatterns: [], engineTaskId: 'zip-scan',
+      signal: new AbortController().signal, audit: async () => {}, onProgress: async () => {} });
+    expect(result.findings[0]).toMatchObject({ message: `${title}\n\n${description}`, suggestion });
+    expect(result.findings[1].message).toBe('重复说明');
+  });
+
   it('propagates failure rather than reporting an empty successful audit', async () => {
     const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async () =>
       Response.json({ status: 'failed', total_files: 5, scanned_files: 0 })) as typeof fetch });
