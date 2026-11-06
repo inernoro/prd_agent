@@ -13,6 +13,13 @@ description: Scans local project structure and generates or uploads CDS compose 
 > 已部署后的调试、日志、冒烟 → 走 `cds-deploy-pipeline`（热路径）。
 > 认证、env、key 管理、CDS 服务自更新 → 走 `cds`（核心）。
 
+## 主备实例选择
+
+备用 CDS 也必须完成项目接入：从 `cdscli instance list` 选择已登记实例，再运行
+`instance connect <实例ID> --project <目标项目ID>`；尚未建项目时使用核心技能的
+`--new-project --create-project` 流程。授权独立保存，项目配置、环境变量与预构建模式需要单独核对。
+不要将主用项目 ID 或授权复制到备用，也不自动迁移数据库。
+
 ## 本技能处理 / 不处理
 
 | 处理 | 不处理（去对应技能） |
