@@ -69,6 +69,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python for speech checks
+        if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Verify speech smoke safety contracts
         if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
         run: python3 scripts/tests/mcp-speech-production-smoke.test.py
