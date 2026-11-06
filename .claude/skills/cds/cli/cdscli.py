@@ -11059,8 +11059,8 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
     workspace_connection = func in (cmd_connect, cmd_init) and not getattr(args, "legacy_env", False)
     # Discovery and connection must work even if the selected host is unavailable or unconfigured.
-    if args.cmd == "instance" and args.instance:
-        parser.error("instance 子命令请直接指定实例 ID，不与全局 --instance 混用")
+    if args.cmd in ("instance", "connect") and args.instance:
+        parser.error("接入请用 instance connect <实例ID> 或 connect --host <站点>，不与全局 --instance 混用")
     if args.cmd == "instance" and args.instance_cmd in ("sync", "recommend"):
         selected = _read_instance_private("active-instance.json", {}).get("id")
         if selected:

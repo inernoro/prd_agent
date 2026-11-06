@@ -76,6 +76,8 @@ JSON `notices[code=cds-load-high]`。这是兜底提示，原命令仍在原站�
 - `cdscli instance use standby`：校验后保存当前仓库的默认实例；用 `instance use primary` 切回。
 - `cdscli --instance standby <原有命令>`：仅本次使用目标实例，覆盖继承的主用环境凭据并先校验目标项目，不改变默认选择。
 
+全局 `--instance` 不与 `connect` 或 `instance` 子命令组合；接入使用 `instance connect` 或 `connect --host`，避免两个目标来源互相矛盾。
+
 实例目录只包含公开名称、角色和站点根地址，不能放 Key。独立授权保存在本地
 `.cds/instance-credentials.json`；默认选择保存在 `.cds/active-instance.json`，均排除 Git、权限 0600。
 旧 `.cds/credentials.json` 在未选择实例时继续兼容。检查证据按次保存到本地

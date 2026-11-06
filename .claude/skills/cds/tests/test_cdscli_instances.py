@@ -481,3 +481,20 @@ def test_explicit_scoped_init_keeps_previous_default_selection(workspace, monkey
     monkeypatch.setattr(cli, '_call', lambda *a, **kw: (calls.append((cli._cds_base(), cli._auth_headers()['X-AI-Access-Key'])) or {'projects': []}))
     assert run('project', 'list')[0] == 0
     assert calls == [('https://primary.example', 'cdsp_primary')]
+
+
+@pytest.mark.parametrize('command', [
+    ('connect', '--host', 'https://standby.example', '--project', 'b'),
+    ('instance', 'connect', 'standby', '--project', 'b'),
+])
+def test_onboarding_rejects_global_instance_before_requests_or_pointer_changes(workspace, monkeypatch, command):
+    root, _ = workspace
+    save('https://primary.example', 'a', 'cdsp_primary')
+    cli._write_instance_private('active-instance.json', {'id': 'primary'})
+    before = {n: (root / '.cds' / n).read_bytes() for n in ('credentials.json', 'connection.json', 'active-instance.json', 'instance-credentials.json')}
+    calls = []
+    monkeypatch.setattr(cli, '_request', lambda method, path, **kw: (calls.append((method, path)) or (418, {}, {})))
+    code, _ = run('--instance', 'standby', *command)
+    assert code == 2
+    assert calls == []
+    assert all((root / '.cds' / n).read_bytes() == content for n, content in before.items())
