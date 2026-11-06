@@ -17,6 +17,7 @@ export interface CodeReviewTask {
   phase: string;
   progress: { totalFiles: number; scannedFiles: number };
   engineTaskId?: string;
+  engineCompleted?: boolean;
   reportId?: string;
   findingsSummary?: Record<string, number>;
   error?: string;

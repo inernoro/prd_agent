@@ -74,6 +74,15 @@ describe('代码审查任务完整闭环', () => {
     expect(send.mock.calls[1][0].url).toContain('/code-reviews?project=a&task=');
     await expect(service.deliver(task.id)).rejects.toThrow('已发送');
   });
+  it('报告归档失败后重试复用已完成的引擎任务', async () => {
+    const archive = state.createAcceptanceReportAsync.bind(state);
+    vi.spyOn(state, 'createAcceptanceReportAsync').mockRejectedValueOnce(new Error('对象存储暂时不可用')).mockImplementation(archive);
+    const task = await submit(); await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'upstream-1', engineCompleted: true });
+    await service.retry(task.id); await service.pump();
+    expect(run.mock.calls[1][0].engineTaskId).toBe('upstream-1');
+    expect(service.get(task.id).status).toBe('completed'); expect(state.listAcceptanceReports('a')).toHaveLength(1);
+  });
   it('并发重复提交幂等且不同项目保持隔离', async () => {
     const [a, b] = await Promise.all([submit({ idempotencyKey: 'same' }), submit({ idempotencyKey: 'same' })]);
     expect(a.id).toBe(b.id); expect(service.list('b')).toEqual([]);
