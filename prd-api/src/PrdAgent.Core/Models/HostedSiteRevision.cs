@@ -404,7 +404,7 @@ public static class HostedSiteRevisionRules
         var elements = new List<IElement>();
         var parser = new HtmlParser(new HtmlParserOptions
         {
-            IsScripting = true,
+            IsScripting = false, // 覆盖关闭脚本后生效的 noscript 样式；script 本身仍为 rawtext。
             OnCreated = (element, _) => elements.Add(element),
         });
         using var document = parser.ParseDocument(html);
