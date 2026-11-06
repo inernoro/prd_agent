@@ -1409,9 +1409,9 @@ export class ContainerService {
         timer?.unref();
         let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
         try {
-          slot = await acquireBuildSlot({holder:{branchId:entry.id,profileId:profile.id,operationId:context.operationId,label:profile.name},
+          slot = await acquireBuildSlot({holder:{projectId:entry.projectId,branchId:entry.id,profileId:profile.id,operationId:context.operationId,label:profile.name},
             signal:cancelled.signal,isCancelled,
-            onQueued: info => context.onOutput?.(profile.id,`源码产物等待构建槽：前面 ${info.ahead} 个，正在构建 ${info.active}/${info.max}\n`)});
+            onQueued: info => context.onOutput?.(profile.id,`源码产物按项目轮转等待构建槽：另有 ${info.ahead} 个等待，正在构建 ${info.active}/${info.max}\n`)});
           context.assertCurrent?.('before managed storage artifact');
           if (cancelled.signal.aborted) throw new Error('managed artifact cancelled');
           const network = this.getNetworkForProject(entry.projectId);
