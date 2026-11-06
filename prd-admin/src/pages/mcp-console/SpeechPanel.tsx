@@ -8,6 +8,7 @@ import { AudioAssetPlayer } from '@/components/assets/AudioAssetPlayer';
 import { generateSpeech, getSpeechCapabilities, getSpeechRun, getSpeechSettings, listSpeechPresets, listSpeechRuns, saveSpeechPreset } from '@/services/real/mcpSpeech';
 import type { SpeechCapabilities, SpeechPreset, SpeechRun, SpeechSettings } from '@/services/contracts/mcpSpeech';
 import { toast } from '@/lib/toast';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { EMPTY_SPEECH_DRAFT, applySpeechPreset, isSpeechRunActive, repeatSpeechRun, selectSpeechProfile, speechDraftIssue, speechRunRequest } from './speechForm';
 import { SpeechSettingsPanel, speechCardStyle, speechInputClass, speechInputStyle } from './SpeechSettingsPanel';
 
@@ -22,6 +23,7 @@ const RUN_STATUS: Record<string, { label: string; icon: typeof Check; color: str
 };
 
 export function SpeechPanel({ refreshToken }: { refreshToken: number }) {
+  const { isMobile } = useBreakpoint();
   const [searchParams] = useSearchParams();
   const focusedRunId = searchParams.get('run') || '';
   const [capabilities, setCapabilities] = useState<SpeechCapabilities | null>(null);
@@ -137,7 +139,7 @@ export function SpeechPanel({ refreshToken }: { refreshToken: number }) {
   };
 
   if (loading) return <div className="flex min-h-0 flex-1 items-center justify-center"><MapSectionLoader text="正在读取当前环境的语音能力" /></div>;
-  return <div className="flex min-h-0 flex-1 flex-col gap-4 pb-3 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+  return <div className="flex min-h-0 flex-1 flex-col gap-4 pb-3 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain', paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 12px)' : undefined }}>
     <div className="flex flex-wrap items-center gap-3"><div className="flex-1"><h2 className="flex items-center gap-2 text-base font-semibold"><Headphones size={18} aria-hidden />文生语音</h2><p className="mt-1 text-xs leading-6" style={{ color: 'var(--text-muted)' }}>按原文朗读，成品自动保存到我的资产。当前环境：{capabilities?.environment || '暂未读取'}</p></div><Button size="sm" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} aria-hidden />}刷新</Button><Link to="/my-assets?tab=audio" className="mcp-button">我的音频资产<ArrowRight size={13} aria-hidden /></Link></div>
     {error && <SpeechAlert>{error}</SpeechAlert>}
     {!capabilities?.profiles.length ? <div className="mcp-empty"><Volume2 size={30} aria-hidden /><h3>当前环境尚未配置语音能力</h3><p>{settings?.canManage ? '在下方添加语音能力，并绑定模型网关中的语音模型池和实际可用音色。' : '请联系管理员配置语音模型与音色。已有历史和音频资产仍可查阅。'}</p></div> : <section className="rounded-xl border p-4" style={speechCardStyle}>
