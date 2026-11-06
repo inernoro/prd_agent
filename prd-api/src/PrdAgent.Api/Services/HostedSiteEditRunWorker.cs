@@ -832,8 +832,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string message,
         string phaseCode)
     {
-        // 同一 PPT 结果恢复保存时保留已确认进度，不把读取/保存提示倒退成新一轮执行。
-        if (run.ArtifactType == DesignArtifactTypes.HtmlPpt) progress = Math.Max(run.Progress, progress);
+        // 同一已存结果恢复保存时保留已确认进度，不把读取/保存提示倒退成新一轮执行。
+        if (run.ArtifactType == DesignArtifactTypes.HtmlPpt || !string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+            progress = Math.Max(run.Progress, progress);
         var now = DateTime.UtcNow;
         run.Progress = progress;
         run.PhaseCode = phaseCode;

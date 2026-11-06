@@ -22,6 +22,24 @@ function fixture() {
 }
 
 describe('当前同批容器恢复', () => {
+  it.each(['stopping', 'stopped'] as const)('发布落盘期间手动停止到%s后，迟到恢复不得覆盖继任状态', async status => {
+    const f = fixture(); let current = true, entered!: () => void, release!: () => void;
+    const saving = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    f.options.assertCurrent.mockImplementation(() => { if (!current) throw new Error('superseded by stop'); });
+    f.state.flush.mockResolvedValueOnce(undefined).mockImplementationOnce(async () => { entered(); await pending; });
+    const recovery = recoverBranchRuntime(f.options); await saving;
+    const heldByStop = f.entry.services.api;
+    heldByStop.status = status; f.entry.status = status === 'stopped' ? 'idle' : 'stopping';
+    f.entry.errorMessage = 'stop-owned-result'; current = false; release();
+    await expect(recovery).rejects.toThrow('superseded by stop');
+    expect(f.entry.services.api).toBe(heldByStop);
+    expect(f.entry.services.api.status).toBe(status);
+    expect(f.entry.status).toBe(status === 'stopped' ? 'idle' : 'stopping');
+    expect(f.entry.errorMessage).toBe('stop-owned-result');
+    expect(f.container.cleanupUnusedReplacementNetworks).not.toHaveBeenCalled();
+  });
+
   it.each(['restart', 'readiness', 'persistence'])('未公开服务%s失败后保留原连接，原身份可以继续恢复', async failure => {
     const f = fixture(), originalNetwork = branchAppNetworkName('branch'), connected = new Set([originalNetwork]);
     f.entry.services.api.status = 'error'; f.entry.services.api.servingRuntime = undefined; f.entry.services.api.networkName = originalNetwork;

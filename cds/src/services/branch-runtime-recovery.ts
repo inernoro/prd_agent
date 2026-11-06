@@ -115,6 +115,9 @@ export async function recoverBranchRuntime(options: {
       state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
       check('runtime recovery publication');
     } catch (error) {
+      // 停止等继任操作会原位更新候选；已失去租约的恢复不得回写这些状态。
+      try { assertCurrent('runtime recovery rollback'); }
+      catch { throw error; }
       for (const [id, service] of original) if (entry.services[id] === candidates.get(id)) entry.services[id] = service;
       entry.status = previousStatus; entry.errorMessage = previousError;
       state.save([{ kind: 'branches', id: entry.id }]);
