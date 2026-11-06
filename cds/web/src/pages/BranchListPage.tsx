@@ -1710,6 +1710,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  const projectNoticesAvailable = state.status === 'ok' && !state.projectWarning;
   const noticeProject = useMemo(() => (
     state.status === 'ok' ? state.project : projectId ? fallbackProjectSummary(projectId) : null
   ), [projectId, state.status, state.status === 'ok' ? state.project.id : null, state.status === 'ok' ? state.project.slug : null, state.status === 'ok' ? state.project.name : null, state.status === 'ok' ? state.project.aliasName : null]);
@@ -2303,7 +2304,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   }, [projectId, state.status, canManageConsole]);
 
   useEffect(() => {
-    if (state.status !== 'ok' || state.projectWarning || !projectId || !noticeProject) return;
+    if (!projectNoticesAvailable || !projectId || !noticeProject) return;
     if (missingRequiredKeys.length === 0) return;
     const keys = [...missingRequiredKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -2320,14 +2321,13 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         projectSlug: noticeProject.slug,
       },
     }));
-  }, [missingRequiredKeys, noticeProject, projectId, state]);
+  }, [missingRequiredKeys, noticeProject, projectId, projectNoticesAvailable]);
 
   useEffect(() => {
-    if (!projectId || !noticeProject) return;
+    if (!projectNoticesAvailable || !projectId || !noticeProject) return;
     // 项目元信息走了 fallback(project 404/暂不可读)时不发站内信:此时 projectId
     // 可能指向已删除的项目,发出去的通知会携带死链接,用户点开即 404
     // (2026-07-21 用户实例:通知里的项目 id 已被删除重建)。
-    if (state.status !== 'ok' || state.projectWarning) return;
     if (pendingEnvKeys.length === 0) return;
     const keys = [...pendingEnvKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -2344,7 +2344,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         projectSlug: noticeProject.slug,
       },
     }));
-  }, [noticeProject, pendingEnvKeys, projectId, state]);
+  }, [noticeProject, pendingEnvKeys, projectId, projectNoticesAvailable]);
 
   useEffect(() => {
     if (state.status !== 'ok' || !projectId || !state.hasSchemafulInfra) return;

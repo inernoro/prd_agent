@@ -72,16 +72,21 @@ async function runLoad(name: 'refresh' | 'confirmEmptyBranchList', project: unkn
   return { state, requests };
 }
 
-function runEnvNotice(state: unknown, kind: 'missing-required' | 'pending-env') {
-  let effect: ts.Expression | undefined;
+function envNoticeHarness(state: unknown, kind: 'missing-required' | 'pending-env') {
+  let effect: ts.CallExpression | undefined;
+  let availability = '';
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect' &&
-        node.arguments[0]?.getText(ast).includes(`:${kind}:`)) effect = node.arguments[0];
+        node.arguments[0]?.getText(ast).includes(`:${kind}:`)) effect = node;
+    if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'projectNoticesAvailable') {
+      availability = `const ${node.getText(ast)};`;
+    }
     ts.forEachChild(node, visit);
   };
   visit(ast);
   if (!effect) throw new Error(`Missing production notice effect: ${kind}`);
   const notices: any[] = [];
+  let previousDependencies: unknown[] | undefined;
   const ctx = {
     state, projectId: 'current-project', noticeProject: { name: '原项目', slug: 'old-project' },
     pendingEnvKeys: ['TEST_ONLY'], missingRequiredKeys: ['TEST_ONLY'],
@@ -89,15 +94,39 @@ function runEnvNotice(state: unknown, kind: 'missing-required' | 'pending-env') 
     CustomEvent: class { constructor(public type: string, public detail: unknown) { Object.assign(this, detail); } },
     displayName: (project: any) => project.name,
     projectEnvSettingsHref: () => '/project/current-project/settings',
+    useEffect: (callback: () => void, dependencies: unknown[]) => {
+      if (!previousDependencies || dependencies.some((value, i) => !Object.is(value, previousDependencies![i]))) {
+        previousDependencies = [...dependencies];
+        callback();
+      }
+    },
   };
-  vm.runInNewContext(ts.transpileModule(`(${effect.getText(ast)})();`, {
+  const code = ts.transpileModule(`(() => { ${availability} ${effect.getText(ast)}; })();`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText, ctx);
-  return notices;
+  }).outputText;
+  vm.createContext(ctx);
+  const render = (next: unknown) => { ctx.state = next; vm.runInContext(code, ctx); };
+  render(state);
+  return { notices, render };
+}
+
+function runEnvNotice(state: unknown, kind: 'missing-required' | 'pending-env') {
+  return envNoticeHarness(state, kind).notices;
 }
 
 describe('项目权威失效后不发布配置死链通知', () => {
   for (const kind of ['missing-required', 'pending-env'] as const) {
+    it(`${kind} 分支更新不重发，可用性恢复仍正常提醒`, () => {
+      const state = { status: 'ok', project: { id: 'current-project' }, branches: [] };
+      const harness = envNoticeHarness(state, kind);
+      for (let i = 0; i < 3; i++) harness.render({ ...state, branches: [{ id: `updated-${i}` }] });
+      expect(harness.notices).toHaveLength(1);
+      harness.render({ ...state, projectWarning: 'gateway' });
+      harness.render({ status: 'unavailable', message: 'not found' });
+      expect(harness.notices).toHaveLength(1);
+      harness.render(state);
+      expect(harness.notices).toHaveLength(2);
+    });
     it(`${kind} 在权威失败后即使缓存项目和配置键仍存在也不发通知`, async () => {
       for (const status of [401, 403, 404]) {
         const { state } = await runLoad('refresh', new ApiError(status, {}, 'unavailable'), [], true);
