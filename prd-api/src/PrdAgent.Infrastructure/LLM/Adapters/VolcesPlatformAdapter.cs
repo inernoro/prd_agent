@@ -62,6 +62,14 @@ public class VolcesPlatformAdapter : IImageGenPlatformAdapter
             ["stream"] = false,
             ["watermark"] = true
         };
+        // Seedream 5.0 Pro 只生成单图，官方契约不接受组图或流式字段。
+        if (model.StartsWith("doubao-seedream-5-0-pro", StringComparison.OrdinalIgnoreCase))
+        {
+            if (n != 1) throw new ArgumentOutOfRangeException(nameof(n), "该模型每次只生成一张图片，请拆分生成任务。");
+            request.Remove("n");
+            request.Remove("sequential_image_generation");
+            request.Remove("stream");
+        }
 
         // 优先使用适配器配置的尺寸参数
         if (sizeParams != null && sizeParams.Count > 0)
