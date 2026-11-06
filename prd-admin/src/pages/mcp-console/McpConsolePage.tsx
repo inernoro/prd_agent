@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
+  Headphones,
   Activity,
   Check,
   ChevronDown,
@@ -33,6 +35,7 @@ import { clientSignal, tierLabel } from './signalEncoding';
 import { CapabilityDot, SignalLegend } from './SignalDots';
 import { quotaFillPercent } from './quotaMeter';
 import { secureSameSiteEndpoint } from './endpointUrl';
+import { SpeechPanel } from './SpeechPanel';
 
 /**
  * 智能体接入台。
@@ -47,7 +50,14 @@ export default function McpConsolePage() {
   const [overview, setOverview] = useState<McpConsoleOverviewDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [tab, setTab] = useState<'overview' | 'calls'>('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tab = requestedTab === 'speech' || requestedTab === 'calls' ? requestedTab : 'overview';
+  const setTab = (value: 'overview' | 'calls' | 'speech') => setSearchParams(current => {
+    const next = new URLSearchParams(current);
+    if (value === 'overview') next.delete('tab'); else next.set('tab', value);
+    return next;
+  }, { replace: true });
   const [quotaTarget, setQuotaTarget] = useState<McpClientDto | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<McpClientDto | null>(null);
   // 「刷新」按钮只能刷自己拉的数据。调用记录面板自己管自己的分页与筛选，
@@ -193,6 +203,7 @@ export default function McpConsolePage() {
           {([
             { key: 'overview' as const, label: '能力与客户端', icon: ShieldCheck },
             { key: 'calls' as const, label: '它干了什么', icon: Activity },
+            { key: 'speech' as const, label: '语音能力', icon: Headphones },
           ]).map((item) => {
             const Icon = item.icon;
             const active = tab === item.key;
@@ -295,7 +306,9 @@ export default function McpConsolePage() {
             合计余量本身也不可行动：额度是按密钥算的，加起来那个数谁也用不上。 */}
       </div>
 
-      {tab === 'calls' ? (
+      {tab === 'speech' ? (
+        <SpeechPanel refreshToken={refreshToken} />
+      ) : tab === 'calls' ? (
         <McpCallsPanel clients={clients} refreshToken={refreshToken} />
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px]">
