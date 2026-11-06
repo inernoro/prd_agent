@@ -489,6 +489,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
+  // 新上传内容优先于更早发出的读取；切换工作区也让旧读取失效。
+  const workspaceLoadRevisionRef = useRef(0);
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
@@ -1240,8 +1242,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
+    const revision = ++workspaceLoadRevisionRef.current;
     try {
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
+      if (revision !== workspaceLoadRevisionRef.current) return;
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
         setArticleChoice(res.data.illustrationChoice ?? null);
@@ -1452,6 +1456,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      workspaceLoadRevisionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(fileName);
 
@@ -1509,6 +1514,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      workspaceLoadRevisionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(file.name);
 

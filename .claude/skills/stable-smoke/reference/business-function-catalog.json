@@ -215,7 +215,7 @@
       "entrySmoke": true,
       "automationStatus": "entry",
       "requiredCaseIds": ["LIT-001", "LIT-002", "LIT-003", "LIT-004", "LIT-005", "LIT-006", "LIT-007", "LIT-008", "LIT-009", "LIT-010", "LIT-011"],
-      "regressionCaseIds": ["REG-model-catalog-identity-001", "REG-literary-marker-stream-001"],
+      "regressionCaseIds": ["REG-model-catalog-identity-001", "REG-literary-marker-stream-001", "REG-literary-stale-load-001"],
       "sourcePrefixes": ["prd-admin/src/pages/literary-agent/", "prd-api/src/PrdAgent.Api/Controllers/Api/Literary", "prd-api/src/PrdAgent.Api/Services/Literary"],
       "cdsPolicy": "文章上传、流式配图标记、实际配图、刷新恢复、模型失败、移动端与清理",
       "productionPolicy": "最短作品真实生成、保存、回读并清理",

@@ -5636,4 +5636,81 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+
+  test('[REG-literary-stale-load-001] 手机上传新文章后，迟到的初始化响应不覆盖正文和配图按钮', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const created = await readEnvelope<{ workspace: { id: string } }>(await request.post('/api/literary-agent/workspaces', { headers: authHeaders(token), data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-迟到读取回归`, scenarioType: 'article-illustration', suppressAutoSubmit: true } }));
+    const id = created.workspace.id;
+    const article = '新上传的蓝色长椅文章必须保留，旧初始化响应不得覆盖。';
+    let release: (() => void) | undefined;
+    let fetched: (() => void) | undefined;
+    const initialRead = new Promise<void>(resolve => { fetched = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const matcher = new RegExp(`/api/(?:visual-agent/image-master|literary-agent)/workspaces/${id}/detail(?:[?]|$)`);
+    await page.route(matcher, async route => {
+      const actual = await route.fetch();
+      const snapshot = await actual.json() as ApiEnvelope<{ workspace: { articleContent?: string } }>;
+      expect(snapshot.data.workspace.articleContent || '').toBe('');
+      fetched?.();await held;await route.fulfill({ response: actual });
+    }, { times: 1 });
+    try {
+      await page.goto(`/literary-agent/${id}`, { waitUntil: 'domcontentloaded' });await initialRead;
+      const uploaded = page.waitForResponse(r => r.request().method() === 'PUT' && r.request().postDataJSON()?.articleContent === article);
+      const chooser = page.waitForEvent('filechooser');await page.getByRole('button', { name: '选择文件', exact: true }).click();
+      await (await chooser).setFiles({ name: '新文章.txt', mimeType: 'text/plain', buffer: Buffer.from(article) });await readEnvelope(await uploaded);
+      const applied = page.waitForResponse(r => matcher.test(new URL(r.url()).pathname) && r.request().method() === 'GET');release?.();await (await applied).finished();await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await expect(page.locator('[data-tour-id="literary-editor-content"]')).toContainText(article);
+      await page.getByRole('button', { name: '配图工作台', exact: true }).click();await expect(page.getByRole('button', { name: '生成配图标记', exact: true })).toBeEnabled();
+      const saved = await readEnvelope<{ workspace: { articleContent: string } }>(await request.get(`/api/literary-agent/workspaces/${id}/detail`, { headers: authHeaders(token) }));expect(saved.workspace.articleContent).toBe(article);
+    } finally {
+      release?.();await page.unroute(matcher);
+      await expectDeleteSucceeded(await request.delete(`/api/literary-agent/workspaces/${id}`, { headers: authHeaders(token) }), '迟到读取回归工作区清理失败');expect((await request.get(`/api/literary-agent/workspaces/${id}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
+    }
+  });
+
+  test('[VIS-006] 结果卡重试保留原始提示词与参考图，创建新任务并保留旧产物', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(720_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'retry-reference');
+    const runIds: string[] = [];
+    const prompt = '根据 @img1 的蓝色生成一只纯白背景上的蓝色陶瓷杯，不要文字。';
+    try {
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });await dismissBlockingTutorial(page);await dismissCdsPreviewWidget(page);
+      const picker = page.locator('input[type="file"][accept="image/*"]');await expect(picker).toBeEnabled();
+      await picker.setInputFiles({ name: 'stsmk-retry-blue.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(35, 90, 190, 256).split(',')[1], 'base64') });
+      await expect(page.getByTestId('canvas-image')).toHaveCount(1);
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      const assets = await readEnvelope<{ assets: Array<{ sha256: string; url: string }> }>(await request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token) }));
+      const reference = assets.assets[0];expect(reference).toBeTruthy();
+      const pools = await readEnvelope<ImageModelPool[]>(await request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) }));
+      const model = pools.find(pool => pool.isDefault)!;expect(model).toBeTruthy();
+      const created = await readEnvelope<{ runId: string }>(await request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${workspace.id}-retry-first` },
+        data: { prompt, userMessageContent: prompt, targetKey: `${workspace.id}-retry-first`, platformId: 'logical-model', modelId: model.code, size: '1024x1024', responseFormat: 'url', expectedImageRefCount: 1,
+          imageRefs: [{ refId: 1, assetSha256: reference.sha256, url: reference.url, label: 'stsmk-retry-blue.png', role: 'target' }], x: 400, y: 0, w: 1001, h: 1001 },
+      }));runIds.push(created.runId);
+      const first = await waitForImageRun(page, token, created.runId);await assertImageArtifact(page, first.detail);
+      const oldImage = first.detail.items.find(item => item.url)?.url;expect(oldImage).toBeTruthy();
+      const oldBytes = await (await request.get(oldImage!)).body();
+      await page.reload({ waitUntil: 'domcontentloaded' });await dismissBlockingTutorial(page);await dismissCdsPreviewWidget(page);
+      const retry = page.getByTitle('使用相同提示词重新生成', { exact: true });await expect(retry).toBeVisible();
+      const response = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, { timeout: 90_000 });
+      await retry.click();const next = await readEnvelope<{ runId: string }>(await response);runIds.push(next.runId);expect(next.runId).not.toBe(created.runId);
+      const second = await waitForImageRun(page, token, next.runId);await assertImageArtifact(page, second.detail);
+      expect(second.detail.run.expectedImageRefCount).toBe(1);expect(second.detail.run.imageRefs?.map(ref => ref.assetSha256)).toEqual([reference.sha256]);
+      const oldRun = await readEnvelope<ImageRunDetail>(await request.get(`/api/visual-agent/image-gen/runs/${created.runId}?includeItems=true`, { headers: authHeaders(token) }));expect(oldRun.run.status).toBe('Completed');
+      const oldAgain = await request.get(oldImage!);expect(oldAgain.ok()).toBe(true);expect(createHash('sha256').update(await oldAgain.body()).digest('hex')).toBe(createHash('sha256').update(oldBytes).digest('hex'));
+      const messages = await readEnvelope<{ messages?: Array<{ role: string; content: string }>; items?: Array<{ role: string; content: string }> } | Array<{ role: string; content: string }>>(await request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/messages`, { headers: authHeaders(token) }));
+      const rows = Array.isArray(messages) ? messages : messages.messages || messages.items || [];
+      const userMessages = rows.filter(row => row.role.toLowerCase() === 'user');expect(userMessages.length).toBeGreaterThanOrEqual(2);expect(userMessages.every(row => row.content.replace(/^(?:\(@(?:size|model):[^)]*\)\s*)+/, '').trim() === prompt)).toBe(true);expect(userMessages.every(row => !row.content.includes('【引用图片】'))).toBe(true);
+      await testInfo.attach('image-retry-kept-reference-and-old-result', { body: JSON.stringify({ firstRunId: created.runId, retryRunId: next.runId, referenceSha256: reference.sha256, oldResultPreserved: true }), contentType: 'application/json' });
+    } finally {
+      for (const id of runIds) { const r = await request.get(`/api/visual-agent/image-gen/runs/${id}`, { headers: authHeaders(token) });if (r.ok()) { const state = await readEnvelope<ImageRunDetail>(r);if (!/Completed|Failed|Cancelled/.test(state.run.status)) { await request.post(`/api/visual-agent/image-gen/runs/${id}/cancel`, { headers: authHeaders(token) });await waitForImageRun(page, token, id, 120_000).catch(() => undefined); } } }
+      await expectDeleteSucceeded(await request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, { headers: authHeaders(token) }), '重试工作区清理失败');
+      for (const id of runIds) expect((await request.get(`/api/visual-agent/image-gen/runs/${id}`, { headers: authHeaders(token) })).status()).toBe(404);
+    }
+  });
+
 });
