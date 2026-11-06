@@ -4912,7 +4912,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
   const reviews = new CodeReviewService({
-    state: deps.stateService, inputs: createCodeReviewInputs(), mail: createCodeReviewMail(),
+    state: deps.stateService, inputs: createCodeReviewInputs(),
+    mail: createCodeReviewMail(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
     publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
     ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID
       ? `${process.env.CDS_PROJECT_ID}::${process.env.VITE_GIT_BRANCH || 'default'}` : 'cds-master'),
