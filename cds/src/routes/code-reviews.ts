@@ -7,8 +7,11 @@ import { assertProjectAccess } from './projects.js';
 import { canHumanAccessProject } from '../services/human-project-access.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { maskSecrets } from '../services/secret-masker.js';
+import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
+import { isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
+import { validateCodeReviewSettings } from '../services/code-review-settings.js';
 
-interface ReviewRequest extends Request {
+interface ReviewRequest extends Request, HumanAuthContext {
   cdsProjectKey?: { projectId: string; keyId: string };
   cdsAccess?: Parameters<typeof assertProjectAccess>[0]['cdsAccess'];
 }
@@ -54,6 +57,29 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
       res.status(status).json({ error: status === 500 ? 'review_error' : 'invalid_review_request', message: maskSecrets((error as Error).message).slice(0, 1000) });
     });
   };
+  const settingsAdmin = (req: ReviewRequest) => {
+    const denied = assertUnscopedAdmin(req);
+    if (denied || (req.cdsUser && !isHumanSystemOwner(req))) throw new CodeReviewError(403, '仅限系统管理员配置审查引擎');
+  };
+  const settingsSummary = () => ({ ...state.getCodeReviewSettings(), engineConfigured: service.capabilities().engineConfigured });
+  router.get('/code-reviews/settings', handler((req, res) => {
+    settingsAdmin(req);
+    return res.json(settingsSummary());
+  }));
+  router.put('/code-reviews/settings', json({ limit: '8kb' }), handler(async (req, res) => {
+    settingsAdmin(req);
+    let settings;
+    try { settings = validateCodeReviewSettings(state, req.body); }
+    catch (error) { throw new CodeReviewError(400, (error as Error).message); }
+    const previous = state.getCodeReviewSettings();
+    if ((previous?.engineBaseUrl !== settings.engineBaseUrl || previous?.engineProjectId !== settings.engineProjectId)
+      && service.list().some((task) => !['completed', 'failed', 'cancelled'].includes(task.status))) {
+      throw new CodeReviewError(409, '存在未结束的审查任务，请完成或取消后再切换审查引擎');
+    }
+    await state.setCodeReviewSettings(settings);
+    void service.pump();
+    return res.json(settingsSummary());
+  }));
   router.get('/code-reviews/capabilities', handler((_req, res) => res.json(service.capabilities())));
   router.get('/code-reviews', handler((req, res) => {
     if (req.query.projectId !== undefined) project(req, req.query.projectId);

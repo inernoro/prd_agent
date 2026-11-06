@@ -2642,6 +2642,8 @@ export interface CdsState {
   acceptanceReports?: AcceptanceReportMeta[];
   /** Durable review task metadata; source snapshots and reports use object storage. */
   codeReviewTasks?: import('./shared/code-review.js').CodeReviewTask[];
+  /** Independent DeepAudit project reference; never contains service credentials. */
+  codeReviewSettings?: import('./services/code-review-settings.js').CodeReviewSettings;
   /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
   reportFolders?: ReportFolder[];
   /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */

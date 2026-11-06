@@ -6188,6 +6188,16 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return (this.state.acceptanceReports || []).find((r) => r.id === id);
   }
 
+  getCodeReviewSettings(): import('./code-review-settings.js').CodeReviewSettings | undefined {
+    return this.state.codeReviewSettings ? structuredClone(this.state.codeReviewSettings) : undefined;
+  }
+
+  async setCodeReviewSettings(settings: import('./code-review-settings.js').CodeReviewSettings): Promise<void> {
+    this.state.codeReviewSettings = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
   listCodeReviewTasks(projectId?: string): import('../shared/code-review.js').CodeReviewTask[] {
     return structuredClone((this.state.codeReviewTasks || [])
       .filter((task) => !projectId || task.projectId === projectId)
