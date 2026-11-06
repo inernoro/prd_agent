@@ -8,7 +8,7 @@
 
 1. 在 GitHub 创建 `inernoro/DeepAudit` Fork，检出记录的完整上游提交并建立功能分支。GitHub 连接必须具有创建 Fork 和推送工作流的权限；创建失败时不要换成不存在的仓库或未经校验的上游镜像。
 2. 在 MAP 仓库运行 `python3 scripts/deepaudit-prepare.py --checkout <DeepAudit Git 根目录>`。安装器拒绝非固定提交、错误远端和覆盖已有改动。之后在 Fork 运行 `sh cds-release.sh check`。
-3. 提交 Fork 覆盖层并推送。新增的 `ci.yml` 校验项目发布脚本、构建两个镜像、验证禁用接口，并发布 `sha-<完整提交>` 镜像。预构建模式不使用 latest 或未经证明的回退镜像。
+3. 提交 Fork 覆盖层并推送。`ci.yml` 校验项目发布脚本；CDS 识别的 `branch-image.yml` 同样校验脚本、构建两个镜像、验证禁用接口，并发布 `sha-<完整提交>` 镜像。预构建模式不使用 latest 或未经证明的回退镜像。
 4. 使用 CDS 项目接入技能创建独立 DeepAudit 项目。先以 `POST /api/infra` 和 `initializeStorage: new-only` 为该项目分别分配 PostgreSQL 与 Redis 的全新归属卷，再导入 Fork 根目录 `cds-compose.yml`。只使用该项目环境变量；数据库、Redis、JWT 和服务账号密码由项目内独立生成。配置网关地址、模型、专属网关凭据与管理员 htpasswd bcrypt 哈希。管理前端通过 CDS 的同分支 `backend` 服务别名访问后端。
 5. 使用 CDS 返回的实际服务地址配置调用方。CDS 审查适配器使用服务邮箱和服务密码登录后台 API；管理端另外经过 HTTP Basic 认证。后端没有公开路径前缀或 Web 入口。首次迁移由后端启动脚本执行；显式项目发布路径还包含独立 db-migrate 作业。
 6. 项目脚本发布使用 `cds-release.sh check/deploy` 与 `docker-compose.cds-release.yml`。正式脚本要求完整部署提交和实际管理 URL；部署前验证 Compose 配置，管理端只绑定本机端口，反向代理应由部署目标明确管理。
