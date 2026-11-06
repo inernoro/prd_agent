@@ -87,6 +87,38 @@ def safe_identifier(value):
     return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value) else None
 
 
+def summarize_gateway_catalog(items):
+    """Inspect legacy/untyped speech entries without reporting names, URLs or credentials."""
+    kinds = {"tts": 0, "asr": 0, "other": 0}
+    doubao = {key: 0 for key in kinds}
+    speech = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        models = [x for x in item.get("models", []) if isinstance(x, dict)]
+        values = [item.get(k, "") for k in ("name", "modelName", "modelId", "publicId", "providerId", "platformType", "transformerType")]
+        values += [model.get(k, "") for model in models for k in ("modelId", "displayName")]
+        text = " ".join(x.lower() for x in values if isinstance(x, str))
+        endpoint = item.get("targetUrl") or item.get("apiUrl") or ""
+        try:
+            parsed = urllib.parse.urlsplit(endpoint)
+            host, path = (parsed.hostname or "").lower(), parsed.path.lower()
+        except (ValueError, TypeError):
+            host, path = "", ""
+        is_doubao = any(x in text for x in ("doubao", "豆包", "volcengine", "火山")) or any(host == x or host.endswith("." + x) for x in ("volcengine.com", "volces.com", "volcengineapi.com"))
+        declared = {str(x.get("modelType", "")).lower() for x in [item] + models}
+        # Endpoint and transformer identify untyped legacy exchanges too; ASR is not synthesis.
+        kind = ("tts" if "tts" in declared or "tts" in text or "语音合成" in text or "/tts" in path or "/audio/speech" in path else
+                "asr" if "asr" in declared or "asr" in text or "语音识别" in text or any(x in path for x in ("/asr", "/sauc", "/auc", "/audio/transcriptions")) else "other")
+        kinds[kind] += 1
+        doubao[kind] += int(is_doubao)
+        if kind != "other":
+            speech.append({"kind": kind, "doubao": is_doubao, "enabled": item.get("enabled") is True,
+                           "hasKey": item.get("hasKey") is True, "hasResourceId": bool(item.get("resourceId")),
+                           "declaredAsTts": "tts" in declared})
+    return {"total": len(items), "kinds": kinds, "doubao": doubao, "speechEntries": speech}
+
+
 def validate_target(base, expected, allowed):
     if not re.fullmatch(r"[0-9a-fA-F]{40}", expected):
         raise CheckFailure("expected_commit_required")
@@ -262,11 +294,12 @@ class SpeechSmoke:
             console_token = login.get("token")
             if not isinstance(console_token, str) or not console_token:
                 raise CheckFailure("gateway_viewer_session_unavailable")
-            response = self.http(self.base, "/llmgw/gw/logical-models?modelType=tts", console_token)
+            response = self.http(self.base, "/llmgw/gw/logical-models", console_token)
             models = data_of(response)
-            items = models.get("items") if models else None
-            if not isinstance(items, list):
+            all_items = models.get("items") if models else None
+            if not isinstance(all_items, list):
                 raise CheckFailure("gateway_inventory_unavailable")
+            items = [item for item in all_items if isinstance(item, dict) and item.get("modelType") == "tts"]
             offerings = [o for model in items if isinstance(model, dict) for o in model.get("offerings", []) if isinstance(o, dict)]
             exchanges_response = self.http(self.base, "/llmgw/gw/exchanges", console_token)
             exchanges = data_of(exchanges_response)
@@ -281,6 +314,17 @@ class SpeechSmoke:
                             "doubaoTtsExchangeCount": sum(x.get("transformerType") == "doubao-tts" for x in typed),
                             "enabledDoubaoTtsResourcesWithCredentials": sum(x.get("transformerType") == "doubao-tts" and x.get("enabled") is True
                                 and x.get("hasKey") is True and bool(x.get("resourceId")) for x in typed)})
+            catalogs = {"logicalModels": summarize_gateway_catalog(all_items)}
+            catalogs["exchanges"] = {"available": isinstance(exchange_items, list)}
+            if isinstance(exchange_items, list):
+                catalogs["exchanges"].update(summarize_gateway_catalog(exchange_items))
+            for name in ("platforms", "models"):
+                result = data_of(self.http(self.base, "/llmgw/gw/" + name, console_token))
+                entries = result.get("items") if result else None
+                catalogs[name] = {"available": isinstance(entries, list)}
+                if isinstance(entries, list):
+                    catalogs[name].update(summarize_gateway_catalog(entries))
+            summary["allCatalogs"] = catalogs
         except Exception:
             summary["failureCode"] = "viewer_inventory_unavailable"
         self.check("gateway_viewer_inventory", summary["ok"], failure="viewer_inventory_unavailable", required=False)

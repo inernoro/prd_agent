@@ -478,9 +478,11 @@ class ProductionSpeechTests(unittest.TestCase):
             if path == "/llmgw/gw/auth/stable-smoke-sso":
                 return response({"token": CANARY, "tenant": {"role": "viewer"}})
             if path.startswith("/llmgw/gw/logical-models"):
-                return response({"items": [{"name": CANARY, "offerings": [{"protocol": "openai"}, {"protocol": "doubao-tts"}]}]})
+                return response({"items": [{"name": CANARY, "modelType": "tts", "offerings": [{"protocol": "openai"}, {"protocol": "doubao-tts"}]}]})
             if path == "/llmgw/gw/exchanges":
                 return response({"items": [{"id": CANARY, "name": CANARY, "transformerType": "doubao-tts", "enabled": True, "hasKey": True, "resourceId": CANARY}]})
+            if path in ("/llmgw/gw/platforms", "/llmgw/gw/models"):
+                return response({"items": [{"name": CANARY, "apiUrl": "https://example.com/" + CANARY, "apiKey": CANARY}]})
             return fixture.http(base, path, token, method, **kwargs)
 
         check = smoke.SpeechSmoke(BASE, COMMIT, http=http, session=lambda *_: ("rsa", CANARY, {}), inventory=True)
@@ -490,7 +492,22 @@ class ProductionSpeechTests(unittest.TestCase):
         self.assertEqual(report["gatewayInventory"]["enabledDoubaoTtsResourcesWithCredentials"], 1)
         self.assertEqual(report["gatewayInventory"]["protocols"], ["doubao-tts", "openai"])
         self.assertNotIn(CANARY, json.dumps(report))
+        self.assertEqual(report["gatewayInventory"]["allCatalogs"]["models"]["total"], 1)
+        self.assertTrue(report["gatewayInventory"]["allCatalogs"]["platforms"]["available"])
         self.assertEqual([path for method, path in calls if method != "GET"], ["/api/v1/auth/synthetic/gateway-ticket", "/llmgw/gw/auth/stable-smoke-sso"])
+
+    def test_catalog_finds_legacy_tts_and_does_not_confuse_doubao_asr_or_images_with_tts(self):
+        result = smoke.summarize_gateway_catalog([
+            {"name": "豆包语音识别", "targetUrl": "https://openspeech.bytedance.com/api/v3/sauc/bigmodel", "enabled": True, "hasKey": True},
+            {"name": CANARY, "targetUrl": "https://openspeech.bytedance.com/api/v1/tts?token=" + CANARY, "transformerType": "doubao-tts", "enabled": False, "hasKey": True},
+            {"name": "doubao-seedream-4-5", "apiKey": CANARY},
+            {"name": CANARY, "apiUrl": "https://example.com/v1/audio/speech", "resourceId": CANARY},
+        ])
+        self.assertEqual(result["kinds"], {"tts": 2, "asr": 1, "other": 1})
+        self.assertEqual(result["doubao"], {"tts": 1, "asr": 1, "other": 1})
+        self.assertFalse(result["speechEntries"][1]["declaredAsTts"])
+        self.assertFalse(result["speechEntries"][1]["enabled"])
+        self.assertNotIn(CANARY, json.dumps(result))
 
     def test_gateway_inventory_refuses_non_viewer_session_without_changing_role(self):
         called = []
