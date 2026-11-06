@@ -16362,7 +16362,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) { res.status(404).json({ error: '分支不存在' }); return; }
     const mismatch = assertProjectAccess(req as any, entry.projectId || 'default');
     if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
-    if (entry.executorId) { res.status(409).json({ error: '远端执行器恢复请在所属执行器执行' }); return; }
+    if (isRemoteExecutorOwned(entry.executorId)) { res.status(409).json({ error: '远端执行器恢复请在所属执行器执行' }); return; }
     const { expectedCommitSha, expectedContainers } = req.body || {};
     if (typeof expectedCommitSha !== 'string' || !expectedContainers || typeof expectedContainers !== 'object' || Array.isArray(expectedContainers)) {
       res.status(400).json({ error: '必须提供完整提交和逐服务完整容器身份' }); return;

@@ -8150,6 +8150,19 @@ describe('Branch Routes', () => {
   // ── 轻量重启 + 分支系统日志（2026-05-18）──
 
   describe('POST /api/branches/:id/recover-runtime', () => {
+    it.each([{ executorId: 'master-compat', status: 200 }, { executorId: 'embedded', status: 200 },
+      { executorId: 'executor-remote', status: 409 }])('已有归属$executorId使用统一恢复准入，远端不执行本机命令', async ({ executorId, status }) => {
+      stateService.addBranch({ id: 'recover-owner', branch: 'recover-owner', projectId: 'default', worktreePath: '/tmp/wt/recover-owner',
+        executorId, githubCommitSha: 'a'.repeat(40), services: {}, status: 'error', createdAt: new Date().toISOString() });
+      mock.commands.length = 0;
+      const response = await request(server, 'POST', '/api/branches/recover-owner/recover-runtime', { expectedCommitSha: 'b'.repeat(40), expectedContainers: {} });
+      expect(response.status).toBe(status);
+      if (status === 200) expect(String(response.body)).toContain('恢复目标提交已变化');
+      else expect(response.body).toEqual({ error: '远端执行器恢复请在所属执行器执行' });
+      expect(mock.commands).toEqual([]);
+      expect(operationEvents.some(event => event.branchId === 'recover-owner' && event.action === 'branch.operation.failed')).toBe(status === 200);
+    });
+
     it('真实恢复流的断线心跳抛错被忽略，恢复租约仍能正常收尾', async () => {
       stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'node:20', workDir: '.', containerPort: 3000 });
       stateService.addBranch({ id: 'recover-stream', branch: 'recover-stream', projectId: 'default', worktreePath: '/tmp/wt/recover-stream',
