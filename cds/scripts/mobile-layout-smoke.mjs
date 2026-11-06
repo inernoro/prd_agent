@@ -492,7 +492,50 @@ async function checkProjectInventory(page, label) {
   await page.getByRole('textbox', { name: 'Git 仓库 URL', exact: true }).waitFor();
   await page.getByRole('button', { name: '导入仓库', exact: true }).click();
   assertOk(await page.getByRole('button', { name: '新建项目', exact: true }).isVisible(), `${label}: 项目页新建入口缺失`);
+  for (const view of ['列表视图', '卡片视图']) {
+    await page.getByRole('button', { name: view, exact: true }).click();
+    await checkProjectSkeletonAlignment(page, `${label}:${view}`);
+  }
   console.log(`PASS ${label}: 项目页头、筛选搜索、视图切换与导入入口`);
+}
+
+async function checkProjectSkeletonAlignment(page, label) {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pattern = '**/api/projects';
+  const holdProjects = async route => {
+    await gate;
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify(resolveFixture(new URL(route.request().url()).pathname)) });
+  };
+  const geometry = () => page.evaluate(() => Object.fromEntries([
+    '.cds-project-inventory-heading', '.cds-project-inventory-toolbar', '.cds-project-card',
+    '.cds-project-services', '.cds-project-metrics', '.cds-project-card-footer',
+  ].map(selector => {
+    const rect = document.querySelector(selector).getBoundingClientRect();
+    return [selector, { y: rect.y, height: rect.height }];
+  })));
+  await page.route(pattern, holdProjects);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('[aria-label="加载项目列表"]').waitFor();
+    const loading = await geometry();
+    const transform = await page.locator('.cds-main').evaluate(main => getComputedStyle(main).transform);
+    assertOk(transform === 'none', `${label}: 骨架已显示后不应再次播放整页位移动画`, { transform });
+    release();
+    await page.locator('.cds-project-card[data-project-id]').first().waitFor();
+    // content-visibility:auto initially reports its intrinsic placeholder; measure after paint.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const ready = await geometry();
+    for (const [selector, rect] of Object.entries(loading)) {
+      assertOk(Math.abs(rect.y - ready[selector].y) <= 1 && Math.abs(rect.height - ready[selector].height) <= 1,
+        `${label}: ${selector} 骨架与正文垂直错位`, { loading: rect, ready: ready[selector] });
+    }
+    console.log(`PASS ${label}: 延迟项目响应，骨架与正文各区纵向偏差不超过 1px`);
+  } finally {
+    release();
+    await page.unroute(pattern, holdProjects);
+  }
 }
 
 async function main() {

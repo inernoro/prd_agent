@@ -11,7 +11,7 @@
  * 这类回归编译过、渲染过、单看任何一处都对，只有连着看两帧才显形，所以钉成机械判据：
  * 骨架期用的部件必须**就是**就绪期用的那批部件（同一个导出），而不是长得像的复制品。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
@@ -19,7 +19,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { BranchDrawerSkeleton } from '../../web/src/components/branch/BranchDrawerSkeleton.js';
 import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCard.js';
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
-import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
+import { ProjectListSkeleton, pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
 import { branchNoticeVisible } from '../../web/src/components/BranchDetailDrawer.js';
 import { OverviewPanel } from '../../web/src/components/branch/OverviewPanel.js';
 
@@ -146,5 +146,31 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     const fallback = settings.slice(settings.indexOf('function SettingsTabFallback'), settings.indexOf('function SettingsTabFallback') + 400);
     expect(fallback).toContain('<LoadingBlock');
     expect(fallback).not.toContain('CdsLogoLoader');
+  });
+});
+
+
+describe('项目页从骨架到正文保持相同布局', () => {
+  it('加载与就绪页头使用同一个布局组件，窄屏筛选及工具条不再简化成两根横条', () => {
+    const ready = stripComments(read('components/project/ProjectInventoryHeader.tsx'));
+    const skeleton = stripComments(read('components/skeletons/PageSkeletons.tsx'));
+    expect(ready).toContain('<ProjectInventoryLayout');
+    expect(skeleton).toContain('<ProjectInventoryLayout');
+    const html = renderToStaticMarkup(createElement(ProjectListSkeleton));
+    for (const label of ['管理项目、分支环境与部署。', '全部项目', '运行中', '已暂停', '已就绪']) expect(html).toContain(label);
+    for (const group of ['cds-project-status-filters', 'cds-project-inventory-tools', 'cds-project-inventory-search', 'cds-project-view-switch']) expect(html).toContain(group);
+    expect((html.match(/<button[^>]*disabled/g) || []).length).toBe(8);
+    expect((html.match(/<select[^>]*disabled/g) || []).length).toBe(2);
+    expect(html).not.toContain('h-8 w-72');
+  });
+
+  it('已保存的列表视图在代码和数据加载阶段都保持列表形状', () => {
+    vi.stubGlobal('window', { localStorage: { getItem: () => JSON.stringify({ view: 'list', pinnedProjectIds: [] }) } });
+    try {
+      for (const html of [renderToStaticMarkup(createElement(ProjectListSkeleton)), renderToStaticMarkup(pageSkeletonForPath('/project-list'))]) {
+        expect(html).toContain('cds-project-inventory--list');
+        expect((html.match(/cds-project-card-link/g) || []).length).toBe(6);
+      }
+    } finally { vi.unstubAllGlobals(); }
   });
 });
