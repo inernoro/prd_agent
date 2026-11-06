@@ -6,9 +6,9 @@ import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell
 import { Button } from '@/components/ui/button';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { CodeReviewsSkeleton } from '@/components/skeletons/CodeReviewsSkeleton';
-import { apiRequest, apiUrl } from '@/lib/api';
+import { apiRequest } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
-import { CODE_REVIEW_STATUS, codeReviewAction, codeReviewReportUrl, listCodeReviews, submitCodeReview, type CodeReviewTask } from '@/lib/codeReviews';
+import { CODE_REVIEW_STATUS, codeReviewAction, codeReviewReportUrl, downloadCodeReviewReport, listCodeReviews, submitCodeReview, type CodeReviewTask } from '@/lib/codeReviews';
 
 interface ProjectOption { id: string; name: string; aliasName?: string; }
 interface Capabilities { engineConfigured: boolean; mailConfigured: boolean; }
@@ -228,6 +228,10 @@ function ReviewReportReader({ task, onBack }: { task: CodeReviewTask; onBack: ()
   const [payload, setPayload] = useState<{ report: { title: string; format: 'html' | 'md' }; content: string } | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
+  const downloadRequest = useRef<AbortController | null>(null);
+  const downloadLinks = useRef(new Map<string, number>());
   const container = useRef<HTMLElement>(null);
   const { theme } = useTheme();
   useEffect(() => { container.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, []);
@@ -240,9 +244,46 @@ function ReviewReportReader({ task, onBack }: { task: CodeReviewTask; onBack: ()
       .catch((cause: unknown) => { if (!controller.signal.aborted) setError(errorMessage(cause)); });
     return () => controller.abort();
   }, [task.id, attempt]);
+  useEffect(() => () => {
+    downloadRequest.current?.abort();
+    for (const [url, timer] of downloadLinks.current) {
+      window.clearTimeout(timer);
+      URL.revokeObjectURL(url);
+    }
+    downloadLinks.current.clear();
+  }, []);
+  const download = async (): Promise<void> => {
+    if (downloadRequest.current || !payload) return;
+    const controller = new AbortController();
+    downloadRequest.current = controller;
+    setDownloading(true);
+    setDownloadError('');
+    try {
+      const blob = await downloadCodeReviewReport(task.id, controller.signal);
+      if (controller.signal.aborted) return;
+      const url = URL.createObjectURL(blob);
+      // Keep the URL alive until the browser has started saving, then release it.
+      const timer = window.setTimeout(() => {
+        URL.revokeObjectURL(url);
+        downloadLinks.current.delete(url);
+      }, 1_000);
+      downloadLinks.current.set(url, timer);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `code-review-${task.id}.${payload.report.format}`;
+      document.body.append(link);
+      try { link.click(); } finally { link.remove(); }
+    } catch (cause) {
+      if (!controller.signal.aborted) setDownloadError(errorMessage(cause));
+    } finally {
+      if (downloadRequest.current === controller) downloadRequest.current = null;
+      if (!controller.signal.aborted) setDownloading(false);
+    }
+  };
   const html = payload ? buildCodeReviewDocument(payload.content, payload.report.format, theme) : '';
   return <section ref={container} aria-label="代码审查报告阅读器" className="scroll-mt-20 overflow-hidden rounded-xl border border-border bg-card">
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-3"><div className="flex min-w-0 items-center gap-3"><Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft />返回任务</Button><h2 className="min-w-0 truncate text-sm font-medium">{payload?.report.title || task.title}</h2></div><Button asChild variant="outline" size="sm"><a href={apiUrl(`/api/code-reviews/${encodeURIComponent(task.id)}/report/download`)} download><Download />下载 Markdown</a></Button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-3"><div className="flex min-w-0 items-center gap-3"><Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft />返回任务</Button><h2 className="min-w-0 truncate text-sm font-medium">{payload?.report.title || task.title}</h2></div><Button variant="outline" size="sm" disabled={downloading || !payload} onClick={() => { void download(); }}><Download />{downloading ? '正在下载' : payload?.report.format === 'html' ? '下载 HTML' : '下载 Markdown'}</Button></div>
+    {downloadError ? <div className="p-3"><ErrorNotice message={downloadError} /></div> : null}
     {error ? <div className="space-y-3 p-4"><ErrorNotice message={`报告正文读取失败：${error}`} /><Button variant="outline" onClick={() => setAttempt((value) => value + 1)}>重新加载报告</Button></div> : payload ? <iframe title={payload.report.title} srcDoc={html} sandbox="" className="h-[42rem] w-full border-0" /> : <ContentLoading label="正在读取审查报告正文" variant="panel" />}
   </section>;
 }
