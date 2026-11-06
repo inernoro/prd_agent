@@ -16,7 +16,7 @@ namespace PrdAgent.Infrastructure.LlmGateway.Transformers;
 /// </summary>
 public sealed class DoubaoTtsTransformer : IRawExchangeResponseTransformer
 {
-    public const int MaximumAudioBytes = 32 * 1024 * 1024;
+    public const int MaximumAudioBytes = GatewaySpeechResponseLimits.MaxAudioBytes;
     public const int MaximumResponseBytes = 48 * 1024 * 1024;
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly HashSet<int> SampleRates = [8000, 16000, 22050, 24000, 32000, 44100, 48000];

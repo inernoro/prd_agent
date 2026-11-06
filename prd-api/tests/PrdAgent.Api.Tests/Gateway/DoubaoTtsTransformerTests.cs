@@ -184,6 +184,11 @@ public class DoubaoTtsTransformerTests
         });
         result.Success.ShouldBeTrue(result.ErrorMessage);
         result.BinaryContent!.ShouldBe(Encoding.ASCII.GetBytes("ID3"));
+        var responseAudit = JsonNode.Parse(result.Content!)!;
+        responseAudit["media_omitted"]!.GetValue<bool>().ShouldBeTrue();
+        responseAudit["received_bytes"]!.GetValue<int>().ShouldBe(3);
+        responseAudit["response_sha256"]!.GetValue<string>().Length.ShouldBe(64);
+        result.Content.ShouldNotContain("ID3");
         factory.Requests.Single().RequestUri!.AbsolutePath.ShouldBe("/v1/audio/speech");
         factory.Requests.Single().Headers.Authorization!.Scheme.ShouldBe("Bearer");
         var sent = JsonNode.Parse(await factory.Requests.Single().Content!.ReadAsStringAsync());
@@ -192,6 +197,55 @@ public class DoubaoTtsTransformerTests
         audit.ShouldNotBeNull();
         audit!.RequestBodyRedacted.ShouldNotContain(request["input"]!.GetValue<string>());
         audit.RequestBodyRedacted.ShouldNotContain(request["instructions"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task NativeSpeechCannotTreatJsonAsFinishedAudioEvenWhenBinaryWasExpected()
+    {
+        var gateway = new LlmGateway(new Mock<IModelResolver>().Object,
+            new TestHttpFactory("{\"error\":{\"message\":\"invalid voice\"}}"), NullLogger<LlmGateway>.Instance);
+        var result = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.VideoAgent.Audio.Tts,
+            ModelType = ModelTypes.Tts,
+            RequestBody = Request,
+            ExpectBinaryResponse = true,
+        }, NativeResolution());
+        result.Success.ShouldBeFalse();
+        result.StatusCode.ShouldBe(200);
+        result.ErrorCode.ShouldBe("TTS_RESPONSE_NOT_AUDIO");
+        result.BinaryContent.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task NativeSpeechReadsHeadersFirstAndStopsAtAudioLimitWithoutBufferingWholeResponse()
+    {
+        var content = new BoundedTestContent(GatewaySpeechResponseLimits.MaxAudioBytes + 1024L);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("audio/mpeg");
+        var logs = new Mock<ILlmRequestLogWriter>();
+        LlmLogDone? done = null;
+        logs.Setup(x => x.StartAsync(It.IsAny<LlmLogStart>(), It.IsAny<CancellationToken>())).ReturnsAsync("bounded-tts");
+        logs.Setup(x => x.MarkDone("bounded-tts", It.IsAny<LlmLogDone>()))
+            .Callback<string, LlmLogDone>((_, entry) => done = entry);
+        var resolver = new Mock<IModelResolver>();
+        var gateway = new LlmGateway(resolver.Object, new ContentHttpFactory(content), NullLogger<LlmGateway>.Instance, logs.Object);
+        var result = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.VideoAgent.Audio.Tts,
+            ModelType = ModelTypes.Tts,
+            RequestBody = Request,
+            ExpectBinaryResponse = true,
+        }, NativeResolution());
+        result.Success.ShouldBeFalse();
+        result.ErrorCode.ShouldBe("TTS_RESPONSE_TOO_LARGE");
+        result.StatusCode.ShouldBe(200);
+        result.BinaryContent.ShouldBeNull();
+        content.Stream.BytesRead.ShouldBe(GatewaySpeechResponseLimits.MaxAudioBytes + 1L);
+        JsonNode.Parse(result.Content!)!["truncated"]!.GetValue<bool>().ShouldBeTrue();
+        done.ShouldNotBeNull();
+        done!.Status.ShouldBe("failed");
+        done.ProviderAttempts!.Last().Status.ShouldBe("failed");
+        resolver.Verify(x => x.RecordSuccessAsync(It.IsAny<ModelResolutionResult>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -286,6 +340,68 @@ public class DoubaoTtsTransformerTests
         ExchangeTransformerType = "doubao-tts",
         ExchangeTransformerConfig = Config,
     };
+
+    private static GatewayModelResolution NativeResolution() => new()
+    {
+        Success = true,
+        ActualModel = "configured-speech-model",
+        ActualPlatformId = "configured-openai-instance",
+        OfferingId = "openai-speech-offering",
+        PlatformType = "openai",
+        ApiUrl = "https://openai.example",
+        ApiKey = "test-only-api-key",
+    };
+
+    private sealed class ContentHttpFactory(HttpContent content) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(new Handler(content));
+        private sealed class Handler(HttpContent content) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+                => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
+
+    private sealed class BoundedTestContent(long length) : HttpContent
+    {
+        public CountingAudioStream Stream { get; } = new(length);
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => throw new InvalidOperationException("ResponseContentRead must not buffer the entire speech response.");
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(Stream);
+        protected override bool TryComputeLength(out long computedLength)
+        {
+            computedLength = length;
+            return true;
+        }
+    }
+
+    private sealed class CountingAudioStream(long length) : Stream
+    {
+        public long BytesRead { get; private set; }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = (int)Math.Min(count, length - BytesRead);
+            buffer.AsSpan(offset, read).Fill(0x55);
+            BytesRead += read;
+            return read;
+        }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = (int)Math.Min(buffer.Length, length - BytesRead);
+            buffer.Span[..read].Fill(0x55);
+            BytesRead += read;
+            return ValueTask.FromResult(read);
+        }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position { get => BytesRead; set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
 
     private sealed class TestHttpFactory(string body, string contentType = "application/json") : IHttpClientFactory
     {
