@@ -142,7 +142,9 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
   for (const [action, run] of [
     ['cancel', (id: string) => service.cancel(id)], ['retry', (id: string) => service.retry(id)], ['delivery/retry', (id: string) => service.deliver(id)],
   ] as const) router.post(`/code-reviews/:id/${action}`, handler(async (req, res) => {
-    const task = taskFor(req); return res.json({ task: publicCodeReviewTask(await run(task.id)) });
+    const task = taskFor(req);
+    const result = action === 'retry' ? await service.retry(task.id, req.get('X-CDS-Review-Expected-Updated-At')) : await run(task.id);
+    return res.json({ task: publicCodeReviewTask(result) });
   }));
   router.get('/code-reviews/:id/report', handler(async (req, res) => {
     const task = taskFor(req);

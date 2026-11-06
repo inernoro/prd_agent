@@ -80,7 +80,7 @@ export class CodeReviewService {
     return config ? new CodeReviewEngine(config) : undefined;
   }
   capabilities() {
-    return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(),
+    return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(), conditionalRetry: true,
       tools: CDS_AGENT_CAPABILITY_DEFINITIONS.find((capability) => capability.id === 'code-reviews')?.mcpTools || [] };
   }
   list(projectId?: string) { return this.deps.state.listCodeReviewTasks(projectId); }
@@ -169,13 +169,17 @@ export class CodeReviewService {
     this.active.get(id)?.abort();
     return task;
   }
-  async retry(id: string) {
+  async retry(id: string, expectedUpdatedAt?: string) {
     const task = this.get(id); this.assertOwned(task);
+    if (expectedUpdatedAt !== undefined && (task.status !== 'failed' || task.updatedAt !== expectedUpdatedAt)) {
+      throw new CodeReviewError(409, '任务状态已变化，未执行条件重试，请刷新后查看');
+    }
     if (!['failed', 'cancelled'].includes(task.status) || this.active.has(id)) throw new CodeReviewError(409, '仅可重试已停止的失败或取消任务');
     if (task.reportId) throw new CodeReviewError(409, '报告已归档，请单独重试邮件投递');
     task.status = 'queued'; task.phase = '等待重试'; task.error = undefined;
     task.engineRetryRequested = Boolean(task.engineTaskId && !task.engineCompleted);
     if (!task.engineTaskId) task.progress.scannedFiles = 0;
+    // No await separates the conditional check from StateService's synchronous in-memory replacement before flush.
     await this.save(task); if (this.deps.autoStart !== false) void this.pump(); return task;
   }
   private async audit(id: string, value: unknown) {

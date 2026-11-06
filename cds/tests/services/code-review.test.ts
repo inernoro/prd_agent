@@ -421,6 +421,58 @@ describe('代码审查任务完整闭环', () => {
     server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     return `http://127.0.0.1:${(server.address() as any).port}/api/code-reviews`;
   }
+  it('能力声明条件重试，HTTP匹配失败版本时仍使用原任务与固定源码', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id); const base = await serve();
+    expect((await (await fetch(`${base}/capabilities`, { headers: { 'x-project': 'a' } })).json()).conditionalRetry).toBe(true);
+    const response = await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a', 'X-CDS-Review-Expected-Updated-At': failed.updatedAt } });
+    expect(response.status).toBe(200);
+    expect(service.get(task.id)).toMatchObject({ status: 'queued', id: task.id, sourceHash: failed.sourceHash, inputKey: failed.inputKey });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('人工重试后又取消时，守护的旧条件重试被拒绝且不会复活已取消任务', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id); const base = await serve();
+    expect((await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a' } })).status).toBe(200);
+    expect((await fetch(`${base}/${task.id}/cancel`, { method: 'POST', headers: { 'x-project': 'a' } })).status).toBe(200);
+    const cancelled = service.get(task.id);
+    const response = await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a', 'X-CDS-Review-Expected-Updated-At': failed.updatedAt } });
+    expect(response.status).toBe(409); expect(service.get(task.id)).toEqual(cancelled);
+    expect(cancelled).toMatchObject({ status: 'cancelled', id: task.id, sourceHash: failed.sourceHash, inputKey: failed.inputKey });
+    expect(run).toHaveBeenCalledTimes(1);
+    // An explicit human retry without the conditional header still supports cancelled tasks.
+    expect((await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a' } })).status).toBe(200);
+  });
+  it('失败状态的updatedAt改变也拒绝旧条件重试，不修改原任务', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id); const expected = failed.updatedAt;
+    failed.updatedAt = new Date(Date.parse(expected) + 1).toISOString(); await state.putCodeReviewTask(failed);
+    const base = await serve();
+    const response = await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a', 'X-CDS-Review-Expected-Updated-At': expected } });
+    expect(response.status).toBe(409); expect(service.get(task.id)).toEqual(failed);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('条件检查到入队内存写入不跨await，并发取消后第二个条件重试不能改写状态', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id);
+    const persist = state.putCodeReviewTask.bind(state);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(state, 'putCodeReviewTask').mockImplementation((next) => {
+      const flushed = persist(next); // Original StateService replaces its in-memory row before its first await.
+      return next.status === 'queued' ? flushed.then(() => gate) : flushed;
+    });
+    const retrying = service.retry(task.id, failed.updatedAt);
+    expect(service.get(task.id).status).toBe('queued');
+    await service.cancel(task.id);
+    const cancelled = service.get(task.id);
+    await expect(service.retry(task.id, failed.updatedAt)).rejects.toMatchObject({ status: 409 });
+    expect(service.get(task.id)).toEqual(cancelled);
+    release(); await retrying;
+    expect(service.get(task.id)).toEqual(cancelled);
+    expect(service.get(task.id)).toMatchObject({ status: 'cancelled', id: task.id, sourceHash: failed.sourceHash });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
   it('真实 HTTP ZIP 上传、状态、报告读取和跨项目拒绝', async () => {
     const base = await serve(); const form = new FormData();
     form.set('projectId', 'a'); form.set('sourceType', 'zip'); form.set('file', new Blob([new Uint8Array(zip())]), 'source.zip');
