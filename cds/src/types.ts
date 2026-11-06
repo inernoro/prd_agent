@@ -40,6 +40,28 @@ export type ServiceRole = 'web' | 'api' | 'worker';
 export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
 
 /** A build profile defines how to build/run a specific type of project */
+export interface StaticWebConfig {
+  /** Public frontend directory inside the verified CI image; the image is never started. */
+  imagePath: string;
+  basePath?: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
+export interface StaticWebRuntime {
+  id: string;
+  serviceName: string;
+  projectId: string;
+  branchId: string;
+  profileId: string;
+  image: string;
+  revision: string;
+  rootDirectory: string;
+  basePath: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
 export interface BuildProfile {
   id: string;
   /**
@@ -50,6 +72,8 @@ export interface BuildProfile {
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
+  /** A frontend served as files by the shared CDS process, without an application container. */
+  staticWeb?: StaticWebConfig;
   /** Working directory relative to worktree root (derived from volume mount host path) */
   workDir: string;
   /**
@@ -428,6 +452,7 @@ export interface ReadinessProbe {
 
 /** A deploy mode override — alternative command/image/env for a build profile */
 export interface DeployModeOverride {
+  staticWeb?: StaticWebConfig;
   /** Human-readable label shown in dropdown (e.g., "开发模式", "静态部署") */
   label: string;
   /** Override command (replaces profile.command when this mode is active) */
@@ -498,6 +523,7 @@ export interface DeployModeOverride {
  * See the helper `resolveEffectiveProfile()` in services/container.ts.
  */
 export interface BuildProfileOverride {
+  staticWeb?: StaticWebConfig;
   /** Override Docker image (replaces baseline.dockerImage) */
   dockerImage?: string;
   /** Override run command (replaces baseline.command) */
@@ -1296,6 +1322,8 @@ export interface BranchEntry {
 /** State of a single service (one build profile instance) within a branch */
 /** 可切换入口的实际运行身份；不保存环境变量或构建日志。 */
 export interface ServiceRuntimeRef {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
   containerName: string;
   hostPort: number;
   containerId?: string;
@@ -1310,6 +1338,8 @@ export interface ServiceRuntimeRef {
 }
 
 export interface ServiceState {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
   profileId: string;
   containerName: string;
   /** Host port allocated for this service */
@@ -1433,6 +1463,7 @@ export interface DeploymentVersionProfile {
   artifactImage: string;
   /** 版本创建时的完整CI输入范围；历史重放不得借当前配置缩窄等价证明。 */
   buildScope?: string[];
+  staticWeb?: StaticWebConfig;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   reusable: boolean;
   reuseBlockedReason?: string;

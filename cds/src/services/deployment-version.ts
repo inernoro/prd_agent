@@ -108,6 +108,7 @@ export class DeploymentVersionService {
         name: snapshot.name,
         dockerImage: snapshot.artifactImage,
         buildScope: snapshot.buildScope ? [...snapshot.buildScope] : undefined,
+        staticWeb: snapshot.staticWeb ? structuredClone(snapshot.staticWeb) : undefined,
         command: snapshot.runtimeCommand,
         containerPort: snapshot.containerPort,
         containerWorkDir: snapshot.containerWorkDir,
@@ -141,6 +142,7 @@ export class DeploymentVersionService {
       name: profile.name,
       artifactImage,
       buildScope: profile.buildScope ? [...profile.buildScope] : undefined,
+      staticWeb: profile.staticWeb ? structuredClone(profile.staticWeb) : undefined,
       artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable
@@ -185,6 +187,7 @@ export function computeDeploymentConfigHash(profiles: BuildProfile[], effectiveE
     resources: profile.resources || null,
     managedBuild: profile.managedBuild || null,
     buildScope: profile.buildScope,
+    staticWeb: profile.staticWeb,
     cacheMounts: profile.cacheMounts,
     buildTimeout: profile.buildTimeout,
     role: profile.role,

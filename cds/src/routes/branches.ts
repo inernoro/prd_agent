@@ -5372,7 +5372,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // membership check is O(1) against the set. Single docker round-trip
     // regardless of project size.
     if (live) {
-      const runningNames = await containerService.getRunningContainerNames();
+      const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
       for (const b of branches) {
         for (const [profileId, svc] of Object.entries(b.services)) {
           if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
@@ -5667,7 +5667,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = stateService.getAllBranches().filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
-    const runningNames = await containerService.getRunningContainerNames();
+    const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
     const discoveredApps = await containerService.discoverAppContainers();
     const issues: Array<{
       severity: 'warn' | 'info';
@@ -5857,7 +5857,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = Object.values(stateService.getState().branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
-    const runningNames = await containerService.getRunningContainerNames();
+    const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
     const removed: Array<{ branchId: string; branch: string; profileId: string; containerName: string }> = [];
     const skippedRunning: Array<{ branchId: string; profileId: string; containerName: string }> = [];
     const skippedBusy: Array<{ branchId: string; reason: string }> = [];
@@ -6680,7 +6680,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const live = req.query.live === 'true' || req.query.live === '1';
     const infraServices = stateService.getInfraServicesForProject(projectId);
     if (live) {
-      const runningNames = await containerService.getRunningContainerNames();
+      const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
       for (const [profileId, svc] of Object.entries(branch.services || {})) {
         if (svc.status === 'running' && !runningNames.has(svc.containerName)) {
           svc.status = 'stopped';
@@ -14313,7 +14313,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
-      reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+      reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), staticProfileIds: profiles.filter(profile => acceptedProfiles.get(profile.id)?.staticWeb).map(profile => profile.id), state: stateService,
         portStart: config.portStart, operationId: branchOperationLease?.operationId });
       await stateService.flush();
       // ── Execute layer by layer (parallel within each layer) ──
@@ -15468,7 +15468,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const svc = entry.services[profile.id];
       preserveServingRuntime(svc);
-      reserveServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
+      reserveServiceReplacements({ entry, profileIds: [profile.id], staticProfileIds: effectiveProfile.staticWeb ? [profile.id] : [], state: stateService,
         portStart: config.portStart, operationId: branchOperationLease?.operationId });
       svc.status = 'building';
       // 分支本身不在运行（停止 / 出错后重试）时，聚合状态跟着进入部署中间态，结束时照常重算。
@@ -18806,6 +18806,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (expectedContainerId !== undefined && svc.containerId !== expectedContainerId) {
       res.status(409).json({ error: '当前容器身份已变化，拒绝执行' }); return;
+    }
+    if (svc.staticWeb || svc.runtimeKind === 'static') {
+      res.status(409).json({ error: '该前端由静态文件托管，无可执行命令的容器；请通过预览入口检查页面或重新部署产物' }); return;
     }
 
     try {
@@ -23175,7 +23178,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         }
         stateService.save();
 
-        reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+        reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), staticProfileIds: profiles.filter(profile => importProfiles.get(profile.id)?.staticWeb).map(profile => profile.id), state: stateService,
           portStart: config.portStart });
         await stateService.flush();
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);

@@ -11,6 +11,8 @@ export function pinServingRuntimeDuringCommit(service: ServiceState): () => void
 
 export function runtimeRef(service: ServiceRuntimeRef): ServiceRuntimeRef {
   return { containerName: service.containerName, hostPort: service.hostPort, networkName: service.networkName,
+    runtimeKind: service.runtimeKind,
+    staticWeb: service.staticWeb ? structuredClone(service.staticWeb) : undefined,
     containerId: service.containerId, creationIssued: service.creationIssued,
     connectedNetworks: service.connectedNetworks ? [...service.connectedNetworks] : undefined,
     aliasNetworks: service.aliasNetworks ? [...service.aliasNetworks] : undefined,
