@@ -406,9 +406,19 @@ function hardenHtmlWithFactRetention(
     ? undefined
     : validateVerifiedPackagePaths(packagePaths);
   html = convertRelativeKnowledgeAnchors(html);
+  const cssSources: string[] = [];
+  let styleContentStart: number | undefined;
   for (const tag of iterateHtmlTags(html)) {
-    if (tag.isClosing) continue;
     const name = tag.name.toLowerCase();
+    if (name === 'style') {
+      if (tag.isClosing && styleContentStart !== undefined) {
+        cssSources.push(html.slice(styleContentStart, tag.start));
+        styleContentStart = undefined;
+      } else if (!tag.isClosing) {
+        styleContentStart = tag.end;
+      }
+    }
+    if (tag.isClosing) continue;
     if (verifiedPackagePaths === undefined && name === 'script') {
       throw new AgentWorkspaceRuntimeError(
         'design_output_not_self_contained',
@@ -422,6 +432,8 @@ function hardenHtmlWithFactRetention(
       );
     }
     const attributes = parseHtmlAttributes(tag.attributes);
+    const inlineStyle = attributes.get('style');
+    if (inlineStyle !== undefined) cssSources.push(decodeHtmlText(inlineStyle));
     for (const attribute of ['src', 'href', 'poster', 'background']) {
       const rawValue = attributes.get(attribute);
       if (rawValue === undefined) continue;
@@ -453,20 +465,24 @@ function hardenHtmlWithFactRetention(
       );
     }
   }
-  if (/@import\s+(?:url\s*\()?/i.test(html)) {
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html CSS contains a disallowed @import',
-    );
-  }
-  for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
-    const value = match[2].trim();
-    if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
-    if (verifiedPackagePaths !== undefined && resolveVerifiedPackagePath(value, verifiedPackagePaths)) continue;
-    throw new AgentWorkspaceRuntimeError(
-      'design_output_not_self_contained',
-      'index.html CSS references a non-inline resource',
-    );
+  if (styleContentStart !== undefined) cssSources.push(html.slice(styleContentStart));
+  // JavaScript object-URL helpers and page text are not CSS resource declarations.
+  for (const css of cssSources) {
+    if (/@import\s+(?:url\s*\()?/i.test(css)) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html CSS contains a disallowed @import',
+      );
+    }
+    for (const match of css.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
+      const value = match[2].trim();
+      if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
+      if (verifiedPackagePaths !== undefined && resolveVerifiedPackagePath(value, verifiedPackagePaths)) continue;
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html CSS references a non-inline resource',
+      );
+    }
   }
   if (enforceContentQuality) {
     validateCssGeneratedContent(html);
