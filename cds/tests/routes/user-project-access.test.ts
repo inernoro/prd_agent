@@ -1335,7 +1335,8 @@ describe('human project grants through the production server', () => {
       const response = await fetch(base + `/api/identity-connections/${requestId}${suffix}`, {
         method, headers: { 'X-Poll-Token': pollToken },
       });
-      return { status: response.status, body: await response.json() };
+      const body = await response.text();
+      return { status: response.status, body: response.headers.get('content-type')?.includes('application/json') ? JSON.parse(body) : body };
     };
     const approve = (projectId = 'project-a', userId = memberId) => call('POST', `/api/identity/connections/${requestId}/approve`, owner, { projectId, userId });
     return { requestId, pollToken, poll, approve };
@@ -1362,6 +1363,31 @@ describe('human project grants through the production server', () => {
     expect(JSON.stringify(overview.body)).not.toMatch(/pollToken|ciphertext|authorizationKey|userCredential/);
     expect((await call('GET', '/api/identity/connections', member)).status).toBe(403);
     expect((await credentialCall('GET', '/api/identity/connections', result.authorizationKey)).status).toBe(403);
+  });
+
+  it.each(['flush', 'save-and-compensation'] as const)('keeps approved recovery retryable and failed credentials revoked after %s fails', async failure => {
+    await grant(['project-a']); const t = await recoveryTicket(); await t.approve();
+    if (failure === 'flush') vi.spyOn(state, 'flush').mockRejectedValueOnce(new Error('fake delivery flush failure'));
+    else {
+      const fail = () => { throw new Error('fake delivery save failure'); };
+      vi.spyOn(state, 'save').mockImplementationOnce(fail).mockImplementationOnce(fail);
+    }
+    expect((await t.poll()).status).toBe(500);
+    const request = state.getIdentityConnections().find(r => r.id === t.requestId)!;
+    expect(request.status).toBe('approved');
+    expect(request.userCredentialId).toBeUndefined(); expect(request.projectCredentialId).toBeUndefined();
+    expect(request.envelope).toBeUndefined();
+    expect(state.getUserCredentials().every(c => Boolean(c.revokedAt))).toBe(true);
+    expect(state.getAgentKeys('project-a').every(k => Boolean(k.revokedAt))).toBe(true);
+    const retry = await t.poll();
+    expect(retry.status).toBe(200); expect(retry.body.status).toBe('approved');
+    expect(state.getUserCredentials().filter(c => !c.revokedAt)).toHaveLength(1);
+    expect(state.getAgentKeys('project-a').filter(k => !k.revokedAt)).toHaveLength(1);
+    expect((await credentialCall('GET', '/api/projects/project-a', retry.body.authorizationKey)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-b', retry.body.authorizationKey)).status).toBe(403);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getIdentityConnections().find(r => r.id === t.requestId)?.status).toBe('approved');
+    expect(restored.getUserCredentials().filter(c => !c.revokedAt)).toHaveLength(1);
   });
 
   it('replays only the same encrypted credential pair until acknowledgement, with no plaintext or decryption key in saved state', async () => {
@@ -1418,6 +1444,23 @@ describe('human project grants through the production server', () => {
     await t.approve(); expect((await t.approve()).status).toBe(409);
     state.getIdentityConnections().find(r => r.id === t.requestId)!.expiresAt = new Date(0).toISOString();
     expect((await t.poll()).status).toBe(410);
+  });
+
+  it.each(['permanent', 'finite'] as const)('preserves a claimed legacy key original %s expiry without issuing another credential', async expiry => {
+    await grant(['project-a']);
+    const plain = 'cdsp_projecta_claim-expiry';
+    const expiresAt = expiry === 'finite' ? new Date(Date.now() + 60 * 86_400_000).toISOString() : undefined;
+    const original = { id: 'legacy-expiry', hash: createHash('sha256').update(plain).digest('hex'), scope: 'rw' as const,
+      label: '原期限', createdAt: '2020-01-01T00:00:00.000Z', ...(expiresAt ? { expiresAt } : {}) };
+    state.addAgentKey('project-a', { ...original });
+    expect((await call('POST', '/api/identity/legacy-credentials/project-a/legacy-expiry/claim', owner, { userId: memberId })).status).toBe(200);
+    const claimed = state.getAgentKeys('project-a').find(k => k.id === original.id)!;
+    expect(claimed.expiresAt).toBe(expiresAt); expect(claimed).toMatchObject(original);
+    expect(state.getUserCredentials()).toHaveLength(0); expect(state.getAgentKeys('project-a')).toHaveLength(1);
+    await state.flush(); const restored = new StateService(path.join(dir, 'state.json'), dir); restored.load();
+    expect(restored.getAgentKeys('project-a')[0].expiresAt).toBe(expiresAt);
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 86_400_000);
+    expect(restored.findAgentKeyForAuth(plain)).toEqual({ projectId: 'project-a', keyId: original.id });
   });
 
   it('binds only an explicitly selected unclaimed key, preserving scope, and account/project gates follow the claimed identity', async () => {

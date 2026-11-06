@@ -99,8 +99,10 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
             state.updateIdentityConnection(r.id, { userCredentialId: user.id, projectCredentialId: key.id, envelope });
             await state.flush();
           } catch (error) {
-            state.revokeUserCredential(user.id, 'connection-storage-failed'); state.revokeAgentKey(project.id, key.id);
-            state.updateIdentityConnection(r.id, { status: 'rejected', envelope: undefined });
+            // 交接失败不是所有者拒绝；先撤销本次未交付凭据，再保留同票据重试。
+            user.revokedAt = key.revokedAt = new Date().toISOString(); user.revokedBy = 'connection-storage-failed';
+            Object.assign(r, { userCredentialId: undefined, projectCredentialId: undefined, envelope: undefined });
+            try { state.save(); await state.flush(); } catch { /* 原存储错误仍向上传递，内存凭据已撤销。 */ }
             throw error;
           }
         }
@@ -183,9 +185,8 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
       }
       const before = { ...key };
       key.principalId = principalId; key.claimedAt = new Date().toISOString(); key.claimedBy = actor(req);
-      key.expiresAt = key.expiresAt || daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS);
       try { state.save(); await state.flush(); } catch (error) {
-        for (const field of ['principalId', 'claimedAt', 'claimedBy', 'expiresAt'] as const) {
+        for (const field of ['principalId', 'claimedAt', 'claimedBy'] as const) {
           if (before[field] === undefined) delete key[field]; else key[field] = before[field];
         }
         try { state.save(); } catch { /* 保留原存储错误。 */ }
