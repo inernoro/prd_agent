@@ -1,5 +1,6 @@
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+import json
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -7,7 +8,7 @@ from pydantic import BaseModel, model_validator
 from datetime import datetime, timezone
 
 from app.api import deps
-from app.db.session import get_db
+from app.db.session import get_db, AsyncSessionLocal
 from app.models.audit import AuditTask, AuditIssue
 from app.models.project import Project
 from app.models.user import User
@@ -73,6 +74,12 @@ class AuditTaskSchema(BaseModel):
     branch_name: Optional[str] = None
     exclude_patterns: Optional[str] = None
     scan_config: Optional[str] = None
+    checkpoint_version: int = 0
+    processed_files: int = 0
+    failed_files: int = 0
+    skipped_files: int = 0
+    snapshot_sha256: Optional[str] = None
+    resumable: bool = False
     total_files: int = 0
     scanned_files: int = 0
     total_lines: int = 0
@@ -176,9 +183,38 @@ async def cancel_task(
     return {"message": "任务已取消", "task_id": id}
 
 
+@router.post("/{id}/resume")
+async def resume_task(id: str, background_tasks: BackgroundTasks,
+                      db: AsyncSession = Depends(get_db),
+                      current_user: User = Depends(deps.get_current_user)) -> Any:
+    from app.services.static_runner import can_resume
+    from app.services.scan_snapshot import archive_path
+    from app.api.v1.endpoints.scan import get_user_config_dict, process_zip_task
+    result = await db.execute(select(AuditTask).where(AuditTask.id == id).with_for_update())
+    task = result.scalars().first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    project = await db.get(Project, task.project_id)
+    if task.created_by != current_user.id or not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权继续此审查任务")
+    if not can_resume(task):
+        raise HTTPException(status_code=409, detail="任务不可续跑、快照缺失或旧执行仍在收尾")
+    config = await get_user_config_dict(db, current_user.id)
+    config['scan_config'] = json.loads(task.scan_config or '{}')
+    task.status = 'pending'
+    task.completed_at = None
+    await db.commit()
+    await db.close()
+    task_control.cleanup_task(id)
+    background_tasks.add_task(process_zip_task, id, str(archive_path(id)), AsyncSessionLocal, config)
+    return {'task_id': id, 'status': 'started'}
+
+
 @router.get("/{id}/issues", response_model=List[AuditIssueSchema])
 async def read_task_issues(
     id: str,
+    offset: Optional[int] = Query(None, ge=0),
+    limit: Optional[int] = Query(None, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(deps.get_current_user),
 ) -> Any:
@@ -197,15 +233,12 @@ async def read_task_issues(
     if task.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="无权查看此任务的问题")
     
-    result = await db.execute(
-        select(AuditIssue)
-        .where(AuditIssue.task_id == id)
-        .order_by(
-            # 按严重程度排序
-            AuditIssue.severity.desc(),
-            AuditIssue.created_at.desc()
-        )
-    )
+    query = select(AuditIssue).where(AuditIssue.task_id == id)
+    if offset is not None or limit is not None:
+        query = query.order_by(AuditIssue.id).offset(offset or 0).limit(limit or 500)
+    else:
+        query = query.order_by(AuditIssue.severity.desc(), AuditIssue.created_at.desc(), AuditIssue.id)
+    result = await db.execute(query)
     return result.scalars().all()
 
 
@@ -280,6 +313,9 @@ async def export_task_report_pdf(
         'branch_name': task.branch_name,
         'total_files': task.total_files,
         'scanned_files': task.scanned_files,
+        'processed_files': task.processed_files,
+        'failed_files': task.failed_files,
+        'skipped_files': task.skipped_files,
         'total_lines': task.total_lines,
         'issues_count': task.issues_count,
         'quality_score': task.quality_score,

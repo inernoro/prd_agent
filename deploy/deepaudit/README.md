@@ -39,3 +39,11 @@ CDS 的新归属卷使用 nocopy，初始根目录由 root 持有。镜像启动
 管理流程复查补丁（尚待发布）：除列表页外，补齐项目详情、新建弹窗及配置页的静态模式边界。静态模式不请求 Agent、SSH、嵌入或数据库管理接口，新建审查仅提供逐文件静态与 AI 分析。管理界面沿用原布局和配色，采用系统字体、去除网格及硬编码安全装饰，并解释浏览器验证与应用登录两层用途；普通上游构建保留原模式。15 项双模式组件/流程测试、构建及连接真实线上后端的只读本地浏览器完整交互通过；测试没有发起扫描或修改线上配置。额外检查上游 `tsconfig.app.json` 有 165 条既有严格类型诊断、涉及 29 文件（输出 177 行），本补丁逐条归一化比较无新增；仓库原 `type-check` 根脚本并不等价于完整应用严格检查，不能据此声称应用类型全部通过。
 
 普通扫描新增迁移 `009_cds_scan_failure_details`，持久化可选 `error_code/error_message`。仅使用 `MODEL_POOL_ALL_UNAVAILABLE`、`MODEL_RATE_LIMITED`、`MODEL_TIMEOUT`、`MODEL_AUTH_FAILED`、`ANALYSIS_FAILED` 五个稳定业务码和固定脱敏说明，任务 API 不透传 provider 原文；未知历史失败不补猜原因。ZIP、仓库全失败、连续失败及部分覆盖保留原因和实际进度，运行中断使用通用失败码。九项原因分类、API 脱敏、实际 ORM/迁移与扫描编排检查通过。
+
+原生整仓执行候选：ZIP 与原生仓库扫描共享有界文件队列和单个短事务写入器；一次提交仍只创建一个 `AuditTask`。`scan_config.max_analyze_files=0` 表示全量，`llm_concurrency` 接受 1–8（系统缺省 2），`llm_gap_ms` 可显式为 0；请求显式值优先于用户配置。模板/规则先预载为普通数据，文件获取和模型等待期间不持有数据库 session。保留整文件输入，不截断文件尾部；不支持、排除、空文件与超体积文件不能计入已分析数量。
+
+迁移 `010_ordinary_scan_checkpoints` 只新增任务计数和任务内文件 ledger，不修改历史任务数据。任务专属不可变 ZIP 保存在现有 `ZIP_STORAGE_PATH/task-snapshots/<task-id>/`，目录 700、快照与 manifest 600，已完成文件的结果/问题和进度在同一事务提交。GET 任务增加 `checkpoint_version`、`processed_files`、`failed_files`、`skipped_files`、`snapshot_sha256`、`resumable`。只有版本 1、有可验证快照、有失败/待处理文件且旧 worker 已结束的任务可以 `POST /api/v1/tasks/<id>/resume`，沿用创建者及项目权限，返回相同 task ID；取消后需用户明确续跑，历史版本 0 不假装可以跳过已完成文件。部署重启仍明确将中断任务标为失败，ledger 与已完成问题保留。
+
+发现分页复用 `GET /api/v1/tasks/<id>/issues?offset=0&limit=200`，limit 1–500，分页时按 issue ID 稳定排序，返回仍是问题数组；无 query 保留原兼容接口。`issues_count` 是全任务真实总条数，终态调用方可分页核对完整数量。原 issues、PDF 和 CDS 报告归档继续复用，不公开内部文件调度为额外业务任务。
+
+本地验证：40 文件同任务真实 ORM/快照编排、4/8 并发上限、LLM 期间无数据库 session、任务硬中断/取消及同 ID 续跑跳过完成文件、整文件末尾、权限/损坏快照/旧任务拒绝、分页、迁移与覆盖语义共 15 项新增检查通过；另有 7 项路由认证、9 项失败原因、3 项合同、5 项覆盖层安装检查通过。这些使用受控模型 I/O 验证调度，不代表线上整仓模型审查已经执行。新增检查已加入 Fork 的 Branch Image CI 后端步骤。

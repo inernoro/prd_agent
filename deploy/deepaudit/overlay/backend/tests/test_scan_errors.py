@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.db.base import Base
-from app.models import User, Project, AuditTask
+from app.models import User, Project, AuditTask, AuditFileResult, AuditIssue
 from app.api.v1.endpoints.tasks import AuditTaskSchema
 from app.api.v1.endpoints import scan
 from app.services import scanner
@@ -84,7 +84,7 @@ class SafeFailureContract(unittest.TestCase):
 class ScanFailurePersistence(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine = create_engine('sqlite://')
-        Base.metadata.create_all(self.engine, tables=[User.__table__, Project.__table__, AuditTask.__table__])
+        Base.metadata.create_all(self.engine, tables=[User.__table__, Project.__table__, AuditTask.__table__, AuditFileResult.__table__, AuditIssue.__table__])
         self.session = Session(self.engine, expire_on_commit=False)
         user = User(id='user', email='test@example.com', hashed_password='not-a-real-password')
         project = Project(id='project', name='test', owner_id='user', repository_url='https://github.com/example/repo', repository_type='github')
@@ -96,6 +96,7 @@ class ScanFailurePersistence(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *args): pass
             async def get(self, model, identity): return session.get(model, identity)
             async def commit(self): session.commit()
+            async def execute(self, statement): return session.execute(statement)
             def add(self, entity): session.add(entity)
         self.factory = Database
         self.config = {'otherConfig': {'llmGapMs': 1, 'maxAnalyzeFiles': 0}}
@@ -133,7 +134,7 @@ class ScanFailurePersistence(unittest.IsolatedAsyncioTestCase):
     async def test_repository_consecutive_failure_does_not_erase_pool_cause(self):
         service = SimpleNamespace(analyze_code=AsyncMock(side_effect=ProviderError(503, {'error': {'code': 'MODEL_POOL_ALL_UNAVAILABLE'}})))
         files = [{'path': f'file{i}.py', 'url': 'https://example.invalid/file'} for i in range(6)]
-        with patch.object(scanner, 'LLMService', return_value=service), patch.object(scanner, 'get_github_files', AsyncMock(return_value=files)), patch.object(scanner, 'fetch_file_content', AsyncMock(return_value='x = 1')):
+        with patch.object(scanner, 'LLMService', return_value=service), patch.object(scanner, 'github_api', AsyncMock(return_value={'sha': 'f' * 40})), patch.object(scanner, 'get_github_files', AsyncMock(return_value=files)), patch.object(scanner, 'fetch_file_content', AsyncMock(return_value='x = 1')):
             await scanner.scan_repo_task(self.task.id, self.factory, self.config)
         self.assert_persisted('MODEL_POOL_ALL_UNAVAILABLE', 'failed', 0)
         self.assertEqual(self.task.total_files, 6)

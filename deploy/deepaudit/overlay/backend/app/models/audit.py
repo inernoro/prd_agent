@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Float
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Float, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base
@@ -21,6 +21,12 @@ class AuditTask(Base):
     exclude_patterns = Column(Text, default="[]")
     scan_config = Column(Text, default="{}")
     
+    checkpoint_version = Column(Integer, nullable=False, default=0, server_default="0")
+    snapshot_sha256 = Column(String(64), nullable=True)
+    processed_files = Column(Integer, nullable=False, default=0, server_default="0")
+    failed_files = Column(Integer, nullable=False, default=0, server_default="0")
+    skipped_files = Column(Integer, nullable=False, default=0, server_default="0")
+
     # Stats
     total_files = Column(Integer, default=0)
     scanned_files = Column(Integer, default=0)
@@ -36,6 +42,27 @@ class AuditTask(Base):
     project = relationship("Project", back_populates="tasks")
     creator = relationship("User", foreign_keys=[created_by])
     issues = relationship("AuditIssue", back_populates="task", cascade="all, delete-orphan")
+
+
+    @property
+    def resumable(self):
+        from app.services.static_runner import can_resume
+        return can_resume(self)
+
+
+class AuditFileResult(Base):
+    __tablename__ = "audit_file_results"
+    __table_args__ = (UniqueConstraint("task_id", "file_path", name="uq_audit_file_task_path"),)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String, ForeignKey("audit_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_path = Column(Text, nullable=False)
+    member_name = Column(Text, nullable=False)
+    source_hash = Column(String(64), nullable=True)
+    status = Column(String(20), nullable=False, default="pending")
+    skip_reason = Column(String(64), nullable=True)
+    line_count = Column(Integer, nullable=False, default=0)
+    quality_score = Column(Float, nullable=True)
+    error_code = Column(String(64), nullable=True)
 
 
 class AuditIssue(Base):
