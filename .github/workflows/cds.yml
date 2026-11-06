@@ -95,6 +95,8 @@ jobs:
 
       - name: Code review MCP stdio integration
         run: pnpm --dir mcp test && pnpm --dir mcp check
+      - name: Install design runtime test dependencies
+        run: pnpm -C ../design-runtime/opendesign install --frozen-lockfile
 
       - name: Type check
         run: pnpm build
