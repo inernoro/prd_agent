@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { CdsConfig, ExecAssignment, IShellExecutor } from '../../src/types.js';
 import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../../src/services/self-update-handoff.js';
@@ -33,8 +33,7 @@ function ownedPool() {
   const pool = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
   pools.push(pool); return pool;
 }
-function realCheckpointRuntime(root: string) {
-  const pool = ownedPool();
+function realCheckpointRuntime(root: string, pool = ownedPool()) {
   const dispatches: Array<{ action: string; ownerId: string; assignment: ExecAssignment }> = [];
   const shell: IShellExecutor = { exec: pool.exec.bind(pool), execOwnedOperation: (command, options) => {
     const input = /self-maintenance-files-process\.(ts|js)/.test(command)
@@ -458,9 +457,18 @@ describe('CDS 可撤销重启交接', () => {
     } finally { fs.rmSync(unreadable, { force: true }); observe.mockRestore(); }
   });
 
+  describe('原入口前置就绪与恢复重试分开计时', () => {
+    let prepared: ReturnType<typeof gitFixture>;
+    let readyPool: IsolatedShellExecutor;
+    beforeEach(async () => {
+      prepared = gitFixture(true); readyPool = ownedPool(); await readyPool.start();
+      expect(readyPool.getLifecycle().readyAt).toBeTruthy();
+      expect(readyPool.getStats().unavailable).toBe(false);
+      expect(readyPool.getStats().actors.some(actor => actor.pid > 0)).toBe(true);
+    });
   it.each(['git', 'nginx'] as const)('真实%s恢复失败后仍观察同票，二次确认不重复替换已恢复目录', async failure => {
-    const { root, git, sha, oldFiles } = gitFixture(true);
-    const { runtime, dispatches } = realCheckpointRuntime(root);
+    const { root, git, sha, oldFiles } = prepared;
+    const { runtime, dispatches } = realCheckpointRuntime(root, readyPool);
     const owner = runtime.acquire({ source: 'self-force-sync', actor: 'fixture-retry-restore' })!;
     const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root);
     const backupRoot = path.join(root, 'cds/.cds');
@@ -506,5 +514,6 @@ describe('CDS 可撤销重启交接', () => {
     } finally {
       if (fs.existsSync(blocker)) fs.unlinkSync(blocker);
     }
+  });
   });
 });
