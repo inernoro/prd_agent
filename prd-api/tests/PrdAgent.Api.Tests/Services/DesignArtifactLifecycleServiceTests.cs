@@ -44,11 +44,17 @@ public sealed class DesignArtifactLifecycleServiceTests
         await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id, Builders<DesignArtifactRun>.Update
             .Set(item => item.SourceSurface, DesignArtifactSourceSurfaces.Workflow).Set(item => item.WorkflowSource,
                 new WorkflowDesignSource { ExecutionId = "failed-execution", OperationId = "failed-execution", NodeId = "report",
-                    NodeType = CapsuleTypes.ReportGenerator, InputFingerprint = new string('f', 64) }));
+                    NodeType = CapsuleTypes.ReportGenerator, InputFingerprint = new string('f', 64) })
+            .Set(item => item.LeaseOwnerId, "terminal-worker").Set(item => item.LeaseExpiresAt, DateTime.UtcNow.AddMinutes(5)));
         await AssertConflict(() => service.ResumeResultReadyAsync(new(run.Id, run.UserId, beforeFailure)));
+        await AssertConflict(() => service.ResumeResultReadyAsync(new(run.Id, run.UserId, expected)));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.LeaseExpiresAt, null));
         var recovered = await service.ResumeResultReadyAsync(new(run.Id, run.UserId, expected));
         Assert.Equal(RunStatuses.Queued, recovered.Status);
         Assert.Equal(run.Id, recovered.Id);
+        Assert.Null(recovered.LeaseOwnerId);
+        Assert.Null(recovered.LeaseExpiresAt);
         Assert.Null(recovered.LifecycleFailureCode);
         Assert.Null(recovered.RuntimeFailure);
         Assert.Equal(JsonSerializer.Serialize(run.LifecycleEvents), JsonSerializer.Serialize(recovered.LifecycleEvents.Take(run.LifecycleEvents.Count)));

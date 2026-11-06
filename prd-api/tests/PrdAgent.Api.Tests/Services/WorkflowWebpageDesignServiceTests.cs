@@ -70,10 +70,19 @@ public sealed class WorkflowWebpageDesignServiceTests
             .Set("NodeExecutions.0.Status", NodeExecutionStatus.Failed).Set("NodeExecutions.0.DesignRunId", run.Id)
             .Set("NodeExecutions.0.InputArtifacts", f.Inputs).Set("NodeExecutions.0.ErrorCode", "open_design_execution_failed")
             .Set("NodeExecutions.0.Logs", "原失败日志").Set("NodeExecutions.1.Status", NodeExecutionStatus.Skipped));
-        byte[] currentBytes = [0];
+        byte[] currentBytes = package;
         f.Storage.Setup(item => item.TryDownloadBytesAsync(run.WorkspaceResultAssetKey, It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => currentBytes);
-        f.Gateway.Invocations.Clear(); f.HoldQueue = false;
+        f.Gateway.Invocations.Clear();
+        await f.Db.DesignArtifactRuns.UpdateOneAsync(item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Queued));
+        f.FailNextSave = true;
+        await f.ProcessAsync(run.Id);
+        run = await f.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Error, run.Status);
+        Assert.False(string.IsNullOrWhiteSpace(run.LeaseOwnerId));
+        Assert.Null(run.LeaseExpiresAt);
+        currentBytes = [0]; f.HoldQueue = false;
         Assert.Equal("WORKFLOW_DESIGN_FORBIDDEN", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
             f.Service.ExecuteAsync(f.Node, new(), f.Inputs, f.Invocation with { UserId = "manager", OperationId = "recovery-owner-check" }))).Code);
         Assert.Equal("WORKFLOW_DESIGN_CONFLICT", (await Assert.ThrowsAsync<WorkflowDesignException>(() =>
@@ -380,6 +389,8 @@ public sealed class WorkflowWebpageDesignServiceTests
         public Mock<IDesignArtifactGatewayGrantService> Grants { get; } = new(MockBehavior.Strict);
         public IDesignArtifactWorkspaceBroker Broker { get; private set; } = null!;
         public bool HoldQueue { get; set; }
+        public bool FailNextSave { get; set; }
+        public Task ProcessAsync(string id) => worker.ProcessAsync(id, CancellationToken.None);
         public InMemoryRunEventStore Events { get; } = new();
         public ServiceProvider Provider { get; private set; } = null!;
         public WorkflowWebpageDesignService Service { get; private set; } = null!;
@@ -428,6 +439,11 @@ public sealed class WorkflowWebpageDesignServiceTests
                 .Returns(async (string owner, IReadOnlyList<HostedSiteVerifiedFile> files, string? title, string? _, string _, string sourceRun,
                     List<string>? _, string? _, string _, CancellationToken _) =>
                 {
+                    if (f.FailNextSave)
+                    {
+                        f.FailNextSave = false;
+                        throw new InvalidOperationException("隔离保存失败代表");
+                    }
                     var site = new HostedSite { Id = "site-" + sourceRun, OwnerUserId = owner, Title = title ?? "", SourceRef = sourceRun,
                         SourceType = "design-agent", ContentVersion = DateTime.UtcNow, SiteUrl = "https://assets.example.test/site/index.html",
                         Files = files.Select(file => new HostedSiteFile { Path = file.Path, CosKey = "sites/site-" + sourceRun + "/.versions/first/" + file.Path, Size = file.Content.Length, MimeType = file.MimeType }).ToList() };

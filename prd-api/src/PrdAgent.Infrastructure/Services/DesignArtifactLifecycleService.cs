@@ -467,7 +467,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             && !string.IsNullOrWhiteSpace(current.WorkspaceResultSha256) && !string.IsNullOrWhiteSpace(current.WorkspaceManifestSha256)
             && current.WorkspaceRef?.BaseRevision == current.WorkspaceBaseRevision
             && current.ArtifactSiteId == null && current.ArtifactRevisionId == null && current.PublishBindingOperationId == null
-            && (current.LeaseExpiresAt.HasValue ? current.LeaseExpiresAt <= DateTime.UtcNow : string.IsNullOrWhiteSpace(current.LeaseOwnerId));
+            && (!current.LeaseExpiresAt.HasValue || current.LeaseExpiresAt <= DateTime.UtcNow);
         if ((!failedWorkflow && current.Status is not (RunStatuses.Running or RunStatuses.Committing))
             || current.Runtime != DesignArtifactRuntimes.OpenDesign
             || string.IsNullOrWhiteSpace(current.WorkspaceResultAssetKey)
