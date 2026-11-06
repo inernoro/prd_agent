@@ -10252,7 +10252,10 @@ def cmd_instance_use(args: argparse.Namespace) -> None:
 
 def cmd_instance_connect(args: argparse.Namespace) -> None:
     entry = _instance_entry(args.id)
-    previous = _read_local_credentials_file()
+    previous = {
+        name: _read_instance_private(name, {}) if _private_instance_file(name).exists() else None
+        for name in ("credentials.json", "connection.json", "active-instance.json")
+    }
     args.host = entry["url"]
     try:
         # Existing command exits through ok(); collect that result before checking/selection.
@@ -10268,13 +10271,14 @@ def cmd_instance_connect(args: argparse.Namespace) -> None:
         if not getattr(args, "new_project", False) or getattr(args, "create_project", None):
             _check_instance(entry)
         _write_instance_private("active-instance.json", {"id": entry["id"]})
-    except SystemExit:
+    except BaseException:
         # A valid authorization can still point at the wrong repository. Keep it archived,
-        # but never let failed connection validation replace the previous default.
-        if previous:
-            _write_instance_private("credentials.json", previous)
-        else:
-            _private_instance_file("credentials.json").unlink(missing_ok=True)
+        # but restore the previous pointer and recovery metadata together on any failure.
+        for name, payload in previous.items():
+            if payload is not None:
+                _write_instance_private(name, payload)
+            else:
+                _private_instance_file(name).unlink(missing_ok=True)
         raise
     ok(outcome.get("data"), note="目标实例接入并选择完成；其它实例授权已保留")
 

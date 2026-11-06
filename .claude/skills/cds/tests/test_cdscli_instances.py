@@ -213,16 +213,25 @@ def test_real_http_target_receives_only_its_key_after_selection_and_process_rest
 
 
 @pytest.mark.parametrize("matching", [False, True])
-def test_connect_validates_repository_before_changing_default(workspace, monkeypatch, matching):
+@pytest.mark.parametrize("context_present", [False, True])
+def test_connect_validates_repository_before_changing_default(workspace, monkeypatch, matching, context_present):
     root, _ = workspace
     save('https://primary.example', 'a', 'primary-secret')
     old = (root / '.cds/credentials.json').read_text()
+    context = root / '.cds/connection.json'
+    if not context_present:
+        context.unlink()
+    old_context = json.loads(context.read_text()) if context_present else None
+    calls = []
     cli._write_instance_private('active-instance.json', {'id': 'primary'})
     def request(method, path, **kwargs):
+        calls.append((method, path))
         if method == 'POST':
             return 201, {'requestId': 'r', 'pollToken': 'poll'}, {}
         if path.endswith('/access-requests/r'):
             return 200, {'status': 'approved', 'authorizationKey': 'standby-secret'}, {}
+        if path == '/api/projects/a':
+            return 200, {'id': 'a', 'githubRepoFullName': 'acme/app'}, {}
         return 200, {'id': 'b', 'githubRepoFullName': 'acme/app' if matching else 'wrong/repo'}, {}
     monkeypatch.setattr(cli, '_request', request)
     status, output = run('instance', 'connect', 'standby', '--project', 'b')
@@ -231,6 +240,13 @@ def test_connect_validates_repository_before_changing_default(workspace, monkeyp
     current = json.loads((root / '.cds/credentials.json').read_text())
     assert current['projectId'] == 'b' if matching else current == json.loads(old)
     assert json.loads((root / '.cds/active-instance.json').read_text()) == {'id': 'standby' if matching else 'primary'}
+    if matching:
+        assert json.loads(context.read_text())['host'] == 'https://standby.example'
+    else:
+        assert (json.loads(context.read_text()) if context.exists() else None) == old_context
+        code, restored = run('connect', '--host', 'https://primary.example', '--recover')
+        assert code == 0 and json.loads(restored)['data']['reused'] is True
+        assert all('identity-connections' not in path for _, path in calls)
 
 
 def test_instance_check_refuses_redirect_without_forwarding_credentials(workspace):
