@@ -1,0 +1,130 @@
+x-cds-project:
+  name: DeepAudit
+  description: CDS 五维代码质量审查引擎，禁用动态 PoC，管理端独立认证。
+  repo: https://github.com/inernoro/DeepAudit.git
+
+x-cds-env:
+  DEEPAUDIT_POSTGRES_USER: deepaudit
+  DEEPAUDIT_POSTGRES_DB: deepaudit
+  CDS_SERVICE_EMAIL: cds-review@example.com
+  DEEPAUDIT_ADMIN_USERNAME: deepaudit-admin
+  LLM_PROVIDER: openai
+  OUTPUT_LANGUAGE: zh-CN
+x-cds-env-meta:
+  DEEPAUDIT_POSTGRES_PASSWORD:
+    kind: auto
+    generate: secret
+    hint: 独立数据库密码，CDS 在 DeepAudit 项目内生成。
+  DEEPAUDIT_REDIS_PASSWORD:
+    kind: auto
+    generate: secret
+    hint: 独立 Redis 密码，CDS 在 DeepAudit 项目内生成。
+  SECRET_KEY:
+    kind: auto
+    generate: secret
+    hint: DeepAudit 独立 JWT 签名密钥，禁止复用 CDS 或其他项目密钥。
+  CDS_SERVICE_PASSWORD:
+    kind: auto
+    generate: secret
+    hint: CDS 调审查引擎的独立服务账号密码，配置给 CDS 审查适配器。
+  DEEPAUDIT_ADMIN_PASSWORD_HASH:
+    kind: required
+    hint: 管理界面的 htpasswd bcrypt 哈希，由管理员通过密钥管理配置。
+  DEEPAUDIT_BACKEND_URL:
+    kind: required
+    hint: 当前分支后端的内部 URL，仅供管理界面代理，使用 CDS 返回的实际服务地址。
+  LLM_BASE_URL:
+    kind: required
+    hint: 已授权 LLM 网关的 OpenAI 兼容接口地址。
+  LLM_MODEL:
+    kind: required
+    hint: 已配置网关提供的模型标识。
+  LLM_API_KEY:
+    kind: required
+    hint: 审查引擎专属网关服务凭据。
+
+x-cds-deploy-modes:
+  backend:
+    express:
+      label: CI 预构建
+      prebuilt: true
+      image: ghcr.io/inernoro/deepaudit-cds-backend:sha-${CDS_COMMIT_SHA}
+      containerPort: 8000
+      buildScope: [backend, cds-compose.yml]
+  frontend:
+    express:
+      label: CI 预构建
+      prebuilt: true
+      image: ghcr.io/inernoro/deepaudit-cds-frontend:sha-${CDS_COMMIT_SHA}
+      containerPort: 80
+      buildScope: [frontend, cds-compose.yml]
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    ports: ["5432"]
+    environment:
+      POSTGRES_USER: "${DEEPAUDIT_POSTGRES_USER}"
+      POSTGRES_DB: "${DEEPAUDIT_POSTGRES_DB}"
+      POSTGRES_PASSWORD: "${DEEPAUDIT_POSTGRES_PASSWORD}"
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $$POSTGRES_USER"]
+      interval: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    ports: ["6379"]
+    command: [redis-server, --appendonly, "yes", --requirepass, "${DEEPAUDIT_REDIS_PASSWORD}"]
+    volumes: [redis-data:/data]
+  backend:
+    image: ghcr.io/inernoro/deepaudit-cds-backend:sha-${CDS_COMMIT_SHA}
+    working_dir: /app
+    volumes:
+      - ./backend:/source:ro
+      - backend-uploads:/app/uploads
+      - backend-data:/app/data
+    ports: ["8000"]
+    depends_on: [postgres, redis]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DEEPAUDIT_POSTGRES_USER}:${DEEPAUDIT_POSTGRES_PASSWORD}@${CDS_HOST}:${CDS_POSTGRES_PORT}/${DEEPAUDIT_POSTGRES_DB}
+      REDIS_URL: redis://:${DEEPAUDIT_REDIS_PASSWORD}@${CDS_HOST}:${CDS_REDIS_PORT}/0
+      SECRET_KEY: "${SECRET_KEY}"
+      CDS_SERVICE_EMAIL: "${CDS_SERVICE_EMAIL}"
+      CDS_SERVICE_PASSWORD: "${CDS_SERVICE_PASSWORD}"
+      LLM_PROVIDER: "${LLM_PROVIDER}"
+      LLM_MODEL: "${LLM_MODEL}"
+      LLM_API_KEY: "${LLM_API_KEY}"
+      LLM_BASE_URL: "${LLM_BASE_URL}"
+      OUTPUT_LANGUAGE: "${OUTPUT_LANGUAGE}"
+      MAX_ANALYZE_FILES: "0"
+      ZIP_STORAGE_PATH: /app/uploads/zip_files
+    labels:
+      cds.role: api
+      cds.readiness-path: /health
+      cds.readiness-timeout: "600"
+      cds.prebuilt-image: "true"
+  frontend:
+    image: ghcr.io/inernoro/deepaudit-cds-frontend:sha-${CDS_COMMIT_SHA}
+    working_dir: /usr/share/nginx/html
+    volumes: [./frontend:/source:ro]
+    ports: ["80"]
+    depends_on: [backend]
+    environment:
+      DEEPAUDIT_BACKEND_URL: "${DEEPAUDIT_BACKEND_URL}"
+      DEEPAUDIT_ADMIN_USERNAME: "${DEEPAUDIT_ADMIN_USERNAME}"
+      DEEPAUDIT_ADMIN_PASSWORD_HASH: "${DEEPAUDIT_ADMIN_PASSWORD_HASH}"
+    labels:
+      cds.role: web
+      cds.path-prefix: /
+      cds.web-entry-name: DeepAudit 管理员
+      cds.web-entry-path: /
+      cds.web-entry-primary: "true"
+      cds.readiness-path: /healthz
+      cds.prebuilt-image: "true"
+
+volumes:
+  postgres-data:
+  redis-data:
+  backend-uploads:
+  backend-data:
