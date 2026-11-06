@@ -200,6 +200,32 @@ class ProductionSpeechTests(unittest.TestCase):
             session.assert_not_called()
             http.assert_not_called()
 
+    def test_screenshot_guard_rejects_login_fragments_and_sensitive_queries(self):
+        for value in [BASE + "/synthetic-login#code=" + CANARY, BASE + "/mcp-console#code=" + CANARY,
+                      BASE + "/mcp-console?token=" + CANARY, "https://other.example/mcp-console"]:
+            self.assertFalse(smoke.safe_browser_page(value, BASE))
+        self.assertTrue(smoke.safe_browser_page(BASE + "/mcp-console?tab=speech&run=" + RUN_ID, BASE))
+        self.assertTrue(smoke.safe_browser_page(BASE + "/my-assets?tab=audio", BASE))
+
+    def test_browser_ticket_url_is_same_origin_and_never_reported(self):
+        captured = []
+
+        def http(base, path, **kwargs):
+            captured.append((path, kwargs))
+            return response({"loginUrl": BASE + "/synthetic-login#code=" + CANARY})
+
+        check = smoke.SpeechSmoke(BASE, COMMIT, http=http)
+        with patch.object(smoke.subprocess, "run", return_value=SimpleNamespace(stdout="{}")):
+            url = check.browser_login_url(RUN_ID)
+        self.assertIn(CANARY, url)  # Only the in-memory return value contains the one-time code.
+        self.assertNotIn(CANARY, json.dumps(check.report))
+        self.assertEqual(captured[0][1]["body"]["returnUrl"], "/mcp-console?tab=speech&run=" + RUN_ID)
+
+        with patch.object(smoke.subprocess, "run", return_value=SimpleNamespace(stdout="{}")):
+            check.http = lambda *a, **k: response({"loginUrl": "https://other.example/synthetic-login#code=" + CANARY})
+            with self.assertRaises(smoke.CheckFailure):
+                check.browser_login_url(RUN_ID)
+
     def test_redirect_does_not_forward_authorization(self):
         received = []
 

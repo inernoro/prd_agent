@@ -93,6 +93,14 @@ def validate_target(base, expected, allowed):
         raise CheckFailure("target_not_approved_production_origin")
 
 
+def safe_browser_page(url, base):
+    """Screenshots are permitted only after the one-time login fragment is gone."""
+    parsed, trusted = urllib.parse.urlsplit(url), urllib.parse.urlsplit(base)
+    return ((parsed.scheme, parsed.netloc) == (trusted.scheme, trusted.netloc) and not parsed.fragment
+            and parsed.path in {"/mcp-console", "/my-assets"}
+            and set(urllib.parse.parse_qs(parsed.query)).issubset({"tab", "run"}))
+
+
 class SpeechSmoke:
     def __init__(self, base, expected, mode="readiness", *, http=request, session=None, wait_seconds=180, profile_id="", inventory=False):
         self.base, self.expected, self.mode = base.rstrip("/"), expected.lower(), mode
@@ -279,6 +287,7 @@ class SpeechSmoke:
                          and 0 < len(audio["raw"]) <= MAX_AUDIO, "audio_contract_invalid")
             self.report["run"]["audio"] = {"mime": audio["mime"], "sizeBytes": len(audio["raw"]), "sha256": hashlib.sha256(audio["raw"]).hexdigest()}
             self.report["run"]["runId"] = run_id
+            self.report["run"]["title"] = title
         finally:
             if key_id:
                 revoked = self.get("/api/agent-api-keys/" + key_id + "/revoke", method="POST", body={})
@@ -291,6 +300,109 @@ class SpeechSmoke:
                     self.check("owner_audio_after_key_revocation", owner_audio["status"] == 200
                         and hashlib.sha256(owner_audio["raw"]).hexdigest() == self.report["run"]["audio"]["sha256"],
                         status=owner_audio["status"], failure="owner_audio_unavailable_after_revocation")
+
+    def browser_login_url(self, run_id):
+        """Mint another short ticket for the real UI, never inject JWTs or storage state."""
+        path = "/api/v1/auth/synthetic/ticket"
+        body = {"returnUrl": "/mcp-console?tab=speech&run=" + run_id, "expiresInSeconds": 180}
+        wire = json.dumps(body, separators=(",", ":"))
+        signed = subprocess.run(["node", str(ROOT / "stable-smoke-signature.mjs"), "--method", "POST", "--url", self.base + path,
+                                 "--body", wire, "--username", os.environ.get("STABLE_SMOKE_USER", "")],
+                                capture_output=True, text=True, check=True, timeout=30)
+        headers = json.loads(signed.stdout)
+        result = self.http(self.base, path, method="POST", headers=headers, body=body)
+        issued = data_of(result)
+        value = issued.get("loginUrl") if issued else None
+        if not isinstance(value, str):
+            raise CheckFailure("browser_login_ticket_unavailable")
+        url = urllib.parse.urljoin(self.base, value)
+        parsed, target = urllib.parse.urlsplit(url), urllib.parse.urlsplit(self.base)
+        if (parsed.scheme, parsed.netloc) != (target.scheme, target.netloc) or parsed.path != "/synthetic-login" or not parsed.fragment:
+            raise CheckFailure("browser_login_target_invalid")
+        return url
+
+    def verify_browser(self, output_directory):
+        """Real network and real one-time login. No interception, traces, HAR, video or saved browser state."""
+        summary = {"checked": True, "realNetwork": True, "ok": False, "screenshots": []}
+        self.report["browser"] = summary
+        run_id = safe_identifier(self.report["run"].get("runId"))
+        title = self.report["run"].get("title")
+        if not run_id or not isinstance(title, str) or not title.startswith("stsmk_prod speech "):
+            self.require("production_browser_verification", False, "browser_run_identity_missing")
+        page = None
+        errors = {"page": 0, "console": 0}
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True, args=["--autoplay-policy=no-user-gesture-required"])
+                context = browser.new_context(viewport={"width": 1440, "height": 1000}, accept_downloads=False)
+                page = context.new_page()
+                page.set_default_timeout(45_000)
+                page.on("pageerror", lambda _: errors.__setitem__("page", errors["page"] + 1))
+                page.on("console", lambda message: errors.__setitem__("console", errors["console"] + (1 if message.type == "error" else 0)))
+                try:
+                    login_url = self.browser_login_url(run_id)
+                    page.goto(login_url, wait_until="domcontentloaded")
+                    page.wait_for_function("() => location.pathname === '/mcp-console' && location.hash === ''")
+                    page.get_by_role("heading", name="文生语音", exact=True).wait_for()
+                    if not safe_browser_page(page.url, self.base):
+                        raise CheckFailure("browser_authenticated_route_not_ready")
+
+                    def photograph(name):
+                        if not safe_browser_page(page.url, self.base):
+                            raise CheckFailure("unsafe_screenshot_route")
+                        path = Path(output_directory) / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        page.screenshot(path=str(path), full_page=False)
+                        summary["screenshots"].append(name)
+
+                    def play_audio(container):
+                        load = container.get_by_role("button", name="加载音频", exact=True)
+                        if load.count():
+                            load.first.click()
+                        audio = container.locator("audio").first
+                        audio.wait_for(state="visible")
+                        audio.evaluate("element => element.play()")
+                        audio.evaluate("element => new Promise((resolve,reject) => {const deadline=Date.now()+20000; const poll=()=>{if(Number.isFinite(element.duration)&&element.duration>0&&element.currentTime>0.12){resolve(true);return;} if(element.error||Date.now()>deadline){reject(new Error('Audio playback did not progress'));return;}setTimeout(poll,100);};poll();})")
+                        duration = audio.evaluate("element => {element.pause();return element.duration;}")
+                        return {"durationSeconds": round(duration, 3), "currentTimeProgressed": True}
+
+                    for label, width, height in [("desktop", 1440, 1000), ("mobile", 390, 844)]:
+                        page.set_viewport_size({"width": width, "height": height})
+                        if label == "mobile":
+                            page.go_back(wait_until="domcontentloaded")
+                            page.wait_for_function("() => location.pathname === '/mcp-console' && location.hash === ''")
+                        card = page.locator("#speech-run-" + run_id)
+                        card.get_by_role("heading", name=title, exact=True).wait_for()
+                        summary[label + "HistoryPlayback"] = play_audio(card)
+                        card.scroll_into_view_if_needed()
+                        photograph("speech-" + label + "-history.png")
+                        card.get_by_role("link", name="在我的资产中查看", exact=True).click()
+                        page.wait_for_function("() => location.pathname === '/my-assets' && new URLSearchParams(location.search).get('tab') === 'audio'")
+                        asset_title = page.get_by_text(title, exact=True).first
+                        asset_title.wait_for(state="visible")
+                        if label == "desktop":
+                            page.locator('[role="button"]').filter(has_text=title).first.click()
+                            summary[label + "AssetPlayback"] = play_audio(page.locator("main"))
+                        else:
+                            asset_card = asset_title.locator("xpath=../..")
+                            summary[label + "AssetPlayback"] = play_audio(asset_card)
+                        asset_title.scroll_into_view_if_needed()
+                        photograph("speech-" + label + "-assets.png")
+                        if page.locator("vite-error-overlay").count():
+                            raise CheckFailure("browser_framework_error_overlay")
+                        if not page.evaluate("document.documentElement.scrollWidth <= innerWidth"):
+                            raise CheckFailure("browser_horizontal_overflow")
+                    summary.update({"ok": True, "pageErrorCount": errors["page"], "consoleErrorCount": errors["console"]})
+                    self.require("production_browser_verification", errors["page"] == 0 and errors["console"] == 0, "browser_runtime_errors")
+                finally:
+                    context.close()
+                    browser.close()
+        except CheckFailure:
+            raise
+        except Exception:
+            self.require("production_browser_verification", False, "browser_verification_failed")
 
     def finish(self):
         self.report["finishedAt"] = datetime.now(timezone.utc).isoformat()
@@ -322,7 +434,8 @@ def main(argv=None):
             smoke.check("production_target_validated", True)
         elif smoke.readiness() and args.mode == "run":
             smoke.run()
-            smoke.check("production_browser_verification", False, failure="browser_verification_not_yet_implemented")
+            if all(x["ok"] for x in smoke.report["checks"] if x["required"]):
+                smoke.verify_browser(Path(args.json_out).parent)
     except CheckFailure as error:
         smoke.check("execution", False, failure=str(error))
     except Exception:

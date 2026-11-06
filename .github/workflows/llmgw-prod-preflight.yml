@@ -4,7 +4,8 @@ name: LLM Gateway Production Preflight
 # Merge this workflow to the default branch before treating it as a clickable production gate.
 #
 # 业务只读预检：发布前确认 MAP 与网关可达、凭据可用、commit 符合预期、MAP 没有绕过网关的直连调用。
-# 不部署、不改业务数据；RSA 认证会创建短会话并对齐专用巡检身份权限。
+# 不部署；默认不改业务数据。只有显式 speech_check=run 会创建短语音任务和自有预设。
+# RSA 认证会创建短会话并对齐专用巡检身份权限。
 # 正式发布仍是 fast.sh --commit X && exec_dep.sh --commit X。
 
 on:
@@ -42,6 +43,7 @@ concurrency:
 jobs:
   preflight:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       INPUT_MAP_BASE: ${{ github.event.inputs.map_base || '' }}
       DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}
@@ -63,6 +65,12 @@ jobs:
       - name: Verify speech smoke safety contracts
         if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
         run: python3 scripts/tests/mcp-speech-production-smoke.test.py
+
+      - name: Install browser for explicit speech run
+        if: ${{ github.event.inputs.speech_check == 'run' }}
+        run: |
+          python3 -m pip install --disable-pip-version-check playwright==1.56.0
+          python3 -m playwright install --with-deps chromium
 
       - name: Run production preflight
         shell: bash
