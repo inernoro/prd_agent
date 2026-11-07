@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import yaml from 'js-yaml';
 
 import { describe, expect, it } from 'vitest';
 
@@ -43,7 +44,10 @@ describe('portable general skill packages', () => {
       const skillText = fs.readFileSync(skillFile, 'utf8');
 
       expect(skillText).toMatch(new RegExp(`^name: ${skillName}$`, 'm'));
-      expect(skillText).toMatch(/^version: 2\.0\.0$/m);
+      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(skillText);
+      expect(frontmatter).not.toBeNull();
+      const manifest = yaml.load(frontmatter![1]) as { version?: string; metadata?: { version?: string } };
+      expect(manifest.version ?? manifest.metadata?.version).toBe('2.0.0');
 
       const files = listFiles(directory);
       expect(files.length).toBeGreaterThan(0);
