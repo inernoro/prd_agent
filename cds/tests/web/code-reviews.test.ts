@@ -165,3 +165,16 @@ describe('原始证据与原版文档', () => {
     expect(buildCodeReviewDocument(original, 'html', 'dark', 'injected')).not.toContain('<script');
   });
 });
+
+
+describe('报告自动跳转隔离', () => {
+  it('使用 HTML 解析器移除编码和大小写变体的刷新标签，保留正文布局及代码文本', () => {
+    const input = '<html><head><meta HTTP-EQUIV="&#114;efresh" content="0;url=https://blocked.invalid"><style>body{color:navy}</style></head><body class="original"><pre>&lt;meta http-equiv="refresh"&gt;</pre></body></html>';
+    for (const format of ['html', 'md'] as const) {
+      const rendered = buildCodeReviewDocument(input, format, 'light');
+      expect(rendered).not.toContain('blocked.invalid');
+      expect(rendered).toContain('body{color:navy}'); expect(rendered).toContain('class="original"');
+      expect(rendered).toContain('&lt;meta http-equiv="refresh"&gt;');
+    }
+  });
+});

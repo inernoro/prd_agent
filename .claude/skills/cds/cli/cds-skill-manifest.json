@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.20.1",
+  "version": "0.20.2",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -9,13 +9,14 @@
     "preview-url"
   ],
   "files": {
+    "cds/SKILL.md": "5a759a8ed76632fc64fa10dc5037438733e6d1c6a3bde3c180fe76e27c26f22e",
     "cds/cli/acceptance/.gitignore": "5875f28fb25c8a9449faa5ebb5100a488f79ea807932fb21fb52ce48fcab1db0",
     "cds/cli/acceptance/build_report_html.py": "332ef0716bfc531f3c815acc783695121fb1a6fe25c5001312b4cd34ff7ce9af",
     "cds/cli/acceptance/cds-harness.mjs": "be6a9af00cb5ae704a6f08f295795d3921d9f860447bf9b5dc207faf2e9cef75",
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "1f7bb2fc0dcf1b5869e4a8983c6a40ee37a2aaee9d11471fe4d9ca8f9f6247e3",
+    "cds/cli/cdscli.py": "4f5e50836de9a4447b296bb71e2ddf7d2dfa1a28e2b014b40ea229e74ba0e05e",
     "cds/reference/acceptance-reports.md": "dfc32f7d6975a357edc234ae3d95aec7a196c8b4f8ec54353c215d586b1b92ea",
     "cds/reference/api.md": "0941f2a742bc1b4f42add9973fbfd1d559dd4d57acb74e5011dd23593019921b",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -26,9 +27,8 @@
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/scripts/refresh_manifest.py": "22a4f7d70480a7bd35bc852ea7270fc85f4d12c404c0db49d9a003f009d21e5e",
-    "cds/SKILL.md": "44e025415cb069001c55a1469c1f69363d0a88816e9bbaf91d2afe3390496a7f",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
-    "cds/tests/test_cdscli_code_review.py": "003cc143253957eabf3141b2d60e20671240612c7875e8b34b506060d6d44599",
+    "cds/tests/test_cdscli_code_review.py": "82c7b559fed679bfce125f89e77cba5d057e2fb355b287e9aed5b263e2261872",
     "cds/tests/test_cdscli_connect.py": "92596523cd6fb21b416c9305c75e5ed7df76cf1728caa5a9f0adcc15116d551f",
     "cds/tests/test_cdscli_deploy_branch_resolution.py": "c3b9a15fb33f9dc5193b59283f5e569c745bb0c075f3680f8bfc211e194c3576",
     "cds/tests/test_cdscli_deploy_trigger_failure_reason.py": "e0723fdd5f734d6de38b4a6886a5450d94320ba4a40a4bb7ddb91bbd7a5898e3",
@@ -55,14 +55,14 @@
     "cds/tests/test_verify_score.py": "5f71af819eba0d7c007501f51b170c3919962241f99de8526b438898c46b5666",
     "cds/tests/test_verify_selfheal.py": "c7ea5a0ac11a2d6bbf35fc435029475fc778b31fb4e844dcc2cdc714140c3acc",
     "cds/tests/test_web_entry_contract.py": "f08f361478b6e3232d73090c1edc7616bd34df0823b88958852741374c203636",
+    "cds-project-scan/SKILL.md": "98100e3258da496a501794fa0f62c9e322357aca549465c3f8124645d2fbdc3c",
     "cds-project-scan/reference/cds-pending-import.md": "a071bae76e9bf6ed792af2b0697fad19f62544b38062dce864db8f4ede054cda",
     "cds-project-scan/reference/infra-init.md": "367af0506e5f8418d37cc9483602f6bc34747ed84cba4e6d11f49be1b7b31015",
     "cds-project-scan/reference/tech-detection.md": "20d88a38a278bc65dd2f7f8c9e09e2a5e39e5ef33584af585980249604df7a64",
-    "cds-project-scan/SKILL.md": "98100e3258da496a501794fa0f62c9e322357aca549465c3f8124645d2fbdc3c",
     "cds-deploy-pipeline/SKILL.md": "5e7f3ba287a319e47e286bab215ed298854f6ddf4da129de3c701bcea17868c5",
-    "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "cds-release/SKILL.md": "9acf38c191b28168fbede464aea84a994767223a07d77ad3621c739fc43c2963",
+    "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-06T09:46:26.774Z"
+  "generatedAt": "2026-11-07T20:54:48.333605+00:00"
 }
