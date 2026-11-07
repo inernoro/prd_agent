@@ -85,6 +85,46 @@ public sealed class GenericTaskBudgetIntegrationTests
         Assert.Equal("settled", Assert.Single(result.Reservations).Status);
     }
 
+    [Theory]
+    [InlineData("zero-body")]
+    [InlineData("zero-stream")]
+    [InlineData("missing")]
+    [InlineData("partial")]
+    [InlineData("zero-missing")]
+    [InlineData("zero-estimated")]
+    [InlineData("negative-cache")]
+    [InlineData("cache-only")]
+    public async Task TaskBudgetZeroUsageRemainsUnknownWhilePositiveCacheUsageIsCharged(string kind)
+    {
+        await using var db = new Database();
+        var permit = await db.Bind();
+        var counter = new GatewayRuntimeGrantCallCounter(db.Context);
+        var request = Request(permit, "zero-or-unknown");
+        Assert.True((await counter.TryReserveTaskAsync(request, default)).Allowed);
+        var reserved = Assert.Single((await db.Scope(permit)).Reservations).ReservedUsd;
+        GatewayTokenUsage? usage = kind switch
+        {
+            "missing" => null,
+            "partial" => new() { InputTokens = 0, Source = "response_body" },
+            "zero-missing" => new() { InputTokens = 0, OutputTokens = 0, Source = "missing" },
+            "zero-estimated" => new() { InputTokens = 0, OutputTokens = 0, Source = "estimated" },
+            "negative-cache" => new() { InputTokens = 0, OutputTokens = 0, CacheReadInputTokens = -1, Source = "response_body" },
+            "cache-only" => new() { InputTokens = 0, OutputTokens = 0, CacheReadInputTokens = 4, Source = "response_body" },
+            _ => new() { InputTokens = 0, OutputTokens = 0, Source = kind == "zero-body" ? "response_body" : "stream_event" },
+        };
+        await Task.WhenAll(Enumerable.Range(0, 2).Select(_ =>
+            counter.FinalizeTaskAsync(request, usage, "provider-finished", default)));
+        var result = await db.Scope(permit);
+        var record = Assert.Single(result.Reservations);
+        var known = kind == "cache-only";
+        Assert.Equal(known ? "settled" : "settled-unknown", record.Status);
+        Assert.Equal(0m, result.ReservedUsd);
+        Assert.Equal(kind == "cache-only" ? .0000004m : reserved, result.SpentUsd);
+        Assert.Equal(result.SpentUsd, record.SettledUsd);
+        Assert.Equal("GATEWAY_RUNTIME_TASK_REQUEST_DUPLICATE",
+            (await counter.TryReserveTaskAsync(request, default)).ErrorCode);
+    }
+
     [Fact]
     public async Task ConcurrentInstancesShareFiniteMoneyAndDuplicateRequestCannotSendTwice()
     {

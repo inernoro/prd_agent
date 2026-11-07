@@ -99,9 +99,6 @@ public sealed class GatewayMinimumProtectionCoordinator
     private readonly LlmGatewayDataContext _data;
     private readonly IConfiguration _configuration;
     private readonly ILogger<GatewayMinimumProtectionCoordinator> _logger;
-    private readonly SemaphoreSlim _indexLock = new(1, 1);
-    private bool _indexesReady;
-    private bool _dynamicIndexReady;
     private int _invalidDynamicPolicyReported;
 
     public GatewayMinimumProtectionCoordinator(
@@ -121,7 +118,6 @@ public sealed class GatewayMinimumProtectionCoordinator
         int? callerRateLimitPerMinute,
         CancellationToken ct)
     {
-        await EnsureIndexesAsync(ct);
         var caller = GatewayAppCallerIdentity.NormalizePart(appCallerCode);
         var type = GatewayAppCallerIdentity.NormalizePart(requestType);
         var limits = new List<(string Scope, string Origin, int Seconds, int Limit)>();
@@ -211,22 +207,7 @@ public sealed class GatewayMinimumProtectionCoordinator
         try
         {
             var windows = _data.Database.GetCollection<BsonDocument>(WindowsCollection);
-            if (!_dynamicIndexReady)
-            {
-                await _indexLock.WaitAsync(ct);
-                try
-                {
-                    if (!_dynamicIndexReady)
-                    {
-                        await windows.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-                            Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("AppCallerCode").Ascending("RequestType")
-                                .Ascending("Scope").Ascending("Origin").Ascending("WindowSeconds").Descending("WindowStart"),
-                            new CreateIndexOptions { Name = "idx_llmgw_consumption_baseline_scope_window" }), cancellationToken: ct);
-                        _dynamicIndexReady = true;
-                    }
-                }
-                finally { _indexLock.Release(); }
-            }
+            // 查询辅助索引由DBA清单维护；请求路径不执行DDL，_id仍保证共享计数和告警幂等。
             count ??= await IncrementWindowAsync(tenantId, caller, type, scope, origin, policy.WindowSeconds, currentStart, ct);
             var filter = Builders<BsonDocument>.Filter.Eq("TenantId", tenantId)
                 & Builders<BsonDocument>.Filter.Eq("AppCallerCode", caller) & Builders<BsonDocument>.Filter.Eq("RequestType", type)
@@ -323,24 +304,6 @@ public sealed class GatewayMinimumProtectionCoordinator
     {
         var value = _configuration.GetValue("LlmGateway:MinimumProtection:" + name, fallback);
         return value > 0 ? value : fallback;
-    }
-
-    private async Task EnsureIndexesAsync(CancellationToken ct)
-    {
-        if (_indexesReady) return;
-        await _indexLock.WaitAsync(ct);
-        try
-        {
-            if (_indexesReady) return;
-            await _data.Database.GetCollection<BsonDocument>(WindowsCollection).Indexes.CreateOneAsync(
-                new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
-                    new CreateIndexOptions { Name = "ttl_llmgw_consumption_windows", ExpireAfter = TimeSpan.Zero }), cancellationToken: ct);
-            await _data.Database.GetCollection<BsonDocument>(AlertsCollection).Indexes.CreateOneAsync(
-                new CreateIndexModel<BsonDocument>(Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Status").Descending("CreatedAt"),
-                    new CreateIndexOptions { Name = "idx_llmgw_consumption_alerts_tenant_status_created" }), cancellationToken: ct);
-            _indexesReady = true;
-        }
-        finally { _indexLock.Release(); }
     }
 
     public static void ApplyHeaders(HttpContext http, GatewayMinimumProtectionDecision decision)
