@@ -32,6 +32,7 @@ import { createBootstrapRouter } from './routes/bootstrap.js';
 import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
+import { isHumanSystemOwner } from './services/human-auth.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
 import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
@@ -45,6 +46,10 @@ import { createDbLedgerRouter } from './routes/db-ledger.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createCodeReviewsRouter } from './routes/code-reviews.js';
+import { CodeReviewService } from './services/code-review.js';
+import { createCodeReviewInputs } from './services/code-review-inputs.js';
+import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
@@ -2055,6 +2060,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    if (req.path === '/api/code-reviews' || req.path.startsWith('/api/code-reviews/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     //   - 分组保存（PUT /api/projects/:id/branch-groups）：整份分组整体重发，上限内的合法配置
     //     可达数百 KB，路由自带更大上限的解析器（routes/projects.ts BRANCH_GROUPS_BODY_LIMIT）。
@@ -3593,6 +3599,10 @@ export function createServer(deps: ServerDeps): express.Express {
         ? { username: cdsUser, authProvider: 'legacy', isSystemOwner: true }
         : null;
     res.json({
+      approvalCapabilities: {
+        operator: isHumanSystemOwner(req),
+        accessRequests: authMode === 'disabled' || isHumanSystemOwner(req),
+      },
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,
@@ -4921,6 +4931,23 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
+  const reviews = new CodeReviewService({
+    state: deps.stateService, inputs: createCodeReviewInputs(),
+    mail: createCodeReviewMail(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
+    publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
+    ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID
+      ? `${process.env.CDS_PROJECT_ID}::${process.env.VITE_GIT_BRANCH || 'default'}` : 'cds-master'),
+    githubToken: async (projectId, githubUrl) => {
+      const project = deps.stateService.getProject(projectId);
+      // Installation grants are project-bound; never borrow a different project's authorization.
+      if (!project?.githubInstallationId || !githubAppClient) return undefined;
+      const repo = new URL(githubUrl).pathname.replace(/^\//, '').replace(/\/$/, '').replace(/\.git$/, '');
+      if (project.githubRepoFullName?.toLowerCase() !== repo.toLowerCase()) return undefined;
+      return githubAppClient.getInstallationToken(project.githubInstallationId);
+    },
+  });
+  app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));
+  void reviews.start().catch((error: Error) => console.error('[code-review] recovery failed:', error.message));
 
   // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。

@@ -1,3 +1,4 @@
+import { CodeReviewsSkeleton } from './CodeReviewsSkeleton';
 import { useState } from 'react';
 import { readProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
 import { FolderGit2, LayoutGrid, List, Plus, Search } from 'lucide-react';
@@ -180,6 +181,7 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     case 'project-settings': return <SettingsPageSkeleton label="加载项目设置" />;
     case 'release-console': return <ReleaseConsoleSkeleton />;
     case 'rows': return <LoadingBlock />;
+    case 'code-reviews': return <CodeReviewsSkeleton />;
     default: return <ConsoleGenericSkeleton />;
   }
 }

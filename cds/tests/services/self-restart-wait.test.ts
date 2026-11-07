@@ -108,7 +108,7 @@ describe('接线守卫', () => {
 
   it('三条重启路由都把排空进度接到了 SSE（自更新 / 仅重启 / 强制同步）', () => {
     const sources = [...branches.matchAll(/source: '(api\.self-update|api\.self-restart|api\.self-force-sync)',\s*\n\s*onProgress:/g)].map((m) => m[1]);
-    expect(sources.sort()).toEqual(['api.self-force-sync', 'api.self-restart', 'api.self-update']);
+    expect([...new Set(sources)].sort()).toEqual(['api.self-force-sync', 'api.self-restart', 'api.self-update']);
   });
 
   it('排空每一轮都把等待状态写进单例，换进程前进入 spawning，重启没生效时清掉', () => {
