@@ -947,4 +947,13 @@ x-cds-deploy-modes:
   it('拒绝越界产物目录，不会静默退回容器运行', () => {
     expect(() => parseCdsCompose(compose.replace('/usr/share/nginx/html', '/../../secret'))).toThrow('staticWeb.imagePath');
   });
+  it.each([true, false])('实际配置解析和导出保留仅浏览器声明%s', browserOnly => {
+    const parsed = parseCdsCompose(compose.replace('runtimeConfig: true', `browserOnly: ${browserOnly}\n        runtimeConfig: true`))!;
+    expect(parsed.buildProfiles[0].deployModes?.['static-files'].staticWeb).toHaveProperty('browserOnly', browserOnly);
+    const exported = toCdsCompose(parsed.buildProfiles, {}, parsed.infraServices, parsed.routingRules);
+    expect(parseCdsCompose(exported)!.buildProfiles[0].deployModes?.['static-files'].staticWeb).toHaveProperty('browserOnly', browserOnly);
+  });
+  it('原仅浏览器声明拒绝字符串而不静默丢弃', () => {
+    expect(() => parseCdsCompose(compose.replace('runtimeConfig: true', 'browserOnly: "true"\n        runtimeConfig: true'))).toThrow('browserOnly');
+  });
 });
