@@ -4481,6 +4481,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         request_path,
         body={
             "agentName": agent_name, "purpose": purpose,
+            **({"waitSeconds": max(10, int(recovery_deadline - time.monotonic()))} if new_project else {}),
             **({"requestedProject": {
                 "name": create_name or _repository_identity(git_url).rsplit("/", 1)[-1],
                 "repository": str(getattr(args, "git_url", "") or "").strip(),
@@ -4557,8 +4558,13 @@ def cmd_connect(args: argparse.Namespace) -> None:
                 last_progress_at = now
             time.sleep(interval_seconds)
     finally:
+        # 仅收回本次未领取的一次建项目授权。网络不通也有服务端截止时间兜底。
         if new_project and not authorization_key:
-            print("本地等待已结束，原建项目申请仍可能待审批；请在 CDS 核对并拒绝不再需要的申请，不要重复提交。", file=sys.stderr)
+            try:
+                _request("DELETE", poll_path, timeout=10,
+                         extra_headers={"X-Poll-Token": poll_token}, fatal_network_errors=False)
+            except Exception:
+                pass
             _restore_auth_env(previous)
 
     if not authorization_key:

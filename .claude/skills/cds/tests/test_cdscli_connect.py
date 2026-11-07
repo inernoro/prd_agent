@@ -655,7 +655,7 @@ def test_recovery_ticket_is_private_while_writing_and_failure_leaves_no_secret_f
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
-def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interrupt(workspace, monkeypatch, capsys, interrupt):
+def test_bootstrap_wait_timeout_or_interrupt_cancels_only_own_request(workspace, monkeypatch, interrupt):
     subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
     calls = []
     ticks = [0]
@@ -668,7 +668,7 @@ def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interr
     def fake_request(method, path, body=None, extra_headers=None, **kwargs):
         calls.append((method, path, extra_headers))
         if method == "POST":
-            assert "waitSeconds" not in body
+            assert body["waitSeconds"] == 10
             return 201, {"requestId": "r", "pollToken": "poll"}, {}
         assert extra_headers == {"X-Poll-Token": "poll"}
         return 200, {"status": "pending"}, {}
@@ -681,8 +681,7 @@ def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interr
         code, output = run_command(argv)
         assert code == 2
         assert "poll" not in output
-    assert all(method in ("POST", "GET") for method, _, _ in calls)
-    assert "仍可能待审批" in capsys.readouterr().err
+    assert calls[-1] == ("DELETE", "/api/bootstrap-access-requests/r", {"X-Poll-Token": "poll"})
     assert not (workspace / ".cds/credentials.json").exists()
 
 
