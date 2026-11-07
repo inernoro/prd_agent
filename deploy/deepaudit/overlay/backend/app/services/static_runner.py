@@ -100,10 +100,8 @@ async def run_static_task(task_id, factory, user_config, prepare_source, service
                 raise ValueError('Immutable source archive changed')
         async with factory() as db:
             task = await db.get(AuditTask, task_id)
-            context = None
-            if config['scan_config'].get('rule_set_id') or config['scan_config'].get('prompt_template_id'):
-                context = await service.load_analysis_context(db,
-                    config['scan_config'].get('rule_set_id'), config['scan_config'].get('prompt_template_id'))
+            context = await service.load_analysis_context(db,
+                config['scan_config'].get('rule_set_id'), config['scan_config'].get('prompt_template_id'))
             records = (await db.execute(select(AuditFileResult).where(
                 AuditFileResult.task_id == task_id, AuditFileResult.status.in_(['pending', 'failed'])))).scalars().all()
             pending = [{column.name: getattr(row, column.name) for column in AuditFileResult.__table__.columns} for row in records]

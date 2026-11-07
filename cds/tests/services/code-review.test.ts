@@ -391,6 +391,41 @@ describe('代码审查任务完整闭环', () => {
     const page = await service.auditPage(task.id);
     expect(page.events).toHaveLength(23); expect(page.events.at(-1)).toMatchObject({ sequence: 0 });
   });
+
+  it('五千条原审计证据有界分页直到首条，追加新头不改写原分页且不能跨任务使用游标', async () => {
+    const task = await submit();
+    for (let sequence = 1; sequence <= 5005; sequence++) blobs.set(`history-${sequence}`, Buffer.from(JSON.stringify({
+      sequence, event: { sequence }, previousKey: sequence > 1 ? `history-${sequence - 1}` : undefined,
+    })));
+    task.auditCount = 5005; task.auditHeadKey = 'history-5005'; await state.putCodeReviewTask(task);
+    const read = vi.spyOn(inputs, 'get'), seen: number[] = [];
+    let before: number | undefined, cursor: string | undefined;
+    try {
+      const legacy = await service.auditPage(task.id, 1006);
+      expect(legacy.events.length > 0 || legacy.nextBefore !== undefined).toBe(true);
+      expect(legacy.nextCursor).toBeTypeOf('string');
+      const older = await service.auditPage(task.id, legacy.nextBefore, legacy.nextCursor);
+      expect(older.events[0]).toMatchObject({ sequence: 1005 });
+      do {
+        const priorReads = read.mock.calls.length;
+        const page = await service.auditPage(task.id, before, cursor);
+        expect(read.mock.calls.length - priorReads).toBeLessThanOrEqual(4000);
+        seen.push(...page.events.map(event => (event as { sequence: number }).sequence));
+        if (!before) {
+          expect(page.nextCursor).toBeTypeOf('string');
+          const other = await submit({ idempotencyKey: 'other-audit-task' });
+          await expect(service.auditPage(other.id, page.nextBefore, page.nextCursor)).rejects.toMatchObject({ status: 400 });
+          await expect(service.auditPage(task.id, page.nextBefore, `x${page.nextCursor}`)).rejects.toMatchObject({ status: 400 });
+          expect(read.mock.calls.length - priorReads).toBeLessThanOrEqual(100);
+          blobs.set('history-new', Buffer.from(JSON.stringify({ sequence: 5006, event: { sequence: 5006 }, previousKey: 'history-5005' })));
+          task.auditCount = 5006; task.auditHeadKey = 'history-new'; await state.putCodeReviewTask(task);
+        }
+        before = page.nextBefore; cursor = page.nextCursor;
+      } while (before || cursor);
+      expect(seen).toEqual(Array.from({ length: 5005 }, (_, index) => 5005 - index));
+    } finally { read.mockRestore(); }
+    expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
   it('重启时无引擎编号的运行任务明确失败，不偷偷创建第二次扫描', async () => {
     const task = await submit(); task.status = 'running'; await state.putCodeReviewTask(task);
     service = make(); await service.start();
@@ -421,6 +456,29 @@ describe('代码审查任务完整闭环', () => {
     server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     return `http://127.0.0.1:${(server.address() as any).port}/api/code-reviews`;
   }
+  it('真实HTTP审计沿继续游标读取旧证据，跨项目及无效分页在对象读取前拒绝', async () => {
+    const task = await submit();
+    for (let sequence = 1; sequence <= 150; sequence++) blobs.set(`http-history-${sequence}`, Buffer.from(JSON.stringify({
+      sequence, event: { sequence }, previousKey: sequence > 1 ? `http-history-${sequence - 1}` : undefined,
+    })));
+    task.auditCount = 150; task.auditHeadKey = 'http-history-150'; await state.putCodeReviewTask(task);
+    const base = await serve(), headers = { 'x-project': 'a' };
+    const first = await (await fetch(`${base}/${task.id}/audit`, { headers })).json();
+    expect(first.events).toHaveLength(100); expect(first.events[0]).toMatchObject({ sequence: 150 });
+    const query = new URLSearchParams({ before: String(first.nextBefore), cursor: first.nextCursor });
+    const next = await (await fetch(`${base}/${task.id}/audit?${query}`, { headers })).json();
+    expect(next.events).toHaveLength(50); expect(next.events.at(-1)).toMatchObject({ sequence: 1 });
+    expect(next.nextCursor).toBeUndefined();
+    const read = vi.spyOn(inputs, 'get');
+    try {
+      expect((await fetch(`${base}/${task.id}/audit?${query}`, { headers: { 'x-project': 'b' } })).status).toBe(403);
+      for (const invalid of ['before=0', 'before=invalid', 'cursor=invalid']) {
+        expect((await fetch(`${base}/${task.id}/audit?${invalid}`, { headers })).status).toBe(400);
+      }
+      expect(read).not.toHaveBeenCalled();
+    } finally { read.mockRestore(); }
+    expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
   it('能力声明条件重试，HTTP匹配失败版本时仍使用原任务与固定源码', async () => {
     run.mockRejectedValueOnce(new Error('模型任务失败'));
     const task = await submit(); await service.pump(); const failed = service.get(task.id); const base = await serve();
@@ -493,6 +551,29 @@ describe('代码审查任务完整闭环', () => {
     expect(data.report.shareToken).toBeFalsy(); expect(data.report.reportType).toBe('code-review');
     expect((await post()).status).toBe(200); expect(state.listAcceptanceReports('a')).toHaveLength(1);
     expect((await fetch(`${base}/${data.task.id}/report`, { headers: { 'x-project': 'a' } })).status).toBe(200);
+  });
+
+  it('报告上传幂等键在内容去重及重载后仍绑定原请求，冲突返回409并隔离项目', async () => {
+    let base = await serve();
+    const post = (projectId: string, content: string, key?: string, viaHeader = false) => fetch(`${base}/reports`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-project': projectId, ...(viaHeader && key ? { 'Idempotency-Key': key } : {}) },
+      body: JSON.stringify({ projectId, title: '固定人工复核', format: 'md', content, ...(!viaHeader && key ? { idempotencyKey: key } : {}) }),
+    });
+    const first = await post('a', '# 原报告'); expect(first.status).toBe(201); const original = await first.json();
+    const bound = await post('a', '# 原报告', 'original-request'); expect(bound.status).toBe(200);
+    expect((await bound.json()).report.id).toBe(original.report.id);
+    const retry = await post('a', '# 原报告', 'original-request', true); expect(retry.status).toBe(200);
+    expect((await retry.json()).report.id).toBe(original.report.id);
+    expect((await post('a', '# 不同报告', 'original-request')).status).toBe(409);
+    const reload = new StateService(path.join(dir, 'state.json')); reload.load();
+    await new Promise<void>(resolve => server!.close(() => resolve())); server = undefined;
+    service.stop(); state = reload; service = make(); base = await serve();
+    expect((await post('a', '# 不同报告', 'original-request', true)).status).toBe(409);
+    expect((await post('b', '# 不同报告', 'original-request')).status).toBe(201);
+    expect(state.listAcceptanceReports('a')).toHaveLength(1); expect(state.listAcceptanceReports('b')).toHaveLength(1);
+    const visible = await (await fetch(base, { headers: { 'x-project': 'a' } })).json();
+    expect(JSON.stringify(visible)).not.toMatch(/original-request|reportImportReceipts/);
+    expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
   it('普通项目成员仅能阅读获授权项目的报告，未授权成员不能借任务编号越权', async () => {
     state.addProjectGrant({ id: 'grant-a', principalId: 'human:member', projectId: 'a', origin: 'approved',

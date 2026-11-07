@@ -1,4 +1,4 @@
-import { createReportObjectStore, reportObjectStoreFromEnv, type ReportObjectStore } from './report-object-store.js';
+import { createReportObjectStore, type ReportObjectStore } from './report-object-store.js';
 
 /** Dedicated object prefix; source snapshots are private inputs and never report metadata. */
 export interface CodeReviewInputs {
@@ -7,8 +7,7 @@ export interface CodeReviewInputs {
   get(key: string): Promise<Buffer>;
 }
 export function createCodeReviewInputs(store?: ReportObjectStore): CodeReviewInputs {
-  const config = store ? null : reportObjectStoreFromEnv();
-  const objects = store ?? createReportObjectStore(config ? { ...config, prefix: `${config.prefix}/code-review-inputs` } : null);
+  const objects = store ?? createReportObjectStore(undefined, { keyPrefixSuffix: 'code-review-inputs' });
   return {
     configured: () => objects.isConfigured(),
     async put(taskId, projectId, zip) {

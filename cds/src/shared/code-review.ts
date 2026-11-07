@@ -30,13 +30,15 @@ export interface CodeReviewTask {
   /** Stable deployment scope, preventing preview workers from claiming another deployment's tasks. */
   ownerScope: string;
   idempotencyKey?: string;
+  /** 上传回执只保存键和请求的摘要，不向客户端暴露或参与扫描调度。 */
+  reportImportReceipts?: Array<{ key: string; requestHash: string }>;
   inputKey?: string;
   audit?: Array<Record<string, unknown>>;
   auditHeadKey?: string;
   auditCount?: number;
 }
-export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'ownerScope' | 'idempotencyKey' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested'>;
+export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'ownerScope' | 'idempotencyKey' | 'reportImportReceipts' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested'>;
 export function publicCodeReviewTask(task: CodeReviewTask): PublicCodeReviewTask {
-  const { inputKey: _i, ownerScope: _o, idempotencyKey: _k, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, ...visible } = task;
+  const { inputKey: _i, ownerScope: _o, idempotencyKey: _k, reportImportReceipts: _receipts, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, ...visible } = task;
   return visible;
 }

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { StateService } from './state.js';
 import type { CodeReviewTask } from '../shared/code-review.js';
 import type { CodeReviewInputs } from './code-review-inputs.js';
@@ -65,6 +65,7 @@ export interface SubmitCodeReview {
 
 /** Persistent orchestration; one task at a time per deployment, never run repository scripts. */
 export class CodeReviewService {
+  private readonly auditCursorKey = randomBytes(32);
   private active = new Map<string, AbortController>();
   private pumping = false;
   private stopped = false;
@@ -194,20 +195,41 @@ export class CodeReviewService {
     current.audit = [...(current.audit || []), safe].slice(-20);
     await this.save(current);
   }
-  async auditPage(id: string, before?: number) {
+  async auditPage(id: string, before?: number, cursor?: string) {
     const task = this.get(id);
     const events: unknown[] = [];
     let key = task.auditHeadKey;
+    if (cursor !== undefined) {
+      try {
+        if (!/^[A-Za-z0-9_-]{48,4096}$/.test(cursor)) throw new Error('invalid cursor');
+        const bytes = Buffer.from(cursor, 'base64url');
+        const decipher = createDecipheriv('aes-256-gcm', this.auditCursorKey, bytes.subarray(0, 12));
+        decipher.setAuthTag(bytes.subarray(12, 28));
+        const value = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8'));
+        if (value.taskId !== id || value.projectId !== task.projectId || typeof value.key !== 'string' || !value.key
+          || !Number.isSafeInteger(value.before) || value.before < 1 || before !== undefined && before !== value.before) throw new Error('scope mismatch');
+        key = value.key; before = value.before;
+      } catch { throw new CodeReviewError(400, '审计分页游标无效或已失效，请从第一页重新读取'); }
+    }
     let examined = 0;
-    let nextBefore: number | undefined;
+    let nextBefore = before;
     while (key && examined++ < 4000) {
       const item = JSON.parse((await this.deps.inputs.get(key)).toString('utf8')) as { sequence: number; event: unknown; previousKey?: string };
+      if (!Number.isSafeInteger(item.sequence) || item.sequence < 1) throw new CodeReviewError(500, '审计证据序号无效，请核对原记录');
       key = item.previousKey;
       if (before && item.sequence >= before) continue;
       events.push(item.event);
-      if (events.length >= 100) { nextBefore = key ? item.sequence : undefined; break; }
+      nextBefore = item.sequence;
+      if (events.length >= 100) break;
     }
-    return { events, nextBefore };
+    let nextCursor: string | undefined;
+    if (key) {
+      const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', this.auditCursorKey, iv);
+      const payload = Buffer.from(JSON.stringify({ taskId: id, projectId: task.projectId, key, before: nextBefore }));
+      const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
+      nextCursor = Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64url');
+    }
+    return { events, nextBefore: key ? nextBefore : undefined, nextCursor };
   }
   async pump(): Promise<void> {
     if (this.pumping || this.stopped) return;

@@ -119,8 +119,28 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     const title = typeof fields.title === 'string' ? fields.title.trim().slice(0, 200) : '';
     if (!title || typeof content !== 'string' || !content.trim() || Buffer.byteLength(content) > MAX_REPORT) throw new CodeReviewError(400, '报告标题和正文必填，正文上限 10MiB');
     const contentHash = createHash('sha256').update(content).digest('hex');
+    const rawKey = typeof fields.idempotencyKey === 'string' ? fields.idempotencyKey : req.get('idempotency-key');
+    const key = rawKey?.trim() ? createHash('sha256').update(rawKey.trim()).digest('hex') : undefined;
+    const requestHash = createHash('sha256').update(JSON.stringify([format, title, contentHash])).digest('hex');
+    const receipt = key ? { key, requestHash } : undefined;
+    const prior = key ? service.list(projectId).find(task => task.reportImportReceipts?.some(item => item.key === key)) : undefined;
+    if (prior) {
+      if (prior.reportImportReceipts!.find(item => item.key === key)!.requestHash !== requestHash) {
+        throw new CodeReviewError(409, '同一幂等键已用于不同报告，请核对原上传内容');
+      }
+      const report = prior.reportId ? state.getAcceptanceReport(prior.reportId) : undefined;
+      if (!report || report.projectId !== projectId) throw new CodeReviewError(409, '原上传报告不可读取，请先核对原记录');
+      return res.json({ report, task: publicCodeReviewTask(prior) });
+    }
     const existing = state.listAcceptanceReports(projectId).find((r) => r.reportType === 'code-review' && r.contentHash === contentHash);
-    if (existing) return res.json({ report: existing });
+    if (existing) {
+      if (receipt) {
+        const task = existing.reviewTaskId ? state.getCodeReviewTask(existing.reviewTaskId) : undefined;
+        if (!task || task.projectId !== projectId) throw new CodeReviewError(409, '原报告任务记录缺失，请先核对原记录');
+        await state.putCodeReviewTask({ ...task, reportImportReceipts: [...(task.reportImportReceipts || []), receipt] });
+      }
+      return res.json({ report: existing });
+    }
     const id = randomUUID().replace(/-/g, '');
     const report = await state.createAcceptanceReportAsync({ title: `代码审查报告 · ${title} · ${new Date().toISOString().slice(0, 10)}`,
       projectId, format, content, reportType: 'code-review', reviewTaskId: id, contentHash, createdBy: resolveActorFromRequest(req) });
@@ -128,16 +148,18 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     const task: CodeReviewTask = { id, projectId, title, sourceType: 'report', sourceName: filename || title,
       excludePatterns: [], status: 'completed', phase: '已上传审查报告', progress: { totalFiles: 0, scannedFiles: 0 },
       delivery: { status: 'not_requested' }, ownerScope: service.deps.ownerScope, reportId: report.id,
-      createdBy: resolveActorFromRequest(req), createdAt: now, updatedAt: now };
+      createdBy: resolveActorFromRequest(req), createdAt: now, updatedAt: now,
+      reportImportReceipts: receipt ? [receipt] : undefined };
     await state.putCodeReviewTask(task);
     return res.status(201).json({ report, task: publicCodeReviewTask(task) });
     } finally { unlock(); }
   }));
   router.get('/code-reviews/:id', handler((req, res) => res.json({ task: publicCodeReviewTask(taskFor(req)) })));
   router.get('/code-reviews/:id/audit', handler(async (req, res) => {
-    const task = taskFor(req); const before = Number(req.query.before) || undefined;
-    if (before && (!Number.isSafeInteger(before) || before < 1)) throw new CodeReviewError(400, '审计分页参数无效');
-    return res.json(await service.auditPage(task.id, before));
+    const task = taskFor(req); const before = req.query.before === undefined ? undefined : Number(req.query.before);
+    if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new CodeReviewError(400, '审计分页参数无效');
+    if (req.query.cursor !== undefined && (typeof req.query.cursor !== 'string' || !req.query.cursor)) throw new CodeReviewError(400, '审计分页游标无效');
+    return res.json(await service.auditPage(task.id, before, req.query.cursor as string | undefined));
   }));
   for (const [action, run] of [
     ['cancel', (id: string) => service.cancel(id)], ['retry', (id: string) => service.retry(id)], ['delivery/retry', (id: string) => service.deliver(id)],
