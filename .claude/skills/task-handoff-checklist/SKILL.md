@@ -1,5 +1,7 @@
 ---
 name: task-handoff-checklist
+metadata:
+  version: '2.0.0'
 description: 根据当前分支真实差异生成面向下一位负责人和非技术决策者的交接清单，覆盖入口、文档、契约、测试、发布、安全和遗留风险。触发词：/handoff、任务交接、生成交接清单。
 allowed-tools: Read Bash Glob Grep
 ---
