@@ -4543,9 +4543,9 @@ def cmd_connect(args: argparse.Namespace) -> None:
                     _restore_auth_env(previous)
                     die("授权已批准，但凭据已被其他轮询方取走。请重新发起。", code=2)
                 break
-            if state == "rejected":
+            if state in ("rejected", "expired", "cancelled"):
                 _restore_auth_env(previous)
-                reason = poll_body.get("rejectReason") or "用户拒绝"
+                reason = poll_body.get("rejectReason") or poll_body.get("message") or "用户拒绝"
                 die(f"授权未通过: {reason}", code=2)
             if state not in ("pending", "blocked"):
                 _restore_auth_env(previous)

@@ -685,6 +685,18 @@ def test_bootstrap_wait_timeout_or_interrupt_cancels_only_own_request(workspace,
     assert not (workspace / ".cds/credentials.json").exists()
 
 
+@pytest.mark.parametrize("terminal", ["expired", "cancelled"])
+def test_bootstrap_terminal_message_is_kept_without_credentials(workspace, monkeypatch, terminal):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
+    def request(method, path, **kwargs):
+        if method == "POST": return 201, {"requestId": "terminal", "pollToken": "own-poll"}, {}
+        return 200, {"status": terminal, "message": "本次授权已结束，请重新发起"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
+    code, output = run_command(["connect", "--host", "https://cds.example", "--new-project", "--create-project", "demo"])
+    assert code == 2 and "本次授权已结束，请重新发起" in output and "无法识别授权状态" not in output
+    assert not (workspace / ".cds/credentials.json").exists()
+
 @pytest.mark.parametrize("saved_user", [True, False])
 def test_replacement_approval_never_loses_validated_user_identity(workspace, monkeypatch, saved_user):
     cdscli._save_local_credentials(host="https://cds.example", project_id="proj-a", project_key="cdsp_expired_private")
