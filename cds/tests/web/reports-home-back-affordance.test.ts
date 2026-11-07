@@ -53,4 +53,21 @@ describe('验收报告主页 · 桌面端返回入口', () => {
     expect(SRC).toContain("state.status === 'ok' && !selected");
     expect(SRC).toContain("state.status === 'ok' && selected");
   });
+
+  it('延后的地址提交前保留原页面，不抢先选择后又被旧地址清空', () => {
+    const source = /const handleSelectReport = useCallback\([\s\S]*?=> \{([\s\S]*?)\n  \}, \[/.exec(SRC);
+    expect(source).toBeTruthy();
+    let selected: unknown = 'original';
+    let scheduled: URLSearchParams | undefined;
+    const select = runInNewContext(`((report) => { ${source![1]} })`, {
+      URLSearchParams, setSelected: (value: unknown) => { selected = value; },
+      setNavDrawerOpen: () => {},
+      setSearchParams: (update: (current: URLSearchParams) => URLSearchParams) => {
+        scheduled = update(new URLSearchParams('project=prd-agent&report=original'));
+      },
+    });
+    select({ id: 'target' });
+    expect(selected).toBe('original');
+    expect(scheduled?.get('report')).toBe('target');
+  });
 });

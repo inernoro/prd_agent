@@ -441,7 +441,6 @@ export function ReportsPage(): JSX.Element {
   }, [handleCloseReport]);
 
   const handleSelectReport = useCallback((report: AcceptanceReport) => {
-    setSelected(report);
     setNavDrawerOpen(false);
     // Record a list selection before a report link pushes the next entry, so
     // browser Back can restore the report the reader actually left.
@@ -456,7 +455,6 @@ export function ReportsPage(): JSX.Element {
   const handleLinkedReport = useCallback((id: string): boolean => {
     const target = listedReportTarget(selected?.projectId, id, allReports);
     if (!target) return false;
-    setSelected(target);
     setNavDrawerOpen(false);
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
