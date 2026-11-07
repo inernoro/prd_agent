@@ -19,6 +19,9 @@ public sealed class AdminAuthzMeResponse
     /// </summary>
     public string? CdnBaseUrl { get; set; }
 
+    /// <summary>迁移期间用于读取缺失历史头像的受信旧存储公域。</summary>
+    public string? LegacyCdnBaseUrl { get; set; }
+
     /// <summary>
     /// 权限指纹（基于权限目录 + 角色定义计算的哈希）。
     /// 前端缓存此值，当检测到变化时自动刷新权限缓存。

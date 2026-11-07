@@ -597,6 +597,40 @@ public static class ImageGenModelConfigs
             SupportsInpainting = false,
         },
 
+        // ===== 豆包 Seedream 5.0 Pro（官方标准尺寸，不沿用 4.5 的 4K 能力）=====
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "doubao-seedream-5-0-pro*",
+            DisplayName = "豆包 Seedream 5.0 Pro",
+            Provider = "字节跳动 (火山引擎)",
+            PlatformType = "volces",
+            OfficialDocUrl = "https://ark.volcengine.com/region:cn-beijing/docs/image-generation-api",
+            LastUpdated = "2026-11-05",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "支持 1K/2K 标准尺寸，最高 2K；单次输出一张图片",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"), new("1152x864", "4:3"), new("864x1152", "3:4"),
+                    new("1424x800", "16:9"), new("800x1424", "9:16"), new("1248x832", "3:2"),
+                    new("832x1248", "2:3"), new("1568x672", "21:9"),
+                },
+                ["2k"] = new()
+                {
+                    new("2048x2048", "1:1"), new("2368x1776", "4:3"), new("1776x2368", "3:4"),
+                    new("2816x1584", "16:9"), new("1584x2816", "9:16"), new("2496x1664", "3:2"),
+                    new("1664x2496", "2:3"), new("3136x1344", "21:9"),
+                },
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxPixels = 4624220,
+            Notes = new() { "最多 10 张参考图；不支持组图生成或流式输出", "官方像素范围 921600 至 4624220，此处开放标准尺寸白名单" },
+            SupportsImageToImage = true,
+            SupportsInpainting = false,
+        },
+
         // ===== 豆包 Seedream 4.5（火山引擎）=====
         new ImageGenModelAdapterConfig
         {

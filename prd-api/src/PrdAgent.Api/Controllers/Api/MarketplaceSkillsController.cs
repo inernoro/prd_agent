@@ -39,6 +39,7 @@ public class MarketplaceSkillsController : ControllerBase
     private const int SummaryMaxChars = 30;
     private const int DescriptionMaxChars = 200;
     private const int TitleMaxChars = 80;
+    private const int VersionMaxChars = 64;
     private const int MaxTagsPerItem = 10;
     private const int MaxTagLength = 20;
     private const int PreviewUrlMaxLen = 512;
@@ -90,14 +91,23 @@ public class MarketplaceSkillsController : ControllerBase
         [FromQuery] string? keyword,
         [FromQuery] string? sort,
         [FromQuery] string? tag,
+        [FromQuery] string? scope,
         CancellationToken ct)
     {
-        // 匿名可读：userId 只用于 isFavoritedByCurrentUser 这类「跟我有关」的字段，
-        // 未登录时为空串，这些字段恒为 false。查询本身恒带 IsPublic 过滤。
+        // 公开范围匿名可读；个人范围要求身份，并只读取当前用户上传或收藏的技能。
+        // 所有范围恒带 IsPublic 过滤，匿名公开响应的个人收藏标记恒为 false。
         var userId = this.GetUserIdOrNull() ?? string.Empty;
+        var view = string.IsNullOrWhiteSpace(scope) ? "all" : scope.Trim().ToLowerInvariant();
+        if (view is not ("all" or "mine" or "favorites"))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPE", "不支持的技能范围"));
+        if (view != "all" && string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "请先登录后查看个人技能"));
 
         var builder = Builders<MarketplaceSkill>.Filter;
         var filter = builder.Eq(x => x.IsPublic, true);
+        // 在条数裁切之前按当前身份筛选，个人列表不依赖广场前 200 条。
+        if (view == "mine") filter &= builder.Eq(x => x.OwnerUserId, userId);
+        if (view == "favorites") filter &= builder.AnyEq(x => x.FavoritedByUserIds, userId);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -122,7 +132,9 @@ public class MarketplaceSkillsController : ControllerBase
 
         // 官方条目（findmapskills + 目录技能，按 keyword/tag 过滤）永远置顶
         // Web：无搜索词也展示全部官方（前端归到「官方推荐」独立行，不挤社区瀑布流）
-        var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: true);
+        var officialDtos = view == "all"
+            ? OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: true)
+            : new List<object>();
         // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限。
         // 官方条目自身也要裁：只减 DB 条数的话，官方条目一旦超过 200 总长就会破上限。
         // 现在离 200 还远，但按构造正确比靠「现在还不到」可靠。
@@ -473,6 +485,8 @@ public class MarketplaceSkillsController : ControllerBase
         var meta = _zipExtractor.Extract(bytes);
         if (!string.IsNullOrEmpty(meta.Error))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", $"压缩包解析失败: {meta.Error}"));
+        if (meta.FrontmatterVersion is { Length: > VersionMaxChars })
+            return BadRequest(ApiResponse<object>.Fail("INVALID_VERSION", $"版本号不能超过 {VersionMaxChars} 个字符"));
 
         // 生成 ID、上传 zip 到 COS / R2
         var id = Guid.NewGuid().ToString("N");
@@ -556,6 +570,7 @@ public class MarketplaceSkillsController : ControllerBase
         {
             Id = id,
             Title = finalTitle,
+            Version = meta.FrontmatterVersion,
             Description = finalDescription,
             IconEmoji = finalIcon,
             CoverImageUrl = coverUrl,
@@ -628,6 +643,7 @@ public class MarketplaceSkillsController : ControllerBase
             .Set(x => x.Title, NormalizeTitle(title, skill.Title))
             .Set(x => x.Description, NormalizeDescription(description, skill.Description))
             .Set(x => x.IconEmoji, string.Empty)
+            .Set(x => x.ContentUpdatedAt, DateTime.UtcNow)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         if (tagsJson != null)
@@ -1203,6 +1219,7 @@ public class MarketplaceSkillsController : ControllerBase
             s.Id,
             s.Title,
             s.Description,
+            version = s.Version is { Length: <= VersionMaxChars } ? s.Version : null,
             iconEmoji = string.Empty,
             coverImageUrl = s.CoverImageUrl,
             previewUrl = s.PreviewUrl,
@@ -1224,6 +1241,7 @@ public class MarketplaceSkillsController : ControllerBase
             ownerUserAvatar = s.AuthorAvatar,
             createdAt = s.CreatedAt,
             updatedAt = s.UpdatedAt,
+            contentUpdatedAt = s.ContentUpdatedAt,
         };
     }
 }

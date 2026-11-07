@@ -27,6 +27,7 @@ import type {
   TeamActivityListData,
   TeamActivityModulesData,
   TeamActivityStatsData,
+  TeamActivityRequestOptions,
 } from '@/services/contracts/teamActivity';
 
 function toQuery(
@@ -69,10 +70,12 @@ export const getTeamActivityStatsReal: GetTeamActivityStatsContract = async (
 };
 
 export const getTeamActivityInsightsReal: GetTeamActivityInsightsContract = async (
-  params?: GetTeamActivityInsightsParams
+  params?: GetTeamActivityInsightsParams,
+  options?: TeamActivityRequestOptions
 ): Promise<ApiResponse<TeamActivityInsightsData>> => {
   return await apiRequest<TeamActivityInsightsData>(`${api.teamActivity.insights()}${toQuery(params)}`, {
     method: 'GET',
+    ...options,
   });
 };
 
@@ -95,20 +98,22 @@ export const insightToRequirementReal: InsightToRequirementContract = async (
 };
 
 export const getTeamActivityExperienceMapReal: GetTeamActivityExperienceMapContract = async (
-  params?: GetTeamActivityExperienceMapParams
+  params?: GetTeamActivityExperienceMapParams,
+  options?: TeamActivityRequestOptions
 ): Promise<ApiResponse<TeamActivityExperienceMapData>> => {
   return await apiRequest<TeamActivityExperienceMapData>(
     `${api.teamActivity.experienceMap()}${toQuery(params)}`,
-    { method: 'GET' }
+    { method: 'GET', ...options }
   );
 };
 
 export const getTeamActivityExperienceTrendReal: GetTeamActivityExperienceTrendContract = async (
-  params?: GetTeamActivityExperienceTrendParams
+  params?: GetTeamActivityExperienceTrendParams,
+  options?: TeamActivityRequestOptions
 ): Promise<ApiResponse<TeamActivityExperienceTrendData>> => {
   return await apiRequest<TeamActivityExperienceTrendData>(
     `${api.teamActivity.experienceTrend()}${toQuery(params)}`,
-    { method: 'GET' }
+    { method: 'GET', ...options }
   );
 };
 

@@ -1,0 +1,180 @@
+/* 与网页托管相同的页框、左栏与工具条尺寸；颜色和材质沿用系统 token。 */
+.marketplace-workspace {
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--bg-base);
+}
+
+.marketplace-module-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 52px;
+  flex-shrink: 0;
+  padding: 0 18px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.marketplace-workspace-body { display: flex; flex: 1; min-height: 0; }
+.marketplace-scope-tabs { display: flex; flex-shrink: 0; gap: 22px; padding: 0 18px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-elevated); }
+.marketplace-scope-tabs button { min-height: 40px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 400; cursor: pointer; }
+.marketplace-scope-tabs button:hover { color: var(--text-primary); }
+.marketplace-scope-tabs button[data-active="true"] { border-bottom-color: var(--selection-text); color: var(--selection-text); font-weight: 500; }
+.marketplace-filter-rail {
+  flex: 0 0 212px;
+  min-height: 0;
+  padding: 14px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--border-subtle);
+}
+.marketplace-filters fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.marketplace-filters fieldset + fieldset { margin-top: 24px; }
+.marketplace-filters legend { margin-bottom: 8px; padding: 0 8px; color: var(--text-primary); font-size: 12px; font-weight: 500; }
+.marketplace-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+.marketplace-filter-row:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.marketplace-filter-row[data-active="true"] { background: var(--selection-bg); color: var(--selection-text); }
+.marketplace-filter-row svg { flex-shrink: 0; }
+.marketplace-filter-count { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.marketplace-results { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.marketplace-workspace-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  flex-shrink: 0;
+  padding: 10px 18px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.marketplace-workspace-search { flex: 0 1 320px; min-width: 160px; }
+.marketplace-workspace-search input { height: 34px; font-size: 13px; }
+.marketplace-workspace .marketplace-workspace-search input::placeholder { color: var(--text-secondary); opacity: 1; }
+.marketplace-view-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  flex-shrink: 0;
+  padding: 0 12px;
+  border: 1px solid var(--selection-border);
+  border-radius: var(--radius-control);
+  background: var(--selection-bg);
+  color: var(--selection-text);
+  font-size: 12px;
+}
+.marketplace-primary-actions { display: flex; align-items: center; flex-shrink: 0; gap: 8px; margin-left: auto; }
+.marketplace-primary-actions .map-btn,
+.marketplace-primary-actions .marketplace-connect-button { height: 34px; }
+.marketplace-connect-button { border-color: var(--border-default); background: var(--bg-input); }
+.marketplace-results-scroll { flex: 1; padding: 14px 18px 20px; }
+.marketplace-results-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 28px; margin-bottom: 12px; }
+.marketplace-results-heading h2 { margin: 0; color: var(--text-primary); font-size: 15px; font-weight: 500; }
+.marketplace-results-heading > span { color: var(--text-muted); font-size: 12px; }
+.marketplace-clear-filters { margin-left: auto; padding: 4px 0; border: 0; background: transparent; color: var(--selection-text); font-size: 12px; cursor: pointer; }
+.marketplace-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--marketplace-card-min)), 1fr));
+  justify-content: start;
+  align-content: start;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+}
+.marketplace-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 240px; padding: 24px; color: var(--text-muted); font-size: 13px; }
+.marketplace-empty p { margin: 0; text-align: center; }
+.marketplace-quick-connect .mkt-qc-panel { border: 0; }
+
+/* 平铺继续使用 MarketplaceCard 的详情、收藏、分享、下载和编辑行为。 */
+.mkt-card-density-tile { display: flex; flex-direction: column; height: 100%; min-height: 218px; border-radius: 11px; background-color: var(--bg-site-card); }
+.mkt-card-density-tile .mkt-card-bg-img,
+.mkt-card-density-tile .mkt-card-glyph-banner,
+.mkt-card-density-tile .mkt-card-icon-zone {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: auto;
+  bottom: auto;
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  border: 1px solid var(--skill-glyph-tile-border);
+  background: var(--skill-glyph-tile);
+  box-shadow: none;
+}
+.mkt-card-density-tile .mkt-card-bg-img { object-fit: cover; }
+.mkt-card-density-tile.has-cover::after { display: none; }
+.mkt-card-density-tile .skill-glyph-wrap { width: 36px; height: 36px; }
+.mkt-card-density-tile .skill-glyph { width: 100%; height: 100%; }
+.mkt-card-density-tile .mkt-card-icon-zone svg { width: 32px; height: 32px; }
+.mkt-card-density-tile .mkt-card-glass {
+  position: relative;
+  inset: auto;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+  padding: 14px 14px 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.mkt-card-density-tile .mkt-card-title-row { min-height: 52px; margin-left: 66px; }
+.mkt-card-density-tile .mkt-card-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-height: 40px; white-space: normal; overflow-wrap: anywhere; }
+.mkt-card-density-tile .mkt-card-desc { min-height: 36px; margin-top: 8px; font-size: 12px; line-height: 18px; -webkit-line-clamp: 2; }
+.mkt-card-density-tile .mkt-card-tags { min-height: 16px; margin: 8px 0 10px; }
+.mkt-card-release-meta { display: flex; align-items: center; gap: 10px; margin: auto 0 8px; padding-top: 8px; color: var(--text-secondary); font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; }
+.mkt-card-version { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mkt-card-release-time { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
+.mkt-card-activity { display: inline-flex; flex: 0 0 auto; align-self: center; gap: 4px; }
+.mkt-card-activity-badge { padding: 0 4px; border: 1px solid; border-radius: 4px; font-size: 10px; font-weight: 500; line-height: 16px; white-space: nowrap; box-shadow: none; text-shadow: none; }
+.mkt-card-activity-new { color: var(--accent-fg-blue); background: var(--semantic-info-soft); border-color: var(--semantic-info-border); }
+.mkt-card-activity-hot { color: var(--accent-fg-amber); background: var(--semantic-warning-soft); border-color: var(--semantic-warning-border); }
+.mkt-card-density-tile .mkt-card-glass-footer { min-height: 38px; margin-top: 0; padding: 5px 0; border-color: var(--border-subtle); }
+.mkt-card-density-tile .mkt-card-meta { min-width: 0; }
+.mkt-card-density-tile .mkt-card-owner-name { min-width: 0; max-width: 100%; }
+.mkt-card-density-tile .mkt-card-time { display: none; }
+.mkt-card-density-tile .mkt-card-footer-right { flex: 0 0 auto; }
+.mkt-card-density-tile .mkt-card-actions { gap: 3px; }
+.mkt-card-density-tile .mkt-card-action-button,
+.mkt-card-density-tile .mkt-card-favorite { width: auto; min-width: 28px; height: 28px; padding: 0 4px; gap: 4px; border-radius: 6px; }
+.mkt-card-density-tile .mkt-card-fork-label { display: none; }
+.mkt-card-density-tile .mkt-card-preview-badge { top: 50px; right: auto; left: 14px; width: 52px; justify-content: center; background: var(--panel-solid); color: var(--accent-fg-blue); border-color: var(--semantic-info-border); }
+
+@media (max-width: 1100px) {
+  .marketplace-workspace-toolbar { flex-wrap: wrap; gap: 8px; }
+  .marketplace-workspace-search { order: 2; flex: 1 0 100%; min-width: 100px; }
+}
+@media (max-width: 767px) {
+  .marketplace-module-header { height: 44px; padding: 0 8px; }
+  .marketplace-scope-tabs { gap: 18px; padding: 0 10px; }
+  .marketplace-module-header .marketplace-source-badge { display: none; }
+  .marketplace-workspace-toolbar { flex-wrap: wrap; gap: 6px; padding: 8px; }
+  .marketplace-workspace-search { order: 2; flex: 1 0 100%; }
+  .marketplace-workspace-toolbar > button { padding-right: 9px; padding-left: 9px; }
+  .marketplace-results-scroll { padding: 10px 8px 16px; }
+  .marketplace-tile-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .marketplace-results-heading { margin-bottom: 8px; }
+}

@@ -8,6 +8,23 @@ namespace PrdAgent.Tests;
 
 public class HostedSiteRevisionRulesTests
 {
+    [Theory]
+    [InlineData("styles.css", false)]
+    [InlineData("review.js", false)]
+    [InlineData("product.html", false)]
+    [InlineData("lesson.pdf", true)]
+    [InlineData("downloads/tutorial-package.json", true)]
+    public void PreviewBridge_ShouldPreserveRegisteredCourseDownloads(string asset, bool expected)
+    {
+        var site = new HostedSite
+        {
+            EntryFile = "index.html",
+            Files = [new() { Path = "index.html" }, new() { Path = asset,
+                MimeType = asset.EndsWith(".pdf") ? "application/pdf" : "text/plain", CosKey = "test/" + asset, Size = 10 }],
+        };
+        Assert.Equal(expected, site.RequiresPreviewBridge);
+    }
+
     [Fact]
     public void ContentShape_ShouldTreatOnlyTheExactGeneratedPackageAsSelfContainedHtml()
     {

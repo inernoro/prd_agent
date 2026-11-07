@@ -9,6 +9,24 @@ import type { SseEvent } from '@/lib/sse';
 
 // ─── Types ───
 
+export interface HostedSiteTrafficScope {
+  visits: number;
+  visitors: number;
+  lastViewedAt?: string | null;
+}
+export interface HostedSiteTraffic {
+  all: HostedSiteTrafficScope;
+  external: HostedSiteTrafficScope;
+  activeShareLinks: number;
+}
+
+export interface HostedSiteActivity {
+  /** 服务端按已成功发布的内容修改与回退版本统计，不含基线、草稿或元信息修改。 */
+  editCount: number;
+  /** 服务端判断：近七天创建且当前用户未打开。 */
+  isNew: boolean;
+}
+
 export interface HostedSiteFile {
   path: string;
   cosKey: string;
@@ -44,6 +62,7 @@ export interface HostedSite {
   files: HostedSiteFile[];
   /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
   contentShape?: 'self-contained-html' | 'multi-file';
+  requiresPreviewBridge?: boolean;
   totalSize: number;
   tags: string[];
   folder?: string;
@@ -943,8 +962,10 @@ export async function listSites(params?: {
     total: number;
     owners?: Record<string, SiteOwnerCard>;
     /** 每个站点的独立访客数（siteId → 人数，后端按 userId / IP 去重）。
-     *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。没有访问记录的站点不出现在表里。 */
+     *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。新站无记录时为零；旧累计有值但记录缺失时不返回该项。 */
     visitors?: Record<string, number>;
+    activity?: Record<string, HostedSiteActivity>;
+    traffic?: Record<string, HostedSiteTraffic>;
     /** 团队作用域下，我在该团队的网页托管有效角色（owner/editor/viewer）；个人作用域不返回 */
     myWebHostingRole?: WebHostingRole;
   }>
@@ -1290,6 +1311,9 @@ export interface SharedSiteInfo {
   description?: string;
   siteUrl: string;
   entryFile: string;
+  /** 与站内预览共用服务端文件结构分类；旧服务端缺字段时沿用原策略。 */
+  contentShape?: HostedSite['contentShape'];
+  requiresPreviewBridge?: boolean;
   totalSize: number;
   /** 入口文件自己的字节数（不是 totalSize 那个所有文件之和）。后端取不到时为 0 */
   entrySize: number;
@@ -1310,6 +1334,8 @@ export interface SharedSiteInfo {
    * 反而看得见。匿名访问恒为 false。
    */
   viewerCanEdit?: boolean;
+  /** 服务端确认的网页作者身份，不是分享链接创建者。 */
+  viewerIsOwner?: boolean;
 }
 
 export interface ShareViewData {
@@ -1400,15 +1426,84 @@ export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise
 
 // ─── 评论 ───
 
+/** 发布版本的评审元数据；版本编号和内容标识由服务端维护。 */
+export interface HostedReviewVersion {
+  historyRestricted?: boolean;
+  id: string;
+  siteId: string;
+  versionLabel: string;
+  contentVersionKey: string;
+  publishedAt?: string | null;
+  isCurrent: boolean;
+  canPreview: boolean;
+  entryFile: string;
+  contentShape?: 'self-contained-html' | 'multi-file';
+  siteUrl: string | null;
+}
+
+export type HostedReviewSource = { mode: 'site'; siteId: string }
+  | { mode: 'share'; token: string; password?: string; siteId?: string };
+
+async function readHostedReview<T>(source: HostedReviewSource, suffix: string): Promise<ApiResponse<T>> {
+  if (source.mode === 'site') return apiRequest(`/api/web-pages/${encodeURIComponent(source.siteId)}/revisions${suffix}`);
+  const params = new URLSearchParams();
+  if (source.password) params.set('password', source.password);
+  if (source.siteId) params.set('siteId', source.siteId);
+  const query = params.size ? `?${params}` : '';
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const token = useAuthStore.getState().token;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  try {
+    const response = await fetch(buildApiUrl(`/api/web-pages/shares/view/${encodeURIComponent(source.token)}/revisions${suffix}${query}`), { headers });
+    return await response.json() as ApiResponse<T>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '无法加载版本，请重试' } };
+  }
+}
+
+export function listHostedReviewVersions(source: HostedReviewSource): Promise<ApiResponse<HostedReviewVersion[]>> {
+  return readHostedReview(source, '');
+}
+
+export function previewHostedReviewVersion(source: HostedReviewSource, id: string): Promise<ApiResponse<{ revision: HostedReviewVersion; html: string; siteUrl: string | null }>> {
+  return readHostedReview(source, `/${encodeURIComponent(id)}/preview`);
+}
+
+export interface HostedSiteCommentAnchor {
+  kind: 'element' | 'text';
+  pagePath: string;
+  selector: string;
+  tagName: string;
+  text: string;
+  elementText: string;
+  prefix: string;
+  suffix: string;
+  contentVersion: string;
+}
+
+export interface HostedSiteCommentOptions {
+  siteId?: string;
+  revisionId?: string;
+  expectedContentVersion?: string;
+  anchor?: HostedSiteCommentAnchor;
+  parentId?: string;
+}
+
 export interface HostedSiteCommentDto {
   id: string;
   siteId: string;
+  contentVersion?: string | null;
+  revisionId?: string | null;
   content: string;
   authorUserId: string;
   authorName: string;
   authorAvatarFileName?: string;
   createdAt: string;
   canDelete: boolean;
+  anchor?: HostedSiteCommentAnchor | null;
+  parentId?: string | null;
+  isResolved?: boolean;
+  canResolve?: boolean;
 }
 
 export interface SiteCommentsResult {
@@ -1434,16 +1529,19 @@ export async function listSiteComments(siteId: string): Promise<ApiResponse<Site
 }
 
 /** 在某站点发表评论（owner / 团队成员视角，需登录） */
-export async function addSiteComment(siteId: string, content: string): Promise<ApiResponse<HostedSiteCommentDto>> {
+export async function addSiteComment(siteId: string, content: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
   return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, {
     method: 'POST',
-    body: { content },
+    body: { content, ...options },
   });
 }
 
 /** 经分享链接列出评论（无需登录即可读）。走 raw fetch（公开端点 + 可选携带 token 识别身份） */
-export async function listShareComments(token: string, password?: string): Promise<ApiResponse<SiteCommentsResult>> {
-  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+export async function listShareComments(token: string, password?: string, siteId?: string): Promise<ApiResponse<SiteCommentsResult>> {
+  const params = new URLSearchParams();
+  if (password) params.set('password', password);
+  if (siteId) params.set('siteId', siteId);
+  const q = params.size ? `?${params}` : '';
   const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`);
   const headers: Record<string, string> = { Accept: 'application/json' };
   const authToken = useAuthStore.getState().token;
@@ -1522,11 +1620,28 @@ export function downloadHostedPdf(siteId: string, filePath: string,
 }
 
 /** 经分享链接发表评论（需登录） */
-export async function addShareComment(token: string, content: string, password?: string): Promise<ApiResponse<HostedSiteCommentDto>> {
+export async function addShareComment(token: string, content: string, password?: string, options?: HostedSiteCommentOptions): Promise<ApiResponse<HostedSiteCommentDto>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
   return apiRequest(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, {
     method: 'POST',
-    body: { content },
+    body: { content, ...options },
+  });
+}
+
+/** 解决/重新打开根讨论；分享路径仍需验证当前分享链接和密码。 */
+export function setSiteCommentResolved(source: { siteId: string } | { token: string; password?: string; siteId?: string },
+  commentId: string, resolved: boolean): Promise<ApiResponse<HostedSiteCommentDto>> {
+  const prefix = 'token' in source
+    ? `/api/web-pages/shares/view/${encodeURIComponent(source.token)}`
+    : `/api/web-pages/${encodeURIComponent(source.siteId)}`;
+  const params = new URLSearchParams();
+  if ('token' in source) {
+    if (source.password) params.set('password', source.password);
+    if (source.siteId) params.set('siteId', source.siteId);
+  }
+  const query = params.size ? `?${params}` : '';
+  return apiRequest(`${prefix}/comments/${encodeURIComponent(commentId)}/resolved${query}`, {
+    method: 'PATCH', body: { resolved },
   });
 }
 

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -399,6 +400,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
             try
             {
                 var current = candidate;
+                // 尚未保存完整 PPT 的结果交还原 Worker：它按同一 run/受信结果包恢复，不重新调用模型。
+                if (current.ArtifactType == DesignArtifactTypes.HtmlPpt
+                    && (string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
+                        || string.IsNullOrWhiteSpace(current.ProducedArtifactRevisionId)))
+                    continue;
                 if (current.Status == RunStatuses.Running
                     && !string.IsNullOrWhiteSpace(current.WorkspaceResultAssetKey))
                 {
@@ -410,32 +416,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
 
                 if (current.ArtifactType == DesignArtifactTypes.HtmlPpt)
                 {
-                    if (current.Status == RunStatuses.Committing)
-                    {
-                        var result = await _workspaceBroker.ReadResultAsync(current.Id, CancellationToken.None);
-                        var htmlHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(result.IndexHtml)))
-                            .ToLowerInvariant();
-                        var synchronizedAt = DateTime.UtcNow;
-                        await _db.MdToPptRuns.UpdateOneAsync(
-                            item => item.Id == current.Id && item.UserId == current.UserId && item.Status == "running",
-                            Builders<MdToPptRun>.Update
-                                .Set(item => item.Status, "done")
-                                .Set(item => item.Runtime, DesignArtifactRuntimes.OpenDesign)
-                                .Set(item => item.Provider, DesignArtifactRuntimes.OpenDesign)
-                                .Set(item => item.Html, result.IndexHtml)
-                                .Set(item => item.HtmlHash, htmlHash)
-                                .Set(item => item.Model, current.ResolvedModel)
-                                .Set(item => item.Platform, current.ResolvedPlatform)
-                                .Set(item => item.Total, current.PresentationInput == null ? 0 : current.PresentationInput.TargetPages)
-                                .Set(item => item.Degraded, 0)
-                                .Set(item => item.Error, null)
-                                .Set(item => item.ErrorCode, null)
-                                .Set(item => item.ArtifactContractSynchronizedAt, synchronizedAt)
-                                .Set(item => item.UpdatedAt, synchronizedAt),
-                            cancellationToken: CancellationToken.None);
-                        await CompleteAsync(current.Id, RecoveryLease(current), CancellationToken.None);
-                        recovered++;
-                    }
+                    if (await RecoverPresentationAsync(current)) recovered++;
                     continue;
                 }
 
@@ -461,6 +442,22 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
             {
                 _logger.LogWarning(ex, "OpenDesign 网页公共生命周期恢复未完成 runId={RunId}", candidate.Id);
             }
+        }
+
+        // 公共 Complete 已成功但绑定/兼容投影未成功的 PPT 仍按原完整版本收口。
+        var pendingPresentations = await (from run in _db.DesignArtifactRuns.AsQueryable()
+            join compatibility in _db.MdToPptRuns.AsQueryable() on run.Id equals compatibility.Id
+            where run.DeploymentSlug == DeploymentScope.Current
+                && run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                && run.Runtime == DesignArtifactRuntimes.OpenDesign && run.Status == RunStatuses.Done
+                && compatibility.UserId == run.UserId
+                && compatibility.Runtime == DesignArtifactRuntimes.OpenDesign && compatibility.Status == "running"
+            orderby run.UpdatedAt
+            select run).Take(Math.Clamp(limit, 1, 500)).ToListAsync(CancellationToken.None);
+        foreach (var run in pendingPresentations)
+        {
+            try { if (await RecoverPresentationAsync(run)) recovered++; }
+            catch (Exception ex) { _logger.LogWarning(ex, "OpenDesign 演示稿完成投影待恢复 runId={RunId}", run.Id); }
         }
 
         var pendingBindings = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.ContractVersion == DesignArtifactContractVersions.Current
@@ -496,6 +493,41 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         }
         return recovered;
     }
+
+    private async Task<bool> RecoverPresentationAsync(DesignArtifactRun run)
+    {
+        if (string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+            || string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId)) return false;
+        var revision = await FindProducedRevisionAsync(run);
+        if (revision == null) return false;
+        var site = await _db.HostedSites.Find(item => item.Id == revision.SiteId && item.OwnerUserId == run.UserId)
+            .SingleOrDefaultAsync(CancellationToken.None);
+        if (site == null) return false;
+        await HostedSiteEditRunWorker.CompletePresentationRecordAsync(_db, run, RecoveryLease(run), this,
+            revision.Html, new PersistedDesignArtifact(site.Id, revision.Id, revision.Status, site.SiteUrl, site.Title),
+            CancellationToken.None);
+        return true;
+    }
+
+    internal static void ValidateSavedPresentation(DesignArtifactRun run, HostedSiteRevision revision)
+    {
+        if (revision.Status is not (HostedSiteRevisionStatuses.Draft or HostedSiteRevisionStatuses.Published)
+            || revision.VerifiedFiles.Count <= 1)
+            throw Conflict();
+        _ = HostedSitePreviewAccessService.ComputePackageFingerprint(revision.VerifiedFiles);
+        var files = revision.VerifiedFiles.Select(file => new DesignWorkspaceFile(file.Path,
+            Convert.ToBase64String(file.Content), file.Sha256, file.Content.LongLength, file.MimeType)).ToArray();
+        _ = HostedSiteEditRunWorker.BuildVerifiedHostedSiteFiles(files, revision.Html);
+        var trusted = BuildTrustedManifest(run, files);
+        EnsureManifestMatches(run, trusted.Manifest, trusted.Receipt);
+    }
+
+    internal static bool IsCompletedPresentation(DesignArtifactRun? run) =>
+        run is { ArtifactType: DesignArtifactTypes.HtmlPpt, Runtime: DesignArtifactRuntimes.OpenDesign, Status: RunStatuses.Done }
+        && !string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+        && !string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId)
+        && (run.Operation == DesignArtifactOperations.Edit
+            || (run.ArtifactSiteId == run.ProducedArtifactSiteId && run.ArtifactRevisionId == run.ProducedArtifactRevisionId));
 
     private async Task<IReadOnlyList<DesignWorkspaceFile>> ReadVerifiedFilesAsync(DesignArtifactRun run)
     {

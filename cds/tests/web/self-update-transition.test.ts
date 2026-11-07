@@ -12,6 +12,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
+import vm from 'node:vm';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
   buildForceSyncBody,
@@ -26,6 +30,58 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
+
+describe('实际重启取消记录的历史展示', () => {
+  function actualDisplay(recordOverride?: Record<string, unknown>) {
+    const backend = fs.readFileSync(path.resolve('src/routes/branches.ts'), 'utf8');
+    const backendFile = ts.createSourceFile('branches.ts', backend, ts.ScriptTarget.Latest, true);
+    let record = '';
+    const visitRecord = (node: ts.Node): void => {
+      if (!record && ts.isCallExpression(node) && node.expression.getText(backendFile) === 'stateService.recordSelfUpdate'
+        && node.arguments[0]?.getText(backendFile).includes("stage: 'restart-drain'")) record = node.arguments[0].getText(backendFile);
+      ts.forEachChild(node, visitRecord);
+    };
+    visitRecord(backendFile); expect(record).toBeTruthy();
+    const text = fs.readFileSync(path.resolve('web/src/pages/cds-settings/tabs/MaintenanceTab.tsx'), 'utf8');
+    const file = ts.createSourceFile('MaintenanceTab.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const declarations = file.statements.filter(node => ts.isFunctionDeclaration(node)
+      && ['isRestartCancelled', 'selfUpdateModeDescription', 'selfUpdateStatusLabel'].includes(node.name?.text || ''));
+    let mode = '', detail = '';
+    const visitDisplay = (node: ts.Node): void => {
+      if (ts.isConditionalExpression(node) && node.condition.getText(file) === 'mode'
+        && node.whenTrue.getText(file).includes('selfUpdateModeLabel(mode)')) mode = node.getText(file);
+      if (ts.isJsxExpression(node) && node.expression?.getText(file).includes('selfUpdateModeDescription(selected.updateMode')) detail = node.expression.getText(file);
+      ts.forEachChild(node, visitDisplay);
+    };
+    visitDisplay(file); expect(mode).toBeTruthy(); expect(detail).toBeTruthy();
+    const context = { createElement, branch: 'main', fullSha: HEAD, startedAt: Date.now(), actor: 'owned-test',
+      err: { message: '其他操作未完成', remaining: ['owned-operation'] }, record: null as unknown,
+      mode: undefined, rec: null as unknown, selected: null as unknown, result: null as unknown };
+    const run = (code: string) => vm.runInNewContext(ts.transpileModule(code, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, jsxFactory: 'createElement' },
+    }).outputText, context);
+    run(declarations.map(node => node.getText(file)).join('\n'));
+    run(`record = (${record});`);
+    expect(context.record).toMatchObject({ status: 'aborted', failure: { stage: 'restart-drain' } });
+    expect(context.record).not.toHaveProperty('updateMode');
+    context.rec = context.selected = recordOverride || context.record;
+    run(`result = { label: selfUpdateStatusLabel(rec.status), mode: (${mode}), detail: (${detail}) };`);
+    const result = context.result as { label: string; mode: never; detail: string };
+    return { ...result, mode: renderToStaticMarkup(result.mode).replace(/<[^>]*>/g, '') };
+  }
+  it.each([
+    { field: 'label' as const, expected: '已中止' },
+    { field: 'mode' as const, expected: '未执行重启' },
+    { field: 'detail' as const, expected: '等待其他项目操作超时，本次重启已取消，其他项目继续运行。' },
+  ])('真实后端取消记录的$field保持原说明', ({ field, expected }) => {
+    expect(actualDisplay()[field]).toBe(expected);
+  });
+  it('其他阶段的中止不冒称重启被取消，保留原普通更新说明', () => {
+    const display = actualDisplay({ status: 'aborted', failure: { stage: 'build' } });
+    expect(display.mode).toBe('未标记');
+    expect(display.detail).not.toContain('重启已取消');
+  });
+});
 
 describe('buildForceSyncBody', () => {
   it('三个声明字段一个不漏', () => {
@@ -54,7 +110,7 @@ describe('buildForceSyncBody', () => {
  * body 照样"看起来对"，而线上照样被拒。
  */
 describe('前端组的 body 能过后端闸门', () => {
-  it('非快进切换 + 完整声明 → 放行', () => {
+  it('普通非继承发布被拒；相同声明在人工强制通道仍可使用', () => {
     const body = buildForceSyncBody({
       headSha: HEAD, targetBranch: 'claude/x', intent: 'release', reason: '从 CDS 系统设置强制发布到 claude/x',
     });
@@ -66,8 +122,9 @@ describe('前端组的 body 能过后端闸门', () => {
       expectedFromSha: body.expectedFromSha,
       reason: body.transitionReason,
     });
-    expect(decision.allowed).toBe(true);
-    expect(decision).toMatchObject({ mode: 'release' });
+    expect(decision).toMatchObject({ allowed: false, code: 'release_requires_inherited_revision' });
+    expect(resolveForceSyncTransition({ currentSha: HEAD, targetSha: TARGET, targetContainsCurrent: false,
+      intent: body.transitionIntent, reason: body.transitionReason })).toMatchObject({ mode: 'release' });
   });
 
   it('回滚同样放行', () => {
@@ -133,7 +190,8 @@ describe('默认原因与校验', () => {
         currentSha: HEAD, targetSha: TARGET, targetContainsCurrent: false,
         intent, expectedFromSha: HEAD, reason,
       });
-      expect(decision.allowed, `${intent}: ${reason}`).toBe(true);
+      expect(decision, `${intent}: ${reason}`).toMatchObject(intent === 'rollback'
+        ? { allowed: true } : { allowed: false, code: 'release_requires_inherited_revision' });
     }
   });
 
@@ -256,13 +314,11 @@ describe('强制同步路由不再设闸（接线守卫）', () => {
 });
 
 /**
- * 重启不能被记账动作取消掉。
+ * 日志故障仍可退回无日志启动；状态保存未确认则必须取消并恢复原版本。
  *
  * 2026-07-30 真实事故：一次强制同步把 dist/ 与 web/dist 都换成了新版本，进程却没重启
- * —— 生产是「新前端 + 旧后端」，而 lastSelfUpdate 写着 success。根因是整个 launch()
- * 包在一个大 try 里，`process.exit(0)` 排在写日志 / openSync / interruptAll **后面**，
- * 这些记账动作任意一处同步抛异常就跳到 catch，而 catch 在 exitOnFailure 未设时不退出。
- * 一个写日志的小失败，取消了整件事的目的。
+ * —— 生产是「新前端 + 旧后端」，而 lastSelfUpdate 写着 success。
+ * 2026-10-20 获批新契约：不能把状态保存失败当普通日志故障，须取消已spawn脚本并回滚。
  */
 describe('自更新重启的结构（源码守卫）', () => {
   const routes = fs.readFileSync(
@@ -270,37 +326,44 @@ describe('自更新重启的结构（源码守卫）', () => {
     'utf8',
   );
   const launch = routes.slice(
-    routes.indexOf('const launch = () => {'),
-    routes.indexOf('setTimeout(launch, Math.max(0, input.delayMs || 0));'),
+    routes.indexOf('async function scheduleDetachedCdsRestart'),
+    routes.indexOf('async function flushBranchStateBeforeSuccess'),
   );
+  const helper = fs.readFileSync(new URL('../../src/services/self-update-handoff.ts', import.meta.url), 'utf8');
 
-  it('记账动作各自 try/catch，不共用一个大 try', () => {
+  it('日志与FD记账各自容错，关键状态中断与保存不被吞掉', () => {
     expect(launch).toContain('const safely = (label: string, fn: () => void)');
-    for (const step of ['open-log', 'open-log-fd', 'gate-release-timer', 'interrupt-all']) {
+    for (const step of ['open-log', 'open-log-fd', 'close-log-fd']) {
       expect(launch, step).toContain(`safely('${step}'`);
     }
+    expect(launch).not.toContain("safely('interrupt-all'");
   });
 
-  it('只有 spawn 本身失败才不退出（其余一律照常重启）', () => {
-    // 判据必须是 spawn 的结果，不是「try 块有没有抛」。
-    expect(launch).toContain('let spawned = false;');
-    expect(launch).toContain('spawned = true;');
-    expect(launch).toContain('if (!spawned) {');
+  it('真实helper准备spawn，缺PID或保存未确认都取消而不退出', () => {
+    expect(launch).toContain('prepareDetachedCdsRestart(spawn, cdsDir, { ...process.env }, stdio)');
+    expect(helper).toContain("spawnProcess('bash', ['-p', '-c', CDS_RESTART_PERMIT_COMMAND]");
+    expect(launch).toContain("saved !== 'flushed' || input.preserveQueued !== true || !permit?.hasChildPid");
+    expect(launch).toContain('normalShutdown: input.preserveQueued === true && permit?.hasChildPid === true');
+    expect(launch).toMatch(/await permit\?\.cancel\(\);\s+try \{\s*await input\.rollback\?\.\(\);\s*\}\s*finally \{/);
+    expect(launch).toContain('if (operationsInterrupted && branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);');
   });
 
-  it('spawn 成功后 process.exit 先排上，再做剩余记账', () => {
-    const exitAt = launch.indexOf('setTimeout(() => process.exit(0), 1000);');
-    const gateAt = launch.indexOf("safely('gate-release-timer'");
-    const interruptAt = launch.indexOf("safely('interrupt-all'");
-    expect(exitAt).toBeGreaterThan(-1);
-    // 顺序即保障：退出排在后面的话，前面任何一处再出问题又会把它挡掉。
-    expect(exitAt).toBeLessThan(gateAt);
-    expect(exitAt).toBeLessThan(interruptAt);
+  it('中断终态保存及pipe许可后才排退出，仍用原期限与开闸兜底', () => {
+    const interruptAt = launch.indexOf('interruptAll('), flushAt = launch.indexOf('stateService.flush()');
+    const permitAt = launch.indexOf('await permit.release()'), exitAt = launch.indexOf('process.exit(0)');
+    expect(interruptAt).toBeGreaterThan(-1);
+    expect(flushAt).toBeGreaterThan(interruptAt);
+    expect(permitAt).toBeGreaterThan(flushAt);
+    expect(exitAt).toBeGreaterThan(permitAt);
+    expect(launch).toContain('setTimeout(() => process.exit(0), Math.max(0, deadline - Date.now()))');
+    expect(launch).toContain('}, RESTART_GATE_RELEASE_MS).unref?.()');
   });
 
   it('stdio 打不开时退回 ignore，而不是放弃重启', () => {
     expect(launch).toContain("stdio: ['ignore', number | 'ignore', number | 'ignore']");
-    expect(launch).toMatch(/stdio = \['ignore', fs\.openSync/);
+    expect(launch).toContain("= ['ignore', 'ignore', 'ignore']");
+    expect(launch).toContain("fds.push(fs.openSync(errorLogPath, 'a'))");
+    expect(helper).toContain("stdio: [...stdio, 'pipe']");
   });
 });
 

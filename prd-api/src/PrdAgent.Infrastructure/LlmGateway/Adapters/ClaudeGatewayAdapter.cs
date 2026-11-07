@@ -33,7 +33,8 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         string endpoint,
         string? apiKey,
         JsonObject requestBody,
-        bool enablePromptCache = false)
+        bool enablePromptCache = false,
+        bool includeThinking = false)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
 

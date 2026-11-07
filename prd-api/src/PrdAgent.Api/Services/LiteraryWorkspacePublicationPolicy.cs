@@ -20,9 +20,9 @@ public static class LiteraryWorkspacePublicationPolicy
         ImageMasterWorkspace workspace,
         CancellationToken ct)
     {
+        if (workspace.SuppressAutoSubmit) return true;
         if (!string.Equals(workspace.ScenarioType, "article-illustration", StringComparison.Ordinal))
             return false;
-        if (workspace.SuppressAutoSubmit) return true;
 
         var hasMcpArtifact = await db.McpCallLogs.CountDocumentsAsync(
             x => x.OwnerUserId == workspace.OwnerUserId

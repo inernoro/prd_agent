@@ -32,29 +32,26 @@ const MIME: Record<string, string> = {
 };
 
 function safePublicFile(workspaceDir: string, pathname: string): string | null {
-  let decoded = '';
   try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-  const relative = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
-  if (relative !== 'index.html' && !relative.startsWith('assets/')) return null;
-  const absolute = path.resolve(workspaceDir, relative);
-  const root = fs.realpathSync(workspaceDir);
-  if (!absolute.startsWith(`${path.resolve(workspaceDir)}${path.sep}`)) return null;
-  try {
+    const decoded = decodeURIComponent(pathname);
+    if (decoded.includes('\\') || decoded.includes('\0')) return null;
+    const root = fs.realpathSync(workspaceDir);
+    const absolute = path.resolve(root, decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, ''));
+    const relative = path.relative(root, absolute);
+    // Enforce the public boundary after decoding and resolving dot segments.
+    if (relative !== 'index.html' && !relative.startsWith(`assets${path.sep}`)) return null;
     const stat = fs.lstatSync(absolute);
     if (!stat.isFile() || stat.isSymbolicLink()) return null;
     const real = fs.realpathSync(absolute);
-    if (!real.startsWith(`${root}${path.sep}`)) return null;
+    // A symlinked parent must not turn an assets URL into another workspace file.
+    if (real !== absolute) return null;
     return real;
   } catch {
     return null;
   }
 }
 
-async function startServer(workspaceDir: string): Promise<http.Server> {
+export async function startBrowserQualityServer(workspaceDir: string): Promise<http.Server> {
   const server = http.createServer((req, res) => {
     const file = safePublicFile(workspaceDir, new URL(req.url || '/', 'http://localhost').pathname);
     if (!file) {
@@ -66,6 +63,8 @@ async function startServer(workspaceDir: string): Promise<http.Server> {
       'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
+      // Dedicated workers use their script response policy, not the page's CSP.
+      'Content-Security-Policy': "connect-src 'none'",
     });
     fs.createReadStream(file).pipe(res);
   });
@@ -352,7 +351,7 @@ async function measurePage(
 
 export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<BrowserQualityWorkerResult> {
   fs.mkdirSync(job.evidenceDir, { recursive: true, mode: 0o700 });
-  const server = await startServer(job.workspaceDir);
+  const server = await startBrowserQualityServer(job.workspaceDir);
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const browser = await chromium.launch({
     headless: true,
@@ -369,12 +368,17 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
       ? Number(task.presentationContract?.targetPages)
       : 0;
     for (const viewport of BROWSER_QUALITY_VIEWPORTS) {
-      const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
+      const context = await browser.newContext({
+        viewport: { width: viewport.width, height: viewport.height },
+        deviceScaleFactor: 1,
+        serviceWorkers: 'block',
+      });
       await context.route('**/*', async (route) => {
         const url = new URL(route.request().url());
         if (url.origin === origin) await route.continue();
         else await route.abort('blockedbyclient');
       });
+      await context.routeWebSocket('**/*', (socket) => socket.close({ code: 1008, reason: 'Network disabled' }));
       const page = await context.newPage();
       await page.goto(origin, { waitUntil: 'networkidle', timeout: 15_000 });
       const revealSlides = targetPages > 0 ? await page.locator('.reveal .slides > section').count() : 0;

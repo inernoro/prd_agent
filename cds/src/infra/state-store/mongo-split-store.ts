@@ -72,12 +72,12 @@ import { recordMainThreadSection, timeMainThreadSection } from '../../services/m
 
 /** Mongo 集合最小接口 — 与 mongo-backing-store 风格一致，便于单测。 */
 export interface ISplitMongoCollection<TDoc extends { _id: string }> {
-  findOne(filter: { _id: string }, options?: { readConcern: { level: 'majority' }; readPreference: 'primary'; maxTimeMS: number }): Promise<TDoc | null>;
+  findOne(filter: { _id: string }, options?: { readConcern: { level: 'majority' }; readPreference: 'primary'; maxTimeMS: number; timeoutMS?: number }): Promise<TDoc | null>;
   find(filter?: Record<string, unknown>): { toArray(): Promise<TDoc[]> };
   replaceOne(
     filter: { _id: string },
     doc: TDoc,
-    options?: { upsert: boolean; writeConcern?: { w: 'majority'; j: boolean; wtimeoutMS?: number }; maxTimeMS?: number; ignoreUndefined?: boolean },
+    options?: { upsert: boolean; writeConcern?: { w: 'majority'; j: boolean; wtimeoutMS?: number }; maxTimeMS?: number; timeoutMS?: number; ignoreUndefined?: boolean },
   ): Promise<unknown>;
   deleteOne(filter: { _id: string }): Promise<unknown>;
   bulkWrite(operations: Array<unknown>, options?: { ignoreUndefined: boolean }): Promise<unknown>;
@@ -995,10 +995,10 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         const epoch = this.deploymentRunConfirmationEpoch;
         try {
           // 单实体确认不受后续无关实体/全局状态失败影响，也不借整批成功推断自身成功。
-          await collection.replaceOne({ _id: id }, replacement, { upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, ignoreUndefined: true });
+          await collection.replaceOne({ _id: id }, replacement, { upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, timeoutMS: 5000, ignoreUndefined: true });
         } catch (error) {
           // Mongo 可能已完成写入但确认连接中断；只接受主节点多数读到的精确配对记录。
-          const stored = await collection.findOne({ _id: id }, { readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000 }).catch(() => null);
+          const stored = await collection.findOne({ _id: id }, { readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000, timeoutMS: 5000 }).catch(() => null);
           if (!stored || stableJson({ run: sanitizeDeploymentRun(stored.doc), intent: stored.executionIntent }) !== json) throw error;
         }
         this.persistedJson.deploymentRuns.set(id, json);
@@ -1408,7 +1408,11 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     if (this.dirtyState) this.takeSnapshot();
     const targetGeneration = this.writeGeneration;
     if (targetGeneration <= this.persistedGeneration) return;
-    if (targetGeneration <= this.failedGeneration && this.lastWriteError) {
+    // 同代新重试在途或排队时，等待本次真实写终态，不能复用历史失败。
+    if (
+      targetGeneration <= this.failedGeneration && this.lastWriteError
+      && !this.writeInFlight && !this.pendingWrite
+    ) {
       throw this.lastWriteError;
     }
     await new Promise<void>((resolve, reject) => {

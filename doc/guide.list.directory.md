@@ -18,6 +18,9 @@
 
 ## 文档列表
 
+- [网页托管关联文档 · 计划](./plan.web-hosting.related-documents.md) `plan.web-hosting.related-documents`
+
+- [CDS 骨架维护与验收 · 指南](./guide.cds.loading.md) `guide.cds.loading`
 - [CDS 项目发布脚本 · 指南](./guide.cds.release-scripts.md) `guide.cds.release-scripts`
 
 ### 一、产品规格
@@ -50,6 +53,8 @@
 - [作品投稿与画廊展示 · 规格](./spec.submission-gallery.md) `spec.submission-gallery`
 
 ### 二、设计文档
+
+- [CDS 项目检查与通知总览 · 设计](./design.cds.project-status.md) `design.cds.project-status`
 
 - [验收报告知识库 · 设计](./design.acceptance.kb.md) `design.acceptance.kb`
 - [MAP 自动化验收知识库治理 · 设计](./design.acceptance.knowledge-governance.md) `design.acceptance.knowledge-governance`
@@ -281,6 +286,9 @@
 
 ### 五、计划
 
+- [缺陷可靠性后续闭环 · 计划](./plan.defect-agent.reliability-closure.md) `plan.defect-agent.reliability-closure`
+- [缺陷提交与 AI 润色可靠性排查 · 计划](./plan.defect-agent.submit-reliability.md) `plan.defect-agent.submit-reliability`
+
 - [MCP 接入与能力补齐 · 计划](./plan.platform.mcp-capability-completion.md) `plan.platform.mcp-capability-completion`
 
 - [文档说人话标准推广 · 计划](./plan.doc.readability.rollout.md) `plan.doc.readability.rollout`
@@ -331,6 +339,8 @@
 
 ### 六、技术债务台账
 
+- [缺陷提交可靠性 · 债务台账](./debt.defect-agent.submit-reliability.md) `debt.defect-agent.submit-reliability`
+
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
 - [每日验收的锚点契约 · 债务台账](./debt.acceptance.daily-anchors.md) `debt.acceptance.daily-anchors`
 - [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
@@ -369,6 +379,7 @@
 - [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
 - [角色技能套装 · 债务台账](./debt.skill.role-bundle.md) `debt.skill.role-bundle`
+- [海鲜市场时间与热度展示边界 · 债务台账](./debt.marketplace.activity.md) `debt.marketplace.activity`
 - [演讲智能体 · 债务台账](./debt.speech-agent.md) `debt.speech-agent`
 - [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
 - [视频生成 Agent · 债务台账](./debt.video-agent.md) `debt.video-agent`

@@ -251,6 +251,8 @@ public class AgentApiKeysController : ControllerBase
         public string? Name { get; set; }
         public string? Description { get; set; }
         public List<string>? Scopes { get; set; }
+        /// <summary>接入台逐能力更新：仅替换指定能力，其他存储授权保持不变。</summary>
+        public Dictionary<string, string>? McpCapabilityAccess { get; set; }
         public bool? IsActive { get; set; }
         public bool? WebPublicExposureAllowed { get; set; }
 
@@ -311,6 +313,40 @@ public class AgentApiKeysController : ControllerBase
         return scopes == null || scopes.All(string.IsNullOrWhiteSpace);
     }
 
+    internal static bool TryApplyMcpCapabilityAccess(
+        AgentApiKey key, IReadOnlyList<string> permissions, IReadOnlyDictionary<string, string> changes,
+        out List<string> scopes, out string? error)
+    {
+        // 自动转手动快照当前能力；手动档从存储清单出发，不能用有效权限投影覆盖它。
+        scopes = key.ScopeMode == AgentApiKeyScopeMode.Auto
+            ? McpCapabilityCatalog.AutoScopesFor(permissions).ToList()
+            : key.Scopes.ToList();
+        error = null;
+        foreach (var (capability, level) in changes)
+        {
+            var cap = McpCapabilityCatalog.All.FirstOrDefault(item => item.Key == capability);
+            if (cap == null || level is not ("none" or "read" or "write")
+                || (level == "read" && cap.ReadScope == null) || (level == "write" && cap.WriteScope == null))
+            {
+                error = "无效的能力或授权档位。";
+                return false;
+            }
+            var added = new List<string>();
+            if (level != "none" && cap.ReadScope != null) added.Add(cap.ReadScope);
+            if (level == "write" && cap.WriteScope != null) added.Add(cap.WriteScope);
+            if (added.Any(scope => McpCapabilityCatalog.IsIssuancePermissionChecked(scope)
+                && !McpCapabilityCatalog.PermissionsAllowScope(permissions, scope)))
+            {
+                error = "当前账号无权授予所选能力。";
+                return false;
+            }
+            var replaced = cap.AllScopes().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            scopes.RemoveAll(scope => replaced.Contains(scope));
+            scopes.AddRange(added);
+        }
+        return true;
+    }
+
     [HttpPatch("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateRequest req, CancellationToken ct)
     {
@@ -342,7 +378,16 @@ public class AgentApiKeysController : ControllerBase
                 return BadScopeMode(req.ScopeMode);
             explicitScopeMode = parsedMode;
         }
-        if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
+        if (req.McpCapabilityAccess != null)
+        {
+            if (req.Scopes != null || explicitScopeMode == AgentApiKeyScopeMode.Auto)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "逐能力更新不能与完整授权清单或自动模式同时提交。"));
+            if (!TryApplyMcpCapabilityAccess(key, ownedPermissions, req.McpCapabilityAccess, out var scopes, out var error))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", error!));
+            req.Scopes = scopes;
+            explicitScopeMode = AgentApiKeyScopeMode.Manual;
+        }
+        else if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
         {
             req.Scopes = null;
         }

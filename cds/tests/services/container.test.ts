@@ -7,6 +7,8 @@ import { clearContainerLifecycleIntentsForTest, findRecentContainerLifecycleInte
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
+import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider } from '../../src/services/deployment-phase-budget.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 
 // Parse generated argv through the actual host shell without invoking Docker or a workload.
 function dockerArgv(command: string): string[] {
@@ -102,6 +104,58 @@ describe('ContainerService', () => {
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     });
     afterEach(() => { aliveStub?.mockRestore(); });
+
+    it.each(['run', 'alive'] as const)('原无取消回调启动在%s失败后不再占CPU，未确认内存仍保留', async boundary => {
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      if (boundary === 'run') mock.addResponsePatternFirst(/docker run/, () => ({ stdout: '', stderr: '原启动失败', exitCode: 1 }));
+      else aliveStub.mockRejectedValueOnce(new Error('原启动失败'));
+      setDeploymentPhaseMemoryProvider(() => 10000); setBuildGateHostLoadProvider(() => ({ load1: 18, cores: 18 }));
+      const runtime = makeService(), abort = new AbortController(); let grant: (() => void) | undefined;
+      let next: Promise<void> | undefined;
+      try {
+        await expect(service.runService(makeEntry(), makeProfile(), runtime)).rejects.toThrow('原启动失败');
+        next = deploymentPhaseBudget.acquire('start', { projectId: 'next' }, { reservationKey: 'next-runtime', signal: abort.signal })
+          .then(release => { grant = release; }, () => {});
+        await Promise.resolve(); expect(grant).toBeTypeOf('function');
+        expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === runtime.containerName)).toBe(true);
+      } finally {
+        abort.abort(); await next; grant?.(); deploymentPhaseBudget.releaseMemory(runtime.containerName); deploymentPhaseBudget.releaseMemory('next-runtime');
+        setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
+      }
+    });
+
+    it.each(['ready', 'timeout', 'error', 'replaced'] as const)('原日志信号%s后HTTP仅保留成功交接的操作资格，失败不残留旧资格', async outcome => {
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      setDeploymentPhaseMemoryProvider(() => 10000);
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+      const runtime = makeService(); let current = true;
+      const signal = vi.spyOn(service as any, 'waitForStartupSignalUnbudgeted').mockResolvedValue(true);
+      const probe = vi.spyOn(service as any, 'waitForReadinessUnbudgeted').mockResolvedValue(true);
+      try {
+        await service.runService(makeEntry(), makeProfile({ startupSignal: 'ready' }), runtime, undefined, undefined,
+          { assertCurrent: () => { if (!current) throw new Error('原部署资格失效'); } });
+        if (outcome === 'timeout') signal.mockResolvedValue(false);
+        if (outcome === 'error') signal.mockRejectedValue(new Error('原日志读取失败'));
+        if (outcome === 'replaced') signal.mockImplementation(async () => {
+          await service.runService(makeEntry(), makeProfile(), runtime, undefined, undefined,
+            { assertCurrent: () => { if (!current) throw new Error('新部署资格失效'); } });
+          return false;
+        });
+        if (outcome === 'error') await expect(service.waitForStartupSignal(runtime.containerName, 'ready')).rejects.toThrow('原日志读取失败');
+        else expect(await service.waitForStartupSignal(runtime.containerName, 'ready')).toBe(outcome === 'ready');
+        if (outcome !== 'ready') expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === runtime.containerName)).toBe(true);
+        current = false;
+        const readiness = service.waitForReadiness(runtime.hostPort, undefined, undefined, undefined, runtime.containerName);
+        if (outcome === 'ready' || outcome === 'replaced') { await expect(readiness).rejects.toThrow(outcome === 'ready' ? '原部署资格失效' : '新部署资格失效'); expect(probe).not.toHaveBeenCalled(); }
+        else { await expect(readiness).resolves.toBe(true); expect(probe).toHaveBeenCalledOnce(); }
+        expect(deploymentPhaseBudget.snapshot().ready.active).toEqual([]);
+      } finally {
+        signal.mockRestore(); probe.mockRestore(); deploymentPhaseBudget.releaseMemory(runtime.containerName);
+        setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
+      }
+    });
 
     it('should run docker container with correct mounts and env', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -838,6 +892,55 @@ describe('ContainerService', () => {
   });
 
   describe('stop (pause — container preserved)', () => {
+    it.each([
+      { outcome: 'stopped', running: false, exitCode: 0, severity: 'info' },
+      { outcome: 'forced-exit', running: false, exitCode: 137, severity: 'warn' },
+      { outcome: 'unconfirmed', running: true, exitCode: 0, severity: 'error' },
+    ])('原停止账本保留$outcome风险和请求关联，不冒数据完整性', async ({ outcome, running, exitCode, severity }) => {
+      const records: Array<{ action: string; severity?: string; details?: Record<string, unknown> }> = [];
+      service = new ContainerService(mock, makeConfig(), undefined, { record: event => records.push(event) }, undefined, undefined, unitBindMountInspector);
+      mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64),
+        State: { Status: running ? 'running' : 'exited', Running: running, ExitCode: exitCode } }]), stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker logs|docker exec|docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const stopped = vi.fn(), operation = service.stop('cds-feature-a-api', '用户正常停止', { requestId: 'stop-risk-request' }, stopped);
+      if (running) await expect(operation).rejects.toThrow('停止结果未确认'); else await operation;
+      const result = records.find(event => event.action === (running ? 'container.stop.failed' : 'container.stop.completed'));
+      expect(result).toMatchObject({ severity, requestId: 'stop-risk-request', details: { shutdownOutcome: outcome, dataIntegrity: 'unverified' } });
+      expect(result?.details?.elapsedMs).toEqual(expect.any(Number));
+      expect(Number(result?.details?.elapsedMs)).toBeGreaterThanOrEqual(0);
+      expect(stopped).toHaveBeenCalledTimes(running ? 0 : 1);
+      expect(mock.commands.some(command => /^docker rm\b/.test(command))).toBe(false);
+    });
+
+    it('原普通停止与日志哨兵使用原清理保留通道', async () => {
+      const exec = vi.spyOn(mock, 'exec');
+      mock.addResponsePattern(/docker exec|docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      await service.stop('cds-feature-a-api');
+      const commands = exec.mock.calls.filter(([command]) => /^docker stop\b/.test(command) || command.includes('[CDS-STOP]'));
+      expect(commands).toHaveLength(2);
+      for (const [, options] of commands) expect(options).toMatchObject({ executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
+    });
+
+    it.each(['sentinel', 'stop'])('原清理通道等待%s期间资格失效时，不发出迟到命令或释放后继责任', async boundary => {
+      clearContainerLifecycleIntentsForTest();
+      let current = true;
+      const commands: string[] = [], stopped = vi.fn();
+      const guarded = new ContainerService({ exec: async (command, options) => {
+        if (boundary === 'sentinel' ? command.includes('[CDS-STOP]') : command.startsWith('docker stop')) current = false;
+        options?.beforeStart?.(); commands.push(command);
+        return { stdout: '', stderr: '', exitCode: 0 };
+      } }, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      vi.spyOn(guarded as any, 'captureContainerDiagnostics').mockResolvedValue({});
+      await expect(guarded.stop('cds-feature-a-api', '原停止', { assertCurrent: () => { if (!current) throw new Error('原停止资格失效'); } }, stopped))
+        .rejects.toThrow('原停止资格失效');
+      const intent = findRecentContainerLifecycleIntent('cds-feature-a-api');
+      clearContainerLifecycleIntentsForTest();
+      if (boundary === 'sentinel') expect(intent).toBeUndefined();
+      expect(commands.some(command => command.startsWith('docker stop') || command.includes('[CDS-STOP]'))).toBe(boundary !== 'sentinel');
+      expect(commands.some(command => command.startsWith('docker stop'))).toBe(false);
+      expect(stopped).not.toHaveBeenCalled();
+    });
+
     it('writes a [CDS-STOP] sentinel then docker stop, and does NOT docker rm', async () => {
       mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

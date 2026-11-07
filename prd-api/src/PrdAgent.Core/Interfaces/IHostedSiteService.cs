@@ -8,6 +8,8 @@ namespace PrdAgent.Core.Interfaces;
 /// </summary>
 public interface IHostedSiteService
 {
+    /// <summary>归档可推算地址上的历史资源，并在对外分享前确认旧地址完成源站清理。</summary>
+    Task PrepareReviewHistoryAssetsAsync(string siteId, string userId, CancellationToken ct = default, bool relocateCurrent = false);
     // ── 创建 ──
 
     /// <summary>从 HTML 文件字节创建站点</summary>
@@ -162,6 +164,9 @@ public interface IHostedSiteService
 
     /// <summary>设置站点分享到的团队（「分享到团队」操作，仅 owner 可调）。返回更新后的站点，无权或不存在返回 null</summary>
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
+
+    /// <summary>同步关联访问范围时，将团队与分组限制作为同一份权限一次写入，避免中间态放宽访问。</summary>
+    Task<HostedSite?> SetSharedTeamsAndGroupAsync(string siteId, string userId, List<string> teamIds, string? groupId, CancellationToken ct = default);
 
     /// <summary>
     /// 这个用户能不能把网页放进这个团队空间（owner / editor）。与 SetSharedTeamsAsync 同一条判据，
@@ -411,20 +416,28 @@ public interface IHostedSiteService
 
     /// <summary>
     /// 经分享链接列出评论（公开访问路径）。校验分享访问门（撤销 / 过期 / 可见性 / 密码）。
-    /// 通过后返回分享首个站点的评论；门禁不过时 Result.Error 非空。
+    /// 通过后返回所选站点的评论（未指定则取首站点）；站点必须属于该分享。
     /// </summary>
-    Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
+    Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default, string? siteId = null);
 
     /// <summary>直连 siteId 发表评论（需 viewer 对站点有访问权）。站点不存在 / 无权 / 评论关闭时 Error 非空。</summary>
     Task<AddCommentResult> AddCommentBySiteAsync(
         string siteId, string authorUserId, string authorName, string? avatarFileName,
-        string content, CancellationToken ct = default);
+        string content, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null);
 
     /// <summary>经分享链接发表评论（公开路径，需登录）。校验分享访问门 + 评论开关；通过后插入。</summary>
     Task<AddCommentResult> AddCommentByShareAsync(
         string token, string? password,
         string authorUserId, string authorName, string? avatarFileName,
-        string content, string? ipAddress, CancellationToken ct = default);
+        string content, string? ipAddress, CancellationToken ct = default, HostedSiteCommentAnchor? anchor = null, string? parentId = null,
+        string? revisionId = null, string? expectedContentVersion = null, string? siteId = null);
+
+    Task<AddCommentResult> SetCommentResolvedBySiteAsync(string siteId, string commentId, string userId,
+        bool resolved, CancellationToken ct = default);
+
+    Task<AddCommentResult> SetCommentResolvedByShareAsync(string token, string? password, string commentId,
+        string userId, bool resolved, CancellationToken ct = default, string? siteId = null);
 
     /// <summary>删除评论（作者本人或站点 owner）。无权 / 不存在返回 false。</summary>
     Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default);
@@ -484,6 +497,12 @@ public class ShareSiteResolveResult
 
 public class HostedSiteCommentDto
 {
+    public string? ContentVersion { get; set; }
+    public string? RevisionId { get; set; }
+    public HostedSiteCommentAnchor? Anchor { get; set; }
+    public string? ParentId { get; set; }
+    public bool IsResolved { get; set; }
+    public bool CanResolve { get; set; }
     public string Id { get; set; } = string.Empty;
     public string SiteId { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
@@ -742,6 +761,9 @@ public class SharedSiteInfo
     public string? Description { get; set; }
     public string SiteUrl { get; set; } = string.Empty;
     public string EntryFile { get; set; } = string.Empty;
+    /// <summary>与站内预览相同的文件结构判据；多文件网站需要真实文档 URL。</summary>
+    public string ContentShape { get; set; } = string.Empty;
+    public bool RequiresPreviewBridge { get; set; }
     public long TotalSize { get; set; }
 
     /// <summary>
@@ -788,4 +810,7 @@ public class SharedSiteInfo
     /// 只建过链接的人反而看得见。匿名访问恒为 false。
     /// </summary>
     public bool ViewerCanEdit { get; set; }
+
+    /// <summary>当前访问者是否为网页作者；与分享链接创建者无关，匿名访问恒为 false。</summary>
+    public bool ViewerIsOwner { get; set; }
 }

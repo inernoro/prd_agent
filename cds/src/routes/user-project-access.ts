@@ -127,7 +127,9 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
       }
       const active = new Set(current().map(g => g.projectId));
       res.json({ userId: user.id, allProjects: user.isSystemOwner, projects: state.getProjects().filter(supportsHumanProjectGrant).map(p => ({
-        id: p.id, name: p.aliasName || p.name, authorized: user.isSystemOwner || active.has(p.id),
+        id: p.id, name: p.aliasName || p.name, repository: p.gitRepoUrl,
+        previouslyAuthorized: state.getProjectGrants().some(g => g.principalId === humanPrincipalId(user.id) && g.projectId === p.id),
+        authorized: user.isSystemOwner || active.has(p.id),
       })) });
     } catch (err) {
       if (finishUpdate) {

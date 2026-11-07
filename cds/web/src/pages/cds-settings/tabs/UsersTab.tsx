@@ -12,6 +12,7 @@ import {
   type CdsPublicUser,
 } from '@/lib/api';
 import { Section, Field, LoadingBlock, ErrorBlock, CodePill, EmptyBlock } from '../components';
+import { IdentityRecoveryPanel } from '../components/IdentityRecoveryPanel';
 import { UserProjectAccessDialog } from '../components/UserProjectAccessDialog';
 
 interface MeUser {
@@ -349,6 +350,7 @@ export function UsersTab({
           </div>
         </Section>
       )}
+      {isOwner ? <IdentityRecoveryPanel onToast={onToast} /> : null}
       <UserProjectAccessDialog user={grantUser} onClose={() => setGrantUser(null)} onToast={onToast} />
     </div>
   );

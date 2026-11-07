@@ -124,4 +124,14 @@ public class AskHistoryBudgetTests
         Assert.NotEmpty(result);
         Assert.Equal('新', result[^1].Content[0]);
     }
+    [Fact]
+    public void 连续追问只携带正文而不携带上一轮脚注编号与原文附录()
+    {
+        var answer = "结论[^1]，补充[^2]。\n\n[^1]: " + new string('原', 800) + "\n\n[^2]: 原文二";
+        var result = AskHistoryBudget.Trim(new List<(string?, string?)> { ("assistant", answer), ("user", "继续解释[^1]") });
+        Assert.Equal("结论，补充。", result[0].Content);
+        Assert.Equal("继续解释[^1]", result[1].Content);
+        Assert.Equal("字面量\\[^1]", WebPageAskEvidence.ToHistoryText("字面量\\[^1]"));
+        Assert.Equal("旧答案。", WebPageAskEvidence.ToHistoryText("旧答案[引用:1]。"));
+    }
 }

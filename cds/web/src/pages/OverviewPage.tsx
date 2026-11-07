@@ -1,3 +1,4 @@
+import { ContentLoading } from '@/components/skeletons/ContentLoading';
 /*
  * OverviewPage — 「概览」菜单（plan.cds.service-relations 第四批）：全部项目的关系与体检。
  * 每个项目一张卡（代表分支、体检结论、服务构成），卡之间画跨项目引用边，右侧按严重度列需要处理的事项。
@@ -81,7 +82,7 @@ export function OverviewPage(): JSX.Element {
       )}
     >
       <Workspace fluid className="cds-workspace--fill">
-        {state.status === 'loading' ? <div className="p-6 text-xs text-muted-foreground">正在汇总各项目的关系与体检…</div> : null}
+        {state.status === 'loading' ? <ContentLoading label="读取项目关系总览" variant="panel" /> : null}
         {state.status === 'error' ? <div className="p-6 text-xs text-destructive">读取失败：{state.message}</div> : null}
         {data && layout ? (
           <div className="flex h-full min-h-0 gap-3" data-testid="overview-page">

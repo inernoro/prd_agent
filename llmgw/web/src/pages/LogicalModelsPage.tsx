@@ -89,6 +89,7 @@ export function LogicalModelsPage() {
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [claimDraft, setClaimDraft] = useState<{ id: string; value: string } | null>(null);
+  const [allowlistDraft, setAllowlistDraft] = useState<{ id: string; value: string } | null>(null);
   const [draft, setDraft] = useState<CreateLogicalModelRequest>({
     publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(),
     allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100,
@@ -226,6 +227,17 @@ export function LogicalModelsPage() {
     okNotice(codes.length === 0
       ? `已取消「${item.name}」的全部认领；这些调用方不点名时会回落到 ${item.modelType} 用途的默认`
       : `${codes.length} 个调用方不点名时，从现在起走「${item.name}」`);
+  }
+
+  async function saveAllowlist(item: LogicalModelItem, raw: string) {
+    const codes = raw.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
+    setBusy(`allowlist:${item.id}`);
+    const res = await updateLogicalModel(item.id, { allowedAppCallerCodes: codes });
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '保存允许调用方失败'); return; }
+    setItems((prev) => prev?.map((x) => x.id === item.id ? res.data : x) || null);
+    setAllowlistDraft(null);
+    okNotice(`${item.name} 允许调用方已更新：${describeScope(res.data.allowedAppCallerCodes)}`);
   }
 
   async function toggleDefault(item: LogicalModelItem) {
@@ -375,6 +387,16 @@ export function LogicalModelsPage() {
                             >
                               指定调用方
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-expanded={allowlistDraft?.id === item.id}
+                              onClick={() => setAllowlistDraft((x) => (x?.id === item.id
+                                ? null
+                                : { id: item.id, value: item.allowedAppCallerCodes.join(', ') }))}
+                            >
+                              允许调用方
+                            </Button>
                             <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
@@ -403,6 +425,24 @@ export function LogicalModelsPage() {
                               保存
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => setClaimDraft(null)}>取消</Button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {allowlistDraft?.id === item.id && canWrite ? (
+                        <div data-testid="logical-model-allowlist" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                          <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
+                            这些调用方可以使用此模型，不改变默认调用方。逗号或空格分隔；留空表示当前租户全部调用方可用。
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                            <input
+                              aria-label={`${item.name} 允许的调用方`}
+                              value={allowlistDraft.value}
+                              onChange={(e) => setAllowlistDraft({ id: item.id, value: e.target.value })}
+                              style={{ ...inputStyle, flex: 1, minWidth: 260 }}
+                            />
+                            <Button size="sm" disabled={busy === `allowlist:${item.id}`} onClick={() => void saveAllowlist(item, allowlistDraft.value)}>保存</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setAllowlistDraft(null)}>取消</Button>
                           </div>
                         </div>
                       ) : null}
@@ -502,7 +542,7 @@ export function LogicalModelsPage() {
           <>
             <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
             <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
-            {usage ? <span>近 30 天 Gateway 估算 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
+            {usage ? <span>近 30 天 Gateway 估算 <strong>{formatUsageCost(monthlyCostUsd, unpricedCalls)}</strong></span> : null}
             {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
             <span>已设默认 <strong>{items.filter((x) => x.isDefaultForType).length}</strong> 个用途</span>
           </>
@@ -540,6 +580,7 @@ export function LogicalModelsPage() {
                     <option value="generation">generation</option>
                     <option value="vision">vision</option>
                     <option value="chat">chat</option>
+                    <option value="code">code</option>
                     <option value="video-gen">video-gen</option>
                   </select>
                 </label>
@@ -633,8 +674,8 @@ export function LogicalModelsPage() {
                         <>
                           <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
                           <span style={{ display: 'flex', flexDirection: 'column' }}>
-                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsd(stat.totalCostUsd)}</span>
-                            <span style={HINT_TEXT}>Gateway 估算 · {formatCount(stat.totalCalls)} 次</span>
+                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsageCost(stat.totalCostUsd, stat.unpricedCalls)}</span>
+                            <span style={HINT_TEXT}>Gateway 估算 · {formatCount(stat.totalCalls)} 次{stat.unpricedCalls > 0 ? ` · ${formatCount(stat.unpricedCalls)} 次未计价` : ''}</span>
                           </span>
                         </>
                       ) : <span style={HINT_TEXT}>暂无</span>}
@@ -830,6 +871,14 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
     };
   }
   if (!live) {
+    if (routes.every((route) => route.health === 'disabled')) {
+      return {
+        text: '线路已手动停用',
+        dot: 'var(--warn)',
+        tone: 'warn',
+        advice: '所有上游线路都已手动停用，这个模型当前不会承接请求。请在下方启用至少一条线路；手动停用不会在冷却后自动恢复。',
+      };
+    }
     return blocked.length > 0
       ? {
           text: '无可用线路',
@@ -842,13 +891,18 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
           text: '无可用线路',
           dot: 'var(--err)',
           tone: 'warn',
-          advice: '所有上游线路都被连续失败摘掉了，这个模型当前会解析失败。'
-            + '冷却期满系统会自己拿一条真实请求去试探；先去查上游密钥与配额，'
-            + '修好之后可以在展开里点「手动恢复」不等冷却。',
+          advice: '这个模型当前没有可用线路。手动停用的线路需要在下方重新启用；'
+            + '连续失败的线路才会在冷却后试探恢复，也可点「手动恢复」不等冷却。若仍不可用，请检查上游密钥与配额。',
         };
   }
   if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
   return { text: '正常', dot: 'var(--ok)', tone: 'ok' };
+}
+
+/** 合计只包含已计价部分；有缺价调用时不能把零合计展示成完整费用。 */
+function formatUsageCost(value: number, unpricedCalls: number): string {
+  if (unpricedCalls > 0) return value > 0 ? `已计价部分 ${formatUsd(value)}` : '费用未知';
+  return formatUsd(value);
 }
 
 function formatUsd(value: number): string {

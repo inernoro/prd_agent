@@ -1,4 +1,5 @@
 import { migrateLegacyNavId } from '@/lib/launcherCatalog';
+import { SIDEBAR_HIDDEN_APPKEYS } from '@/lib/adminMenuCatalog';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 
 /**
@@ -10,8 +11,7 @@ export function collectStaleNavTokens(lists: readonly (readonly string[])[], kno
   const set = new Set<string>();
   for (const arr of lists) {
     for (const t of arr) {
-      if (t === NAV_DIVIDER_KEY) continue;
-      if (!knownIds.has(migrateLegacyNavId(t))) set.add(t);
+      if (isStaleNavToken(t, knownIds)) set.add(t);
     }
   }
   return [...set].sort();
@@ -19,5 +19,7 @@ export function collectStaleNavTokens(lists: readonly (readonly string[])[], kno
 
 /** 单个 token 是否已下线（与 collectStaleNavTokens 同一判据） */
 export function isStaleNavToken(token: string, knownIds: ReadonlySet<string>): boolean {
-  return token !== NAV_DIVIDER_KEY && !knownIds.has(migrateLegacyNavId(token));
+  const id = migrateLegacyNavId(token);
+  // 永久退出侧栏的功能仍然存在，不应进入全员布局的失效菜单清理。
+  return token !== NAV_DIVIDER_KEY && !SIDEBAR_HIDDEN_APPKEYS.has(id) && !knownIds.has(id);
 }

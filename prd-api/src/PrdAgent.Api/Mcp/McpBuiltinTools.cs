@@ -315,7 +315,7 @@ public static class McpBuiltinTools
         {
             Name = "map_debt_sync",
             Description = "把仓库里 doc/debt.*.md 的债务台账推到任务台，按 key 幂等（重复推同一条只更新不新建）。key 形如 platform.active-tasks#15 —— 台账文件名去掉 debt. 前缀和 .md，加表格里的编号。**只覆盖正文**（标题/现状/补的条件）；谁认领了、转成了哪条任务一律不动，所以反复跑不会抹掉认领记录。改完 debt 文档顺手跑一次即可。",
-            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
             Method = "POST",
             PathTemplate = "/api/open/tasks/debts/sync",
             Params = new List<McpToolParam>

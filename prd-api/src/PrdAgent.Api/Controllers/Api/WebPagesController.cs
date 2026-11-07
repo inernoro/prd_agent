@@ -11,6 +11,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Filters;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -21,7 +22,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/web-pages")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
-public class WebPagesController : ControllerBase
+public partial class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
     private readonly IHostedSiteOptimizationService _optimizationService;
@@ -73,7 +74,8 @@ public class WebPagesController : ControllerBase
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory,
-        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null)
+        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
+        PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -83,6 +85,7 @@ public class WebPagesController : ControllerBase
         _httpClientFactory = httpClientFactory;
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
+        _reviewStorage = assetStorage;
     }
 
     /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
@@ -729,94 +732,108 @@ public class WebPagesController : ControllerBase
     /// 站点没有任何访问记录时不出现在返回里，前端据此显示 0 而不是编一个数。
     /// </summary>
     /// <summary>
-    /// 每个站点的独立访客数。
+    /// 每个站点的访问次数、独立访客与最近访问。
     ///
     /// 必须并两个来源：站内访问记在 SiteViewEvents（登录用户直接打开或团队内访问），
     /// 而公开分享链接的访问记在 ShareViewLogs、按分享而不是按站点存。只数前者的话，
     /// 一个只通过分享链接传播的站点在卡片上永远是「0 访客」——那不是「没人看」，
     /// 是我们没去数。两边的身份口径一样（登录用 ViewerUserId，匿名退回 IP），
-    /// 所以可以先各自取出「站点 → 访客键集合」再求并，避免同一个人被数两次。
+    /// 所以按同一访客和固定半小时时段合并，避免一次打开在两端被重复计数。
     /// </summary>
-    private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds)
+    private async Task<Dictionary<string, HostedSiteTraffic>> BuildTrafficAsync(
+        IReadOnlyCollection<HostedSite> sites, string viewerUserId, ISet<string> openedSites)
     {
-        var ids = siteIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-        if (ids.Count == 0) return new Dictionary<string, long>();
+        var buckets = sites.ToDictionary(site => site.Id, site => new HostedSiteTrafficAccumulator(site.OwnerUserId));
+        var ids = buckets.Keys.ToList();
+        if (ids.Count == 0) return new Dictionary<string, HostedSiteTraffic>();
 
-        // 登录用户按用户去重，匿名退回 IP；两端用同一把尺子，否则并集会把同一个人算两次
-        var visitorKey = new BsonDocument("$ifNull", new BsonArray
+        // 同一来源先在数据库中合并到访客/半小时时段，跨来源再按同一键合并。
+        BsonDocument Group(string target) => new("$group", new BsonDocument
         {
-            "$ViewerUserId",
-            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "anonymous" }),
+            { "_id", new BsonDocument
+                {
+                    { "target", "$" + target },
+                    { "user", new BsonDocument("$ifNull", new BsonArray { "$ViewerUserId", "" }) },
+                    { "ip", new BsonDocument("$cond", new BsonArray
+                        {
+                            new BsonDocument("$eq", new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$ViewerUserId", "" }), "" }),
+                            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "" }), "",
+                        }) },
+                    { "window", new BsonDocument("$floor", new BsonDocument("$divide", new BsonArray
+                        { new BsonDocument("$toLong", "$ViewedAt"), HostedSiteTrafficAccumulator.WindowMilliseconds })) },
+                }
+            },
+            { "lastViewedAt", new BsonDocument("$max", "$ViewedAt") },
         });
-
-        var buckets = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        void Add(string siteId, string visitor)
+        void Add(string siteId, BsonDocument row, bool provesOpened)
         {
-            if (!buckets.TryGetValue(siteId, out var set))
-                buckets[siteId] = set = new HashSet<string>(StringComparer.Ordinal);
-            set.Add(visitor);
+            if (!buckets.TryGetValue(siteId, out var bucket)) return;
+            var key = row["_id"].AsBsonDocument;
+            var user = key["user"].AsString;
+            bucket.Add(user, key["ip"].AsString, row["lastViewedAt"].ToUniversalTime());
+            if (provesOpened && user == viewerUserId) openedSites.Add(siteId);
         }
 
-        // 来源一：站内访问，本来就带 SiteId
         var sitePipeline = new[]
         {
             new BsonDocument("$match", new BsonDocument("SiteId", new BsonDocument("$in", new BsonArray(ids)))),
-            new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
-            {
-                { "site", "$SiteId" },
-                { "visitor", visitorKey },
-            })),
+            Group("SiteId"),
         };
-        foreach (var row in await _db.SiteViewEvents.Aggregate<BsonDocument>(sitePipeline).ToListAsync())
-        {
-            var key = row["_id"].AsBsonDocument;
-            if (key["site"].IsBsonNull) continue;
-            Add(key["site"].AsString, key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString);
-        }
+        using (var cursor = await _db.SiteViewEvents.AggregateAsync<BsonDocument>(sitePipeline))
+            while (await cursor.MoveNextAsync())
+                foreach (var row in cursor.Current) Add(row["_id"].AsBsonDocument["target"].AsString, row, true);
 
-        // 来源二：分享访问。ShareViewLog 只认分享，得先把分享映回它包含的站点。
-        // 一条分享可以带多个站点，访客算给这条分享里的每个站点——这是这份日志能支持的最细粒度，
-        // 比整列显示 0 诚实得多；真要做到「他到底点开了哪一个」得在分享阅读页按站点埋点，另记一笔账。
-        // 两个字段都要认：合集分享写 SiteIds，存量单站点分享只写 SiteId。只查 SiteIds 的话，
-        // 单站点分享整条被漏掉，而那正是「纯靠分享访问的站点显示 0 访客」最常见的形态——
-        // 修了一半等于没修。字段口径走 WebPageShareLink.TargetSiteIds() 这一个来源。
+        // 包含站内便捷链以及已撤销/已过期链接的历史；链接状态不能抹去已发生的访问。
         var fb = Builders<WebPageShareLink>.Filter;
         var shares = await _db.WebPageShareLinks
             .Find(fb.Or(fb.AnyIn(x => x.SiteIds, ids), fb.In(x => x.SiteId, ids)))
             .Project<WebPageShareLink>(Builders<WebPageShareLink>.Projection
-                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds))
+                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds)
+                .Include(x => x.Purpose).Include(x => x.IsRevoked).Include(x => x.ExpiresAt))
             .ToListAsync();
-        var shareToSites = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var share in shares)
-        {
-            if (string.IsNullOrEmpty(share.Id)) continue;
-            var hit = share.TargetSiteIds().Where(ids.Contains).ToList();
-            if (hit.Count > 0) shareToSites[share.Id] = hit;
-        }
-
+        var now = DateTime.UtcNow;
+        foreach (var share in shares.Where(share => share.Purpose != "visit" && !share.IsRevoked && (share.ExpiresAt == null || share.ExpiresAt > now)))
+            foreach (var siteId in share.TargetSiteIds().Distinct())
+                if (buckets.TryGetValue(siteId, out var bucket)) bucket.Value.ActiveShareLinks++;
+        var shareToSites = shares.ToDictionary(share => share.Id, share => share.TargetSiteIds().Distinct().ToList());
         if (shareToSites.Count > 0)
         {
             var sharePipeline = new[]
             {
-                new BsonDocument("$match", new BsonDocument("ShareId",
-                    new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
-                new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
-                {
-                    { "share", "$ShareId" },
-                    { "visitor", visitorKey },
-                })),
+                new BsonDocument("$match", new BsonDocument("ShareId", new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
+                Group("ShareId"),
             };
-            foreach (var row in await _db.ShareViewLogs.Aggregate<BsonDocument>(sharePipeline).ToListAsync())
-            {
-                var key = row["_id"].AsBsonDocument;
-                if (key["share"].IsBsonNull) continue;
-                if (!shareToSites.TryGetValue(key["share"].AsString, out var sites)) continue;
-                var visitor = key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString;
-                foreach (var siteId in sites) Add(siteId, visitor);
-            }
+            using var cursor = await _db.ShareViewLogs.AggregateAsync<BsonDocument>(sharePipeline);
+            while (await cursor.MoveNextAsync())
+                foreach (var row in cursor.Current)
+                {
+                    var targets = shareToSites[row["_id"].AsBsonDocument["target"].AsString];
+                    foreach (var siteId in targets) Add(siteId, row, targets.Count == 1);
+                }
         }
+        return sites.Select(site => (site.Id, Summary: buckets[site.Id].Build(site.ViewCount)))
+            .Where(item => item.Summary != null).ToDictionary(item => item.Id, item => item.Summary!);
+    }
 
-        return buckets.ToDictionary(kv => kv.Key, kv => (long)kv.Value.Count);
+    private async Task<Dictionary<string, HostedSiteActivity>> BuildActivityAsync(
+        IReadOnlyCollection<HostedSite> sites, ISet<string> openedSites)
+    {
+        var now = DateTime.UtcNow;
+        var result = sites.ToDictionary(site => site.Id, site => new HostedSiteActivity
+        {
+            IsNew = HostedSiteActivityPolicy.IsNew(site.CreatedAt, openedSites.Contains(site.Id), now),
+        });
+        if (result.Count == 0) return result;
+        var filter = Builders<HostedSiteRevision>.Filter.In(revision => revision.SiteId, result.Keys)
+            & Builders<HostedSiteRevision>.Filter.Where(HostedSiteActivityPolicy.PublishedEdit);
+        var counts = await _db.HostedSiteRevisions.Aggregate().Match(filter)
+            .Group<BsonDocument>(new BsonDocument
+            {
+                { "_id", "$SiteId" }, { "count", new BsonDocument("$sum", 1) },
+            }).ToListAsync(CancellationToken.None);
+        foreach (var count in counts)
+            if (result.TryGetValue(count["_id"].AsString, out var activity)) activity.EditCount = count["count"].ToInt64();
+        return result;
     }
 
     /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
@@ -836,9 +853,11 @@ public class WebPagesController : ControllerBase
         var (items, total) = await _siteService.ListAsync(
             userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
 
-        // 卡片要展示「N 访客」（设计稿屏 2 中卡与大卡都有这一格），浏览数是累计次数、访客是去重人数，
-        // 两个数不是一回事，所以必须单独算，不能拿 ViewCount 冒充。
-        var visitors = await BuildVisitorCountsAsync(items.Select(s => s.Id));
+        // 三个访问指标共用记录范围；旧 visitors 映射继续供现有消费方使用，旧累计浏览不覆盖。
+        var openedSites = new HashSet<string>(StringComparer.Ordinal);
+        var traffic = await BuildTrafficAsync(items, userId, openedSites);
+        var visitors = traffic.ToDictionary(kv => kv.Key, kv => kv.Value.All.Visitors);
+        var activity = await BuildActivityAsync(items, openedSites);
 
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
         //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
@@ -852,12 +871,12 @@ public class WebPagesController : ControllerBase
             {
                 var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
                 var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
-                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors }));
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors, activity, traffic }));
             }
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors }));
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors, activity, traffic }));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, visitors }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, visitors, activity, traffic }));
     }
 
     /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>
@@ -1496,6 +1515,10 @@ public class WebPagesController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
             return Ok(ApiResponse<object>.Ok(updated));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
@@ -1689,6 +1712,10 @@ public class WebPagesController : ControllerBase
                 unifiedShareUrl = share.ShortSeq > 0 ? $"/s/{share.Token}" : null,
             }));
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
@@ -1837,8 +1864,15 @@ public class WebPagesController : ControllerBase
             }
         }
 
-        var result = await _siteService.UpdateShareSettingsAsync(
-            shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        UpdateShareSettingsResult result;
+        try
+        {
+            result = await _siteService.UpdateShareSettingsAsync(shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.HOSTED_SITE_HISTORY_UNAVAILABLE, ex.Message));
+        }
         if (!result.Ok)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "修改失败"));
         return Ok(ApiResponse<object>.Ok(new { visibility = result.Visibility, expiresAt = result.ExpiresAt }));
@@ -1955,6 +1989,13 @@ public class WebPagesController : ControllerBase
     // 评论
     // ─────────────────────────────────────────────
 
+    /// <summary>公开静态批注脚本，不携带站点数据或身份凭据。</summary>
+    [AllowAnonymous]
+    [HttpGet("annotation-runtime.js")]
+    [ResponseCache(Duration = 300, Location = ResponseCacheLocation.Any)]
+    public IActionResult AnnotationRuntime() =>
+        Content(HostedSiteAnnotationRuntime.Script, "text/javascript; charset=utf-8");
+
     /// <summary>切换站点是否允许评论（仅 owner / editor 可调）</summary>
     [HttpPatch("{id}/comments-enabled")]
     public async Task<IActionResult> SetCommentsEnabled(string id, [FromBody] SetCommentsEnabledRequest req)
@@ -1980,17 +2021,18 @@ public class WebPagesController : ControllerBase
     public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
     {
         var result = await _siteService.AddCommentBySiteAsync(
-            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
+            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion);
         return MapAddCommentResult(result);
     }
 
     /// <summary>经分享链接列出评论（公开访问，无需登录即可读）</summary>
     [HttpGet("shares/view/{token}/comments")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListShareComments(string token, [FromQuery] string? password)
+    public async Task<IActionResult> ListShareComments(string token, [FromQuery] string? password, [FromQuery] string? siteId = null)
     {
         var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
-        var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId);
+        var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId, siteId: siteId);
         if (result.Error != null)
             return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
         return Ok(ApiResponse<object>.Ok(result));
@@ -2003,7 +2045,25 @@ public class WebPagesController : ControllerBase
         var userId = GetUserId();
         var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
-            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip);
+            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip, anchor: req.Anchor, parentId: req.ParentId,
+            revisionId: req.RevisionId, expectedContentVersion: req.ExpectedContentVersion, siteId: req.SiteId);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("{siteId}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetSiteCommentResolved(string siteId, string commentId, [FromBody] SetCommentResolvedRequest req)
+    {
+        var result = await _siteService.SetCommentResolvedBySiteAsync(siteId, commentId, GetUserId(), req.Resolved);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>分享访问门禁通过后，根讨论作者或站点所有者标记解决／重新打开。</summary>
+    [HttpPatch("shares/view/{token}/comments/{commentId}/resolved")]
+    public async Task<IActionResult> SetShareCommentResolved(string token, string commentId, [FromQuery] string? password,
+        [FromBody] SetCommentResolvedRequest req, [FromQuery] string? siteId = null)
+    {
+        var result = await _siteService.SetCommentResolvedByShareAsync(token, password, commentId, GetUserId(), req.Resolved, siteId: siteId);
         return MapAddCommentResult(result);
     }
 
@@ -2045,6 +2105,7 @@ public class WebPagesController : ControllerBase
             401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, error)),
             403 => StatusCode(403, ApiResponse<object>.Fail(errorCode ?? "FORBIDDEN", error)),
             400 => BadRequest(ApiResponse<object>.Fail(errorCode ?? ErrorCodes.INVALID_FORMAT, error)),
+            409 => Conflict(ApiResponse<object>.Fail(errorCode ?? "CONTENT_VERSION_CHANGED", error)),
             _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, error)),
         };
     }
@@ -2219,8 +2280,18 @@ public class SetCommentsEnabledRequest
     public bool Enabled { get; set; }
 }
 
+public class SetCommentResolvedRequest
+{
+    public bool Resolved { get; set; }
+}
+
 public class AddSiteCommentRequest
 {
+    public string? SiteId { get; set; }
+    public string? RevisionId { get; set; }
+    public string? ExpectedContentVersion { get; set; }
+    public HostedSiteCommentAnchor? Anchor { get; set; }
+    public string? ParentId { get; set; }
     /// <summary>评论正文（1-2000 字）</summary>
     public string? Content { get; set; }
 }

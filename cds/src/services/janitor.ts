@@ -125,11 +125,11 @@ export interface ImageDockerFns {
   /** 被任何容器（含已停止）引用的镜像。 */
   listInUseImages: () => Promise<string[]>;
   /** 删除一个镜像；成功返回 null，失败返回错误文本（不抛，单个失败不该中断整轮）。 */
-  removeImage: (image: string) => Promise<string | null>;
+  removeImage: (image: string, isProtected?: () => boolean) => Promise<string | null>;
 }
 
 type DockerCommandResult = { ok: boolean; stdout: string; error: string };
-type DockerRunner = (args: string[], timeoutMs: number) => Promise<DockerCommandResult>;
+type DockerRunner = (args: string[], timeoutMs: number, beforeStart?: () => void) => Promise<DockerCommandResult>;
 
 function createImageDocker(run: DockerRunner): ImageDockerFns {
   return {
@@ -143,14 +143,21 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
       if (out.startsWith('__ERR__')) throw new Error('容器镜像占用查询失败，本轮跳过镜像回收。');
       return out.split('\n').filter(Boolean);
     },
-    removeImage: async (image) => {
+    removeImage: async (image, isProtected) => {
+      let held = false;
+      const beforeStart = () => {
+        if (isProtected?.()) { held = true; throw new Error(`${IMAGE_HELD_PREFIX}在途部署仍需要此产物`); }
+      };
+      try {
+      beforeStart();
       // ps.Image 可能是 digest、ID 或另一个 tag。删除前直接按 daemon 的
       // image identity 查全部容器（含停止），不能等 rmi 已经取消 tag 后再检查。
       const currentRefs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000, run).catch(() => '__ERR__ 容器引用查询未确认');
       if (currentRefs.startsWith('__ERR__') || currentRefs.trim() !== '') {
         return `${IMAGE_HELD_PREFIX}有容器引用或引用检查失败，未执行普通删除、未强制删除`;
       }
-      const out = await execDocker(['rmi', image], 60_000, run);
+      beforeStart();
+      const out = await execDocker(['rmi', image], 60_000, run, beforeStart);
       if (!out.startsWith('__ERR__')) return null;
       const err = out.replace('__ERR__ ', '');
       // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
@@ -167,16 +174,21 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
         // 用哨兵前缀把它与真失败区分开，由调用方归到「按住不删」而非「删失败」。
         return `${IMAGE_HELD_PREFIX}${err}（有容器引用或引用检查失败，未强制删除）`;
       }
-      const forced = await execDocker(['rmi', '-f', image], 60_000, run);
+      beforeStart();
+      const forced = await execDocker(['rmi', '-f', image], 60_000, run, beforeStart);
       return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
+      } catch (error) {
+        if (held) return `${IMAGE_HELD_PREFIX}在途部署仍需要此产物`;
+        throw error;
+      }
     },
   };
 }
 
 export const defaultImageDocker: ImageDockerFns = createImageDocker(execDockerDetailed);
 
-async function execDocker(args: string[], timeoutMs = 120_000, run: DockerRunner = execDockerDetailed): Promise<string> {
-  const result = await run(args, timeoutMs);
+async function execDocker(args: string[], timeoutMs = 120_000, run: DockerRunner = execDockerDetailed, beforeStart?: () => void): Promise<string> {
+  const result = await run(args, timeoutMs, beforeStart);
   return result.ok ? result.stdout.trim() : `__ERR__ ${result.error.trim()}`;
 }
 
@@ -189,9 +201,10 @@ async function execDocker(args: string[], timeoutMs = 120_000, run: DockerRunner
  * 「找到 66 个、一个不删」。
  */
 function execDockerDetailed(
-  args: string[], timeoutMs = 120_000,
+  args: string[], timeoutMs = 120_000, beforeStart?: () => void,
 ): Promise<{ ok: boolean; stdout: string; error: string }> {
   return new Promise((resolve) => {
+    beforeStart?.();
     execFile('docker', args, { timeout: timeoutMs }, (err, stdout, stderr) => {
       resolve({ ok: !err, stdout: (stdout || '').trim(), error: (stderr || (err as Error | null)?.message || '').trim() });
     });
@@ -485,10 +498,10 @@ async function listMountedHostPaths(run: DockerRunner): Promise<string[] | null>
 export function createJanitorDockerAdapters(shell: IShellExecutor): {
   dockerPrune: DockerPruneFn; imageDocker: ImageDockerFns; orphanWorktreeFs: OrphanWorktreeFs;
 } {
-  const run: DockerRunner = async (args, timeout) => {
+  const run: DockerRunner = async (args, timeout, beforeStart) => {
     const readOnly = ['images', 'ps', 'inspect'].includes(args[0]);
     const result = await shell.exec(['docker', ...args].map(shellQuoteArg).join(' '), {
-      timeout, executionLane: readOnly ? 'observation' : 'operation',
+      timeout, executionLane: readOnly ? 'observation' : 'operation', beforeStart,
     });
     return { ok: result.exitCode === 0, stdout: result.stdout.trim(),
       error: result.stderr.trim() || (result.exitCode !== 0 ? 'Docker 命令未成功，未确认操作结果。' : '') };
@@ -637,6 +650,8 @@ export class JanitorService {
     private readonly imageDocker: ImageDockerFns = defaultImageDocker,
     /** 孤儿 worktree 对账所需的磁盘读写（可注入以便测试，不真的碰磁盘）。 */
     private readonly orphanWorktreeFs: OrphanWorktreeFs = defaultOrphanWorktreeFs,
+    /** 仅受理且未结束的原部署输入；不新增期限或持久化豁免。 */
+    private readonly protectedImages?: () => readonly string[],
   ) {}
 
   /**
@@ -838,7 +853,7 @@ export class JanitorService {
           createdAt: v.createdAt,
         })));
     const plan: ImageRetentionPlan = computeImageRetentionPlan({
-      ledger, hostImages, inUseImages, keepGenerations,
+      ledger, hostImages, inUseImages: [...inUseImages, ...(this.protectedImages?.() || [])], keepGenerations,
       maxRemovals: imageMaxRemovalsFor(tier, this.config.imageMaxRemovalsPerSweep ?? 40),
     });
     const removed: string[] = [];
@@ -847,7 +862,10 @@ export class JanitorService {
     for (const image of plan.remove) {
       // 串行：一次 sweep 不许把 docker 与磁盘 IO 打满（并发 prune 撞车正是
       // 2026-07-27 人工恢复时踩到的坑：a prune operation is already running）。
-      const err = await this.imageDocker.removeImage(image);
+      const isProtected = () => computeImageRetentionPlan({ ledger, hostImages: [image],
+        inUseImages: [...(this.protectedImages?.() || [])], keepGenerations, maxRemovals: 1 }).remove.length === 0;
+      const err = await (this.protectedImages
+        ? this.imageDocker.removeImage(image, isProtected) : this.imageDocker.removeImage(image));
       if (!err) { removed.push(image); continue; }
       // held = 有正当理由没删（当前唯一一种：仍有容器引用），不计入失败
       if (err.startsWith(IMAGE_HELD_PREFIX)) {

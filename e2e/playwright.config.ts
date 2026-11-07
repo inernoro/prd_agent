@@ -1,3 +1,4 @@
+import { stableSmokeReporterConfig, stableSmokeTraceMode } from './utils/stableSmokeDiagnostics.mjs';
 /**
  * Playwright E2E configuration — Phase 6 of the test-system build-out.
  *
@@ -34,22 +35,20 @@ export default defineConfig({
   workers: process.env.STABLE_SMOKE_RUN ? 1 : process.env.CI ? 2 : 1,
   // Generate HTML report AND JSON so CI can upload both; dot reporter
   // keeps stdout readable for human tails.
-  reporter: process.env.STABLE_SMOKE_JSON_OUTPUT
-    ? [
-        ['list'],
-        ['json', { outputFile: process.env.STABLE_SMOKE_JSON_OUTPUT }],
-        ['html', { open: 'never', outputFolder: process.env.STABLE_SMOKE_HTML_OUTPUT }],
-      ]
-    : process.env.CI
+  reporter: stableSmokeReporterConfig({
+    jsonOutput: process.env.STABLE_SMOKE_JSON_OUTPUT || '',
+    htmlOutput: process.env.STABLE_SMOKE_HTML_OUTPUT,
+    stableRun: Boolean(process.env.STABLE_SMOKE_RUN),
+  }) ?? (process.env.CI
     ? [['dot'], ['html', { open: 'never' }], ['json', { outputFile: 'results.json' }]]
-    : [['list'], ['html', { open: 'on-failure' }]],
+    : [['list'], ['html', { open: 'on-failure' }]]),
   use: {
     baseURL: BASE_URL,
     // Always capture a screenshot on failure — ~50KB each, negligible
     // cost for post-mortem. Trace only on retry so first-try flake is
     // invisible but deterministic failure has a deep dive.
     screenshot: 'only-on-failure',
-    trace: 'on-first-retry',
+    trace: stableSmokeTraceMode(Boolean(process.env.STABLE_SMOKE_RUN)),
     video: 'retain-on-failure',
     // Network fixture tests use page.route() to replace API responses.
     // Service workers can satisfy fetches before Playwright sees them,

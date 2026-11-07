@@ -1,5 +1,5 @@
 import { acceptPackageDownloadRequest, downloadHostedPackage, PACKAGE_DOWNLOAD_STATUS, withPackageDownloadBridge } from './packageDownloadBridge';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { downloadHostedPdf } from '@/services/real/webPages';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { saveBlobAsFile } from './sourceDownload';
@@ -8,8 +8,9 @@ import { acceptPdfDownloadRequest, PDF_DOWNLOAD_INIT, PDF_DOWNLOAD_STATUS, withP
 type PdfDownloadSite = { id: string; siteUrl: string; entryFile: string; pdfFilePaths?: string[] };
 type Status = { kind: 'idle' | 'pending' | 'handed-off' | 'error'; message: string };
 
-export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { token: string; password?: string }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { token: string; password?: string }, externalFrameRef?: RefObject<HTMLIFrameElement>) {
+  const ownedFrameRef = useRef<HTMLIFrameElement>(null);
+  const iframeRef = externalFrameRef ?? ownedFrameRef;
   const [status, setStatus] = useState<Status>({ kind: 'idle', message: '' });
   const pendingRef = useRef<object | null>(null);
   const siteId = site?.id ?? '';
@@ -26,7 +27,7 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
     if (!context.siteId) return;
     iframeRef.current?.contentWindow?.postMessage({ type: PDF_DOWNLOAD_INIT,
       siteId: context.siteId, nonce: context.nonce, pdfFilePaths: context.pdfFilePaths }, '*');
-  }, [context]);
+  }, [context, iframeRef]);
 
   useEffect(() => {
     let active = true;
@@ -34,6 +35,7 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
     pendingRef.current = null;
     setStatus({ kind: 'idle', message: '' });
     const receive = (event: MessageEvent) => {
+      if (!context.siteId) return;
       const frame = iframeRef.current?.contentWindow;
       if (frame && event.source === frame && event.data?.type === 'map-hosted-pdf-ready') {
         notifyFrame();
@@ -97,7 +99,7 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
     };
     window.addEventListener('message', receive);
     return () => { active = false; abort.abort(); window.removeEventListener('message', receive); };
-  }, [context, shareToken, sharePassword, notifyFrame]);
+  }, [context, shareToken, sharePassword, notifyFrame, iframeRef]);
 
   return { iframeRef, notifyFrame, status,
     decorateHtml: (html: string) => withPackageDownloadBridge(withPdfDownloadBridge(html, context), context) };

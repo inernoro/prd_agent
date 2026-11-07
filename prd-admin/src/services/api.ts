@@ -1306,6 +1306,7 @@ export const api = {
     askConfig: (siteId: string) => `/api/web-pages/${siteId}/ask/config`,
     // 重新按正文生成开场问题（owner 明确要的那一次，同步等结果）
     askRegenerateQuestions: (siteId: string) => `/api/web-pages/${siteId}/ask/questions/regenerate`,
+    askRating: (messageId: string) => `/api/web-pages/ask/messages/${messageId}/rating`,
     askStream: (siteId: string) => `/api/web-pages/${siteId}/ask/stream`,
     askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
     // 剩余额度旁路：与提问走同一套门禁与同一个计数桶，但只读不加一

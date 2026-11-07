@@ -77,6 +77,8 @@ export type UpdateAgentApiKeyContract = (input: {
   name?: string;
   description?: string;
   scopes?: string[];
+  /** 仅更新指定平台能力，保留其他存储授权；不与 scopes 或 auto 同传。 */
+  mcpCapabilityAccess?: Record<string, 'none' | 'read' | 'write'>;
   /** 显式切模式。不传时：**存了 scopes 就自动钉成 manual**（存清单那一刻就是动过高级设置那一刻） */
   scopeMode?: 'auto' | 'manual';
   isActive?: boolean;

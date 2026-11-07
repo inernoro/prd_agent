@@ -459,7 +459,16 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         CancellationToken ct = default)
     {
         var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
-        if (current.Status is not (RunStatuses.Running or RunStatuses.Committing)
+        var failedWorkflow = current.Status == RunStatuses.Error
+            && current.SourceSurface == DesignArtifactSourceSurfaces.Workflow
+            && current.ArtifactType == DesignArtifactTypes.WebPage && current.Operation == DesignArtifactOperations.Generate
+            && current.WorkflowSource is { ExecutionId: not null } source && source.OperationId == source.ExecutionId
+            && !string.IsNullOrWhiteSpace(source.NodeId) && !string.IsNullOrWhiteSpace(source.InputFingerprint)
+            && !string.IsNullOrWhiteSpace(current.WorkspaceResultSha256) && !string.IsNullOrWhiteSpace(current.WorkspaceManifestSha256)
+            && current.WorkspaceRef?.BaseRevision == current.WorkspaceBaseRevision
+            && current.ArtifactSiteId == null && current.ArtifactRevisionId == null && current.PublishBindingOperationId == null
+            && (!current.LeaseExpiresAt.HasValue || current.LeaseExpiresAt <= DateTime.UtcNow);
+        if ((!failedWorkflow && current.Status is not (RunStatuses.Running or RunStatuses.Committing))
             || current.Runtime != DesignArtifactRuntimes.OpenDesign
             || string.IsNullOrWhiteSpace(current.WorkspaceResultAssetKey)
             || !string.IsNullOrWhiteSpace(current.ProducedArtifactSiteId)
@@ -477,6 +486,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 Builders<DesignArtifactRun>.Filter.Eq(
                     item => item.WorkspaceResultAssetKey,
                     current.WorkspaceResultAssetKey),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceResultSha256, current.WorkspaceResultSha256),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkspaceManifestSha256, current.WorkspaceManifestSha256),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.WorkflowSource, current.WorkflowSource),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, null),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null),
                 Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupLeaseOwnerId, null),
@@ -493,6 +505,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 { nameof(DesignArtifactRun.RecoveryEnqueuedAt), BsonNull.Value },
                 { nameof(DesignArtifactRun.CompletedAt), BsonNull.Value },
                 { nameof(DesignArtifactRun.Error), BsonNull.Value },
+                { nameof(DesignArtifactRun.LifecycleFailureCode), BsonNull.Value },
+                { nameof(DesignArtifactRun.RuntimeFailure), BsonNull.Value },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
             },
             DesignArtifactLifecycleEventTypes.Recovered,
