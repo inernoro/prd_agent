@@ -1,7 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectionPage } from '../src/lib/collectionPaging.ts';
-import { groupModelProviders } from '../src/lib/modelProviderGroups.ts';
+import { readFile } from 'node:fs/promises';
+import ts from 'typescript';
+
+async function loadTypeScriptModule(relativePath) {
+  const source = await readFile(new URL(relativePath, import.meta.url), 'utf8');
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+}
+
+const { collectionPage } = await loadTypeScriptModule('../src/lib/collectionPaging.ts');
+const { groupModelProviders } = await loadTypeScriptModule('../src/lib/modelProviderGroups.ts');
 
 const names = Array.from({ length: 10000 }, (_, i) => ({ id: `model-${i}`, name: i === 9999 ? '最后一项 SUNBURST' : `模型 ${i}` }));
 const text = (item) => `${item.id} ${item.name}`;
@@ -50,7 +61,8 @@ test('万条Offering聚合成两家供应方，但全部线路均可独立检索
   assert.equal(collectionPage(routes, 'o9999', x => x.id, 1, 10).items[0].id, 'o9999');
 });
 
-import { providerForDetail, logicalForDetail, physicalForDetail, traceRouteStatus } from '../src/lib/modelDetailIdentity.ts';
+const { providerForDetail, logicalForDetail, physicalForDetail, traceRouteStatus, offeringParticipationStatus }
+  = await loadTypeScriptModule('../src/lib/modelDetailIdentity.ts');
 test('同名Provider详情以ID为准，不能混入另一家的元信息', () => {
   const providers = [{ id: 'p1', name: '同名' }, { id: 'p2', name: '同名' }];
   assert.equal(providerForDetail(providers, 'p2', '同名').id, 'p2');
@@ -74,7 +86,6 @@ test('调用全貌的健康与降级状态可用同一展示值进行检索', ()
   assert.equal(collectionPage(routes, '停用', traceRouteStatus, 1, 10).items[0].id, 'c');
 });
 
-const { offeringParticipationStatus } = await import('../src/lib/modelDetailIdentity.ts');
 test('线路开关启用但上游已停用时，状态必须警告不可参与，不能绿色报启用', () => {
   const status = offeringParticipationStatus({ enabled: true, skipReason: '上游那个模型被停用了', healthStatus: 0 });
   assert.equal(status.label, '不可参与');

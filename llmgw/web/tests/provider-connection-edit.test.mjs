@@ -12,6 +12,8 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
   const names = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'Event', 'MouseEvent'];
   const previous = Object.fromEntries(names.map(name => [name, globalThis[name]]));
   for (const name of names) globalThis[name] = dom.window[name];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
   const { createRoot } = await import('react-dom/client');
   const routerModule = await import('react-router-dom');
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -125,6 +127,8 @@ test('供应方编辑保持可见及权限；调用全貌区分线路缺失与�
     await server.close();
     dom.window.close();
     for (const name of names) globalThis[name] = previous[name];
+    if (previousNavigator) Object.defineProperty(globalThis, 'navigator', previousNavigator);
+    else delete globalThis.navigator;
     delete globalThis.__providerEditFixture;
     delete globalThis.__providerRouterModule;
     delete globalThis.IS_REACT_ACT_ENVIRONMENT;
