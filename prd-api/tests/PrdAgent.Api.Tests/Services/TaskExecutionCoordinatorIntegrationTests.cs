@@ -1,3 +1,7 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Services;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -446,6 +450,149 @@ public sealed class TaskExecutionCoordinatorIntegrationTests : IAsyncLifetime
             Assert.Equal(1, retry.ModifiedCount);
         }
         Assert.Equal(nextPermit.Id, (await tasks.Find(x => x.Id == "cancelled-row").SingleAsync()).TaskPermitId);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task DeferredPreDispatchFailure_CanRetrySameRunWithoutCompletingItsLease()
+    {
+        var (worker, db, services, attempts, permitId) = await CreateFailingDocumentWorkerAsync(false);
+        using (services)
+        {
+            await ProcessNextDocumentRunAsync(worker);
+            Assert.Equal(1, attempts());
+            var run = await db.DocumentStoreAgentRuns.Find(x => x.TaskPermitId == permitId).SingleAsync();
+            Assert.Equal(DocumentStoreRunStatus.Queued, run.Status);
+            Assert.NotNull(run.AutomaticRetryNextAt);
+            await db.DocumentStoreAgentRuns.UpdateOneAsync(x => x.Id == run.Id,
+                Builders<DocumentStoreAgentRun>.Update.Set(x => x.AutomaticRetryNextAt, DateTime.UtcNow.AddSeconds(-1)));
+            await ProcessNextDocumentRunAsync(worker);
+            Assert.Equal(2, attempts());
+            var next = await db.DocumentStoreAgentRuns.Find(x => x.Id == run.Id).SingleAsync();
+            Assert.Equal(DocumentStoreRunStatus.Queued, next.Status);
+            Assert.Equal(2, next.AutomaticRetryCount);
+            var execution = Assert.Single((await Permits.Find(x => x.Id == permitId).SingleAsync()).Executions);
+            Assert.Equal(TaskExecutionLeaseStates.Pending, execution.State);
+            Assert.Equal(0, execution.DispatchCount);
+        }
+    }
+
+    [DesignScopeMongoFact]
+    public async Task DeferredFailureAfterPhysicalDispatch_IsTerminalAndNeverRequeued()
+    {
+        var (worker, db, services, attempts, permitId) = await CreateFailingDocumentWorkerAsync(true);
+        using (services)
+        {
+            await ProcessNextDocumentRunAsync(worker);
+            Assert.Equal(1, attempts());
+            var run = await db.DocumentStoreAgentRuns.Find(x => x.TaskPermitId == permitId).SingleAsync();
+            Assert.Equal(DocumentStoreRunStatus.Failed, run.Status);
+            Assert.Null(run.AutomaticRetryNextAt);
+            Assert.NotNull(run.EndedAt);
+            Assert.Equal(0, run.AutomaticRetryCount);
+            Assert.Equal("TASK_EXECUTION_OUTCOME_UNKNOWN", run.FailureCode);
+            await ProcessNextDocumentRunAsync(worker);
+            Assert.Equal(1, attempts());
+            var execution = Assert.Single((await Permits.Find(x => x.Id == permitId).SingleAsync()).Executions);
+            Assert.Equal(TaskExecutionLeaseStates.Completed, execution.State);
+            Assert.Equal(1, execution.DispatchCount);
+        }
+    }
+
+    [DesignScopeMongoFact]
+    public async Task DuplicateInfraJob_DoesNotStopConsumptionOfNextAdmittedJob()
+    {
+        var completed = await Coordinator.RegisterAsync(Permit("infra-completed"), false, default);
+        await (await Coordinator.AcquireAsync(completed.Permit.Id, "old", default)).DisposeAsync();
+        var next = await Coordinator.RegisterAsync(Permit("infra-next"), false, default);
+        var sessions = new Moq.Mock<IInfraAgentSessionService>(Moq.MockBehavior.Strict);
+        sessions.Setup(x => x.RunRuntimeJobAsync("user", "session", "new", "content", Moq.It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        using var services = new ServiceCollection().AddSingleton(sessions.Object).BuildServiceProvider();
+        var queue = new FiniteRuntimeQueue([
+            new("user", "session", "old", "content", DateTime.UtcNow) { TaskPermitId = completed.Permit.Id },
+            new("user", "session", "new", "content", DateTime.UtcNow) { TaskPermitId = next.Permit.Id },
+        ]);
+        using var worker = new InfraAgentRuntimeWorker(services.GetRequiredService<IServiceScopeFactory>(), queue,
+            NullLogger<InfraAgentRuntimeWorker>.Instance, Coordinator);
+        await worker.StartAsync(default);
+        await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
+        sessions.Verify(x => x.RunRuntimeJobAsync("user", "session", "new", "content", Moq.It.IsAny<CancellationToken>()), Moq.Times.Once);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RetryRelease_IsSingleWinnerAndRejectsStaleDispatchedOrRevokedLease()
+    {
+        var permit = Permit("retry-fence");
+        await Coordinator.RegisterAsync(permit, false, default);
+        await using var first = await Coordinator.AcquireAsync(permit.Id, "run", default);
+        var released = await Task.WhenAll(Enumerable.Range(0, 12)
+            .Select(_ => Coordinator.TryReleaseForRetryAsync(first.Proof, default)));
+        Assert.Single(released, x => x);
+        await using var next = await Coordinator.AcquireAsync(permit.Id, "run", default);
+        Assert.True(next.Proof.Fence > first.Proof.Fence);
+        Assert.False(await first.TryReleaseForRetryAsync());
+        Assert.True(await Coordinator.ValidateAsync(next.Proof, false, default));
+        using (TaskExecutionContext.Enter(next.Identity))
+        {
+            await using var borrowed = await Coordinator.AcquireAsync(permit.Id, "run", default);
+            Assert.False(await borrowed.TryReleaseForRetryAsync());
+        }
+        Assert.True(await Coordinator.ValidateAsync(next.Proof, true, default));
+        Assert.False(await next.TryReleaseForRetryAsync());
+        Assert.True(await Coordinator.ValidateAsync(next.Proof, false, default));
+        var revoked = Permit("retry-revoked");
+        await Coordinator.RegisterAsync(revoked, false, default);
+        await using var revokedLease = await Coordinator.AcquireAsync(revoked.Id, "revoked-run", default);
+        await Coordinator.RevokeAsync(revoked.Id, "revoked-run", default);
+        Assert.False(await revokedLease.TryReleaseForRetryAsync());
+        Assert.Equal(TaskExecutionLeaseStates.Cancelled,
+            Assert.Single((await Permits.Find(x => x.Id == revoked.Id).SingleAsync()).Executions).State);
+    }
+
+    private async Task<(DocumentStoreAgentWorker Worker, MongoDbContext Db, ServiceProvider Services, Func<int> Attempts, string PermitId)>
+        CreateFailingDocumentWorkerAsync(bool dispatched)
+    {
+        var coordinator = Coordinator;
+        var permit = Permit(Guid.NewGuid().ToString("N"));
+        await coordinator.RegisterAsync(permit, false, default);
+        var db = new MongoDbContext(_connection, _database);
+        await db.DocumentStoreAgentRuns.InsertOneAsync(new()
+        {
+            Id = "recording-archive-transcribe-" + Guid.NewGuid().ToString("N"),
+            Kind = DocumentStoreAgentRunKind.Transcribe, Status = DocumentStoreRunStatus.Queued,
+            SourceEntryId = "entry", TaskPermitId = permit.Id, OwnerInstanceId = "prd-agent:test::main",
+        });
+        var attempts = 0;
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ASPNETCORE_ENVIRONMENT"] = "test", ["Deployment:Identity"] = "prd-agent:test", ["Changelog:GitHubBranch"] = "main",
+        }).Build();
+        var events = new Moq.Mock<IRunEventStore>();
+        var services = new ServiceCollection().AddSingleton(db).AddSingleton<IConfiguration>(config)
+            .AddSingleton(events.Object).AddScoped<SubtitleGenerationProcessor>(_ =>
+            {
+                Interlocked.Increment(ref attempts);
+                if (dispatched) Assert.True(coordinator.ValidateAsync(TaskExecutionContext.Current!.Lease!, true, default).GetAwaiter().GetResult());
+                throw new HttpRequestException("synthetic transient failure; no external request");
+            }).BuildServiceProvider();
+        var worker = new DocumentStoreAgentWorker(services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<DocumentStoreAgentWorker>.Instance, coordinator);
+        return (worker, db, services, () => attempts, permit.Id);
+    }
+
+    private static Task ProcessNextDocumentRunAsync(DocumentStoreAgentWorker worker)
+        => (Task)typeof(DocumentStoreAgentWorker).GetMethod("ProcessNextRunAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(worker, null)!;
+
+    private sealed class FiniteRuntimeQueue(IReadOnlyList<InfraAgentRuntimeJob> jobs) : IInfraAgentRuntimeJobQueue
+    {
+        public ValueTask EnqueueAsync(InfraAgentRuntimeJob job, CancellationToken ct) => throw new NotSupportedException();
+        public async IAsyncEnumerable<InfraAgentRuntimeJob> DequeueAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            foreach (var job in jobs) { ct.ThrowIfCancellationRequested(); yield return job; }
+            await Task.CompletedTask;
+        }
     }
 
     public sealed class FutureBusinessRun : ITaskAuthorizedRun

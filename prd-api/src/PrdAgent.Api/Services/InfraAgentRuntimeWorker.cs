@@ -33,7 +33,7 @@ public sealed class InfraAgentRuntimeWorker : BackgroundService
             try
             {
                 await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, job.TaskPermitId, job.MessageId);
-                if (taskExecutionAttempt.ShouldSkip) return;
+                if (taskExecutionAttempt.ShouldSkip) continue;
                 using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
                     ?? TaskExecutionContext.ForRun(job.TaskPermitId, job.MessageId));
                 using var scope = _scopeFactory.CreateScope();

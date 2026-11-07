@@ -13,6 +13,7 @@ public interface ITaskExecutionCoordinator
     Task<bool> ValidateHashAsync(string permitId, string? runId, string ownerHash, long fence,
         bool beforeDispatch, CancellationToken ct, string? businessRunId = null);
     Task<bool> CompleteAsync(TaskExecutionLeaseProof proof, CancellationToken ct);
+    Task<bool> TryReleaseForRetryAsync(TaskExecutionLeaseProof proof, CancellationToken ct);
     Task RevokeAsync(string permitId, string? runId, CancellationToken ct);
     Task ChangeActorAuthorizationAsync(string tenantId, string actorId, bool enabled, CancellationToken ct);
     Task ChangeCredentialAuthorizationAsync(string tenantId, string credentialId, bool enabled, CancellationToken ct);
@@ -78,6 +79,12 @@ public sealed class TaskExecutionLease : IAsyncDisposable
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         catch { _lost.Cancel(); }
     }
+
+    /// <summary>仅独占租约可以交还明确未发送的任务；代次与发送计数由持久协调器原子核验。</summary>
+    public Task<bool> TryReleaseForRetryAsync(CancellationToken ct = default)
+        => _borrowed || Volatile.Read(ref _disposed) != 0
+            ? Task.FromResult(false)
+            : _coordinator.TryReleaseForRetryAsync(Proof, ct);
 
     public async ValueTask DisposeAsync()
     {

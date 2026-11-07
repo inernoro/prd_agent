@@ -683,6 +683,40 @@ public class DocumentStoreAgentWorker : BackgroundService
                 return;
             }
 
+            if (willRetry && taskExecutionAttempt.Lease is { } retryLease)
+            {
+                // 先在当前租约保护下持久化未来重试，再原子交还未发送租约。
+                // 已发送或失效的代次不能因普通暂时错误被重置为可执行。
+                var released = false;
+                try { released = await retryLease.TryReleaseForRetryAsync(CancellationToken.None); }
+                catch (Exception retryError)
+                {
+                    _logger.LogWarning(retryError, "[doc-store-agent] Cannot verify safe retry run={RunId}", run.Id);
+                }
+                if (!released)
+                {
+                    if (!await _taskExecutions!.ValidateAsync(retryLease.Proof, false, CancellationToken.None)) return;
+                    willRetry = false;
+                    userMessage = "本次执行无法安全自动重试，原始内容已保留；请核对已有结果后重新提交。";
+                    var stopped = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                        r => r.Id == run.Id && r.TaskPermitId == run.TaskPermitId
+                            && r.Status == DocumentStoreRunStatus.Queued && r.ExecutionId == string.Empty
+                            && r.AutomaticRetryNextAt == retryAt,
+                        Builders<DocumentStoreAgentRun>.Update
+                            .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                            .Set(r => r.Phase, "执行结果待核对")
+                            .Set(r => r.ErrorMessage, userMessage)
+                            .Set(r => r.FailureCode, "TASK_EXECUTION_OUTCOME_UNKNOWN")
+                            .Set(r => r.StartedAt, run.StartedAt)
+                            .Set(r => r.EndedAt, failedAt)
+                            .Set(r => r.AutomaticRetryNextAt, null)
+                            .Set(r => r.AutomaticRetryReason, null)
+                            .Set(r => r.AutomaticRetryCount, run.AutomaticRetryCount),
+                        cancellationToken: CancellationToken.None);
+                    if (stopped.ModifiedCount == 0) return;
+                }
+            }
+
             if (!willRetry && run.Kind == DocumentStoreAgentRunKind.Transcribe)
             {
                 try

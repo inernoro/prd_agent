@@ -184,6 +184,25 @@ public sealed class TaskExecutionCoordinator(LlmGatewayDataContext data) : ITask
             return result.MatchedCount == 1;
         });
 
+    public Task<bool> TryReleaseForRetryAsync(TaskExecutionLeaseProof proof, CancellationToken ct)
+        => GuardAsync(async () =>
+        {
+            var permit = await Permits.Find(x => x.Id == proof.PermitId).FirstOrDefaultAsync(ct);
+            if (permit is null || permit.ExecutionContractVersion != ContractVersion || !await AuthorizationMatchesAsync(permit, ct)) return false;
+            var matches = new BsonDocument("$and", new BsonArray
+            {
+                ExecutionMatches(proof.RunId, OwnerHash(proof.OwnerToken), proof.Fence),
+                new BsonDocument("$eq", new BsonArray { "$$e.DispatchCount", 0 })
+            });
+            var result = await Permits.UpdateOneAsync(LivePermit(proof.PermitId) & AnyExecution(matches),
+                MapExecutions(matches, new BsonDocument
+                {
+                    ["State"] = TaskExecutionLeaseStates.Pending, ["OwnerHash"] = "",
+                    ["LeaseUntil"] = DateTime.UnixEpoch, ["FinishedAt"] = BsonNull.Value
+                }), cancellationToken: ct);
+            return result.MatchedCount == 1;
+        });
+
     public Task RevokeAsync(string permitId, string? runId, CancellationToken ct)
         => GuardAsync(async () =>
         {
