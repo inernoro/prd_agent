@@ -529,6 +529,8 @@ export interface DeployModeOverride {
  */
 export interface BuildProfileOverride {
   staticWeb?: StaticWebConfig;
+  /** 本分支实际依赖的服务；未设时继承项目依赖，空数组显式清空。 */
+  dependsOn?: string[];
   /** Override Docker image (replaces baseline.dockerImage) */
   dockerImage?: string;
   /** Override run command (replaces baseline.command) */

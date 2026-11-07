@@ -392,6 +392,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
     // **不得**覆盖 baseline 真实端口 → 根治 `docker: invalid containerPort: null`（prd-agent-main 等）。
     ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
     ...(override.pathPrefixes !== undefined ? { pathPrefixes: override.pathPrefixes } : {}),
+    ...(override.dependsOn !== undefined ? { dependsOn: override.dependsOn } : {}),
     ...(override.resources !== undefined ? { resources: override.resources } : {}),
     ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
     ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
