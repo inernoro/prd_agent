@@ -146,7 +146,7 @@ describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () =
 describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件', () => {
   it('外壳的 Suspense fallback 按路由取 pageSkeletonForPath，不再自画固定方块', () => {
     const shell = stripComments(read('components/layout/AppShell.tsx'));
-    expect(shell).toContain('pageSkeletonForPath(pathname)');
+    expect(shell).toContain('pageSkeletonForPath(pathname, { canManageProjects })');
     expect(shell).toContain("from '@/components/skeletons/PageSkeletons'");
     const fallback = shell.slice(shell.indexOf('function ConsoleRouteFallback'), shell.indexOf('function ConsoleRouteFallback') + 1200);
     expect(fallback).not.toContain('cds-loading-skeleton-panel h-40');
@@ -270,7 +270,7 @@ describe('项目页从骨架到正文保持相同布局', () => {
     const skeleton = stripComments(read('components/skeletons/PageSkeletons.tsx'));
     expect(ready).toContain('<ProjectInventoryLayout');
     expect(skeleton).toContain('<ProjectInventoryLayout');
-    const html = renderToStaticMarkup(createElement(ProjectListSkeleton));
+    const html = renderToStaticMarkup(createElement(ProjectListSkeleton, { canManageProjects: true }));
     for (const label of ['管理项目、分支环境与部署。', '全部项目', '运行中', '已暂停', '已就绪']) expect(html).toContain(label);
     for (const group of ['cds-project-status-filters', 'cds-project-inventory-tools', 'cds-project-inventory-search', 'cds-project-view-switch']) expect(html).toContain(group);
     expect((html.match(/<button[^>]*disabled/g) || []).length).toBe(8);
@@ -286,5 +286,22 @@ describe('项目页从骨架到正文保持相同布局', () => {
         expect((html.match(/cds-project-card-link/g) || []).length).toBe(6);
       }
     } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+
+describe('项目加载骨架遵从已知管理能力', () => {
+  it('身份未知和普通成员不画管理操作，明确的所有者保留操作轮廓', () => {
+    for (const node of [createElement(ProjectListSkeleton), createElement(ProjectListSkeleton, { canManageProjects: false }), pageSkeletonForPath('/project-list')]) {
+      const html = renderToStaticMarkup(node);
+      expect(html).not.toContain('导入仓库');
+      expect(html).not.toContain('新建项目');
+      expect(html).toContain('cds-project-status-filters');
+    }
+    for (const node of [createElement(ProjectListSkeleton, { canManageProjects: true }), pageSkeletonForPath('/project-list', { canManageProjects: true })]) {
+      const html = renderToStaticMarkup(node);
+      expect(html).toContain('导入仓库');
+      expect(html).toContain('新建项目');
+    }
   });
 });

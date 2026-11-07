@@ -50,7 +50,7 @@ import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { useNowTick } from '@/hooks/useNowTick';
 import { readProjectInventoryPreferences, writeProjectInventoryPreferences, type ProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
@@ -457,6 +457,7 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
+  const consoleOwner = useCanManageConsole();
   const events = useCdsEvents();
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -521,6 +522,7 @@ export function ProjectListPage(): JSX.Element {
   const [repositoryImportOpen, setRepositoryImportOpen] = useState(false);
   const [environmentTargets, setEnvironmentTargets] = useState<ProjectEnvironmentTarget[]>([]);
   const [environmentStatus, setEnvironmentStatus] = useState<ProjectEnvironmentStatus>('loading');
+  const hasEnvironmentSnapshot = useRef(false);
   const [environmentRefresh, setEnvironmentRefresh] = useState(0);
   const environmentAccess = state.status === 'ok' ? state.canManageProjects : null;
   const [quickRepoUrl, setQuickRepoUrl] = useState('');
@@ -533,23 +535,27 @@ export function ProjectListPage(): JSX.Element {
   useEffect(() => {
     if (environmentAccess === null) return;
     if (!environmentAccess) {
+      hasEnvironmentSnapshot.current = false;
+      setEnvironmentTargets([]);
+      setInventorySelection(selection => ({ ...selection, environment: 'all' }));
       setEnvironmentStatus('unavailable');
       return;
     }
     let cancelled = false;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 15_000);
-    setEnvironmentStatus('loading');
+    if (!hasEnvironmentSnapshot.current) setEnvironmentStatus('loading');
     void apiRequest<{ targets: ProjectEnvironmentTarget[] }>('/api/releases/targets', { signal: controller.signal })
       .then(data => {
         if (cancelled) return;
+        hasEnvironmentSnapshot.current = true;
         setEnvironmentTargets(data.targets || []);
         setEnvironmentStatus('ready');
       })
       .catch(() => {
         if (cancelled) return;
-        setEnvironmentStatus('error');
-        setInventorySelection(selection => ({ ...selection, environment: 'all' }));
+        if (hasEnvironmentSnapshot.current) setToast('发布环境刷新失败，已保留上次结果，请稍后刷新重试');
+        else setEnvironmentStatus('error');
       })
       .finally(() => window.clearTimeout(timeout));
     return () => { cancelled = true; window.clearTimeout(timeout); controller.abort(); };
@@ -690,6 +696,7 @@ export function ProjectListPage(): JSX.Element {
 
   const projects = state.status === 'ok' ? state.projects : [];
   const canManageProjects = state.status === 'ok' && state.canManageProjects;
+  const showProjectCreator = state.status === 'ok' ? state.canManageProjects : consoleOwner;
   const legacy = state.status === 'ok' ? state.legacy : null;
   const pendingImportCount = pendingImports.pendingCount || 0;
   const serviceLabels = useMemo(() => new Map(projects.map(project =>
@@ -911,7 +918,7 @@ export function ProjectListPage(): JSX.Element {
             </form>
         ) : null}
         <section aria-label="项目列表">
-          {state.status === 'loading' ? <ProjectListSkeleton /> : null}
+          {state.status === 'loading' ? <ProjectListSkeleton canManageProjects={showProjectCreator} /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
             <EmptyProjects canManageProjects={canManageProjects} onCreate={() => setCreateOpen(true)} />
@@ -1546,7 +1553,7 @@ function EmptyProjects({ onCreate, canManageProjects }: { onCreate: () => void; 
         </div>
         <h2 className="mt-5 text-lg font-semibold">{canManageProjects ? '还没有项目' : '还没有获授权的项目'}</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-          {canManageProjects ? '粘贴上方仓库 URL 创建第一个项目，CDS 会自动 clone、识别栈并生成默认构建配置。' : '请联系系统所有者在「用户管理 → 项目授权」中分配访问权限，然后刷新本页。'}
+          {canManageProjects ? '点击页头“导入仓库”，粘贴 Git 仓库 URL 创建第一个项目，CDS 会自动 clone、识别栈并生成默认构建配置。' : '请联系系统所有者在「用户管理 → 项目授权」中分配访问权限，然后刷新本页。'}
         </p>
         {canManageProjects ? <div className="mt-5">
           <Button onClick={onCreate}>

@@ -4001,6 +4001,7 @@
   .cds-project-inventory-empty h2 { color: hsl(var(--foreground)); font-size: 1rem; font-weight: 500; }
   .cds-project-inventory-empty p { font-size: 0.875rem; }
   .cds-project-inventory--list { grid-template-columns: minmax(0, 1fr); gap: 0.625rem; }
+  .cds-project-inventory--list .cds-project-card { content-visibility: visible; contain-intrinsic-size: none; }
   .cds-project-inventory--list .cds-project-card-link { display: grid; grid-template-columns: 1.15fr 1.1fr 1fr 0.9fr; align-items: center; gap: 1.25rem; padding: 0.875rem 3.25rem 0.875rem 1rem; }
   .cds-project-inventory--list .cds-project-card-heading { padding: 0; }
   .cds-project-inventory--list .cds-project-services { height: 4rem; margin: 0; }

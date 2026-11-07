@@ -243,6 +243,7 @@ export function ConsoleLayout(): JSX.Element {
 function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
   const scene = loadingSceneForPath(pathname);
+  const canManageProjects = useCanManageConsole();
   const projectList = pathname === '/project-list';
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
@@ -264,7 +265,7 @@ function ConsoleRouteFallback(): JSX.Element {
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
         <div className={cn('cds-workspace cds-workspace--fluid', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
-          {pageSkeletonForPath(pathname)}
+          {pageSkeletonForPath(pathname, { canManageProjects })}
           <ListLoadingFeedback />
         </div>
       </main>

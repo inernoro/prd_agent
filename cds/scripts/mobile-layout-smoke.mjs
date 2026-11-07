@@ -556,7 +556,7 @@ async function checkProjectInventory(page, label) {
   console.log(`PASS ${label}: 项目页头、筛选搜索、视图切换与导入入口`);
 }
 
-async function checkProjectSkeletonAlignment(page, label) {
+async function checkProjectSkeletonAlignment(page, label, projectResult = resolveFixture('/api/projects')) {
   let release, releaseChunk;
   const gate = new Promise(resolve => { release = resolve; });
   const chunkGate = new Promise(resolve => { releaseChunk = resolve; });
@@ -567,7 +567,7 @@ async function checkProjectSkeletonAlignment(page, label) {
   const holdProjects = async route => {
     await gate;
     await route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify(resolveFixture(new URL(route.request().url()).pathname)) });
+      body: JSON.stringify(projectResult) });
   };
   const geometry = () => page.evaluate(() => Object.fromEntries([
     '.cds-project-inventory-heading', '.cds-project-inventory-toolbar', '.cds-project-card',
@@ -585,10 +585,13 @@ async function checkProjectSkeletonAlignment(page, label) {
     await page.locator('[aria-label="加载项目列表"]').waitFor();
     await page.evaluate(() => document.fonts.ready);
     const chunkLoading = await geometry();
+    const expectedActions = projectResult.canManageProjects === false ? 0 : 1;
+    assertOk(await page.locator('.cds-project-inventory-actions').count() === expectedActions, `${label}: 代码加载骨架的管理能力不匹配`);
     releaseChunk();
     await fallback.waitFor({ state: 'hidden' });
     await page.locator('[aria-label="加载项目列表"]').waitFor();
     const loading = await geometry();
+    assertOk(await page.locator('.cds-project-inventory-actions').count() === expectedActions, `${label}: 数据加载骨架的管理能力不匹配`);
     const transform = await page.locator('.cds-main').evaluate(main => getComputedStyle(main).transform);
     assertOk(transform === 'none', `${label}: 骨架已显示后不应再次播放整页位移动画`, { transform });
     release();
@@ -608,6 +611,107 @@ async function checkProjectSkeletonAlignment(page, label) {
     await page.unroute(pattern, holdProjects);
     await page.unroute(chunkPattern, holdChunk);
   }
+}
+
+async function checkProjectEnvironmentRefresh(browser) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  let release;
+  try {
+    await installFixtures(context);
+    let refresh = false, started;
+    const requested = new Promise(resolve => { started = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    const targets = [{ id: 'fixture-refresh-target', projectId: FIXTURE_PROJECT_ID, environment: 'production', isEnabled: true }];
+    await context.route('**/api/releases/targets', async route => {
+      if (refresh) {
+        started(); await gate;
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: '合成刷新失败' }) });
+      } else await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ targets }) });
+    });
+    const page = await context.newPage();
+    await page.goto(`${baseUrl}/project-list`);
+    const filter = page.getByRole('combobox', { name: '环境筛选', exact: true });
+    await filter.locator('option[value="production"]').waitFor({ state: 'attached' });
+    await filter.selectOption('production');
+    const assertSnapshot = async () => {
+      assertOk(await filter.inputValue() === 'production' && !await filter.isDisabled(), '刷新不能清空或禁用已加载的环境筛选');
+      assertOk((await page.locator('.cds-project-environment').allTextContents()).join('').includes('production'), '刷新不能清空卡片已有环境名称');
+    };
+    await assertSnapshot(); refresh = true;
+    await page.getByRole('button', { name: '刷新项目列表', exact: true }).click();
+    await requested; await assertSnapshot(); release();
+    await page.getByText('发布环境刷新失败，已保留上次结果，请稍后刷新重试', { exact: true }).waitFor();
+    await assertSnapshot();
+    console.log('PASS project-environment-refresh: 等待及失败均保留环境名称、筛选值和可用性');
+  } finally { release?.(); await context.close(); }
+}
+
+async function checkMemberProjectSkeleton(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    await installFixtures(context);
+    const auth = resolveFixture('/api/auth/status');
+    const projectResult = { ...resolveFixture('/api/projects'), canManageProjects: false };
+    await context.route('**/api/auth/status', route => route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ...auth, user: { ...auth.user, isSystemOwner: false } }) }));
+    await context.route('**/api/projects', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(projectResult) }));
+    const page = await context.newPage(); await page.goto(`${baseUrl}/project-list`);
+    await page.locator('.cds-project-card[data-project-id]').first().waitFor();
+    assertOk(await page.locator('.cds-project-inventory-actions').count() === 0, '普通成员不得出现管理操作');
+    for (const view of ['列表视图', '卡片视图']) {
+      await page.getByRole('button', { name: view, exact: true }).click();
+      await checkProjectSkeletonAlignment(page, `member:${view}`, projectResult);
+    }
+    console.log('PASS member-project-skeleton: 普通成员代码、数据等待和正文均无管理操作且保持对齐');
+  } finally { await context.close(); }
+}
+
+async function checkProjectListContinuity(browser) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  try {
+    await installFixtures(context);
+    const seed = resolveFixture('/api/projects');
+    const projects = Array.from({ length: 80 }, (_, i) => ({ ...seed.projects[0], id: `fixture-list-${i}`, slug: `fixture-list-${i}`, aliasName: undefined, name: `列表样例项目 ${i}`, paused: false }));
+    await context.route('**/api/projects', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...seed, projects, canManageProjects: true }) }));
+    const page = await context.newPage(); await page.goto(`${baseUrl}/project-list`);
+    await page.locator('.cds-project-card[data-project-id]').first().waitFor();
+    await page.getByRole('button', { name: '列表视图', exact: true }).click();
+    await page.locator('.cds-project-inventory--list').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    const height = async scroll => page.evaluate(async shouldScroll => {
+      let node = document.querySelector('.cds-project-inventory--list');
+      while (node && node !== document.body && (!/(auto|scroll)/.test(getComputedStyle(node).overflowY) || node.scrollHeight <= node.clientHeight + 1)) node = node.parentElement;
+      const scroller = node && node !== document.body ? node : document.scrollingElement;
+      if (shouldScroll) scroller.scrollTop = scroller.scrollHeight;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return scroller.scrollHeight;
+    }, scroll);
+    const before = await height(false), after = await height(true);
+    assertOk(Math.abs(before - after) <= 1, '列表离屏行进入视口后不得改变滚动内容高度', { before, after });
+    assertOk(await page.locator('.cds-project-inventory--list .cds-project-card').count() === 80, '连续列表必须保留全部样例项目');
+    console.log(`PASS project-list-continuity: 80 行滚动前后高度 ${before}/${after}`);
+  } finally { await context.close(); }
+}
+
+async function checkEmptyProjectEntry(browser) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    await installFixtures(context);
+    await context.route('**/api/projects', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ projects: [], total: 0, canManageProjects: true }) }));
+    const page = await context.newPage(); await page.goto(`${baseUrl}/project-list`);
+    await page.getByText('还没有项目', { exact: true }).waitFor();
+    await page.getByText(/点击页头“导入仓库”/).waitFor();
+    await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Git 仓库 URL', exact: true }).waitFor();
+    console.log('PASS empty-project-entry: 首次项目提示对应可见入口，展开后可粘贴仓库地址');
+  } finally { await context.close(); }
+}
+
+async function checkProjectReviewRegressions(browser) {
+  await checkProjectEnvironmentRefresh(browser);
+  await checkMemberProjectSkeleton(browser);
+  await checkProjectListContinuity(browser);
+  await checkEmptyProjectEntry(browser);
 }
 
 async function main() {
@@ -632,11 +736,17 @@ async function main() {
     if (only === 'layout-visibility') {
       assertOk(OFFLINE, '原生折叠测量控制仅在离线合成环境运行');
       await checkNativeDetailsVisibility(browser);
+    } else if (only === 'project-inventory') {
+      assertOk(OFFLINE, '项目页失败回归只在离线合成环境运行');
+      await checkProjectReviewRegressions(browser);
     } else if (only === 'instance-outage') {
       assertOk(OFFLINE, '断线回归仅在离线合成环境运行，不向实际服务注入断线');
       for (const mobile of [true, false]) for (const pinned of [true, false]) await checkInstanceOutage(browser, mobile, pinned);
     } else {
-    if (OFFLINE && !only) await checkNativeDetailsVisibility(browser);
+    if (OFFLINE && !only) {
+      await checkNativeDetailsVisibility(browser);
+      await checkProjectReviewRegressions(browser);
+    }
     if (only !== 'task-schedule') {
       const probe = await browser.newPage();
       const project = await getFirstProject(probe);

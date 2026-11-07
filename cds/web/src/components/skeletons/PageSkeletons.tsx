@@ -85,12 +85,12 @@ export function BranchListSkeleton(): JSX.Element {
  */
 const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const;
 
-export function ProjectListSkeleton(): JSX.Element {
+export function ProjectListSkeleton({ canManageProjects = false }: { canManageProjects?: boolean } = {}): JSX.Element {
   const [view] = useState(() => readProjectInventoryPreferences().view);
   return (
     <div aria-busy="true" aria-live="polite" aria-label="加载项目列表">
       <div aria-hidden>
-        <ProjectInventoryLayout canManageProjects count={<span className="cds-loading-skeleton-line inline-block h-3 w-3 align-middle" />}
+        <ProjectInventoryLayout canManageProjects={canManageProjects} count={<span className="cds-loading-skeleton-line inline-block h-3 w-3 align-middle" />}
           actions={<>
             <Button disabled variant="outline" size="sm" className="cds-loading-skeleton-panel"><FolderGit2 className="invisible" /><span className="invisible">导入仓库</span></Button>
             <Button disabled size="sm" className="cds-loading-skeleton-panel"><Plus className="invisible" /><span className="invisible">新建项目</span></Button>
@@ -164,11 +164,11 @@ export function ConsoleGenericSkeleton(): JSX.Element {
 }
 
 /** 路由 → 骨架形状。控制台外壳在 chunk 未到时按它画，和页面自己等数据时画的是同一副。 */
-export function pageSkeletonForPath(pathname: string): JSX.Element {
+export function pageSkeletonForPath(pathname: string, capabilities: { canManageProjects?: boolean } = {}): JSX.Element {
   switch (loadingSceneForPath(pathname)?.kind) {
     case 'auth': return <AuthPageSkeleton />;
     case 'public-status': return <PublicStatusSkeleton />;
-    case 'projects': return <ProjectListSkeleton />;
+    case 'projects': return <ProjectListSkeleton canManageProjects={capabilities.canManageProjects} />;
     case 'branches': return <BranchListSkeleton />;
     case 'relations': return <ContentLoading label="读取关系视图" variant="panel" />;
     case 'agent-table': return <AgentRequestsSkeleton />;
