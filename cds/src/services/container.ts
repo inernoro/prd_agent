@@ -2617,12 +2617,18 @@ export class ContainerService {
   ): Promise<boolean> {
     const scope = this.runtimePhaseOwners.get(containerName);
     const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName, scope?.owner);
-    scope?.check?.();
-    const ready = await this.waitForStartupSignalUnbudgeted(containerName, signal, onOutput, timeoutSeconds);
-    scope?.check?.();
-    if (ready) releaseMemory();
-    // 日志信号后仍可能继续HTTP探测，操作资格由后续就绪阶段结算。
-    return ready;
+    let handedOff = false;
+    try {
+      scope?.check?.();
+      const ready = await this.waitForStartupSignalUnbudgeted(containerName, signal, onOutput, timeoutSeconds);
+      scope?.check?.();
+      if (ready) releaseMemory();
+      // 只有成功才向后续HTTP阶段交接资格，失败结束时也不能删除同名新持有者。
+      handedOff = ready;
+      return ready;
+    } finally {
+      if (!handedOff && this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
+    }
   }
 
   private async waitForStartupSignalUnbudgeted(

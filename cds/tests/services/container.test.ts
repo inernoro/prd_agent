@@ -105,7 +105,7 @@ describe('ContainerService', () => {
     });
     afterEach(() => { aliveStub?.mockRestore(); });
 
-    it('原日志信号后HTTP就绪阶段继续受同一操作资格保护，过期不占探测槽', async () => {
+    it.each(['ready', 'timeout', 'error', 'replaced'] as const)('原日志信号%s后HTTP仅保留成功交接的操作资格，失败不残留旧资格', async outcome => {
       mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
       setDeploymentPhaseMemoryProvider(() => 10000);
@@ -116,11 +116,20 @@ describe('ContainerService', () => {
       try {
         await service.runService(makeEntry(), makeProfile({ startupSignal: 'ready' }), runtime, undefined, undefined,
           { assertCurrent: () => { if (!current) throw new Error('原部署资格失效'); } });
-        expect(await service.waitForStartupSignal(runtime.containerName, 'ready')).toBe(true);
+        if (outcome === 'timeout') signal.mockResolvedValue(false);
+        if (outcome === 'error') signal.mockRejectedValue(new Error('原日志读取失败'));
+        if (outcome === 'replaced') signal.mockImplementation(async () => {
+          await service.runService(makeEntry(), makeProfile(), runtime, undefined, undefined,
+            { assertCurrent: () => { if (!current) throw new Error('新部署资格失效'); } });
+          return false;
+        });
+        if (outcome === 'error') await expect(service.waitForStartupSignal(runtime.containerName, 'ready')).rejects.toThrow('原日志读取失败');
+        else expect(await service.waitForStartupSignal(runtime.containerName, 'ready')).toBe(outcome === 'ready');
+        if (outcome !== 'ready') expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === runtime.containerName)).toBe(true);
         current = false;
-        await expect(service.waitForReadiness(runtime.hostPort, undefined, undefined, undefined, runtime.containerName))
-          .rejects.toThrow('原部署资格失效');
-        expect(probe).not.toHaveBeenCalled();
+        const readiness = service.waitForReadiness(runtime.hostPort, undefined, undefined, undefined, runtime.containerName);
+        if (outcome === 'ready' || outcome === 'replaced') { await expect(readiness).rejects.toThrow(outcome === 'ready' ? '原部署资格失效' : '新部署资格失效'); expect(probe).not.toHaveBeenCalled(); }
+        else { await expect(readiness).resolves.toBe(true); expect(probe).toHaveBeenCalledOnce(); }
         expect(deploymentPhaseBudget.snapshot().ready.active).toEqual([]);
       } finally {
         signal.mockRestore(); probe.mockRestore(); deploymentPhaseBudget.releaseMemory(runtime.containerName);
