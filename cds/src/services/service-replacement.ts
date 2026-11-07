@@ -7,16 +7,21 @@ import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuring
 import { archiveBranchContainerLogs } from './container-log-archiver.js';
 import { resolveBranchEnvLayers } from './branch-env-layers.js';
 
+function staticConsumerAliases(entry: BranchEntry, profileId: string, state: StateService): Set<string> {
+  const project = entry.projectId ? state.getProject(entry.projectId) : undefined;
+  return new Set(computeProfileAliases(profileId, [entry.projectId, project?.slug].filter((value): value is string => Boolean(value))));
+}
+function referencesStaticAlias(value: string, aliases: Set<string>): boolean {
+  return [...value.matchAll(/https?:\/\/([a-z0-9_.-]+)(?=[:/]|$)/gi)].some(match => aliases.has(match[1]));
+}
 /** Browser-only is an explicit deployment contract, never inferred from a shared network. */
 export function assertBrowserOnlyStaticConsumers(entry: BranchEntry, profileId: string, state: StateService): void {
-  const project = entry.projectId ? state.getProject(entry.projectId) : undefined;
-  const aliases = new Set(computeProfileAliases(profileId, [entry.projectId, project?.slug].filter((value): value is string => Boolean(value))));
+  const aliases = staticConsumerAliases(entry, profileId, state);
   for (const { effective: peer, provenance, envError } of resolveBranchEnvLayers(state, entry, { jwtIssuer: '' }).profiles) {
     if (peer.id === profileId) continue;
     if (envError) throw new Error(`服务 ${peer.id} 的运行环境无法完整解析，请核对后再选择仅浏览器静态模式`);
     const references = [...(peer.calls || []), ...(peer.dependsOn || [])];
-    const internalUrl = provenance.some(({ value }) => [...value.matchAll(/https?:\/\/([a-z0-9_.-]+)(?=[:/]|$)/gi)]
-      .some(match => aliases.has(match[1])));
+    const internalUrl = provenance.some(({ value }) => referencesStaticAlias(value, aliases));
     if (internalUrl || references.some(target => aliases.has(target))) throw new Error(`服务 ${peer.id} 仍声明依赖该前端容器地址，请迁移依赖后再选择仅浏览器静态模式`);
   }
 }
@@ -184,6 +189,21 @@ function publicationIdentity(entry: BranchEntry): string {
     [id, service.status, runtimeRef(service), service.servingRuntime, service.pendingRuntime]));
 }
 
+async function runningConsumersDoNotReference(profileId: string, published: ReadonlyMap<string, ServiceRuntimeRef | null>,
+  container: Pick<ContainerService, 'getEnv'>, aliases: Set<string>, check: (step: string) => void): Promise<boolean> {
+  for (const [id, peer] of published) {
+    if (id === profileId || peer?.staticWeb) continue;
+    if (!peer?.containerId || !/^[a-f0-9]{64}$/.test(peer.containerId)) return false;
+    let env: string;
+    check('before running consumer environment');
+    try { env = await container.getEnv(peer.containerId); }
+    catch { check('after unreadable consumer environment'); return false; }
+    check('after running consumer environment');
+    if (referencesStaticAlias(env, aliases)) return false;
+  }
+  return true;
+}
+
 /** 连接旧网络不代表仍依赖旧版本；消费者必须已能通过服务别名访问当前版本。 */
 async function retireReplacedRuntimes(options: Parameters<typeof commitServiceReplacements>[0]): Promise<void> {
   const { entry, state, container } = options;
@@ -216,7 +236,11 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
       const actual = await container.inspectOwnedRuntime(entry, id, old, false);
       check('after retirement retained identity');
       if (actual && (isProtected(actual) || (!actual.staticWeb && !actual.aliasNetworks?.length))) continue;
-      if (confirmed.staticWeb?.browserOnly) assertBrowserOnlyStaticConsumers(entry, id, state);
+      if (confirmed.staticWeb?.browserOnly) {
+        assertBrowserOnlyStaticConsumers(entry, id, state);
+        const aliases = staticConsumerAliases(entry, id, state); aliases.add((actual || old).containerName);
+        if (!await runningConsumersDoNotReference(id, published, container, aliases, check)) continue;
+      }
       const referenced = actual && !actual.staticWeb && !confirmed.staticWeb?.browserOnly && [...published].some(([peerId, peer]) => {
         if (peerId === id || peer?.staticWeb) return false;
         if (!peer) return true; // 当前消费者未确认运行时，保留其可能依赖的旧版本。
@@ -240,7 +264,7 @@ async function retireReplacedRuntimes(options: Parameters<typeof commitServiceRe
 
 /** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
 export async function commitServiceReplacements(options: {
-  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs'>;
+  entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs' | 'getEnv'>;
   operationId?: string; operationGeneration?: number;
   assertCurrent?: (step: string) => void;
   onFailureDiagnostics?: (snapshots: OperationLogContainerSnapshot[]) => void;

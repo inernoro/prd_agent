@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { assertBrowserOnlyStaticConsumers, commitServiceReplacements, prepareServiceReplacement, replacementLaunchEntry, reserveServiceReplacements } from '../../src/services/service-replacement.js';
 import { resolveBranchUpstream } from '../../src/services/proxy.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
 function fixture() {
   const service: ServiceState = { profileId: 'api', containerName: 'new-api', hostPort: 10002, status: 'starting',
@@ -21,7 +22,7 @@ function fixture() {
     getAllBranches: () => [], getState: () => ({ projects: [] }),
     appendContainerLogArchive: vi.fn((_id, snapshot) => ({ ...snapshot, capturedAt: '2026-11-05T00:00:00Z' })) } as unknown as StateService;
   const container = { cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined), removeOwnedRuntime: vi.fn().mockResolvedValue(undefined),
-    getLogs: vi.fn().mockResolvedValue(''),
+    getLogs: vi.fn().mockResolvedValue(''), getEnv: vi.fn().mockResolvedValue(''),
     inspectOwnedRuntime: vi.fn().mockImplementation(async (_entry, _id, runtime) =>
       ({ ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName] })) } as unknown as ContainerService;
   return { entry, service, state, container };
@@ -318,6 +319,33 @@ describe('静态预览版本切换', () => {
 });
 
 describe('仅浏览器前端容器退役合同', () => {
+  it('读取实际环境期间服务身份变化，旧回执不能删除旧前端或覆盖新消费者', async () => {
+    const f = browserFixture();
+    vi.mocked(f.container.getEnv).mockImplementation(async () => {
+      f.entry.services.backend.containerId = 'c'.repeat(64);
+      return 'TARGET=https://external.example/path\n';
+    });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('当前服务身份已变化');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.entry.services.backend.containerId).toBe('c'.repeat(64));
+    expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(true);
+  });
+  it.each(['internal-alias', 'container-name', 'unavailable', 'unconfirmed', 'external'])('配置已改外部地址，实际运行消费者=%s 时只凭真实证据退役', async kind => {
+    const f = browserFixture(), shell = new MockShellExecutor();
+    Object.assign(f.state, { getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend', env: { TARGET: 'https://external.example/path' } }] });
+    shell.addResponsePattern(/docker inspect/, () => kind === 'unavailable'
+      ? { stdout: '', stderr: 'environment unavailable', exitCode: 1 }
+      : { stdout: `TARGET=${kind === 'internal-alias' ? 'http://api:80/path' : kind === 'container-name' ? 'http://old-api:80/path' : 'https://external.example/path'}\n`, stderr: '', exitCode: 0 });
+    const native = new ContainerService(shell, {} as CdsConfig);
+    f.container.getEnv = native.getEnv.bind(native);
+    if (kind === 'unconfirmed') vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, id, runtime) => id === 'backend' ? null : { ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName!] });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).resolves.toBeUndefined();
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(kind === 'external' ? 1 : 0);
+    expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(kind !== 'external');
+    expect(f.entry.services.backend.containerId).toBe('b'.repeat(64));
+    expect(shell.commands).toHaveLength(kind === 'unconfirmed' ? 0 : 1);
+    for (const command of shell.commands) { expect(command).toContain('docker inspect ' + 'b'.repeat(64)); expect(command).not.toContain('unchanged-backend'); }
+  });
   it.each(['project', 'legacy-project', 'branch', 'mode', 'external', 'legacy-external'])('按实际运行环境解析 %s 消费者，保留外部地址控制', async layer => {
     const f = browserFixture(), internal = 'http://api:80/path', external = 'https://external.example/path';
     const externalOnly = layer.endsWith('external');
