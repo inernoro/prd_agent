@@ -440,7 +440,8 @@ export function ReportsPage(): JSX.Element {
     handleSelectReport(target);
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
-      next.set('project', target.projectId!);
+      // Keep the existing scope: canonicalizing a slug/global view would refetch
+      // the list and clear the report that has just been selected.
       next.set('report', target.id);
       if (target.folderId) next.set('folder', target.folderId);
       else next.delete('folder');

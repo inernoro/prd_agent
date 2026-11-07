@@ -46,6 +46,7 @@ async function verifyAuthenticatedReportNavigation() {
       ? `<h1>${title}</h1><a target="_blank" href="${target}">打开技术附录</a><a target="_blank" href="${missing}">未列出报告</a>`
       : `# ${title}\n\n[打开技术附录](${target})\n\n[未列出报告](${missing})`;
     const rawRequests = [];
+    let listRequests = 0, rejectUnexpectedListReload = true;
     await context.route('**/api/**', async route => {
       const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
       if (p === '/api/auth/status') return route.fulfill({ json: { authenticated: true, enabled: true, mode: 'basic', user: { id: 'fixture-owner', name: '合成验收账号', isSystemOwner: true } } });
@@ -55,7 +56,10 @@ async function verifyAuthenticatedReportNavigation() {
         if (p === `/api/reports/${appendixId}/raw`) return route.fulfill({ contentType: 'text/plain', body: `<h1>APPENDIX-${format}</h1>` });
         return route.fulfill({ status: 403, json: { message: '不可访问的合成报告' } });
       }
-      if (p === '/api/reports') return route.fulfill({ json: { reports } });
+      if (p === '/api/reports') {
+        if (++listRequests > 1 && rejectUnexpectedListReload) return route.fulfill({ status: 503, json: { message: '不得因同项目导航重新读取列表' } });
+        return route.fulfill({ json: { reports } });
+      }
       if (p === '/api/projects') return route.fulfill({ json: { projects: [{ id: canonicalProject, slug: project, name: '合成验收项目' }] } });
       if (p === '/api/report-folders') return route.fulfill({ json: { folders: [] } });
       if (p === '/api/cds-system/connections') return route.fulfill({ json: { connections: [] } });
@@ -66,7 +70,8 @@ async function verifyAuthenticatedReportNavigation() {
     });
     const page = await context.newPage();
     try {
-      await page.goto(`${base}/reports?project=${canonicalProject}&report=${supervisorId}`);
+      const scope = format === 'html' ? `project=${canonicalProject}&` : '';
+      await page.goto(`${base}/reports?${scope}report=${supervisorId}`);
       let frame = page.frameLocator(`iframe[title="${title}"]`);
       await frame.getByRole('heading', { name: title }).waitFor();
       await page.evaluate((reportId) => window.postMessage({ type: 'cds:authenticated-report-navigation', reportId }, location.origin), appendixId);
@@ -81,7 +86,10 @@ async function verifyAuthenticatedReportNavigation() {
       assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts');
       assert.equal(context.pages().length, 1, 'report navigation must not open a popup');
       assert.equal(new URL(page.url()).searchParams.get('folder'), folder, 'folder comes from authenticated metadata');
+      assert.equal(new URL(page.url()).searchParams.get('project'), format === 'html' ? canonicalProject : null, 'same-project navigation preserves the existing list scope');
+      assert.equal(listRequests, 1, 'navigation must use the already authenticated list');
       assert(await frame.locator('body').evaluate(() => { try { void window.parent.document.body; return false; } catch { return true; } }), 'frame remains isolated from authenticated parent');
+      rejectUnexpectedListReload = false;
       await page.reload();
       await frame.getByRole('heading', { name: `APPENDIX-${format}` }).waitFor();
       await page.screenshot({ path: path.join(out, `report-auth-navigation-${format}.jpg`) });
