@@ -58,7 +58,7 @@ describe('验收报告主页 · 桌面端返回入口', () => {
     const source = /const handleSelectReport = useCallback\([\s\S]*?=> \{([\s\S]*?)\n  \}, \[/.exec(SRC);
     expect(source).toBeTruthy();
     let selected: unknown = 'original';
-    let scheduled: URLSearchParams | undefined;
+    let scheduled = new URLSearchParams('report=original');
     const select = runInNewContext(`((report) => { ${source![1]} })`, {
       URLSearchParams, setSelected: (value: unknown) => { selected = value; },
       setNavDrawerOpen: () => {},
@@ -68,6 +68,6 @@ describe('验收报告主页 · 桌面端返回入口', () => {
     });
     select({ id: 'target' });
     expect(selected).toBe('original');
-    expect(scheduled?.get('report')).toBe('target');
+    expect(scheduled.get('report')).toBe('target');
   });
 });
