@@ -4,11 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import {
-  codeReviewAction, codeReviewReportUrl, downloadCodeReviewReport, listCodeReviews, submitCodeReview,
+  codeReviewAction, codeReviewReportUrl, downloadCodeReviewReport, listCodeReviews, listCodeReviewBranches, submitCodeReview,
   type CodeReviewTask,
 } from '../../web/src/lib/codeReviews.js';
 import { buildCodeReviewDocument, ReviewDetail } from '../../web/src/pages/CodeReviewsPage.js';
-import { FindingDetail, readableAiExplanation } from '../../web/src/pages/code-reviews/ReviewReportReader.js';
+import { FindingDetail, readableAiExplanation, ReviewReportReader } from '../../web/src/pages/code-reviews/ReviewReportReader.js';
 import { AppRail } from '../../web/src/components/layout/AppShell.js';
 
 const { MemoryRouter } = createRequire(path.resolve('web/package.json'))('react-router-dom');
@@ -22,6 +22,15 @@ const task: CodeReviewTask = {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('code review API client', () => {
+  it('CDS 来源只发送当前项目和所选分支 ID，无需文件或 GitHub 地址', async () => {
+    const branches = [{ id: 'branch/selected', branch: 'feature/review', status: 'idle' }];
+    const fetcher = vi.fn().mockImplementation(async (_url, init) => Response.json(init?.method === 'POST' ? { task } : { branches }));
+    vi.stubGlobal('fetch', fetcher);
+    expect(await listCodeReviewBranches(task.projectId)).toEqual(branches);
+    expect(fetcher.mock.calls[0][0]).toBe('/api/code-reviews/branches?projectId=project+%26+private');
+    await submitCodeReview({ projectId: task.projectId, sourceType: 'cds', branchId: branches[0].id });
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ projectId: task.projectId, sourceType: 'cds', branchId: 'branch/selected' });
+  });
   it('fetches report downloads with credentials and preserves the exact archived bytes', async () => {
     const body = '# 审查报告\n\n固定提交：abc123\n';
     const fetcher = vi.fn().mockResolvedValue(new Response(body, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } }));
@@ -95,6 +104,14 @@ function renderDetail(value: CodeReviewTask): string {
 }
 
 describe('code review task reading', () => {
+  it('导入文档第一个页签就是报告内容，不显示没有数据的问题页签', () => {
+    const html = renderToStaticMarkup(createElement(MemoryRouter, {}, createElement(ReviewReportReader, {
+      task: { ...task, sourceType: 'report', reportId: 'report', status: 'completed' }, projectName: '项目', onBack: () => undefined, onAction: () => undefined, pending: false,
+    })));
+    expect(html).toContain('aria-selected="true"'); expect(html).toContain('报告内容'); expect(html).toContain('文档信息');
+    expect(html).not.toContain('>原始报告</button>'); expect(html).not.toContain('>问题</button>');
+    expect(html).toContain('正在读取报告内容');
+  });
   it('makes the review entry available to project members without exposing owner report controls', () => {
     const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(AppRail, {
       active: 'code-reviews', canManageSettings: false, canLogout: false, logoutState: 'idle',

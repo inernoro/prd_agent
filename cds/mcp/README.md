@@ -40,9 +40,9 @@ cwd = "/absolute/path/project"
 
 | 工具 | 输入 | 行为 |
 |---|---|---|
-| `cds_code_review_submit` | `zipPath` 或 `githubUrl`；可选 `ref`、`excludePatterns`、`title`、`email`、`idempotencyKey` | 创建异步审查任务；显式提供邮箱才额外发信 |
+| `cds_code_review_submit` | `zipPath`、`githubUrl` 或当前项目 `branchId`（三选一）；可选 `ref`、`excludePatterns`、`title`、`email`、`idempotencyKey` | 创建异步审查任务；显式提供邮箱才额外发信 |
 | `cds_code_review_get` | `taskId`；可选 `offset`、`limit`、`severity`、`query` | 查询进度、结构化问题、覆盖范围、报告链接和投递状态；不触发分析 |
-| `cds_code_review_list` | 无 | 查询凭据绑定项目的任务与报告关联 |
+| `cds_code_review_list` | 可选 `includeBranches` | 查询凭据绑定项目的任务与报告关联；为 true 时附带可审查分支 ID 与名称 |
 | `cds_code_review_report_upload` | `filePath`、`title`；可选 `idempotencyKey` | 上传已有 HTML/Markdown 报告，无需重新审查 |
 
 工具发现读取 CDS `/api/code-reviews/capabilities` 的共享能力目录，只展示服务端登记的工具。
@@ -70,3 +70,8 @@ pnpm --dir cds/mcp check
 ```
 
 首次读取较大的历史结果时，`cds_code_review_get` 会立即返回 `result: null, resultLoading: true`。继续按同一 taskId 查询，后台只整理引擎已有问题，完成后返回分页结果；不会恢复审查或改变失败状态。
+
+直接审查 CDS 已连接的项目：先调用 `cds_code_review_list({"includeBranches":true})`，
+用户选择返回的分支后调用 `cds_code_review_submit({"branchId":"所选分支ID"})`。
+无需上传文件或填写 GitHub URL。准备源码时复用现有项目仓库授权，同步远端分支并固定 SHA；
+审查不包含工作树未提交内容，不切换部署分支，也不运行项目脚本。`ref` 仅用于 GitHub 来源。

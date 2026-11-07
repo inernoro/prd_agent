@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { BuildProfile, ExecOptions, IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
@@ -9,6 +10,7 @@ import { fetchWithLockRetry } from './git-fetch-retry.js';
 import { hasDatabaseInitializationSource } from './stack-detector.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
 import { readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity, worktreePathActivity, WorktreePathActivity } from './worktree-path-activity.js';
+import { CODE_REVIEW_ZIP_LIMITS, shouldIncludeCodeReviewPath } from './code-review-source.js';
 
 // 同一控制进程/规范repoRoot共用；元数据清理未知时复用现有活动围栏，不放行后继写入。
 const repositoryMutations = new Map<string, Promise<void>>();
@@ -136,6 +138,59 @@ export class WorktreeService {
 
   setGitEnvProvider(provider: (repoRoot: string) => Promise<ExecOptions['env'] | undefined>): void {
     this.gitEnvProvider = provider;
+  }
+
+  /** Capture committed source without checkout/reset or running project scripts. */
+  async exportCodeReviewSnapshot(repoRoot: string, branch: string, excludePatterns: string[], control: {
+    signal: AbortSignal; assertCurrent: () => void;
+  }): Promise<{ zip: Buffer; commitSha: string; skippedFiles: number }> {
+    const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+    const assertCurrent = () => { control.signal.throwIfAborted(); control.assertCurrent(); };
+    if (!this.shell.execBackgroundObservation) throw new Error('当前实例缺少仓库读取执行器');
+    const observe = async (command: string, stdin?: string): Promise<string> => {
+      assertCurrent(); let output = ''; let bytes = 0;
+      const result = await this.shell.execBackgroundObservation!(command, { cwd: repoRoot, timeout: 45_000,
+        signal: control.signal, beforeStart: assertCurrent, captureOutput: false, stdin,
+        onData: (chunk, channel) => { bytes += Buffer.byteLength(chunk); if (bytes > 16 * 1024 * 1024) throw new Error('仓库目录超过读取上限'); if (channel !== 'stderr') output += chunk; } });
+      assertCurrent(); if (result.exitCode !== 0) throw new Error('CDS 分支源码读取失败，请检查仓库同步与访问权限');
+      return output;
+    };
+    return worktreePathActivity.run([repoRoot], () => withRepositoryMutation(repoRoot, async () => {
+      await observe(`git check-ref-format ${quote(`refs/heads/${branch}`)}`);
+      const env = await this.gitEnvProvider?.(repoRoot); assertCurrent();
+      // An explicit remote-tracking ref avoids both mutable worktrees and FETCH_HEAD races.
+      const fetched = await this.shell.exec(`git -c core.hooksPath=/dev/null -c fetch.recurseSubmodules=false fetch origin ${quote(`+refs/heads/${branch}:refs/remotes/origin/${branch}`)}`, {
+        cwd: repoRoot, env, signal: control.signal, beforeStart: assertCurrent, timeout: 60_000,
+      });
+      assertCurrent(); if (fetched.exitCode !== 0) throw new Error('无法同步所选 CDS 分支，请检查已有仓库授权');
+      const commitSha = (await observe(`git rev-parse --verify ${quote(`refs/remotes/origin/${branch}^{commit}`)}`)).trim();
+      if (!/^[a-f0-9]{40}$/.test(commitSha)) throw new Error('无法固定 CDS 分支提交');
+      const tree = await observe(`git ls-tree -r -l -z ${quote(commitSha)}`);
+      if (tree && !tree.endsWith('\0')) throw new Error('仓库目录读取不完整');
+      const paths: string[] = []; let skippedFiles = 0;
+      for (const row of tree.split('\0').filter(Boolean)) {
+        const tab = row.indexOf('\t'); const [mode, type, , size] = row.slice(0, tab).trim().split(/\s+/);
+        const name = row.slice(tab + 1);
+        if (tab < 0) throw new Error('仓库目录格式无效');
+        if (shouldIncludeCodeReviewPath(name, excludePatterns) && mode === '120000') throw new Error('审查范围包含符号链接，请先排除该路径');
+        if (type !== 'blob' || !['100644', '100755'].includes(mode) || !shouldIncludeCodeReviewPath(name, excludePatterns)
+          || !Number.isSafeInteger(Number(size)) || Number(size) > CODE_REVIEW_ZIP_LIMITS.file) { skippedFiles++; continue; }
+        paths.push(name);
+      }
+      if (!paths.length) throw new Error('所选分支没有符合规则的源码文件');
+      if (paths.length > CODE_REVIEW_ZIP_LIMITS.entries || Buffer.byteLength(JSON.stringify(paths)) > 1024 * 1024) throw new Error('所选分支源码数量或路径总长度超过上限');
+      const temporary = await fs.promises.mkdtemp(path.join(tmpdir(), 'cds-review-source-'));
+      try {
+        const target = path.join(temporary, 'source.zip');
+        // This trusted platform helper runs in the existing isolated executor.
+        // Binary output is bounded before writing and file names never enter shell syntax.
+        const script = `const fs=require('node:fs'),cp=require('node:child_process');const paths=JSON.parse(fs.readFileSync(0,'utf8'));const zip=cp.execFileSync('git',['-C',process.argv[1],'archive','--format=zip',process.argv[2],'--',...paths.map(p=>':(literal)'+p)],{maxBuffer:${CODE_REVIEW_ZIP_LIMITS.compressed},timeout:30000});fs.writeFileSync(process.argv[3],zip,{mode:0o600});`;
+        await observe([process.execPath, '-e', script, repoRoot, commitSha, target].map(quote).join(' '), JSON.stringify(paths));
+        const info = await fs.promises.stat(target); assertCurrent();
+        if (info.size > CODE_REVIEW_ZIP_LIMITS.compressed) throw new Error('源码快照超过 100 MiB');
+        return { zip: await fs.promises.readFile(target), commitSha, skippedFiles };
+      } finally { await fs.promises.rm(temporary, { recursive: true, force: true }); }
+    }), true);
   }
 
   /**

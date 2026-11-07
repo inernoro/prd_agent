@@ -36,7 +36,8 @@ export function readableAiExplanation(raw: string): Array<{ label?: string; text
 export function ReviewReportReader({ task, projectName, onBack, onAction, pending }: { task: CodeReviewTask; projectName: string; onBack: () => void;
   onAction: (action: 'cancel' | 'retry' | 'delivery/retry') => void; pending: boolean }): JSX.Element {
   const [params, setParams] = useSearchParams();
-  const [tab, setTab] = useState<ReaderTab>(task.sourceType === 'report' ? 'original' : task.reportId || task.progress.scannedFiles > 0 ? 'findings' : 'details');
+  const imported = task.sourceType === 'report';
+  const [tab, setTab] = useState<ReaderTab>(imported || task.reportId || task.progress.scannedFiles > 0 ? 'findings' : 'details');
   const [read, setRead] = useState<CodeReviewRead | null>(null);
   const [original, setOriginal] = useState<ReportPayload | null>(null);
   const [error, setError] = useState('');
@@ -68,18 +69,21 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
     return () => controller.abort();
   }, [task.id, task.updatedAt, offset, severity, search, attempt]);
   useEffect(() => {
-    if (tab !== 'original' || original || !task.reportId) return;
+    const firstTabDocument = tab === 'findings' && (imported || Boolean(read && !read.result && !read.resultLoading));
+    if ((tab !== 'original' && !firstTabDocument) || original || !task.reportId) return;
     const controller = new AbortController(); setOriginalError('');
     void apiRequest<ReportPayload>(`/api/code-reviews/${encodeURIComponent(task.id)}/report`, { signal: controller.signal })
       .then(value => { if (!controller.signal.aborted) setOriginal(value); })
       .catch(() => { if (!controller.signal.aborted) setOriginalError('原始报告暂时无法读取，请重新加载。'); });
     return () => controller.abort();
-  }, [task.id, task.reportId, tab, original, attempt]);
+  }, [task.id, task.reportId, tab, original, attempt, imported, read]);
   const result = read?.result;
   const current = read?.task || task;
   const selection = Number(params.get('issue'));
   const finding = result?.findings.find(item => item.index === selection) || result?.findings[0];
   const totalFindings = result ? Object.values(result.summary).reduce((sum, n) => sum + n, 0) : undefined;
+  const tabs: Array<[ReaderTab, string]> = imported ? [['findings', '报告内容'], ['details', '文档信息']]
+    : [['findings', `问题${totalFindings === undefined ? '' : ` ${totalFindings}`}`], ['original', '原始报告'], ['details', '审查详情']];
   const select = (index: number): void => setParams(current => { const next = new URLSearchParams(current); next.set('issue', String(index)); return next; });
   const coverage = reviewCoverage(current);
   const download = async (): Promise<void> => {
@@ -95,28 +99,32 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
     } catch { if (alive.current) setDownloadError('报告下载未完成，请重试。'); }
     finally { if (alive.current) setDownloading(false); }
   };
+  const documentView = original ? <ReportDocument {...original.report} content={original.content} />
+    : originalError ? <div className="space-y-3"><ErrorNotice message={originalError} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载报告</Button></div>
+      : task.reportId ? <ContentLoading label="正在读取报告内容" variant="panel" /> : <p className="py-8 text-base text-muted-foreground">报告尚未归档，请在审查详情中查看进度。</p>;
   return <section aria-label="代码审查报告阅读器" className="min-w-0 space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={onBack}><ArrowLeft />返回列表</Button>
       <Button variant="outline" disabled={(!task.reportId && !result) || downloading} onClick={() => { void download(); }}><Download />{downloading ? '正在下载' : task.reportId ? '下载报告' : '下载当前结果'}</Button></div>
     <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="min-w-0 max-w-full break-words text-[1.75rem] font-semibold tracking-tight">{task.title === '代码审查报告' ? task.sourceName : task.title}</h1>
       {coverage.kind === 'partial' || current.status === 'failed' ? <span className="rounded bg-warn-soft px-3 py-1 text-sm text-warn">阶段结果 · 未完成</span> : null}</div>
-      <p className="break-all text-sm text-muted-foreground">{projectName} · {current.commitSha ? `固定提交 ${current.commitSha.slice(0, 12)}` : current.sourceHash ? `ZIP 快照 ${current.sourceHash.slice(0, 12)}` : current.sourceName}</p>
+      <p className="break-all text-sm text-muted-foreground">{projectName}{current.branchName ? ` · ${current.branchName}` : ''} · {current.commitSha ? `固定提交 ${current.commitSha.slice(0, 12)}` : current.sourceHash ? `ZIP 快照 ${current.sourceHash.slice(0, 12)}` : current.sourceName}</p>
       <p role="status" className={`px-3 py-2 text-base ${coverage.kind === 'partial' || coverage.kind === 'unknown' || current.status === 'failed' ? 'bg-warn-soft text-warn' : 'bg-muted/40 text-muted-foreground'}`}>
         {coverage.text}{task.sourceType !== 'report' ? '。发现仅代表已分析范围，均未做运行期验证。' : ''}</p>
     </header>
     {downloadError ? <ErrorNotice message={downloadError} /> : null}
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border" role="tablist" aria-label="报告视图">
-      <div className="flex gap-3">{([['findings', `问题${totalFindings === undefined ? '' : ` ${totalFindings}`}`], ['original', '原始报告'], ['details', '审查详情']] as const).map(([key, label], index) =>
+      <div className="flex gap-3">{tabs.map(([key, label], index) =>
         <button key={key} type="button" role="tab" tabIndex={tab === key ? 0 : -1} aria-selected={tab === key} aria-controls={`review-panel-${key}`} id={`review-tab-${key}`} onClick={() => setTab(key)}
-          onKeyDown={event => { const keys: ReaderTab[] = ['findings', 'original', 'details']; const next = event.key === 'ArrowRight' ? (index + 1) % 3 : event.key === 'ArrowLeft' ? (index + 2) % 3 : event.key === 'Home' ? 0 : event.key === 'End' ? 2 : null; if (next !== null) { event.preventDefault(); setTab(keys[next]); document.getElementById(`review-tab-${keys[next]}`)?.focus(); } }}
+          onKeyDown={event => { const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null; if (next !== null) { event.preventDefault(); setTab(tabs[next][0]); window.document.getElementById(`review-tab-${tabs[next][0]}`)?.focus(); } }}
           className={`border-b px-3 py-3 text-base ${tab === key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>{label}</button>)}</div>
       <span className="pb-2 text-sm text-muted-foreground">{task.sourceType === 'report' ? '原文件保存' : '静态与 AI 分析 · 发现待验证'}</span>
     </div>
     <div role="tabpanel" id={`review-panel-${tab}`} aria-labelledby={`review-tab-${tab}`}>
       {tab === 'details' ? <div className="space-y-4"><ReviewDetail task={current} now={Date.now()} pending={pending} onAction={onAction} />
         {result ? <div className="space-y-2 text-base"><h2 className="font-medium">覆盖与检查说明</h2>{result.notes.map((note, index) => <p key={index} className="break-words text-muted-foreground">{note}</p>)}</div> : null}</div> : null}
-      {tab === 'original' ? original ? <ReportDocument {...original.report} content={original.content} /> : originalError ? <div className="space-y-3"><ErrorNotice message={originalError} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载</Button></div> : task.reportId ? <ContentLoading label="正在读取原始报告" variant="panel" /> : <p className="py-8 text-base text-muted-foreground">报告尚未归档，请在审查详情中查看进度。</p> : null}
-      {tab === 'findings' ? error ? <div className="space-y-3"><ErrorNotice message={error} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载问题</Button></div>
+      {tab === 'original' ? documentView : null}
+      {tab === 'findings' ? imported ? documentView : error ? <div className="space-y-3"><ErrorNotice message={error} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载问题</Button></div>
+        : read && !result && !read.resultLoading && task.reportId ? <div className="space-y-4"><p className="rounded-md bg-warn-soft px-4 py-3 text-base leading-6 text-warn">{read.resultUnavailableReason || '历史任务未保存可读取的问题明细'}。以下展示已归档的报告正文，问题数量与证据以原文为准。</p>{documentView}</div>
         : !read ? <ContentLoading label="正在读取问题明细" variant="panel" /> : !result ? <div className="space-y-4 py-6"><p className="text-base text-muted-foreground">{read.resultUnavailableReason}</p>
           {read.resultLoading ? <ContentLoading label="正在整理已有问题，不会重新执行审查" variant="inline" /> : task.sourceType !== 'report' ? <Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新读取问题</Button> : null}
           <Button variant="outline" onClick={() => setTab(task.reportId ? 'original' : 'details')}>{task.reportId ? '阅读原始报告' : '查看审查进度'}</Button></div>

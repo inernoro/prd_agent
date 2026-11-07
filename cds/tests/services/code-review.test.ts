@@ -14,6 +14,7 @@ import { CodeReviewEngine, type CodeReviewEngineResult } from '../../src/service
 import { publicCodeReviewTask, type CodeReviewTask } from '../../src/shared/code-review.js';
 import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
 import { CodeReviewUpstreamHttpError } from '../../src/services/code-review-audit.js';
+import { readCodeReviewSnapshot } from '../../src/services/code-review-source.js';
 
 describe('代码审查任务完整闭环', () => {
   let dir: string, state: StateService, service: CodeReviewService, server: Server | undefined;
@@ -421,6 +422,39 @@ describe('代码审查任务完整闭环', () => {
     server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     return `http://127.0.0.1:${(server.address() as any).port}/api/code-reviews`;
   }
+  it('CDS 分支任务固定 SHA 与路径，重试复用快照，不重新读取发生变化的分支', async () => {
+    state.addBranch({ id: 'selected', projectId: 'a', branch: 'feature/audit', worktreePath: '/unused', services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    const cdsSnapshot = vi.fn(async () => ({ zip: zip(), commitSha: 'c'.repeat(40), sourceName: 'a · feature/audit', skippedFiles: 8 }));
+    service = new CodeReviewService({ ...service.deps, cdsSnapshot });
+    run.mockImplementationOnce(async () => { throw new Error('模型暂时不可用'); });
+    const task = await service.submit({ projectId: 'a', sourceType: 'cds', branchId: 'selected', createdBy: 'test', excludePatterns: ['vendor/'] });
+    expect(task).toMatchObject({ status: 'queued', branchId: 'selected', branchName: 'feature/audit' });
+    await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', commitSha: 'c'.repeat(40), inputSkippedFiles: 8 });
+    expect(cdsSnapshot).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'a', branchId: 'selected', branchName: 'feature/audit', excludePatterns: ['vendor/'] }));
+    const sent = await readCodeReviewSnapshot(run.mock.calls[0][0].zip);
+    expect(sent.files.map(file => file.name)).toEqual(['src/index.ts']);
+    await service.retry(task.id); await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'completed', commitSha: 'c'.repeat(40), branchName: 'feature/audit' });
+    expect(cdsSnapshot).toHaveBeenCalledTimes(1); expect(state.listAcceptanceReports('a')).toHaveLength(1);
+    expect(state.getAcceptanceReport(service.get(task.id).reportId!)?.branch).toBe('feature/audit');
+  });
+  it('分支列表和提交共享项目权限，跨项目分支与混合来源在读取仓库前被拒绝', async () => {
+    for (const projectId of ['a', 'b']) state.addBranch({ id: `branch-${projectId}`, projectId, branch: `feature/${projectId}`, worktreePath: '/unused', services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    const cdsSnapshot = vi.fn(); service = new CodeReviewService({ ...service.deps, cdsSnapshot });
+    const url = await serve(), headers = { 'x-project': 'a', 'content-type': 'application/json' };
+    const branches = await fetch(`${url}/branches?projectId=a`, { headers });
+    expect(await branches.json()).toEqual({ branches: [{ id: 'branch-a', branch: 'feature/a', status: 'idle' }] });
+    expect((await fetch(`${url}/branches?projectId=b`, { headers })).status).toBe(403);
+    const post = (data: object) => fetch(url, { method: 'POST', headers, body: JSON.stringify({ projectId: 'a', sourceType: 'cds', ...data }) });
+    expect((await post({ branchId: 'branch-b' })).status).toBe(403);
+    expect((await post({ branchId: 'branch-a', githubUrl: 'https://github.com/a/b' })).status).toBe(400);
+    expect((await post({ branchId: 'branch-a', ref: 'main' })).status).toBe(400);
+    expect(cdsSnapshot).not.toHaveBeenCalled();
+    const accepted = await post({ branchId: 'branch-a' }); expect(accepted.status).toBe(202);
+    expect((await accepted.json()).task).toMatchObject({ sourceType: 'cds', branchId: 'branch-a', branchName: 'feature/a', status: 'queued' });
+    expect(cdsSnapshot).not.toHaveBeenCalled();
+  });
   it('结构化结果持久化后可独立读取，分页与原始报告不触发再次分析', async () => {
     run.mockImplementation(async () => ({ ...result(), findings: Array.from({ length: 125 }, (_, i) => ({
       ...result().findings[0], severity: i < 3 ? 'high' : 'low', title: `问题 ${i}`, codeSnippet: '<script>not executed</script>', aiExplanation: '原始解释',

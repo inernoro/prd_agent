@@ -5,9 +5,9 @@ import type { ReviewCapabilities } from './ReviewComposer';
 
 const configuration = JSON.stringify({ mcpServers: { 'cds-code-review': { command: 'node', args: ['/absolute/path/prd_agent/cds/mcp/src/server.mjs'] } } }, null, 2);
 const toolLabels: Record<string, string> = {
-  cds_code_review_submit: '提交 ZIP 或 GitHub 地址，返回任务 ID',
+  cds_code_review_submit: '提交 ZIP、GitHub 地址或 CDS 分支 ID，返回任务 ID',
   cds_code_review_get: '读取进度、结构化问题、覆盖说明和报告链接',
-  cds_code_review_list: '列出当前项目的审查记录',
+  cds_code_review_list: '列出审查记录；includeBranches=true 获取当前项目分支',
   cds_code_review_report_upload: '保存已有 HTML / Markdown 报告，不重新审查',
 };
 

@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.20.2",
+  "version": "0.20.3",
   "skills": [
     "cds",
     "cds-project-scan",
@@ -9,14 +9,14 @@
     "preview-url"
   ],
   "files": {
-    "cds/SKILL.md": "c90282d13560c332a9a162e9c6fe5e9ec58183d7d66214307393e5e999027995",
+    "cds/SKILL.md": "2205c33866bf4c63009b472d8aa7ccad8ea4267f96c515cc4c370bd0033f6c2d",
     "cds/cli/acceptance/.gitignore": "5875f28fb25c8a9449faa5ebb5100a488f79ea807932fb21fb52ce48fcab1db0",
     "cds/cli/acceptance/build_report_html.py": "332ef0716bfc531f3c815acc783695121fb1a6fe25c5001312b4cd34ff7ce9af",
     "cds/cli/acceptance/cds-harness.mjs": "be6a9af00cb5ae704a6f08f295795d3921d9f860447bf9b5dc207faf2e9cef75",
     "cds/cli/acceptance/cds.config.example.json": "0f0aca3f66243fd76f1003d3ae06f076db52650eda60c385491352d9cffa248c",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "4f5e50836de9a4447b296bb71e2ddf7d2dfa1a28e2b014b40ea229e74ba0e05e",
+    "cds/cli/cdscli.py": "9688cf831123e01a110844952eba456ef5d8ee29f73adcfc0090fb6ee0a4a809",
     "cds/reference/acceptance-reports.md": "dfc32f7d6975a357edc234ae3d95aec7a196c8b4f8ec54353c215d586b1b92ea",
     "cds/reference/api.md": "0941f2a742bc1b4f42add9973fbfd1d559dd4d57acb74e5011dd23593019921b",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -28,7 +28,7 @@
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/scripts/refresh_manifest.py": "22a4f7d70480a7bd35bc852ea7270fc85f4d12c404c0db49d9a003f009d21e5e",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
-    "cds/tests/test_cdscli_code_review.py": "82c7b559fed679bfce125f89e77cba5d057e2fb355b287e9aed5b263e2261872",
+    "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
     "cds/tests/test_cdscli_connect.py": "92596523cd6fb21b416c9305c75e5ed7df76cf1728caa5a9f0adcc15116d551f",
     "cds/tests/test_cdscli_deploy_branch_resolution.py": "c3b9a15fb33f9dc5193b59283f5e569c745bb0c075f3680f8bfc211e194c3576",
     "cds/tests/test_cdscli_deploy_trigger_failure_reason.py": "e0723fdd5f734d6de38b4a6886a5450d94320ba4a40a4bb7ddb91bbd7a5898e3",
@@ -64,5 +64,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-07T21:27:06.519460+00:00"
+  "generatedAt": "2026-11-07T23:18:13.663883+00:00"
 }

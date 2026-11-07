@@ -47,6 +47,7 @@ before(async () => {
     if (url.pathname.endsWith('/wrong-project')) { res.end(JSON.stringify({ task: { ...task, projectId: 'other' } })); return; }
     if (url.pathname.endsWith('/secret-error')) { res.writeHead(502); res.end(JSON.stringify({ message: `upstream ${key} SMTP_PASSWORD=private-password` })); return; }
     if (req.url.endsWith('/reports')) { res.end(JSON.stringify({ report: { id: 'report-1', projectId: 'project-one', reportType: 'code-review' } })); return; }
+    if (url.pathname === '/api/code-reviews/branches') { res.end(JSON.stringify({ branches: [{ id: 'branch-1', branch: 'feature/audit', status: 'idle' }] })); return; }
     if (url.searchParams.has('projectId')) { res.end(JSON.stringify({ tasks: [task] })); return; }
     if (url.searchParams.has('includeResult')) {
       res.end(JSON.stringify({ task, result: { taskId: task.id, projectId: task.projectId,
@@ -116,7 +117,7 @@ test('rejects project overrides, mismatched responses, ambiguous inputs and non-
     const override = await client.callTool({ name: 'cds_code_review_list', arguments: { projectId: 'other' } });
     assert.equal(override.isError, true);
     assert.equal(requests.length, count);
-    for (const args of [{}, { zipPath: 'code.zip', githubUrl: 'https://github.com/a/b' }, { githubUrl: 'http://localhost/private' }, { githubUrl: 'https://user:pass@github.com/a/b' }]) {
+    for (const args of [{}, { zipPath: 'code.zip', githubUrl: 'https://github.com/a/b' }, { branchId: 'branch-1', githubUrl: 'https://github.com/a/b' }, { branchId: 'branch-1', zipPath: 'code.zip' }, { branchId: 'branch-1', ref: 'main' }, { githubUrl: 'http://localhost/private' }, { githubUrl: 'https://user:pass@github.com/a/b' }]) {
       const result = await client.callTool({ name: 'cds_code_review_submit', arguments: args });
       assert.equal(result.isError, true);
     }
@@ -124,6 +125,18 @@ test('rejects project overrides, mismatched responses, ambiguous inputs and non-
     const mismatched = await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'wrong-project' } });
     assert.equal(mismatched.isError, true);
     assert.match(mismatched.content[0].text, /项目不匹配/);
+  });
+});
+
+test('real stdio client discovers CDS branches and submits one without local files or repository URLs', async () => {
+  await withClient(async client => {
+    const listed = parsed(await client.callTool({ name: 'cds_code_review_list', arguments: { includeBranches: true } }));
+    assert.deepEqual(listed.tasks, [task]);
+    assert.deepEqual(listed.branches, [{ id: 'branch-1', branch: 'feature/audit', status: 'idle' }]);
+    assert.equal(requests.at(-1).url, '/api/code-reviews/branches?projectId=project-one');
+    const response = await client.callTool({ name: 'cds_code_review_submit', arguments: { branchId: listed.branches[0].id, excludePatterns: ['vendor/'], title: '所选分支' } });
+    assert.equal(response.isError, undefined);
+    assert.deepEqual(JSON.parse(requests.at(-1).body), { sourceType: 'cds', projectId: 'project-one', branchId: 'branch-1', excludePatterns: ['vendor/'], title: '所选分支' });
   });
 });
 

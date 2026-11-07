@@ -9,8 +9,10 @@ export interface CodeReviewTask {
   id: string;
   projectId: string;
   title: string;
-  sourceType: 'zip' | 'github' | 'report';
+  sourceType: 'zip' | 'github' | 'cds' | 'report';
   sourceName: string;
+  branchId?: string;
+  branchName?: string;
   githubUrl?: string;
   ref?: string;
   excludePatterns?: string[];
@@ -35,7 +37,8 @@ export interface CodeReviewTask {
 
 export interface CodeReviewSubmission {
   projectId: string;
-  sourceType: 'zip' | 'github';
+  sourceType: 'zip' | 'github' | 'cds';
+  branchId?: string;
   file?: File;
   githubUrl?: string;
   ref?: string;
@@ -62,6 +65,12 @@ export async function listCodeReviews(projectId: string, signal?: AbortSignal): 
   const query = projectId ? `?${new URLSearchParams({ projectId })}` : '';
   const response = await apiRequest<{ tasks: CodeReviewTask[] }>(`/api/code-reviews${query}`, { signal });
   return response.tasks;
+}
+
+export interface CodeReviewBranch { id: string; branch: string; status: string }
+export async function listCodeReviewBranches(projectId: string, signal?: AbortSignal): Promise<CodeReviewBranch[]> {
+  const response = await apiRequest<{ branches: CodeReviewBranch[] }>(`/api/code-reviews/branches?${new URLSearchParams({ projectId })}`, { signal });
+  return response.branches;
 }
 
 export interface CodeReviewRead {
@@ -97,14 +106,13 @@ export async function uploadCodeReviewReport(projectId: string, title: string, f
 }
 
 export async function submitCodeReview(input: CodeReviewSubmission, signal?: AbortSignal): Promise<CodeReviewTask> {
-  if (input.sourceType === 'github') {
+  if (input.sourceType !== 'zip') {
     const { task } = await apiRequest<{ task: CodeReviewTask }>('/api/code-reviews', {
       method: 'POST',
       body: {
         projectId: input.projectId,
         sourceType: input.sourceType,
-        githubUrl: input.githubUrl,
-        ref: input.ref || undefined,
+        ...(input.sourceType === 'cds' ? { branchId: input.branchId } : { githubUrl: input.githubUrl, ref: input.ref || undefined }),
         excludePatterns: input.excludePatterns,
         email: input.email || undefined,
       },

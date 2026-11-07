@@ -45,6 +45,8 @@ class CodeReviewCliTest(unittest.TestCase):
                     task["projectId"] = "other"
                 if self.path.endswith("/reports"):
                     result = {"report": {"id": "report-1", "projectId": "project-one", "reportType": "code-review"}}
+                elif self.path.startswith("/api/code-reviews/branches?"):
+                    result = {"branches": [{"id": "branch-1", "branch": "feature/audit", "status": "idle"}]}
                 elif "includeResult=1" in self.path:
                     result = {"task": task, "result": {"projectId": "project-one", "taskId": task["id"], "findings": [], "coverage": {"complete": False}}}
                 elif "?" in self.path:
@@ -99,6 +101,21 @@ class CodeReviewCliTest(unittest.TestCase):
             "projectId": "project-one", "sourceType": "github", "githubUrl": "https://github.com/inernoro/prd_agent", "ref": "main", "email": "owner@example.com", "excludePatterns": ["vendor/**"], "idempotencyKey": "submission-1",
         })
         self.assertEqual(output["data"]["task"]["id"], "task-1")
+
+    def test_cds_branch_discovery_and_submission_without_upload(self):
+        code, output = self.call("list", "--include-branches")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(output["data"]["branches"][0]["id"], "branch-1")
+        self.assertEqual(self.requests[-1]["path"], "/api/code-reviews/branches?projectId=project-one")
+        code, output = self.call("submit", "--branch-id", "branch-1", "--exclude", "vendor/")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(self.requests[-1]["body"]), {
+            "sourceType": "cds", "projectId": "project-one", "branchId": "branch-1", "excludePatterns": ["vendor/"],
+        })
+        count = len(self.requests)
+        code, _ = self.call("submit", "--branch-id", "branch-1", "--ref", "main")
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.requests), count)
 
     def test_zip_upload_and_report_upload_send_local_bytes(self):
         code, output = self.call("submit", "--zip-file", "code.zip", "--exclude", "vendor/**")

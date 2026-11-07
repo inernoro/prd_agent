@@ -46,6 +46,7 @@ import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
 import { CodeReviewService } from './services/code-review.js';
+import { codeReviewRepositoryRoot } from './services/code-review-source.js';
 import { createCodeReviewInputs } from './services/code-review-inputs.js';
 import { createCodeReviewMail } from './services/code-review-mail.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
@@ -871,6 +872,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Static exact matches
   const staticMap: Record<string, string> = {
+    'GET /code-reviews/branches': '列出审查分支',
     // shared 基础设施服务远程主机（系统级，2026-05-06）
     'GET /cds-system/remote-hosts': '列出远程主机',
     'POST /cds-system/remote-hosts': '登记远程主机',
@@ -4925,6 +4927,23 @@ export function createServer(deps: ServerDeps): express.Express {
       const repo = new URL(githubUrl).pathname.replace(/^\//, '').replace(/\/$/, '').replace(/\.git$/, '');
       if (project.githubRepoFullName?.toLowerCase() !== repo.toLowerCase()) return undefined;
       return githubAppClient.getInstallationToken(project.githubInstallationId);
+    },
+    cdsSnapshot: async input => {
+      const project = deps.stateService.getProject(input.projectId);
+      const branch = deps.stateService.getBranch(input.branchId);
+      if (!project || !branch || branch.projectId !== project.id || branch.branch !== input.branchName || branch.deleting || branch.mirror || project.mirror) throw new Error('所选 CDS 项目或分支已变化，请重新选择');
+      const sourceRoot = (p: typeof project, b: typeof branch) => codeReviewRepositoryRoot(p, b, deps.config.repoRoot,
+        deps.stateService.resolveProjectForAutoBuild(deps.config.repoRoot)?.id);
+      const repoRoot = sourceRoot(project, branch), repository = project.githubRepoFullName;
+      const assertCurrent = () => {
+        const currentProject = deps.stateService.getProject(project.id), currentBranch = deps.stateService.getBranch(branch.id);
+        if (!currentProject || !currentBranch || currentProject.mirror || currentBranch.mirror || currentBranch.projectId !== project.id
+          || currentBranch.deleting || currentBranch.branch !== input.branchName || currentProject.githubRepoFullName !== repository
+          || sourceRoot(currentProject, currentBranch) !== repoRoot) throw new Error('所选项目或分支已变化，已停止获取源码');
+      };
+      const snapshot = await deps.worktreeService.exportCodeReviewSnapshot(repoRoot, branch.branch, input.excludePatterns, { signal: input.signal, assertCurrent });
+      assertCurrent();
+      return { ...snapshot, sourceName: `${project.name} · ${branch.branch}` };
     },
   });
   app.use('/api', createCodeReviewsRouter({ state: deps.stateService, service: reviews }));

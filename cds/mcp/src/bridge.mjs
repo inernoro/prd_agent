@@ -15,16 +15,17 @@ const common = {
 const submitSchema = z.object({
   zipPath: z.string().min(1).optional(),
   githubUrl: z.url().optional(),
+  branchId: id.optional(),
   ref: z.string().min(1).max(250).optional(),
   excludePatterns: z.array(z.string().max(250)).max(100).optional(),
   ...common,
-}).strict().refine((input) => Boolean(input.zipPath) !== Boolean(input.githubUrl), {
-  message: 'zipPath 与 githubUrl 必须且只能提供一个',
-}).refine((input) => !input.zipPath || !input.ref, { message: 'ZIP 不接受仓库 ref' });
+}).strict().refine((input) => [input.zipPath, input.githubUrl, input.branchId].filter(Boolean).length === 1, {
+  message: 'zipPath、githubUrl 与 branchId 必须且只能提供一个',
+}).refine((input) => !input.ref || Boolean(input.githubUrl), { message: '只有 GitHub 来源接受仓库 ref' });
 const uploadSchema = z.object({ filePath: z.string().min(1), title: common.title.unwrap(), idempotencyKey: common.idempotencyKey }).strict();
 const getSchema = z.object({ taskId: id, offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional(),
   severity: z.enum(['critical', 'high', 'medium', 'low', 'info']).optional(), query: z.string().max(300).optional() }).strict();
-const listSchema = z.object({}).strict();
+const listSchema = z.object({ includeBranches: z.boolean().optional() }).strict();
 const inputSchemas = {
   cds_code_review_submit: submitSchema,
   cds_code_review_get: getSchema,
@@ -37,19 +38,20 @@ export const TOOLS = [
   {
     name: 'cds_code_review_submit',
     title: '发起 CDS 代码审查',
-    description: '在当前项目提交工作区内的 ZIP 或 GitHub 仓库地址。异步返回任务，所有报告归档 CDS；仅在提供 email 时额外发送邮件。上传源码不会执行项目脚本。',
+    description: '提交工作区内 ZIP、GitHub 地址或当前 CDS 项目分支 ID（三选一）。分支 ID 通过 list(includeBranches=true) 获取。异步返回任务，报告归档 CDS；仅提供 email 时额外发送邮件。不执行项目脚本。',
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
         zipPath: stringProperty('工作区内本地 ZIP 路径，不能指向服务器文件'),
         githubUrl: stringProperty('https://github.com/owner/repo 地址'),
-        ref: stringProperty('仓库分支、标签或提交；ZIP 不使用此参数'),
+        branchId: stringProperty('当前 CDS 项目内的分支 ID，由 list(includeBranches=true) 获取；准备源码时同步并固定提交 SHA'),
+        ref: stringProperty('仅 GitHub 来源使用的分支、标签或提交'),
         title: stringProperty('审查任务名称'),
         excludePatterns: { type: 'array', maxItems: 100, items: { type: 'string', maxLength: 250 } },
         email: stringProperty('可选报告收件邮箱，提供即授权本次任务发送邮件'),
         idempotencyKey: stringProperty('可选重试幂等键，相同提交重试时复用'),
       },
-      oneOf: [{ required: ['zipPath'] }, { required: ['githubUrl'] }],
+      oneOf: [{ required: ['zipPath'] }, { required: ['githubUrl'] }, { required: ['branchId'] }],
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -64,8 +66,8 @@ export const TOOLS = [
   },
   {
     name: 'cds_code_review_list', title: '列出代码审查任务',
-    description: '只查询当前凭据绑定项目的审查任务和报告关联。',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: '只查询当前凭据绑定项目的审查任务和报告关联；includeBranches=true 时附带可选 CDS 分支 ID 与名称。',
+    inputSchema: { type: 'object', properties: { includeBranches: { type: 'boolean', description: '同时读取当前项目可审查的 CDS 分支' } }, additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -231,6 +233,9 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
           for (const key of ['title', 'email', 'idempotencyKey']) if (args[key]) form.set(key, args[key]);
           if (args.excludePatterns) form.set('excludePatterns', JSON.stringify(args.excludePatterns));
           result = await request('POST', '/api/code-reviews', form);
+        } else if (args.branchId) {
+          const { zipPath: ignoredZip, githubUrl: ignoredGithub, ref: ignoredRef, ...rest } = args;
+          result = await request('POST', '/api/code-reviews', { ...rest, projectId: credentials.projectId, sourceType: 'cds' });
         } else {
           const github = new URL(args.githubUrl);
           if (github.protocol !== 'https:' || github.hostname !== 'github.com' || github.port || github.username || github.password
@@ -258,10 +263,15 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
         return result;
       }
       if (name === 'cds_code_review_list') {
-        listSchema.parse(input);
+        const args = listSchema.parse(input);
         const result = await request('GET', `/api/code-reviews?projectId=${encodeURIComponent(credentials.projectId)}`);
         if (!Array.isArray(result.tasks)) throw new Error('CDS 返回任务列表格式错误');
         result.tasks.forEach(assertProject);
+        if (args.includeBranches) {
+          const value = await request('GET', `/api/code-reviews/branches?projectId=${encodeURIComponent(credentials.projectId)}`);
+          if (!Array.isArray(value.branches) || value.branches.some(branch => !branch || typeof branch.id !== 'string' || typeof branch.branch !== 'string')) throw new Error('CDS 返回分支列表格式错误');
+          result.branches = value.branches.map(({ id, branch, status }) => ({ id, branch, status }));
+        }
         return result;
       }
       if (name === 'cds_code_review_report_upload') {

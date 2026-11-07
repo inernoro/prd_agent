@@ -83,6 +83,11 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     return res.json(settingsSummary());
   }));
   router.get('/code-reviews/capabilities', handler((_req, res) => res.json(service.capabilities())));
+  router.get('/code-reviews/branches', handler((req, res) => {
+    const projectId = project(req, req.query.projectId);
+    return res.json({ branches: state.getBranchesForProject(projectId).filter(branch => !branch.deleting && !branch.mirror)
+      .map(branch => ({ id: branch.id, branch: branch.branch, status: branch.status })) });
+  }));
   router.get('/code-reviews', handler((req, res) => {
     if (req.query.projectId !== undefined) project(req, req.query.projectId);
     const tasks = service.list(typeof req.query.projectId === 'string' ? req.query.projectId : req.cdsProjectKey?.projectId)
@@ -94,9 +99,9 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     const projectId = project(req, fields.projectId);
     if (file && (file.length > MAX_ZIP || !filename?.toLowerCase().endsWith('.zip'))) throw new CodeReviewError(400, '仅支持 100MiB 以内的 ZIP 文件');
     const sourceType = fields.sourceType;
-    if (sourceType !== 'github' && sourceType !== 'zip') throw new CodeReviewError(400, '请选择 ZIP 或 GitHub 来源');
-    if (sourceType === 'github' && file) throw new CodeReviewError(400, 'GitHub 来源不能同时上传 ZIP');
-    const task = await service.submit({ projectId, sourceType, zip: file, filename,
+    if (sourceType !== 'github' && sourceType !== 'zip' && sourceType !== 'cds') throw new CodeReviewError(400, '请选择上传源码或 CDS 项目分支');
+    if (sourceType !== 'zip' && file) throw new CodeReviewError(400, '仓库来源不能同时上传 ZIP');
+    const task = await service.submit({ projectId, sourceType, zip: file, filename, branchId: typeof fields.branchId === 'string' ? fields.branchId : undefined,
       title: typeof fields.title === 'string' ? fields.title : undefined,
       githubUrl: typeof fields.githubUrl === 'string' ? fields.githubUrl : undefined,
       ref: fields.ref as string | undefined, excludePatterns: fields.excludePatterns as string[] | undefined,

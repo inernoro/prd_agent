@@ -48,12 +48,16 @@ export interface CodeReviewDeps {
   publicBaseUrl: string;
   ownerScope: string;
   githubToken?: (projectId: string, githubUrl: string) => Promise<string | undefined>;
+  cdsSnapshot?: (input: { projectId: string; branchId: string; branchName: string; excludePatterns: string[]; signal: AbortSignal }) => Promise<{
+    zip: Buffer; commitSha: string; sourceName: string; skippedFiles: number;
+  }>;
   autoStart?: boolean;
   resolveEngine?: () => (Pick<CodeReviewEngine, 'run'> & Partial<Pick<CodeReviewEngine, 'readExisting'>>) | undefined;
 }
 export interface SubmitCodeReview {
   projectId: string;
-  sourceType: 'github' | 'zip';
+  sourceType: 'github' | 'zip' | 'cds';
+  branchId?: string;
   githubUrl?: string;
   ref?: string;
   zip?: Buffer;
@@ -197,11 +201,18 @@ export class CodeReviewService {
     if (input.email && !this.deps.mail.configured()) throw new CodeReviewError(503, '邮件通道未配置，请选择仅报告中心');
     if (input.excludePatterns && (!Array.isArray(input.excludePatterns) || input.excludePatterns.length > 100 || input.excludePatterns.some((p) => typeof p !== 'string' || p.length > 200))) throw new CodeReviewError(400, '排除目录格式不正确');
     if (input.ref && (typeof input.ref !== 'string' || input.ref.length > 255 || /[\r\n\0]/.test(input.ref))) throw new CodeReviewError(400, '仓库版本格式不正确');
-    if (input.sourceType === 'github') {
+    const branch = input.sourceType === 'cds' ? this.deps.state.getBranch(input.branchId || '') : undefined;
+    if (input.sourceType !== 'cds' && input.branchId) throw new CodeReviewError(400, '只有 CDS 来源接受分支 ID');
+    if (input.sourceType === 'cds') {
+      if (!branch || branch.projectId !== input.projectId) throw new CodeReviewError(403, '所选分支不属于当前项目');
+      if (branch.deleting || branch.mirror) throw new CodeReviewError(409, '所选分支正在删除或属于其他实例，请重新选择');
+      if (!this.deps.cdsSnapshot) throw new CodeReviewError(503, '当前实例尚未配置 CDS 分支源码读取');
+      if (input.zip || input.githubUrl || input.ref) throw new CodeReviewError(400, 'CDS 分支来源只接受当前项目的分支 ID');
+    } else if (input.sourceType === 'github') {
       try { parseCodeReviewGithubUrl(input.githubUrl || ''); } catch (error) { throw new CodeReviewError(400, (error as Error).message); }
     } else if (input.sourceType !== 'zip' || !input.zip?.length) throw new CodeReviewError(400, '请上传 ZIP 源码包');
     const idempotencyKey = createHash('sha256').update(JSON.stringify({ projectId: input.projectId, sourceType: input.sourceType,
-      githubUrl: input.githubUrl, ref: input.ref, hash: input.zip ? createHash('sha256').update(input.zip).digest('hex') : undefined,
+      githubUrl: input.githubUrl, ref: input.ref, branchId: input.branchId, hash: input.zip ? createHash('sha256').update(input.zip).digest('hex') : undefined,
       exclude: input.excludePatterns || [], email: input.email || '', key: input.idempotencyKey || '' })).digest('hex');
     // Without an explicit key, only deduplicate in-flight work; finished reviews can be requested again.
     const existing = this.list(input.projectId).find((t) => t.idempotencyKey === idempotencyKey && t.ownerScope === this.deps.ownerScope
@@ -209,7 +220,8 @@ export class CodeReviewService {
     if (existing) return existing;
     const now = new Date().toISOString();
     const task: CodeReviewTask = { id: randomUUID().replace(/-/g, ''), projectId: input.projectId, title: input.title?.trim().slice(0, 300) || '代码审查报告',
-      sourceType: input.sourceType, sourceName: input.sourceType === 'github' ? input.githubUrl! : (input.filename || 'source.zip').slice(0, 200),
+      sourceType: input.sourceType, sourceName: branch ? `CDS · ${branch.branch}` : input.sourceType === 'github' ? input.githubUrl! : (input.filename || 'source.zip').slice(0, 200),
+      branchId: branch?.id, branchName: branch?.branch,
       githubUrl: input.githubUrl, ref: input.ref, excludePatterns: input.excludePatterns || [], status: 'queued', phase: '等待审查',
       progress: { totalFiles: 0, scannedFiles: 0 }, delivery: { status: input.email ? 'pending' : 'not_requested', email: input.email },
       createdBy: input.createdBy, createdAt: now, updatedAt: now, ownerScope: this.deps.ownerScope, idempotencyKey };
@@ -344,14 +356,18 @@ export class CodeReviewService {
       let task = this.get(id);
       task.status = 'preparing'; task.phase = '准备固定源码快照'; await this.save(task);
       if (!task.inputKey) {
-        const snapshot = await fetchCodeReviewGithubSnapshot({ githubUrl: task.githubUrl!, ref: task.ref,
+        const snapshot = task.sourceType === 'cds' ? await this.deps.cdsSnapshot!({ projectId: task.projectId,
+          branchId: task.branchId!, branchName: task.branchName!, excludePatterns: task.excludePatterns, signal: controller.signal })
+          : await fetchCodeReviewGithubSnapshot({ githubUrl: task.githubUrl!, ref: task.ref,
           token: await this.deps.githubToken?.(task.projectId, task.githubUrl!), signal: controller.signal,
           audit: async (e) => this.audit(id, e) });
-        const validated = await validateCodeReviewZip(snapshot.zip, task.excludePatterns);
+        const validated = await validateCodeReviewZip(snapshot.zip, task.excludePatterns, task.sourceType !== 'cds');
         task = this.get(id); this.checkActive(task, controller.signal);
         task.commitSha = snapshot.commitSha; task.sourceHash = createHash('sha256').update(snapshot.zip).digest('hex');
         task.sourceName = snapshot.sourceName; task.progress.totalFiles = validated.totalFiles;
-        task.inputSkippedFiles = validated.skippedFiles;
+        task.inputSkippedFiles = validated.skippedFiles + ('skippedFiles' in snapshot && typeof snapshot.skippedFiles === 'number' ? snapshot.skippedFiles : 0);
+        if (task.sourceType === 'cds') await this.audit(id, { operation: 'cds.branch_snapshot', outcome: 'success',
+          branchId: task.branchId, branchName: task.branchName, commitSha: snapshot.commitSha, sourceHash: task.sourceHash });
         task.inputKey = await this.deps.inputs.put(id, task.projectId, validated.zip);
         await this.save(task);
       }
@@ -397,7 +413,7 @@ export class CodeReviewService {
       const report = found || await this.deps.state.createAcceptanceReportAsync({
         title: `代码审查报告 · ${task.sourceName}${task.commitSha ? `@${task.commitSha.slice(0, 8)}` : ''} · ${new Date().toISOString().slice(0, 10)}`,
         format: 'md', content: renderCodeReviewReport(task, result), reportType: 'code-review', reviewTaskId: id,
-        projectId: task.projectId, commitSha: task.commitSha, createdBy: task.createdBy,
+        projectId: task.projectId, branch: task.branchName, commitSha: task.commitSha, createdBy: task.createdBy,
         contentHash: task.sourceHash, sourceId: `code-review:${id}`,
       });
       task = this.get(id); this.checkActive(task, controller.signal);

@@ -5,7 +5,9 @@ export interface CodeReviewTask {
   id: string;
   projectId: string;
   title: string;
-  sourceType: 'github' | 'zip' | 'report';
+  sourceType: 'github' | 'zip' | 'cds' | 'report';
+  branchId?: string;
+  branchName?: string;
   sourceName: string;
   githubUrl?: string;
   ref?: string;
