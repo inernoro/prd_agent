@@ -18,7 +18,7 @@ import {
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
-import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
+import { BranchOperationCoordinator, BranchOperationSupersededError, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider } from '../../src/services/deployment-phase-budget.js';
@@ -4696,6 +4696,34 @@ describe('Branch Routes', () => {
         if (active) await active;
         setBuildGateHostLoadProvider(null);
       }
+    });
+
+    it.each(['', '/api'])('联合等待%s清理快照保存失败不覆盖原取代错误或误记部署失败', async profilePath => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      const id = 'source-joint-settle-error';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/joint-settle-error', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      let refuseSettlement = false, refused = false;
+      const originalSave = stateService.save.bind(stateService);
+      const save = vi.spyOn(stateService, 'save').mockImplementation(() => {
+        if (refuseSettlement && !refused && !stateService.getBranch(id)?.buildQueue) {
+          refused = true; throw new Error('secondary queue settlement refused');
+        }
+        return originalSave();
+      });
+      const admission = vi.spyOn(deploymentPhaseBudget, 'acquireSourceStart').mockImplementation(async (_owner, _key, options) => {
+        options.onQueued?.({ ahead: 0, active: 1, max: 1 });
+        refuseSettlement = true;
+        throw new BranchOperationSupersededError('original-operation', id, 'original joint wait');
+      });
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy${profilePath}`, { commitSha: 'a'.repeat(40) });
+        expect(response.status).toBe(200); expect(refused).toBe(true);
+        expect((await waitForAcceptedRun(response)).status).toBe('cancelled');
+        expect(String(response.body)).not.toContain('secondary queue settlement refused');
+        expect(stateService.getBranch(id)?.buildQueue).toBeUndefined();
+        expect(mock.commands.some(command => isAppLaunchCommand(command))).toBe(false);
+      } finally { admission.mockRestore(); save.mockRestore(); }
     });
 
     it('首次与既有源码部署混跑时保持一致槽位顺序，不相互锁住编译与启动容量', async () => {
