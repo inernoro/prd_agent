@@ -222,10 +222,7 @@ public sealed class LiveAsrSessionOrchestrator
                     if (beforeFallbackSend is null)
                         throw new TaskExecutionAdmissionException("TASK_ADMISSION_UNAVAILABLE", "任务授权服务暂时不可用，已停止转写；请保留录音后稍后重试。", 503);
                     _invocationAuthority?.AssertAuthorized(appCallerCode, requestContext);
-                    if (index > 0)
-                    {
-                        await beforeFallbackSend(platformCancellationToken);
-                    }
+                    await beforeFallbackSend(platformCancellationToken);
                     onUpstreamRequest();
                     finalResult = await _asr.TranscribeLivePcmAsync(
                         ResolveWebSocketUrl(candidate),
