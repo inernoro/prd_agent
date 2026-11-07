@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { commitServiceReplacements, replacementLaunchEntry, reserveServiceReplacements } from '../../src/services/service-replacement.js';
+import { assertBrowserOnlyStaticConsumers, commitServiceReplacements, prepareServiceReplacement, replacementLaunchEntry, reserveServiceReplacements } from '../../src/services/service-replacement.js';
 import { resolveBranchUpstream } from '../../src/services/proxy.js';
 
 function fixture() {
@@ -311,5 +311,48 @@ describe('静态预览版本切换', () => {
     expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(1);
     expect(f.container.removeOwnedRuntime).toHaveBeenCalledWith(f.entry, 'api', expect.objectContaining({ containerName: 'old-api' }), expect.any(Object));
     expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+  });
+});
+
+describe('仅浏览器前端容器退役合同', () => {
+  it.each([true, false])('首次实际准备也核对容器消费者=%s，校验在任何容器操作之前', async referenced => {
+    const f = fixture(); f.service.servingRuntime = undefined; f.service.pendingRuntime = undefined;
+    Object.assign(f.state, { getProject: () => ({ slug: 'project' }), getEffectiveProfilesForBranch: () => [
+      { id: 'api' }, { id: 'backend', calls: referenced ? ['api'] : [] },
+    ] });
+    const prepare = prepareServiceReplacement({ ...f, profile: { id: 'api', staticWeb: { browserOnly: true } } as never, portStart: 10010 });
+    if (referenced) await expect(prepare).rejects.toThrow('仍声明依赖');
+    else await expect(prepare).resolves.toBe(f.service);
+    expect(f.container.inspectOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+  function browserFixture() {
+    const f = fixture(); f.service.status = 'running'; f.service.containerId = 'static:new';
+    f.service.staticWeb = { id: 'static:new', browserOnly: true } as NonNullable<ServiceState['staticWeb']>;
+    f.service.networkName = undefined; f.service.aliasNetworks = [];
+    f.entry.services.backend = { profileId: 'backend', containerName: 'unchanged-backend', hostPort: 10003, status: 'running', networkName: 'old-network', containerId: 'b'.repeat(64) };
+    Object.assign(f.state, { getProject: () => ({ slug: 'project' }), getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend', env: {} }] });
+    return f;
+  }
+  it('明确声明无容器消费者后，只退役旧前端，后端身份和网络保持', async () => {
+    const f = browserFixture();
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(1);
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledWith(f.entry, 'api', expect.objectContaining({ containerId: 'a'.repeat(64) }), expect.any(Object));
+    expect(f.entry.services.backend.containerId).toBe('b'.repeat(64));
+    expect(f.entry.services.backend.networkName).toBe('old-network');
+  });
+  it('没有明确合同仍保留可能被容器消费者使用的旧前端', async () => {
+    const f = browserFixture(); f.service.staticWeb!.browserOnly = false;
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+  it.each(['calls', 'dependsOn', 'url'])('发现 %s 反向依赖则拒绝，不会退役旧前端', async kind => {
+    const f = browserFixture();
+    Object.assign(f.state, { getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend',
+      ...(kind === 'url' ? { env: { TARGET: 'http://api:80/path' } } : { [kind]: ['api'] }) }] });
+    expect(() => assertBrowserOnlyStaticConsumers(f.entry, 'api', f.state)).toThrow('仍声明依赖');
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('仍声明依赖');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
   });
 });

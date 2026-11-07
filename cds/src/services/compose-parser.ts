@@ -26,6 +26,7 @@ import { isReservedPersistentTarget, UnsafeDeploymentStorageError } from './depl
 export function parseStaticWeb(value: unknown): StaticWebConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('staticWeb 必须声明静态产物目录');
   const input = value as Record<string, unknown>;
+  if (input.browserOnly !== undefined && typeof input.browserOnly !== 'boolean') throw new Error('staticWeb.browserOnly 必须为布尔值');
   if (typeof input.imagePath !== 'string' || !input.imagePath.startsWith('/') || input.imagePath.includes('..')
     || /[\x00\r\n]/.test(input.imagePath)) throw new Error('staticWeb.imagePath 必须是镜像内绝对目录');
   if (input.basePath !== undefined && (typeof input.basePath !== 'string' || !/^\/(?:[a-z0-9_~.-]+\/)*[a-z0-9_~.-]*$/i.test(input.basePath)
@@ -34,7 +35,7 @@ export function parseStaticWeb(value: unknown): StaticWebConfig {
   if (input.proxyRules !== undefined && (!Array.isArray(input.proxyRules) || input.proxyRules.some(rule =>
     !rule || typeof rule.pathPrefix !== 'string' || !/^\/(?:[a-z0-9_~.-]+\/)*[a-z0-9_~.-]*$/i.test(rule.pathPrefix) || rule.pathPrefix.includes('..')
     || typeof rule.profileId !== 'string' || !/^[\w.-]+$/.test(rule.profileId)))) throw new Error('staticWeb.proxyRules 无效');
-  return { imagePath: input.imagePath, ...(input.basePath !== undefined ? { basePath: input.basePath as string } : {}),
+  return { imagePath: input.imagePath, ...(input.browserOnly !== undefined ? { browserOnly: input.browserOnly as boolean } : {}), ...(input.basePath !== undefined ? { basePath: input.basePath as string } : {}),
     ...(input.runtimeConfig !== undefined ? { runtimeConfig: input.runtimeConfig as boolean } : {}),
     ...(input.proxyRules !== undefined ? { proxyRules: input.proxyRules as StaticWebConfig['proxyRules'] } : {}) };
 }

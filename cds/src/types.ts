@@ -41,6 +41,8 @@ export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
 
 /** A build profile defines how to build/run a specific type of project */
 export interface StaticWebConfig {
+  /** Explicit contract: this frontend has no consumers through Docker DNS. */
+  browserOnly?: boolean;
   /** Public frontend directory inside the verified CI image; the image is never started. */
   imagePath: string;
   basePath?: string;
@@ -49,6 +51,7 @@ export interface StaticWebConfig {
 }
 
 export interface StaticWebRuntime {
+  browserOnly?: boolean;
   id: string;
   serviceName: string;
   projectId: string;

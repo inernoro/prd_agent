@@ -32,6 +32,39 @@ function prepare(extra = {}) {
     env: { VITE_API_BASE_URL: '/actual/api', PASSWORD: 'must-never-be-exported' }, check: () => {}, ...extra });
 }
 
+it.each([true, false])('原仅浏览器声明%s写入真实运行原件并可按该原件启动', async browserOnly => {
+  const runtime = await prepare({ config: { imagePath: '/dist', browserOnly } });
+  expect(runtime).toHaveProperty('browserOnly', browserOnly);
+  const manifest = JSON.parse(await fs.readFile(path.join(runtime.rootDirectory, '.cds-static-owner.json'), 'utf8'));
+  expect(manifest).toHaveProperty('browserOnly', browserOnly);
+  const port = await manager.start(runtime, 0);
+  expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(200);
+  expect(manager.inspect(runtime.id)?.runtime).toHaveProperty('browserOnly', browserOnly);
+});
+
+it('首页引用的 CSS 缺失时在切换之前拒绝产物', async () => {
+  const broken = new StaticWebService({ rootDirectory: path.join(directory, 'missing-css'), resolveUpstream: () => undefined,
+    exportFiles: async (_i, _p, destination) => {
+      await bundle(destination);
+      await fs.appendFile(path.join(destination, 'index.html'), '<link rel="stylesheet" href="/assets/missing.css">');
+    } });
+  await expect(broken.prepare({ identity, serviceName: 'broken-css', image, revision,
+    config: { imagePath: '/dist' }, env: {}, check: () => {} })).rejects.toThrow('不存在');
+});
+
+it('首页引用的实际 CSS 存在时正常验入并通过真实HTTP读取', async () => {
+  manager = new StaticWebService({ rootDirectory: directory, resolveUpstream: () => undefined,
+    exportFiles: async (_i, _p, destination) => {
+      await bundle(destination);
+      await fs.appendFile(path.join(destination, 'index.html'), '<link rel="stylesheet" href="/assets/site.css?v=one">');
+      await fs.writeFile(path.join(destination, 'assets/site.css'), 'body { color: blue; }');
+    } });
+  const runtime = await prepare(), port = await manager.start(runtime, 0);
+  const response = await fetch(`http://127.0.0.1:${port}/assets/site.css?v=one`);
+  expect(response.status).toBe(200); expect(response.headers.get('content-type')).toContain('text/css');
+  expect(await response.text()).toContain('color: blue');
+});
+
 describe('非容器静态预览实际HTTP行为', () => {
   it('从真实文件提供页面和资源，SPA刷新正常，缺失资源保持404及正确缓存/MIME', async () => {
     const runtime = await prepare();

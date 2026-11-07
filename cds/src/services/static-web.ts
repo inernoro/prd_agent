@@ -53,7 +53,9 @@ async function validateFiles(root: string, basePath: string): Promise<void> {
   const scripts = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)]
     .map(match => match[1]).filter(value => !/^(?:[a-z]+:)?\/\//i.test(value) && !value.includes('runtime-config'));
   if (!scripts.length) throw new Error('静态首页没有可校验的脚本入口');
-  for (const source of scripts) {
+  const styles = [...html.matchAll(/<link\b[^>]*\bhref=["']([^"']+\.css(?:[?#][^"']*)?)["']/gi)]
+    .map(match => match[1]).filter(value => !/^(?:[a-z]+:)?\/\//i.test(value));
+  for (const source of [...scripts, ...styles]) {
     const pathname = decodeURIComponent(source.split(/[?#]/)[0]);
     if (pathname.startsWith('/') && !pathname.startsWith(basePath)) throw new Error('静态首页脚本路径与站点挂载路径不一致');
     const relative = (pathname.startsWith('/') ? pathname.slice(basePath.length) : pathname).replace(/^\/+/, '');
@@ -131,7 +133,7 @@ export class StaticWebService {
       }
       const runtime: StaticWebRuntime = { id, serviceName: options.serviceName, ...identity,
         image: options.image, revision: options.revision, rootDirectory,
-        basePath, proxyRules: config.proxyRules, runtimeConfig: config.runtimeConfig };
+        basePath, proxyRules: config.proxyRules, runtimeConfig: config.runtimeConfig, browserOnly: config.browserOnly };
       check();
       await fs.writeFile(path.join(rootDirectory, '.cds-static-owner.json'), JSON.stringify(runtime), { mode: 0o600, flag: 'wx' });
       return runtime;
