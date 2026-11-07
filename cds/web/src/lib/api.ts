@@ -194,6 +194,8 @@ export type ReportFormat = 'html' | 'md';
 export type ReportVerdict = 'pass' | 'conditional' | 'fail';
 
 export interface AcceptanceReport {
+  reportType?: 'acceptance' | 'code-review';
+  reviewTaskId?: string;
   id: string;
   title: string;
   format: ReportFormat;

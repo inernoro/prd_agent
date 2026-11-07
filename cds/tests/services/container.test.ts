@@ -892,6 +892,55 @@ describe('ContainerService', () => {
   });
 
   describe('stop (pause — container preserved)', () => {
+    it.each([
+      { outcome: 'stopped', running: false, exitCode: 0, severity: 'info' },
+      { outcome: 'forced-exit', running: false, exitCode: 137, severity: 'warn' },
+      { outcome: 'unconfirmed', running: true, exitCode: 0, severity: 'error' },
+    ])('原停止账本保留$outcome风险和请求关联，不冒数据完整性', async ({ outcome, running, exitCode, severity }) => {
+      const records: Array<{ action: string; severity?: string; details?: Record<string, unknown> }> = [];
+      service = new ContainerService(mock, makeConfig(), undefined, { record: event => records.push(event) }, undefined, undefined, unitBindMountInspector);
+      mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64),
+        State: { Status: running ? 'running' : 'exited', Running: running, ExitCode: exitCode } }]), stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker logs|docker exec|docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const stopped = vi.fn(), operation = service.stop('cds-feature-a-api', '用户正常停止', { requestId: 'stop-risk-request' }, stopped);
+      if (running) await expect(operation).rejects.toThrow('停止结果未确认'); else await operation;
+      const result = records.find(event => event.action === (running ? 'container.stop.failed' : 'container.stop.completed'));
+      expect(result).toMatchObject({ severity, requestId: 'stop-risk-request', details: { shutdownOutcome: outcome, dataIntegrity: 'unverified' } });
+      expect(result?.details?.elapsedMs).toEqual(expect.any(Number));
+      expect(Number(result?.details?.elapsedMs)).toBeGreaterThanOrEqual(0);
+      expect(stopped).toHaveBeenCalledTimes(running ? 0 : 1);
+      expect(mock.commands.some(command => /^docker rm\b/.test(command))).toBe(false);
+    });
+
+    it('原普通停止与日志哨兵使用原清理保留通道', async () => {
+      const exec = vi.spyOn(mock, 'exec');
+      mock.addResponsePattern(/docker exec|docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      await service.stop('cds-feature-a-api');
+      const commands = exec.mock.calls.filter(([command]) => /^docker stop\b/.test(command) || command.includes('[CDS-STOP]'));
+      expect(commands).toHaveLength(2);
+      for (const [, options] of commands) expect(options).toMatchObject({ executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
+    });
+
+    it.each(['sentinel', 'stop'])('原清理通道等待%s期间资格失效时，不发出迟到命令或释放后继责任', async boundary => {
+      clearContainerLifecycleIntentsForTest();
+      let current = true;
+      const commands: string[] = [], stopped = vi.fn();
+      const guarded = new ContainerService({ exec: async (command, options) => {
+        if (boundary === 'sentinel' ? command.includes('[CDS-STOP]') : command.startsWith('docker stop')) current = false;
+        options?.beforeStart?.(); commands.push(command);
+        return { stdout: '', stderr: '', exitCode: 0 };
+      } }, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
+      vi.spyOn(guarded as any, 'captureContainerDiagnostics').mockResolvedValue({});
+      await expect(guarded.stop('cds-feature-a-api', '原停止', { assertCurrent: () => { if (!current) throw new Error('原停止资格失效'); } }, stopped))
+        .rejects.toThrow('原停止资格失效');
+      const intent = findRecentContainerLifecycleIntent('cds-feature-a-api');
+      clearContainerLifecycleIntentsForTest();
+      if (boundary === 'sentinel') expect(intent).toBeUndefined();
+      expect(commands.some(command => command.startsWith('docker stop') || command.includes('[CDS-STOP]'))).toBe(boundary !== 'sentinel');
+      expect(commands.some(command => command.startsWith('docker stop'))).toBe(false);
+      expect(stopped).not.toHaveBeenCalled();
+    });
+
     it('writes a [CDS-STOP] sentinel then docker stop, and does NOT docker rm', async () => {
       mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

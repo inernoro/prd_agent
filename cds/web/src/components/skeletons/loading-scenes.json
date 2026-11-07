@@ -70,6 +70,13 @@
     "workspace": "bleed"
   },
   {
+    "route": "/code-reviews",
+    "name": "代码审查报告",
+    "page": "pages/CodeReviewsPage.tsx",
+    "kind": "code-reviews",
+    "workspace": "fluid"
+  },
+  {
     "route": "/reports",
     "name": "验收报告",
     "page": "pages/ReportsPage.tsx",

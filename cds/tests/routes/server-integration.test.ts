@@ -711,6 +711,8 @@ describe('Server route ordering (regression)', () => {
         expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
+      expect(JSON.parse((await request(server, '/api/auth/status', { Cookie: memberCookie })).body).approvalCapabilities)
+        .toEqual({ operator: false, accessRequests: false });
       const memberMe = await request(server, '/api/me', { Cookie: memberCookie });
       expect(memberMe.status).toBe(200);
       expect(JSON.parse(memberMe.body).user).toMatchObject({
@@ -1003,6 +1005,43 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
+  it('reports human approval capabilities separately from project-key authentication', async () => {
+    vi.stubEnv('CDS_AUTH_MODE', 'basic'); vi.stubEnv('CDS_USERNAME', 'operator'); vi.stubEnv('CDS_PASSWORD', 'secret'); vi.stubEnv('CDS_SSO_ENABLED', 'false');
+    try {
+      const key = 'cdsp_approval_fixture-project-key';
+      const app = buildRealServerWithEvents([], state => {
+        state.addProject({ id: 'approval-project', slug: 'approval-project', name: 'Approval Project', kind: 'git', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        state.addAgentKey('approval-project', { id: 'approval-key', label: 'fixture', scope: 'rw', hash: crypto.createHash('sha256').update(key).digest('hex'), createdAt: new Date().toISOString() });
+      });
+      server = await startServer(app);
+      const machine = { 'X-AI-Access-Key': key };
+      const machineStatus = await request(server, '/api/auth/status', machine);
+      expect(machineStatus.status).toBe(200);
+      expect(JSON.parse(machineStatus.body).approvalCapabilities).toEqual({ operator: false, accessRequests: false });
+      expect((await request(server, '/api/cds-system/operator/requests', machine)).status).toBe(403);
+      expect((await request(server, '/api/access-requests', machine)).status).toBe(403);
+      const login = await requestJson(server, 'POST', '/api/login', { username: 'operator', password: 'secret' });
+      expect(login.status).toBe(200);
+      const raw = login.headers['set-cookie']; const cookie = (Array.isArray(raw) ? raw[0] : String(raw)).split(';')[0];
+      const human = { Cookie: cookie };
+      expect(JSON.parse((await request(server, '/api/auth/status', human)).body).approvalCapabilities)
+        .toEqual({ operator: true, accessRequests: true });
+      expect((await request(server, '/api/cds-system/operator/requests', human)).status).toBe(200);
+      expect((await request(server, '/api/access-requests', human)).status).toBe(200);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('keeps disabled-mode access requests available without claiming human operator permission', async () => {
+    vi.stubEnv('CDS_AUTH_MODE', 'disabled'); vi.stubEnv('CDS_USERNAME', ''); vi.stubEnv('CDS_PASSWORD', ''); vi.stubEnv('CDS_SSO_ENABLED', 'false');
+    try {
+      server = await startServer(buildRealServerWithEvents([]));
+      expect(JSON.parse((await request(server, '/api/auth/status')).body).approvalCapabilities)
+        .toEqual({ operator: false, accessRequests: true });
+      expect((await request(server, '/api/cds-system/operator/requests')).status).toBe(403);
+      expect((await request(server, '/api/access-requests')).status).toBe(200);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it.each(['basic', 'sso-only'] as const)('keeps %s Ticket SSO project access without granting system ownership', async (mode) => {
     const previousUser = process.env.CDS_USERNAME;
     const previousPassword = process.env.CDS_PASSWORD;
@@ -1036,6 +1075,7 @@ describe('Server route ordering (regression)', () => {
       const headers = { Cookie: rawCookie.split(';')[0] };
       const status = await request(server, '/api/auth/status', headers);
       expect(JSON.parse(status.body).user).toMatchObject({ authProvider: 'ticket-sso', isSystemOwner: false });
+      expect(JSON.parse(status.body).approvalCapabilities).toEqual({ operator: false, accessRequests: mode === 'sso-only' });
       const projects = await request(server, '/api/projects', headers);
       expect(projects.status).toBe(200);
       expect(JSON.parse(projects.body).projects.map((project: { id: string }) => project.id)).toContain('sso-compat-project');

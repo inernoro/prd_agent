@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/lintsinghua/DeepAudit.git",
+  "branch": "v3.0.0",
+  "commit": "551cf2565fa1e8d21cae7bf4d4cc85d0d0abcfa9",
+  "fork": "https://github.com/inernoro/DeepAudit.git",
+  "license": "AGPL-3.0-only",
+  "overwrittenUpstreamFiles": {
+    "frontend/src/pages/Login.tsx": "075d3b994bb0a5680ce6c58c1eb82e33f42007683e72a212c9fd488e6edaf0bc",
+    "frontend/src/app/routes.tsx": "178ae3f3a58e9f798243f8d13fe6f6a0fe516308840e1670e6a193f6152cc6c6",
+    "frontend/src/pages/Dashboard.tsx": "daa13af0d351fb0ba52624416db2155fb352a16a1738ad8242b2745ec1de8e7d",
+    "frontend/src/pages/AuditTasks.tsx": "aa1b3fbb715b8b8755950500e9f517f6601afe5b91579b907d54d099648acd49",
+    "backend/app/api/v1/endpoints/scan.py": "364e459c20e7fb25a10dd87cba7bb4eda232091918ff44d98fbdf54e135c8cec",
+    "backend/app/api/v1/endpoints/tasks.py": "0046341af1e2ef2aeddc5b53608198d71c090f7547d9c91a8d982bb0a91ba669",
+    "backend/app/models/audit.py": "e21f571908af1608b98f61b872d660e1ed8251356be1c87ac677486aa495be4e",
+    "backend/app/services/scanner.py": "8cd2805559a82b3664fd2a97e0f4922095e948b1efc4071f84d38459125fa337",
+    "frontend/src/app/App.tsx": "d4f37358d782d1aa87de28c73a24fbb0a6edebcf94c04c4eb0c2f79db0bfedfd",
+    "frontend/src/assets/styles/globals.css": "40bbea3dabae1ebbd732fa8f997df190235d72250bcd4078d30cd90e6bd3e875",
+    "frontend/src/components/audit/CreateTaskDialog.tsx": "89b1db63109e700c1c1e339b6e56d86ec35f910191d2574a73653a19238429d5",
+    "frontend/src/components/system/SystemConfig.tsx": "9150d839b78845be49bd633637ee2b154bc3a07278d7e3966cd773175bfbcd7b",
+    "frontend/src/pages/AdminDashboard.tsx": "39a0419d6e439df293dc831703918eec5f69397b31bea1cbe67ae04134093469",
+    "frontend/src/pages/ProjectDetail.tsx": "74fbd5d6a9c9c2106c5f134d3f2619eb251b644a46b8b0db3290711db03dbd93",
+    "backend/app/api/v1/endpoints/projects.py": "cefa87d1cead44b3669f28afb6259ab607c7bb95a085ccea54869085dccfb63c",
+    "backend/app/core/config.py": "c988afac86931b8ab52f96d479ab6083b82073a549a544b7d7d22b6efbe9fd7c",
+    "backend/app/models/__init__.py": "943a046fcf2c71dfbdafc3e4a0236f83d957c9e0c7f430e1ff57f311b51d7ca3",
+    "backend/app/services/llm/service.py": "72c866962fc46a53d5f5aee78ea1f7fcbe014a6a4c3f33d6798f1315739170ec",
+    "backend/app/services/report_generator.py": "2d9fa7db6c215d81faf29e528898f2403212ba352f8c4a57635bddd4176614cd",
+    "backend/app/services/zip_storage.py": "62daadd8a4d0104020992635e3858dd178ed67949a2063a55296c1e0cdef7190"
+  }
+}

@@ -6236,6 +6236,36 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return (this.state.acceptanceReports || []).find((r) => r.id === id);
   }
 
+  getCodeReviewSettings(): import('./code-review-settings.js').CodeReviewSettings | undefined {
+    return this.state.codeReviewSettings ? structuredClone(this.state.codeReviewSettings) : undefined;
+  }
+
+  async setCodeReviewSettings(settings: import('./code-review-settings.js').CodeReviewSettings): Promise<void> {
+    this.state.codeReviewSettings = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listCodeReviewTasks(projectId?: string): import('../shared/code-review.js').CodeReviewTask[] {
+    return structuredClone((this.state.codeReviewTasks || [])
+      .filter((task) => !projectId || task.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+  }
+
+  getCodeReviewTask(id: string): import('../shared/code-review.js').CodeReviewTask | undefined {
+    const task = (this.state.codeReviewTasks || []).find((row) => row.id === id);
+    return task ? structuredClone(task) : undefined;
+  }
+
+  async putCodeReviewTask(task: import('../shared/code-review.js').CodeReviewTask): Promise<void> {
+    const rows = this.state.codeReviewTasks ||= [];
+    const index = rows.findIndex((row) => row.id === task.id);
+    if (index < 0) rows.push(structuredClone(task));
+    else rows[index] = structuredClone(task);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
   /** Read the raw content of a report from disk, or undefined if missing. */
   readAcceptanceReportContent(id: string): string | undefined {
     const meta = this.getAcceptanceReport(id);
@@ -6406,6 +6436,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * callers cannot collide. Returns the stored metadata.
    */
   createAcceptanceReport(input: {
+    reportType?: 'acceptance' | 'code-review';
+    reviewTaskId?: string;
     title: string;
     format: 'html' | 'md';
     content: string;
@@ -6521,6 +6553,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     return {
       id: crypto.randomUUID().replace(/-/g, ''),
+      reportType: input.reportType,
+      reviewTaskId: input.reviewTaskId,
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,

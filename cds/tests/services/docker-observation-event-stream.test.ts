@@ -1,3 +1,6 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
+import { readReadyFixturePid } from '../helpers/process-pid-fixture.js';
+import { shellQuoteArg } from '../../src/services/secure-database-cli.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -48,12 +51,12 @@ setInterval(()=>{},1000);setTimeout(()=>process.exit(0),60000);
 `;
   await writeFile(path.join(dir, 'docker'), script, { mode: 0o700 });
   process.env.PATH = `${dir}:${originalPath || ''}`;
-  const streams = new ObservationStreamExecutor(count); pools.push(streams); await streams.start(); vi.clearAllMocks();
+  const streams = traceExecutor(new ObservationStreamExecutor(count), 'events-stream'); pools.push(streams); await streams.start(); vi.clearAllMocks();
   const trace = async () => (await readFile(traceFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-  return { streams, trace };
+  return { streams, trace, dir };
 }
-async function until(predicate: () => boolean, attempts = 400): Promise<void> {
-  for(let i=0;i<attempts;i++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}
+async function until(predicate: () => boolean | Promise<boolean>, attempts = 400): Promise<void> {
+  for(let i=0;i<attempts;i++){if(await predicate())return;await new Promise(r=>setTimeout(r,10));}
   throw new Error('Event fixture did not become ready');
 }
 afterEach(async () => {
@@ -126,12 +129,18 @@ describe('Docker事件独立读取真实进程',()=>{
     expect((await f.trace()).length).toBe(count);expect(f.streams.getStats().admitted).toBe(0);
   });
   it('实际stop取消所属健康诊断并等待消费收尾，不留下迟到状态同步',async()=>{
-    const f=await fixture(1);const health=new IsolatedShellExecutor(new ShellExecutor(),{concurrency:1});pools.push(health);await health.start();
+    const health=traceExecutor(new IsolatedShellExecutor(new ShellExecutor(),{concurrency:1}), 'events-health');pools.push(health);
+    const [f]=await Promise.all([fixture(1),health.start()]);
+    const childFile=path.join(f.dir,'health-child.pid');let childPid:number|undefined;
     const records:any[]=[];let synced=0;
-    const shell:IShellExecutor={exec:(_command,options)=>health.exec('sleep 30',options)};
+    const shell:IShellExecutor={exec:(_command,options)=>health.exec(`sleep 30 & echo $! > ${shellQuoteArg(childFile)}; wait`,options)};
     const monitor=new DockerEventMonitor(shell,{record:r=>records.push(r)},()=>{synced++;},f.streams);listeners.push(monitor);monitor.start();
-    await until(()=>health.getStats().active===1);await monitor.stop();
+    await until(async()=>!!(childPid=await readReadyFixturePid(childFile)));await monitor.stop();
     expect(health.getStats().active).toBe(0);expect(f.streams.getStats().admitted).toBe(0);
+    expect(synced).toBe(0);expect(records.filter(r=>r.action==='die')).toEqual([]);
+    const stopped=await new ShellExecutor().exec(`ps -o stat= -p ${childPid}`);
+    expect(stopped.stdout.trim()).toMatch(/^(Z.*)?$/);
+    await new Promise<void>(resolve=>setImmediate(resolve));
     expect(synced).toBe(0);expect(records.filter(r=>r.action==='die')).toEqual([]);
   });
   it('实际持续流越过30秒有限查询默认期限，直到显式取消才结束',async()=>{
