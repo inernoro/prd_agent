@@ -21,8 +21,8 @@ describe('human project access UI wiring', () => {
     expect(list).toMatch(/const suspiciousEmpty =\s*canManageProjects && nextProjects\.length === 0/);
   });
   it('hides owner actions and explains how an unassigned member gets access', () => {
-    expect(list).toContain("const showProjectCreator = state.status === 'ok' ? state.canManageProjects : consoleOwner");
-    expect(list).toContain('center={showProjectCreator ? (');
+    expect(list).toContain('{canManageProjects && repositoryImportOpen ? (');
+    expect(read('components/project/ProjectInventoryHeader.tsx')).toContain('{canManageProjects ? <div className="cds-project-inventory-actions">');
     expect(list).toContain('disabled={!canManageProjects}');
     expect(list).toContain('disabled={!canManageProjects || quickCreating || !quickRepoUrl.trim()}');
     expect(list).toContain('if (!canManageProjects) return;');

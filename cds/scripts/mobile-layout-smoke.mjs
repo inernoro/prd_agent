@@ -412,6 +412,7 @@ async function runViewport(browser, project, viewport) {
     await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
     await page.waitForTimeout(500);
     await checkLayout(page, `${viewport.label}:${label}`, OFFLINE ? anchor : undefined);
+    if (OFFLINE && label === 'project-list') await checkProjectInventory(page, `${viewport.label}:${label}`);
   }
 
   await page.goto(`${baseUrl}/branches/${encodeURIComponent(projectId)}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
@@ -522,6 +523,90 @@ async function checkInstanceOutage(browser, mobile, pinned) {
       await page.screenshot({ path: `${process.env.CDS_OUTAGE_EVIDENCE}/${name}.png` });
     }
     await context.close();
+  }
+}
+
+async function checkProjectInventory(page, label) {
+  await page.getByRole('heading', { name: '项目', level: 1, exact: true }).waitFor();
+  await page.getByText('管理项目、分支环境与部署。', { exact: true }).waitFor();
+  const cards = page.locator('.cds-project-card[data-project-id]');
+  assertOk(await cards.count() === 1, `${label}: 项目页没有渲染真实样例卡片`);
+  const filters = page.getByRole('group', { name: '项目状态筛选', exact: true });
+  await filters.getByRole('button', { name: /^已暂停/ }).click();
+  await page.getByText('没有匹配的项目', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '清除筛选', exact: true }).click();
+  const search = page.getByRole('searchbox', { name: '搜索项目或服务', exact: true });
+  await search.fill('没有这个样例项目');
+  await page.getByText('没有匹配的项目', { exact: true }).waitFor();
+  await search.fill('窄屏样例项目');
+  await cards.first().waitFor();
+  await search.fill('');
+  await page.getByRole('combobox', { name: '项目排序', exact: true }).selectOption('recent');
+  await page.getByRole('button', { name: '列表视图', exact: true }).click();
+  await page.locator('.cds-project-inventory--list').waitFor();
+  await page.getByRole('button', { name: '卡片视图', exact: true }).click();
+  await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Git 仓库 URL', exact: true }).waitFor();
+  await page.getByRole('button', { name: '导入仓库', exact: true }).click();
+  assertOk(await page.getByRole('button', { name: '新建项目', exact: true }).isVisible(), `${label}: 项目页新建入口缺失`);
+  for (const view of ['列表视图', '卡片视图']) {
+    await page.getByRole('button', { name: view, exact: true }).click();
+    await checkProjectSkeletonAlignment(page, `${label}:${view}`);
+  }
+  console.log(`PASS ${label}: 项目页头、筛选搜索、视图切换与导入入口`);
+}
+
+async function checkProjectSkeletonAlignment(page, label) {
+  let release, releaseChunk;
+  const gate = new Promise(resolve => { release = resolve; });
+  const chunkGate = new Promise(resolve => { releaseChunk = resolve; });
+  const pattern = '**/api/projects';
+  // Offline probes use the real Vite lazy module, so both code and data waiting states are measured.
+  const chunkPattern = '**/src/pages/ProjectListPage.tsx*';
+  const holdChunk = async route => { await chunkGate; await route.continue(); };
+  const holdProjects = async route => {
+    await gate;
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify(resolveFixture(new URL(route.request().url()).pathname)) });
+  };
+  const geometry = () => page.evaluate(() => Object.fromEntries([
+    '.cds-project-inventory-heading', '.cds-project-inventory-toolbar', '.cds-project-card',
+    '.cds-project-services', '.cds-project-metrics', '.cds-project-card-footer',
+  ].map(selector => {
+    const rect = document.querySelector(selector).getBoundingClientRect();
+    return [selector, { y: rect.y, height: rect.height }];
+  })));
+  await page.route(pattern, holdProjects);
+  await page.route(chunkPattern, holdChunk);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const fallback = page.getByRole('status', { name: '页面加载中', exact: true });
+    await fallback.waitFor();
+    await page.locator('[aria-label="加载项目列表"]').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    const chunkLoading = await geometry();
+    releaseChunk();
+    await fallback.waitFor({ state: 'hidden' });
+    await page.locator('[aria-label="加载项目列表"]').waitFor();
+    const loading = await geometry();
+    const transform = await page.locator('.cds-main').evaluate(main => getComputedStyle(main).transform);
+    assertOk(transform === 'none', `${label}: 骨架已显示后不应再次播放整页位移动画`, { transform });
+    release();
+    await page.locator('.cds-project-card[data-project-id]').first().waitFor();
+    // content-visibility:auto initially reports its intrinsic placeholder; measure after paint.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const ready = await geometry();
+    for (const [phase, sample] of [['chunk', chunkLoading], ['data', loading]]) {
+      for (const [selector, rect] of Object.entries(sample)) {
+        assertOk(Math.abs(rect.y - ready[selector].y) <= 1 && Math.abs(rect.height - ready[selector].height) <= 1,
+          `${label}:${phase}: ${selector} 骨架与正文垂直错位`, { loading: rect, ready: ready[selector] });
+      }
+    }
+    console.log(`PASS ${label}: 延迟代码与项目响应，骨架与正文各区纵向偏差不超过 1px`);
+  } finally {
+    releaseChunk(); release();
+    await page.unroute(pattern, holdProjects);
+    await page.unroute(chunkPattern, holdChunk);
   }
 }
 

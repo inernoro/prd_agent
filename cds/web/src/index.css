@@ -3968,93 +3968,151 @@
     min-width: 0;
   }
 
-  .cds-project-card {
-    /* Match the project title, canvas and margins rather than the shorter branch card. */
-    contain-intrinsic-size: auto 18.09375rem;
-    --project-node-size: 3.5rem;
-    --project-node-icon-size: 1.75rem;
-    --project-node-gap: 0.875rem;
-    --project-node-radius: 0.625rem;
+  /* The chunk skeleton is already visible; replaying main's entrance moves the same layout again. */
+  .cds-page-enter:has(> .cds-project-inventory-workspace) { animation: none; }
+  .cds-project-inventory-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.75rem; }
+  .cds-project-inventory-title { display: flex; align-items: center; gap: 0.75rem; }
+  .cds-project-inventory-title h1 { margin: 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.025em; }
+  .cds-project-inventory-title > span { padding: 0 0.375rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.25rem; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); font-size: 0.75rem; }
+  .cds-project-inventory-heading p { margin: 0.5rem 0 0; color: hsl(var(--muted-foreground)); font-size: 0.875rem; }
+  .cds-project-inventory-actions { display: flex; gap: 0.625rem; flex-shrink: 0; }
+  .cds-project-inventory-actions button svg { width: 1.125rem; height: 1.125rem; }
+  .cds-project-inventory-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-width: 0; padding-bottom: 0.75rem; margin-bottom: 1.375rem; border-bottom: 1px solid hsl(var(--hairline)); }
+  .cds-project-status-filters { display: flex; align-self: stretch; gap: 1.5rem; flex-shrink: 0; }
+  .cds-project-status-filters > button { display: inline-flex; position: relative; align-items: center; gap: 0.5rem; min-height: 2.25rem; color: hsl(var(--muted-foreground)); font-size: 0.875rem; white-space: nowrap; }
+  .cds-project-status-filters > button > span { padding: 0 0.3125rem; border-radius: 0.1875rem; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); font-size: 0.6875rem; font-variant-numeric: tabular-nums; }
+  .cds-project-status-filters > button[aria-pressed='true'] { color: hsl(var(--foreground)); }
+  .cds-project-status-filters > button[aria-pressed='true']::after { content: ''; position: absolute; height: 2px; background: hsl(var(--primary)); bottom: -0.8125rem; inset-inline: 0; }
+  .cds-project-inventory-tools { display: flex; min-width: 0; align-items: center; gap: 0.625rem; }
+  .cds-project-inventory-search { display: flex; align-items: center; gap: 0.5rem; height: 2.25rem; min-width: 0; width: 15rem; padding: 0 0.625rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; background: hsl(var(--surface-sunken)); color: hsl(var(--muted-foreground)); }
+  .cds-project-inventory-search svg { height: 1rem; width: 1rem; flex-shrink: 0; }
+  .cds-project-inventory-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: hsl(var(--foreground)); font-size: 0.8125rem; }
+  .cds-project-inventory-tools select { height: 2.25rem; min-width: 0; max-width: 12rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; padding: 0 0.5rem; background: hsl(var(--surface-raised)); color: hsl(var(--foreground-muted)); font-size: 0.8125rem; }
+  .cds-project-inventory-tools select:disabled { opacity: 0.65; }
+  .cds-project-view-switch { display: inline-flex; height: 2.25rem; padding: 0.125rem; flex-shrink: 0; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; }
+  .cds-project-view-switch button { display: grid; place-items: center; width: 2rem; border-radius: 0.1875rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-view-switch button svg { width: 1.1875rem; height: 1.1875rem; }
+  .cds-project-view-switch button[aria-pressed='true'] { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+  .cds-project-inventory-search:focus-within, .cds-project-inventory-tools select:focus-visible, .cds-project-view-switch button:focus-visible, .cds-project-status-filters > button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+  .cds-project-repository-import { display: flex; align-items: center; gap: 0.625rem; min-width: 0; margin-bottom: 1.375rem; }
+  .cds-project-inventory-grid { --cds-card-min: 20.5rem; gap: 1.125rem; }
+  .cds-project-inventory-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 1.375rem; color: hsl(var(--muted-foreground)); font-size: 0.75rem; }
+  .cds-project-inventory-empty { display: flex; min-height: 12rem; align-items: center; justify-content: center; flex-direction: column; gap: 0.75rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-inventory-empty h2 { color: hsl(var(--foreground)); font-size: 1rem; font-weight: 500; }
+  .cds-project-inventory-empty p { font-size: 0.875rem; }
+  .cds-project-inventory--list { grid-template-columns: minmax(0, 1fr); gap: 0.625rem; }
+  .cds-project-inventory--list .cds-project-card-link { display: grid; grid-template-columns: 1.15fr 1.1fr 1fr 0.9fr; align-items: center; gap: 1.25rem; padding: 0.875rem 3.25rem 0.875rem 1rem; }
+  .cds-project-inventory--list .cds-project-card-heading { padding: 0; }
+  .cds-project-inventory--list .cds-project-services { height: 4rem; margin: 0; }
+  .cds-project-inventory--list .cds-project-service-focus { flex-direction: row; gap: 0.5rem; }
+  .cds-project-inventory--list .cds-project-service-list { grid-auto-rows: minmax(1rem, 1fr); gap: 0.125rem; }
+  .cds-project-inventory--list .cds-project-service-item { padding-block: 0.125rem; }
+  .cds-project-inventory--list .cds-project-service-list[data-service-count='1'] .cds-project-service-item { flex-direction: row; gap: 0.5rem; }
+  .cds-project-inventory--list .cds-project-service-list[data-service-count='1'] .cds-project-service-glyph { width: 1.1875rem; height: 1.1875rem; }
+  .cds-project-inventory--list .cds-project-metrics { min-height: 2.625rem; padding: 0; gap: 0.375rem 0.75rem; }
+  .cds-project-inventory--list .cds-project-build-rate { margin-left: 0; }
+  .cds-project-inventory--list .cds-project-card-footer { margin: 0; padding: 0; border: 0; flex-wrap: wrap; gap: 0.375rem 0.75rem; }
+  .cds-project-inventory--list .cds-project-card-footer time { margin-left: 0; }
+  .cds-project-inventory--list .cds-project-clone-error { grid-column: 1 / -1; margin: 0; }
+  @media (max-width: 68.75rem) {
+    .cds-project-inventory-toolbar { flex-wrap: wrap; gap: 1.25rem; }
+    .cds-project-inventory-tools { width: 100%; }
+    .cds-project-inventory-search { flex: 1; }
+    .cds-project-inventory--list .cds-project-card-link { grid-template-columns: 1fr 1fr; gap: 0.75rem; }
   }
-
-  /* Phones: shrink the tech-stack dock so the typical 4-6 glyphs fit centred
-     instead of getting hard-cut mid-icon; `safe center` keeps it centred when
-     it fits and falls back to scrollable (not clipped) for the rare 7-stack
-     project. The hover-magnify dock is desktop-only, so static sizing is fine. */
   @media (max-width: 640px) {
-    .cds-project-card {
-      --project-node-size: 2.6rem;
-      --project-node-gap: 0.55rem;
-    }
-    .cds-project-node-row {
-      justify-content: safe center;
-      overflow-x: auto;
-      scrollbar-width: none;
-    }
-    .cds-project-node-row::-webkit-scrollbar {
-      display: none;
-    }
+    .cds-project-inventory-heading { align-items: flex-start; gap: 0.625rem; margin-bottom: 1rem; }
+    .cds-project-inventory-title h1 { font-size: 1.5rem; }
+    .cds-project-inventory-heading p { max-width: 12rem; font-size: 0.75rem; line-height: 1.6; }
+    .cds-project-inventory-actions { gap: 0.375rem; }
+    .cds-project-inventory-actions button { padding-inline: 0.625rem; }
+    .cds-project-status-filters { width: 100%; min-width: 0; overflow-x: auto; gap: 1.25rem; padding-bottom: 0.25rem; }
+    .cds-project-status-filters > button { font-size: 0.8125rem; }
+    .cds-project-status-filters > button[aria-pressed='true']::after { bottom: 0; }
+    .cds-project-inventory-toolbar { gap: 0.5rem; margin-bottom: 1rem; }
+    .cds-project-inventory-tools { flex-wrap: wrap; gap: 0.5rem; }
+    .cds-project-inventory-search { flex-basis: 100%; width: 100%; }
+    .cds-project-inventory-tools select { flex: 1; max-width: none; }
+    .cds-project-repository-import { flex-wrap: wrap; }
+    .cds-project-repository-import > div { flex-basis: 100%; }
+    .cds-project-inventory--list .cds-project-services { display: none; }
+    .cds-project-inventory--list .cds-project-card-link { grid-template-columns: minmax(0, 1fr); padding-right: 3rem; }
   }
 
-  .cds-project-node-row {
-    min-height: 6.5rem;
-    gap: var(--project-node-gap);
-    padding-block: 0.75rem;
-    isolation: isolate;
+  /* Compact project inventory. Every surface and status follows the CDS theme. */
+  .cds-project-card {
+    contain-intrinsic-size: auto 16.5rem;
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid hsl(var(--hairline));
+    border-radius: 0.4375rem;
+    background: hsl(var(--surface-raised));
+    transition: border-color 150ms ease;
   }
-
-  .cds-project-node {
-    width: var(--project-node-size);
-    height: var(--project-node-size);
-    border-radius: var(--project-node-radius);
-    transform-origin: center bottom;
-    background-clip: padding-box;
-    box-shadow:
-      0 1rem 2.125rem -1.5625rem rgb(0 0 0 / 0.85),
-      0 1px 0 rgb(255 255 255 / 0.04) inset,
-      0 0 0 1px rgb(255 255 255 / 0.035) inset;
-    transition:
-      box-shadow 180ms ease,
-      border-color 180ms ease,
-      background-color 180ms ease,
-      filter 180ms ease;
-    will-change: transform;
+  .cds-project-card:hover { border-color: hsl(var(--hairline-strong)); }
+  .cds-project-card[data-paused='true'] { background: hsl(var(--surface-raised) / 0.55); border-color: hsl(var(--hairline) / 0.6); }
+  .cds-project-card[data-paused='true'] .cds-project-card-heading,
+  .cds-project-card[data-paused='true'] .cds-project-card-footer { opacity: 0.65; }
+  .cds-project-card[data-paused='true'] .cds-project-services { opacity: 0.45; }
+  .cds-project-card[data-paused='true'] .cds-project-online,
+  .cds-project-card[data-paused='true'] .cds-project-build-rate,
+  .cds-project-card[data-paused='true'] .cds-project-cpu:not(.text-warn):not(.text-bad) { opacity: 0.6; }
+  .cds-project-card-link { display: flex; min-width: 0; height: 100%; flex-direction: column; }
+  .cds-project-card-link:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; border-radius: inherit; }
+  .cds-project-card-heading { display: flex; align-items: center; gap: 0.625rem; min-width: 0; padding: 1rem 3.25rem 0 1rem; }
+  .cds-project-monogram { display: grid; place-items: center; width: 2.125rem; height: 2.125rem; flex-shrink: 0; border: 1px solid hsl(var(--hairline-strong) / 0.65); border-radius: 0.3125rem; background: hsl(var(--muted)); color: hsl(var(--foreground-muted)); font-size: 0.6875rem; font-weight: 600; }
+  .cds-project-card-heading h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; font-weight: 600; letter-spacing: -0.015em; }
+  .cds-project-pin { width: 0.875rem; height: 0.875rem; flex-shrink: 0; color: hsl(var(--muted-foreground)); }
+  .cds-project-state { display: inline-flex; align-items: center; gap: 0.3125rem; flex-shrink: 0; white-space: nowrap; font-size: 0.6875rem; }
+  .cds-project-state i { width: 0.3125rem; height: 0.3125rem; border-radius: 50%; background: currentColor; }
+  .cds-project-services { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.35fr); gap: 0.625rem; height: 6.25rem; margin: 0.875rem 1rem 0; }
+  .cds-project-service-focus { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.625rem; min-width: 0; padding: 0.5rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; background: hsl(var(--accent) / 0.5); }
+  .cds-project-service-focus strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--foreground)); font-size: 0.8125rem; font-weight: 500; }
+  .cds-project-service-copy { display: flex; flex-direction: column; min-width: 0; max-width: 100%; gap: 0.375rem; }
+  .cds-project-service-copy small { color: hsl(var(--muted-foreground)); font-size: 0.6875rem; }
+  .cds-project-service-glyph { display: grid; place-items: center; flex-shrink: 0; width: 2rem; height: 2rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-node-icon { width: 100%; height: 100%; object-fit: contain; }
+  .cds-project-service-list { display: grid; grid-auto-rows: minmax(1.625rem, 1fr); gap: 0.25rem; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .cds-project-service-item { display: flex; align-items: center; gap: 0.5rem; min-width: 0; padding: 0.25rem 0.625rem; border-radius: 0.25rem; background: hsl(var(--surface-sunken) / 0.65); color: hsl(var(--foreground-muted)); font-size: 0.75rem; }
+  .cds-project-service-item .cds-project-service-glyph { width: 1.1875rem; height: 1.1875rem; }
+  .cds-project-service-dot { width: 0.25rem; height: 0.25rem; margin-left: auto; flex-shrink: 0; border-radius: 50%; }
+  .cds-project-service-list[data-service-count='1'] .cds-project-service-item { flex-direction: column; justify-content: center; gap: 0.625rem; position: relative; }
+  .cds-project-service-list[data-service-count='1'] .cds-project-service-glyph { width: 1.75rem; height: 1.75rem; }
+  .cds-project-service-list[data-service-count='1'] .cds-project-service-dot { position: absolute; top: 0.625rem; right: 0.625rem; }
+  .cds-project-services--single { display: flex; align-items: center; padding: 0.875rem 1.25rem; gap: 1rem; border: 1px solid hsl(var(--hairline)); border-radius: 0.3125rem; background: hsl(var(--accent) / 0.3); }
+  .cds-project-services--single .cds-project-service-focus { flex: 1; flex-direction: row; justify-content: flex-start; gap: 1rem; padding: 0; background: none; border: 0; }
+  .cds-project-service-caption { color: hsl(var(--muted-foreground)); font-size: 0.6875rem; }
+  .cds-project-service-caption b { display: block; color: hsl(var(--foreground-muted)); font-size: 1.125rem; font-weight: 500; text-align: center; }
+  .cds-project-services--repository { display: flex; align-items: center; gap: 0.875rem; overflow: hidden; border-radius: 0.3125rem; background: hsl(var(--surface-sunken) / 0.65); }
+  .cds-project-repository-mark { display: grid; place-items: center; align-self: stretch; width: 5rem; flex-shrink: 0; background: hsl(var(--accent) / 0.5); color: hsl(var(--foreground-muted)); }
+  .cds-project-repository-mark svg { width: 2.25rem; height: 2.25rem; }
+  .cds-project-repository-label, .cds-project-repository-provider { display: block; font-size: 0.6875rem; color: hsl(var(--muted-foreground)); }
+  .cds-project-repository-name { display: block; max-width: 100%; padding-right: 0.75rem; margin: 0.4375rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; font-weight: 500; }
+  .cds-project-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 0.375rem 0.875rem; min-height: 2.5rem; padding: 0.5rem 1rem; color: hsl(var(--muted-foreground)); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+  .cds-project-online, .cds-project-cpu { display: inline-flex; align-items: center; gap: 0.3125rem; white-space: nowrap; }
+  .cds-project-online { color: hsl(var(--foreground-muted)); }
+  .cds-project-metrics svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+  .cds-project-build-rate { margin-left: auto; white-space: nowrap; }
+  .cds-project-card-footer { display: flex; align-items: center; gap: 0.75rem; min-width: 0; min-height: 2.5rem; margin-top: auto; padding: 0.625rem 1rem; border-top: 1px solid hsl(var(--hairline) / 0.65); color: hsl(var(--muted-foreground)); font-size: 0.6875rem; }
+  .cds-project-environment { min-width: 0; max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cds-project-branch { display: flex; align-items: center; gap: 0.3125rem; min-width: 0; }
+  .cds-project-branch svg { width: 0.8125rem; height: 0.8125rem; flex-shrink: 0; }
+  .cds-project-branch span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: var(--cds-font-mono); }
+  .cds-project-branch-count { flex-shrink: 0; white-space: nowrap; }
+  .cds-project-card-footer time { flex-shrink: 0; margin-left: auto; }
+  .cds-project-actions { position: absolute; top: 0.9375rem; right: 0.75rem; }
+  .cds-project-actions [role='menuitem'] svg { width: 1.125rem; height: 1.125rem; }
+  .cds-project-clone-error { margin: 0 1rem 0.875rem; padding: 0.5rem 0.75rem; border-radius: 0.3125rem; background: hsl(var(--bad-soft)); color: hsl(var(--bad)); font-size: 0.75rem; line-height: 1.5; overflow-wrap: anywhere; }
+  @media (max-width: 640px) {
+    .cds-project-card-heading { padding-inline-start: 0.875rem; gap: 0.5rem; }
+    .cds-project-card-heading h2 { font-size: 0.9375rem; }
+    .cds-project-services { margin-inline: 0.875rem; }
+    .cds-project-metrics, .cds-project-card-footer { padding-inline: 0.875rem; }
+    .cds-project-metrics { gap: 0.375rem 0.625rem; }
+    .cds-project-services--single { padding-inline: 0.875rem; }
   }
-
-  .cds-project-node-icon {
-    width: var(--project-node-icon-size);
-    height: var(--project-node-icon-size);
-    transition: width 120ms ease, height 120ms ease, filter 160ms ease;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    .cds-project-node-row .cds-project-node:hover {
-      z-index: 3;
-      box-shadow:
-        0 1.625rem 3.375rem -1.75rem rgb(0 0 0 / 0.88),
-        0 0 0 1px hsl(var(--foreground) / 0.08),
-        0 0 1.75rem -1.125rem currentColor,
-        inset 0 1px 0 rgb(255 255 255 / 0.16);
-      filter: saturate(1.12) brightness(1.05);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .cds-project-node,
-    .cds-project-node-icon {
-      transition: none;
-      will-change: auto;
-    }
-
-    .cds-project-node-row .cds-project-node:hover {
-      filter: none;
-    }
-  }
-
-  .cds-project-node-badge {
-    @apply absolute bottom-1 right-1 rounded px-1.5 font-mono text-[0.6875rem] font-extrabold leading-4 shadow-sm;
-    background-color: hsl(var(--surface-sunken));
-  }
+  @media (prefers-reduced-motion: reduce) { .cds-project-card { transition: none; } }
 
   /*
    * Surface tiers. Use these instead of `bg-card border-border` ad-hoc piles.
