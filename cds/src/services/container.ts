@@ -2615,6 +2615,25 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     timeoutSeconds = 300,
   ): Promise<boolean> {
+    const scope = this.runtimePhaseOwners.get(containerName);
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName, scope?.owner);
+    try {
+      scope?.check?.();
+      const ready = await this.waitForStartupSignalUnbudgeted(containerName, signal, onOutput, timeoutSeconds);
+      scope?.check?.();
+      if (ready) releaseMemory();
+      return ready;
+    } finally {
+      if (this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
+    }
+  }
+
+  private async waitForStartupSignalUnbudgeted(
+    containerName: string,
+    signal: string,
+    onOutput?: (chunk: string) => void,
+    timeoutSeconds = 300,
+  ): Promise<boolean> {
     if (isPreviewInstance()) { onOutput?.(`${previewInstanceBlockedMessage('docker')}\n`); return false; }
     if (this.staticWebLogMessage(containerName) !== undefined) {
       const listening = this.staticSites?.has(containerName) === true;
@@ -2703,12 +2722,15 @@ export class ContainerService {
     containerName?: string,
   ): Promise<boolean> {
     const scope = containerName ? this.runtimePhaseOwners.get(containerName) : undefined;
+    const releaseMemory = containerName ? deploymentPhaseBudget.captureMemoryRelease(containerName, scope?.owner) : undefined;
     try {
       const ready = await deploymentPhaseBudget.run('ready', scope?.owner || {},
         () => this.waitForReadinessUnbudgeted(hostPort, probe, onAttempt, onOutput, containerName), { check: scope?.check });
-      if (ready && containerName) deploymentPhaseBudget.releaseMemory(containerName);
+      if (ready) releaseMemory?.();
       return ready;
-    } finally { if (containerName) this.runtimePhaseOwners.delete(containerName); }
+    } finally {
+      if (containerName && this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
+    }
   }
 
   private async waitForReadinessUnbudgeted(
