@@ -55,7 +55,7 @@ describe('MCP语音面板', () => {
     await render();
     expect(host.textContent).toContain('当前模型池尚未配置');
     expect(host.textContent).toContain('产品介绍');
-    const submit = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('生成并保存语音'));
+    const submit = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('生成语音'));
     expect(submit?.disabled).toBe(true);
   });
   it('历史查询失败不显示误导性的无历史空态', async () => {
@@ -67,7 +67,7 @@ describe('MCP语音面板', () => {
   it('上游结果不明时停止自动查询，重复生成按钮不可用', async () => {
     vi.useFakeTimers();
     services.listSpeechRuns.mockResolvedValue(ok({ items: [{ ...completed, status: 'unknown', audioUrl: undefined, assetId: undefined }] }));
-    await render();
+    await render('/mcp-console?tab=speech&view=history');
     await act(async () => vi.advanceTimersByTime(15000));
     expect(services.listSpeechRuns).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain('结果待核查');
@@ -109,7 +109,7 @@ describe('MCP语音面板', () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '  原文保持不变\n继续朗读  ');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    const submit = [...host.querySelectorAll('button')].find(button => button.textContent === '生成并保存语音')!;
+    const submit = [...host.querySelectorAll('button')].find(button => button.textContent === '生成语音')!;
     expect(submit.disabled).toBe(false);
     await act(async () => submit.click());
     await act(async () => submit.click());
@@ -120,4 +120,94 @@ describe('MCP语音面板', () => {
     expect(first.clientRequestId).toBeTruthy();
     expect(second.clientRequestId).toBe(first.clientRequestId);
   });
+});
+
+
+const editStudioText = async (text: string) => {
+  const textarea = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="需要朗读的文字"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, text);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+};
+const clickStudioButton = async (prefix: string) => act(async () => {
+  const button = [...host.querySelectorAll('button')].find(item => item.textContent?.startsWith(prefix));
+  expect(button).toBeTruthy();
+  button!.click();
+});
+
+it('工作台和历史切换保留原稿，浏览操作不提交生成预设或配置', async () => {
+  await render();
+  await editStudioText('  原稿保持\n不改写  ');
+  await clickStudioButton('历史记录');
+  expect(host.querySelector('aside[aria-label="音频详情"]')?.textContent).toContain('产品介绍');
+  await clickStudioButton('创作工作台');
+  expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="需要朗读的文字"]')?.value).toBe('  原稿保持\n不改写  ');
+  expect(services.generateSpeech).not.toHaveBeenCalled();
+  expect(services.saveSpeechPreset).not.toHaveBeenCalled();
+  expect(services.saveSpeechSettings).not.toHaveBeenCalled();
+});
+
+it('没有可用能力时仍能进入已有历史，普通用户没有环境管理入口', async () => {
+  services.getSpeechCapabilities.mockResolvedValue(ok({ environment: 'preview', profiles: [] }));
+  services.getSpeechSettings.mockResolvedValue(ok({ environment: 'preview', revision: 1, profiles: [], canManage: false }));
+  await render();
+  expect(host.textContent).toContain('当前环境尚未配置语音能力');
+  expect([...host.querySelectorAll('button')].some(item => item.textContent === '环境配置')).toBe(false);
+  await clickStudioButton('历史记录');
+  expect(host.querySelector('aside[aria-label="音频详情"]')?.textContent).toContain('产品介绍');
+  expect(services.generateSpeech).not.toHaveBeenCalled();
+});
+
+it('只有管理员能打开环境配置，单纯打开不保存', async () => {
+  services.getSpeechSettings.mockResolvedValue(ok({ environment: 'preview', revision: 1, profiles: [profile], canManage: true }));
+  await render();
+  await clickStudioButton('环境配置');
+  expect(host.textContent).toContain('管理当前环境的语音能力');
+  expect(services.saveSpeechSettings).not.toHaveBeenCalled();
+});
+
+it('只有MP3且没有特性时不伪造情绪或声音指令', async () => {
+  services.getSpeechCapabilities.mockResolvedValue(ok({ environment: 'preview', profiles: [{ ...profile, supportsInstructions: false, supportsEmotion: false }] }));
+  await render();
+  expect(host.querySelector('aside[aria-label="声音设置"]')?.textContent).toContain('MP3');
+  expect(host.querySelector('select[aria-label="情绪（可选）"]')).toBeNull();
+  expect(host.querySelector('textarea[aria-label="声音指令（可选）"]')).toBeNull();
+  expect(services.generateSpeech).not.toHaveBeenCalled();
+});
+
+it('选择声音预设保留原稿并正确回填音色', async () => {
+  services.getSpeechCapabilities.mockResolvedValue(ok({ environment: 'preview', profiles: [{ ...profile, voices: [...profile.voices, { id: 'b', name: '另一音色', languages: ['zh'] }] }] }));
+  services.listSpeechPresets.mockResolvedValue(ok({ items: [{ id: 'preset-1', name: '常用声音', profileId: profile.id, profileRevision: 1, revision: 1, voiceId: 'b', format: 'mp3', speed: 1 }] }));
+  await render();
+  await editStudioText('保留原稿');
+  const select = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('我的声音预设'))!.querySelector('select')!;
+  await act(async () => { select.value = 'preset-1'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="需要朗读的文字"]')?.value).toBe('保留原稿');
+  expect(host.querySelector<HTMLSelectElement>('select[aria-label="音色"]')?.value).toBe('b');
+});
+
+it('清空能力不崩溃或丢原稿，并禁止生成', async () => {
+  await render();
+  await editStudioText('保留原稿');
+  const select = host.querySelector<HTMLSelectElement>('select[aria-label="语音能力"]')!;
+  await act(async () => { select.value = ''; select.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="需要朗读的文字"]')?.value).toBe('保留原稿');
+  expect(host.textContent).toContain('请先选择当前环境中的语音能力');
+});
+
+it.each(['queued', 'failed', 'unknown'] as const)('历史只有%s任务时不宣称已有成品同步资产', async status => {
+  services.listSpeechRuns.mockResolvedValue(ok({ items: [{ ...completed, status, assetId: undefined, audioUrl: undefined }] }));
+  await render('/mcp-console?tab=speech&view=history');
+  expect(host.textContent).not.toContain('成品已同步到我的资产');
+  expect(services.generateSpeech).not.toHaveBeenCalled();
+});
+
+it('目标深链404时不以另一任务冒充详情', async () => {
+  services.getSpeechRun.mockResolvedValue(fail('RUN_NOT_FOUND', '目标任务不存在或不可访问。'));
+  await render('/mcp-console?tab=speech&run=not-owned');
+  expect(host.textContent).toContain('目标任务不存在或不可访问');
+  const details = host.querySelector('aside[aria-label="音频详情"]')!;
+  expect(details.textContent).not.toContain(completed.text);
+  expect(details.querySelector('audio')).toBeNull();
 });

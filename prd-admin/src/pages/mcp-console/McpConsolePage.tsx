@@ -125,6 +125,8 @@ export default function McpConsolePage() {
     [clients, overview],
   );
 
+  if (tab === 'speech') return <SpeechPanel refreshToken={refreshToken} />;
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -306,9 +308,7 @@ export default function McpConsolePage() {
             合计余量本身也不可行动：额度是按密钥算的，加起来那个数谁也用不上。 */}
       </div>
 
-      {tab === 'speech' ? (
-        <SpeechPanel refreshToken={refreshToken} />
-      ) : tab === 'calls' ? (
+      {tab === 'calls' ? (
         <McpCallsPanel clients={clients} refreshToken={refreshToken} />
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px]">

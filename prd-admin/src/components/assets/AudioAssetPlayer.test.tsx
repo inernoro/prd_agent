@@ -108,3 +108,62 @@ describe('受控音频资产播放与下载', () => {
     expect(host.querySelector('a')?.getAttribute('href')).toBe('blob:private-audio');
   });
 });
+
+
+it('同一会话自动刷新token后，在途音频仍成功交付', async () => {
+  let complete!: (file: { blob: Blob; fileName: string }) => void;
+  download.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+  await render();
+  await load();
+  auth.token = 'refreshed-token';
+  await render();
+  await act(async () => complete({ blob: new Blob(['same-owned-audio']), fileName: 'same.mp3' }));
+  expect(host.querySelector('audio')?.getAttribute('src')).toBe('blob:private-audio');
+  expect(revokeObjectURL).not.toHaveBeenCalled();
+});
+
+it('换用户后晚返回的旧下载不生成Blob或恢复旧音频', async () => {
+  let complete!: (file: { blob: Blob; fileName: string }) => void;
+  download.mockReturnValue(new Promise(resolve => { complete = resolve; }));
+  await render();
+  await load();
+  auth.user = { userId: 'user-b' };
+  auth.sessionKey = 'another-session';
+  auth.token = 'another-token';
+  await render();
+  await act(async () => complete({ blob: new Blob(['old-owner']), fileName: 'old.mp3' }));
+  expect(host.querySelector('audio')).toBeNull();
+  expect(createObjectURL).not.toHaveBeenCalled();
+});
+
+it('studio基于真实媒体事件更新metadata与seek，播放下载复用同一Blob', async () => {
+  const metadata = vi.fn();
+  await act(async () => root.render(<AudioAssetPlayer url={path} title="产品旁白.mp3" variant="studio" onMetadata={metadata} />));
+  expect(download).not.toHaveBeenCalled();
+  await load();
+  const media = host.querySelector('audio')!;
+  Object.defineProperty(media, 'duration', { value: 3.912, configurable: true });
+  await act(async () => media.dispatchEvent(new Event('loadedmetadata')));
+  expect(metadata).toHaveBeenCalledWith({ sizeBytes: 5, duration: 3.912 });
+  const seek = host.querySelector<HTMLInputElement>('input[type="range"]')!;
+  expect(seek.disabled).toBe(false);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(seek, '1.25');
+    seek.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(media.currentTime).toBe(1.25);
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (this: HTMLMediaElement) {
+    this.dispatchEvent(new Event('play'));
+    return Promise.resolve();
+  });
+  try {
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="播放产品旁白.mp3"]')!.click());
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('button[aria-label="暂停产品旁白.mp3"]')).not.toBeNull();
+    const link = host.querySelector('a[download]')!;
+    expect(link.getAttribute('href')).toBe(media.getAttribute('src'));
+    expect(link.getAttribute('href')).toBe('blob:private-audio');
+    expect(link.getAttribute('download')).toBe('旁白.mp3');
+    expect(download).toHaveBeenCalledTimes(1);
+  } finally { play.mockRestore(); }
+});

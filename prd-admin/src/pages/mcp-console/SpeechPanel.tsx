@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, Check, Clock3, Headphones, Plus, RefreshCw, Save, Volume2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, AudioLines, Check, Clock3, FileAudio, Folder, History, Plus, RefreshCw, Save, Search, SlidersHorizontal, Volume2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
+import { Surface } from '@/components/design/Surface';
 import { AudioAssetPlayer } from '@/components/assets/AudioAssetPlayer';
 import { generateSpeech, getSpeechCapabilities, getSpeechRun, getSpeechSettings, listSpeechPresets, listSpeechRuns, saveSpeechPreset } from '@/services/real/mcpSpeech';
 import type { SpeechCapabilities, SpeechPreset, SpeechRun, SpeechSettings } from '@/services/contracts/mcpSpeech';
 import { toast } from '@/lib/toast';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { EMPTY_SPEECH_DRAFT, applySpeechPreset, isSpeechRunActive, repeatSpeechRun, selectSpeechProfile, speechDraftIssue, speechRunRequest } from './speechForm';
-import { SpeechSettingsPanel, speechCardStyle, speechInputClass, speechInputStyle } from './SpeechSettingsPanel';
+import { SpeechSettingsPanel } from './SpeechSettingsPanel';
+import './SpeechStudio.css';
 
 const RUN_STATUS: Record<string, { label: string; icon: typeof Check; color: string }> = {
   queued: { label: '排队中', icon: Clock3, color: 'var(--text-secondary)' },
@@ -23,9 +24,12 @@ const RUN_STATUS: Record<string, { label: string; icon: typeof Check; color: str
 };
 
 export function SpeechPanel({ refreshToken }: { refreshToken: number }) {
-  const { isMobile } = useBreakpoint();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const focusedRunId = searchParams.get('run') || '';
+  const historyView = searchParams.get('view') === 'history' || !!focusedRunId;
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [showPresetEditor, setShowPresetEditor] = useState(false);
   const [capabilities, setCapabilities] = useState<SpeechCapabilities | null>(null);
   const [settings, setSettings] = useState<SpeechSettings | null>(null);
   const [presets, setPresets] = useState<SpeechPreset[]>([]);
@@ -118,8 +122,9 @@ export function SpeechPanel({ refreshToken }: { refreshToken: number }) {
       const result = await generateSpeech(speechRunRequest(draft, profile, submitIdentity.current.key));
       if (!result.success) { toast.error(result.error?.message || '任务未提交，请检查配置后重试。'); return; }
       submitIdentity.current = null;
-      toast.success('语音任务已提交，可在下方历史查看进度');
+      toast.success('语音任务已提交，可在历史记录查看进度');
       await refresh();
+      setSearchParams(current => { const next = new URLSearchParams(current); next.set('view', 'history'); next.set('run', result.data.id); return next; }, { replace: true });
     } catch { toast.error('提交结果暂未确认，请先刷新历史；直接重试同一内容不会重复提交。'); }
     finally { setSubmitting(false); }
   };
@@ -138,50 +143,109 @@ export function SpeechPanel({ refreshToken }: { refreshToken: number }) {
     finally { setSavingPreset(false); }
   };
 
-  if (loading) return <div className="flex min-h-0 flex-1 items-center justify-center"><MapSectionLoader text="正在读取当前环境的语音能力" /></div>;
-  return <div className="flex min-h-0 flex-1 flex-col gap-4 pb-3 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain', paddingBottom: isMobile ? 'calc(var(--mobile-tab-height, 60px) + env(safe-area-inset-bottom, 0px) + 12px)' : undefined }}>
-    <div className="flex flex-wrap items-center gap-3"><div className="flex-1"><h2 className="flex items-center gap-2 text-base font-semibold"><Headphones size={18} aria-hidden />文生语音</h2><p className="mt-1 text-xs leading-6" style={{ color: 'var(--text-muted)' }}>按原文朗读，成品自动保存到我的资产。当前环境：{capabilities?.environment || '暂未读取'}</p></div><Button size="sm" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} aria-hidden />}刷新</Button><Link to="/my-assets?tab=audio" className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium" style={speechCardStyle}>我的音频资产<ArrowRight size={13} aria-hidden /></Link></div>
-    {error && <SpeechAlert>{error}</SpeechAlert>}
-    {!capabilities?.profiles.length ? <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-8 text-center" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}><Volume2 size={30} aria-hidden /><h3>当前环境尚未配置语音能力</h3><p>{settings?.canManage ? '在下方添加语音能力，并绑定模型网关中的语音模型池和实际可用音色。' : '请联系管理员配置语音模型与音色。已有历史和音频资产仍可查阅。'}</p></div> : <section className="rounded-xl border p-4" style={speechCardStyle}>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="flex min-w-0 flex-col gap-3">
-          <Field label="需要朗读的文字"><textarea aria-label="需要朗读的文字" rows={9} className={`${speechInputClass} resize-y`} style={speechInputStyle} value={draft.text} onChange={event => setDraft(current => ({ ...current, text: event.target.value }))} placeholder="粘贴讲稿、产品介绍或希望朗读的文字。生成时保留原文。" /></Field>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: 'var(--text-muted)' }}><span>{Array.from(draft.text).length} 字{profile ? ` / 单次最多 ${profile.maxTextChars} 字` : ''}</span><span>单次生成，不自动改写</span></div>
-          <Field label="成品名称（可选）"><input className={speechInputClass} style={speechInputStyle} value={draft.title} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} placeholder="例如：新品介绍旁白" /></Field>
-        </div>
-        <div className="flex min-w-0 flex-col gap-3">
-          {presetError && <SpeechAlert>{presetError}</SpeechAlert>}
-          <Field label="我的声音预设"><select aria-label="我的声音预设" className={speechInputClass} style={speechInputStyle} value={presetId} onChange={event => { const selected = presets.find(item => item.id === event.target.value); setPresetId(event.target.value); setPresetName(selected?.name ?? ''); if (selected) setDraft(current => applySpeechPreset(current, selected)); }}><option value="">自定义声音配置</option>{presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></Field>
-          <Field label="语音能力"><select aria-label="语音能力" className={speechInputClass} style={speechInputStyle} value={draft.profileId} onChange={event => { const selected = capabilities.profiles.find(item => item.id === event.target.value); setPresetId(''); setDraft(current => selected ? selectSpeechProfile(current, selected) : { ...current, profileId: '', profileRevision: undefined, voiceId: '', format: '', instructions: '', emotion: '' }); }}><option value="">请选择语音能力</option>{!profile && draft.profileId && <option value={draft.profileId}>原语音能力已不可用</option>}{capabilities.profiles.map(item => <option key={item.id} value={item.id}>{item.name}{!item.available ? '（暂不可用）' : ''}</option>)}</select></Field>
-          {profile && <>
-            {!profile.available && <SpeechAlert>{profile.unavailableReason || '此能力暂不可用，请联系管理员检查配置。'}</SpeechAlert>}
-            {draft.profileRevision !== undefined && draft.profileRevision !== profile.revision && <div className="flex flex-wrap items-center gap-2"><span className="text-xs" style={{ color: 'var(--semantic-warning-text)' }}>原声音配置已更新，需重新确认音色。</span><Button size="sm" onClick={() => { setDraft(current => selectSpeechProfile(current, profile)); setPresetId(''); }}>载入最新声音配置</Button></div>}
-            <div className="grid grid-cols-2 gap-3"><Field label="音色"><select aria-label="音色" className={speechInputClass} style={speechInputStyle} value={draft.voiceId} onChange={event => setDraft(current => ({ ...current, voiceId: event.target.value }))}>{!profile.voices.some(voice => voice.id === draft.voiceId) && <option value={draft.voiceId}>请选择可用音色</option>}{profile.voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}{voice.languages?.length ? ` · ${voice.languages.join(' / ')}` : ''}</option>)}</select></Field><Field label="输出格式"><select aria-label="输出格式" className={speechInputClass} style={speechInputStyle} value={draft.format} onChange={event => setDraft(current => ({ ...current, format: event.target.value }))}>{!profile.formats.includes(draft.format) && <option value={draft.format}>请选择输出格式</option>}{profile.formats.map(format => <option key={format}>{format}</option>)}</select></Field></div>
-            {profile.voices.find(voice => voice.id === draft.voiceId)?.previewUrl && <audio controls preload="none" className="w-full" src={profile.voices.find(voice => voice.id === draft.voiceId)?.previewUrl} aria-label="音色试听" />}
-            <Field label={`语速（${profile.minSpeed}–${profile.maxSpeed}）`}><input type="number" min={profile.minSpeed} max={profile.maxSpeed} step={0.1} className={speechInputClass} style={speechInputStyle} value={Number.isFinite(draft.speed) ? draft.speed : ''} onChange={event => setDraft(current => ({ ...current, speed: event.target.valueAsNumber }))} /></Field>
-            {profile.supportsInstructions && <Field label="声音指令（可选）"><textarea aria-label="声音指令（可选）" rows={2} className={speechInputClass} style={speechInputStyle} value={draft.instructions} onChange={event => setDraft(current => ({ ...current, instructions: event.target.value }))} placeholder="描述此能力支持的朗读方式" /></Field>}
-            {profile.supportsEmotion && <Field label="情绪（可选）"><select aria-label="情绪（可选）" className={speechInputClass} style={speechInputStyle} value={draft.emotion} onChange={event => setDraft(current => ({ ...current, emotion: event.target.value }))}><option value="">上游默认</option>{profile.emotions.map(emotion => <option key={emotion}>{emotion}</option>)}</select></Field>}
-          </>}
-          <div className="flex flex-wrap gap-2"><input aria-label="声音预设名称" className={`${speechInputClass} flex-1`} style={speechInputStyle} value={presetName} onChange={event => setPresetName(event.target.value)} placeholder="为这组声音配置命名" /><Button size="sm" disabled={savingPreset || !profile} onClick={() => void savePreset()}>{savingPreset ? <MapSpinner size={14} /> : <Save size={14} aria-hidden />}{selectedPreset ? '更新预设' : '保存预设'}</Button>{selectedPreset && <Button size="sm" onClick={() => { setPresetId(''); setPresetName(''); }}><Plus size={12} aria-hidden />另存为</Button>}</div>
-        </div>
+  const navigateWorkspace = (history: boolean, runId?: string) => {
+    setShowSettings(false);
+    setSearchParams(current => {
+      const next = new URLSearchParams(current);
+      next.set('tab', 'speech');
+      if (history) next.set('view', 'history'); else next.delete('view');
+      if (runId) next.set('run', runId); else next.delete('run');
+      return next;
+    }, { replace: true });
+  };
+  const selectedRun = focusedRunId ? visibleRuns.find(run => run.id === focusedRunId) : visibleRuns[0];
+  const selectedVoice = profile?.voices.find(voice => voice.id === draft.voiceId);
+  const matchingRuns = visibleRuns.filter(run => (!statusFilter || run.status === statusFilter) &&
+    (!query.trim() || `${run.title} ${run.text}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
+  const characterCount = Array.from(draft.text).length;
+  const repeat = (run: SpeechRun) => { setDraft(repeatSpeechRun(run)); setPresetId(''); navigateWorkspace(false); };
+
+  if (loading) return <div className="speech-studio-loading"><MapSectionLoader text="正在读取当前环境的语音能力" /></div>;
+  return <Surface className="speech-studio" data-testid="speech-studio">
+    <header className="speech-toolbar">
+      <Link to="/mcp-console" className="speech-toolbar-back" aria-label="返回智能体接入台" title="返回智能体接入台"><ArrowLeft size={16} /></Link>
+      <h1><AudioLines size={20} aria-hidden />文生语音</h1>
+      <div className="speech-view-tabs" aria-label="语音工作区">
+        <button type="button" aria-current={!historyView && !showSettings ? 'page' : undefined} onClick={() => navigateWorkspace(false)}>创作工作台</button>
+        <button type="button" aria-current={historyView && !showSettings ? 'page' : undefined} onClick={() => navigateWorkspace(true)}>语音历史 <span>{visibleRuns.length}</span></button>
       </div>
-      <div className="mt-4 flex flex-wrap items-center gap-3"><Button variant="primary" size="sm" disabled={submitting || !!issue} onClick={() => void generate()}>{submitting ? <MapSpinner size={14} /> : <Volume2 size={14} aria-hidden />}{submitting ? '正在提交语音任务' : '生成并保存语音'}</Button><span className="text-xs" style={{ color: 'var(--text-muted)' }}>{issue || '任务在后台执行，关闭客户端也会继续。'}</span></div>
-    </section>}
-    <section className="rounded-xl border p-4" style={speechCardStyle}>
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Clock3 size={16} aria-hidden />最近的语音任务</h2>
-      {historyError && <SpeechAlert>{historyError}</SpeechAlert>}
-      {focusedRunError && <SpeechAlert>{focusedRunError}</SpeechAlert>}
-      {!visibleRuns.length && !historyError && !focusedRunError && <p className="py-8 text-center text-xs" style={{ color: 'var(--text-muted)' }}>还没有语音任务。可在上方生成，也可以让已授权的 MCP 客户端为你生成。</p>}
-      <div className="flex flex-col gap-3">{visibleRuns.map(run => <SpeechRunCard key={run.id} run={run} focused={run.id === focusedRunId} onRepeat={() => { setDraft(repeatSpeechRun(run)); setPresetId(''); }} />)}</div>
-    </section>
-    {settingsError && <SpeechAlert>{settingsError}</SpeechAlert>}
-    {settings?.canManage && <><Button size="sm" className="self-start" onClick={() => setShowSettings(value => !value)}>{showSettings ? '收起环境配置' : '管理当前环境的语音能力'}</Button>{showSettings && <SpeechSettingsPanel key={settings.revision} settings={settings} onSaved={refresh} />}</>}
-  </div>;
+      <span className="speech-toolbar-spacer" />
+      <span className="speech-environment" title={`当前环境：${capabilities?.environment || '暂未读取'}`}><span className="sr-only">当前环境：</span>{capabilities?.environment || '暂未读取'}</span>
+      <Button size="sm" className="speech-refresh" disabled={refreshing} aria-label="刷新语音记录" title="刷新语音记录" onClick={() => void refresh()}>{refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} />}</Button>
+      {settings?.canManage && <Button size="sm" className="speech-config-button" aria-expanded={showSettings} onClick={() => setShowSettings(value => !value)}><SlidersHorizontal size={14} />环境配置</Button>}
+    </header>
+    <div className={`speech-workspace${showSettings ? ' speech-workspace--settings' : ''}`}>
+      <nav className="speech-workspace-nav" aria-label="语音导航">
+        <span className="speech-eyebrow">工作区</span>
+        <button type="button" className="speech-nav-item" aria-current={!historyView && !showSettings ? 'page' : undefined} onClick={() => navigateWorkspace(false)}><Plus size={18} />新建语音</button>
+        <button type="button" className="speech-nav-item" aria-current={historyView && !showSettings ? 'page' : undefined} onClick={() => navigateWorkspace(true)}><History size={18} />历史记录 <span>{visibleRuns.length}</span></button>
+        <Link className="speech-nav-item" to="/my-assets?tab=audio"><Folder size={18} />我的音频资产</Link>
+        <div className="speech-nav-presets">
+          <span className="speech-eyebrow">声音预设</span>
+          {!presets.length && <p className="speech-muted">保存常用声音，随时复用。</p>}
+          {presets.map(preset => <button key={preset.id} type="button" className="speech-preset-card" aria-pressed={preset.id === presetId} onClick={() => { setPresetId(preset.id); setPresetName(preset.name); setDraft(current => applySpeechPreset(current, preset)); navigateWorkspace(false); }}><strong>{preset.name}</strong><span>{preset.speed}× · {preset.format.toUpperCase()}</span></button>)}
+        </div>
+        <p className="speech-nav-footnote"><Folder size={17} aria-hidden />每次生成，自动存入资产<br />可从历史随时找回</p>
+      </nav>
+      {showSettings ? <main className="speech-main speech-settings-main">
+        <div className="speech-page-heading"><h2>环境配置</h2><p>管理当前环境的语音能力</p></div>
+        {settingsError && <SpeechAlert>{settingsError}</SpeechAlert>}
+        {settings?.canManage && <SpeechSettingsPanel key={settings.revision} settings={settings} onSaved={refresh} />}
+      </main> : <>
+        <main className="speech-main">
+          {error && <SpeechAlert>{error}</SpeechAlert>}
+          {historyError && <SpeechAlert>{historyError}</SpeechAlert>}
+          {settingsError && <SpeechAlert>{settingsError}</SpeechAlert>}
+          {focusedRunError && <SpeechAlert>{focusedRunError}</SpeechAlert>}
+          {historyView ? <>
+            <div className="speech-page-heading"><h2>每一次表达，都能找回。</h2><p>查看已有成品，继续播放、下载或打开我的资产。</p></div>
+            <div className="speech-history-filters"><label className="speech-history-search"><Search size={17} /><input aria-label="搜索成品名称或朗读文字" placeholder="搜索成品名称或朗读文字" value={query} onChange={event => setQuery(event.target.value)} /></label><select className="speech-input" aria-label="任务状态" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">全部状态</option>{Object.entries(RUN_STATUS).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}</select></div>
+            <p className="speech-history-count">{query || statusFilter ? '筛选结果' : '最近任务'} · {matchingRuns.length} 条</p>
+            <div className="speech-history-list">{matchingRuns.map(run => <SpeechHistoryItem key={run.id} run={run} selected={run.id === selectedRun?.id} onSelect={() => navigateWorkspace(true, run.id)} />)}</div>
+            {!matchingRuns.length && !historyError && !focusedRunError && <div className="speech-empty"><FileAudio size={30} /><h3>{query || statusFilter ? '没有匹配的语音任务' : '还没有语音任务'}</h3><p>{query || statusFilter ? '试试其他名称、文字或状态。' : '在创作工作台生成，或让已授权的 MCP 客户端为你生成。'}</p></div>}
+            {visibleRuns.some(run => run.status === 'completed' && run.assetId) && <p className="speech-history-footnote"><Check size={16} />成品已同步到我的资产，刷新后仍可查看。</p>}
+          </> : <>
+            <div className="speech-page-heading"><h2>让文字，自然开口。</h2><p>写下要说的话，选好声音，即可生成专属音频。</p></div>
+            {!capabilities?.profiles.length ? <div className="speech-empty"><Volume2 size={30} /><h3>当前环境尚未配置语音能力</h3><p>{settings?.canManage ? '在环境配置中添加语音能力，绑定可用的模型池与音色。' : '请联系管理员配置语音模型与音色。已有历史和音频资产仍可查阅。'}</p><Button size="sm" className="speech-control" onClick={() => navigateWorkspace(true)}>查看语音历史</Button></div> : <>
+              <Field label="成品名称（选填）"><input className="speech-input" value={draft.title} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} placeholder="为这次表达起个名字" /></Field>
+              <div className="speech-script-label"><span>朗读文本</span><span>{characterCount}{profile ? ` / ${profile.maxTextChars}` : ' 字'}</span></div>
+              <div className="speech-script-editor"><textarea aria-label="需要朗读的文字" value={draft.text} onChange={event => setDraft(current => ({ ...current, text: event.target.value }))} placeholder="粘贴讲稿、产品介绍或希望朗读的文字。" /><p>按原文朗读，保留你的表达。</p></div>
+              <div className="speech-generate-row"><span><FileAudio size={16} />{characterCount} 字</span><Button variant="primary" className="speech-generate-button" disabled={submitting || !!issue} onClick={() => void generate()}>{submitting ? <MapSpinner size={18} /> : <AudioLines size={18} />}{submitting ? '正在提交语音任务' : '生成语音'}</Button></div>
+              {issue && <p className="speech-form-help" role="status">{issue}</p>}
+            </>}
+            {!!visibleRuns.length && <section className="speech-recent"><h3>最近生成</h3><SpeechResultCard run={visibleRuns[0]} onOpen={() => navigateWorkspace(true, visibleRuns[0].id)} /></section>}
+          </>}
+        </main>
+        <aside className="speech-inspector" aria-label={historyView ? '音频详情' : '声音设置'}>
+          {historyView ? selectedRun ? <SpeechRunDetails key={selectedRun.id} run={selectedRun} profiles={capabilities?.profiles || []} onRepeat={() => repeat(selectedRun)} /> : <><h2>音频详情</h2><p className="speech-muted">选择一条历史记录，查看音频与声音配置。</p></> : <>
+            <h2>声音设置<SlidersHorizontal size={18} /></h2>
+            {selectedVoice && <div className="speech-voice-identity"><div className="speech-voice-avatar">{Array.from(selectedVoice.name)[0]}</div><div><strong>{selectedVoice.name}</strong><p>{profile?.name}</p></div>{!!selectedVoice.languages.length && <div className="speech-language-tags">{selectedVoice.languages.map(language => <span key={language}>{language}</span>)}</div>}</div>}
+            <Field label="语音能力"><select aria-label="语音能力" className="speech-input" value={draft.profileId} onChange={event => { const next = capabilities?.profiles.find(item => item.id === event.target.value); setPresetId(''); setDraft(current => next ? selectSpeechProfile(current, next) : { ...current, profileId: '', profileRevision: undefined, voiceId: '', format: '', instructions: '', emotion: '' }); }}><option value="">选择语音能力</option>{!profile && draft.profileId && <option value={draft.profileId}>原语音能力已不可用</option>}{capabilities?.profiles.map(item => <option key={item.id} value={item.id}>{item.name}{!item.available ? '（暂不可用）' : ''}</option>)}</select></Field>
+            {profile && <>
+              {!profile.available && <SpeechAlert>{profile.unavailableReason || '此能力暂不可用，请联系管理员检查配置。'}</SpeechAlert>}
+              {draft.profileRevision !== undefined && draft.profileRevision !== profile.revision && <div className="speech-version-warning"><p>原声音配置已更新，需重新确认音色。</p><Button size="sm" className="speech-control" onClick={() => { setDraft(current => selectSpeechProfile(current, profile)); setPresetId(''); }}>载入最新声音配置</Button></div>}
+              <Field label="音色"><select aria-label="音色" className="speech-input" value={draft.voiceId} onChange={event => setDraft(current => ({ ...current, voiceId: event.target.value }))}>{!profile.voices.some(voice => voice.id === draft.voiceId) && <option value={draft.voiceId}>请选择可用音色</option>}{profile.voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}</option>)}</select></Field>
+              {selectedVoice?.previewUrl && <audio controls preload="none" className="w-full" src={selectedVoice.previewUrl} aria-label="音色试听" />}
+              <Field label={<>语速 <span className="speech-speed-value">{Number.isFinite(draft.speed) ? `${draft.speed.toFixed(1)}×` : '请选择语速'}</span></>}><input aria-label="语速" className="speech-range" style={{ '--speech-progress': `${profile.maxSpeed > profile.minSpeed ? Math.min(100, Math.max(0, (draft.speed - profile.minSpeed) / (profile.maxSpeed - profile.minSpeed) * 100)) : 0}%` } as CSSProperties} type="range" min={profile.minSpeed} max={profile.maxSpeed} step={0.1} value={draft.speed} onChange={event => setDraft(current => ({ ...current, speed: event.target.valueAsNumber }))} /><span className="speech-range-labels"><span>{profile.minSpeed}×</span><span>{profile.maxSpeed}×</span></span></Field>
+              <Field label="输出格式">{profile.formats.length === 1 && profile.formats.includes(draft.format) ? <div className="speech-format-value">{draft.format.toUpperCase()}</div> : <select aria-label="输出格式" className="speech-input" value={draft.format} onChange={event => setDraft(current => ({ ...current, format: event.target.value }))}>{!profile.formats.includes(draft.format) && <option value={draft.format}>请选择输出格式</option>}{profile.formats.map(format => <option key={format} value={format}>{format.toUpperCase()}</option>)}</select>}</Field>
+              {profile.supportsInstructions && <Field label="声音指令（可选）"><textarea aria-label="声音指令（可选）" rows={2} className="speech-input" value={draft.instructions} onChange={event => setDraft(current => ({ ...current, instructions: event.target.value }))} placeholder="描述此能力支持的朗读方式" /></Field>}
+              {profile.supportsEmotion && <Field label="情绪（可选）"><select aria-label="情绪（可选）" className="speech-input" value={draft.emotion} onChange={event => setDraft(current => ({ ...current, emotion: event.target.value }))}><option value="">上游默认</option>{profile.emotions.map(emotion => <option key={emotion}>{emotion}</option>)}</select></Field>}
+            </>}
+            <div className="speech-preset-settings"><h3>声音预设</h3><p className="speech-muted">喜欢这组声音？保存后可直接复用。</p>
+              {!!presets.length && <div className="speech-preset-selector"><Field label="我的声音预设"><select className="speech-input" value={presetId} onChange={event => { const preset = presets.find(item => item.id === event.target.value); setPresetId(preset?.id || ''); setPresetName(preset?.name || ''); if (preset) setDraft(current => applySpeechPreset(current, preset)); }}><option value="">自定义声音配置</option>{presets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></Field></div>}
+              {!showPresetEditor ? <Button className="speech-control" size="sm" disabled={!profile} onClick={() => setShowPresetEditor(true)}>保存为预设</Button> : <div className="speech-preset-editor"><input aria-label="声音预设名称" className="speech-input" value={presetName} onChange={event => setPresetName(event.target.value)} placeholder="为这组声音配置命名" /><Button className="speech-control" size="sm" disabled={savingPreset || !profile} onClick={() => void savePreset()}>{savingPreset ? <MapSpinner size={14} /> : <Save size={14} />}{selectedPreset ? '更新预设' : '保存预设'}</Button>{selectedPreset && <Button className="speech-control" size="sm" onClick={() => { setPresetId(''); setPresetName(''); }}>另存为</Button>}</div>}
+              {presetError && <SpeechAlert>{presetError}</SpeechAlert>}
+            </div>
+            <div className="speech-scope-note"><p>当前支持原文朗读</p><p>语音可用范围与参数由环境配置管理。</p>{profile && <p>单次 {profile.maxTextChars} 字 · 每日 {profile.dailyCharacterQuota} 字 · 并发 {profile.maxConcurrentRuns}</p>}</div>
+          </>}
+        </aside>
+      </>}
+    </div>
+  </Surface>;
 }
 
-function SpeechRunCard({ run, focused, onRepeat }: { run: SpeechRun; focused: boolean; onRepeat: () => void }) {
+function SpeechRunStatus({ run }: { run: SpeechRun }) {
   const status = RUN_STATUS[run.status] ?? { label: run.stage || run.status, icon: Clock3, color: 'var(--text-muted)' };
-  const Icon = status.icon;
   const active = isSpeechRunActive(run);
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -191,21 +255,59 @@ function SpeechRunCard({ run, focused, onRepeat }: { run: SpeechRun; focused: bo
     const timer = setInterval(update, 1000);
     return () => clearInterval(timer);
   }, [active, run.createdAt]);
-  return <article id={`speech-run-${run.id}`} className="rounded-lg border p-3" style={{ borderColor: focused ? 'var(--accent-primary)' : 'var(--border-subtle)' }}>
-    <div className="flex flex-wrap items-center gap-2"><h3 className="min-w-0 flex-1 break-words text-sm font-medium">{run.title || '语音生成'}</h3><span className="inline-flex items-center gap-1.5 text-xs" style={{ color: status.color }}>{active ? <MapSpinner size={12} /> : <Icon size={12} aria-hidden />}{status.label}{active ? ` · 已等待 ${elapsed} 秒` : ''}</span><RelativeTime value={run.createdAt} className="text-xs" /></div>
-    <p className="mt-2 break-words text-xs" style={{ color: 'var(--text-muted)' }}>{run.profileName} · {run.voiceId} · {run.format} · 语速 {run.speed}</p>
-    {active && run.stage && <p className="mt-2 text-xs" aria-live="polite" style={{ color: 'var(--text-secondary)' }}>{run.stage}</p>}
-    {run.errorMessage && <p className="mt-2 text-xs leading-6" role="status" style={{ color: 'var(--semantic-warning-text)' }}>{run.errorMessage}</p>}
-    {run.status === 'unknown' && <p className="mt-2 text-xs leading-6" style={{ color: 'var(--text-muted)' }}>上游是否完成尚未确认，请联系管理员核查此任务，避免重复生成和计费。</p>}
-    <details className="mt-2 text-xs"><summary className="cursor-pointer" style={{ color: 'var(--text-muted)' }}>查看朗读文字与声音配置</summary><p className="mt-2 whitespace-pre-wrap break-words leading-6">{run.text}</p>{run.instructions && <p className="mt-2 leading-6">声音指令：{run.instructions}</p>}{run.emotion && <p className="mt-2">情绪：{run.emotion}</p>}{run.actualModel && <p className="mt-2">实际模型：{run.actualModel}{run.actualPlatformName ? ` · ${run.actualPlatformName}` : ''}</p>}{run.profileRevision !== undefined && <p className="mt-2">声音配置版本：{run.profileRevision}{run.environment ? ` · 环境：${run.environment}` : ''}</p>}</details>
-    {run.status === 'completed' && run.audioUrl && <div className="mt-3"><AudioAssetPlayer url={run.audioUrl} title={run.title || '生成的语音'} /></div>}
-    <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={active || run.status === 'unknown'} onClick={onRepeat}>按此配置再次生成</Button>{run.assetId && <Link className="inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium" style={speechCardStyle} to="/my-assets?tab=audio">在我的资产中查看<ArrowRight size={12} aria-hidden /></Link>}</div>
-  </article>;
+  const Icon = status.icon;
+  return <span className={`speech-run-status${run.status === 'completed' ? ' speech-run-status--complete' : ''}`} style={{ color: status.color }}>{active ? <MapSpinner size={13} /> : <Icon size={13} aria-hidden />}{status.label}{active ? ` · 已等待 ${elapsed} 秒` : ''}</span>;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="flex min-w-0 flex-col gap-1.5 text-xs"><span style={{ color: 'var(--text-secondary)' }}>{label}</span>{children}</label>;
+function SpeechHistoryItem({ run, selected, onSelect }: { run: SpeechRun; selected: boolean; onSelect: () => void }) {
+  return <button type="button" id={`speech-run-${run.id}`} className="speech-history-item" aria-pressed={selected} onClick={onSelect}>
+    <span className="speech-history-item-title"><FileAudio size={21} /><strong>{run.title || '语音生成'}</strong><SpeechRunStatus run={run} /></span>
+    <span className="speech-history-item-text">{run.text}</span>
+    <span className="speech-history-item-meta">{run.profileName} · {run.format.toUpperCase()} · {run.speed}× · <RelativeTime value={run.createdAt} /></span>
+  </button>;
+}
+
+function SpeechResultCard({ run, onOpen }: { run: SpeechRun; onOpen: () => void }) {
+  return <Surface variant="inset" className="speech-result-card">
+    <div className="speech-result-title"><SpeechRunStatus run={run} /><div><h4><button type="button" aria-label={`查看任务详情：${run.title || '语音生成'}`} onClick={onOpen}>{run.title || '语音生成'}</button></h4><p>{RUN_STATUS[run.status]?.label || run.status} · <RelativeTime value={run.createdAt} />{run.assetId ? ' · 已保存到我的资产' : ''}</p></div></div>
+    <SpeechRunMessage run={run} />
+    {run.status === 'completed' && run.audioUrl && <AudioAssetPlayer url={run.audioUrl} title={run.title || '生成的语音'} variant="studio" actions={<Link className="speech-asset-link" to="/my-assets?tab=audio">查看资产</Link>} />}
+  </Surface>;
+}
+
+function SpeechRunMessage({ run }: { run: SpeechRun }) {
+  return <>
+    {isSpeechRunActive(run) && run.stage && <p className="speech-run-message" role="status">{run.stage}</p>}
+    {run.errorMessage && <p className="speech-run-message" role="status">{run.errorMessage}</p>}
+    {run.status === 'unknown' && <p className="speech-run-message">上游是否完成尚未确认，请联系管理员核查此任务，避免重复生成和计费。</p>}
+  </>;
+}
+
+function SpeechRunDetails({ run, profiles, onRepeat }: { run: SpeechRun; profiles: SpeechCapabilities['profiles']; onRepeat: () => void }) {
+  const [metadata, setMetadata] = useState<{ sizeBytes?: number; duration?: number } | null>(null);
+  const voice = profiles.find(profile => profile.id === run.profileId)?.voices.find(item => item.id === run.voiceId);
+  const active = isSpeechRunActive(run);
+  return <>
+    <h2>音频详情</h2><SpeechRunStatus run={run} /><h3 className="speech-detail-title">{run.title || '语音生成'}</h3>
+    <SpeechRunMessage run={run} />
+    {run.status === 'completed' && run.audioUrl && <div className="speech-detail-player"><AudioAssetPlayer url={run.audioUrl} title={run.title || '生成的语音'} variant="studio" onMetadata={setMetadata} /></div>}
+    <section className="speech-detail-text"><h3>朗读原文</h3><p>{run.text}</p></section>
+    <dl className="speech-detail-metadata">
+      <div><dt>音色</dt><dd>{voice?.name || run.voiceId}</dd></div>
+      {!!voice?.languages.length && <div><dt>语言</dt><dd>{voice.languages.join(' / ')}</dd></div>}
+      <div><dt>声音配置</dt><dd>{run.speed}× · {run.format.toUpperCase()}</dd></div>
+      {metadata && <div><dt>文件</dt><dd>{metadata.sizeBytes !== undefined ? `${(metadata.sizeBytes / 1024).toFixed(1)} KB` : ''}{metadata.duration ? ` · ${metadata.duration.toFixed(3)} 秒` : ''}</dd></div>}
+      {run.instructions && <div><dt>声音指令</dt><dd>{run.instructions}</dd></div>}{run.emotion && <div><dt>情绪</dt><dd>{run.emotion}</dd></div>}
+      {run.actualModel && <div><dt>实际模型</dt><dd>{run.actualModel}{run.actualPlatformName ? ` · ${run.actualPlatformName}` : ''}</dd></div>}
+      {run.profileRevision !== undefined && <div><dt>配置版本</dt><dd>{run.profileRevision}{run.environment ? ` · ${run.environment}` : ''}</dd></div>}
+    </dl>
+    <div className="speech-detail-actions"><Button size="sm" className="speech-control" disabled={active || run.status === 'unknown'} onClick={onRepeat}>按此配置再次生成</Button>{run.assetId && <Link className="speech-asset-link" to="/my-assets?tab=audio">在我的资产中查看</Link>}</div>
+  </>;
+}
+
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
+  return <label className="speech-field"><span className="speech-field-label">{label}</span>{children}</label>;
 }
 function SpeechAlert({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed" style={{ background: 'var(--semantic-warning-soft)', borderColor: 'var(--semantic-warning-border)', color: 'var(--semantic-warning-text)' }} role="status"><AlertTriangle size={15} className="shrink-0" aria-hidden /><span>{children}</span></div>;
+  return <div className="speech-alert" role="status"><AlertTriangle size={15} aria-hidden />{children}</div>;
 }
