@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { ContainerService, ContainerStopUnconfirmedError } from '../../src/services/container.js';
+import { prepareServiceReplacement } from '../../src/services/service-replacement.js';
 import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
 import { DeploymentPhaseBudget, deploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -208,6 +209,36 @@ describe('原创建与就绪资格记录保留', () => {
     const candidate = { ...runtime, containerId: undefined, creationIssued: undefined, status: 'building' as const };
     return { candidate, entry: branch() };
   }
+
+  it.each(['run-check', 'storage'] as const)('停止服务的%s异常不能把继承旧CID当本次启动的物理证明', async stage => {
+    const oldId = 'd'.repeat(64), physicalProofs: string[] = [];
+    let current = true;
+    const prepared = stage === 'run-check'
+      ? prepareRun(() => { current = false; return { stdout: runtime.containerId!, stderr: '', exitCode: 0 }; })
+      : prepareSplitRun(() => ({ stdout: '', stderr: '', exitCode: 0 }), absent);
+    const stopped = { ...prepared.candidate, status: 'stopped' as const, containerId: oldId };
+    prepared.entry.services.api = stopped;
+    const target = await prepareServiceReplacement({ entry: prepared.entry, service: stopped, profile,
+      state: { save: vi.fn() } as any, container: service, portStart: config.portStart });
+    expect(target).toBe(stopped); expect(target.containerId).toBe(oldId);
+    mock.addResponsePatternFirst(/docker inspect --format.*"restarting"/, match => {
+      physicalProofs.push(match.input!);
+      return match.input!.includes(oldId)
+        ? { stdout: '', stderr: `Error: No such object: ${oldId}`, exitCode: 1 }
+        : { ...inspection(stage === 'run-check'), stdout: JSON.stringify({ id: runtime.containerId,
+          running: stage === 'run-check', restarting: false, status: stage === 'run-check' ? 'running' : 'created',
+          project: 'p1', branch: 'b1', profile: 'api' }) };
+    });
+    if (stage === 'storage') vi.spyOn(service as any, 'inspectCreatedStorageContainer')
+      .mockRejectedValueOnce(new Error('本次存储验证失败'));
+    await expect(service.runService(prepared.entry, profile, target, undefined, undefined, { ...owner,
+      assertCurrent: () => { if (!current) throw new Error('本次资格失效'); },
+    })).rejects.toThrow(stage === 'run-check' ? '本次资格失效' : '本次存储验证失败');
+    expect(mock.commands.some(command => command.startsWith(stage === 'run-check' ? 'docker run' : 'docker create'))).toBe(true);
+    expect(target.containerId).toBe(oldId);
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ key: target.containerName, owner })]);
+    expect(physicalProofs.some(command => command.includes(oldId))).toBe(false);
+  });
 
   it('创建命令尚未发出就失败时，释放本次刚预约的额度', async () => {
     const { candidate, entry } = prepareRun(() => ({ stdout: 'unused', stderr: '', exitCode: 0 }));

@@ -1757,6 +1757,7 @@ export class ContainerService {
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined, releaseOwnMemory: (() => boolean) | undefined;
     let creationIssued = false, runtimeCommandSettled = false, activationIssued = false;
+    let attemptRuntime: import('../types.js').ServiceRuntimeRef | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -2261,9 +2262,10 @@ export class ContainerService {
       const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
       const mustCreateBeforeStart = attachSharedBeforeStart || acceptedStoragePlan.mounts.some(m => m.kind === 'volume');
       const dockerCreateVerb = mustCreateBeforeStart ? 'docker create' : 'docker run -d';
+      attemptRuntime = { containerName: service.containerName, hostPort: service.hostPort };
       const runCmd = [
         dockerCreateVerb,
-        `--name ${service.containerName}`,
+        `--name ${attemptRuntime.containerName}`,
         `--network ${netPlan.runNetwork}`,
         ...profileAliasFlags,
         `-p 127.0.0.1:${service.hostPort}:${profile.containerPort}`,
@@ -2307,6 +2309,8 @@ export class ContainerService {
       creationIssued = true; activationIssued = !mustCreateBeforeStart;
       const result = await shell.exec(runCmd);
       runtimeCommandSettled = true;
+      const acknowledgedId = result.stdout.trim();
+      if (attemptRuntime && result.exitCode === 0 && /^[a-f0-9]{64}$/.test(acknowledgedId)) attemptRuntime.containerId = acknowledgedId;
       phaseCheck();
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
@@ -2335,7 +2339,6 @@ export class ContainerService {
         });
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
-      const acknowledgedId = result.stdout.trim();
       if (mustCreateBeforeStart && !/^[a-f0-9]{64}$/.test(acknowledgedId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
       if (mustCreateBeforeStart) {
         await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
@@ -2476,9 +2479,9 @@ export class ContainerService {
       if (releaseStart) {
         releaseStart(); releaseStart = undefined;
         if (!creationIssued) releaseOwnMemory?.();
-        else if (runtimeCommandSettled) {
+        else if (runtimeCommandSettled && attemptRuntime) {
           try {
-            if (await this.isDeploymentRuntimeUnused(entry, profile.id, runtimeRef(service), 5000, activationIssued)) releaseOwnMemory?.();
+            if (await this.isDeploymentRuntimeUnused(entry, profile.id, attemptRuntime, 5000, activationIssued)) releaseOwnMemory?.();
           } catch { /* 物理核验未知时保留原预约和原错误，不重新认领同名新责任。 */ }
         }
       }
