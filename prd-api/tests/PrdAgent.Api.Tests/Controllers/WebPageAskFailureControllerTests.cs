@@ -1,13 +1,18 @@
 using System.Security.Claims;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -182,6 +187,8 @@ public sealed class WebPageAskFailureControllerTests
         private readonly Mock<IAskOpeningQuestionGenerator> _openers = new(MockBehavior.Strict);
         private readonly AskQuotaDecision _decision;
         private readonly WebPageAskController _controller;
+        private readonly ServiceProvider _services;
+        private readonly LlmGatewayDataContext _governance;
         private readonly MemoryStream _body = new();
         private GatewayRequest? _request;
         private LlmRequestContext? _scope;
@@ -200,6 +207,9 @@ public sealed class WebPageAskFailureControllerTests
             _databaseName = databaseName;
             _share = share;
             Db = new MongoDbContext(connection, databaseName);
+            _governance = new LlmGatewayDataContext(connection, databaseName + "_gateway");
+            _services = new ServiceCollection().AddSingleton(new TaskAdmissionService(_governance,
+                new ConfigurationBuilder().Build())).BuildServiceProvider();
             _decision = consumed ? AskQuotaDecision.Ok() : AskQuotaDecision.FailOpen();
             _quota.Setup(q => q.TryConsumeAsync(Site.Id, share ? null : ReaderId,
                 It.IsAny<string?>(), Site.AskDailyLimit, CancellationToken.None)).ReturnsAsync(_decision);
@@ -219,7 +229,12 @@ public sealed class WebPageAskFailureControllerTests
                 .ReturnsAsync(new SiteContentSnapshot { SiteId = Site.Id, Text = "本页有可读的正文。", FileCount = 1 });
             _controller = new WebPageAskController(sites.Object, snapshots.Object, _quota.Object,
                 _openers.Object, _gateway.Object, _context.Object, Db, NullLogger<WebPageAskController>.Instance);
-            var http = new DefaultHttpContext();
+            var http = new DefaultHttpContext { RequestServices = _services };
+            var action = share ? nameof(WebPageAskController.AskStreamByShare) : nameof(WebPageAskController.AskStream);
+            var descriptor = new ControllerActionDescriptor { ControllerTypeInfo = typeof(WebPageAskController).GetTypeInfo(),
+                ActionName = action, MethodInfo = typeof(WebPageAskController).GetMethod(action)! };
+            http.SetEndpoint(new Endpoint(_ => Task.CompletedTask, new EndpointMetadataCollection(descriptor), action));
+            http.Request.Method = "POST";
             if (!share)
                 http.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", ReaderId)], "test"));
             http.Response.Body = _body;
@@ -242,6 +257,18 @@ public sealed class WebPageAskFailureControllerTests
             var request = new AskStreamRequest { Question = "这页说了什么？", SiteId = Site.Id };
             if (_share) await _controller.AskStreamByShare("fixture-share", request);
             else await _controller.AskStream(Site.Id, request);
+            if (_share)
+            {
+                var identity = TaskAdmissionRequestState.Get(_controller.HttpContext).Identity;
+                Assert.NotNull(identity);
+                var permit = await _governance.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+                    .Find(x => x.Id == identity.PermitId).SingleAsync();
+                Assert.Equal(OwnerId, permit.ActorUserId);
+                Assert.StartsWith("verified-integration:site-share:", permit.TriggerCredentialId);
+                Assert.Contains(AppCallerRegistry.Admin.WebHosting.Ask, permit.AllowedAppCallerCodes);
+                Assert.Equal(TaskExecutionOrigins.Agent, permit.Origin);
+                Assert.EndsWith(".AskStreamByShare", permit.SourceTask);
+            }
             ResponseText = Encoding.UTF8.GetString(_body.ToArray());
             return ResponseText.Split("\n\n", StringSplitOptions.RemoveEmptyEntries).Select(frame =>
             {
@@ -275,6 +302,10 @@ public sealed class WebPageAskFailureControllerTests
 
         public async ValueTask DisposeAsync()
         {
+            foreach (var lease in TaskAdmissionRequestState.Get(_controller.HttpContext).Leases.AsEnumerable().Reverse())
+                await lease.DisposeAsync();
+            await _services.DisposeAsync();
+            await _client.DropDatabaseAsync(_databaseName + "_gateway");
             await _client.DropDatabaseAsync(_databaseName);
             await _body.DisposeAsync();
         }
