@@ -10,6 +10,7 @@ import { homeState, sortHomeTargets } from '@/lib/statusHome';
 import { classifyAlert } from '../../../src/shared/alarm-classification';
 import { checkPurpose, checkTitle, EVENT_NAMES, frequency, inspectionState, inspectionCheckState, inspectionCheckLabel, projectChannels, type ChannelStatus, type ProjectInspection } from '@/lib/projectStatus';
 import { HomeStateBadge } from './status/BusinessHome';
+import { MonitorCenterSkeleton } from './status/primitives';
 import './status/status-home.css';
 import './status/project-status.css';
 
@@ -58,9 +59,8 @@ export function ProjectStatusPage(): JSX.Element {
   const title = data?.project.aliasName || data?.project.name || projectId;
   const detailUrl = (id: string): string => `/status?target=${encodeURIComponent(id)}`;
   return <AppShell active="status" topbar={<TopBar left={<Crumb items={[{ label: '监控中心', href: '/status' }, { label: title }]} />} right={<Button variant="outline" onClick={() => void load()} disabled={busy}><RefreshCw className={busy ? 'animate-spin' : ''} />{busy ? '正在更新' : '刷新'}</Button>} />}>
-    <Workspace fluid className="cds-workspace--fill"><div className="status-home project-status-page">
+    <Workspace fluid className="cds-workspace--fill">{!data && !error ? <MonitorCenterSkeleton /> : <div className="status-home project-status-page">
       {error && <div role="alert" className="status-home-guidance border-destructive">{error}<Button onClick={() => void load()}>重新读取</Button></div>}
-      {!data && !error && <section className="status-home-panel animate-pulse" aria-busy="true"><h1>正在汇总项目检查与通知</h1><p>正在读取常设检查、定期实测、调度计划和通知回执。</p></section>}
       {data && <>
         <header className="status-home-panel"><div className="project-status-title"><div><p className="status-home-muted">项目运行总览</p><h1>{title} · 检查与通知</h1></div><ShieldCheck className="h-8 w-8 text-primary" /></div>
           <p>{issues.length + inspectionIssues.length ? `${issues.length + inspectionIssues.length} 项检查需要处理` : expiredProber || data.errors.length || uncertain ? '当前有检查缺少可靠的最新结论' : '已接入的检查暂未发现异常'}。{uncertain ? `另有 ${uncertain} 项待确认或逾期。` : ''} 结果只覆盖下面已列出的检查。</p>
@@ -82,6 +82,6 @@ export function ProjectStatusPage(): JSX.Element {
         <section id="delivery" className="status-home-panel"><h2>最近 24 小时的通知记录</h2>{data.deliveries === null ? <p>通知记录无法读取或当前账号无权查看。不能把这当成没有发送失败。</p> : !data.deliveries.length ? <p>当前范围没有发送记录；不能据此证明通知链路正常。</p> : <div className="project-status-table-wrap"><table><thead><tr><th>时间 / 对应检查</th><th>发给哪个通道</th><th>结果</th></tr></thead><tbody>{data.deliveries.map(d => <tr key={d.deliveryId}><td>{timestamp(d.at)}<p>{d.targetName || '通知通道演练'}</p>{d.eventKind && <small>{EVENT_NAMES[d.eventKind] || (d.kind === 'drill' ? '通知演练' : '状态变化')}</small>}</td><td>{d.channelName || '通道名称未记录'}</td><td>{DELIVERY[d.status as keyof typeof DELIVERY] || '结果未确认'}{d.status === 'failed' && <p>请检查接收端或通知配置后重试；详细原因可在通知历史查看。</p>}</td></tr>)}</tbody></table></div>}{data.truncated && <p role="alert">历史记录达到查询上限，当前显示的是部分记录。</p>}{data.suppressed.length > 0 && <details><summary>为什么有 {data.suppressed.length} 条状态变化没有发送</summary>{data.suppressed.map(d => <p key={d.deliveryId}>{d.targetName}：{SKIP_REASON[d.reason || ''] || '按通知去重或恢复观察规则，本次未发送。'}</p>)}</details>}</section>
         <section id="coverage" className="status-home-panel"><h2>覆盖与缺口</h2><p>常设检查 {data.summary === null ? '未知' : checks.length} 项，外部定期实测 {data.inspections === null ? '未知' : inspections.reduce((n, i) => n + i.checks.length, 0)} 项，分支预览服务 {data.summary === null ? '未知' : previews.length} 项。它们检查的路径不同，不能相互代替。</p>{data.inspections === null ? <p>定期实测结果读取失败，覆盖情况尚未确认。</p> : !inspections.length && <p className="text-destructive">定期实测尚未接入，当前看不到所有模型的实际生成能力。</p>}{data.summary?.coverage?.uncovered.filter(t => t.projectId === data.project.id).map(t => <p className="text-destructive" key={t.id}>{t.name}：{t.reason}；{t.action}</p>)}<details><summary>查看 {previews.length} 项分支预览检查</summary>{previews.map(t => <p key={t.id}><HomeStateBadge state={homeState(t, now)} /> <Link to={detailUrl(t.id)}>{t.name}</Link> · {t.measured ? '有实测' : '未实测'} · {t.lastSample ? formatRelative(t.lastSample.t, now) : '尚无样本'}</p>)}</details><p><Link to="/status?view=owner">查看完整探测覆盖与管理</Link> · <Link to={`/reports?project=${encodeURIComponent(data.project.id)}`}>查看项目全部验收报告</Link></p></section>
       </>}
-    </div></Workspace>
+    </div>}</Workspace>
   </AppShell>;
 }
