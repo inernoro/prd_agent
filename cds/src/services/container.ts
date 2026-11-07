@@ -1682,6 +1682,8 @@ export class ContainerService {
        * 失败风暴让编译绕过闸门（2026-07-16 队列堵死复盘）。
        */
       onSourceCompileFallback?: () => Promise<void>;
+      /** 原源码进程取得启动容量后才申请编译槽，等待容量时不占编译槽。 */
+      onBeforeSourceStart?: () => Promise<void>;
       /**
        * 版本台账里该分支该服务的历史构建镜像（由新到旧）。预构建镜像拉不到时，
        * 用来找「上一版可复用镜像」，避免明明组件没改却在宿主全量重编
@@ -2302,6 +2304,8 @@ export class ContainerService {
           if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) !== installedPhaseOwner) throw new Error('部署启动阶段已结束');
         }, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
       releaseOwnMemory = deploymentPhaseBudget.captureMemoryRelease(service.containerName, phaseOwner);
+      phaseCheck();
+      if (!profile.prebuiltImage) await context.onBeforeSourceStart?.();
       phaseCheck();
       installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
       this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);
@@ -3147,7 +3151,7 @@ export class ContainerService {
    * 停止"的权威源是 CDS 侧的 lastStopSource / 活动日志(见 index.ts
    * runAutoRestartTick),哨兵只是给人查 docker logs 时的肉眼便利。
    */
-  private async writeStopSentinel(containerName: string, reason: string): Promise<void> {
+  private async writeStopSentinel(containerName: string, reason: string, assertCurrent?: (step: string) => void): Promise<void> {
     // 容器名拼进 shell 前硬校验(与 getServiceStats 同款白名单:不符合
     // docker 命名规则的一定不是合法容器名 → 直接放弃写哨兵,reject 比
     // escape 更安全)。
@@ -3166,9 +3170,9 @@ export class ContainerService {
         .slice(0, 120) || 'cds-stop';
     const line = `[CDS-STOP] reason=${safeReason} ts=${new Date().toISOString()}`;
     try {
-      await this.shell.exec(
+      await this.qualifiedShell(assertCurrent).exec(
         `docker exec ${containerName} sh -c "echo '${line}' > /proc/1/fd/1 2>/dev/null"`,
-        { timeout: 3000 },
+        { timeout: 3000, executionLane: 'operation', executionPurpose: 'temporary-cleanup' },
       );
     } catch {
       /* best-effort:哨兵写失败不影响停止,判定走 CDS 账本 */
@@ -3210,6 +3214,7 @@ export class ContainerService {
       return;
     }
     if (containerName.startsWith('static:') || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) { await onStopped(); return; }
+    const requestedAt = Date.now();
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
@@ -3234,7 +3239,7 @@ export class ContainerService {
       },
     });
     context.assertCurrent?.('before stop sentinel');
-    await this.writeStopSentinel(containerName, reason);
+    await this.writeStopSentinel(containerName, reason, context.assertCurrent);
     this.noteLifecycleIntent(containerName, context.kind ?? 'cds-stop', reason, {
       projectId: context.projectId ?? null,
       branchId: context.branchId ?? null,
@@ -3248,13 +3253,14 @@ export class ContainerService {
       source: context.source ?? null,
     });
     context.assertCurrent?.('before docker stop');
-    const result = await this.shell.exec(`docker stop ${containerName}`);
+    const result = await this.qualifiedShell(context.assertCurrent).exec(`docker stop ${containerName}`,
+      { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
     const confirmed = state?.running === false
       || (state?.running !== true && (result.exitCode === 0 || isDockerNoSuchContainer(result)));
     this.recordContainerEvent({
-      severity: confirmed ? 'info' : 'error',
+      severity: !confirmed ? 'error' : state?.exitCode === 137 ? 'warn' : 'info',
       source: 'cds-container-service',
       action: confirmed ? 'container.stop.completed' : 'container.stop.failed',
       message: confirmed ? `docker stop completed for ${containerName}: ${reason}` : `docker stop not confirmed for ${containerName}: ${reason}`,
@@ -3274,6 +3280,9 @@ export class ContainerService {
       error: after.error,
       details: {
         reason,
+        elapsedMs: Date.now() - requestedAt,
+        shutdownOutcome: !confirmed ? 'unconfirmed' : state?.exitCode === 137 ? 'forced-exit' : 'stopped',
+        dataIntegrity: 'unverified',
         actor: context.actor ?? null,
         trigger: context.trigger ?? null,
         operation: context.operation ?? null,
