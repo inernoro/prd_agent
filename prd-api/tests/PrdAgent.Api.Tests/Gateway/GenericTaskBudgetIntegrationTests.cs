@@ -115,6 +115,124 @@ public sealed class GenericTaskBudgetIntegrationTests
         Assert.Single((await db.Scope(permit)).Reservations);
     }
 
+    [Fact]
+    public async Task ReleasedBeforeSendRestoresPhysicalSlotButRetainsRequestDeduplication()
+    {
+        await using var db = new Database();
+        var permit = Permit(); permit.MaxCalls = 1;
+        await TaskBudgetContracts.BindAsync(permit, Config(limit: 1m), db.Context, default);
+        var counter = new GatewayRuntimeGrantCallCounter(db.Context);
+        var first = Request(permit, "never-sent");
+        Assert.True((await counter.TryReserveTaskAsync(first, default)).Allowed);
+        await counter.FinalizeTaskAsync(first, null, GatewayTaskBudgetOutcomes.RejectedBeforeSend, default);
+        await counter.FinalizeTaskAsync(first, null, GatewayTaskBudgetOutcomes.RejectedBeforeSend, default);
+        var released = await db.Scope(permit);
+        Assert.Equal(0m, released.SpentUsd);
+        Assert.Equal(0m, released.ReservedUsd);
+        Assert.Equal("released-before-send", Assert.Single(released.Reservations).Status);
+        Assert.Equal("GATEWAY_RUNTIME_TASK_REQUEST_DUPLICATE",
+            (await counter.TryReserveTaskAsync(first, default)).ErrorCode);
+
+        var requests = Enumerable.Range(0, 10).Select(i => Request(permit, $"retry-{i}")).ToArray();
+        var results = await Task.WhenAll(requests.Select(r => new GatewayRuntimeGrantCallCounter(db.Context)
+            .TryReserveTaskAsync(r, default)));
+        Assert.Equal(1, results.Count(x => x.Allowed));
+        var winner = requests[Array.FindIndex(results, x => x.Allowed)];
+        await counter.FinalizeTaskAsync(winner, null, "unknown", default);
+        Assert.False((await counter.TryReserveTaskAsync(Request(permit, "after-unknown"), default)).Allowed);
+        var finished = await db.Scope(permit);
+        Assert.Equal(2, finished.Reservations.Count);
+        Assert.Contains(finished.Reservations, r => r.Status == "settled-unknown");
+        Assert.True(finished.SpentUsd > 0m);
+    }
+
+    [Fact]
+    public async Task ReleasedRequestTombstonesStillHaveBoundedLedgerStorage()
+    {
+        await using var db = new Database();
+        var permit = await db.Bind();
+        await db.Scopes.UpdateOneAsync(x => x.Id == permit.BudgetScopeId,
+            Builders<GatewayRuntimeBudgetScopeRecord>.Update.Set(x => x.Reservations,
+                Enumerable.Range(0, GatewayTaskPermitRecord.MaximumCalls).Select(i => new GatewayRuntimeBudgetReservationRecord
+                { RequestId = $"released-{i}", GrantId = permit.Id, Status = "released-before-send" }).ToList()));
+        Assert.False((await new GatewayRuntimeGrantCallCounter(db.Context)
+            .TryReserveTaskAsync(Request(permit, "over-storage-envelope"), default)).Allowed);
+        Assert.Equal(GatewayTaskPermitRecord.MaximumCalls, (await db.Scope(permit)).Reservations.Count);
+    }
+
+    [Theory]
+    [InlineData("send")]
+    [InlineData("stream")]
+    [InlineData("native")]
+    public async Task FunctionToolSchemaMediaPropertyNamesRemainTextOnly(string transport)
+    {
+        await using var db = new Database();
+        var (gateway, _, permit, context, _, paid) = await Build(db);
+        var schema = JsonNode.Parse("""
+            {"type":"object","properties":{"image_url":{"type":"string"},"audio":{"type":"string"},
+            "file_id":{"type":"string"},"nested":{"type":"object","properties":{"input_audio":{"type":"string"}}}}}
+            """)!;
+        var tool = transport == "native"
+            ? new JsonObject { ["type"] = "function", ["name"] = "describe_metadata", ["parameters"] = schema }
+            : new JsonObject { ["type"] = "function", ["function"] = new JsonObject
+                { ["name"] = "describe_metadata", ["parameters"] = schema } };
+        var body = new JsonObject { ["tools"] = new JsonArray(tool), ["messages"] = new JsonArray() };
+        if (transport == "native")
+        {
+            body.Remove("messages"); body["input"] = "synthetic"; body["store"] = false;
+            var response = await gateway.SendNativeResponsesWithResolutionAsync(new GatewayRawRequest
+            { AppCallerCode = Caller, ModelType = ModelTypes.Chat, EndpointPath = "/v1/responses", Context = context,
+                RequestBody = body }, NativeResolution(), (_, _) => Task.CompletedTask);
+            Assert.True(response.Success, $"{response.ErrorCode}: {response.ErrorMessage}");
+        }
+        else
+        {
+            var request = new GatewayRequest { AppCallerCode = Caller, ModelType = ModelTypes.Chat, Context = context, RequestBody = body };
+            if (transport == "send")
+            {
+                var response = await gateway.SendAsync(request);
+                Assert.True(response.Success, $"{response.ErrorCode}: {response.ErrorMessage}");
+            }
+            else
+            {
+                var done = false;
+                await foreach (var chunk in gateway.StreamAsync(request))
+                { Assert.NotEqual(GatewayChunkType.Error, chunk.Type); if (chunk.Type == GatewayChunkType.Done) { done = true; break; } }
+                Assert.True(done);
+            }
+        }
+        Assert.Equal(1, paid.Count);
+        Assert.Equal("settled", Assert.Single((await db.Scope(permit)).Reservations).Status);
+    }
+
+    [Theory]
+    [InlineData("image_url")]
+    [InlineData("input_audio")]
+    [InlineData("file_id")]
+    [InlineData("builtin")]
+    [InlineData("nested-tools-object")]
+    public async Task ActualMediaAndBuiltinToolsRemainUnpriced(string kind)
+    {
+        await using var db = new Database();
+        var (gateway, _, permit, context, _, paid) = await Build(db);
+        var body = new JsonObject { ["messages"] = new JsonArray() };
+        if (kind == "builtin") body["tools"] = new JsonArray(new JsonObject { ["type"] = "web_search_preview" });
+        else if (kind == "nested-tools-object") body["tools"] = new JsonObject
+            { ["content"] = new JsonObject { ["image_url"] = "synthetic-media" } };
+        else body["messages"] = new JsonArray(new JsonObject { ["role"] = "user",
+            ["content"] = new JsonArray(new JsonObject { ["type"] = kind, [kind] = "synthetic-media" }) });
+        var response = await gateway.SendAsync(new GatewayRequest
+        { AppCallerCode = Caller, ModelType = ModelTypes.Chat, Context = context, RequestBody = body });
+        Assert.Equal("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED", response.ErrorCode);
+        Assert.Equal(0, paid.Count);
+        Assert.Empty((await db.Scope(permit)).Reservations);
+    }
+
+    private static GatewayModelResolution NativeResolution() => new()
+    { Success = true, ActualModel = "synthetic-model", ActualPlatformId = "synthetic-platform", ActualPlatformName = "Synthetic",
+        LogicalModelPublicId = "synthetic-logical", PlatformType = "openai", Protocol = "openai", SupportsFunctionCalling = true,
+        ApiUrl = "https://upstream.invalid", ApiKey = "synthetic", ResolutionType = "PinnedModel" };
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -245,8 +363,10 @@ public sealed class GenericTaskBudgetIntegrationTests
         Assert.Equal("settled", Assert.Single(scope.Reservations).Status);
     }
 
-    [Fact]
-    public async Task ExistingPptCompletionContractUsesOriginalLedgerWithoutGenericDoubleReservation()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExistingPptCompletionContractUsesOriginalLedgerWithoutGenericDoubleReservation(bool stream)
     {
         await using var db = new Database();
         var (gateway, _, permit, context, http, paid) = await Build(db);
@@ -275,15 +395,32 @@ public sealed class GenericTaskBudgetIntegrationTests
         var request = new GatewayRequest { AppCallerCode = caller, ModelType = ModelTypes.Chat,
             Context = CopyContext(context, "ppt-physical", run, legacy.Id),
             RequestBody = new JsonObject { ["messages"] = new JsonArray(), ["max_tokens"] = 100 } };
-        await foreach (var chunk in gateway.StreamWithAdmissionAsync(request, async (physical, token) =>
+        async Task<GatewayRuntimeGrantCallAdmission> Admit(GatewayPhysicalAdmissionContext physical, CancellationToken token)
         {
             reservation = new GatewayTaskBudgetRequest(legacy.Id, permit.TenantId, permit.ActorUserId, run, caller,
                 $"outline:{run}", physical.RequestId, physical.RequestBodyUtf8Bytes, physical.EffectiveMaxOutputTokens,
                 physical.LogicalModelPublicId, physical.Provider, physical.Model, physical.OfferingId);
-            var result = await counter.TryReserveTaskAsync(reservation, token);
-            return result.Allowed ? null : GatewayStreamChunk.Fail(result.Detail, result.ErrorCode);
-        }))
-        { if (chunk.Type == GatewayChunkType.Done) { usage = chunk.TokenUsage; break; } }
+            return await counter.TryReserveTaskAsync(reservation, token);
+        }
+        if (stream)
+        {
+            await foreach (var chunk in gateway.StreamWithAdmissionAsync(request, async (physical, token) =>
+            {
+                var result = await Admit(physical, token);
+                return result.Allowed ? null : GatewayStreamChunk.Fail(result.Detail, result.ErrorCode);
+            }))
+            { if (chunk.Type == GatewayChunkType.Done) { usage = chunk.TokenUsage; break; } }
+        }
+        else
+        {
+            var response = await gateway.SendWithAdmissionAsync(request, async (physical, token) =>
+            {
+                var result = await Admit(physical, token);
+                return result.Allowed ? null : GatewayResponse.Fail(result.ErrorCode, result.Detail, result.StatusCode);
+            });
+            Assert.True(response.Success, $"{response.ErrorCode}: {response.ErrorMessage}");
+            usage = response.TokenUsage;
+        }
         Assert.NotNull(usage);
         await counter.FinalizeTaskAsync(reservation!, usage, "succeeded", default);
         var dedicated = await db.Scopes.Find(x => x.Id == legacy.Id).SingleAsync();
@@ -293,12 +430,18 @@ public sealed class GenericTaskBudgetIntegrationTests
         Assert.Single(dedicated.Reservations);
         Assert.Empty((await db.Scope(permit)).Reservations);
         // 有效PPT合同本身不是发送权；业务漏写真实预占仍在物理出口被拒。
-        var rejected = false;
-        await foreach (var chunk in gateway.StreamWithAdmissionAsync(new GatewayRequest
+        var bypass = new GatewayRequest
         { AppCallerCode = caller, ModelType = ModelTypes.Chat, Context = CopyContext(context, "ppt-bypass", run, legacy.Id),
-            RequestBody = request.RequestBody }, (_, _) => Task.FromResult<GatewayStreamChunk?>(null)))
-            if (chunk is GatewayStreamRejectedBeforeSend) rejected = true;
-        Assert.True(rejected);
+            RequestBody = request.RequestBody };
+        if (stream)
+        {
+            var rejected = false;
+            await foreach (var chunk in gateway.StreamWithAdmissionAsync(bypass, (_, _) => Task.FromResult<GatewayStreamChunk?>(null)))
+                if (chunk is GatewayStreamRejectedBeforeSend) rejected = true;
+            Assert.True(rejected);
+        }
+        else Assert.IsType<GatewaySendRejectedBeforeSend>(await gateway.SendWithAdmissionAsync(bypass,
+            (_, _) => Task.FromResult<GatewayResponse?>(null)));
         Assert.Equal(1, paid.Count);
     }
 
@@ -368,7 +511,7 @@ public sealed class GenericTaskBudgetIntegrationTests
         resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ModelResolutionResult { Success = true, ActualModel = "synthetic-model", ActualPlatformId = "synthetic-platform",
                 ActualPlatformName = "Synthetic", LogicalModelPublicId = "synthetic-logical", PlatformType = "openai", Protocol = "openai",
-                ApiUrl = "https://upstream.invalid", ApiKey = "synthetic", ResolutionType = "PinnedModel" });
+                ApiUrl = "https://upstream.invalid", ApiKey = "synthetic", ResolutionType = "PinnedModel", SupportsFunctionCalling = true });
         var upstream = new FakeUpstream { LoseOutcome = loseOutcome };
         var requestAccessor = new Mock<ILLMRequestContextAccessor>();
         requestAccessor.SetupGet(x => x.Current).Returns(new LlmRequestContext(context.RequestId!, null, null, context.UserId,

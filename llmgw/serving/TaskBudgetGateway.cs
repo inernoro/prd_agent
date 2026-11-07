@@ -71,7 +71,8 @@ public sealed class TaskBudgetGateway(
     public async Task<GatewayResponse> SendWithAdmissionAsync(GatewayRequest request,
         Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>> admit, CancellationToken ct = default)
     {
-        if (!Bound) return await inner.SendWithAdmissionAsync(request, admit, ct);
+        if (!Bound || await UsesVerifiedPptContract(request.AppCallerCode, request.Context, ct))
+            return await inner.SendWithAdmissionAsync(request, admit, ct);
         GatewayTaskBudgetRequest? reserved = null;
         GatewayTokenUsage? usage = null;
         var outcome = "unknown";
@@ -234,10 +235,13 @@ public sealed class TaskBudgetGateway(
         if (node is JsonObject obj)
         {
             if (new[] { "n", "best_of" }.Any(key => obj[key] is { } count && (!int.TryParse(count.ToString(), out var value) || value != 1))) return true;
-            if (obj["tools"] is JsonArray tools && tools.Any(t => t?["type"]?.ToString() != "function")) return true;
+            if (obj["tools"] is JsonArray tools
+                && tools.Any(t => t is not JsonObject definition || definition["type"]?.ToString() != "function")) return true;
             if (obj.Any(p => p.Key is "image_url" or "input_audio" or "audio" or "file_id" or "file_url" or "modalities")) return true;
             if (obj["type"]?.ToString() is "input_image" or "image" or "input_file" or "input_audio" or "audio" or "video") return true;
-            return obj.Any(p => ContainsUnpricedInput(p.Value));
+            // function 的定义和 JSON schema 只是文本；属性名不代表真实媒体输入。
+            // 仅跳过已在上方验证为 function 的 tools，实际消息/输入仍逐层检查。
+            return obj.Any(p => (p.Key != "tools" || p.Value is not JsonArray) && ContainsUnpricedInput(p.Value));
         }
         return node is JsonArray list && list.Any(ContainsUnpricedInput);
     }

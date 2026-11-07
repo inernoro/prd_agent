@@ -463,7 +463,22 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data, M
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne("Reservations.RequestId", request.RequestId));
         if (scope.TaskPermitId is not null)
             commonFilter &= new BsonDocumentFilterDefinition<GatewayRuntimeBudgetScopeRecord>(new BsonDocument("$expr",
-                new BsonDocument("$lt", new BsonArray { new BsonDocument("$size", "$Reservations"), scope.MaxPhysicalCalls })));
+                new BsonDocument("$and", new BsonArray
+                {
+                    // 明确未发送的记录保留去重墓碑，但不占用已签物理发送槽位。
+                    new BsonDocument("$lt", new BsonArray
+                    {
+                        new BsonDocument("$size", new BsonDocument("$filter", new BsonDocument
+                        {
+                            { "input", "$Reservations" }, { "as", "attempt" },
+                            { "cond", new BsonDocument("$ne", new BsonArray { "$$attempt.Status", "released-before-send" }) },
+                        })),
+                        scope.MaxPhysicalCalls,
+                    }),
+                    // 墓碑也有独立技术上限；不因释放槽位而让嵌入式账本无限增长。
+                    new BsonDocument("$lt", new BsonArray
+                        { new BsonDocument("$size", "$Reservations"), GatewayTaskPermitRecord.MaximumCalls }),
+                })));
 
         FilterDefinition<GatewayRuntimeBudgetScopeRecord> filter;
         UpdateDefinition<GatewayRuntimeBudgetScopeRecord> update;
