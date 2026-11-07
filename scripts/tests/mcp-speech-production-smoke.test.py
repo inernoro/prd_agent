@@ -582,5 +582,143 @@ class ProductionSpeechTests(unittest.TestCase):
             server.server_close()
 
 
+class ExistingRunReadOnlyTests(unittest.TestCase):
+    def fixture(self, *, owned=False, leak=False, ranged=True, bad_range=False, private=True, mismatch=False, wrong_user=False, anonymous_status=401):
+        calls = []
+        audio = b"ID3 existing private fixture audio"
+        def http(base, path, token="", method="GET", body=None, **kwargs):
+            calls.append((method, path, token, kwargs))
+            self.assertEqual(method, "GET")
+            self.assertIsNone(body)
+            if path == "/api/version":
+                return {**response(), "payload": {"commit": "e" * 40 if mismatch else COMMIT, "text": CANARY}}
+            if path == "/api/authz/me":
+                return response({"username": "other" if wrong_user else "stsmk_prod", "isRoot": False, "private": CANARY})
+            if not token:
+                return response(status=anonymous_status)
+            if path.endswith("/audio"):
+                if not owned:
+                    return response(status=404)
+                headers = {"Cache-Control": "private, no-store" if private else "public", "Content-Disposition": "attachment; filename=" + CANARY,
+                           "Accept-Ranges": "bytes" if ranged else ""}
+                if kwargs.get("headers", {}).get("Range") and ranged:
+                    result = response(status=206, raw=b"wrong" if bad_range else audio[:32], mime="audio/mpeg")
+                    headers["Content-Range"] = f"bytes 0-31/{len(audio)}"
+                else:
+                    result = response(raw=audio, mime="audio/mpeg")
+                return {**result, "headers": headers}
+            if path == "/api/mcp-speech/runs/" + RUN_ID:
+                return response({"id": RUN_ID, "status": "completed", "assetId": "speech-" + RUN_ID, "format": "mp3", "text": CANARY}) if owned else response(status=404)
+            if path.startswith("/api/mcp-speech/runs?"):
+                return response({"items": [{"id": RUN_ID, "text": CANARY}] if owned or leak else []})
+            if path.startswith("/api/mobile/assets?"):
+                return response({"items": [{"id": "speech-" + RUN_ID, "title": CANARY}] if owned or leak else []})
+            raise AssertionError("unexpected read-only route")
+        return calls, smoke.SpeechSmoke(BASE, COMMIT, http=http, session=lambda *_: ("rsa", CANARY, {})), audio
+
+    def main_check(self, check, extra=()):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"DEFAULT_MAP_BASE": BASE, "STABLE_SMOKE_USER": "stsmk_prod"}), \
+                patch.object(smoke, "SpeechSmoke", return_value=check), contextlib.redirect_stdout(io.StringIO()) as output:
+            code = smoke.main(["--map-base", BASE, "--expect-commit", COMMIT, "--check-existing-run-id", RUN_ID,
+                               "--json-out", str(Path(directory) / "result.json"), *extra])
+        self.assertNotIn(CANARY, output.getvalue())
+        self.assertNotIn(RUN_ID, output.getvalue())
+        self.assertNotIn("startedAt", check.report)
+        self.assertNotIn("finishedAt", check.report)
+        return code, check.report
+
+    def test_independent_404_is_partial_and_never_a_successful_file_read(self):
+        calls, check, _ = self.fixture()
+        code, report = self.main_check(check)
+        self.assertEqual(code, 0)
+        self.assertEqual(report["verdict"], "partial")
+        summary = report["existingRun"]
+        self.assertTrue(summary["anonymousAuthorizationVerified"])
+        self.assertFalse(summary["independentAccountCanRead"])
+        self.assertFalse(summary["positiveFileReadVerified"])
+        self.assertFalse(summary["targetInOwnAssets"])
+        self.assertEqual(summary["outcome"], "independent_account_cannot_access")
+        self.assertFalse(report["run"]["attempted"])
+        self.assertTrue(all(method == "GET" for method, _, _, _ in calls))
+        self.assertEqual(sum(not token for _, path, token, _ in calls if path != "/api/version"), 5)
+
+    def test_anonymous_access_is_not_hidden_by_expected_independent_404(self):
+        _, check, _ = self.fixture(anonymous_status=200)
+        code, report = self.main_check(check)
+        self.assertEqual((code, report["verdict"]), (1, "fail"))
+        self.assertFalse(report["existingRun"]["anonymousAuthorizationVerified"])
+        self.assertFalse(report["existingRun"]["positiveFileReadVerified"])
+
+    def test_owned_audio_verifies_refresh_asset_hash_headers_and_real_range(self):
+        calls, check, raw = self.fixture(owned=True)
+        code, report = self.main_check(check)
+        self.assertEqual((code, report["verdict"]), (0, "pass"))
+        summary = report["existingRun"]
+        self.assertTrue(summary["positiveFileReadVerified"])
+        self.assertTrue(summary["rangeSupported"])
+        self.assertTrue(summary["rangeValid"])
+        self.assertEqual(summary["audio"]["sha256"], smoke.hashlib.sha256(raw).hexdigest())
+        self.assertEqual(summary["audio"]["bytes"], len(raw))
+        self.assertEqual(sum(path.startswith("/api/mcp-speech/runs?") and bool(token) for _, path, token, _ in calls), 2)
+
+    def test_unsupported_range_is_explicit_and_does_not_claim_range_support(self):
+        _, check, _ = self.fixture(owned=True, ranged=False)
+        code, report = self.main_check(check)
+        self.assertEqual(code, 0)
+        self.assertFalse(report["existingRun"]["rangeSupported"])
+        self.assertTrue(report["existingRun"]["positiveFileReadVerified"])
+
+    def test_foreign_asset_or_history_leak_fails_even_when_private_endpoints_return_404(self):
+        _, check, _ = self.fixture(leak=True)
+        code, report = self.main_check(check)
+        self.assertEqual((code, report["verdict"]), (1, "fail"))
+        self.assertFalse(report["existingRun"]["positiveFileReadVerified"])
+
+    def test_cache_policy_or_corrupted_range_is_not_positive_file_verification(self):
+        for options in ({"private": False}, {"bad_range": True}):
+            with self.subTest(options=options):
+                _, check, _ = self.fixture(owned=True, **options)
+                code, report = self.main_check(check)
+                self.assertEqual((code, report["verdict"]), (1, "fail"))
+                self.assertFalse(report["existingRun"]["positiveFileReadVerified"])
+
+    def test_commit_mismatch_stops_before_rsa_and_target_requests(self):
+        calls, check, _ = self.fixture(mismatch=True)
+        check.session = session = unittest.mock.Mock()
+        code, _ = self.main_check(check)
+        self.assertEqual(code, 1)
+        session.assert_not_called()
+        self.assertEqual([path for _, path, _, _ in calls], ["/api/version"])
+
+    def test_wrong_signed_identity_stops_before_target_requests(self):
+        calls, check, _ = self.fixture(wrong_user=True)
+        code, _ = self.main_check(check)
+        self.assertEqual(code, 1)
+        self.assertEqual([path for _, path, _, _ in calls], ["/api/version", "/api/authz/me"])
+
+    def test_invalid_id_or_conflicting_flags_stop_before_any_network_or_signing(self):
+        conflicts = [["--check-existing-run-id", "../" + RUN_ID], ["--check-existing-run-id", ""],
+                     ["--mode", "run", "--allow-production-run"], ["--prepare-access"], ["--allow-production-run"],
+                     ["--check-mcp-contract"], ["--check-unconfigured-ui"], ["--gateway-inventory"],
+                     ["--map-base", "https://other.example"], ["--expect-commit", "bad"]]
+        for extra in conflicts:
+            with self.subTest(extra=extra):
+                calls, check, _ = self.fixture()
+                check.session = session = unittest.mock.Mock()
+                code, _ = self.main_check(check, extra)
+                self.assertEqual(code, 1)
+                self.assertEqual(calls, [])
+                session.assert_not_called()
+
+    def test_workflow_keeps_existing_run_out_of_browser_gateway_and_mutating_modes(self):
+        workflow = (ROOT / ".github/workflows/llmgw-prod-preflight.yml").read_text()
+        self.assertIn("speech_existing_run_id:", workflow)
+        self.assertIn("github.event.inputs.speech_existing_run_id == ''", workflow)
+        self.assertIn('validation_args+=(--check-existing-run-id "$SPEECH_EXISTING_RUN_ID")', workflow)
+        self.assertLess(workflow.index('if [ -n "$SPEECH_EXISTING_RUN_ID" ]; then\n            exit 0'),
+                        workflow.index('python3 scripts/llmgw-prod-preflight.py'))
+        self.assertIn('elif [ "$SPEECH_CHECK" = readiness ] && [ -z "$SPEECH_EXISTING_RUN_ID" ]', workflow)
+
+
 if __name__ == "__main__":
     unittest.main()

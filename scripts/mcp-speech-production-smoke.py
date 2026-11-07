@@ -62,8 +62,11 @@ def request(base, path, token="", method="GET", body=None, timeout=30, binary=Fa
     try:
         with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as response:
             raw, status, mime = response.read((MAX_AUDIO if binary else 2_000_000) + 1), response.status, response.headers.get_content_type()
+            response_headers = {name: response.headers.get(name, "") for name in
+                                ("Cache-Control", "Content-Disposition", "Accept-Ranges", "Content-Range")}
     except urllib.error.HTTPError as error:
         raw, status, mime = b"", error.code, ""
+        response_headers = {}
     except Exception:  # Do not serialize exception messages: they can contain credentials/URLs.
         return {"status": 0, "payload": None, "raw": b"", "mime": ""}
     payload = None
@@ -72,7 +75,7 @@ def request(base, path, token="", method="GET", body=None, timeout=30, binary=Fa
             payload = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             pass
-    return {"status": status, "payload": payload, "raw": raw if binary else b"", "mime": mime}
+    return {"status": status, "payload": payload, "raw": raw if binary else b"", "mime": mime, "headers": response_headers}
 
 
 def data_of(result):
@@ -220,6 +223,105 @@ class SpeechSmoke:
         if self.inventory:
             self.gateway_inventory()
         return all(item["ok"] for item in self.report["checks"] if item["required"])
+
+    def check_existing_run(self, run_id):
+        """GET-only business checks, using only the dedicated signed account's own access."""
+        self.require("existing_readiness_only", self.mode == "readiness" and not self.prepare_access
+                     and safe_identifier(run_id) is not None, "existing_run_options_invalid")
+        summary = {"checked": True, "businessReadOnly": True, "synthesisAttempted": False,
+                   "anonymousAuthorizationVerified": False, "independentAccountCanRead": False,
+                   "positiveFileReadVerified": False, "outcome": "not_verified"}
+        self.report["existingRun"] = summary
+        version = self.get("/api/version", token="")
+        payload = version.get("payload")
+        actual = payload.get("commit") if isinstance(payload, dict) else None
+        self.report["actualCommit"] = actual.lower() if isinstance(actual, str) and re.fullmatch(r"[0-9a-fA-F]{40}", actual) else None
+        if not self.check("production_commit", version["status"] == 200 and self.report["actualCommit"] == self.expected,
+                          status=version["status"], failure="production_commit_mismatch"):
+            return
+        session = self.session(self.base, 30)
+        self.token = session[1] if session else ""
+        self.require("signed_map_session", bool(self.token), "signed_session_unavailable")
+        identity = data_of(self.get("/api/authz/me"))
+        self.require("existing_independent_identity", bool(identity) and identity.get("username") == "stsmk_prod"
+                     and identity.get("isRoot") is not True, "existing_identity_mismatch")
+        history_path = "/api/mcp-speech/runs?limit=100"
+        assets_path = "/api/mobile/assets?category=audio&limit=100"
+        run_path = "/api/mcp-speech/runs/" + run_id
+        audio_path = run_path + "/audio"
+        routes = {"history": history_path, "run": run_path, "private_audio": audio_path,
+                  "assets": assets_path, "open_audio": "/api/open/speech/runs/" + run_id + "/audio"}
+        anonymous = []
+        for name, path in routes.items():
+            result = self.get(path, token="", binary=name in {"private_audio", "open_audio"})
+            anonymous.append(self.check("existing_anonymous_" + name, result["status"] == 401,
+                                        status=result["status"], failure="anonymous_access_not_rejected"))
+        summary["anonymousAuthorizationVerified"] = all(anonymous)
+        detail_result = self.get(run_path)
+        audio = self.get(audio_path, binary=True)
+        history_result = self.get(history_path)
+        assets_result = self.get(assets_path)
+        def items_of(result):
+            data = data_of(result)
+            return data.get("items") if data and isinstance(data.get("items"), list) else None
+        history, assets = items_of(history_result), items_of(assets_result)
+        history_match = isinstance(history, list) and any(isinstance(item, dict)
+            and (item.get("id") or item.get("runId")) == run_id for item in history)
+        asset_match = isinstance(assets, list) and any(isinstance(item, dict)
+            and item.get("id") == "speech-" + run_id for item in assets)
+        self.check("existing_owner_history_readable", history_result["status"] == 200 and history is not None,
+                   status=history_result["status"], failure="owner_history_unavailable")
+        self.check("existing_owner_assets_readable", assets_result["status"] == 200 and assets is not None,
+                   status=assets_result["status"], failure="owner_assets_unavailable")
+        if detail_result["status"] == 404 and audio["status"] == 404:
+            self.check("existing_independent_run_hidden", True, status=404)
+            self.check("existing_independent_audio_hidden", True, status=404)
+            self.check("existing_foreign_history_absent", not history_match, failure="foreign_run_in_owner_history")
+            self.check("existing_foreign_asset_absent", not asset_match, failure="foreign_asset_in_owner_assets")
+            summary.update({"outcome": "independent_account_cannot_access", "targetInOwnHistory": history_match,
+                            "targetInOwnAssets": asset_match})
+            return
+        detail = data_of(detail_result)
+        owned = (detail_result["status"] == 200 and isinstance(detail, dict)
+                 and (detail.get("id") or detail.get("runId")) == run_id
+                 and detail.get("status") == "completed" and detail.get("assetId") == "speech-" + run_id)
+        self.check("existing_completed_run_owned", owned, status=detail_result["status"], failure="existing_run_not_readable")
+        self.check("existing_private_audio_readable", audio["status"] == 200, status=audio["status"], failure="existing_audio_not_readable")
+        if not owned or audio["status"] != 200:
+            return
+        summary["independentAccountCanRead"] = True
+        self.check("existing_history_matches", history_match, failure="owned_run_missing_in_history")
+        self.check("existing_asset_matches", asset_match, failure="owned_asset_missing")
+        refreshed = self.get(history_path)
+        refreshed_items = items_of(refreshed)
+        self.check("existing_history_after_refresh", refreshed["status"] == 200 and isinstance(refreshed_items, list)
+                   and any(isinstance(item, dict) and (item.get("id") or item.get("runId")) == run_id for item in refreshed_items),
+                   status=refreshed["status"], failure="owned_run_missing_after_refresh")
+        raw, mime, headers = audio.get("raw", b""), audio.get("mime", ""), audio.get("headers", {})
+        valid_audio = 0 < len(raw) <= MAX_AUDIO and mime == MIMES.get(detail.get("format"))
+        self.check("existing_audio_bytes_and_mime", valid_audio, failure="existing_audio_invalid")
+        cache = {part.strip().lower() for part in headers.get("Cache-Control", "").split(",")}
+        private = {"private", "no-store"}.issubset(cache)
+        disposition = bool(re.match(r"^attachment(?:;|$)", headers.get("Content-Disposition", ""), re.I))
+        self.check("existing_audio_private_no_store", private, failure="private_cache_headers_missing")
+        self.check("existing_audio_attachment", disposition, failure="download_disposition_missing")
+        summary["audio"] = {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "mime": mime if mime in MIMES.values() else "",
+                            "privateNoStore": private, "attachment": disposition}
+        if not valid_audio:
+            summary["outcome"] = "owned_artifact_checks_failed"
+            return
+        count = min(32, len(raw))
+        ranged = self.get(audio_path, binary=True, headers={"Range": "bytes=0-" + str(count - 1)})
+        supported = ranged["status"] == 206
+        if supported:
+            valid_range = (ranged.get("raw") == raw[:count] and ranged.get("mime") == mime
+                           and ranged.get("headers", {}).get("Content-Range") == f"bytes 0-{count - 1}/{len(raw)}")
+        else:
+            valid_range = (ranged["status"] == 200 and headers.get("Accept-Ranges", "").lower() != "bytes"
+                           and ranged.get("raw") == raw and ranged.get("mime") == mime)
+        self.check("existing_audio_range", valid_range, status=ranged["status"], failure="range_response_invalid")
+        summary.update({"rangeSupported": supported, "rangeValid": valid_range, "positiveFileReadVerified": valid_audio and private and disposition and valid_range,
+                        "outcome": "owned_artifact_verified" if valid_audio and private and disposition and valid_range else "owned_artifact_checks_failed"})
 
     def prepare_own_speech_access(self, auth):
         """Only the three registered speech permissions, only on the verified caller's own account."""
@@ -656,8 +758,12 @@ class SpeechSmoke:
             self.require("production_browser_verification", False, "browser_verification_failed")
 
     def finish(self):
-        self.report["finishedAt"] = datetime.now(timezone.utc).isoformat()
+        if not getattr(self, "existing_run_only", False):
+            self.report["finishedAt"] = datetime.now(timezone.utc).isoformat()
         self.report["verdict"] = "pass" if self.report["checks"] and all(x["ok"] for x in self.report["checks"] if x["required"]) else "fail"
+        if (self.report["verdict"] == "pass" and getattr(self, "existing_run_only", False)
+                and not self.report.get("existingRun", {}).get("positiveFileReadVerified")):
+            self.report["verdict"] = "partial"
         return self.report
 
 
@@ -674,11 +780,19 @@ def main(argv=None):
     parser.add_argument("--prepare-access", action="store_true", help="Explicitly allow adding only the three speech permissions to the verified stsmk_prod account.")
     parser.add_argument("--check-unconfigured-ui", action="store_true", help="In readiness mode only, verify the real empty speech UI without creating a task.")
     parser.add_argument("--check-mcp-contract", action="store_true", help="Explicitly create and revoke a one-day scoped key for read-only MCP contract checks; never synthesize.")
+    parser.add_argument("--check-existing-run-id", default=None, help="Readiness-only GET checks of an existing run; never creates credentials or speech.")
     parser.add_argument("--json-out", required=True)
     args = parser.parse_args(argv)
     smoke = SpeechSmoke(args.map_base, args.expect_commit, args.mode, profile_id=args.profile_id,
                         wait_seconds=min(max(args.wait_seconds, 3), 300), inventory=args.gateway_inventory, prepare_access=args.prepare_access)
+    smoke.existing_run_only = args.check_existing_run_id is not None
+    if smoke.existing_run_only:
+        smoke.report.pop("startedAt", None)
     try:
+        if smoke.existing_run_only and (safe_identifier(args.check_existing_run_id) is None or args.mode != "readiness"
+                or args.prepare_access or args.allow_production_run or args.check_mcp_contract
+                or args.check_unconfigured_ui or args.gateway_inventory):
+            raise CheckFailure("existing_run_options_invalid")
         validate_target(args.map_base, args.expect_commit, os.environ.get("DEFAULT_MAP_BASE", ""))
         if os.environ.get("STABLE_SMOKE_USER", "") != "stsmk_prod":
             raise CheckFailure("production_smoke_identity_required")
@@ -686,6 +800,8 @@ def main(argv=None):
             raise CheckFailure("explicit_production_run_opt_in_required")
         if args.validate_only:
             smoke.check("production_target_validated", True)
+        elif smoke.existing_run_only:
+            smoke.check_existing_run(args.check_existing_run_id)
         else:
             ready = smoke.readiness()
             if args.check_mcp_contract:
@@ -705,7 +821,7 @@ def main(argv=None):
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if report["verdict"] == "pass" else 1
+    return 0 if report["verdict"] in {"pass", "partial"} else 1
 
 
 if __name__ == "__main__":

@@ -39,6 +39,10 @@ on:
         type: boolean
         required: false
         default: false
+      speech_existing_run_id:
+        description: "Optional 32-hex existing run ID: readiness-only GET checks, no keys, generation, permission changes or browser state."
+        required: false
+        default: ""
       speech_prepare_access:
         description: "Explicitly allow preparing only stsmk_prod's own three speech permissions; never removes denies or changes roles. Requires readiness or run."
         type: boolean
@@ -71,6 +75,7 @@ jobs:
       SPEECH_CHECK: ${{ github.event.inputs.speech_check || 'off' }}
       SPEECH_CHECK_MCP_CONTRACT: ${{ github.event.inputs.speech_check_mcp_contract || 'false' }}
       SPEECH_PREPARE_ACCESS: ${{ github.event.inputs.speech_prepare_access || 'false' }}
+      SPEECH_EXISTING_RUN_ID: ${{ github.event.inputs.speech_existing_run_id || '' }}
 
     steps:
       - name: Checkout
@@ -88,7 +93,7 @@ jobs:
 
       - name: Install browser for speech checks
         timeout-minutes: 3
-        if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' }}
+        if: ${{ github.event.inputs.speech_check != '' && github.event.inputs.speech_check != 'off' && github.event.inputs.speech_existing_run_id == '' }}
         run: |
           python3 -m pip install --disable-pip-version-check --timeout 30 --retries 2 playwright==1.56.0
           python3 - <<'PY'
@@ -132,12 +137,26 @@ jobs:
             exit 1
           fi
 
+          validation_args=()
+          if [ -n "$SPEECH_EXISTING_RUN_ID" ]; then
+            if [ "$SPEECH_CHECK" != readiness ] || [ "$SPEECH_PREPARE_ACCESS" != false ] || [ "$SPEECH_CHECK_MCP_CONTRACT" != false ]; then
+              echo "ERROR: Existing-run checks require readiness without access preparation or MCP credential creation." >&2
+              exit 1
+            fi
+            validation_args+=(--check-existing-run-id "$SPEECH_EXISTING_RUN_ID")
+          fi
+
           # Validate the trusted production origin before either check signs a request.
           if [ "$SPEECH_CHECK" != off ]; then
             python3 scripts/mcp-speech-production-smoke.py \
               --map-base "$map_base" --expect-commit "$expect_commit" \
-              --validate-only \
+              --validate-only "${validation_args[@]}" \
               --json-out artifacts/llmgw-prod-preflight/speech-target-validation.json
+          fi
+
+          # Existing-file checks must not call gateway route-self-test or any business POST.
+          if [ -n "$SPEECH_EXISTING_RUN_ID" ]; then
+            exit 0
           fi
 
           if [ -z "$map_base" ]; then
@@ -179,6 +198,11 @@ jobs:
           map_base="${INPUT_MAP_BASE:-$DEFAULT_MAP_BASE}"
           expect_commit="${INPUT_EXPECT_COMMIT:-$EXPECT_COMMIT}"
           speech_args=(--mode "$SPEECH_CHECK")
+          if [ -n "$SPEECH_EXISTING_RUN_ID" ]; then
+            speech_args+=(--check-existing-run-id "$SPEECH_EXISTING_RUN_ID")
+          else
+            speech_args+=(--gateway-inventory)
+          fi
           if [ "$SPEECH_CHECK_MCP_CONTRACT" = true ]; then
             speech_args+=(--check-mcp-contract)
           fi
@@ -187,13 +211,12 @@ jobs:
           fi
           if [ "$SPEECH_CHECK" = run ]; then
             speech_args+=(--allow-production-run)
-          elif [ "$SPEECH_CHECK" = readiness ]; then
+          elif [ "$SPEECH_CHECK" = readiness ] && [ -z "$SPEECH_EXISTING_RUN_ID" ]; then
             speech_args+=(--check-unconfigured-ui)
           fi
           python3 scripts/mcp-speech-production-smoke.py \
             --map-base "$map_base" \
             --expect-commit "$expect_commit" \
-            --gateway-inventory \
             --json-out artifacts/llmgw-prod-preflight/speech-production-smoke.json \
             "${speech_args[@]}"
 
