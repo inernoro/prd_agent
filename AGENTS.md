@@ -163,7 +163,7 @@ tsc --noEmit + 单元测试，把「端到端是否真的解决」丢给用户�
 
 两条铁律缺一不可（完整语义见 `doc/rule.doc.naming.md`）：
 
-1. **类型前缀**七选一：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.`
+1. **类型前缀**：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.` `adr.` `pdr.`。根目录 `pri.<类型>.md` 解释每类文章的作用；ADR/PDR 保存重要选择的理由与历史，现行规格与设计通过链接引用。
 2. **appname 优先 + 点分层级**：topic 第一段是应用名，子模块用 `.` 续接，禁止用 `-` 把 appname 和子模块黏死
 
 跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。
@@ -220,7 +220,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `frontend-modal.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 模态框 3 硬约束：inline style 高度 + createPortal + min-h:0 |
 | `full-height-layout.md` | `prd-admin/src/pages/**/*.tsx`, `prd-desktop/src/pages/**/*.tsx` | 宽屏页面必须撑满视口：根 `h-full min-h-0 flex flex-col`，禁止 `calc(100vh - Npx)` 魔数，滚动发生在最近内容层 |
 | `server-authority.md` | `prd-api/src/**/*.cs` | CancellationToken.None + Run/Worker + SSE 心跳 |
-| `doc-types.md` | `doc/**/*.md` | 7 种文档前缀（spec/design/plan/rule/guide/report/debt） |
+| `doc-types.md` | `doc/**/*.md` | 文档前缀与职责（含 adr/pdr；原则入口见根目录 pri 文档） |
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
 | `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
 | `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
@@ -278,7 +278,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
 | **conflict-resolution** | `/resolve` | 输入当前分支 → 将 main 合并进来，AI 自动解决冲突，避免 PR 时冲突 |
-| **doc-writer** | `/doc` | 输入文档类型 → 校验 `doc/` 下的命名和表头格式，自动套用 7 种标准模板（spec/design/plan/rule/guide/report/debt） |
+| **doc-writer** | `/doc` | 输入文档目的 → 发现仓库约定，按职责选择结构与模板，不强制固定前缀 |
 | **doc-sync** | `/doc-sync` | 无需输入 → 扫描 `doc/` 目录，自动对齐 `index.yml` 和 `guide.list.directory.md` |
 | **code-hygiene** | `/hygiene` | 输入代码变更 → 检测死代码/兼容垫片/命名残留/冗余参数等 10 类技术债，输出清理建议 |
 | **deep-trace** | `/deep-trace` | 输入代码变更 → 跨层（C#→JSON→Rust→React）验证字段名、类型、序列化、空值处理的正确性 |

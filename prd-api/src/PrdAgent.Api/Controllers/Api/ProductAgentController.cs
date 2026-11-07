@@ -702,6 +702,9 @@ public partial class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Lifecycle) && !ProductVersionLifecycle.All.Contains(request.Lifecycle))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的版本生命周期"));
 
+        var referenceError = await ValidateVersionRequirementReferencesAsync(productId, request.RequirementIds);
+        if (referenceError != null) return referenceError;
+
         // 自动绑定该产品下生效的默认版本表单/流程（产品覆盖 > 全局），让快速新建的版本也能走流转
         var (defTpl, defWf) = await ResolveDefaultsAsync(ProductEntityType.Version, productId);
         var templateId = string.IsNullOrEmpty(request.TemplateId) ? defTpl : request.TemplateId;
@@ -726,6 +729,8 @@ public partial class ProductAgentController : ControllerBase
         version.CurrentState = await ResolveInitialStateAsync(workflowDefId);
 
         await _db.ProductVersions.InsertOneAsync(version);
+        if (version.RequirementIds.Count > 0)
+            await SyncVersionToRequirementsAsync(productId, version.Id, version.RequirementIds);
         await RecalcProductCountsAsync(productId);
         return Ok(ApiResponse<object>.Ok(version));
     }
@@ -739,6 +744,9 @@ public partial class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在或无权访问"));
         if (!string.IsNullOrWhiteSpace(request.Lifecycle) && !ProductVersionLifecycle.All.Contains(request.Lifecycle))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的版本生命周期"));
+
+        var referenceError = await ValidateVersionRequirementReferencesAsync(version.ProductId, request.RequirementIds);
+        if (referenceError != null) return referenceError;
 
         var u = Builders<ProductVersion>.Update.Set(v => v.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(request.VersionName)) u = u.Set(v => v.VersionName, request.VersionName.Trim());
@@ -1897,6 +1905,9 @@ public partial class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Grade) && !ProductItemGrade.All.Contains(request.Grade))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的需求分级"));
 
+        var referenceError = await ValidateRequirementVersionReferencesAsync(productId, request.VersionIds);
+        if (referenceError != null) return referenceError;
+
         // 未显式指定流程时，绑定该对象类型的默认流程（让流转开箱即用）
         var reqWorkflowDefId = request.WorkflowDefId;
         if (string.IsNullOrWhiteSpace(reqWorkflowDefId))
@@ -1930,7 +1941,7 @@ public partial class ProductAgentController : ControllerBase
         // 维护版本侧反向引用（版本关联需求）
         if (req.VersionIds.Count > 0)
             await _db.ProductVersions.UpdateManyAsync(
-                v => req.VersionIds.Contains(v.Id),
+                v => v.ProductId == productId && !v.IsDeleted && req.VersionIds.Contains(v.Id),
                 Builders<ProductVersion>.Update.AddToSet(v => v.RequirementIds, req.Id));
         await RecalcProductCountsAsync(productId);
         return Ok(ApiResponse<object>.Ok(req));
@@ -1945,6 +1956,9 @@ public partial class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "需求不存在或无权访问"));
         if (!string.IsNullOrWhiteSpace(request.Grade) && !ProductItemGrade.All.Contains(request.Grade))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的需求分级"));
+
+        var referenceError = await ValidateRequirementVersionReferencesAsync(req.ProductId, request.VersionIds);
+        if (referenceError != null) return referenceError;
 
         var u = Builders<Requirement>.Update.Set(r => r.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(request.Title)) u = u.Set(r => r.Title, request.Title.Trim());
@@ -3927,7 +3941,8 @@ public partial class ProductAgentController : ControllerBase
 
         var isGlobalAdmin = await CanManageAsync(userId);
 
-        // 历史对象未绑定流程时：惰性绑定默认流程 + 补初始状态（让存量数据也能流转）
+        // 历史对象先解析默认流程，校验通过后再绑定，拒绝请求不能改写对象。
+        var bindDefaultWorkflow = false;
         if (string.IsNullOrWhiteSpace(workflowDefId))
         {
             (_, workflowDefId) = await ResolveDefaultsAsync(request.EntityType, productId);
@@ -3935,7 +3950,7 @@ public partial class ProductAgentController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该对象类型暂无可用流程定义"));
             var seedDef = await _db.ProductWorkflowDefinitions.Find(w => w.Id == workflowDefId && !w.IsDeleted).FirstOrDefaultAsync();
             if (string.IsNullOrWhiteSpace(currentState)) currentState = seedDef?.GetInitialStateKey();
-            await BindWorkflowAsync(request.EntityType, request.EntityId, workflowDefId, currentState);
+            bindDefaultWorkflow = true;
         }
 
         var def = await _db.ProductWorkflowDefinitions.Find(w => w.Id == workflowDefId && !w.IsDeleted).FirstOrDefaultAsync();
@@ -4009,6 +4024,11 @@ public partial class ProductAgentController : ControllerBase
 
             if (request.EntityType == ProductEntityType.Requirement && requirementEntity != null)
             {
+                if (request.VersionIds is { Count: > 0 } || transition.ToState == RequirementWorkflowCatalog.Scheduled)
+                {
+                    var referenceError = await ValidateRequirementVersionReferencesAsync(productId, mergedVersionIds);
+                    if (referenceError != null) return referenceError;
+                }
                 var (inApprovedInitiation, inCompletedRelease) = await LoadRequirementLinkageAsync(productId, requirementEntity.Id);
                 var initiationValid = false;
                 if (!string.IsNullOrWhiteSpace(request.InitiationId))
@@ -4052,6 +4072,9 @@ public partial class ProductAgentController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅已上线状态的功能可下架"));
         }
+
+        if (bindDefaultWorkflow)
+            await BindWorkflowAsync(request.EntityType, request.EntityId, workflowDefId, currentState);
 
         // 落库新状态。自动化：流转可显式转交，或 AutoAssignToActor 自动 claim 给操作人
         var now = DateTime.UtcNow;
@@ -7812,13 +7835,33 @@ public partial class ProductAgentController : ControllerBase
             Builders<Product>.Update.Set(p => p.DefectCount, (int)defects).Set(p => p.UpdatedAt, DateTime.UtcNow));
     }
 
+    private async Task<IActionResult?> ValidateRequirementVersionReferencesAsync(string productId, List<string>? versionIds)
+    {
+        if (versionIds == null || versionIds.Count == 0) return null;
+        var ids = versionIds.Distinct().ToList();
+        var validCount = await _db.ProductVersions.CountDocumentsAsync(v =>
+            v.ProductId == productId && !v.IsDeleted && ids.Contains(v.Id));
+        return validCount == ids.Count ? null
+            : BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "归属版本不存在、已删除或不属于当前产品"));
+    }
+
+    private async Task<IActionResult?> ValidateVersionRequirementReferencesAsync(string productId, List<string>? requirementIds)
+    {
+        if (requirementIds == null || requirementIds.Count == 0) return null;
+        var ids = requirementIds.Distinct().ToList();
+        var validCount = await _db.Requirements.CountDocumentsAsync(r =>
+            r.ProductId == productId && !r.IsDeleted && ids.Contains(r.Id));
+        return validCount == ids.Count ? null
+            : BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "关联需求不存在、已删除或不属于当前产品"));
+    }
+
     /// <summary>版本→需求 反向同步：把 versionId 从该产品所有需求的 VersionIds 移除，再加到选中的需求。</summary>
     private async Task SyncVersionToRequirementsAsync(string productId, string versionId, List<string> requirementIds)
     {
         await _db.Requirements.UpdateManyAsync(r => r.ProductId == productId,
             Builders<Requirement>.Update.Pull(r => r.VersionIds, versionId));
         if (requirementIds.Count > 0)
-            await _db.Requirements.UpdateManyAsync(r => requirementIds.Contains(r.Id),
+            await _db.Requirements.UpdateManyAsync(r => r.ProductId == productId && !r.IsDeleted && requirementIds.Contains(r.Id),
                 Builders<Requirement>.Update.AddToSet(r => r.VersionIds, versionId));
     }
 
@@ -7828,7 +7871,7 @@ public partial class ProductAgentController : ControllerBase
         await _db.ProductVersions.UpdateManyAsync(v => v.ProductId == productId,
             Builders<ProductVersion>.Update.Pull(v => v.RequirementIds, requirementId));
         if (versionIds.Count > 0)
-            await _db.ProductVersions.UpdateManyAsync(v => versionIds.Contains(v.Id),
+            await _db.ProductVersions.UpdateManyAsync(v => v.ProductId == productId && !v.IsDeleted && versionIds.Contains(v.Id),
                 Builders<ProductVersion>.Update.AddToSet(v => v.RequirementIds, requirementId));
     }
 

@@ -249,7 +249,21 @@ The root keeps project entrypoints and top-level documentation. Supporting mater
 | `changelogs/` | One changelog fragment per change set |
 | `deploy/` | Deployment support files |
 
-Documentation uses the prefixes `spec.`, `design.`, `plan.`, `rule.`, `guide.`, `report.`, and `debt.`. See [AGENTS.md](AGENTS.md) for naming, directory, change-record, and quality requirements.
+`pri` abbreviates Principles. Root-level `pri.<type>.md` files explain each document type; individual documents live in `doc/`. Current specifications and designs evolve, while accepted or rejected decisions preserve their rationale and use successor records for substantive changes.
+
+| Prefix | Purpose | Principles |
+| --- | --- | --- |
+| `spec.*` | Current product behavior and acceptance criteria | [pri.spec.md](pri.spec.md) |
+| `design.*` | Current structure, responsibilities, and data flow | [pri.design.md](pri.design.md) |
+| `plan.*` | Delivery sequence, ownership, and completion criteria | [pri.plan.md](pri.plan.md) |
+| `rule.*` | Current business and engineering constraints | [pri.rule.md](pri.rule.md) |
+| `guide.*` | Task-oriented operating instructions | [pri.guide.md](pri.guide.md) |
+| `report.*` | Time-bounded evidence; new repository reports are weekly reports | [pri.report.md](pri.report.md) |
+| `debt.*` | Known gaps, impact, and closure conditions | [pri.debt.md](pri.debt.md) |
+| `adr.*` | Important architecture and engineering decisions | [pri.adr.md](pri.adr.md) |
+| `pdr.*` | Important product choices and business commitments | [pri.pdr.md](pri.pdr.md) |
+
+See the [decision governance guide](doc/guide.platform.decision-records.md) for project gaps and product methods, and [decision practice](doc/guide.platform.decision-practice.md) for two real change replays, an independent-reader exercise, and a portable starting method. Full naming, directory, change-record, and quality requirements are in [AGENTS.md](AGENTS.md).
 
 README illustrations follow a shared [visual specification](assets/readme/design-system.json) for color, typography, geometry, and badge treatment.
 

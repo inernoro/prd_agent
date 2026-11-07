@@ -17,6 +17,10 @@ folders:
     name: 六、技术债务台账
   - prefix: report
     name: 七、报告与周报
+  - prefix: adr
+    name: 八、架构决策
+  - prefix: pdr
+    name: 九、产品决策
 
 docs:
   plan.web-hosting.related-documents: "网页托管关联文档 · 计划"
@@ -41,6 +45,7 @@ docs:
   spec.prd: "PRD Agent 产品需求文档 · 规格"
   spec.prd-admin.recording-design-demo-request: "给设计方的画板请求（录音交付页）"
   spec.product-agent.pa: "毒舌秘书（PA Agent）产品规格 · 规格"
+  spec.product-agent.version-claims: "产品管理正式申领与历史追溯 · 规格"
   spec.project-vision: "项目愿景与背景 · 规格"
   spec.report-agent.phase5: "周报 Agent Phase 5 — 用户故事 · 规格"
   spec.report-agent.v2: "周报 Agent v2.0 产品需求 · 规格"
@@ -152,7 +157,7 @@ docs:
   design.prd-agent.bookshelf-digest: "公共藏书阁 · 精读稿 · 设计"
   design.prd-agent.bookshelf.exam: "公共藏书阁 · 结业考 · 判定口径"
   design.prd-agent.reprocess-chat-routing: "文档再加工智能体调用路由 · 设计"
-  design.product-agent: "产品管理智能体（product-agent）设计文档 · 设计"
+  design.product-agent: "产品管理智能体：产品结构与承重契约 · 设计"
   design.report-agent.ai-systems: "AI 周报系统市场调研 · 设计"
   design.report-agent: "周报管理 Agent (Report Agent) · 设计"
   design.report-agent.monthly: "周报管理 Agent · 月报 · 设计"
@@ -222,6 +227,8 @@ docs:
   guide.open-platform.open-api: "开放平台 Open API · 指南"
   guide.platform.active-tasks: "活动任务清单 · 指南"
   guide.platform.agent-onboarding: "Agent 开发入门 · 指南"
+  guide.platform.decision-practice: "从真实变更到决策记忆：产品试点与跨项目实操 · 指南"
+  guide.platform.decision-records: "决策治理：项目补足与跨项目推广 · 指南"
   guide.platform.development-guide: "PRD Agent 开发文档 · 指南"
   guide.platform.e2e-tests: "Playwright E2E 测试 · 指南"
   guide.platform.llm-gateway.acceptance-breadcrumbs: "LLM 网关验收面包屑清单 · 指南"
@@ -256,7 +263,7 @@ docs:
   rule.doc.maintenance: "文档维护与收敛 · 规则"
   rule.doc.readability: "文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则"
   rule.doc.naming: "文档命名规则（doc/） · 规则"
-  rule.doc.templates: "七类文档内容模板 · 规则"
+  rule.doc.templates: "文档内容与决策记录模板 · 规则"
   rule.frontend.default-editable: "默认可编辑原则 · 规则"
   rule.frontend.frontend-component-reuse: "前端组件复用 · 规则"
   rule.frontend.frontend-modal: "前端浮层布局 · 规则"
@@ -429,3 +436,10 @@ docs:
   report.gw-test-matrix: "网关测试矩阵全量报告（grandfather 保留） · 报告"
   report.platform.llm-gateway.resilience-acceptance: "LLM Gateway 故障隔离与恢复 · 测试环境验收报告"
   report.web-hosting.ask-dock-handoff: "「向我提问」形变坞 · 交接清单"
+  # 八、架构决策
+  adr.doc.001.document-roles: "ADR-DOC-001 文档原则与决策记录分层 · 架构决策"
+  adr.platform.001.llm-boundary: "ADR-PLATFORM-001 大模型调用统一归口 · 架构决策"
+  # 九、产品决策
+  pdr.platform.001.product-foundation: "PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策"
+  pdr.product-agent.001.rule-evolution: "PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策"
+  pdr.product-agent.002.version-claim-boundary: "PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策"
