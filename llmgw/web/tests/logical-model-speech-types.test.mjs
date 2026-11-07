@@ -11,6 +11,8 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
   const names = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'HTMLSelectElement', 'Event', 'MouseEvent'];
   const previous = Object.fromEntries(names.map(name => [name, globalThis[name]]));
   for (const name of names) globalThis[name] = dom.window[name];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   const { createRoot } = await import('react-dom/client');
@@ -109,6 +111,8 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
     await server.close();
     dom.window.close();
     for (const name of names) globalThis[name] = previous[name];
+    if (previousNavigator) Object.defineProperty(globalThis, 'navigator', previousNavigator);
+    else delete globalThis.navigator;
     delete globalThis.__logicalSpeechFixture;
     delete globalThis.__logicalSpeechRouter;
     delete globalThis.IS_REACT_ACT_ENVIRONMENT;

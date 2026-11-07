@@ -11,6 +11,8 @@ test('豆包语音资源可编辑读回，并发冲突保留输入且不回传�
   const names = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'Event', 'MouseEvent'];
   const previous = Object.fromEntries(names.map(name => [name, globalThis[name]]));
   for (const name of names) globalThis[name] = dom.window[name];
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   const { createRoot } = await import('react-dom/client');
@@ -78,6 +80,8 @@ test('豆包语音资源可编辑读回，并发冲突保留输入且不回传�
     await server.close();
     dom.window.close();
     for (const name of names) globalThis[name] = previous[name];
+    if (previousNavigator) Object.defineProperty(globalThis, 'navigator', previousNavigator);
+    else delete globalThis.navigator;
     delete globalThis.__speechExchangeFixture;
     delete globalThis.__speechExchangeRouter;
     delete globalThis.IS_REACT_ACT_ENVIRONMENT;
