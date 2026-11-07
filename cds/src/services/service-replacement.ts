@@ -12,8 +12,8 @@ function staticConsumerAliases(entry: BranchEntry, profileId: string, state: Sta
   return new Set(computeProfileAliases(profileId, [entry.projectId, project?.slug].filter((value): value is string => Boolean(value))));
 }
 function referencesStaticAlias(value: string, aliases: Set<string>): boolean {
-  for (const match of value.matchAll(/(?=(https?:\/\/[^\s/"'<>?#]+))/gi)) {
-    try { if (aliases.has(new URL(match[1]).hostname)) return true; }
+  for (const match of value.matchAll(/(?=(https?:\/\/(?:[^\s/"'<>?#]*@)?[^\s/"'<>?#,@]+))/gi)) {
+    try { const host = new URL(match[1]).hostname; if ([...aliases].some(alias => alias.toLowerCase() === host)) return true; }
     catch { return true; }
   }
   return false;

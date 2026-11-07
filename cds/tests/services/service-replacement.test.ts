@@ -330,27 +330,32 @@ describe('仅浏览器前端容器退役合同', () => {
     expect(f.entry.services.backend.containerId).toBe('c'.repeat(64));
     expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(true);
   });
-  it.each(['internal-alias', 'container-name', 'unavailable', 'unconfirmed', 'external', 'credentialed', 'uppercase', 'multiple-urls'])('配置已改外部地址，实际运行消费者=%s 时只凭真实证据退役', async kind => {
-    const f = browserFixture(), shell = new MockShellExecutor();
-    Object.assign(f.state, { getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend', env: { TARGET: 'https://external.example/path' } }] });
+  it.each(['internal-alias', 'container-name', 'unavailable', 'unconfirmed', 'external', 'credentialed', 'uppercase', 'multiple-urls', 'multiple-external', 'multiple-external-ports', 'uppercase-container', 'uppercase-profile', 'credentialed-comma'])('配置已改外部地址，实际运行消费者=%s 时只凭真实证据退役', async kind => {
+    const f = browserFixture(), shell = new MockShellExecutor(), profileId = kind === 'uppercase-profile' ? 'API' : 'api';
+    if (profileId !== 'api') { delete f.entry.services.api; f.entry.services[profileId] = f.service; f.service.profileId = profileId; }
+    if (kind === 'uppercase-container') f.service.servingRuntime!.containerName = 'OLD-API';
+    Object.assign(f.state, { getEffectiveProfilesForBranch: () => [{ id: profileId }, { id: 'backend', env: { TARGET: 'https://external.example/path' } }] });
     const target = { 'internal-alias': 'http://api:80/path', 'container-name': 'http://old-api:80/path',
       credentialed: 'http://fixture-user:fixture-pass@api:80/path', uppercase: 'http://API:80/path',
-      'multiple-urls': 'http://external.example,http://api:80/path' }[kind] || 'https://external.example/path';
+      'multiple-urls': 'http://external.example,http://api:80/path', 'multiple-external': 'http://external.example,http://other.example',
+      'multiple-external-ports': 'https://external.example:443,http://other.example:80',
+      'uppercase-container': 'http://old-api:80/path', 'uppercase-profile': 'http://api:80/path', 'credentialed-comma': 'http://fixture,user:pass@api:80/path' }[kind] || 'https://external.example/path';
     shell.addResponsePattern(/docker inspect/, () => kind === 'unavailable'
       ? { stdout: '', stderr: 'environment unavailable', exitCode: 1 }
       : { stdout: `TARGET=${target}\n`, stderr: '', exitCode: 0 });
     const native = new ContainerService(shell, {} as CdsConfig);
     f.container.getEnv = native.getEnv.bind(native);
     if (kind === 'unconfirmed') vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, id, runtime) => id === 'backend' ? null : { ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName!] });
-    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).resolves.toBeUndefined();
-    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(kind === 'external' ? 1 : 0);
-    expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(kind !== 'external');
+    await expect(commitServiceReplacements({ ...f, profileIds: [profileId] })).resolves.toBeUndefined();
+    const externalOnly = kind === 'external' || kind.startsWith('multiple-external');
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(externalOnly ? 1 : 0);
+    expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(!externalOnly);
     expect(f.entry.services.backend.containerId).toBe('b'.repeat(64));
     expect(shell.commands).toHaveLength(kind === 'unconfirmed' ? 0 : 1);
     for (const command of shell.commands) { expect(command).toContain('docker inspect ' + 'b'.repeat(64)); expect(command).not.toContain('unchanged-backend'); }
   });
-  it.each(['project', 'legacy-project', 'branch', 'mode', 'external', 'legacy-external'])('按实际运行环境解析 %s 消费者，保留外部地址控制', async layer => {
-    const f = browserFixture(), internal = 'http://api:80/path', external = 'https://external.example/path';
+  it.each(['project', 'legacy-project', 'branch', 'mode', 'external', 'legacy-external', 'list-external'])('按实际运行环境解析 %s 消费者，保留外部地址控制', async layer => {
+    const f = browserFixture(), internal = 'http://api:80/path', external = layer === 'list-external' ? 'https://external.example:443,http://other.example:80' : 'https://external.example/path';
     const externalOnly = layer.endsWith('external');
     const projectEnv = { FRONTEND_URL: layer === 'branch' || externalOnly ? external : internal };
     const branchEnv = layer === 'branch' ? { FRONTEND_URL: internal } : {};
