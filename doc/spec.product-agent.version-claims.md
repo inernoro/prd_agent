@@ -1,6 +1,6 @@
 # 产品管理正式申领与历史追溯 · 规格
 
-> **版本**：v1.2 | **日期**：2026-11-08 | **状态**：申领规则与需求排期已有聚焦验证；完整申领公网路径及用户理解效果待验
+> **版本**：v1.2 | **日期**：2026-11-08 | **状态**：已落地
 
 **一句话**：说明常规正式版本如何继承立项、校验申领与保留后续公告，并用具体业务实例区分编号、状态和交付证据。
 **谁该读**：使用版本申领、解释历史记录、实现关联流程或验收产品规则的产品、工程与测试人员。
@@ -59,6 +59,7 @@
 | S08 需求排期 | 手动转已排期但版本缺失、不存在、已删除或属于另一产品 | 前端要求补字段，服务端拒绝无效依据，原状态与引用不被部分改写 | 隔离数据库拒绝测试通过；公网确认跨产品拒绝不改原数据，有效排期保存状态和双向关联 |
 | S09 自动状态推进 | V 保存成功，某关联需求没有对应流程边 | 该需求可被跳过，不能报告全部已推进 | 已有流程边的正向服务端测试通过；多流程、缺边及正式发号后中断恢复仍开放 |
 | S10 已填写关联的流转请求 | 弹窗填写有效立项、上线关联、版本或缺失标题后提交 | 控件填写后仍可见，发送内容保留填写值；功能对象不被错误要求需求专用依据 | 6项组件回归通过；公网捕获版本选择提交且控件保留。立项、上线选择有组件诊断，未逐一走公网路径 |
+| S11 历史失效版本关联 | 需求已有被删除、不存在或属于其他产品的版本引用 | 编辑关联时显示失效项；用户显式取消后可选择本产品版本或清空。列表加载失败不误判或保存，服务端拒绝不关闭弹窗、不报告成功 | 组件回归覆盖可见修复、清空、加载重试与保存拒绝；隔离数据库回归覆盖修复旧引用后完成排期。此项是 PR 审查修订，不属于旧基线已完成的公网验证 |
 
 ## 四、一次变更应检查的影响
 
@@ -77,7 +78,7 @@
 
 ## 五、验证层次与当前边界
 
-业务验证基线为 `fc26e26c6`。[该提交 CI](https://github.com/inernoro/prd_agent/actions/runs/42212137020)与[镜像构建](https://github.com/inernoro/prd_agent/actions/runs/42212120734)均通过。CI 的常规测试不代替需要数据库的集成测试；本页后续文字更新也不据此宣称新提交已完成同样的全量业务验证。
+基础运行证据对应 `fc26e26c6`。[该提交 CI](https://github.com/inernoro/prd_agent/actions/runs/42212137020)与[镜像构建](https://github.com/inernoro/prd_agent/actions/runs/42212120734)均通过。后续失效关联修复与最终检查跟踪于 [PR #1905](https://github.com/inernoro/prd_agent/pull/1905)，不借旧提交的绿灯证明新行为。CI 的常规测试也不代替需要数据库的集成测试。
 
 隔离数据库检查已执行申领、防重、来源、原 T 保护、公告后补、需求版本引用和流转闸门；公告匹配使用受控上游响应验证冲突与失败不改写成功进度。组件交互检查验证填写与请求。公网浏览器则从登录、百宝箱、产品管理进入测试需求，确认选择版本后控件保留、请求携带版本、状态进入已排期且双向关联正确；跨产品引用被拒绝，原标题与关联不变，测试对象清理成功。
 
@@ -90,3 +91,4 @@
 - [服务端正式申领断言](../prd-api/tests/PrdAgent.Api.Tests/Services/ProductVersionClaimGuardTests.cs)、[流转测试](../prd-admin/src/pages/product-agent/workflowTransitionGuard.test.ts)、[版本基础信息测试](../prd-admin/src/pages/product-agent/versionBasicInfoCatalog.test.ts)、[申领来源与历史对照测试](../prd-admin/src/pages/product-agent/versionClaimScope.test.ts)、[功能字段测试](../prd-admin/src/pages/product-agent/FeatureSpecificationFields.test.ts)。
 - [流转弹窗组件回归](../prd-admin/src/pages/product-agent/WorkflowTransitionDialog.test.tsx)、[需求版本引用集成回归](../prd-api/tests/PrdAgent.Api.Tests/Controllers/ProductVersionReferenceTests.cs)。
 - [公告同步受控响应与隔离数据库测试](../prd-api/tests/PrdAgent.Api.Tests/Services/ProductAnnouncementSyncTests.cs)。
+- [历史失效版本关联的组件恢复测试](../prd-admin/src/pages/product-agent/ProductRelationModals.test.tsx)。

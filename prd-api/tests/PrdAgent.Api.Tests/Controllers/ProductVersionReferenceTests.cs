@@ -151,6 +151,29 @@ public class ProductVersionReferenceTests
         Assert.Contains("r1", version.RequirementIds);
     }
 
+    [Fact]
+    public async Task Legacy_invalid_links_can_be_explicitly_repaired_before_scheduling()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var definition = ProductWorkflowDefaults.Requirement(); definition.Id = "workflow";
+        await fixture.Db.ProductWorkflowDefinitions.InsertOneAsync(definition);
+        await fixture.Db.Requirements.UpdateOneAsync(x => x.Id == "r1", Builders<Requirement>.Update
+            .Set(x => x.WorkflowDefId, definition.Id).Set(x => x.CurrentState, RequirementWorkflowCatalog.New)
+            .Set(x => x.VersionIds, new List<string> { "foreign-version", "deleted-version", "missing-version" }));
+        Assert.IsType<OkObjectResult>(await fixture.Controller().UpdateRequirement("r1",
+            new UpsertRequirementRequest { VersionIds = new() { "v1" } }));
+        var edge = definition.Transitions.First(x => x.FromState == RequirementWorkflowCatalog.New
+            && x.ToState == RequirementWorkflowCatalog.Scheduled);
+        Assert.IsType<OkObjectResult>(await fixture.Controller().Transition(new TransitionRequest {
+            EntityType = ProductEntityType.Requirement, EntityId = "r1", TransitionKey = edge.Key,
+        }));
+        var saved = await fixture.Db.Requirements.Find(x => x.Id == "r1").SingleAsync();
+        Assert.Equal(RequirementWorkflowCatalog.Scheduled, saved.CurrentState);
+        Assert.Equal(new[] { "v1" }, saved.VersionIds);
+        Assert.Equal(new[] { "r1" }, (await fixture.Db.ProductVersions.Find(x => x.Id == "v1").SingleAsync()).RequirementIds);
+        Assert.Equal(new[] { "foreign-requirement" }, (await fixture.Db.ProductVersions.Find(x => x.Id == "foreign-version").SingleAsync()).RequirementIds);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly MongoClient client;
