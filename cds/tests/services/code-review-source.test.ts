@@ -169,4 +169,54 @@ describe('code review source snapshots', () => {
       audit: async () => {}, fetchImpl })).rejects.toThrow(/不允许/);
     expect(count).toBe(3);
   });
+
+  it.each([
+    { redirect: false, status: 403, reason: 'Repository access blocked by policy' },
+    { redirect: true, status: 502, reason: 'Archive upstream unavailable' },
+  ])('retains redacted failure body and request identity for snapshot HTTP $status', async ({ redirect, status, reason }) => {
+    const events: CodeReviewAuditEvent[] = []; let count = 0;
+    const fetchImpl = (async () => {
+      if (++count === 1) return Response.json({ default_branch: 'main' });
+      if (count === 2) return Response.json({ sha: 'a'.repeat(40) });
+      if (redirect && count === 3) return new Response(null, { status: 302, headers: { location: 'https://codeload.github.com/a/b/zip/main' } });
+      return Response.json({ message: reason, password: 'private-password', email: 'private@example.com', authorization: 'Bearer private-token' },
+        { status, headers: { 'x-request-id': 'snapshot-denied-request' } });
+    }) as typeof fetch;
+    await expect(fetchCodeReviewGithubSnapshot({ githubUrl: 'https://github.com/a/b', token: 'private-token',
+      signal: new AbortController().signal, audit: async event => { events.push(event); }, fetchImpl })).rejects.toThrow(`HTTP ${status}`);
+    const failure = events.at(-1)!;
+    expect(failure).toMatchObject({ operation: 'github.download_snapshot', status, outcome: 'http_error', truncated: false,
+      upstreamRequestId: 'snapshot-denied-request' });
+    expect(failure.evidence).toContain(reason); expect(failure.responseBytes).toBeGreaterThan(0);
+    for (const secret of ['private-token', 'private-password', 'private@example.com']) expect(JSON.stringify(events)).not.toContain(secret);
+  });
+  it('bounds and cancels oversized failed snapshot evidence while retaining the upstream reason', async () => {
+    const events: CodeReviewAuditEvent[] = []; let count = 0, cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('Archive access denied ' + 'x'.repeat(20_000)));
+    }, cancel() { cancelled = true; } });
+    const fetchImpl = (async () => ++count === 1 ? Response.json({ default_branch: 'main' }) : count === 2
+      ? Response.json({ sha: 'a'.repeat(40) }) : new Response(body, { status: 403 })) as typeof fetch;
+    await expect(fetchCodeReviewGithubSnapshot({ githubUrl: 'https://github.com/a/b', signal: new AbortController().signal,
+      audit: async event => { events.push(event); }, fetchImpl })).rejects.toThrow('HTTP 403');
+    const failure = events.at(-1)!;
+    expect(failure.truncated).toBe(true); expect(failure.evidence.length).toBeLessThanOrEqual(4096);
+    expect(failure.evidence).toContain('Archive access denied'); expect(cancelled).toBe(true);
+    expect(JSON.parse(failure.evidence.split('\n')[0])).toMatchObject({ capturedBytes: 8192, bodyReadFailed: false });
+  });
+  it('keeps received failure-body evidence when the error response stream itself fails', async () => {
+    const events: CodeReviewAuditEvent[] = []; let count = 0, pulls = 0;
+    const body = new ReadableStream<Uint8Array>({ pull(controller) {
+      if (++pulls === 1) controller.enqueue(new TextEncoder().encode('Archive unavailable before stream ended'));
+      else controller.error(new Error('private-reader-exception'));
+    } });
+    const fetchImpl = (async () => ++count === 1 ? Response.json({ default_branch: 'main' }) : count === 2
+      ? Response.json({ sha: 'a'.repeat(40) }) : new Response(body, { status: 503 })) as typeof fetch;
+    await expect(fetchCodeReviewGithubSnapshot({ githubUrl: 'https://github.com/a/b', signal: new AbortController().signal,
+      audit: async event => { events.push(event); }, fetchImpl })).rejects.toThrow('HTTP 503');
+    expect(events.at(-1)).toMatchObject({ outcome: 'http_error', status: 503, truncated: true });
+    expect(events.at(-1)!.evidence).toContain('Archive unavailable before stream ended');
+    expect(JSON.parse(events.at(-1)!.evidence.split('\n')[0])).toMatchObject({ bodyReadFailed: true });
+    expect(JSON.stringify(events)).not.toContain('private-reader-exception');
+  });
 });

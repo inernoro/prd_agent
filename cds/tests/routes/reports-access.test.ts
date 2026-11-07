@@ -218,6 +218,7 @@ describe('Acceptance report routes — project-scoped key access', () => {
   it.each([
     { title: '普通失败验收', reportType: 'code-review' },
     { title: '代码审查报告 · 普通失败验收' },
+    { title: '代码审查报告 · 普通失败验收 · 2026-11-07' },
   ])('普通验收不能靠类型或标题绕开质量统计：$title', async fields => {
     const created = await call(server, 'POST', '/api/reports', {
       projectKey: 'proj-a', body: { ...fields, format: 'md', content: '# 失败验收', verdict: 'fail', defectCounts: { p0: 1 } },

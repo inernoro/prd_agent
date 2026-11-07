@@ -19,7 +19,8 @@ export const REPORT_KINDS = [
 ] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number] | '其他';
 export function isCodeReviewReport(report: AcceptanceReportMeta): boolean {
-  return report.reportType === 'code-review' || parseReportTitle(report.title).kind === '代码审查报告';
+  return report.reportType === 'code-review'
+    || report.reportType === undefined && parseReportTitle(report.title).kind === '代码审查报告';
 }
 
 export interface ParsedReportTitle {

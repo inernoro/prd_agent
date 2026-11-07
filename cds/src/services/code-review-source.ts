@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import { buildZip } from '../utils/zip.js';
-import { readReviewResponse, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
+import { readReviewResponse, redactReviewEvidence, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
+import { redactBodyText } from './http-log-store.js';
 
 export const CODE_REVIEW_ZIP_LIMITS = { compressed: 100 * 1024 * 1024, expanded: 1024 * 1024 * 1024,
   entries: 20_000, file: 200 * 1024 } as const;
@@ -138,6 +139,36 @@ export function parseCodeReviewGithubUrl(input: string): { owner: string; repo: 
   return { owner: parts[0], repo };
 }
 
+async function snapshotFailureEvidence(response: Response, token?: string) {
+  const limit = 8 * 1024, chunks: Buffer[] = [];
+  let captured = 0, received = 0, incomplete = Number(response.headers.get('content-length')) > limit, bodyReadFailed = false;
+  const reader = response.body?.getReader();
+  if (reader) {
+    try {
+      while (captured < limit) {
+        const next = await reader.read();
+        if (next.done) break;
+        received += next.value.length;
+        const part = Buffer.from(next.value.subarray(0, limit - captured));
+        chunks.push(part); captured += part.length;
+        if (captured === limit) incomplete = true;
+      }
+    } catch { incomplete = true; bodyReadFailed = true; }
+    finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+  }
+  const bytes = Buffer.concat(chunks, captured);
+  const scrub = (value: string) => {
+    const redacted = redactReviewEvidence(redactBodyText(value));
+    return token ? redacted.split(token).join('[credential]') : redacted;
+  };
+  const prefix = JSON.stringify({ capturedBytes: captured, receivedBytesLowerBound: received,
+    capturedSHA256: createHash('sha256').update(bytes).digest('hex'), bodyReadFailed });
+  const text = scrub(bytes.toString('utf8')), remaining = 4096 - prefix.length - 1;
+  const requestId = response.headers.get('x-github-request-id') ?? response.headers.get('x-request-id');
+  return { evidence: `${prefix}\n${text.slice(0, remaining)}`, truncated: incomplete || text.length > remaining,
+    responseBytes: received, upstreamRequestId: requestId ? scrub(requestId).slice(0, 200) : undefined };
+}
+
 export async function fetchCodeReviewGithubSnapshot(input: {
   githubUrl: string; ref?: string; token?: string; signal: AbortSignal; audit: CodeReviewAudit; fetchImpl?: typeof fetch;
 }): Promise<{ zip: Buffer; commitSha: string; sourceName: string }> {
@@ -159,6 +190,7 @@ export async function fetchCodeReviewGithubSnapshot(input: {
   let event = { operation: 'github.download_snapshot', url: `${base}/zipball/${commit.sha}`, method: 'GET',
     startedAt: new Date(started).toISOString() };
   let response: Response | undefined;
+  let failureEvidenceAttempted = false;
   try {
     response = await fetchImpl(event.url, { headers, signal: input.signal, redirect: 'manual' });
     // GitHub redirects archives to codeload. Never forward installation credentials to another origin.
@@ -178,14 +210,19 @@ export async function fetchCodeReviewGithubSnapshot(input: {
       response = await fetchImpl(target.href, { signal: input.signal, redirect: 'error',
         headers: { 'User-Agent': 'CDS-Code-Review' } });
     }
-    if (!response.ok) throw new Error(`GitHub 源码下载失败（HTTP ${response.status}）`);
+    if (!response.ok) {
+      const evidence = await snapshotFailureEvidence(response, input.token);
+      failureEvidenceAttempted = true;
+      await input.audit({ ...event, durationMs: Date.now() - started, status: response.status, outcome: 'http_error', ...evidence });
+      throw new Error(`GitHub 源码下载失败（HTTP ${response.status}）`);
+    }
     const zip = await readReviewResponse(response, CODE_REVIEW_ZIP_LIMITS.compressed);
     await input.audit({ ...event, durationMs: Date.now() - started, status: response.status, outcome: 'success',
       evidence: JSON.stringify({ commitSha: commit.sha, bytes: zip.length, sha256: createHash('sha256').update(zip).digest('hex') }),
       responseBytes: zip.length, truncated: false });
     return { zip, commitSha: commit.sha, sourceName };
   } catch (error) {
-    await input.audit({ ...event, durationMs: Date.now() - started, status: response?.status,
+    if (!failureEvidenceAttempted) await input.audit({ ...event, durationMs: Date.now() - started, status: response?.status,
       outcome: response ? 'http_error' : 'network_error', evidence: response ? '源码下载失败或重定向不符合限制' : '未收到响应', truncated: false });
     throw error;
   }
