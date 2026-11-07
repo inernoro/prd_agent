@@ -2090,6 +2090,22 @@ describe('Branch Routes', () => {
       expect((res.body as any).extraProfiles).toEqual([]);
     });
 
+    it('显式先停后启可往返保存，非法更新顺序被拒且不影响兄弟分支', async () => {
+      seedBranch('b1'); seedBranch('b2');
+      const put = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ ...extraSvc('private-db'), updateOrder: 'stop-first' }],
+      });
+      expect(put.status).toBe(200);
+      const read = await request(server, 'GET', '/api/branches/b1/extra-services');
+      expect((read.body as any).extraProfiles[0].updateOrder).toBe('stop-first');
+      const invalid = await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ ...extraSvc('private-db'), updateOrder: 'parallel-writers' }],
+      });
+      expect(invalid.status).toBe(400);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].updateOrder).toBe('stop-first');
+      expect(stateService.getBranch('b2')!.extraProfiles || []).toEqual([]);
+    });
+
     it('PUT declares an extra service; GET reflects it; a sibling stays empty (zero cross-impact)', async () => {
       seedBranch('b1'); seedBranch('b2');
       const put = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
@@ -2427,6 +2443,21 @@ describe('Branch Routes', () => {
       const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { FOO: 'bar' } });
       expect(put.status).toBe(200);
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.FOO).toBe('bar');
+    });
+
+    it('分支依赖通过 API 往返并进入生效配置，拒绝非法依赖且保留项目底座', async () => {
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: '.', command: 'run', containerPort: 8080, projectId: 'default' });
+      seedBranch('b1');
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dependsOn: ['fresh-mysql'] });
+      expect(put.status).toBe(200);
+      expect((put.body as any).effective.dependsOn).toEqual(['fresh-mysql']);
+      const get = await request(server, 'GET', '/api/branches/b1/profile-overrides');
+      expect((get.body as any).profiles.find((p: any) => p.profileId === 'api').override.dependsOn).toEqual(['fresh-mysql']);
+      expect(stateService.getBuildProfile('api')!.dependsOn).toBeUndefined();
+      for (const dependsOn of ['fresh-mysql', [''], [1]]) {
+        expect((await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dependsOn })).status).toBe(400);
+      }
+      expect(stateService.getBranch('b1')!.profileOverrides?.api.dependsOn).toEqual(['fresh-mysql']);
     });
 
     it('round-trips a branch HTTP readiness path through the override API and effective profile', async () => {

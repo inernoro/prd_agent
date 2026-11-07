@@ -395,6 +395,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
     // **不得**覆盖 baseline 真实端口 → 根治 `docker: invalid containerPort: null`（prd-agent-main 等）。
     ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
     ...(override.pathPrefixes !== undefined ? { pathPrefixes: override.pathPrefixes } : {}),
+    ...(override.dependsOn !== undefined ? { dependsOn: override.dependsOn } : {}),
     ...(override.resources !== undefined ? { resources: override.resources } : {}),
     ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
     ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
@@ -1726,7 +1727,8 @@ export class ContainerService {
       const runtime = await this.staticWebService().prepare({
         identity: { projectId: entry.projectId!, branchId: entry.id, profileId: profile.id },
         serviceName: service.containerName, image: artifact.image, revision: artifact.revision, config: profile.staticWeb,
-        env: this.resolveProfileRuntimeEnv(entry, profile, customEnv), check,
+        // 版本模板使用本次核验产物，兼容全新分支尚无提交缓存。
+        env: this.resolveProfileRuntimeEnv({ ...entry, pinnedCommit: undefined, githubCommitSha: artifact.revision }, profile, customEnv), check,
       });
       try { check(); }
       catch (error) { await this.staticWebService().discard(runtime); throw error; }
@@ -3188,7 +3190,7 @@ export class ContainerService {
     // kind 以前不在这个 Pick 里，于是所有停止一律记成通用的 cds-stop：调用方明明知道
     // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
     // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
-    context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+    context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'assertCurrent'> = {},
     // 同组调用在第一个异步操作前冻结全部原预约；普通停止在入队前冻结。
     releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName),
   ): Promise<void> {
@@ -3228,6 +3230,7 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    context.assertCurrent?.('before stop sentinel');
     await this.writeStopSentinel(containerName, reason);
     this.noteLifecycleIntent(containerName, context.kind ?? 'cds-stop', reason, {
       projectId: context.projectId ?? null,
@@ -3241,7 +3244,9 @@ export class ContainerService {
       operation: context.operation ?? null,
       source: context.source ?? null,
     });
+    context.assertCurrent?.('before docker stop');
     const result = await this.shell.exec(`docker stop ${containerName}`);
+    context.assertCurrent?.('after docker stop');
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
     const confirmed = state?.running === false

@@ -14055,7 +14055,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProfileSuffix = deployProjectId === 'default'
         ? ''
         : `-${deployProject?.slug || deployProjectId}`;
-      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
+      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix, deploymentInput.profileOverrides);
 
       // ── Ensure required infrastructure is running ──
       // A profile can depend on project infra such as mongodb/redis and use
@@ -17031,6 +17031,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `dbInit 非法（仅允许 'empty' 或 'clone'）` });
         return;
       }
+      if (body.dependsOn != null && (!Array.isArray(body.dependsOn)
+        || body.dependsOn.some(value => typeof value !== 'string' || !value.trim()))) {
+        res.status(400).json({ error: 'dependsOn 必须是非空服务标识的数组' });
+        return;
+      }
 
       // 分支隔离配置会连同 context path 更新 HTTP 就绪路径。运行时早已支持
       // readinessProbe 覆盖；在这里丢弃它会让已就绪的服务持续被旧路径误判。
@@ -17053,6 +17058,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         containerPort: typeof body.containerPort === 'number' ? body.containerPort : undefined,
         env: envOverride,
         pathPrefixes: Array.isArray(body.pathPrefixes) ? body.pathPrefixes as string[] : undefined,
+        dependsOn: Array.isArray(body.dependsOn) ? body.dependsOn.map(value => (value as string).trim()) : undefined,
         resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
@@ -18581,6 +18587,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       };
       const pathPrefixes = strArray(raw?.pathPrefixes);
       const dependsOn = strArray(raw?.dependsOn);
+      if (raw.updateOrder !== undefined && raw.updateOrder !== 'start-first' && raw.updateOrder !== 'stop-first') {
+        res.status(400).json({ error: `额外服务 "${id}" 的 updateOrder 非法（仅允许 start-first 或 stop-first）` });
+        return;
+      }
       const startupSignal = typeof raw?.startupSignal === 'string' && raw.startupSignal.trim() !== ''
         ? raw.startupSignal : undefined;
       const readinessProbe = ((): ReadinessProbe | undefined => {
@@ -18661,6 +18671,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })()),
         ...(pathPrefixes ? { pathPrefixes } : {}),
         ...(dependsOn ? { dependsOn } : {}),
+        ...(raw.updateOrder !== undefined ? { updateOrder: raw.updateOrder } : {}),
         ...(readinessProbe ? { readinessProbe } : {}),
         ...(startupSignal ? { startupSignal } : {}),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
