@@ -306,9 +306,13 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (item.createdProject) {
       res.status(409).json({ error: 'project_already_created', message: '项目已创建，未撤销项目权限。' }); return;
     }
+    // 清理只终止仍在途的申请；原审批决定、终态时间与事件均保持。
+    if (item.status !== 'pending' && item.status !== 'approved') {
+      res.json({ cancelled: item.status === 'cancelled', status: item.status }); return;
+    }
     if (item.issuedKeyId) stateService.revokeGlobalAgentKey(item.issuedKeyId);
     stateService.updateAccessRequest(item.id, {
-      status: item.status === 'expired' ? 'expired' : 'cancelled',
+      status: 'cancelled',
       issuedKeyPlaintext: undefined, decidedAt: new Date().toISOString(),
     });
     cdsEventsBus.publish('access-request.decided', { requestId: item.id, status: 'cancelled', pendingCount: pendingCount(stateService) });

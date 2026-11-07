@@ -3843,9 +3843,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       if (item.kind !== 'bootstrap' || item.createdProject
         || !['pending', 'approved'].includes(item.status)) continue;
       const key = (this.state.globalAgentKeys || []).find(k => k.id === item.issuedKeyId);
+      const requestDeadline = Date.parse(item.expiresAt || '') || Date.parse(item.createdAt) + 600_000;
+      const keyDeadline = Date.parse(key?.expiresAt || '');
       const deadline = item.deliveredAt
-        ? Date.parse(key?.expiresAt || '') || Date.parse(item.deliveredAt) + 300_000
-        : Date.parse(item.expiresAt || '') || Date.parse(item.createdAt) + 600_000;
+        ? keyDeadline || Date.parse(item.deliveredAt) + 300_000
+        : Math.min(requestDeadline, keyDeadline || Infinity);
       if (deadline > now && !key?.revokedAt) continue;
       if (key && !key.revokedAt) key.revokedAt = new Date(now).toISOString();
       item.status = 'expired';

@@ -144,6 +144,37 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     server = app.listen(0);
   });
 
+  it.each(['rejected', 'expired', 'cancelled'] as const)('发起方清理保留原%s终态与审批记录，不重复发事件', async terminal => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'Terminal', repository: 'https://github.com/acme/terminal' },
+    });
+    expect(init.status).toBe(201);
+    const id = init.body.requestId, headers = { 'X-Poll-Token': init.body.pollToken };
+    const endpoint = `/api/bootstrap-access-requests/${id}`;
+    if (terminal === 'rejected') {
+      expect((await request(server, 'POST', `/api/access-requests/${id}/reject`, { reason: '原操作员拒绝' })).status).toBe(200);
+    } else if (terminal === 'expired') {
+      stateService.updateAccessRequest(id, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+      expect((await request(server, 'GET', '/api/access-requests')).status).toBe(200);
+    } else expect((await request(server, 'DELETE', endpoint, undefined, headers)).status).toBe(200);
+    const before = structuredClone(stateService.getAccessRequest(id));
+    expect(before?.status).toBe(terminal);
+    const events: unknown[] = [];
+    const unsubscribe = cdsEventsBus.subscribe(event => {
+      if (event.type === 'access-request.decided') events.push(event.data);
+    });
+    try {
+      const cleanup = await request(server, 'DELETE', endpoint, undefined, headers);
+      expect(cleanup.status).toBe(200);
+      expect(stateService.getAccessRequest(id)).toEqual(before);
+      expect(events).toEqual([]);
+      expect(cleanup.body.cancelled).toBe(terminal === 'cancelled');
+      const poll = await request(server, 'GET', endpoint, undefined, headers);
+      expect(poll.body.status).toBe(terminal);
+      if (terminal === 'rejected') expect(poll.body.rejectReason).toBe('原操作员拒绝');
+    } finally { unsubscribe(); }
+  });
+
   it('普通成员不能枚举其他项目的授权目标、回执或批准申请', async () => {
     const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
       agentName: 'test', requestedProject: { name: 'Private', repository: 'https://github.com/acme/private' },
@@ -308,6 +339,29 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     stateService.updateAccessRequest(id, { status: 'approved', createdProject: { id: 'real', name: 'Cancel', createdAt: new Date().toISOString() } });
     expect((await request(server, 'DELETE', route, undefined, { 'X-Poll-Token': init.body.pollToken })).status).toBe(409);
     expect(stateService.getAccessRequest(id)!.status).toBe('approved');
+  });
+
+  it('未领取的一次凭据按自身期限过期，不交付已失效授权', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'Undelivered', repository: 'https://github.com/acme/undelivered' },
+    });
+    expect(init.status).toBe(201);
+    const id = init.body.requestId;
+    expect((await request(server, 'POST', `/api/access-requests/${id}/approve`, {})).status).toBe(200);
+    const item = stateService.getAccessRequest(id)!;
+    const key = stateService.getGlobalAgentKeys().find(k => k.id === item.issuedKeyId)!;
+    const plaintext = item.issuedKeyPlaintext;
+    expect(item.deliveredAt).toBeUndefined();
+    expect(Date.parse(item.expiresAt!)).toBeGreaterThan(Date.now());
+    expect(plaintext).toBeTruthy();
+    key.expiresAt = new Date(Date.now() - 1).toISOString();
+    const poll = await request(server, 'GET', `/api/bootstrap-access-requests/${id}`, undefined, { 'X-Poll-Token': init.body.pollToken });
+    expect(poll.status).toBe(200);
+    expect(poll.body.status).toBe('expired');
+    expect(poll.body.authorizationKey).toBeUndefined();
+    expect(item.issuedKeyPlaintext).toBeUndefined();
+    expect(item.status).toBe('expired');
+    expect(key.revokedAt).toBeTruthy();
   });
 
   it('领取但未建项目的一次凭据有硬过期，正常全局凭据不新增期限', async () => {
