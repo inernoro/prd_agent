@@ -2015,6 +2015,19 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b2')!.extraProfiles || []).toEqual([]);
     });
 
+    it('编辑额外服务省略更新顺序时保留先停后启，显式指定仍可切回默认顺序', async () => {
+      seedBranch('b1'); seedBranch('b2');
+      const profile = { ...extraSvc('private-db'), updateOrder: 'stop-first' };
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [profile] })).status).toBe(200);
+      const edited = { ...extraSvc('private-db'), containerPort: 3307, env: { LABEL: 'edited' } };
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [edited] })).status).toBe(200);
+      const saved = (await request(server, 'GET', '/api/branches/b1/extra-services')).body as any;
+      expect(saved.extraProfiles[0]).toMatchObject({ updateOrder: 'stop-first', containerPort: 3307, env: { LABEL: 'edited' } });
+      expect(stateService.getBranch('b2')!.extraProfiles || []).toEqual([]);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ ...edited, updateOrder: 'start-first' }] })).status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].updateOrder).toBe('start-first');
+    });
+
     it('PUT declares an extra service; GET reflects it; a sibling stays empty (zero cross-impact)', async () => {
       seedBranch('b1'); seedBranch('b2');
       const put = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
@@ -2367,6 +2380,21 @@ describe('Branch Routes', () => {
         expect((await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dependsOn })).status).toBe(400);
       }
       expect(stateService.getBranch('b1')!.profileOverrides?.api.dependsOn).toEqual(['fresh-mysql']);
+    });
+
+    it.each([{ dependsOn: ['fresh-mysql'] }, { dependsOn: [] }])('编辑其他配置保留分支依赖 $dependsOn，显式 null 恢复项目依赖', async ({ dependsOn }) => {
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: '.', command: 'run', containerPort: 8080, projectId: 'default', dependsOn: ['shared-db'] });
+      seedBranch('b1'); seedBranch('b2');
+      expect((await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dependsOn })).status).toBe(200);
+      const edited = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8081, activeDeployMode: 'express' });
+      expect(edited.status).toBe(200);
+      expect((edited.body as any).override.dependsOn).toEqual(dependsOn);
+      expect((edited.body as any).effective.dependsOn).toEqual(dependsOn);
+      expect(stateService.getBranch('b2')!.profileOverrides?.api).toBeUndefined();
+      expect(stateService.getBuildProfile('api')!.dependsOn).toEqual(['shared-db']);
+      const inherited = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dependsOn: null });
+      expect(inherited.status).toBe(200);
+      expect((inherited.body as any).effective.dependsOn).toEqual(['shared-db']);
     });
 
     it('round-trips a branch HTTP readiness path through the override API and effective profile', async () => {

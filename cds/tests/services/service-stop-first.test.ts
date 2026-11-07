@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BranchEntry, BuildProfile, ServiceState } from '../../src/types.js';
 import type { StateService } from '../../src/services/state.js';
-import type { ContainerService } from '../../src/services/container.js';
+import { ContainerService } from '../../src/services/container.js';
+import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { CdsConfig } from '../../src/types.js';
 import { prepareServiceReplacement, reserveServiceReplacements } from '../../src/services/service-replacement.js';
 
 function fixture() {
@@ -20,10 +23,53 @@ function fixture() {
 }
 
 describe('显式先停后启与冷启动网络', () => {
+  it('等待停止预算期间操作被取代，真实停止入口不得发命令或释放原预约', async () => {
+    const name = 'stop-first-cancelled', owner = { projectId: 'project', branchId: 'branch', operationId: 'old' };
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker inspect /, () => ({ exitCode: 0, stderr: '', stdout: JSON.stringify([
+      { Id: 'a'.repeat(64), Name: '/' + name, State: { Running: true, Status: 'running' } },
+    ]) }));
+    deploymentPhaseBudget.reserveKnownMemory(name, 128, owner);
+    const release = await deploymentPhaseBudget.acquire('terminal', owner);
+    try {
+      const container = new ContainerService(shell, {} as CdsConfig);
+      let cancelled = false;
+      const stopping = container.stop(name, 'replacement-stop-first', { ...owner,
+        assertCurrent: () => { if (cancelled) throw new Error('superseded'); } });
+      cancelled = true; release();
+      await expect(stopping).rejects.toThrow('superseded');
+      expect(shell.commands.some(command => /^docker (stop|exec)\b/.test(command))).toBe(false);
+      expect(deploymentPhaseBudget.memorySnapshot().find(row => row.key === name)?.memoryMB).toBe(128);
+    } finally { release(); deploymentPhaseBudget.releaseMemory(name); }
+  });
+
+  it.each([false, true])('真实停止确认释放按名预约且不结算后继预约，检查期间换代=%s', async superseded => {
+    const f = fixture(), owner = { projectId: 'project', branchId: 'branch', operationId: 'operation' };
+    deploymentPhaseBudget.reserveKnownMemory(f.old.containerName, 128, owner);
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker inspect /, () => ({ exitCode: 0, stderr: '', stdout: JSON.stringify([
+      { Id: f.old.containerId, Name: '/' + f.old.containerName, State: { Running: f.running.has(f.old.containerId), Status: f.running.has(f.old.containerId) ? 'running' : 'exited', ExitCode: 0 } },
+    ]) }));
+    shell.addResponsePattern(/docker stop /, () => { f.running.delete(f.old.containerId); return { exitCode: 0, stdout: '', stderr: '' }; });
+    const manager = new ContainerService(shell, {} as CdsConfig);
+    f.container.stop = manager.stop.bind(manager);
+    if (superseded) vi.mocked(f.container.inspectOwnedRuntime).mockImplementationOnce(async (_entry, _id, runtime) => {
+      deploymentPhaseBudget.reserveKnownMemory(f.old.containerName, 256, { ...owner, operationId: 'new' });
+      return { ...runtime };
+    });
+    try {
+      await prepareServiceReplacement(f);
+      expect(shell.commands).toContain('docker stop ' + f.old.containerId);
+      const reservation = deploymentPhaseBudget.memorySnapshot().find(row => row.key === f.old.containerName);
+      if (superseded) expect(reservation).toMatchObject({ memoryMB: 256, owner: { operationId: 'new' } });
+      else expect(reservation).toBeUndefined();
+    } finally { deploymentPhaseBudget.releaseMemory(f.old.containerName); }
+  });
+
   it('候选获得运行身份前，先停止并确认旧写者；保留原容器与数据卷', async () => {
     const f = fixture();
     const target = await prepareServiceReplacement(f);
-    expect(f.container.stop).toHaveBeenCalledWith(f.old.containerId, 'replacement-stop-first', expect.objectContaining({ branchId: 'branch', profileId: 'database' }));
+    expect(f.container.stop).toHaveBeenCalledWith(f.old.containerId, 'replacement-stop-first', expect.objectContaining({ branchId: 'branch', profileId: 'database' }), expect.any(Function));
     expect(f.running.size).toBe(0);
     expect(target.containerName).not.toBe(f.old.containerName);
     expect(target.containerId).toBeUndefined();

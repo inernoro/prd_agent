@@ -20,6 +20,7 @@ import { runningCommitSha } from '../../src/services/running-version.js';
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -200,7 +201,8 @@ describe('Executor /exec/deploy', () => {
     };
     const containerService = new ContainerService(mock, config, undefined, eventSink, undefined, undefined, unitBindMountInspector);
     (containerService as any).waitForContainerAlive = async () => undefined;
-    (containerService as any).waitForReadiness = async () => true;
+    // 保留公共就绪方法的预约结算，仅替换实际网络探测。
+    (containerService as any).waitForReadinessUnbudgeted = async () => true;
 
     const app = express();
     app.use(express.json());
@@ -378,6 +380,8 @@ describe('Executor /exec/deploy', () => {
       RepoDigests: profiles.map(profile => `ghcr.io/owned/${profile.id}@${imageId}`), Os: 'linux', Architecture: 'amd64',
       Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
     const ensure = vi.spyOn(WorktreeService.prototype, 'ensureCommitAvailable');
+    // 过载时启动并发只有一个，已就绪角色必须真实归还启动预约才能启动下一个。
+    setBuildGateHostLoadProvider(() => ({ cores: 1, load1: 2 }));
     try {
       if (mode === 'preflight') {
         const result = await artifactPost({ profiles, commitSha: target, remainingMs: 120_000,
@@ -394,7 +398,7 @@ describe('Executor /exec/deploy', () => {
       }
       expect(ensure).not.toHaveBeenCalled();
       expect(mock.commands.some(command => /^git |^'git'/.test(command))).toBe(false);
-    } finally { ensure.mockRestore(); }
+    } finally { ensure.mockRestore(); setBuildGateHostLoadProvider(null); }
   });
 
   it.each(['preflight', 'deploy'])('executor %s跨项目归属在Docker及Git前拒绝，不能借默认项目仓库', async mode => {

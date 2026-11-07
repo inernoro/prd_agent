@@ -3117,14 +3117,15 @@ export class ContainerService {
     // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
     // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
     context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'assertCurrent'> = {},
+    releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName),
   ): Promise<void> {
     return deploymentPhaseBudget.run('terminal', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
       profileId: context.profileId || undefined, operationId: context.operationId },
-      () => this.stopUnbudgeted(containerName, reason, context));
+      () => this.stopUnbudgeted(containerName, reason, context, releaseMemory));
   }
 
-  private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
-    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName);
+  private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {},
+    releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName)): Promise<void> {
     const requestedAt = Date.now();
     const staticSite = this.staticSites?.inspect(containerName);
     if (staticSite) {
