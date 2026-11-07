@@ -43,10 +43,33 @@ describe('显式先停后启与冷启动网络', () => {
     } finally { release(); deploymentPhaseBudget.releaseMemory(name); }
   });
 
+  it.each([false, true])('真实停止确认释放按名预约且不结算后继预约，检查期间换代=%s', async superseded => {
+    const f = fixture(), owner = { projectId: 'project', branchId: 'branch', operationId: 'operation' };
+    deploymentPhaseBudget.reserveKnownMemory(f.old.containerName, 128, owner);
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker inspect /, () => ({ exitCode: 0, stderr: '', stdout: JSON.stringify([
+      { Id: f.old.containerId, Name: '/' + f.old.containerName, State: { Running: f.running.has(f.old.containerId), Status: f.running.has(f.old.containerId) ? 'running' : 'exited', ExitCode: 0 } },
+    ]) }));
+    shell.addResponsePattern(/docker stop /, () => { f.running.delete(f.old.containerId); return { exitCode: 0, stdout: '', stderr: '' }; });
+    const manager = new ContainerService(shell, {} as CdsConfig);
+    f.container.stop = manager.stop.bind(manager);
+    if (superseded) vi.mocked(f.container.inspectOwnedRuntime).mockImplementationOnce(async (_entry, _id, runtime) => {
+      deploymentPhaseBudget.reserveKnownMemory(f.old.containerName, 256, { ...owner, operationId: 'new' });
+      return { ...runtime };
+    });
+    try {
+      await prepareServiceReplacement(f);
+      expect(shell.commands).toContain('docker stop ' + f.old.containerId);
+      const reservation = deploymentPhaseBudget.memorySnapshot().find(row => row.key === f.old.containerName);
+      if (superseded) expect(reservation).toMatchObject({ memoryMB: 256, owner: { operationId: 'new' } });
+      else expect(reservation).toBeUndefined();
+    } finally { deploymentPhaseBudget.releaseMemory(f.old.containerName); }
+  });
+
   it('候选获得运行身份前，先停止并确认旧写者；保留原容器与数据卷', async () => {
     const f = fixture();
     const target = await prepareServiceReplacement(f);
-    expect(f.container.stop).toHaveBeenCalledWith(f.old.containerId, 'replacement-stop-first', expect.objectContaining({ branchId: 'branch', profileId: 'database' }));
+    expect(f.container.stop).toHaveBeenCalledWith(f.old.containerId, 'replacement-stop-first', expect.objectContaining({ branchId: 'branch', profileId: 'database' }), expect.any(Function));
     expect(f.running.size).toBe(0);
     expect(target.containerName).not.toBe(f.old.containerName);
     expect(target.containerId).toBeUndefined();

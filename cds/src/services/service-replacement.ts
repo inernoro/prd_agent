@@ -6,6 +6,7 @@ import { branchAppNetworkName } from './branch-network.js';
 import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
 import { archiveBranchContainerLogs } from './container-log-archiver.js';
 import { resolveBranchEnvLayers } from './branch-env-layers.js';
+import { deploymentPhaseBudget } from './deployment-phase-budget.js';
 
 function staticConsumerAliases(entry: BranchEntry, profileId: string, state: StateService): Set<string> {
   const project = entry.projectId ? state.getProject(entry.projectId) : undefined;
@@ -77,14 +78,16 @@ export async function prepareServiceReplacement(options: {
     const stop = container.stop?.bind(container);
     if (!stop) throw new Error('当前部署执行器不支持先停旧实例，未启动候选');
     // 只停经归属核对的本服务精确 CID。停止不删除容器或卷；失败必须在新实例启动前熔断。
-    for (const runtime of serviceRuntimeRefs(service).map(runtimeRef)) {
+    const runtimes = serviceRuntimeRefs(service).map(runtime => ({ runtime: runtimeRef(runtime),
+      releaseMemory: deploymentPhaseBudget.captureMemoryRelease(runtime.containerName) }));
+    for (const { runtime, releaseMemory } of runtimes) {
       assertCurrent?.('before stop-first identity');
       const owned = await container.inspectOwnedRuntime(entry, profile.id, runtime);
       assertCurrent?.('after stop-first identity');
       if (!owned) continue;
       await stop(owned.containerId!, 'replacement-stop-first', { projectId: entry.projectId,
         branchId: entry.id, profileId: profile.id, operationId: options.operationId,
-        operation: 'replacement-stop-first', source: 'service-replacement', assertCurrent });
+        operation: 'replacement-stop-first', source: 'service-replacement', assertCurrent }, releaseMemory);
       assertCurrent?.('after stop-first stop');
       if (await container.inspectOwnedRuntime(entry, profile.id, owned)) throw new Error('旧实例停止未确认，未启动独占数据卷的候选');
       assertCurrent?.('after stop-first confirmation');

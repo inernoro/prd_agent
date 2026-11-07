@@ -18486,6 +18486,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     //  2. **剥离掩码哨兵**：入参值命中 `***` / `***[masked]***` 等 → 保留旧值（基底里已有）；旧值不存在
     //     则不写入（绝不持久化字面哨兵）。
     const MASK_SENTINELS = new Set(['***', '***[masked]***', '****', '*****']);
+    const prevExtraUpdateOrderById = new Map((entry.extraProfiles || []).map(profile => [profile.id, profile.updateOrder]));
     const prevExtraEnvById = new Map<string, Record<string, string>>(
       (entry.extraProfiles || []).map((p) => [p.id, (p.env || {}) as Record<string, string>]),
     );
@@ -18591,6 +18592,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `额外服务 "${id}" 的 updateOrder 非法（仅允许 start-first 或 stop-first）` });
         return;
       }
+      const updateOrder = raw.updateOrder ?? prevExtraUpdateOrderById.get(id);
       const startupSignal = typeof raw?.startupSignal === 'string' && raw.startupSignal.trim() !== ''
         ? raw.startupSignal : undefined;
       const readinessProbe = ((): ReadinessProbe | undefined => {
@@ -18671,7 +18673,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })()),
         ...(pathPrefixes ? { pathPrefixes } : {}),
         ...(dependsOn ? { dependsOn } : {}),
-        ...(raw.updateOrder !== undefined ? { updateOrder: raw.updateOrder } : {}),
+        ...(updateOrder !== undefined ? { updateOrder } : {}),
         ...(readinessProbe ? { readinessProbe } : {}),
         ...(startupSignal ? { startupSignal } : {}),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),

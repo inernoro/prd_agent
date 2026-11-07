@@ -2106,6 +2106,19 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b2')!.extraProfiles || []).toEqual([]);
     });
 
+    it('编辑额外服务省略更新顺序时保留先停后启，显式指定仍可切回默认顺序', async () => {
+      seedBranch('b1'); seedBranch('b2');
+      const profile = { ...extraSvc('private-db'), updateOrder: 'stop-first' };
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [profile] })).status).toBe(200);
+      const edited = { ...extraSvc('private-db'), containerPort: 3307, env: { LABEL: 'edited' } };
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [edited] })).status).toBe(200);
+      const saved = (await request(server, 'GET', '/api/branches/b1/extra-services')).body as any;
+      expect(saved.extraProfiles[0]).toMatchObject({ updateOrder: 'stop-first', containerPort: 3307, env: { LABEL: 'edited' } });
+      expect(stateService.getBranch('b2')!.extraProfiles || []).toEqual([]);
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ ...edited, updateOrder: 'start-first' }] })).status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].updateOrder).toBe('start-first');
+    });
+
     it('PUT declares an extra service; GET reflects it; a sibling stays empty (zero cross-impact)', async () => {
       seedBranch('b1'); seedBranch('b2');
       const put = await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('demo-extra')] });
