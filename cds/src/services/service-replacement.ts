@@ -325,7 +325,8 @@ export async function commitServiceReplacements(options: {
     return;
   }
   const changed = selected.filter(service => service.servingRuntime && service.servingRuntime.containerName !== service.containerName);
-  if (!changed.length && !selected.some(service => service.retainedRuntimes?.length)) return;
+  // 冷启动也可能预约了共同网络，成功后仍须沿用既有网络结算与归属检查。
+  if (!changed.length && !selected.some(service => service.retainedRuntimes?.length) && !entry.replacementNetwork) return;
   assertCurrent?.('before runtime cutover persistence');
   await state.flush();
   assertCurrent?.('after candidate persistence before cutover');
