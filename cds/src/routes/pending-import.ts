@@ -409,10 +409,12 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     const idSuffix = project.legacyFlag ? '' : `-${projectResourceNamespace(project)}`;
     // depends_on / cds.calls 写的是 compose 服务名；id 加了项目后缀后由同一个助手对齐（与克隆导入、
     // Quickstart 同一份规则），否则 `web` 调 `api` 会落成 `web-foo` 调不存在的 `api`，边被丢、服务被判游离。
+    const approvedIds = new Set(parsed.buildProfiles.map(profile => `${profile.id}${idSuffix}`));
+    const profileSource = req.body?.mergeSource === true ? parseCdsCompose(composeSource)! : parsed;
     const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
-      (parsed.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
+      (profileSource.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
       idSuffix,
-    );
+    ).filter(profile => approvedIds.has(profile.id));
     try {assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));}
     catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
     try { stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles); }

@@ -1,20 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import type { BranchEntry, BuildProfile, ServiceState, ServiceRuntimeRef, OperationLogContainerSnapshot } from '../types.js';
 import type { StateService } from './state.js';
-import { ContainerRemovalPrerequisiteError, computeProfileAliases, resolveEffectiveProfile, type ContainerService } from './container.js';
+import { ContainerRemovalPrerequisiteError, computeProfileAliases, type ContainerService } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
 import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
 import { archiveBranchContainerLogs } from './container-log-archiver.js';
+import { resolveBranchEnvLayers } from './branch-env-layers.js';
 
 /** Browser-only is an explicit deployment contract, never inferred from a shared network. */
 export function assertBrowserOnlyStaticConsumers(entry: BranchEntry, profileId: string, state: StateService): void {
   const project = entry.projectId ? state.getProject(entry.projectId) : undefined;
   const aliases = new Set(computeProfileAliases(profileId, [entry.projectId, project?.slug].filter((value): value is string => Boolean(value))));
-  for (const raw of state.getEffectiveProfilesForBranch(entry)) {
-    const peer = resolveEffectiveProfile(raw, entry);
+  for (const { effective: peer, provenance, envError } of resolveBranchEnvLayers(state, entry, { jwtIssuer: '' }).profiles) {
     if (peer.id === profileId) continue;
+    if (envError) throw new Error(`服务 ${peer.id} 的运行环境无法完整解析，请核对后再选择仅浏览器静态模式`);
     const references = [...(peer.calls || []), ...(peer.dependsOn || [])];
-    const internalUrl = Object.values(peer.env || {}).some(value => [...value.matchAll(/https?:\/\/([a-z0-9_.-]+)(?=[:/]|$)/gi)]
+    const internalUrl = provenance.some(({ value }) => [...value.matchAll(/https?:\/\/([a-z0-9_.-]+)(?=[:/]|$)/gi)]
       .some(match => aliases.has(match[1])));
     if (internalUrl || references.some(target => aliases.has(target))) throw new Error(`服务 ${peer.id} 仍声明依赖该前端容器地址，请迁移依赖后再选择仅浏览器静态模式`);
   }

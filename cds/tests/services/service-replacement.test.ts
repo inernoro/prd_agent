@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BranchEntry, ServiceState } from '../../src/types.js';
 import type { StateService } from '../../src/services/state.js';
-import { ContainerService } from '../../src/services/container.js';
+import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import type { CdsConfig, ExecOptions, IShellExecutor } from '../../src/types.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,9 +13,12 @@ import { resolveBranchUpstream } from '../../src/services/proxy.js';
 function fixture() {
   const service: ServiceState = { profileId: 'api', containerName: 'new-api', hostPort: 10002, status: 'starting',
     networkName: 'new-network', servingRuntime: { containerName: 'old-api', containerId: 'a'.repeat(64), hostPort: 10001, networkName: 'old-network' } };
-  const entry = { id: 'branch', projectId: 'project', services: { api: service } } as BranchEntry;
+  const entry = { id: 'branch', branch: 'feature', projectId: 'project', services: { api: service } } as BranchEntry;
   let port = 10010;
   const state = { save: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), allocatePort: () => port++,
+    getCdsEnvVars: () => ({}), getMirrorEnvVars: () => ({}), getCustomEnvScope: () => ({}),
+    getCustomEnvRaw: () => ({}),
+    getAllBranches: () => [], getState: () => ({ projects: [] }),
     appendContainerLogArchive: vi.fn((_id, snapshot) => ({ ...snapshot, capturedAt: '2026-11-05T00:00:00Z' })) } as unknown as StateService;
   const container = { cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined), removeOwnedRuntime: vi.fn().mockResolvedValue(undefined),
     getLogs: vi.fn().mockResolvedValue(''),
@@ -315,9 +318,27 @@ describe('静态预览版本切换', () => {
 });
 
 describe('仅浏览器前端容器退役合同', () => {
+  it.each(['project', 'legacy-project', 'branch', 'mode', 'external', 'legacy-external'])('按实际运行环境解析 %s 消费者，保留外部地址控制', async layer => {
+    const f = browserFixture(), internal = 'http://api:80/path', external = 'https://external.example/path';
+    const externalOnly = layer.endsWith('external');
+    const projectEnv = { FRONTEND_URL: layer === 'branch' || externalOnly ? external : internal };
+    const branchEnv = layer === 'branch' ? { FRONTEND_URL: internal } : {};
+    const peer = { id: 'backend', dockerImage: 'example/backend:1', env: { TARGET: '${FRONTEND_URL}' },
+      ...(layer === 'mode' ? { env: { TARGET: external }, activeDeployMode: 'consume', deployModes: { consume: { env: { TARGET: '${FRONTEND_URL}' } } } } : {}) };
+    Object.assign(f.state, { getCustomEnvScope: (scope: string) => scope === f.entry.id ? branchEnv : layer.startsWith('legacy-') ? {} : projectEnv,
+      getCustomEnvRaw: () => ({ project: projectEnv }),
+      getEffectiveProfilesForBranch: () => [{ id: 'api' }, peer] });
+    const runtime = (new ContainerService({} as never, { jwt: { issuer: 'fixture' } } as CdsConfig) as any)
+      .resolveProfileRuntimeEnv(f.entry, resolveEffectiveProfile(peer as never, f.entry), { ...projectEnv, ...branchEnv });
+    expect(runtime.TARGET).toBe(externalOnly ? external : internal);
+    if (externalOnly) await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).resolves.toBeUndefined();
+    else await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('仍声明依赖');
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(externalOnly ? 1 : 0);
+    expect(f.entry.services.backend.containerId).toBe('b'.repeat(64));
+  });
   it.each([true, false])('首次实际准备也核对容器消费者=%s，校验在任何容器操作之前', async referenced => {
     const f = fixture(); f.service.servingRuntime = undefined; f.service.pendingRuntime = undefined;
-    Object.assign(f.state, { getProject: () => ({ slug: 'project' }), getEffectiveProfilesForBranch: () => [
+    Object.assign(f.state, { getProject: () => ({ id: 'project', slug: 'project' }), getEffectiveProfilesForBranch: () => [
       { id: 'api' }, { id: 'backend', calls: referenced ? ['api'] : [] },
     ] });
     const prepare = prepareServiceReplacement({ ...f, profile: { id: 'api', staticWeb: { browserOnly: true } } as never, portStart: 10010 });
@@ -331,7 +352,7 @@ describe('仅浏览器前端容器退役合同', () => {
     f.service.staticWeb = { id: 'static:new', browserOnly: true } as NonNullable<ServiceState['staticWeb']>;
     f.service.networkName = undefined; f.service.aliasNetworks = [];
     f.entry.services.backend = { profileId: 'backend', containerName: 'unchanged-backend', hostPort: 10003, status: 'running', networkName: 'old-network', containerId: 'b'.repeat(64) };
-    Object.assign(f.state, { getProject: () => ({ slug: 'project' }), getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend', env: {} }] });
+    Object.assign(f.state, { getProject: () => ({ id: 'project', slug: 'project' }), getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend', env: {} }] });
     return f;
   }
   it('明确声明无容器消费者后，只退役旧前端，后端身份和网络保持', async () => {

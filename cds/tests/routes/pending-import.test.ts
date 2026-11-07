@@ -265,6 +265,9 @@ x-cds-deploy-modes:
       stateService.setCustomEnvVar('JWT_SECRET', 'runtime-secret-fixture', projectId);
       stateService.addBuildProfile({ id: 'api-sample', projectId, name: 'api', dockerImage: 'example/api:1',
         workDir: '.', containerPort: 8080, env: { TOKEN: 'runtime-private-fixture' } });
+      stateService.addBuildProfile({ id: 'web-sample', projectId, name: 'web', dockerImage: 'example/web:1',
+        workDir: '.', containerPort: 80, activeDeployMode: 'express',
+        deployModes: { express: { dockerImage: 'example/web:1', prebuiltImage: true } } });
       const apiBefore = structuredClone(stateService.getBuildProfile('api-sample'));
       const submitted = await request(server, 'POST', `/api/projects/${projectId}/pending-import`,
         { agentName: 'A', composeYaml: partialSource });
@@ -280,6 +283,8 @@ x-cds-deploy-modes:
       expect(merged.services.api).toEqual(original.services.api);
       expect(merged['x-cds-env']).toEqual(original['x-cds-env']);
       expect(Object.keys(merged['x-cds-deploy-modes'].web)).toEqual(['express', 'static-files']);
+      expect(Object.keys(stateService.getBuildProfile('web-sample')!.deployModes!)).toEqual(['express', 'static-files']);
+      expect(stateService.getBuildProfile('web-sample')!.activeDeployMode).toBe('express');
       expect(result.body.composeVersion).toBe(version + 1);
     });
 
