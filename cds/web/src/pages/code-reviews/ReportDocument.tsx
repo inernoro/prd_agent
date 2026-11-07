@@ -42,6 +42,7 @@ export function ReportDocument({ content, format, title }: { content: string; fo
   const frame = useRef<HTMLIFrameElement>(null);
   const token = useMemo(() => crypto.randomUUID(), [content, format]);
   const [height, setHeight] = useState(400);
+  const document = useMemo(() => buildCodeReviewDocument(content, format, theme, token), [content, format, theme, token]);
   useEffect(() => {
     setHeight(400);
     const resize = (event: MessageEvent): void => {
@@ -52,6 +53,6 @@ export function ReportDocument({ content, format, title }: { content: string; fo
     window.addEventListener('message', resize);
     return () => window.removeEventListener('message', resize);
   }, [token]);
-  return <iframe ref={frame} title={title} srcDoc={buildCodeReviewDocument(content, format, theme, token)}
+  return <iframe ref={frame} title={title} srcDoc={document}
     sandbox="allow-scripts" referrerPolicy="no-referrer" className="block w-full border-0" style={{ height }} />;
 }
