@@ -2,10 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BranchEntry, BuildProfile, ServiceState } from '../../src/types.js';
 import type { StateService } from '../../src/services/state.js';
 import { ContainerService } from '../../src/services/container.js';
+import { branchAppNetworkName } from '../../src/services/branch-network.js';
 import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig } from '../../src/types.js';
-import { prepareServiceReplacement, reserveServiceReplacements } from '../../src/services/service-replacement.js';
+import { commitServiceReplacements, prepareServiceReplacement, reserveServiceReplacements } from '../../src/services/service-replacement.js';
 
 function fixture() {
   const profile: BuildProfile = { id: 'database', projectId: 'project', name: 'database', workDir: '.', dockerImage: 'mysql:8', containerPort: 3306, updateOrder: 'stop-first' };
@@ -130,6 +131,35 @@ describe('显式先停后启与冷启动网络', () => {
     const cancelled = fixture();
     await expect(prepareServiceReplacement({ ...cancelled, assertCurrent: () => { throw new Error('cancelled'); } })).rejects.toThrow('cancelled');
     expect(cancelled.container.stop).not.toHaveBeenCalled();
+  });
+
+
+  it('连续三轮全冷启动仍结算网络责任，仅清除本分支已无引用的旧替换网络', async () => {
+    const f = fixture(); f.service.servingRuntime = undefined; f.service.pendingRuntime = undefined;
+    f.entry.services.api = { profileId: 'api', containerName: 'cold-api', hostPort: 10003, status: 'idle' };
+    const previous = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-${'c'.repeat(32)}`;
+    f.entry.replacementNetworks = [previous];
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker network inspect/, () => ({ exitCode: 0, stderr: '', stdout: JSON.stringify({
+      'cds.type': 'replacement-network', 'cds.project.id': f.entry.projectId, 'cds.branch.id': f.entry.id,
+    }) }));
+    shell.addResponsePattern(/docker network rm/, () => ({ exitCode: 0, stdout: '', stderr: '' }));
+    const manager = new ContainerService(shell, {} as CdsConfig);
+    f.container.cleanupUnusedReplacementNetworks = manager.cleanupUnusedReplacementNetworks.bind(manager);
+    for (let round = 0; round < 3; round++) {
+      reserveServiceReplacements({ ...f, profileIds: ['database', 'api'], operationId: 'cold-' + round });
+      const network = f.entry.replacementNetwork;
+      expect(network).toBeTruthy();
+      for (const service of Object.values(f.entry.services)) service.status = 'running';
+      await commitServiceReplacements({ ...f, profileIds: ['database', 'api'] });
+      expect(f.entry.replacementOperationId).toBeUndefined();
+      expect(f.entry.replacementNetwork).toBeUndefined();
+      expect(f.entry.replacementNetworks).toEqual([network]);
+      expect(f.service.networkName).toBe(network);
+      expect(f.entry.services.api.networkName).toBe(network);
+    }
+    expect(shell.commands.filter(command => command.startsWith('docker network rm'))).toHaveLength(3);
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
   });
 
   it('全冷启动的同轮数据库和应用使用同一网络，不复用各自过期网络', () => {
