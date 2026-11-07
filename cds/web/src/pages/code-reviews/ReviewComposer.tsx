@@ -77,7 +77,7 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
             <div className="flex justify-between gap-4"><dt className="text-muted-foreground">项目</dt><dd>{projects.find(p => p.id === projectId)?.aliasName || projects.find(p => p.id === projectId)?.name}</dd></div>
             <div className="space-y-1"><dt className="text-muted-foreground">源码</dt><dd className="break-all">{source === 'zip' ? file?.name : github}</dd></div>
             <div className="space-y-1"><dt className="text-muted-foreground">版本与范围</dt><dd>{source === 'github' ? ref || '仓库默认分支；提交后记录实际提交版本' : '提交后按 ZIP 哈希固定快照'}。依赖目录、构建产物与不支持的文件按规则排除，实际覆盖以报告为准。</dd></div>
-            {exclude ? <div><dt className="text-muted-foreground">额外排除</dt><dd className="whitespace-pre-wrap">{exclude}</dd></div> : null}
+            {exclude ? <div><dt className="text-muted-foreground">额外排除</dt><dd className="whitespace-pre-wrap break-words">{exclude}</dd></div> : null}
             <div><dt className="text-muted-foreground">报告接收</dt><dd className="break-all">报告中心{sendEmail ? ` + ${email}` : ''}</dd></div>
           </dl>
           <p className="rounded-md bg-warn-soft px-4 py-3 text-base leading-6 text-warn">当前无法提供可靠的费用预估。确认开始后将按实际模型用量计费。</p>

@@ -77,7 +77,7 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
   return <section aria-label="代码审查报告阅读器" className="min-w-0 space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={onBack}><ArrowLeft />返回列表</Button>
       <Button variant="outline" disabled={(!task.reportId && !result) || downloading} onClick={() => { void download(); }}><Download />{downloading ? '正在下载' : task.reportId ? '下载报告' : '下载当前结果'}</Button></div>
-    <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-[1.75rem] font-semibold tracking-tight">{task.title === '代码审查报告' ? task.sourceName : task.title}</h1>
+    <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="min-w-0 max-w-full break-words text-[1.75rem] font-semibold tracking-tight">{task.title === '代码审查报告' ? task.sourceName : task.title}</h1>
       {coverage.kind === 'partial' || current.status === 'failed' ? <span className="rounded bg-warn-soft px-3 py-1 text-sm text-warn">阶段结果 · 未完成</span> : null}</div>
       <p className="break-all text-sm text-muted-foreground">{projectName} · {current.commitSha ? `固定提交 ${current.commitSha.slice(0, 12)}` : current.sourceHash ? `ZIP 快照 ${current.sourceHash.slice(0, 12)}` : current.sourceName}</p>
       <p role="status" className={`px-3 py-2 text-base ${coverage.kind === 'partial' || coverage.kind === 'unknown' || current.status === 'failed' ? 'bg-warn-soft text-warn' : 'bg-muted/40 text-muted-foreground'}`}>
@@ -93,7 +93,7 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
     </div>
     <div role="tabpanel" id={`review-panel-${tab}`} aria-labelledby={`review-tab-${tab}`}>
       {tab === 'details' ? <div className="space-y-4"><ReviewDetail task={current} now={Date.now()} pending={pending} onAction={onAction} />
-        {result ? <div className="space-y-2 text-base"><h2 className="font-medium">覆盖与检查说明</h2>{result.notes.map((note, index) => <p key={index} className="text-muted-foreground">{note}</p>)}</div> : null}</div> : null}
+        {result ? <div className="space-y-2 text-base"><h2 className="font-medium">覆盖与检查说明</h2>{result.notes.map((note, index) => <p key={index} className="break-words text-muted-foreground">{note}</p>)}</div> : null}</div> : null}
       {tab === 'original' ? original ? <ReportDocument {...original.report} content={original.content} /> : originalError ? <div className="space-y-3"><ErrorNotice message={originalError} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载</Button></div> : task.reportId ? <ContentLoading label="正在读取原始报告" variant="panel" /> : <p className="py-8 text-base text-muted-foreground">报告尚未归档，请在审查详情中查看进度。</p> : null}
       {tab === 'findings' ? error ? <div className="space-y-3"><ErrorNotice message={error} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载问题</Button></div>
         : !read ? <ContentLoading label="正在读取问题明细" variant="panel" /> : !result ? <div className="space-y-4 py-6"><p className="text-base text-muted-foreground">{read.resultUnavailableReason}</p>
