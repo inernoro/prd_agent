@@ -12,7 +12,11 @@ function staticConsumerAliases(entry: BranchEntry, profileId: string, state: Sta
   return new Set(computeProfileAliases(profileId, [entry.projectId, project?.slug].filter((value): value is string => Boolean(value))));
 }
 function referencesStaticAlias(value: string, aliases: Set<string>): boolean {
-  return [...value.matchAll(/https?:\/\/([a-z0-9_.-]+)(?=[:/]|$)/gi)].some(match => aliases.has(match[1]));
+  for (const match of value.matchAll(/(?=(https?:\/\/[^\s/"'<>?#]+))/gi)) {
+    try { if (aliases.has(new URL(match[1]).hostname)) return true; }
+    catch { return true; }
+  }
+  return false;
 }
 /** Browser-only is an explicit deployment contract, never inferred from a shared network. */
 export function assertBrowserOnlyStaticConsumers(entry: BranchEntry, profileId: string, state: StateService): void {

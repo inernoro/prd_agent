@@ -330,12 +330,15 @@ describe('仅浏览器前端容器退役合同', () => {
     expect(f.entry.services.backend.containerId).toBe('c'.repeat(64));
     expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(true);
   });
-  it.each(['internal-alias', 'container-name', 'unavailable', 'unconfirmed', 'external'])('配置已改外部地址，实际运行消费者=%s 时只凭真实证据退役', async kind => {
+  it.each(['internal-alias', 'container-name', 'unavailable', 'unconfirmed', 'external', 'credentialed', 'uppercase', 'multiple-urls'])('配置已改外部地址，实际运行消费者=%s 时只凭真实证据退役', async kind => {
     const f = browserFixture(), shell = new MockShellExecutor();
     Object.assign(f.state, { getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend', env: { TARGET: 'https://external.example/path' } }] });
+    const target = { 'internal-alias': 'http://api:80/path', 'container-name': 'http://old-api:80/path',
+      credentialed: 'http://fixture-user:fixture-pass@api:80/path', uppercase: 'http://API:80/path',
+      'multiple-urls': 'http://external.example,http://api:80/path' }[kind] || 'https://external.example/path';
     shell.addResponsePattern(/docker inspect/, () => kind === 'unavailable'
       ? { stdout: '', stderr: 'environment unavailable', exitCode: 1 }
-      : { stdout: `TARGET=${kind === 'internal-alias' ? 'http://api:80/path' : kind === 'container-name' ? 'http://old-api:80/path' : 'https://external.example/path'}\n`, stderr: '', exitCode: 0 });
+      : { stdout: `TARGET=${target}\n`, stderr: '', exitCode: 0 });
     const native = new ContainerService(shell, {} as CdsConfig);
     f.container.getEnv = native.getEnv.bind(native);
     if (kind === 'unconfirmed') vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, id, runtime) => id === 'backend' ? null : { ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName!] });
