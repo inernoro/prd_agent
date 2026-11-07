@@ -1,5 +1,9 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { CODE_REVIEW_ENGINE_FAILURE_REASONS, CodeReviewUpstreamHttpError, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
+import { readCodeReviewSnapshot } from './code-review-source.js';
+
+/** Stop local polling on CDS shutdown without cancelling the durable upstream task. */
+export class CodeReviewWorkerStoppedError extends Error {}
 
 export interface CodeReviewFinding {
   filePath: string;
@@ -20,7 +24,22 @@ export interface CodeReviewEngineResult {
   engineTaskId: string;
 }
 
-interface EngineTask { id: string; status: string; total_files: number; scanned_files: number; error_code?: string; error_message?: string }
+interface EngineTask { id: string; status: string; total_files: number; scanned_files: number; error_code?: string; error_message?: string;
+  resumable?: boolean; checkpoint_version?: number; processed_files?: number; failed_files?: number; skipped_files?: number; issues_count?: number }
+const MAX_FINDINGS = 100_000;
+const MAX_FINDING_BYTES = 128 * 1024 * 1024;
+function hasIncompleteFiles(task: EngineTask): boolean {
+  const skipped = task.checkpoint_version === 1 ? task.skipped_files ?? 0 : 0;
+  const failed = task.failed_files ?? 0;
+  if (task.checkpoint_version === 1) {
+    const counts = [task.total_files, task.scanned_files, skipped, failed, task.processed_files ?? 0];
+    if (counts.some((count) => !Number.isSafeInteger(count) || count < 0)
+      || task.scanned_files + skipped + failed > task.total_files || (task.processed_files ?? 0) > task.total_files) {
+      throw new Error('DeepAudit 文件覆盖计数无效，未归档不完整报告');
+    }
+  }
+  return Number(failed) > 0 || Number(task.scanned_files) + Number(skipped) < Number(task.total_files);
+}
 
 /** DeepAudit v3 five-dimension ZIP scanner. Does not call the Agent/PoC sandbox API. */
 export class CodeReviewEngine {
@@ -50,11 +69,24 @@ export class CodeReviewEngine {
   }
 
   async run(input: {
-    taskId: string; zip: Buffer; signal: AbortSignal; excludePatterns: string[]; engineTaskId?: string;
-    onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string }) => Promise<void>;
+    taskId: string; zip: Buffer; signal: AbortSignal; excludePatterns: string[]; engineTaskId?: string; retryFailed?: boolean;
+    onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string;
+      processedFiles?: number; failedFiles?: number; skippedFiles?: number }) => Promise<void>;
     audit: CodeReviewAudit;
   }): Promise<CodeReviewEngineResult> {
     input.signal.throwIfAborted();
+    let preparedUpload: FormData | undefined;
+    if (!input.engineTaskId || input.retryFailed) {
+      // Do CPU-heavy verification/enumeration before opening an upstream keepalive connection.
+      // Explicit retries may need a legacy resubmission; ordinary tracking must never reparse its snapshot.
+      const snapshot = await readCodeReviewSnapshot(input.zip);
+      preparedUpload = new FormData();
+      preparedUpload.set('file', new Blob([new Uint8Array(input.zip)], { type: 'application/zip' }), 'snapshot.zip');
+      // CDS already applied boundary-based exclusions; explicit targets bypass legacy sampling.
+      preparedUpload.set('scan_config', JSON.stringify({ exclude_patterns: [], max_analyze_files: 0,
+        file_paths: snapshot.files.map((file) => file.name) }));
+      input.signal.throwIfAborted();
+    }
     if (!this.token) await this.login(input.signal, input.audit);
     const request = async (operation: string, path: string, init: RequestInit = {}): Promise<unknown> => {
       const attempt = () => reviewJsonRequest(operation, `${this.base}${path}`, {
@@ -70,25 +102,37 @@ export class CodeReviewEngine {
       }
     };
     let engineTaskId = input.engineTaskId;
-    if (!engineTaskId) {
-      // Separate upstream project per task prevents concurrent ZIP overwrites and isolates snapshots.
-      const project = await request('deepaudit.create_project', '/projects/', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: `CDS-${input.taskId}`, source_type: 'zip', description: 'CDS 固定源码快照审查' }),
-      }) as { id?: string };
-      if (!project.id || typeof project.id !== 'string') throw new Error('DeepAudit 未返回项目 ID');
-      const form = new FormData();
-      form.set('project_id', project.id);
-      form.set('file', new Blob([new Uint8Array(input.zip)], { type: 'application/zip' }), 'snapshot.zip');
-      // CDS already applied user exclusions to this fixed snapshot with directory boundaries.
-      // DeepAudit uses substring exclusions, so replaying them would silently remove different files.
-      form.set('scan_config', JSON.stringify({ exclude_patterns: [] }));
-      const scan = await request('deepaudit.submit_scan', '/scan/upload-zip', { method: 'POST', body: form }) as { task_id?: string };
-      if (!scan.task_id || typeof scan.task_id !== 'string') throw new Error('DeepAudit 未返回审查任务 ID');
-      engineTaskId = scan.task_id;
-    }
-    const taskPath = `/tasks/${encodeURIComponent(engineTaskId)}`;
     try {
+      if (engineTaskId && input.retryFailed) {
+        const existing = await request('deepaudit.retry_status', `/tasks/${encodeURIComponent(engineTaskId)}`) as EngineTask;
+        if (existing.status === 'failed' || existing.status === 'cancelled'
+          || (existing.status === 'completed' && hasIncompleteFiles(existing))) {
+          if (existing.resumable === true) {
+            const resumed = await request('deepaudit.resume_task', `/tasks/${encodeURIComponent(engineTaskId)}/resume`, { method: 'POST' }) as { task_id?: string };
+            if (resumed.task_id !== engineTaskId) throw new Error('DeepAudit 续跑返回了不同的任务编号');
+          } else if (existing.checkpoint_version === 1) {
+            // A checkpointed scan may still have in-flight workers or an unavailable snapshot. Never replay it as legacy.
+            throw new Error('DeepAudit 原生任务暂不可续跑；已保留原任务编号，请等待当前分析收尾后重试，若仍不可用请联系管理员检查固定源码快照。');
+          } else {
+            // Legacy scans have no file ledger. Their explicit retries keep the fixed CDS snapshot but start a new scan.
+            engineTaskId = undefined;
+          }
+        }
+      }
+      if (!engineTaskId) {
+        // Separate upstream project per task prevents concurrent ZIP overwrites and isolates snapshots.
+        const project = await request('deepaudit.create_project', '/projects/', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: `CDS-${input.taskId}`, source_type: 'zip', description: 'CDS 固定源码快照审查' }),
+        }) as { id?: string };
+        if (!project.id || typeof project.id !== 'string') throw new Error('DeepAudit 未返回项目 ID');
+        const form = preparedUpload!;
+        form.set('project_id', project.id);
+        const scan = await request('deepaudit.submit_scan', '/scan/upload-zip', { method: 'POST', body: form }) as { task_id?: string };
+        if (!scan.task_id || typeof scan.task_id !== 'string') throw new Error('DeepAudit 未返回审查任务 ID');
+        engineTaskId = scan.task_id;
+      }
+      const taskPath = `/tasks/${encodeURIComponent(engineTaskId)}`;
       await input.onProgress({ phase: 'DeepAudit 已接收源码，等待分析', totalFiles: 0, scannedFiles: 0, engineTaskId });
       let task: EngineTask;
       for (;;) {
@@ -100,18 +144,53 @@ export class CodeReviewEngine {
         const totalFiles = Math.max(0, Number(task.total_files) || 0);
         const scannedFiles = Math.max(0, Number(task.scanned_files) || 0);
         await input.onProgress({ phase: task.status === 'completed' ? 'DeepAudit 分析结束' : 'DeepAudit 正在分析源码',
-          totalFiles, scannedFiles, engineTaskId });
-        if (task.status === 'completed') break;
+          totalFiles, scannedFiles, engineTaskId,
+          processedFiles: task.processed_files, failedFiles: task.failed_files, skippedFiles: task.skipped_files });
+        if (task.status === 'completed') {
+          if ((task.resumable === true || task.checkpoint_version === 1) && hasIncompleteFiles(task)) {
+            throw new Error(`DeepAudit 整仓审查尚未完成（已分析 ${scannedFiles}/${totalFiles} 个文件）。已完成文件的分析结果已保留，请重试继续未完成部分；当前未形成完整代码质量结论。`);
+          }
+          break;
+        }
         if (task.status === 'failed') {
           const reason = task.error_code && Object.hasOwn(CODE_REVIEW_ENGINE_FAILURE_REASONS, task.error_code)
             ? CODE_REVIEW_ENGINE_FAILURE_REASONS[task.error_code] : CODE_REVIEW_ENGINE_FAILURE_REASONS.ANALYSIS_FAILED;
-          throw new Error(`DeepAudit 审查引擎执行失败（已分析 ${scannedFiles}/${totalFiles} 个文件），未形成代码质量结论。${reason}`);
+          throw new Error(`DeepAudit 审查引擎执行失败（已分析 ${scannedFiles}/${totalFiles} 个文件），未形成代码质量结论。${reason}${task.resumable === true ? '已完成文件的分析结果已保留，重试可继续未完成部分。' : ''}`);
         }
         if (task.status === 'cancelled') throw new Error(`DeepAudit 任务已取消（已分析 ${scannedFiles}/${totalFiles} 个文件），未形成代码质量结论。`);
         await delay(this.options.pollIntervalMs ?? 2000, undefined, { signal: input.signal });
       }
-      const rawIssues = await request('deepaudit.task_findings', `${taskPath}/issues`);
-      if (!Array.isArray(rawIssues)) throw new Error('DeepAudit 问题列表格式无效');
+      let rawIssues: unknown[];
+      if (task.checkpoint_version === 1) {
+        const expected = task.issues_count;
+        if (expected !== undefined && (!Number.isInteger(expected) || expected < 0 || expected > MAX_FINDINGS)) {
+          throw new Error('DeepAudit 问题总数无效或超过安全处理上限，未归档不完整报告');
+        }
+        rawIssues = [];
+        const ids = new Set<string>();
+        let bytes = 0;
+        for (;;) {
+          const page = await request('deepaudit.task_findings', `${taskPath}/issues?offset=${rawIssues.length}&limit=200`);
+          if (!Array.isArray(page) || page.length > 200) throw new Error('DeepAudit 分页问题列表格式无效');
+          bytes += Buffer.byteLength(JSON.stringify(page));
+          if (rawIssues.length + page.length > MAX_FINDINGS || bytes > MAX_FINDING_BYTES) {
+            throw new Error('DeepAudit 问题列表超过安全处理上限，未归档不完整报告');
+          }
+          for (const issue of page) {
+            const id = issue && typeof issue === 'object' ? (issue as Record<string, unknown>).id : undefined;
+            if (typeof id !== 'string' || !id || ids.has(id)) throw new Error('DeepAudit 分页问题编号缺失或重复，未归档不完整报告');
+            ids.add(id);
+          }
+          rawIssues.push(...page);
+          if (expected !== undefined && rawIssues.length > expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
+          if (page.length < 200) break;
+        }
+        if (expected !== undefined && rawIssues.length !== expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
+      } else {
+        const legacy = await request('deepaudit.task_findings', `${taskPath}/issues`);
+        if (!Array.isArray(legacy)) throw new Error('DeepAudit 问题列表格式无效');
+        rawIssues = legacy;
+      }
       const categories = ['bug', 'security', 'performance', 'style', 'maintainability'];
       const severities = ['critical', 'high', 'medium', 'low', 'info'];
       const findings = rawIssues.map((raw): CodeReviewFinding => {
@@ -132,12 +211,13 @@ export class CodeReviewEngine {
       const scannedFiles = Math.max(0, Number(task.scanned_files) || 0);
       return { findings, totalFiles, scannedFiles, skippedFiles: Math.max(0, totalFiles - scannedFiles), engineTaskId,
         notes: ['采用 DeepAudit 静态与 AI 五维分析；未执行动态 PoC，发现均待人工复核。',
+          ...(task.checkpoint_version === 1 && Number(task.skipped_files) > 0 ? [`DeepAudit 按引擎政策跳过 ${task.skipped_files} 个文件；跳过不计为分析成功，不能视为审查通过。`] : []),
           ...(scannedFiles < totalFiles ? [`DeepAudit 有 ${totalFiles - scannedFiles} 个文件未成功分析，不能视为全量通过。`] : []),
           ...(totalFiles === 0 ? ['DeepAudit 未分析任何文件，检查支持语言、排除规则和模型配置。'] : [])] };
     } catch (error) {
-      if (input.signal.aborted) {
+      if (engineTaskId && input.signal.aborted && !(input.signal.reason instanceof CodeReviewWorkerStoppedError)) {
         // Best-effort upstream cancellation uses an independent short timeout.
-        await reviewJsonRequest('deepaudit.cancel_task', `${this.base}${taskPath}/cancel`,
+        await reviewJsonRequest('deepaudit.cancel_task', `${this.base}/tasks/${encodeURIComponent(engineTaskId)}/cancel`,
           { method: 'POST', headers: { Authorization: `Bearer ${this.token}` }, signal: AbortSignal.timeout(5000) }, input.audit, this.fetchImpl).catch(() => undefined);
       }
       throw error;

@@ -11,7 +11,7 @@ import { apiRequest } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
 import { codeReviewAction, codeReviewReportUrl, downloadCodeReviewReport, listCodeReviews, submitCodeReview, type CodeReviewTask } from '@/lib/codeReviews';
 
-import { explainReviewError, isReviewActive, reviewCoverage, reviewPage, reviewTaskExplanation, reviewTaskLabel, summarizeReviews, type ReviewFilter } from '@/lib/codeReviewView';
+import { explainReviewError, isReviewActive, reviewCoverage, reviewPage, reviewTaskExplanation, reviewTaskLabel, selectReviewFocus, summarizeReviews, type ReviewFilter } from '@/lib/codeReviewView';
 
 interface ProjectOption { id: string; name: string; aliasName?: string; }
 interface Capabilities { engineConfigured: boolean; mailConfigured: boolean; }
@@ -166,6 +166,7 @@ export function CodeReviewsPage(): JSX.Element {
   const summary = useMemo(() => summarizeReviews(scopedTasks), [scopedTasks]);
   const visible = useMemo(() => reviewPage(scopedTasks, query, filter, page), [scopedTasks, query, filter, page]);
   const selected = selectedId ? scopedTasks.find((task) => task.id === selectedId) : undefined;
+  const focusedTask = selectReviewFocus(scopedTasks, selectedId);
   const reportMode = params.get('report') === '1';
   const projectName = (id: string): string => {
     const project = projects.find((item) => item.id === id);
@@ -204,40 +205,33 @@ export function CodeReviewsPage(): JSX.Element {
     <Workspace wide className="min-h-0 space-y-5 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 space-y-1.5">
-          <h1 className="text-2xl font-semibold tracking-tight">代码审查报告</h1>
-          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">查看审查进度、处理失败与覆盖不足，阅读已生成的报告。</p>
+          <h1 className="text-2xl font-semibold tracking-tight">整仓审查</h1>
+          <p className="max-w-3xl text-sm leading-6 text-muted-foreground">一次提交完整仓库，跟踪本次审查并阅读报告。实际覆盖范围以报告为准，所有发现均需人工核实。</p>
         </div>
-        <Button onClick={() => { setActionError(''); setComposerOpen(true); }} disabled={submitting}><Plus />发起审查</Button>
+        <Button onClick={() => { setActionError(''); setComposerOpen(true); }} disabled={submitting}><Plus />发起整仓审查</Button>
       </header>
       {setupError ? <ErrorNotice message={setupError} title="审查配置读取失败" /> : null}
       {capabilities && !capabilities.engineConfigured ? <div role="status" className="rounded-lg border border-border bg-muted/40 p-3 text-sm">审查服务尚未接入，暂时无法发起新任务。已有报告仍可查阅，请管理员检查连接配置。</div> : null}
       {notice ? <div role="status" className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm"><Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{notice}</div> : null}
       {!composerOpen && actionError ? <ErrorNotice message={actionError} /> : null}
-      <section aria-label="审查概况" className="overflow-hidden rounded-xl border border-border bg-card">
-        <div className="border-b border-border px-5 py-4">
-          <p className="text-base font-semibold leading-6">{summary.headline}</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">{summary.active ? `仍有 ${summary.active} 项任务排队或处理中。` : ''}已出报告也可能覆盖不足，“需处理”与报告数量会重叠；上传档案未计入 AI 审查结果。</p>
-        </div>
-        <div className="grid grid-cols-2 divide-x divide-border sm:grid-cols-4">
-          {filters.slice(1).map((item) => <button type="button" key={item.value} className="min-w-0 px-5 py-3 text-left transition-colors hover:bg-muted/50" onClick={() => changeFilter(item.value)} aria-label={`查看${item.label} ${item.count} 项`}>
-            <span className="block text-xs text-muted-foreground">{item.label}</span><span className={`mt-1 block text-2xl font-semibold tabular-nums ${item.value === 'attention' && item.count ? 'text-destructive' : ''}`}>{item.count}</span>
-          </button>)}
-        </div>
-      </section>
-      <section aria-labelledby="review-history-heading" className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 id="review-history-heading" className="text-base font-semibold">任务与报告</h2>
-          <label className="flex min-w-0 items-center gap-2 text-sm"><span className="shrink-0 whitespace-nowrap text-muted-foreground">项目</span><select aria-label="筛选审查项目" value={projectFilter} className={`${inputClass} max-w-60`} onChange={(event) => { setPage(0); const next = new URLSearchParams(); if (event.target.value) next.set('project', event.target.value); setParams(next); }}><option value="">全部可访问项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.aliasName || project.name}</option>)}</select></label>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-base font-semibold">{selectedId ? '所选记录' : '最新审查'}</h2>
+        <label className="flex min-w-0 items-center gap-2 text-sm"><span className="shrink-0 whitespace-nowrap text-muted-foreground">项目</span><select aria-label="筛选审查项目" value={projectFilter} className={`${inputClass} max-w-60`} onChange={(event) => { setPage(0); const next = new URLSearchParams(); if (event.target.value) next.set('project', event.target.value); setParams(next); }}><option value="">全部可访问项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.aliasName || project.name}</option>)}</select></label>
+      </div>
+      {listError ? <ErrorNotice message={listError} title="任务列表刷新失败，当前保留上次结果" /> : null}
+      {!loading && !listError && selectedId && !selected ? <ErrorNotice message="未找到该审查任务，或当前账号没有访问权限。" title="无法打开所选任务" /> : null}
+      {focusedTask ? <ReviewDetail task={focusedTask} now={now} pending={Boolean(pendingAction)} onAction={(action) => { void act(focusedTask, action); }} /> : !selectedId ? <div className="rounded-xl border border-border bg-card p-6 text-sm leading-6 text-muted-foreground">还没有源码审查记录。上传完整仓库 ZIP，或提交 GitHub 仓库地址，即可开始。上传的外部报告可在历史记录中查看。</div> : null}
+      <details className="rounded-xl border border-border bg-card">
+        <summary id="review-history-heading" className="cursor-pointer px-5 py-4 text-sm font-medium">历史记录<span className="ml-2 text-xs font-normal text-muted-foreground">{scopedTasks.length} 项执行记录与报告</span></summary>
+        <section aria-labelledby="review-history-heading" className="space-y-3 border-t border-border p-4">
+          <p className="text-xs leading-5 text-muted-foreground">包含早期手工拆分的执行记录。每项保留原有进度和报告，未合并为一次整仓审查；这些记录可能尚未完成。</p>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex max-w-full flex-wrap gap-1" role="group" aria-label="筛选任务状态">{filters.map((item) => <button key={item.value} type="button" aria-pressed={filter === item.value} onClick={() => changeFilter(item.value)} className={`rounded-md px-3 py-1.5 text-xs font-medium ${filter === item.value ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:bg-muted/50'}`}>{item.label}<span className="ml-1.5 tabular-nums opacity-70">{item.count}</span></button>)}</div>
           <label className="relative block min-w-0 flex-1 sm:max-w-xs"><Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" aria-hidden="true" /><span className="sr-only">搜索审查任务</span><input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder="搜索名称、来源或任务编号" className={`${inputClass} pl-9`} /></label>
         </div>
-        {listError ? <ErrorNotice message={listError} title="任务列表刷新失败，当前保留上次结果" /> : null}
-        {!loading && !listError && selectedId && !selected ? <ErrorNotice message="未找到该审查任务，或当前账号没有访问权限。" title="无法打开所选任务" /> : null}
-        <div className={selected ? 'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]' : ''}>
+        <div>
           <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card">
-            {loading && scopedTasks.length === 0 ? <ContentLoading label="正在读取审查任务" variant="rows" /> : visible.items.length ? <ReviewTaskList items={visible.items} selectedId={selectedId} projectName={projectName} onSelect={selectTask} /> : <div className="px-6 py-10 text-center">
+            {loading && scopedTasks.length === 0 ? <ContentLoading label="正在读取审查任务" variant="rows" /> : visible.items.length ? <ReviewTaskList items={visible.items} selectedId={focusedTask?.id || ''} projectName={projectName} onSelect={selectTask} /> : <div className="px-6 py-10 text-center">
               <FileCode2 className="mx-auto mb-3 size-7 text-muted-foreground" aria-hidden="true" />
               <h3 className="text-sm font-medium">{scopedTasks.length ? '没有匹配的任务' : '还没有代码审查任务'}</h3>
               <p className="mt-2 text-sm text-muted-foreground">{scopedTasks.length ? '试试其他状态，或清空搜索条件。' : '上传 ZIP 或提交 GitHub 地址，开始第一项审查。'}</p>
@@ -248,14 +242,15 @@ export function CodeReviewsPage(): JSX.Element {
               <div className="flex items-center gap-2"><Button variant="ghost" size="sm" aria-label="上一页任务" disabled={visible.page === 0} onClick={() => setPage(visible.page - 1)}><ChevronLeft /></Button><span className="tabular-nums">{visible.page + 1} / {visible.pages}</span><Button variant="ghost" size="sm" aria-label="下一页任务" disabled={visible.page + 1 >= visible.pages} onClick={() => setPage(visible.page + 1)}><ChevronRight /></Button></div>
             </div>
           </div>
-          {selected ? <ReviewDetail task={selected} now={now} pending={Boolean(pendingAction)} onClose={() => setParams((current) => { const next = new URLSearchParams(current); next.delete('task'); return next; })} onAction={(action) => { void act(selected, action); }} /> : null}
         </div>
-      </section>
+        </section>
+      </details>
       <Dialog open={composerOpen} onOpenChange={(open) => { setComposerOpen(open); if (!open && !submitting) setFile(null); }}>
         <DialogContent frame className="max-w-2xl" style={{ width: 'min(42rem, calc(100vw - 2rem))', maxHeight: '90vh', animation: 'none' }}>
-          <DialogHeader className="shrink-0 border-b border-border px-5 py-4"><DialogTitle>发起代码审查</DialogTitle><DialogDescription>选择代码来源，审查结果会自动保存到报告中心。</DialogDescription></DialogHeader>
+          <DialogHeader className="shrink-0 border-b border-border px-5 py-4"><DialogTitle>发起整仓审查</DialogTitle><DialogDescription>一次提交完整仓库，由同一个审查任务处理，无需手工拆分 ZIP。报告会保存到报告中心。</DialogDescription></DialogHeader>
           <form onSubmit={(event) => { void submit(event); }} className="flex min-h-0 flex-1 flex-col" aria-busy={submitting}>
             <DialogBody className="space-y-4">
+              <p className="text-xs leading-5 text-muted-foreground">依赖目录、超大文件和不支持的文件会在报告覆盖说明中列出。提交整仓不表示每个文件均已分析，所有发现均需人工核实。</p>
               {actionError ? <ErrorNotice message={actionError} /> : null}
           <fieldset disabled={submitting} className="space-y-4">
             <label className="block space-y-1.5 text-sm"><span>归属项目</span><select required className={inputClass} value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">请选择项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.aliasName || project.name}</option>)}</select></label>
@@ -408,6 +403,7 @@ export function ReviewDetail({ task, now, pending, onAction, onClose }: {
   const elapsed = Math.max(0, Math.floor((now - new Date(task.createdAt).getTime()) / 1000));
   return <article aria-label="审查任务详情" className="min-w-0 space-y-4 rounded-xl border border-border bg-card p-5">
     <div className="flex items-start justify-between gap-3"><div className="min-w-0 space-y-2"><TaskStatus task={task} /><h3 className="break-words text-base font-semibold leading-6">{task.title || task.sourceName}</h3></div>{onClose ? <Button variant="ghost" size="icon" aria-label="关闭任务详情" onClick={onClose}><X /></Button> : null}</div>
+    <p className="break-words text-sm text-muted-foreground">{task.sourceName}{task.commitSha ? ` · ${task.commitSha.slice(0, 12)}` : ''}</p>
     <p className="text-sm leading-6">{reviewTaskExplanation(task)}</p>
     {task.sourceType !== 'report' ? <div aria-live="polite" className={`space-y-2 rounded-lg p-3 ${coverage.kind === 'partial' || coverage.kind === 'unknown' ? 'bg-warn-soft' : 'bg-muted/30'}`}>
       <p className="text-sm font-medium">{coverage.text}</p>

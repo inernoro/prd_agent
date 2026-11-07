@@ -10,8 +10,8 @@ import { createCodeReviewsRouter } from '../../src/routes/code-reviews.js';
 import { buildZip } from '../../src/utils/zip.js';
 import { buildReportsOverview } from '../../src/services/acceptance-overview.js';
 import { buildPipelineOverview, buildPipelineSeries } from '../../src/services/acceptance-pipeline.js';
-import type { CodeReviewEngineResult } from '../../src/services/code-review-engine.js';
-import type { CodeReviewTask } from '../../src/shared/code-review.js';
+import { CodeReviewEngine, type CodeReviewEngineResult } from '../../src/services/code-review-engine.js';
+import { publicCodeReviewTask, type CodeReviewTask } from '../../src/shared/code-review.js';
 import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
 import { CodeReviewUpstreamHttpError } from '../../src/services/code-review-audit.js';
 
@@ -104,6 +104,57 @@ describe('代码审查任务完整闭环', () => {
     const task = await submit({ zip: buildZip([{ name: 'src/a.ts', data: 'const a = 1;' }, { name: 'src/b.ts', data: 'const b = 2;' }]) }); await service.pump();
     expect(service.get(task.id)).toMatchObject({ status: 'completed', phase: '部分文件未完成分析，报告已归档', progress: { totalFiles: 2, scannedFiles: 1 } });
     expect(service.get(task.id).reportId).toBeTruthy();
+  });
+  it.each(['zip', 'github'] as const)('%s整仓一次提交一个可见任务，原生部分失败后同编号续跑并归档唯一完整报告', async (sourceType) => {
+    const files = Array.from({ length: 40 }, (_, index) => ({ name: `repository/module-${index % 4}/src/file-${index}.ts`, data: `export const value = ${index};` }));
+    const archive = buildZip(files);
+    const sha = 'a'.repeat(40);
+    let uploads = 0, resumes = 0;
+    const paths: string[] = [];
+    const engine = new CodeReviewEngine({ baseUrl: 'http://deepaudit', token: 'token', fetchImpl: (async (url, init) => {
+      if (String(url).endsWith('/projects/')) return Response.json({ id: 'native-project' });
+      if (String(url).endsWith('/scan/upload-zip')) {
+        uploads++;
+        const config = JSON.parse(String((init!.body as FormData).get('scan_config')));
+        expect(config.max_analyze_files).toBe(0); paths.push(...config.file_paths);
+        expect(paths).toHaveLength(40); expect(paths.every((name) => name.startsWith('module-'))).toBe(true);
+        return Response.json({ task_id: 'one-native-task' });
+      }
+      if (String(url).endsWith('/resume')) { resumes++; return Response.json({ task_id: 'one-native-task', status: 'started' }); }
+      if (String(url).endsWith('/issues')) return Response.json([{ file_path: paths[0], title: '已保留的问题', description: '首轮文件分析的原因', suggestion: '修复建议', issue_type: 'bug', severity: 'high' }]);
+      return Response.json({ status: 'completed', total_files: 40, scanned_files: resumes ? 40 : 37,
+        processed_files: 40, failed_files: resumes ? 0 : 3, resumable: !resumes });
+    }) as typeof fetch });
+    const makeNative = () => new CodeReviewService({ state, inputs, engine, mail: { configured: () => true, send },
+      ownerScope: 'test', publicBaseUrl: 'https://cds.example', autoStart: false });
+    vi.stubGlobal('fetch', (async (url) => {
+      if (String(url).endsWith(`/zipball/${sha}`)) return new Response(new Uint8Array(archive), { headers: { 'content-type': 'application/zip' } });
+      if (String(url).includes('/commits/')) return Response.json({ sha });
+      return Response.json({ default_branch: 'main' });
+    }) as typeof fetch);
+    try {
+      service = makeNative();
+      const task = await service.submit({ projectId: 'a', sourceType, ...(sourceType === 'zip' ? { zip: archive } : { githubUrl: 'https://github.com/org/repo' }), createdBy: 'test' });
+      await service.pump();
+      const failed = service.get(task.id);
+      expect(failed).toMatchObject({ status: 'failed', engineTaskId: 'one-native-task', progress: { totalFiles: 40, scannedFiles: 37 } });
+      expect(failed.error).toContain('已完成文件的分析结果已保留'); expect(failed.reportId).toBeUndefined();
+      const original = { sourceHash: failed.sourceHash, inputKey: failed.inputKey };
+      expect(uploads).toBe(1); expect(resumes).toBe(0); expect(service.list('a')).toHaveLength(1);
+      await service.retry(task.id);
+      expect(service.get(task.id).engineRetryRequested).toBe(true);
+      expect(publicCodeReviewTask(service.get(task.id))).not.toHaveProperty('engineRetryRequested');
+      // The explicit retry intent survives a CDS restart; it is consumed by this one resume attempt.
+      service.stop(); service = makeNative(); await service.start();
+      await vi.waitFor(() => expect(service.get(task.id).status).toBe('completed'));
+      expect(service.get(task.id)).toMatchObject({ ...original, engineTaskId: 'one-native-task', progress: { totalFiles: 40, scannedFiles: 40 } });
+      expect(service.get(task.id).commitSha).toBe(sourceType === 'github' ? sha : undefined);
+      expect(service.get(task.id).engineRetryRequested).toBeUndefined();
+      expect(uploads).toBe(1); expect(resumes).toBe(1); expect(service.list('a')).toHaveLength(1);
+      expect(state.listAcceptanceReports('a')).toHaveLength(1);
+      const content = await state.readAcceptanceReportContentAsync(service.get(task.id).reportId!);
+      expect(content).toContain('40/40'); expect(content).toContain('首轮文件分析的原因'); expect(content).toContain('修复建议');
+    } finally { vi.unstubAllGlobals(); }
   });
   it('派发间引擎暂不可用时保留原排队任务，恢复探测后使用原 ID 和源码继续', async () => {
     let available = true;
@@ -220,6 +271,116 @@ describe('代码审查任务完整闭环', () => {
     service = make(); await service.start(); await service.pump();
     expect(run).toHaveBeenCalledTimes(1); expect(state.listAcceptanceReports()).toHaveLength(1);
   });
+  it('持续推进的整仓任务超过两小时仍可用一个任务归档一份报告', async () => {
+    const files = Array.from({ length: 14 }, (_, index) => ({ name: `module-${index}/index.ts`, data: `export const value = ${index};` }));
+    let finish!: () => void;
+    run.mockImplementation(async (input) => {
+      await input.onProgress({ phase: '整仓分析中', totalFiles: files.length, scannedFiles: 0, engineTaskId: 'whole-repository' });
+      return new Promise<CodeReviewEngineResult>((resolve, reject) => {
+        finish = () => resolve({ ...result(), engineTaskId: 'whole-repository', totalFiles: files.length, scannedFiles: files.length });
+        input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true });
+      });
+    });
+    const task = await submit({ zip: buildZip(files) });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const pumping = service.pump();
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      for (let scanned = 1; scanned <= 13; scanned++) {
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+        await run.mock.calls[0][0].onProgress({ phase: '整仓分析中', totalFiles: files.length, scannedFiles: scanned, engineTaskId: 'whole-repository' });
+      }
+      expect(run.mock.calls[0][0].signal.aborted).toBe(false);
+      finish(); await pumping;
+      expect(service.get(task.id)).toMatchObject({ status: 'completed', engineTaskId: 'whole-repository', progress: { totalFiles: 14, scannedFiles: 14 } });
+      expect(run).toHaveBeenCalledTimes(1); expect(state.listAcceptanceReports('a')).toHaveLength(1);
+    } finally { service.stop(); vi.useRealTimers(); }
+  });
+  it('重复状态轮询不延长文件空闲超时，失败仍保留已有覆盖与原引擎编号', async () => {
+    vi.stubEnv('CDS_CODE_REVIEW_IDLE_TIMEOUT_MS', '60000');
+    let entered = false;
+    run.mockImplementation(async (input) => {
+      await input.onProgress({ phase: '整仓分析中', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository' });
+      entered = true;
+      return new Promise<CodeReviewEngineResult>((_resolve, reject) => input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true }));
+    });
+    const task = await submit();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const pumping = service.pump(); await vi.waitFor(() => expect(entered).toBe(true));
+      for (let index = 0; index < 2; index++) {
+        await vi.advanceTimersByTimeAsync(20_000);
+        await run.mock.calls[0][0].onProgress({ phase: '仍在轮询', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository' });
+      }
+      await vi.advanceTimersByTimeAsync(20_000); await pumping;
+      expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'whole-repository', progress: { totalFiles: 40, scannedFiles: 7 } });
+      expect(service.get(task.id).error).toContain('长时间没有文件分析进展');
+      expect(state.listAcceptanceReports('a')).toHaveLength(0);
+    } finally { service.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); }
+  });
+  it.each(['processedFiles', 'failedFiles', 'skippedFiles'])('%s实际增加可延长空闲期限，同值轮询最终仍超时', async (counter) => {
+    vi.stubEnv('CDS_CODE_REVIEW_IDLE_TIMEOUT_MS', '60000');
+    let entered = false;
+    run.mockImplementation(async (input) => {
+      await input.onProgress({ phase: '整仓分析中', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository', [counter]: 0 });
+      entered = true;
+      return new Promise<CodeReviewEngineResult>((_resolve, reject) => input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true }));
+    });
+    const task = await submit();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const pumping = service.pump(); await vi.waitFor(() => expect(entered).toBe(true));
+      for (let count = 1; count <= 3; count++) {
+        await vi.advanceTimersByTimeAsync(40_000);
+        await run.mock.calls[0][0].onProgress({ phase: '整仓分析中', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository', [counter]: count });
+        expect(run.mock.calls[0][0].signal.aborted).toBe(false);
+      }
+      await vi.advanceTimersByTimeAsync(40_000);
+      await run.mock.calls[0][0].onProgress({ phase: '重复状态', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository', [counter]: 3 });
+      await vi.advanceTimersByTimeAsync(20_000); await pumping;
+      expect(service.get(task.id).status).toBe('failed'); expect(service.get(task.id).error).toContain('长时间没有文件分析进展');
+      expect(service.get(task.id).progress.scannedFiles).toBe(7);
+    } finally { service.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); }
+  });
+  it('整仓最长执行时间可配置且下限一小时，不无限等待', async () => {
+    vi.stubEnv('CDS_CODE_REVIEW_MAX_DURATION_MS', '1');
+    vi.stubEnv('CDS_CODE_REVIEW_IDLE_TIMEOUT_MS', String(6 * 60 * 60_000));
+    let entered = false;
+    run.mockImplementation(async (input) => {
+      await input.onProgress({ phase: '整仓分析中', totalFiles: 40, scannedFiles: 1, engineTaskId: 'whole-repository' });
+      entered = true;
+      return new Promise<CodeReviewEngineResult>((_resolve, reject) => input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true }));
+    });
+    const task = await submit();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const pumping = service.pump(); await vi.waitFor(() => expect(entered).toBe(true));
+      await vi.advanceTimersByTimeAsync(60 * 60_000 - 1000);
+      expect(run.mock.calls[0][0].signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1000); await pumping;
+      expect(service.get(task.id).status).toBe('failed'); expect(service.get(task.id).error).toContain('最长执行时间');
+    } finally { service.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); }
+  });
+  it('CDS停止仅暂停本地跟踪，重启保持同一引擎编号和已分析进度', async () => {
+    let entered = false;
+    run.mockImplementationOnce(async (input) => {
+      await input.onProgress({ phase: '整仓分析中', totalFiles: 40, scannedFiles: 7, engineTaskId: 'whole-repository' });
+      entered = true;
+      return new Promise<CodeReviewEngineResult>((_resolve, reject) => input.signal.addEventListener('abort', () => reject(input.signal.reason), { once: true }));
+    });
+    const task = await submit(); const pumping = service.pump(); await vi.waitFor(() => expect(entered).toBe(true));
+    service.stop(); await pumping;
+    expect(run.mock.calls[0][0].signal.reason.constructor.name).toBe('CodeReviewWorkerStoppedError');
+    expect(service.get(task.id)).toMatchObject({ status: 'running', engineTaskId: 'whole-repository', progress: { totalFiles: 40, scannedFiles: 7 } });
+    run.mockImplementationOnce(async (input) => {
+      expect(input.engineTaskId).toBe('whole-repository');
+      await input.onProgress({ phase: '恢复跟踪', totalFiles: 0, scannedFiles: 0, engineTaskId: 'whole-repository' });
+      expect(service.get(task.id).progress.scannedFiles).toBe(7);
+      return { ...result(), engineTaskId: 'whole-repository', totalFiles: 40, scannedFiles: 40 };
+    });
+    service = make(); await service.start(); await vi.waitFor(() => expect(service.get(task.id).status).toBe('completed'));
+    expect(run).toHaveBeenCalledTimes(2); expect(state.listAcceptanceReports('a')).toHaveLength(1);
+  });
   it('所有上游尝试保留可分页的对象证据，不随元数据摘要截断而丢失', async () => {
     run.mockImplementation(async (input) => {
       for (let i = 0; i < 23; i++) await input.audit({ operation: 'deepaudit.status', sequence: i, outcome: 'success' });
@@ -260,6 +421,58 @@ describe('代码审查任务完整闭环', () => {
     server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     return `http://127.0.0.1:${(server.address() as any).port}/api/code-reviews`;
   }
+  it('能力声明条件重试，HTTP匹配失败版本时仍使用原任务与固定源码', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id); const base = await serve();
+    expect((await (await fetch(`${base}/capabilities`, { headers: { 'x-project': 'a' } })).json()).conditionalRetry).toBe(true);
+    const response = await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a', 'X-CDS-Review-Expected-Updated-At': failed.updatedAt } });
+    expect(response.status).toBe(200);
+    expect(service.get(task.id)).toMatchObject({ status: 'queued', id: task.id, sourceHash: failed.sourceHash, inputKey: failed.inputKey });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('人工重试后又取消时，守护的旧条件重试被拒绝且不会复活已取消任务', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id); const base = await serve();
+    expect((await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a' } })).status).toBe(200);
+    expect((await fetch(`${base}/${task.id}/cancel`, { method: 'POST', headers: { 'x-project': 'a' } })).status).toBe(200);
+    const cancelled = service.get(task.id);
+    const response = await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a', 'X-CDS-Review-Expected-Updated-At': failed.updatedAt } });
+    expect(response.status).toBe(409); expect(service.get(task.id)).toEqual(cancelled);
+    expect(cancelled).toMatchObject({ status: 'cancelled', id: task.id, sourceHash: failed.sourceHash, inputKey: failed.inputKey });
+    expect(run).toHaveBeenCalledTimes(1);
+    // An explicit human retry without the conditional header still supports cancelled tasks.
+    expect((await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a' } })).status).toBe(200);
+  });
+  it('失败状态的updatedAt改变也拒绝旧条件重试，不修改原任务', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id); const expected = failed.updatedAt;
+    failed.updatedAt = new Date(Date.parse(expected) + 1).toISOString(); await state.putCodeReviewTask(failed);
+    const base = await serve();
+    const response = await fetch(`${base}/${task.id}/retry`, { method: 'POST', headers: { 'x-project': 'a', 'X-CDS-Review-Expected-Updated-At': expected } });
+    expect(response.status).toBe(409); expect(service.get(task.id)).toEqual(failed);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('条件检查到入队内存写入不跨await，并发取消后第二个条件重试不能改写状态', async () => {
+    run.mockRejectedValueOnce(new Error('模型任务失败'));
+    const task = await submit(); await service.pump(); const failed = service.get(task.id);
+    const persist = state.putCodeReviewTask.bind(state);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(state, 'putCodeReviewTask').mockImplementation((next) => {
+      const flushed = persist(next); // Original StateService replaces its in-memory row before its first await.
+      return next.status === 'queued' ? flushed.then(() => gate) : flushed;
+    });
+    const retrying = service.retry(task.id, failed.updatedAt);
+    expect(service.get(task.id).status).toBe('queued');
+    await service.cancel(task.id);
+    const cancelled = service.get(task.id);
+    await expect(service.retry(task.id, failed.updatedAt)).rejects.toMatchObject({ status: 409 });
+    expect(service.get(task.id)).toEqual(cancelled);
+    release(); await retrying;
+    expect(service.get(task.id)).toEqual(cancelled);
+    expect(service.get(task.id)).toMatchObject({ status: 'cancelled', id: task.id, sourceHash: failed.sourceHash });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
   it('真实 HTTP ZIP 上传、状态、报告读取和跨项目拒绝', async () => {
     const base = await serve(); const form = new FormData();
     form.set('projectId', 'a'); form.set('sourceType', 'zip'); form.set('file', new Blob([new Uint8Array(zip())]), 'source.zip');

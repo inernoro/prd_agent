@@ -83,6 +83,22 @@ export async function readReviewResponse(response: Response, maxBytes: number): 
   }
 }
 
+function networkFailureEvidence(error: unknown): string {
+  const types = new Set(['Error', 'TypeError', 'AbortError', 'TimeoutError', 'AggregateError',
+    'SocketError', 'ConnectTimeoutError', 'HeadersTimeoutError', 'BodyTimeoutError']);
+  const codes = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
+    'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
+  const causes: Array<{ type?: string; code?: string }> = [];
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 4; depth++) {
+    const { name, code, cause } = current as { name?: unknown; code?: unknown; cause?: unknown };
+    const safe = { type: typeof name === 'string' && types.has(name) ? name : undefined,
+      code: typeof code === 'string' && codes.has(code) ? code : undefined };
+    if (safe.type || safe.code) causes.push(safe);
+    current = cause;
+  }
+  return JSON.stringify({ reason: '未收到响应', causes }); // Never preserve raw messages, stack, hosts or credentials.
+}
+
 export async function reviewJsonRequest(
   operation: string, url: string, init: RequestInit,
   audit: CodeReviewAudit, fetchImpl: typeof fetch = fetch,
@@ -95,7 +111,7 @@ export async function reviewJsonRequest(
     response = await fetchImpl(url, { ...init, redirect: 'error' });
   } catch (error) {
     await audit({ ...base, durationMs: Date.now() - started, outcome: 'network_error',
-      evidence: '未收到响应', truncated: false });
+      evidence: networkFailureEvidence(error), truncated: false });
     throw error;
   }
   let content: Buffer | undefined;

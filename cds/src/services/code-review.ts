@@ -3,7 +3,7 @@ import type { StateService } from './state.js';
 import type { CodeReviewTask } from '../shared/code-review.js';
 import type { CodeReviewInputs } from './code-review-inputs.js';
 import type { CodeReviewMail } from './code-review-mail.js';
-import { CodeReviewEngine, type CodeReviewEngineResult } from './code-review-engine.js';
+import { CodeReviewEngine, CodeReviewWorkerStoppedError, type CodeReviewEngineResult } from './code-review-engine.js';
 import { validateCodeReviewZip, fetchCodeReviewGithubSnapshot, parseCodeReviewGithubUrl } from './code-review-source.js';
 import { maskSecretsInObject, maskSecrets } from './secret-masker.js';
 import { CDS_AGENT_CAPABILITY_DEFINITIONS } from '../shared/agent-mission-registry.js';
@@ -15,6 +15,10 @@ export class CodeReviewError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 const terminal = new Set(['completed', 'failed', 'cancelled']);
+function boundedTimeout(name: string, fallback: number, min: number, max: number): number {
+  const configured = Number(process.env[name]);
+  return Number.isFinite(configured) && configured > 0 ? Math.min(max, Math.max(min, configured)) : fallback;
+}
 function isTransportFailure(error: unknown): boolean {
   for (let current = error, depth = 0; current && typeof current === 'object' && depth < 4; depth++) {
     if (current instanceof CodeReviewUpstreamHttpError) return [502, 503, 504].includes(current.status);
@@ -76,7 +80,7 @@ export class CodeReviewService {
     return config ? new CodeReviewEngine(config) : undefined;
   }
   capabilities() {
-    return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(),
+    return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(), conditionalRetry: true,
       tools: CDS_AGENT_CAPABILITY_DEFINITIONS.find((capability) => capability.id === 'code-reviews')?.mcpTools || [] };
   }
   list(projectId?: string) { return this.deps.state.listCodeReviewTasks(projectId); }
@@ -155,7 +159,7 @@ export class CodeReviewService {
     this.stopped = true;
     if (this.engineProbeTimer) clearTimeout(this.engineProbeTimer);
     this.engineProbeTimer = undefined;
-    for (const controller of this.active.values()) controller.abort();
+    for (const controller of this.active.values()) controller.abort(new CodeReviewWorkerStoppedError('CDS 实例停止跟踪'));
   }
   async cancel(id: string) {
     const task = this.get(id); this.assertOwned(task);
@@ -165,13 +169,17 @@ export class CodeReviewService {
     this.active.get(id)?.abort();
     return task;
   }
-  async retry(id: string) {
+  async retry(id: string, expectedUpdatedAt?: string) {
     const task = this.get(id); this.assertOwned(task);
+    if (expectedUpdatedAt !== undefined && (task.status !== 'failed' || task.updatedAt !== expectedUpdatedAt)) {
+      throw new CodeReviewError(409, '任务状态已变化，未执行条件重试，请刷新后查看');
+    }
     if (!['failed', 'cancelled'].includes(task.status) || this.active.has(id)) throw new CodeReviewError(409, '仅可重试已停止的失败或取消任务');
     if (task.reportId) throw new CodeReviewError(409, '报告已归档，请单独重试邮件投递');
     task.status = 'queued'; task.phase = '等待重试'; task.error = undefined;
-    if (!task.engineCompleted) task.engineTaskId = undefined;
-    task.progress.scannedFiles = 0;
+    task.engineRetryRequested = Boolean(task.engineTaskId && !task.engineCompleted);
+    if (!task.engineTaskId) task.progress.scannedFiles = 0;
+    // No await separates the conditional check from StateService's synchronous in-memory replacement before flush.
     await this.save(task); if (this.deps.autoStart !== false) void this.pump(); return task;
   }
   private async audit(id: string, value: unknown) {
@@ -231,8 +239,18 @@ export class CodeReviewService {
   }
   private async execute(id: string, engine: Pick<CodeReviewEngine, 'run'>) {
     const controller = new AbortController(); this.active.set(id, controller);
-    const timeout = setTimeout(() => controller.abort(new Error('审查超过 2 小时，请缩小范围后重试')), 2 * 60 * 60 * 1000);
+    const hour = 60 * 60 * 1000;
+    const maxDuration = boundedTimeout('CDS_CODE_REVIEW_MAX_DURATION_MS', 7 * 24 * hour, hour, 14 * 24 * hour);
+    const idleDuration = boundedTimeout('CDS_CODE_REVIEW_IDLE_TIMEOUT_MS', 30 * 60 * 1000, 60_000, 6 * hour);
+    const timeout = setTimeout(() => controller.abort(new Error('审查达到配置的最长执行时间，未完成部分请重试')), maxDuration);
     timeout.unref();
+    let idleTimeout: ReturnType<typeof setTimeout>;
+    const refreshIdle = () => {
+      if (idleTimeout) clearTimeout(idleTimeout);
+      idleTimeout = setTimeout(() => controller.abort(new Error('审查长时间没有文件分析进展，未完成部分请重试')), idleDuration);
+      idleTimeout.unref();
+    };
+    refreshIdle();
     try {
       let task = this.get(id);
       task.status = 'preparing'; task.phase = '准备固定源码快照'; await this.save(task);
@@ -250,11 +268,20 @@ export class CodeReviewService {
       }
       const zip = await this.deps.inputs.get(task.inputKey!);
       const selectedFiles = task.progress.totalFiles;
+      let lastCounts = [-1, -1, -1, -1, -1], lastEngineTaskId: string | undefined;
       const result = await engine.run({ taskId: id, zip, signal: controller.signal, excludePatterns: task.excludePatterns,
-        engineTaskId: task.engineTaskId,
+        engineTaskId: task.engineTaskId, retryFailed: task.engineRetryRequested,
         onProgress: async (p) => {
           const current = this.get(id); this.checkActive(current, controller.signal);
-          current.status = 'running'; current.phase = p.phase; current.progress = { totalFiles: Math.max(current.progress.totalFiles, p.totalFiles), scannedFiles: p.scannedFiles };
+          // Failed/skipped files also represent completed work; repeated HTTP polls do not.
+          const counts = [p.scannedFiles, p.totalFiles, p.processedFiles ?? -1, p.failedFiles ?? -1, p.skippedFiles ?? -1];
+          if (counts.some((count, index) => count > lastCounts[index]) || (p.engineTaskId && p.engineTaskId !== lastEngineTaskId)) refreshIdle();
+          lastCounts = counts.map((count, index) => Math.max(count, lastCounts[index]));
+          if (p.engineTaskId) lastEngineTaskId = p.engineTaskId;
+          current.engineRetryRequested = undefined; // One explicit retry request is consumed once tracking starts.
+          const newEngineTask = p.engineTaskId && current.engineTaskId && p.engineTaskId !== current.engineTaskId;
+          current.status = 'running'; current.phase = p.phase; current.progress = { totalFiles: Math.max(current.progress.totalFiles, p.totalFiles),
+            scannedFiles: newEngineTask ? p.scannedFiles : Math.max(current.progress.scannedFiles, p.scannedFiles) };
           if (p.engineTaskId) current.engineTaskId = p.engineTaskId;
           await this.save(current);
         }, audit: async (e) => this.audit(id, e) });
@@ -262,9 +289,10 @@ export class CodeReviewService {
       task.engineTaskId = result.engineTaskId;
       if (selectedFiles > 0 && result.scannedFiles === 0) {
         task.engineCompleted = false; // A manual retry must start a new analysis, not reuse the empty result.
+        task.engineTaskId = undefined;
         throw new CodeReviewError(502, `审查引擎未成功分析任何文件（已分析 0/${selectedFiles} 个文件），未形成代码质量结论。请联系管理员检查模型服务与引擎日志后重试。`);
       }
-      task.engineCompleted = true;
+      task.engineCompleted = true; task.engineRetryRequested = undefined;
       task.phase = '汇总静态检查与 AI 分析'; await this.save(task);
       const staticResult = await runCodeReviewStaticAnalysis({ zip, signal: controller.signal });
       result.findings.push(...staticResult.findings); result.notes.push(...staticResult.notes);
@@ -291,11 +319,12 @@ export class CodeReviewService {
       const task = this.get(id);
       if (this.stopped) return; // persisted upstream id lets the next process resume safely
       if (task.status !== 'cancelled') {
-        task.status = 'failed'; task.phase = '审查失败'; task.error = clean(error instanceof Error ? error.message : error); await this.save(task);
+        const failure = controller.signal.aborted ? controller.signal.reason : error;
+        task.status = 'failed'; task.phase = '审查失败'; task.error = clean(failure instanceof Error ? failure.message : failure); await this.save(task);
         // A stale serving-runtime URL can still be marked running during replacement. Avoid draining its queue.
         if (!controller.signal.aborted && isTransportFailure(error)) this.dispatchNotBefore = Date.now() + 30_000;
       }
-    } finally { clearTimeout(timeout); this.active.delete(id); }
+    } finally { clearTimeout(timeout); clearTimeout(idleTimeout!); this.active.delete(id); }
   }
   private checkActive(task: CodeReviewTask, signal: AbortSignal) {
     signal.throwIfAborted();

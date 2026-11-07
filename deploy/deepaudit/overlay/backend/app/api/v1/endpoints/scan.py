@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, Depends, BackgroundTasks,
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import Any, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 import uuid
 import shutil
@@ -46,191 +46,15 @@ TEXT_EXTENSIONS = [
 
 
 async def process_zip_task(task_id: str, file_path: str, db_session_factory, user_config: dict = None):
-    """后台ZIP文件处理任务"""
-    async with db_session_factory() as db:
-        task = await db.get(AuditTask, task_id)
-        if not task:
-            return
-
-        extract_dir = Path(f"/tmp/{task_id}")
-        try:
-            task.error_code = None
-            task.error_message = None
-            task.status = "running"
-            task.started_at = datetime.now(timezone.utc)
-            await db.commit()
-            
-            # 创建使用用户配置的LLM服务实例
-            llm_service = LLMService(user_config=user_config or {})
-
-            # Extract ZIP
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-
-            # 获取用户自定义排除模式
-            scan_config = (user_config or {}).get('scan_config', {})
-            custom_exclude_patterns = scan_config.get('exclude_patterns', [])
-            
-            # Find files
-            files_to_scan = []
-            for root, dirs, files in os.walk(extract_dir):
-                # 排除常见非代码目录
-                dirs[:] = [d for d in dirs if d not in ['node_modules', '__pycache__', '.git', 'dist', 'build', 'vendor']]
-                
-                for file in files:
-                    full_path = Path(root) / file
-                    # 统一使用正斜杠，确保跨平台兼容性
-                    rel_path = normalize_path(str(full_path.relative_to(extract_dir)))
-                    
-                    # 检查文件类型和排除规则（包含用户自定义排除模式）
-                    if is_text_file(rel_path) and not should_exclude(rel_path, custom_exclude_patterns):
-                        try:
-                            content = full_path.read_text(errors='ignore')
-                            if len(content) <= settings.MAX_FILE_SIZE_BYTES:
-                                files_to_scan.append({
-                                    "path": rel_path,
-                                    "content": content
-                                })
-                        except:
-                            pass
-
-            # 获取分析配置（优先使用用户配置）
-            analysis_config = get_analysis_config(user_config)
-            max_analyze_files = analysis_config['max_analyze_files']
-            llm_gap_ms = analysis_config['llm_gap_ms']
-
-            # 限制文件数量
-            # 如果指定了特定文件，则只分析这些文件
-            target_files = scan_config.get('file_paths', [])
-            if target_files:
-                # 统一目标文件路径的分隔符，确保匹配一致性
-                normalized_targets = {normalize_path(p) for p in target_files}
-                print(f"🎯 ZIP任务: 指定分析 {len(normalized_targets)} 个文件")
-                files_to_scan = [f for f in files_to_scan if f['path'] in normalized_targets]
-            elif max_analyze_files > 0:
-                files_to_scan = files_to_scan[:max_analyze_files]
-
-            task.total_files = len(files_to_scan)
-            await db.commit()
-
-            print(f"📊 ZIP任务 {task_id}: 找到 {len(files_to_scan)} 个文件 (最大文件数: {max_analyze_files}, 请求间隔: {llm_gap_ms}ms)")
-
-            total_issues = 0
-            total_lines = 0
-            quality_scores = []
-            scanned_files = 0
-            failed_files = 0
-
-            for file_info in files_to_scan:
-                # 检查是否取消
-                if task_control.is_cancelled(task_id):
-                    print(f"🛑 ZIP任务 {task_id} 已被取消")
-                    task.status = "cancelled"
-                    task.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
-                    task_control.cleanup_task(task_id)
-                    return
-
-                try:
-                    content = file_info['content']
-                    total_lines += content.count('\n') + 1
-                    language = get_language_from_path(file_info['path'])
-                    
-                    # 获取规则集和提示词模板ID
-                    scan_config = (user_config or {}).get('scan_config', {})
-                    rule_set_id = scan_config.get('rule_set_id')
-                    prompt_template_id = scan_config.get('prompt_template_id')
-                    
-                    # 使用规则集和提示词模板进行分析
-                    if rule_set_id or prompt_template_id:
-                        result = await llm_service.analyze_code_with_rules(
-                            content, language, 
-                            rule_set_id=rule_set_id,
-                            prompt_template_id=prompt_template_id,
-                            db_session=db
-                        )
-                    else:
-                        result = await llm_service.analyze_code(content, language)
-                    
-                    issues = result.get("issues", [])
-                    for i in issues:
-                        issue = AuditIssue(
-                            task_id=task.id,
-                            file_path=file_info['path'],
-                            line_number=i.get('line', 1),
-                            column_number=i.get('column'),
-                            issue_type=i.get('type', 'maintainability'),
-                            severity=i.get('severity', 'low'),
-                            title=i.get('title', 'Issue'),
-                            message=i.get('title', 'Issue'),
-                            description=i.get('description'),
-                            suggestion=i.get('suggestion'),
-                            code_snippet=i.get('code_snippet'),
-                            ai_explanation=json.dumps(i.get('xai')) if i.get('xai') else None,
-                            status="open"
-                        )
-                        db.add(issue)
-                        total_issues += 1
-                    
-                    if "quality_score" in result:
-                        quality_scores.append(result["quality_score"])
-                    
-                    scanned_files += 1
-                    task.scanned_files = scanned_files
-                    task.total_lines = total_lines
-                    task.issues_count = total_issues
-                    await db.commit()
-                    
-                    print(f"📈 ZIP任务 {task_id}: 进度 {scanned_files}/{len(files_to_scan)}")
-                    
-                    # 请求间隔
-                    await asyncio.sleep(llm_gap_ms / 1000)
-
-                except Exception as file_error:
-                    record_scan_error(task, file_error)
-                    await db.commit()
-                    failed_files += 1
-                    print(f"❌ ZIP任务分析文件失败 ({file_info['path']}): {task.error_code}")
-                    await asyncio.sleep(llm_gap_ms / 1000)
-
-            # 完成任务
-            avg_quality_score = sum(quality_scores) / len(quality_scores) if quality_scores else 100.0
-            
-            # 如果有文件需要分析但全部失败，标记为失败
-            if len(files_to_scan) > 0 and scanned_files == 0:
-                record_scan_error(task)
-                task.status = "failed"
-                task.completed_at = datetime.now(timezone.utc)
-                task.scanned_files = 0
-                task.total_lines = total_lines
-                task.issues_count = 0
-                task.quality_score = 0
-                await db.commit()
-                print(f"❌ ZIP任务 {task_id} 失败: 所有 {len(files_to_scan)} 个文件分析均失败，请检查 LLM API 配置")
-            else:
-                task.status = "completed"
-                task.completed_at = datetime.now(timezone.utc)
-                task.scanned_files = scanned_files
-                task.total_lines = total_lines
-                task.issues_count = total_issues
-                task.quality_score = avg_quality_score
-                await db.commit()
-                print(f"✅ ZIP任务 {task_id} 完成: 扫描 {scanned_files} 个文件, 发现 {total_issues} 个问题")
-            task_control.cleanup_task(task_id)
-            
-        except Exception as e:
-            record_scan_error(task, e)
-            print(f"❌ ZIP扫描失败: {task.error_code}")
-            task.status = "failed"
-            task.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-            task_control.cleanup_task(task_id)
-        finally:
-            # Cleanup - 只清理解压目录，不删除源ZIP文件（已持久化存储）
-            if extract_dir.exists():
-                shutil.rmtree(extract_dir)
+    from app.services.static_runner import run_static_task
+    from app.services.scan_snapshot import freeze_zip
+    from app.services.scanner import task_control
+    async def prepare(saved, project, config, options):
+        await freeze_zip(task_id, file_path)
+        return {}
+    await run_static_task(task_id, db_session_factory, user_config, prepare,
+                          LLMService, task_control, is_text_file, should_exclude,
+                          get_language_from_path)
 
 
 @router.post("/upload-zip")
@@ -271,24 +95,23 @@ async def scan_zip(
         os.remove(file_path)
         raise HTTPException(status_code=400, detail="文件大小不能超过500MB")
     
+    # Validate the public options; internal filesystem references are never accepted.
+    try:
+        parsed_scan_config = ScanRequest.model_validate(json.loads(scan_config or '{}')).model_dump(exclude_none=True)
+    except (ValueError, TypeError):
+        os.remove(file_path)
+        raise HTTPException(status_code=400, detail="扫描配置无效")
+
     # 保存ZIP文件到持久化存储
     await save_project_zip(project_id, file_path, file.filename)
     
-    # Parse scan_config if provided
-    parsed_scan_config = {}
-    if scan_config:
-        try:
-            parsed_scan_config = json.loads(scan_config)
-        except json.JSONDecodeError:
-            pass
-
     # Create Task
     task = AuditTask(
         project_id=project_id,
         created_by=current_user.id,
         task_type="zip_upload",
         status="pending",
-        scan_config=scan_config if scan_config else "{}"
+        scan_config=json.dumps(parsed_scan_config)
     )
     db.add(task)
     await db.commit()
@@ -297,20 +120,16 @@ async def scan_zip(
     # 获取用户配置
     user_config = await get_user_config_dict(db, current_user.id)
     
-    # 将扫描配置注入到 user_config 中（包括规则集、提示词模板和排除模式）
-    if parsed_scan_config:
-        user_config['scan_config'] = {
-            'file_paths': parsed_scan_config.get('file_paths', []),
-            'exclude_patterns': parsed_scan_config.get('exclude_patterns', []),
-            'rule_set_id': parsed_scan_config.get('rule_set_id'),
-            'prompt_template_id': parsed_scan_config.get('prompt_template_id'),
-        }
+    user_config['scan_config'] = parsed_scan_config
+    task_id = task.id
+    # FastAPI's yield dependency may otherwise hold this transaction through BackgroundTasks.
+    await db.close()
+    from app.services.scan_snapshot import freeze_zip
+    frozen = await freeze_zip(task_id, file_path)
+    os.remove(file_path)
+    background_tasks.add_task(process_zip_task, task_id, frozen, AsyncSessionLocal, user_config)
 
-    # Trigger Background Task - 使用持久化存储的文件路径
-    stored_zip_path = await load_project_zip(project_id)
-    background_tasks.add_task(process_zip_task, task.id, stored_zip_path or file_path, AsyncSessionLocal, user_config)
-
-    return {"task_id": task.id, "status": "queued"}
+    return {"task_id": task_id, "status": "queued"}
 
 
 class ScanRequest(BaseModel):
@@ -319,6 +138,9 @@ class ScanRequest(BaseModel):
     exclude_patterns: Optional[List[str]] = None
     rule_set_id: Optional[str] = None
     prompt_template_id: Optional[str] = None
+    max_analyze_files: Optional[int] = Field(None, ge=0)
+    llm_concurrency: Optional[int] = Field(None, ge=1, le=8)
+    llm_gap_ms: Optional[int] = Field(None, ge=0)
 
 
 @router.post("/scan-stored-zip")
@@ -361,19 +183,14 @@ async def scan_stored_zip(
     # 获取用户配置
     user_config = await get_user_config_dict(db, current_user.id)
     
-    # 将扫描配置注入到 user_config 中（包括规则集、提示词模板和排除模式）
-    if scan_request:
-        user_config['scan_config'] = {
-            'file_paths': scan_request.file_paths or [],
-            'exclude_patterns': scan_request.exclude_patterns or [],
-            'rule_set_id': scan_request.rule_set_id,
-            'prompt_template_id': scan_request.prompt_template_id,
-        }
+    user_config['scan_config'] = scan_request.model_dump(exclude_none=True) if scan_request else {}
+    task_id = task.id
+    await db.close()
+    from app.services.scan_snapshot import freeze_zip
+    frozen = await freeze_zip(task_id, stored_zip_path)
+    background_tasks.add_task(process_zip_task, task_id, frozen, AsyncSessionLocal, user_config)
 
-    # Trigger Background Task
-    background_tasks.add_task(process_zip_task, task.id, stored_zip_path, AsyncSessionLocal, user_config)
-
-    return {"task_id": task.id, "status": "queued"}
+    return {"task_id": task_id, "status": "queued"}
 
 
 class InstantAnalysisRequest(BaseModel):

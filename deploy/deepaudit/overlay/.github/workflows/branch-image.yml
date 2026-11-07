@@ -73,6 +73,13 @@ jobs:
           -e DATABASE_URL=postgresql+asyncpg://ci:ci@127.0.0.1/ci
           -e PYTHONPATH=/app deepaudit-cds-backend:test
           .venv/bin/python tests/test_scan_errors.py
+      - name: 验证整仓并发与文件断点续跑
+        if: matrix.component == 'backend'
+        run: >-
+          docker run --rm -e SECRET_KEY=ci-only-validation-secret-01234567890123456789
+          -e DATABASE_URL=postgresql+asyncpg://ci:ci@127.0.0.1/ci
+          -e PYTHONPATH=/app deepaudit-cds-backend:test
+          .venv/bin/python tests/test_native_runner.py
       - name: 发布同提交不可变镜像
         if: github.event_name != 'pull_request'
         env:
