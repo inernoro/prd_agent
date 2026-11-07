@@ -226,6 +226,7 @@ docs:
   guide.open-platform.open-api: "开放平台 Open API · 指南"
   guide.platform.active-tasks: "活动任务清单 · 指南"
   guide.platform.agent-onboarding: "Agent 开发入门 · 指南"
+  guide.platform.decision-practice: "从真实变更到决策记忆：产品试点与跨项目实操 · 指南"
   guide.platform.decision-records: "决策治理：项目补足与跨项目推广 · 指南"
   guide.platform.development-guide: "PRD Agent 开发文档 · 指南"
   guide.platform.e2e-tests: "Playwright E2E 测试 · 指南"

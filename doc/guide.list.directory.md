@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> **版本**：v2.2 | **日期**：2026-11-06 | **状态**：已落地
+> **版本**：v2.3 | **日期**：2026-11-08 | **状态**：已落地
 
 **一句话**：全部长期文档按职责分类，架构和产品决策单独收录，用来确认有没有目标文章并拿到准确入口。
 **谁该读**：已经知道自己要找哪一类文档、想扫一眼有哪些的人。
@@ -226,6 +226,7 @@
 - [开放平台 Open API · 指南](./guide.open-platform.open-api.md) `guide.open-platform.open-api`
 - [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
+- [从真实变更到决策记忆：产品试点与跨项目实操 · 指南](./guide.platform.decision-practice.md) `guide.platform.decision-practice`
 - [决策治理：项目补足与跨项目推广 · 指南](./guide.platform.decision-records.md) `guide.platform.decision-records`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`

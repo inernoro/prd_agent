@@ -151,6 +151,7 @@ Good entry points:
 - [pri.adr.md](pri.adr.md) for ADR principles and the eight core principles for future maintainers.
 - [pri.pdr.md](pri.pdr.md) for product foundations, structural commitments, and product decision records.
 - [Decision governance guide](doc/guide.platform.decision-records.md) for project gaps, product methods, and cross-project adoption.
+- [Decision practice](doc/guide.platform.decision-practice.md) for two real change replays, an independent-reader exercise, and a portable starting method.
 - [AGENTS.md](AGENTS.md) for repository rules.
 - [cds/README.md](cds/README.md) for the CDS managed-delivery quick start and user acceptance checklist.
 - [doc/design.platform.peer-sync.md](doc/design.platform.peer-sync.md) for system interconnection.
