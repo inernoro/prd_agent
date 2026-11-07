@@ -125,7 +125,7 @@ describe('部署阶段容量准入', () => {
       await expect(budget.acquireSourceStart({ projectId: 'p' }, 'candidate', {
         signal: ac.signal, onQueued: () => { if (mode === 'abort') ac.abort(); else throw new Error('queue save refused'); }, onStart: ended,
       }, { signal: ac.signal })).rejects.toThrow(mode === 'abort' ? '取消' : 'queue save refused');
-      expect(ended).toHaveBeenCalledTimes(1);
+      expect(ended).not.toHaveBeenCalled();
       expect(budget.snapshot().start).toMatchObject({ active: [], queued: [] });
       expect(budget.memorySnapshot()).toEqual([]);
       expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });

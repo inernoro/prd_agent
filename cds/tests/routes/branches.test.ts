@@ -4671,6 +4671,33 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch(id)?.lastDeployQueueWaitMs).toBeGreaterThanOrEqual(2000);
     });
 
+    it.each(['', '/api'])('首次源码%s联合排队取消不误报开始构建，原等待与资源正常结清', async profilePath => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      const id = 'source-joint-cancel-log';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/joint-cancel-log', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
+      const slots = await Promise.all(Array.from({ length: buildGateStatus().max }, () => acquireBuildSlot()));
+      let active: ReturnType<typeof request> | undefined;
+      try {
+        active = request(server, 'POST', `/api/branches/${id}/deploy${profilePath}`, { commitSha: 'a'.repeat(40) });
+        await vi.waitFor(() => expect(stateService.getBranch(id)?.buildQueue?.serviceIds || []).toContain('api'));
+        branchOperationCoordinator.cancelBranch(id, '原排队操作主动取消');
+        const response = await active; expect(response.status).toBe(200);
+        const completed = await waitForAcceptedRun(response); expect(completed.status).toBe('cancelled');
+        expect(String(response.body)).toContain('[build-gate] 按项目轮转');
+        expect(String(response.body)).not.toContain('[build-gate] 排队结束');
+        expect(stateService.getBranch(id)?.buildQueue).toBeUndefined();
+        expect(buildGateStatus().holders.some(holder => holder.branchId === id)).toBe(false);
+        expect(deploymentPhaseBudget.snapshot().start.queued.some(owner => owner.branchId === id)).toBe(false);
+      } finally {
+        branchOperationCoordinator.cancelBranch(id, '测试正常收尾');
+        for (const slot of slots) slot.release();
+        if (active) await active;
+        setBuildGateHostLoadProvider(null);
+      }
+    });
+
     it('首次与既有源码部署混跑时保持一致槽位顺序，不相互锁住编译与启动容量', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.',
         command: 'node server.js', containerPort: 3000 });

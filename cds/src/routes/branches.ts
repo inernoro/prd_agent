@@ -14457,9 +14457,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               return slot;
             } catch (err) {
               clearQueueTimer();
+              // 失败也结清等待统计，但不发送成功开始构建的日志。
+              deployQueueTracker.onStart(profile.id);
               if (err instanceof BuildSlotCancelledError) {
                 // 排队等待被取消：结束排队 episode 清掉分支卡 chip。
-                deployQueueTracker.onStart(profile.id);
                 logEvent({
                   step: `queue-${profile.id}`,
                   status: 'warning',
@@ -15600,8 +15601,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return slot;
         } catch (err) {
           clearQueueTimer();
+          // 单服务在准入前失败时还未进入运行 finally，需在此结清原等待。
+          deployQueueTracker.onStart(profile.id);
           if (err instanceof BuildSlotCancelledError) {
-            deployQueueTracker.onStart(profile.id);
             logEvent({
               step: `queue-${profile.id}`,
               status: 'warning',

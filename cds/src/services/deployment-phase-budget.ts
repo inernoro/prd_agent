@@ -248,7 +248,7 @@ export class DeploymentPhaseBudget {
       releaseStart ??= await pending.catch(() => undefined);
       if (releaseStart && !memoryCleanup) memoryCleanup = this.captureMemoryRelease(key, capturedOwner);
       releaseStart?.(); memoryCleanup?.(); buildSlot?.release();
-      try { finishQueue(); } catch { /* 保留原失败，资源已按捕获身份归还。 */ }
+      // 未获准入不得触发成功 onStart；原路由异常收尾负责结清队列显示。
       throw error;
     } finally { registration.dispose(); }
   }
