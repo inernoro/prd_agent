@@ -126,16 +126,7 @@ public static class LiveAsrGatewayEndpoint
                 () => Interlocked.Exchange(ref paidUpstreamAttempted, 1),
                 http.RequestAborted,
                 platformLifetime.Token,
-                async token =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    var service = http.RequestServices.GetRequiredService<IGatewayTaskAdmission>();
-                    var next = await service.ReserveContinuationAsync(http, admission.Authorization,
-                        admission.Ingress.AppCallerCode, CancellationToken.None);
-                    if (!next.Allowed) throw new TaskExecutionAdmissionException(next.ErrorCode, next.Message, next.StatusCode);
-                    await http.RequestServices.GetRequiredService<IGatewayInvocationAuthority>()
-                        .AssertCurrentAsync(admission.Ingress.AppCallerCode, admission.Ingress.Context, CancellationToken.None);
-                }, admission.Ingress.AppCallerCode);
+                CreatePhysicalSendAdmission(http, admission), admission.Ingress.AppCallerCode);
         }
         finally
         {
@@ -195,6 +186,30 @@ public static class LiveAsrGatewayEndpoint
                 }
             }
         }
+    }
+
+    internal static Func<CancellationToken, Task> CreatePhysicalSendAdmission(
+        HttpContext http, GatewaySpecializedAdmission admission)
+    {
+        // HTTP gate已预占首槽；只有实际供应商尝试才消费它，后续尝试分别核销。
+        var firstPhysicalAttempt = 1;
+        return async token =>
+        {
+            token.ThrowIfCancellationRequested();
+            // 现有通用金额合同仅支持文本token；不能给ASR伪造价格或物理预占事实。
+            if (http.Items[GatewayTaskAdmission.HttpContextPermitKey] is GatewayTaskPermitRecord { BudgetScopeId: { Length: > 0 } })
+                throw new TaskExecutionAdmissionException("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED",
+                    "实时转写尚无音频金额合同，已停止发送；请保留录音后由管理员核对计价配置。", 409);
+            if (Interlocked.Exchange(ref firstPhysicalAttempt, 0) == 0)
+            {
+                var service = http.RequestServices.GetRequiredService<IGatewayTaskAdmission>();
+                var next = await service.ReserveContinuationAsync(http, admission.Authorization,
+                    admission.Ingress.AppCallerCode, token);
+                if (!next.Allowed) throw new TaskExecutionAdmissionException(next.ErrorCode, next.Message, next.StatusCode);
+            }
+            await http.RequestServices.GetRequiredService<IGatewayInvocationAuthority>()
+                .AssertCurrentAsync(admission.Ingress.AppCallerCode, admission.Ingress.Context, token);
+        };
     }
 
     private static LlmLogStart CreateLiveAsrLogStart(

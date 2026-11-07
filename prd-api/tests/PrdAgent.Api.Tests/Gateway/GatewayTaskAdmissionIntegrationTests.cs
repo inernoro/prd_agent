@@ -2,6 +2,7 @@ using PrdAgent.Infrastructure.Security;
 using PrdAgent.Api.Tests.Gateway;
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.WebSockets;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Security.Cryptography;
@@ -24,6 +25,7 @@ using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Core.LlmGateway.Asr;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -739,6 +741,189 @@ public sealed class GatewayTaskAdmissionIntegrationTests
         cancelled.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         database.PaidCalls.ShouldBe(1);
         oldGrant.ExpiresAt.ShouldBeGreaterThan(DateTime.UtcNow);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AsrPhysicalAdmission_BoundSessionCannotSendFirstCandidate(bool live)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var setup = await PrepareAsrPhysicalAdmission(database, 3, boundBudget: true);
+        using var services = setup.Services;
+        var connector = new UnknownAsrConnector();
+        var paid = 0;
+        var attempted = 0;
+        var plan = AsrCandidate("first", live);
+        var orchestrator = AsrOrchestrator(plan, connector, () => paid++);
+        var result = await orchestrator.ExecuteAsync(new AsrFramesTransport(1), setup.Context,
+            _ => Task.CompletedTask, () => attempted++, beforeFallbackSend:
+                AsrPhysicalSendAdmission(setup.Http, setup.Admission));
+        result.ErrorCode.ShouldBe("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED");
+        connector.Calls.ShouldBe(0); paid.ShouldBe(0); attempted.ShouldBe(0);
+        setup.Http.Items.ContainsKey(GatewayInvocationAuthority.TaskBudgetAdmissionKey).ShouldBeFalse();
+        (await database.Permits.Find(x => x.Id == setup.Permit.Id).SingleAsync()).CallCount.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task AsrPhysicalAdmission_FirstAndLaterBatchAttemptsUseExactlyTheirPermitSlots(int maxCalls)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var setup = await PrepareAsrPhysicalAdmission(database, maxCalls);
+        using var services = setup.Services;
+        var paid = 0;
+        var attempted = 0;
+        var connector = new UnknownAsrConnector();
+        var result = await AsrOrchestrator(AsrCandidate("batch", false), connector, () => paid++)
+            .ExecuteAsync(new AsrFramesTransport(5), setup.Context, _ => Task.CompletedTask,
+                () => attempted++, beforeFallbackSend: AsrPhysicalSendAdmission(setup.Http, setup.Admission));
+        result.ErrorCode.ShouldBe("TASK_PERMIT_EXHAUSTED");
+        paid.ShouldBe(maxCalls); attempted.ShouldBe(maxCalls); connector.Calls.ShouldBe(0);
+        (await database.Permits.Find(x => x.Id == setup.Permit.Id).SingleAsync()).CallCount.ShouldBe(maxCalls);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AsrPhysicalAdmission_WebSocketUnknownAttemptKeepsItsSlotAndLaterAttemptsAreCounted(int maxCalls)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var setup = await PrepareAsrPhysicalAdmission(database, maxCalls);
+        using var services = setup.Services;
+        var connector = new UnknownAsrConnector();
+        var paid = 0;
+        var attempted = 0;
+        var plan = AsrCandidate("first", true); plan.RetryCandidates = [AsrCandidate("second", true)];
+        var result = await AsrOrchestrator(plan, connector, () => paid++)
+            .ExecuteAsync(new AsrFramesTransport(0), setup.Context, _ => Task.CompletedTask,
+                () => attempted++, beforeFallbackSend: AsrPhysicalSendAdmission(setup.Http, setup.Admission));
+        connector.Calls.ShouldBe(maxCalls); attempted.ShouldBe(maxCalls); paid.ShouldBe(0);
+        if (maxCalls == 1) result.ErrorCode.ShouldBe("TASK_PERMIT_EXHAUSTED");
+        (await database.Permits.Find(x => x.Id == setup.Permit.Id).SingleAsync()).CallCount.ShouldBe(maxCalls);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AsrPhysicalAdmission_RevocationBeforeFirstOrLaterWebSocketStopsTheNextSend(bool revokeFirst)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var setup = await PrepareAsrPhysicalAdmission(database, 3);
+        using var services = setup.Services;
+        var executions = new TaskExecutionCoordinator(database.Data);
+        if (revokeFirst) await executions.RevokeAsync(setup.Permit.Id, null, default);
+        var connector = new UnknownAsrConnector(() => executions.RevokeAsync(setup.Permit.Id, null, default));
+        var plan = AsrCandidate("first", true); plan.RetryCandidates = [AsrCandidate("second", true)];
+        var result = await AsrOrchestrator(plan, connector, () => throw new InvalidOperationException("unexpected batch send"))
+            .ExecuteAsync(new AsrFramesTransport(0), setup.Context, _ => Task.CompletedTask,
+                () => { }, beforeFallbackSend: AsrPhysicalSendAdmission(setup.Http, setup.Admission));
+        result.ErrorCode.ShouldBeOneOf("TASK_EXECUTION_LEASE_INVALID", "TASK_PERMIT_INVALID");
+        connector.Calls.ShouldBe(revokeFirst ? 0 : 1);
+        (await database.Permits.Find(x => x.Id == setup.Permit.Id).SingleAsync()).CallCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AsrPhysicalAdmission_MissingCredentialsDoNotSpendTheFirstPhysicalSlot()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var setup = await PrepareAsrPhysicalAdmission(database, 1);
+        using var services = setup.Services;
+        var connector = new UnknownAsrConnector();
+        var plan = AsrCandidate("no-credential", true, hasCredential: false);
+        plan.RetryCandidates = [AsrCandidate("first-real-attempt", true)];
+        await AsrOrchestrator(plan, connector, () => throw new InvalidOperationException("unexpected batch send"))
+            .ExecuteAsync(new AsrFramesTransport(0), setup.Context, _ => Task.CompletedTask,
+                () => { }, beforeFallbackSend: AsrPhysicalSendAdmission(setup.Http, setup.Admission));
+        connector.Calls.ShouldBe(1);
+        (await database.Permits.Find(x => x.Id == setup.Permit.Id).SingleAsync()).CallCount.ShouldBe(1);
+    }
+
+    private static async Task<(DefaultHttpContext Http, GatewayRequestContext Context, object Admission, ServiceProvider Services,
+        GatewayTaskPermitRecord Permit)> PrepareAsrPhysicalAdmission(TestDatabase database, int maxCalls, bool boundBudget = false)
+    {
+        var caller = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio;
+        var permit = await database.PermitAsync(maxCalls);
+        permit.AllowedAppCallerCodes = [caller];
+        if (boundBudget) permit.BudgetScopeId = "synthetic-text-only-budget";
+        await database.Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
+        var http = new DefaultHttpContext();
+        http.Request.Headers[GatewayTaskAdmission.HeaderName] = permit.Id;
+        http.Request.Headers[TaskExecutionHeaders.LeaseToken] = PlatformExecutionFixture.Token(permit.Id);
+        http.Request.Headers[TaskExecutionHeaders.LeaseFence] = "1";
+        var authorization = new GatewayKeyAuthorization(true, true, 200, "", "", KeyId: "synthetic-asr-key",
+            TenantId: permit.TenantId, LegacySharedKey: true);
+        var configuration = new ConfigurationBuilder().Build();
+        var admission = new GatewayTaskAdmission(database.Data, configuration, NullLogger<GatewayTaskAdmission>.Instance);
+        (await admission.AdmitAsync(http, authorization, caller, true, default)).Allowed.ShouldBeTrue();
+        var lease = (GatewayTaskLeaseFact)http.Items[GatewayTaskAdmission.HttpContextLeaseKey]!;
+        var context = new GatewayRequestContext { RequestId = "synthetic-live-asr", TenantId = permit.TenantId,
+            UserId = permit.ActorUserId, ServiceKeyId = authorization.KeyId, SourceSystem = "map", TaskPermitId = permit.Id,
+            TaskLeaseRunId = lease.RunId, TaskLeaseOwnerHash = lease.OwnerHash, TaskLeaseFence = lease.Fence,
+            ExecutionOrigin = permit.Origin, TriggerActorUserId = permit.ActorUserId,
+            TriggerCredentialId = permit.TriggerCredentialId, SourceDeployment = permit.SourceDeployment, SourceTask = permit.SourceTask };
+        http.Items["llmgw.key.authorization"] = authorization;
+        http.Items[GatewayInvocationAuthority.PaidAdmissionKey] = true;
+        http.Items[GatewayInvocationAuthority.AdmittedCallerKey] = caller;
+        var accessor = new Mock<IHttpContextAccessor>(); accessor.SetupGet(x => x.HttpContext).Returns(http);
+        var services = new ServiceCollection().AddSingleton<IGatewayTaskAdmission>(admission)
+            .AddSingleton<IGatewayInvocationAuthority>(new GatewayInvocationAuthority(accessor.Object, configuration,
+                new TaskExecutionCoordinator(database.Data))).BuildServiceProvider();
+        http.RequestServices = services;
+        var admissionType = typeof(LiveAsrGatewayEndpoint).Assembly.GetType("PrdAgent.LlmGatewayHost.GatewaySpecializedAdmission")!;
+        var physicalAdmission = Activator.CreateInstance(admissionType, new object?[] { context.RequestId,
+            new GatewayIngressRequest { RequestId = context.RequestId!, IngressProtocol = "gw-native",
+                AppCallerCode = caller, RequestType = ModelTypes.Asr, Context = context }, authorization })!;
+        return (http, context, physicalAdmission, services, permit);
+    }
+
+    private static Func<CancellationToken, Task> AsrPhysicalSendAdmission(HttpContext http, object admission)
+        => (Func<CancellationToken, Task>)typeof(LiveAsrGatewayEndpoint).GetMethod("CreatePhysicalSendAdmission",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.Invoke(null, [http, admission])!;
+
+    private static ModelResolutionResult AsrCandidate(string id, bool live, bool hasCredential = true) => new()
+    { Success = true, ActualPlatformId = id, ActualPlatformName = "synthetic-asr", ActualModel = id,
+        IsExchange = live, ExchangeTransformerType = live ? "doubao-asr-stream" : null,
+        PlatformType = "openai", Protocol = "openai", ApiKey = hasCredential ? "synthetic" : "", ApiUrl = "wss://synthetic.invalid/asr" };
+
+    private static LiveAsrSessionOrchestrator AsrOrchestrator(ModelResolutionResult plan, UnknownAsrConnector connector, Action onBatch)
+    {
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(plan);
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(It.IsAny<GatewayRawRequest>(), It.IsAny<GatewayModelResolution>(), It.IsAny<CancellationToken>()))
+            .Callback(onBatch).ReturnsAsync(new GatewayRawResponse { Success = true, Content = "{\"text\":\"合成转写片段\"}", StatusCode = 200 });
+        return new LiveAsrSessionOrchestrator(resolver.Object,
+            new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance, connector),
+            new LiveAsrBatchFallbackService(gateway.Object, resolver.Object, NullLogger<LiveAsrBatchFallbackService>.Instance),
+            NullLogger<LiveAsrSessionOrchestrator>.Instance);
+    }
+
+    private sealed class UnknownAsrConnector(Func<Task>? afterAttempt = null) : ISafeOutboundWebSocketConnector
+    {
+        public int Calls;
+        public Task<SafeWebSocketTarget> PrepareAsync(string? url, CancellationToken ct = default)
+            => throw new InvalidOperationException("no network resolution in this fixture");
+        public async Task<IDisposable> ConnectAsync(ClientWebSocket socket, string? url, CancellationToken ct = default)
+        { Calls++; if (afterAttempt is not null) await afterAttempt(); throw new HttpRequestException("synthetic unknown connection outcome"); }
+    }
+
+    private sealed class AsrFramesTransport(int windows) : ILiveAsrSessionTransport
+    {
+        public Task<bool> ReceiveStartAsync(CancellationToken ct) => Task.FromResult(true);
+        public async Task ReceiveFramesAsync(IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
+            Func<LiveAsrEvent, Task> emit, CancellationToken ct)
+        {
+            foreach (var writer in writers)
+            {
+                for (var i = 1; i <= windows; i++)
+                    await writer.WriteAsync(new LiveAsrAudioFrame(i, Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()), ct);
+                await writer.WriteAsync(new LiveAsrAudioFrame(windows + 1, [], IsFinal: true), ct);
+                writer.TryComplete();
+            }
+        }
     }
 
     private static async Task<WebApplication> Server(TestDatabase database, bool omitAdmissionService = false,
