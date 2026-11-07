@@ -2,14 +2,15 @@ const MESSAGE_TYPE = 'cds:authenticated-report-navigation';
 const REPORT_ID = /^[a-f0-9]{32}$/;
 
 /** Only same-origin, same-project report links are candidates for parent navigation. */
-export function linkedReportId(href: string, origin: string, projectId: string): string | null {
+export function linkedReportId(href: string, origin: string, projectId: string, projectSlug?: string | null): string | null {
   if (!projectId || href.startsWith('#')) return null;
   let url: URL;
   try { url = new URL(href, origin); } catch { return null; }
   if (url.origin !== origin || url.pathname !== '/reports' || url.username || url.password || url.hash) return null;
   if ([...url.searchParams.keys()].some((key) => !['project', 'folder', 'report'].includes(key))) return null;
   for (const key of ['project', 'folder', 'report']) if (url.searchParams.getAll(key).length > 1) return null;
-  if (url.searchParams.get('project') !== projectId) return null;
+  const linkedProject = url.searchParams.get('project');
+  if (linkedProject !== projectId && (!projectSlug || linkedProject !== projectSlug)) return null;
   const id = url.searchParams.get('report') || '';
   return /^[a-f0-9]{32}$/.test(id) ? id : null;
 }
@@ -34,8 +35,8 @@ export function listedReportTarget<T extends { id: string; projectId?: string | 
 }
 
 /** Generated from the same URL parser tested below; no credentials enter the frame. */
-export function reportNavigationScript(origin: string, projectId: string): string {
-  const config = JSON.stringify({ origin, projectId, type: MESSAGE_TYPE }).replace(/</g, '\\u003c');
+export function reportNavigationScript(origin: string, projectId: string, projectSlug?: string | null): string {
+  const config = JSON.stringify({ origin, projectId, projectSlug, type: MESSAGE_TYPE }).replace(/</g, '\\u003c');
   return `(() => {
     const config = ${config};
     const parseLink = ${linkedReportId.toString()};
@@ -43,7 +44,7 @@ export function reportNavigationScript(origin: string, projectId: string): strin
       if (!event.isTrusted || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       const link = event.target?.closest?.('a[href]');
       if (!link) return;
-      const reportId = parseLink(link.getAttribute('href') || '', config.origin, config.projectId);
+      const reportId = parseLink(link.getAttribute('href') || '', config.origin, config.projectId, config.projectSlug);
       if (!reportId) return;
       event.preventDefault();
       event.stopPropagation();
@@ -53,11 +54,11 @@ export function reportNavigationScript(origin: string, projectId: string): strin
 }
 
 /** Keep the opaque-origin sandbox and the stored immutable report body unchanged. */
-export function withReportNavigation(raw: string, origin: string, projectId?: string | null): string {
+export function withReportNavigation(raw: string, origin: string, projectId?: string | null, projectSlug?: string | null): string {
   if (!projectId) return raw;
   const doc = new DOMParser().parseFromString(raw, 'text/html');
   const script = doc.createElement('script');
-  script.textContent = reportNavigationScript(origin, projectId);
+  script.textContent = reportNavigationScript(origin, projectId, projectSlug);
   doc.head.prepend(script);
   return '<!doctype html>\n' + doc.documentElement.outerHTML;
 }

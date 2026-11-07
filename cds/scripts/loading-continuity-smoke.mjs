@@ -35,10 +35,10 @@ async function verifyAuthenticatedReportNavigation() {
   for (const format of ['html', 'md']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
     const supervisorId = '1'.repeat(32), appendixId = '2'.repeat(32), missingId = '3'.repeat(32);
-    const project = 'fixture-project', folder = '4'.repeat(32), title = `受保护主管-${format}`;
+    const project = 'fixture-project', canonicalProject = 'canonical-fixture-project', folder = '4'.repeat(32), title = `受保护主管-${format}`;
     const reports = [
-      { id: supervisorId, title, format, projectId: project, folderId: folder, sizeBytes: 300, createdAt: '2026-11-07T00:00:00Z' },
-      { id: appendixId, title: `技术附录-${format}`, format, projectId: project, folderId: folder, sizeBytes: 100, createdAt: '2026-11-07T00:00:00Z' },
+      { id: supervisorId, title, format, projectId: canonicalProject, projectSlug: project, folderId: folder, sizeBytes: 300, createdAt: '2026-11-07T00:00:00Z' },
+      { id: appendixId, title: `技术附录-${format}`, format, projectId: canonicalProject, projectSlug: project, folderId: folder, sizeBytes: 100, createdAt: '2026-11-07T00:00:00Z' },
     ];
     const target = `${base}/reports?project=${project}&report=${appendixId}`;
     const missing = `${base}/reports?project=${project}&report=${missingId}`;

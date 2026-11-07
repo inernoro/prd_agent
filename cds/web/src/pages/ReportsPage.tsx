@@ -2321,7 +2321,7 @@ function ReportViewer({
       .then((raw) => {
         if (reqRef.current !== token) return;
         if (report.format === 'html') {
-          setMdHtml(withReportNavigation(raw, window.location.origin, report.projectId));
+          setMdHtml(withReportNavigation(raw, window.location.origin, report.projectId, report.projectSlug));
           return;
         }
         const parsed = marked.parse(raw, { async: false }) as string;
@@ -2336,7 +2336,7 @@ function ReportViewer({
           img { max-width: 100%; height: auto; }
           a { color: ${linkColor}; }
         </style></head><body>${parsed}</body></html>`;
-        setMdHtml(withReportNavigation(doc, window.location.origin, report.projectId));
+        setMdHtml(withReportNavigation(doc, window.location.origin, report.projectId, report.projectSlug));
       })
       .catch((err) => {
         if (reqRef.current !== token) return;

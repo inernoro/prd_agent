@@ -16,6 +16,12 @@ describe('REG-stsmk-report-external-link-001 authenticated same-project navigati
     expect(linkedReportId(`/reports?project=${project}&report=${id}`, origin, project)).toBe(id);
   });
 
+  it('resolves the current project slug from trusted metadata without admitting another project', () => {
+    expect(linkedReportId(link, origin, 'canonical-project-id', project)).toBe(id);
+    expect(linkedReportId(link, origin, 'canonical-project-id', 'another-project')).toBeNull();
+    expect(listedReportTarget('canonical-project-id', id, [{ id, projectId: 'other-project' }])).toBeUndefined();
+  });
+
   it.each([
     `https://outside.example/reports?project=${project}&report=${id}`,
     `${origin}/reports?project=another-project&report=${id}`,
@@ -89,8 +95,8 @@ describe('REG-stsmk-report-external-link-001 authenticated same-project navigati
     expect(source).toContain('ref={iframeRef}');
     expect(source).toContain('sandbox="allow-scripts"');
     expect(source).not.toMatch(/sandbox="[^"]*allow-(?:popups|same-origin|top-navigation)/);
-    expect(source).toContain('withReportNavigation(raw, window.location.origin, report.projectId)');
-    expect(source).toContain('withReportNavigation(doc, window.location.origin, report.projectId)');
+    expect(source).toContain('withReportNavigation(raw, window.location.origin, report.projectId, report.projectSlug)');
+    expect(source).toContain('withReportNavigation(doc, window.location.origin, report.projectId, report.projectSlug)');
     expect(source).toContain('listedReportTarget(selected?.projectId, id, allReports)');
   });
 });
