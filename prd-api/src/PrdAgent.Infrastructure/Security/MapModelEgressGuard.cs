@@ -13,10 +13,14 @@ namespace PrdAgent.Infrastructure.Security;
 /// </summary>
 public sealed class MapModelEgressHandler(string clientName, Uri gatewayBase) : DelegatingHandler
 {
+    /// <summary>仅收紧当前请求：探测指定资源时不发送任何重定向后的第二跳。</summary>
+    public static readonly HttpRequestOptionsKey<bool> DisableRedirects = new("map.disable-redirects");
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         Validate(request);
         var response = await base.SendAsync(request, ct);
+        if (request.Options.TryGetValue(DisableRedirects, out var disabled) && disabled) return response;
         // 主处理器禁止自动跳转；普通网页/附件 GET 在本层逐跳校验，避免跳过出口检查。
         if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head) return response;
         HttpRequestMessage current = request;

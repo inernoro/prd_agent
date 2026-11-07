@@ -518,7 +518,12 @@ public static class GatewayHttpEndpoints
                 nativeBody.Remove("provider");
             }
             // 图片属于输入能力，不改变已冻结的业务调用方类型；核心能力门会单独校验视觉支持。
-            var requestType = ModelTypes.Chat;
+            var requestType = runtimeGrant?.ModelType ?? ModelTypes.Chat;
+            if (requestType is not (ModelTypes.Chat or ModelTypes.Code))
+            {
+                await WriteCompatErrorAsync(http, "设计授权的模型用途无效", "invalid_request_error", "RUNTIME_GRANT_MODEL_TYPE_INVALID", 400);
+                return;
+            }
             var ingress = new GatewayIngressRequest
             {
                 RequestId = requestId,
@@ -1261,11 +1266,20 @@ public static class GatewayHttpEndpoints
                 }, jsonOpts, statusCode: StatusCodes.Status403Forbidden);
             }
             using var _ = OpenContextScope(accessor, ingress.Context, body.ModelType, ingress.AppCallerCode);
-            var resolution = GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(resolveAuthorization?.RuntimeGrant) || string.IsNullOrWhiteSpace(body.OfferingId)
-                ? await gateway.ResolveModelAsync(
+            if (body.ReadOnlyMetadata && !string.IsNullOrWhiteSpace(body.OfferingId))
+                return Results.Json(new { error = new { code = "METADATA_OFFERING_RECOVERY_NOT_ALLOWED" } },
+                    jsonOpts, statusCode: StatusCodes.Status400BadRequest);
+            // 只读解析不认领执行租约；sidecar 仍只能使用签发许可中的可信路由。
+            var metadataOnly = GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(resolveAuthorization?.RuntimeGrant)
+                || string.IsNullOrWhiteSpace(body.OfferingId);
+            var resolution = metadataOnly
+                ? await gateway.ResolveModelMetadataAsync(
                     ingress.AppCallerCode, body.ModelType, ingress.ExpectedModel, ingress.PinnedPlatformId, ingress.PinnedModelId, CancellationToken.None)
                 : await gateway.ResolveOfferingAsync(
-                    ingress.AppCallerCode, body.ModelType, body.OfferingId, CancellationToken.None);
+                    ingress.AppCallerCode, body.ModelType, body.OfferingId!, CancellationToken.None);
+            if (metadataOnly)
+                http.Response.Headers[PrdAgent.Core.LlmGateway.ILlmGateway.MetadataResolutionPurposeHeader]
+                    = PrdAgent.Core.LlmGateway.ILlmGateway.ReadOnlyMetadataPurpose;
             return Results.Json(resolution, jsonOpts);
         });
 
@@ -6673,7 +6687,8 @@ public sealed record ResolveRequestDto(
     string? ModelPolicy = null,
     string? ModelPoolId = null,
     GatewayRequestContext? Context = null,
-    string? OfferingId = null);
+    string? OfferingId = null,
+    bool ReadOnlyMetadata = false);
 
 // /gw/v1/client-stream 的请求体 DTO（PascalCase）。Messages 用 Core 的 LLMMessage，
 // 与 MAP 侧 HttpLlmClient 序列化口径一致。

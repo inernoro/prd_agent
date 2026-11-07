@@ -20,6 +20,55 @@ public sealed class DesignArtifactRunRecoveryTests
 {
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task PresentationPartialDraftRecovery_ReusesExactPackageAndNeverDeletesAMismatchingHistory()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync("ppt_partial_draft");
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("ppt-partial-draft", now);
+        run.ContractVersion = DesignArtifactContractVersions.Current;
+        run.Runtime = DesignArtifactRuntimes.OpenDesign;
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.Operation = DesignArtifactOperations.Edit;
+        run.TargetSiteId = "existing-ppt";
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var claimed = await HostedSiteEditRunWorker.TryClaimAsync(fixture.Db, run.Id, "new-worker", now,
+            TimeSpan.FromMinutes(2), CancellationToken.None);
+        var files = BuildDesignWorkspaceFiles();
+        var html = Encoding.UTF8.GetString(Convert.FromBase64String(files.Single(file => file.Path == "index.html").ContentBase64));
+        var draft = new HostedSiteRevision
+        {
+            Id = "saved-before-produced-write", SiteId = run.TargetSiteId, CreatedByUserId = run.UserId,
+            SourceRunId = run.Id, Runtime = run.Runtime, Status = HostedSiteRevisionStatuses.Draft,
+            ParentRevisionId = "original", BasedOnContentVersion = now, Html = html,
+            VerifiedFiles = files.Select(file => new HostedSiteRevisionFile { Path = file.Path,
+                Content = Convert.FromBase64String(file.ContentBase64), Sha256 = file.Sha256, MimeType = file.MediaType }).ToList(),
+        };
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(draft);
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var parent = new HostedSiteRevision { Id = "original", SiteId = run.TargetSiteId };
+        var editable = new HostedSiteEditableEntry(new HostedSite { Id = run.TargetSiteId }, html, now);
+        var saved = await HostedSiteEditRunWorker.PersistArtifactWithLeaseAsync(fixture.Db, claimed!, "new-worker",
+            html, parent, editable, sites.Object, revisions.Object, now, TimeSpan.FromMinutes(2), CancellationToken.None, files);
+        Assert.Equal(draft.Id, saved.RevisionId);
+        Assert.Equal(files.Count, draft.VerifiedFiles.Count);
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+
+        // 任一资源字节变化都不得当成原产物承接，也不能借补偿删除这份既存历史。
+        draft.VerifiedFiles[1].Content = Encoding.UTF8.GetBytes("synthetic changed resource");
+        draft.VerifiedFiles[1].Sha256 = Convert.ToHexString(SHA256.HashData(draft.VerifiedFiles[1].Content)).ToLowerInvariant();
+        await fixture.Db.HostedSiteRevisions.UpdateOneAsync(item => item.Id == draft.Id,
+            Builders<HostedSiteRevision>.Update.Set(item => item.VerifiedFiles, draft.VerifiedFiles));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => HostedSiteEditRunWorker.PersistArtifactWithLeaseAsync(
+            fixture.Db, claimed!, "new-worker", html, parent, editable, sites.Object, revisions.Object, now,
+            TimeSpan.FromMinutes(2), CancellationToken.None, files));
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
+        sites.VerifyNoOtherCalls();
+        revisions.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task RejectedWorkspaceResultCleanup_ShouldRetryFromDurableRunState()
     {
         await using var fixture = await RunMongoFixture.CreateAsync("design_run_recovery");
@@ -2030,6 +2079,17 @@ public sealed class DesignArtifactRunRecoveryTests
             ],
         };
         await fixture.Db.HostedSites.InsertOneAsync(site);
+        // 此用例只验证上传阶段 CAS 失败，提供已归档的当前基线，避免归档上传先触发竞争。
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = "baseline-reupload-cas-loser", SiteId = site.Id,
+            Status = HostedSiteRevisionStatuses.Published, PublishedContentVersion = now,
+            PublishedEntryCosKey = "web-hosting/sites/" + site.Id + "/.versions/" + new string('a', 32) + "/index.html",
+            PublishedAssetKeys = ["web-hosting/sites/" + site.Id + "/.versions/" + new string('a', 32) + "/index.html"],
+            PublishedEntryFile = "index.html", CapturedContentShape = HostedSiteContentShapes.SelfContainedHtml,
+        });
+        site.Files[0].CosKey = "web-hosting/sites/" + site.Id + "/.versions/" + new string('a', 32) + "/index.html";
+        await fixture.Db.HostedSites.ReplaceOneAsync(x => x.Id == site.Id, site);
         string? uploadedKey = null;
         var deleted = new List<string>();
         var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
@@ -2065,7 +2125,8 @@ public sealed class DesignArtifactRunRecoveryTests
         Assert.Contains(uploadedKey, afterFailure.PendingAssetCleanupKeys);
         Assert.Empty(afterFailure.AssetPublishInProgressKeys);
         Assert.True(await service.ResumeNextPendingAssetCleanupAsync(now.AddMinutes(10), CancellationToken.None));
-        Assert.Equal([uploadedKey!], deleted);
+        Assert.Equal(["web-hosting/sites/" + site.Id + "/index.html", uploadedKey!], deleted);
+        Assert.DoesNotContain(site.Files[0].CosKey, deleted);
         storage.VerifyAll();
     }
 

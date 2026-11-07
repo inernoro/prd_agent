@@ -1,3 +1,4 @@
+import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
@@ -10,6 +11,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { SelfMaintenanceRuntime } from './services/self-maintenance-runtime.js';
+import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
@@ -31,6 +34,7 @@ import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
+import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
@@ -568,6 +572,8 @@ export interface ServerDeps {
   gracefulShutdown?: GracefulShutdownController;
   /** Resources must settle before the shared execution pools close. */
   registerResourceShutdown?: (close: () => Promise<void>) => void;
+  /** 同一服务器的维护owner、执行能力与纯状态/健康投影。 */
+  selfMaintenanceRuntime?: SelfMaintenanceRuntime;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -911,6 +917,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/integrations/bug-report/authorize': '接收 MAP 缺陷转发授权',
     'POST /cds-system/integrations/bug-report/test': '测试缺陷转发接入',
     'GET /cds-system/connections': '列出配对连接',
+    'GET /instance-catalog': '查看主备 CDS 实例目录',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/offsite-backup': '查询离机备份配置',
     'PUT /cds-system/offsite-backup': '保存离机备份配置',
@@ -1418,6 +1425,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    [/^GET \/projects\/[^/]+\/access-status$/, '核对原项目访问恢复状态'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
     [/^POST \/bootstrap-access-requests$/, '发起新项目接入申请'],
@@ -1565,11 +1573,15 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (method === 'POST' && path === '/api/identity-connections') return true;
+  if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && /^\/api\/identity-connections\/[^/]+\/ack$/.test(path)) return true;
   if (isPublicAgentSetupRoute(method, path)) return true;
+  if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-status$/.test(path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
-  if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
+  if ((method === 'GET' || method === 'DELETE') && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
@@ -1835,6 +1847,13 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
+    deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
+      action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
+      details: { selfMaintenance: view } });
+    console.warn('[self-maintenance] CDS 维护写者正在停止或等待清理确认，请检查维护状态。');
+  });
+  deps.registerResourceShutdown?.(() => selfMaintenance.close());
   app.disable('x-powered-by');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
@@ -1856,7 +1875,10 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     ),
   );
-  const deploymentRunService = new DeploymentRunService(deps.stateService);
+  const deploymentRunService = new DeploymentRunService(deps.stateService, {
+    isExecutionWaiting: (run, now) => Boolean(run.operationId && run.operationGeneration !== undefined
+      && (deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt || 0) > now.getTime()),
+  });
   if (deps.branchOperationCoordinator && deps.config.mode !== 'executor') {
     const restored = deploymentRunService.restoreQueued(deps.branchOperationCoordinator);
     if (restored.length) console.warn(`[deployment-run] 已恢复 ${restored.length} 个尚未执行的排队意图`);
@@ -2090,6 +2112,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
+    // 纯判据不执行命令/取消/释放；公开check只给布尔，不暴露维护身份或assignment。
+    checks.selfMaintenance = { ok: selfMaintenance.isHealthy() };
+    if (!checks.selfMaintenance.ok) overallOk = false;
 
     // Check 1: state readable — plus 暴露 backing store kind 到 detail
     // 供"Mongo 模式是否真正生效"这类无认证诊断。不泄漏 URI/credentials。
@@ -2754,6 +2779,7 @@ export function createServer(deps: ServerDeps): express.Express {
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
       isPendingReplay: pendingReplayGate.isTrusted,
+      isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
     }));
@@ -3470,6 +3496,10 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
 
+  // esbuild将发布入口扁平到dist，目录回退应与实际SPA产物同址。
+  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot,
+    path.resolve(__dirname, '..', 'web', 'dist', 'cds-instances.json')));
+
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
 
@@ -3792,6 +3822,7 @@ export function createServer(deps: ServerDeps): express.Express {
         pidStartedAt,
         restartStatus,
         restartWait,
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,
@@ -3816,6 +3847,7 @@ export function createServer(deps: ServerDeps): express.Express {
         runningPid: process.pid,
         pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
         restartStatus: 'not_required',
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: null,
         selfUpdateHistory: [],
         webBuildSha: '',
@@ -4024,6 +4056,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
+    res.flushHeaders();
     activityClients.add(res);
     // Send buffered history
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
@@ -4575,6 +4608,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
   app.use('/api', createIdentityRouter({ stateService: deps.stateService, authService: authService ?? undefined }));
+  if (authService) app.use('/api', createIdentityConnectionsRouter({ stateService: deps.stateService, authService }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
@@ -4673,6 +4707,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
   app.use('/api', (req, res, next) => {
     if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    // Let already accepted, authenticated queued work drain to completion.
+    if (pendingReplayGate.isTrusted(req)) { next(); return; }
     const draining = selfUpdateDrainBlockReason(Date.now());
     if (!draining) { next(); return; }
     res.setHeader('Retry-After', '60');
@@ -5025,6 +5061,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
 
   app.use('/api', createBranchRouter({
+    selfMaintenanceRuntime: selfMaintenance,
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
     containerService: deps.containerService,

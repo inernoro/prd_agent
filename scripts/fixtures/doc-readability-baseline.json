@@ -32,7 +32,7 @@
     "design": 178,
     "plan": 21,
     "rule": 41,
-    "guide": 102,
+    "guide": 101,
     "report": 52,
     "debt": 213
   },
@@ -584,12 +584,6 @@
       "bare": 0,
       "impl": 0,
       "src": 7
-    },
-    "guide.platform.mcp-connector.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 1
     },
     "guide.platform.mongodb-indexes.md": {
       "missing": 0,

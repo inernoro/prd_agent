@@ -1,3 +1,5 @@
+import { InstanceSwitcher } from '@/components/InstanceSwitcher';
+import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
@@ -9,6 +11,7 @@ import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
+import { ListLoadingBoundary, ListLoadingFeedback } from '@/components/skeletons/ListLoadingBoundary';
 import {
   requestAgentAccess,
   resolveAgentPageContext,
@@ -134,6 +137,11 @@ export function canManageSystemSettings(status: ShellAuthStatus | null): boolean
   return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
 }
 
+/** Loading contour only: verified ticket SSO manages projects without being a system owner. */
+export function canShowProjectActions(status: ShellAuthStatus | null): boolean {
+  return canManageSystemSettings(status) || status?.mode === 'sso';
+}
+
 export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通账号，请联系系统所有者切换为多域名预览。';
 
 /** Simple/port previews require owner routing writes; members retain multi-domain previews. */
@@ -150,6 +158,10 @@ export const ConsoleAuthContext = createContext<{
 /** UI affordances use the same server-authenticated owner decision as route mounting. */
 export function useCanManageConsole(): boolean {
   return canManageSystemSettings(useContext(ConsoleAuthContext).status);
+}
+
+export function useCanShowProjectActions(): boolean {
+  return canShowProjectActions(useContext(ConsoleAuthContext).status);
 }
 
 /** Never mount owner pages (and their effects) for members or unresolved authentication. */
@@ -218,12 +230,15 @@ function activeNavKeyFor(pathname: string): AppNavKey {
  */
 export function ConsoleLayout(): JSX.Element {
   const { pathname } = useLocation();
+  const listPage = pathname === '/project-list' || pathname === '/branch-list' || pathname.startsWith('/branches/');
   return (
     <ShellFrameContext.Provider value={true}>
       <ShellChrome active={activeNavKeyFor(pathname)}>
-        <Suspense fallback={<ConsoleRouteFallback />}>
-          <Outlet />
-        </Suspense>
+        <ListLoadingBoundary key={pathname} enabled={listPage}>
+          <Suspense fallback={<ConsoleRouteFallback />}>
+            <Outlet />
+          </Suspense>
+        </ListLoadingBoundary>
       </ShellChrome>
     </ShellFrameContext.Provider>
   );
@@ -236,22 +251,31 @@ export function ConsoleLayout(): JSX.Element {
  */
 function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
+  const scene = loadingSceneForPath(pathname);
+  const canManageProjects = useCanShowProjectActions();
+  const projectList = pathname === '/project-list';
+  const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
+  const listPage = projectList || branchList;
   return (
     <>
-      <header className="cds-topbar" aria-hidden>
+      {listPage ? <TopBar
+        left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
+        center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
+      /> : <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
           <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
         </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
-      </header>
+      </header>}
       <main className="cds-main">
         {/*
           骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className="cds-workspace cds-workspace--fluid" role="status" aria-label="页面加载中">
-          {pageSkeletonForPath(pathname)}
+        <div className={cn('cds-workspace cds-workspace--fluid', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
+          {pageSkeletonForPath(pathname, { canManageProjects })}
+          <ListLoadingFeedback />
         </div>
       </main>
     </>
@@ -410,6 +434,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
         active={active}
+        authPending={authPending || !authStatus}
         canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
@@ -424,6 +449,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         open={navOpen}
         onClose={() => setNavOpen(false)}
         active={active}
+        authPending={authPending || !authStatus}
         canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
@@ -495,6 +521,7 @@ export function PaletteHint(): JSX.Element | null {
 
 interface RailNavProps {
   active: AppNavKey;
+  authPending?: boolean;
   canManageSettings: boolean;
   canLogout: boolean;
   authMode?: string;
@@ -511,6 +538,7 @@ interface RailNavProps {
  */
 function RailNav({
   active,
+  authPending = false,
   canManageSettings,
   canLogout,
   authMode,
@@ -666,7 +694,7 @@ function RailNav({
           <span className="cds-rail-full">系统设置</span>
           <span className="cds-rail-short">设置</span>
         </Link>
-        </> : (
+        </> : !authPending ? (
           <Link to="/cds-settings#activity" className="cds-rail-item"
             data-active={active === 'cds-settings' ? 'true' : 'false'}
             aria-label="个人操作痕迹" title="查看自己的操作记录" onClick={onNavigate}>
@@ -674,7 +702,7 @@ function RailNav({
             <span className="cds-rail-full">个人操作痕迹</span>
             <span className="cds-rail-short">痕迹</span>
           </Link>
-        )}
+        ) : null}
       </div>
       <div className="cds-rail-footer">
         <RailThemeToggle />
@@ -1121,6 +1149,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             : null}
         </div>
       ) : null}
+      <InstanceSwitcher />
       <div id="cds-information-center-host" className="relative shrink-0" />
     </header>
   );
@@ -1210,6 +1239,7 @@ export function Workspace({ wide = false, fluid = false, className, children }: 
       )}
     >
       {children}
+      <ListLoadingFeedback />
     </div>
   );
 }

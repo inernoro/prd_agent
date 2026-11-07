@@ -292,6 +292,7 @@ export class BranchOperationCoordinator {
   private generations = new Map<string, number>();
 
   private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
+  private readonly normalShutdownPendingGuards = new Set<(pending: PendingWebhookDeploy) => boolean>();
 
   constructor(private readonly events?: ServerEventLogSink | null) {}
 
@@ -369,6 +370,20 @@ export class BranchOperationCoordinator {
     if (!this.deploymentInputs.has(key)) this.deploymentInputs.set(key, structuredClone(input));
   }
 
+  /** 原受理输入仍由协调器的既有终态负责释放；仅在进程内提取镜像引用。 */
+  getDeploymentImageReferences(resolve: (request: Readonly<BranchOperationRequest>, input: Readonly<DeploymentInputSnapshot>) => readonly string[]): string[] {
+    const owners = [...this.active.values(), ...this.pendingWebhookDeploys.values(), ...this.reservedContinuations.values(),
+      ...[...this.pendingReplayClaims.values()].map(claim => claim.pending)];
+    const seen = new Set<string>(), images = new Set<string>();
+    for (const owner of owners) {
+      const key = this.replayKey(owner), input = this.deploymentInputs.get(key);
+      if (!input || seen.has(key)) continue;
+      seen.add(key);
+      for (const image of resolve(owner.request, input)) if (image) images.add(image);
+    }
+    return [...images];
+  }
+
   /** HTTP 鉴权只读当前领取的公开身份；不暴露私有配置，begin 仍原子消费并复核。 */
   getClaimedPendingReplay(input: BranchOperationRequest['pendingReplay']): PendingWebhookDeploy | undefined {
     this.prunePendingReplayClaims();
@@ -411,6 +426,11 @@ export class BranchOperationCoordinator {
   onOperationEnded(listener: (operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void): () => void {
     this.operationEndListeners.add(listener);
     return () => this.operationEndListeners.delete(listener);
+  }
+
+  onNormalShutdownPending(guard: (pending: PendingWebhookDeploy) => boolean): () => void {
+    this.normalShutdownPendingGuards.add(guard);
+    return () => this.normalShutdownPendingGuards.delete(guard);
   }
 
   hasWaitingOperation(operationId: string, generation: number): boolean {
@@ -611,6 +631,25 @@ export class BranchOperationCoordinator {
     return this.finishAndDrain(lease, status, error, Infinity);
   }
 
+  /** 运行收割只撤销已失败的确切执行身份，保留后继待办给既有派发器领取。 */
+  revokeInterrupted(identity: {
+    operationId: string; generation: number; branchId: string; projectId: string; profileId?: string;
+  }): boolean {
+    const entry = this.findActiveEntryByOperation(identity.operationId);
+    const active = entry?.active;
+    if (!entry || !active || active.generation !== identity.generation
+      || active.branchId !== identity.branchId
+      || (active.request.projectId || 'default') !== identity.projectId
+      || (active.request.profileId || undefined) !== identity.profileId) return false;
+    active.cancelled = true;
+    active.cancelReason = 'deployment run heartbeat expired';
+    this.active.delete(entry.key);
+    this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
+      reason: active.cancelReason,
+    });
+    return true;
+  }
+
   private finishAndDrain(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error: string | undefined, limit: number): PendingWebhookDeploy[] {
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;
@@ -681,7 +720,27 @@ export class BranchOperationCoordinator {
     }
   }
 
-  interruptAll(reason: string, source: string): void {
+  /** 最终交接不能撤销仍有执行资格的操作；已领取待办与保留续步也属于在途。 */
+  isQuiescentForRestart(): boolean {
+    return this.getRestartBlockingOperations().length === 0;
+  }
+
+  getRestartBlockingOperations(): Array<{ operationId: string; branchId: string }> {
+    this.prunePendingReplayClaims();
+    this.pruneReservedContinuations();
+    return [...this.active.values(), ...[...this.pendingReplayClaims.values()].map(claim => claim.pending),
+      ...this.reservedContinuations.values()];
+  }
+
+  /** 排空与正常交接只保留同一原身份、尚未领取且没有执行资格的待办。 */
+  getUnclaimedPending(operationId: string, generation: number): PendingWebhookDeploy | undefined {
+    const same = (item: { operationId: string; generation: number }) => item.operationId === operationId && item.generation === generation;
+    if ([...this.active.values()].some(same) || [...this.pendingReplayClaims.values()].some(claim => same(claim.pending))
+      || [...this.reservedContinuations.values()].some(same)) return undefined;
+    return [...this.pendingWebhookDeploys.values()].find(same);
+  }
+
+  interruptAll(reason: string, source: string, options: { normalShutdown?: boolean } = {}): void {
     this.artifactTargetReads.clear();
     for (const active of this.active.values()) {
       this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
@@ -692,7 +751,21 @@ export class BranchOperationCoordinator {
         cancelReason: active.cancelReason || null,
       });
     }
-    for (const pending of this.pendingWebhookDeploys.values()) {
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      const { operationId, generation } = pending;
+      const unclaimed = this.getUnclaimedPending(operationId, generation) === pending;
+      const preserved = options.normalShutdown === true && unclaimed && [...this.normalShutdownPendingGuards].some(guard => {
+        try { return guard(pending); } catch { return false; }
+      });
+      if (preserved && this.pendingWebhookDeploys.get(key) === pending
+        && pending.operationId === operationId && pending.generation === generation) {
+        this.pendingWebhookDeploys.delete(key);
+        this.deploymentInputs.delete(this.replayKey({ operationId, generation }));
+        this.record('branch.operation.deferred', pending.request, operationId, generation, 'info', {
+          reason, source, pending: true, preserved: true,
+        });
+        continue;
+      }
       this.record('branch.operation.interrupted', pending.request, pending.operationId, pending.generation, 'warn', {
         reason,
         source,
@@ -715,6 +788,12 @@ export class BranchOperationCoordinator {
         continueWith: reserved.continueWith,
       });
     }
+    // 取消重启后进程仍会服务；撤销旧运行许可，但保留代次与生命周期监听。
+    this.active.clear();
+    this.pendingWebhookDeploys.clear();
+    this.reservedContinuations.clear();
+    this.pendingReplayClaims.clear();
+    this.deploymentInputs.clear();
   }
 
   isCurrent(branchId: string, operationId: string, generation: number): boolean {
@@ -964,16 +1043,21 @@ export class BranchOperationCoordinator {
   }
 
   private getUsableReservedContinuation(branchId: string, request?: BranchOperationRequest): ReservedContinuation | null {
+    this.pruneReservedContinuations(branchId, request);
+    return [...this.reservedContinuations.values()].find(reserved => reserved.branchId === branchId
+      && (!request || this.operationsConflict(request, reserved.request))) || null;
+  }
+
+  private pruneReservedContinuations(branchId?: string, request?: BranchOperationRequest): void {
     for (const [key, reserved] of this.reservedContinuations) {
-      if (reserved.branchId !== branchId || (request && !this.operationsConflict(request, reserved.request))) continue;
-      if (Date.now() <= reserved.expiresAt) return reserved;
+      if ((branchId && reserved.branchId !== branchId) || (request && !this.operationsConflict(request, reserved.request))) continue;
+      if (Date.now() <= reserved.expiresAt) continue;
       this.reservedContinuations.delete(key);
       this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
         reason: 'reserved continuation expired', reserved: true,
       });
-      this.cancelPendingWebhookDeploy(branchId, 'reserved continuation expired before manual deploy continuation arrived', {}, reserved.request);
+      this.cancelPendingWebhookDeploy(reserved.branchId, 'reserved continuation expired before manual deploy continuation arrived', {}, reserved.request);
     }
-    return null;
   }
 
   private cancelReservedContinuations(request: BranchOperationRequest, reason: string): void {
@@ -1124,7 +1208,7 @@ export class BranchOperationCoordinator {
       severity,
       source: 'branch-operation-coordinator',
       action,
-      message: `${action}: ${request.branchId} ${request.kind}`,
+      message: action === 'branch.operation.deferred' ? '保留原待办，重启后待校验' : `${action}: ${request.branchId} ${request.kind}`,
       projectId: request.projectId || null,
       branchId: request.branchId,
       profileId: request.profileId || null,

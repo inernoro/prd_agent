@@ -9,6 +9,7 @@ import {StateService} from '../../src/services/state.js';
 import {ContainerService} from '../../src/services/container.js';
 import {WorktreeService} from '../../src/services/worktree.js';
 import {BranchOperationCoordinator} from '../../src/services/branch-operation-coordinator.js';
+import {DeploymentRunService} from '../../src/services/deployment-run.js';
 import {createBranchRouter} from '../../src/routes/branches.js';
 import {createPendingImportRouter} from '../../src/routes/pending-import.js';
 import {createProjectsRouter} from '../../src/routes/projects.js';
@@ -24,7 +25,8 @@ beforeEach(async()=>{
  if(c.startsWith('docker volume create')){const row=state.getStorageBirth(name)!;volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stdout:name,stderr:''}}throw Error('unexpected fixture command');})} as IShellExecutor;
  const config={repoRoot:root,worktreeBase:root,storageInstanceId:'own',dockerNetwork:'own',portStart:10001,masterPort:9900,workerPort:5500,sharedEnv:{},jwt:{secret:'own-fixture',issuer:'own'}} as CdsConfig;
  const app=express();app.use(express.json());app.use((req,_res,next)=>{(req as any).cdsProjectKey={projectId:String(req.headers['x-own-project']||'p'),keyId:'fixture'};next()});
- app.use('/api',createBranchRouter({stateService:state,containerService:new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector),worktreeService:new WorktreeService(shell,config),shell,config,branchOperationCoordinator:coordinator,registry:{getAll:()=>nodes,getOnline:()=>nodes,selectExecutor:()=>nodes[0]||null} as any}));
+ const runs=new DeploymentRunService(state);runs.bindOperationCoordinator(coordinator);
+ app.use('/api',createBranchRouter({stateService:state,containerService:new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector),worktreeService:new WorktreeService(shell,config),shell,config,branchOperationCoordinator:coordinator,deploymentRunService:runs,registry:{getAll:()=>nodes,getOnline:()=>nodes,selectExecutor:()=>nodes[0]||null} as any}));
  app.use('/api',createPendingImportRouter({stateService:state}));
  app.use('/api',createProjectsRouter({stateService:state,shell,config}));
  server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
@@ -55,7 +57,7 @@ function lateExecutor() {
  const now=new Date().toISOString();
  nodes.push({id:'late-remote',role:'remote',host:'127.0.0.1',port:1,status:'online',labels:[],branches:[],capacity:{maxBranches:10,memoryMB:1024,cpuCores:2},load:{memoryUsedMB:0,cpuPercent:0},registeredAt:now,lastHeartbeat:now});
  const calls:Array<{url:string;body:any}>=[];
- vi.stubGlobal('fetch',async(input:any,init:any)=>{calls.push({url:String(input),body:JSON.parse(init.body)});return new Response('event: complete\ndata: {"ok":true,"services":{"app":{"status":"running"}}}\n\n',{status:200});});
+ vi.stubGlobal('fetch',async(input:any,init:any)=>{if(String(input).endsWith('/exec/deployment-owner'))return new Response(JSON.stringify({qualified:true,admissionId:'fixture-admission'}));calls.push({url:String(input),body:JSON.parse(init.body)});return new Response('event: complete\ndata: {"ok":true,"services":{"app":{"status":"running"}}}\n\n',{status:200});});
  return calls;
 }
 it.each(['explicit','auto','sticky'])('late %s remote placement cannot drop published local P mounts',async placement=>{

@@ -43,6 +43,7 @@ interface Job {
   cleanup: boolean;
   bytes: number;
   dataTail: Promise<void>;
+  ackBytes: number;
   deadline: number;
   timer?: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
@@ -81,8 +82,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private startTimer?: NodeJS.Timeout;
   private startedMonotonic = 0;
   private readonly lifecycle: PoolLifecycle = {};
-  private startupRestartPending = false;
-  private startupRestartCleanedGeneration?: number;
+  private startupRestartTargetGeneration?: number;
+  private startupCleanedGeneration = 0;
   private stopping?: Promise<void>;
   private closing?: Promise<void>;
   private readonly concurrency: number;
@@ -189,7 +190,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     const timeout = continuous ? Infinity : options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : this.defaultTimeoutMs;
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
-      const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, onAssigned: options.onAssigned, cleanup, bytes, dataTail: Promise.resolve(), active: false,
+      const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, onAssigned: options.onAssigned, cleanup, bytes, dataTail: Promise.resolve(), ackBytes: 0, active: false,
         deadline: performance.now() + timeout, timer: continuous ? undefined : setTimeout(() => this.cancel(id, 'deadline'), Math.min(timeout, 2_147_483_647)), signal: options.signal, resolve, reject };
       if (job.signal) { job.abort = () => this.cancel(id, 'cancelled'); job.signal.addEventListener('abort', job.abort, { once: true }); }
       this.jobs.set(id, job); this.queue.push(job); this.bytes += bytes; if (cleanup) this.cleanupBytes += bytes;
@@ -213,14 +214,15 @@ export class IsolatedShellExecutor implements IShellExecutor {
         this.factoryGeneration = message.generation; this.factoryProcessPid = message.pid; this.supervisorMetrics = message.supervisorMetrics; this.factoryMetrics = undefined;
         return;
       }
+      // 首代started尚未被观察时也可确认它已清理；只记水位，不清理新代状态。
+      if (message.type === 'factory-cleaned' && Number.isSafeInteger(message.generation)
+        && (message.generation === 1 || message.generation === this.factoryGeneration)) {
+        this.startupCleanedGeneration = Math.max(this.startupCleanedGeneration, message.generation);
+      }
       if (message.generation !== this.factoryGeneration) return;
       if (message.factoryMetrics) this.factoryMetrics = message.factoryMetrics;
       if (message.type === 'factory-resetting') { this.ready = false; this.unavailable = true; return; }
       if (message.type === 'factory-cleaned') {
-        if (this.startupRestartPending) {
-          this.startupRestartPending = false;
-          this.startupRestartCleanedGeneration = message.generation;
-        }
         this.actors.clear(); this.factoryProcessPid = undefined; this.factoryMetrics = undefined; this.supervisorMetrics = message.supervisorMetrics;
         for (const job of [...this.jobs.values()]) this.finish(job, undefined, 'unavailable');
         return;
@@ -242,7 +244,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
     }
     if (message.type === 'fatal') { void this.failPool('factory-fatal'); return; }
     if (message.type === 'ready' && !this.closed && (!this.unavailable || this.supervised && !this.failed && !this.stopping)
-      && (!this.supervised || !this.startupRestartPending && (this.startupRestartCleanedGeneration === undefined || this.factoryGeneration > this.startupRestartCleanedGeneration))) {
+      && (!this.supervised || this.startupRestartTargetGeneration === undefined
+        || this.factoryGeneration > this.startupRestartTargetGeneration && this.startupCleanedGeneration >= this.startupRestartTargetGeneration)) {
       const recoveredInitialStart = !!this.lifecycle.startupFailure && !this.lifecycle.readyAt;
       this.lifecycle.readyAt ??= new Date().toISOString();
       this.lifecycle.readyElapsedMs ??= Math.round(performance.now() - this.startedMonotonic);
@@ -272,7 +275,12 @@ export class IsolatedShellExecutor implements IShellExecutor {
     } else if (message.type === 'data') {
       job.dataTail = job.dataTail.then(async () => {
         if (!job.failure) await job.onData?.(message.chunk, message.channel);
-        this.send({ type: 'ack', id: job.id, bytes: message.bytes });
+        // 32KiB低于原64KiB低水位；仅合并已消费字节，不扩大帧、窗口或缓存。
+        job.ackBytes += message.bytes;
+        if (job.ackBytes >= 32 * 1024) {
+          this.send({ type: 'ack', id: job.id, bytes: job.ackBytes });
+          job.ackBytes = 0;
+        }
       }).catch(() => { this.cancel(job.id, 'callback'); });
     } else if (message.type === 'result') {
       const actor = [...this.actors.values()].find(actor => actor.pid === message.pid);
@@ -357,11 +365,12 @@ export class IsolatedShellExecutor implements IShellExecutor {
     if (this.closed || this.failed || this.ready) return;
     // 原首次5秒照常失败；旧请求不重放。保留预热监督者清理旧代并按原恢复预算替换工厂。
     this.recordPoolFailure('startup-deadline');
-    this.startupRestartPending = true;
+    // initialize的首代固定为1；迟到回调不能把恢复目标重新解析成当前替换代。
+    this.startupRestartTargetGeneration = 1;
     this.ready = false; this.unavailable = true;
     this.startReject?.(this.executionError('unavailable'));
     for (const job of [...this.jobs.values()]) this.finish(job, undefined, 'unavailable');
-    this.send({ type: 'restart-after-startup-deadline' });
+    this.send({ type: 'restart-after-startup-deadline', generation: this.startupRestartTargetGeneration });
   }
   private async failPool(reason: PoolFailureReason): Promise<void> {
     if (this.failed) return;

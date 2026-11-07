@@ -18,6 +18,8 @@ export interface MarketplaceSkillDto {
   forkCount: number;
   createdAt: string;
   updatedAt?: string;
+  /** 内容编辑时间；旧记录为空时使用上传时间，不能用包含收藏/下载活动的 updatedAt 替代。 */
+  contentUpdatedAt?: string | null;
   ownerUserId: string;
   ownerUserName: string;
   ownerUserAvatar?: string | null;
@@ -68,10 +70,13 @@ export interface MarketplaceSkillTagCount {
 
 // === Contracts ===
 
+export type MarketplaceSkillScope = 'all' | 'favorites' | 'mine';
+
 export type ListMarketplaceSkillsContract = (input: {
   keyword?: string;
   sort?: 'hot' | 'new';
   tag?: string;
+  scope?: MarketplaceSkillScope;
 }) => Promise<ApiResponse<{ items: MarketplaceSkillDto[] }>>;
 
 /** 当前用户收藏的技能列表（供"我的空间"消费） */

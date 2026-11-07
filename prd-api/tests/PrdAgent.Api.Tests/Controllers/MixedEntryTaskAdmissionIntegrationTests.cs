@@ -215,7 +215,8 @@ public sealed class MixedEntryTaskAdmissionIntegrationTests
             new SkillZipMetadataExtractor(), _config, _factory.Object, NullLogger<MarketplaceSkillsController>.Instance, new MemoryCache(new MemoryCacheOptions())), nameof(MarketplaceSkillsController.Upload));
         internal DefectAgentController Defect() => Attach(new DefectAgentController(Business, _gateway, NullLogger<DefectAgentController>.Instance,
             _storage.Object, Mock.Of<ICacheManager>(), null!, Mock.Of<IOpenPlatformService>(), _accessor, Mock.Of<IAgentApiKeyService>(), _config,
-            _factory.Object, new DefectPolishService(_gateway, Business, NullLogger<DefectPolishService>.Instance), new AdminPushDispatchSignal()), nameof(DefectAgentController.StreamScores));
+            _factory.Object, new DefectPolishService(_gateway, Business, NullLogger<DefectPolishService>.Instance), new AdminPushDispatchSignal(),
+            new HistoricalAssetUrlResolver(_config, _factory.Object)), nameof(DefectAgentController.StreamScores));
         internal ReviewAgentController Review() => Attach(new ReviewAgentController(Business, _gateway, NullLogger<ReviewAgentController>.Instance,
             new ReviewWebhookService(Business, _factory.Object, NullLogger<ReviewWebhookService>.Instance, _config, Mock.Of<ISafeOutboundUrlValidator>()), _storage.Object), nameof(ReviewAgentController.StreamReviewResult));
         private T Attach<T>(T controller, string action) where T : ControllerBase

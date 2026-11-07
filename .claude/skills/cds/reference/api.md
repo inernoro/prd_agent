@@ -168,3 +168,22 @@ CLI 未封装的能力不得编造命令。需要 fallback 时先确认认证类
 现有通道的故障入口可用 `cdscli monitor incident-page --file` 更新。私有文件提供 channelId 与 incidentPageUrl；CLI 先读当前通道，再使用已有管理员 PUT 接口保留其他配置，地址限 HTTPS 且不得含登录凭据。
 
 管理员使用 `cdscli monitor identity` 读取，或 `--file` 从私有 JSON 文件更新。对应 `GET/PUT /api/cds-system/alarm-identity`，使用与通知通道相同的系统管理员权限；项目 Key 不可读写。配置含当前 instance 与可选 targets，名称与环境必填，自身稳定 ID 由服务端生成且改名不变。真实配置不得作为文档示例提交。
+
+
+## 主备实例目录
+
+`GET /api/instance-catalog`：通过现有 CDS 鉴权后读取仓库根目录 `cds-instances.json`，只返回
+`version` 与实例的 `id/name/role/url`。无配置返回空列表，无效配置返回 503，响应禁止缓存。
+CLI：`instance sync` 同步目录，`instance list` 离线发现；网页与 CLI 使用相同目录格式。
+CLI 优先读取项目根目录；没有时回退技能包 `reference/instance-catalog.json` 的公开快照，
+快照由仓库根目录生成且 CI 对拍。它不包含凭据，不检查站点健康，也不要求当前服务支持目录 API。
+
+`instance recommend` 只读查询当前 `GET /api/host-stats`，返回 `state=normal|high|unknown`、
+CPU 数值、阈值 80%、HTTP 状态和备用列表。备用 `authorization` 是本地授权存在性
+（`required|stored-not-verified`），不代表健康或授权有效；命令不会访问备用或改变选择。
+站点密钥隔离沿用 `instance connect/check/use`，跨站点复用 Key、项目和分支 ID 均被禁止。
+常用部署命令的高负载提示额外出现在顶层 `notices`，正常结果不增加该字段，也不改变原命令退出码。
+负载查询成功、非成功响应、网络失败和解析异常均在本地 `.cds/instance-load-checks/` 留下
+trace、来源、状态、响应类型/哈希及有限 CPU 数值；不保存原始正文、密钥或错误文本。
+
+不返回或复用任何实例 Key，不进行远端探测或写请求转发。

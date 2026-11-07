@@ -12,6 +12,7 @@ on:
     branches: ["**"]
     paths:
       - "cds/**"
+      - "cds-instances.json"
       - ".github/workflows/cds-prebuilt.yml"
       - ".claude/skills/cds/**"
       - ".claude/skills/cds-project-scan/**"
@@ -27,7 +28,8 @@ env:
 jobs:
   build-and-push:
     name: Build & Push CDS Prebuilt
-    runs-on: ubuntu-latest
+    # 浏览器验收与管理端使用同一受支持LTS，避免新runner字体依赖安装超时。
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -49,9 +51,14 @@ jobs:
           node-version: "20"
 
       - name: Install CDS deps
+        timeout-minutes: 10
         run: |
           pnpm -C cds install --frozen-lockfile
           pnpm -C cds/web install --frozen-lockfile
+          pnpm -C cds exec playwright install --with-deps chromium
+
+      - name: Install design runtime test dependencies
+        run: pnpm -C design-runtime/opendesign install --frozen-lockfile
 
       # 类型门：把 self-update 现有的 tsc --noEmit 校验挪到 CI。两端都过才出产物，
       # 等于「预构建产物天生已通过类型检查」，本机自更新不必再花 52s 跑 tsc。
@@ -68,8 +75,33 @@ jobs:
           cd cds
           OUT_DIR=dist node scripts/build-dist-esbuild.mjs
 
+      - name: Verify backend imports without source checkout
+        run: pnpm -C cds exec vitest run tests/services/prebuilt-source-free-import.test.ts
+
       - name: Build web (vite → cds/web/dist)
         run: pnpm -C cds/web build
+
+      - name: Verify loading continuity in a real browser
+        timeout-minutes: 10
+        run: |
+          pnpm -C cds/web exec vite preview --host 127.0.0.1 --port 8870 --strictPort > "$RUNNER_TEMP/cds-loading-preview.log" 2>&1 &
+          CDS_LOADING_PREVIEW_PID=$!
+          trap 'kill "$CDS_LOADING_PREVIEW_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8870/ > /dev/null; then break; fi
+            sleep 1
+          done
+          pnpm -C cds smoke:loading http://127.0.0.1:8870 --out "$RUNNER_TEMP/cds-loading-continuity"
+          CDS_LOADING_EVIDENCE="$RUNNER_TEMP/cds-loading-neighbors" node cds/scripts/loading-coverage-smoke.mjs http://127.0.0.1:8870
+          CDS_SKELETON_EVIDENCE="$RUNNER_TEMP/cds-loading-lists" node cds/scripts/list-loading-smoke.mjs http://127.0.0.1:8870
+
+      - name: Archive loading acceptance failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-loading-failure-${{ github.sha }}
+          path: ${{ runner.temp }}/cds-loading-*
+          retention-days: 7
 
       - name: Write prebuilt manifest
         run: |

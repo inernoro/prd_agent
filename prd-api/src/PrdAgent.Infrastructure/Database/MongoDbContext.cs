@@ -358,6 +358,7 @@ public class MongoDbContext
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 
     // Web Hosting 网页托管与分享
+    public IMongoCollection<HostedDocumentGroup> HostedDocumentGroups => _database.GetCollection<HostedDocumentGroup>("hosted_document_groups");
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");
     public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
@@ -1753,6 +1754,15 @@ public class MongoDbContext
         ArenaBattles.Indexes.CreateOne(new CreateIndexModel<ArenaBattle>(
             Builders<ArenaBattle>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_arena_battles_user_created" }));
+
+        // 一份文档只属于一个导航组；唯一多值索引同时防止并发添加到两个组。
+        HostedDocumentGroups.Indexes.CreateOne(new CreateIndexModel<HostedDocumentGroup>(
+            Builders<HostedDocumentGroup>.IndexKeys.Ascending(x => x.SiteIds),
+            new CreateIndexOptions { Unique = true, Name = "ux_hosted_document_groups_member" }));
+
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys.Ascending(x => x.ReferencedSiteIds).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_comments_references" }));
 
         // ========== Hosted Sites 网页托管索引 ==========
 

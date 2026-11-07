@@ -151,7 +151,8 @@ public class WorkflowAgentController : ControllerBase
         {
             var execResult = await CapsuleExecutor.ExecuteAsync(
                 HttpContext.RequestServices, _logger, testNode,
-                new Dictionary<string, string>(), mockInputArtifacts);
+                new Dictionary<string, string>(), mockInputArtifacts,
+                designInvocation: new WorkflowDesignInvocation(GetUserId(), Guid.NewGuid().ToString("N"), testNode.NodeId));
 
             var completedAt = DateTime.UtcNow;
             testResult = new CapsuleTestRunResult
@@ -165,6 +166,8 @@ public class WorkflowAgentController : ControllerBase
                 Logs = execResult.Logs,
                 Artifacts = execResult.Artifacts.Select(a => new TestRunArtifact
                 {
+                    CosUrl = a.CosUrl,
+                    DesignDelivery = a.DesignDelivery,
                     Name = a.Name,
                     MimeType = a.MimeType,
                     SizeBytes = a.SizeBytes,
@@ -186,6 +189,7 @@ public class WorkflowAgentController : ControllerBase
                 CompletedAt = completedAt,
                 DurationMs = (long)(completedAt - startedAt).TotalMilliseconds,
                 ErrorMessage = ex.Message,
+                ErrorCode = (ex as WorkflowDesignException)?.Code,
                 Logs = $"[ERROR] {ex.Message}",
             };
         }
@@ -769,6 +773,7 @@ public class WorkflowAgentController : ControllerBase
             WorkflowId = original.WorkflowId,
             WorkflowName = original.WorkflowName,
             TriggerType = "resume",
+            ResumedFromExecutionId = original.Id,
             TriggeredBy = GetUserId(),
             TriggeredByName = GetUsername(),
             Variables = original.Variables,
@@ -1025,13 +1030,18 @@ public class WorkflowAgentController : ControllerBase
         if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled)
             return BadRequest(ApiResponse<object>.Fail("ALREADY_TERMINAL", "执行已结束，无法取消"));
 
-        await _db.WorkflowExecutions.UpdateOneAsync(
-            e => e.Id == executionId,
+        var cancelled = await _db.WorkflowExecutions.UpdateOneAsync(
+            e => e.Id == executionId && e.Status != WorkflowExecutionStatus.Completed
+                && e.Status != WorkflowExecutionStatus.Failed && e.Status != WorkflowExecutionStatus.Cancelled,
             Builders<WorkflowExecution>.Update
                 .Set(e => e.Status, WorkflowExecutionStatus.Cancelled)
                 .Set(e => e.CompletedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
+        if (cancelled.MatchedCount == 0)
+            return BadRequest(ApiResponse<object>.Fail("ALREADY_TERMINAL", "执行已结束，无法取消"));
 
+        if (HttpContext.RequestServices.GetService<IWorkflowWebpageDesignService>() is { } design)
+            await design.CancelExecutionAsync(executionId);
         _logger.LogInformation("[{AppKey}] Execution cancelled: {ExecutionId}", AppKey, executionId);
 
         return Ok(ApiResponse<object>.Ok(new { cancelled = true }));
@@ -1111,9 +1121,28 @@ public class WorkflowAgentController : ControllerBase
             logs = nodeExec.Logs,
             logsCosUrl = nodeExec.LogsCosUrl,
             errorMessage = nodeExec.ErrorMessage,
+            errorCode = nodeExec.ErrorCode,
             inputArtifacts = nodeExec.InputArtifacts,
             artifacts = nodeExec.OutputArtifacts,
         }));
+    }
+
+    [HttpGet("artifacts/{runId}/package")]
+    public async Task<IActionResult> DownloadDesignPackage(string runId)
+    {
+        try
+        {
+            var package = await HttpContext.RequestServices.GetRequiredService<IWorkflowWebpageDesignService>()
+                .DownloadPackageAsync(runId, GetUserId());
+            Response.Headers.CacheControl = "private, no-store";
+            Response.Headers.XContentTypeOptions = "nosniff";
+            return File(package.Content, "application/zip", package.FileName);
+        }
+        catch (WorkflowDesignException ex)
+        {
+            return StatusCode(ex.Code == "WORKFLOW_DESIGN_FORBIDDEN" ? 403 : 409,
+                ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
     }
 
     /// <summary>回放单舱：使用历史执行中记录的真实上游输入重新执行该舱</summary>
@@ -1146,7 +1175,9 @@ public class WorkflowAgentController : ControllerBase
             // 使用存储的真实输入重新执行
             var result = await CapsuleExecutor.ExecuteAsync(
                 HttpContext.RequestServices, _logger, nodeDef,
-                execution.Variables, nodeExec.InputArtifacts);
+                execution.Variables, nodeExec.InputArtifacts,
+                designInvocation: new WorkflowDesignInvocation(GetUserId(), Guid.NewGuid().ToString("N"), nodeId,
+                    executionId, execution.TriggeredBy));
 
             var completedAt = DateTime.UtcNow;
             return Ok(ApiResponse<object>.Ok(new
@@ -1162,6 +1193,8 @@ public class WorkflowAgentController : ControllerBase
                     Logs = result.Logs,
                     Artifacts = result.Artifacts.Select(a => new TestRunArtifact
                     {
+                        CosUrl = a.CosUrl,
+                        DesignDelivery = a.DesignDelivery,
                         Name = a.Name,
                         MimeType = a.MimeType,
                         SizeBytes = a.SizeBytes,
@@ -1187,6 +1220,7 @@ public class WorkflowAgentController : ControllerBase
                     CompletedAt = completedAt,
                     DurationMs = (long)(completedAt - startedAt).TotalMilliseconds,
                     ErrorMessage = ex.Message,
+                    ErrorCode = (ex as WorkflowDesignException)?.Code,
                     Logs = $"[ERROR] {ex.Message}",
                 },
             }));
@@ -2272,7 +2306,7 @@ public class WorkflowAgentController : ControllerBase
         Response.Headers.Connection = "keep-alive";
 
         var execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId)
-            .Project(e => new { e.Status })
+            .Project(e => new { e.Status, e.TriggeredBy })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (execution == null)
@@ -2281,6 +2315,12 @@ public class WorkflowAgentController : ControllerBase
             return;
         }
 
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+        {
+            Response.StatusCode = StatusCodes.Status403Forbidden;
+            await Response.WriteAsync("event: error\ndata: {\"errorCode\":\"PERMISSION_DENIED\",\"errorMessage\":\"无权限查看此执行\"}\n\n", cancellationToken);
+            return;
+        }
         if (afterSeq <= 0)
         {
             var last = (Request.Headers["Last-Event-ID"].FirstOrDefault() ?? "").Trim();
@@ -2327,8 +2367,27 @@ public class WorkflowAgentController : ControllerBase
             }
             else
             {
-                try { await Task.Delay(400, cancellationToken); }
-                catch { break; }
+                // 取消可能先于worker认领/批次推进；持续心跳的空事件流也须观察落库终态。
+                var terminal = await _db.WorkflowExecutions.Find(e => e.Id == executionId)
+                    .Project(e => new { e.Status, e.DurationMs, e.ErrorMessage,
+                        CompletedNodes = e.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Completed),
+                        FailedNodes = e.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Failed),
+                        SkippedNodes = e.NodeExecutions.Count(n => n.Status == NodeExecutionStatus.Skipped) })
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (terminal?.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed
+                    or WorkflowExecutionStatus.Cancelled or WorkflowExecutionStatus.TimedOut)
+                {
+                    await WriteSseEvent("execution-completed", new { executionId, status = terminal.Status,
+                        durationMs = terminal.DurationMs, completedNodes = terminal.CompletedNodes,
+                        failedNodes = terminal.FailedNodes, skippedNodes = terminal.SkippedNodes,
+                        errorMessage = terminal.ErrorMessage });
+                    isTerminal = true;
+                }
+                else
+                {
+                    try { await Task.Delay(400, cancellationToken); }
+                    catch { break; }
+                }
             }
         }
     }
@@ -2411,11 +2470,14 @@ public class CapsuleTestRunResult
     /// <summary>执行产物</summary>
     public List<TestRunArtifact> Artifacts { get; set; } = new();
 
+    public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
 }
 
 public class TestRunArtifact
 {
+    public string? CosUrl { get; set; }
+    public WorkflowDesignDelivery? DesignDelivery { get; set; }
     public string Name { get; set; } = string.Empty;
     public string MimeType { get; set; } = string.Empty;
     public long SizeBytes { get; set; }

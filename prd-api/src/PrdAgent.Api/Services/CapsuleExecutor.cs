@@ -87,7 +87,8 @@ public static class CapsuleExecutor
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        EmitEventDelegate? emitEvent = null)
+        EmitEventDelegate? emitEvent = null,
+        WorkflowDesignInvocation? designInvocation = null)
     {
         logger.LogInformation("Executing capsule: {NodeId} type={NodeType} name={NodeName}",
             node.NodeId, node.NodeType, node.Name);
@@ -117,12 +118,12 @@ public static class CapsuleExecutor
             CapsuleTypes.Condition => ExecuteCondition(node, inputArtifacts),
 
             // ── 输出类 ──
-            CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent),
-            CapsuleTypes.WebpageGenerator => await ExecuteWebpageGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent),
+            CapsuleTypes.ReportGenerator => await ExecuteReportGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent, designInvocation),
+            CapsuleTypes.WebpageGenerator => await ExecuteWebpageGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent, designInvocation),
             CapsuleTypes.FileExporter => ExecuteFileExporter(node, inputArtifacts),
             CapsuleTypes.WebhookSender => await ExecuteWebhookSenderAsync(sp, node, inputArtifacts),
             CapsuleTypes.NotificationSender => await ExecuteNotificationSenderAsync(sp, node, variables, inputArtifacts),
-            CapsuleTypes.SitePublisher => await ExecuteSitePublisherAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.SitePublisher => await ExecuteSitePublisherAsync(sp, node, variables, inputArtifacts, designInvocation),
             CapsuleTypes.EmailSender => await ExecuteEmailSenderAsync(sp, node, variables, inputArtifacts),
 
             // ── 短视频工作流类 ──
@@ -3315,8 +3316,11 @@ public static class CapsuleExecutor
 
     public static async Task<CapsuleResult> ExecuteReportGeneratorAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null)
+        List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null,
+        WorkflowDesignInvocation? designInvocation = null)
     {
+        if (GetConfigString(node, "format") == "html")
+            return await ExecuteWebpageGeneratorAsync(sp, node, variables, inputArtifacts, emitEvent, designInvocation);
         var gateway = sp.GetService<PrdAgent.Core.LlmGateway.ILlmGateway>();
         if (gateway == null)
             throw new InvalidOperationException("LLM Gateway 未配置，无法生成报告");
@@ -3506,457 +3510,15 @@ public static class CapsuleExecutor
 
     // ── 网页报告生成器 ──────────────────────────────────────────
 
-    public static async Task<CapsuleResult> ExecuteWebpageGeneratorAsync(
+    public static Task<CapsuleResult> ExecuteWebpageGeneratorAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null)
+        List<ExecutionArtifact> inputArtifacts, EmitEventDelegate? emitEvent = null,
+        WorkflowDesignInvocation? designInvocation = null)
     {
-        var gateway = sp.GetService<PrdAgent.Core.LlmGateway.ILlmGateway>();
-        if (gateway == null)
-            throw new InvalidOperationException("LLM Gateway 未配置，无法生成网页报告");
-
-        var reportTemplate = ReplaceVariables(GetConfigString(node, "reportTemplate") ?? "", variables);
-        var style = GetConfigString(node, "style") ?? "modern-dark";
-        var title = ReplaceVariables(GetConfigString(node, "title") ?? "", variables);
-        var includeCharts = GetConfigString(node, "includeCharts") != "false";
-        var maxInputTokens = 80000;
-
-        var logs = new StringBuilder();
-        logs.AppendLine($"[网页报告生成器] 节点: {node.Name}");
-        logs.AppendLine($"  Style: {style}, IncludeCharts: {includeCharts}");
-        logs.AppendLine($"  InputArtifacts: {inputArtifacts.Count} 个");
-        foreach (var ia in inputArtifacts)
-            logs.AppendLine($"    - [{ia.Name}] SlotId={ia.SlotId} InlineContent={ia.InlineContent?.Length ?? 0} chars");
-
-        var inputText = string.Join("\n---\n", inputArtifacts
-            .Where(a => !string.IsNullOrWhiteSpace(a.InlineContent))
-            .Select(a => $"[{a.Name}]\n{a.InlineContent}"));
-
-        // Token 感知截断
-        var templateTokens = EstimateTokens(reportTemplate);
-        var dataTokenBudget = maxInputTokens - templateTokens - 2000; // 预留更多给系统提示词
-        if (dataTokenBudget < 1000) dataTokenBudget = 1000;
-        var (truncatedInput, _, wasTruncated) = TruncateToTokenBudget(inputText, dataTokenBudget, logs);
-        if (wasTruncated) inputText = truncatedInput;
-
-        // 构建风格描述
-        var styleDesc = style switch
-        {
-            "modern-dark" => "深色玻璃拟态风格 (dark glassmorphism)：深色背景 (#0f0f23)，半透明毛玻璃卡片 (rgba(255,255,255,0.05) + backdrop-filter: blur)，渐变色标题，柔和的发光边框。配色以深蓝/紫色为主调，辅以亮青色和金色高亮。",
-            "modern-light" => "现代浅色风格：白色/浅灰背景，卡片带轻微阴影，清爽蓝绿配色，简约排版。",
-            "dashboard" => "数据看板风格：类似 Grafana/Superset 看板，深色背景，卡片网格布局，大数字指标卡 (KPI cards) 在顶部，图表区域整齐排列。",
-            "report" => "正式报告风格：类似企业 PDF 报告，白色背景，衬线标题，表格和段落为主，配色低调专业。",
-            _ => "" // custom: 不额外描述
-        };
-
-        var systemPrompt = @"你是一位资深前端开发专家，擅长生成**演示文稿风格**的精美 HTML 报告。
-
-## 输出要求
-1. 输出一个**完整的、自包含的 HTML 文件**（从 <!DOCTYPE html> 开始到 </html> 结束）
-2. 所有 CSS 和 JS 必须**内嵌**，不依赖外部样式表（Chart.js 等图表库可使用 CDN，服务器会自动下载内联）
-3. **不要**输出任何 markdown 代码块标记（不要 ```html ... ```），直接输出 HTML 代码
-4. **不要**在 HTML 之前或之后输出任何额外的解释文字
-
-## 幻灯片演示架构（核心！）
-整个报告采用 **PPT 幻灯片分页模式**，每个章节是一张独立的全屏幻灯片（slide）：
-
-### HTML 结构
-```
-<div class=""slides-container"">
-  <section class=""slide"" id=""slide-0"">封面</section>
-  <section class=""slide"" id=""slide-1"">KPI 概览</section>
-  <section class=""slide"" id=""slide-2"">图表分析</section>
-  <section class=""slide"" id=""slide-3"">数据表格</section>
-  ...更多幻灯片...
-  <section class=""slide"" id=""slide-N"">结论与建议</section>
-</div>
-```
-
-### CSS 要求
-```css
-/* 幻灯片容器 - 竖向 scroll-snap */
-.slides-container {
-  height: 100vh; overflow-y: auto; scroll-snap-type: y mandatory;
-  scroll-behavior: smooth;
-}
-/* 每张幻灯片占满视口 */
-.slide {
-  min-height: 100vh; scroll-snap-align: start;
-  display: flex; flex-direction: column; justify-content: center;
-  padding: 60px 80px; box-sizing: border-box; position: relative;
-}
-```
-
-### 导航系统（必须实现）
-1. **右侧导航圆点**：固定在右侧的竖排小圆点，点击跳转对应幻灯片，当前页高亮
-2. **键盘导航**：↑↓ 方向键切换幻灯片
-3. **页码指示器**：右下角显示「3 / 8」格式的当前页/总页数
-4. **IntersectionObserver**：用 IntersectionObserver 监听当前可见 slide 来更新导航状态
-
-### JavaScript 导航示例
-```js
-const slides = document.querySelectorAll('.slide');
-const dots = document.querySelectorAll('.nav-dot');
-const pageIndicator = document.getElementById('page-indicator');
-const observer = new IntersectionObserver((entries) => {
-  entries.forEach(e => {
-    if (e.isIntersecting) {
-      const idx = [...slides].indexOf(e.target);
-      dots.forEach((d,i) => d.classList.toggle('active', i===idx));
-      pageIndicator.textContent = `${idx+1} / ${slides.length}`;
-    }
-  });
-}, { threshold: 0.5 });
-slides.forEach(s => observer.observe(s));
-document.addEventListener('keydown', (e) => {
-  const current = [...slides].findIndex(s => s.getBoundingClientRect().top >= -10);
-  if (e.key==='ArrowDown'||e.key===' ') { e.preventDefault(); slides[Math.min(current+1,slides.length-1)]?.scrollIntoView({behavior:'smooth'}); }
-  if (e.key==='ArrowUp') { e.preventDefault(); slides[Math.max(current-1,0)]?.scrollIntoView({behavior:'smooth'}); }
-});
-```
-
-## 幻灯片内容编排
-- **封面**：大标题 + 副标题(日期/团队) + 装饰性背景图形
-- **KPI 概览**：3-5 个关键指标大数字卡片(grid)，每个卡片带图标、数值、趋势箭头
-- **图表分析**（可多页）：每页聚焦 1-2 个图表，图表要大而清晰，配简短解读文字
-- **数据表格**（可多页）：表格简洁，关键数据高亮，每页不超过 15 行
-- **结论与建议**：要点列表 + 行动建议，每条建议用卡片呈现
-
-## 缺陷统计报告专用渲染规则（当数据包含 dimensions 且 aggregationType 为 tapd-bug-28d 时适用）
-
-### 重大缺陷页（P0/P1）
-如果 dim 10 (P0) 或 dim 11 (P1) 的 details 数组非空，**必须**为其生成独立幻灯片「近期重大缺陷」：
-- 按等级分组展示（先 P0 后 P1）
-- 每条缺陷渲染为一个卡片，包含：
-  - **问题描述**（标题字段），作为**可点击的超链接**，`<a href=""URL链接"" target=""_blank"">` 跳转到 TAPD
-  - 如果该缺陷的 `描述中的链接` 字段非空，**必须额外渲染为独立的链接行**（通常是语雀溯源报告等外部文档）。格式：
-    - 将 `描述中的链接` 按 ` | ` 分隔拆分为多个 URL
-    - 每个 URL 渲染为 `<a href=""url"" target=""_blank"" class=""doc-link"">url</a>`
-    - 如果能从 URL 路径推断文档标题（如语雀链接），可在链接后附加描述
-  - 链接文字使用蓝色高亮，带下划线 hover 效果
-  - 处理人/创建人 显示在缺陷描述下方
-- 示例 HTML 结构：
-```html
-<h3>P0</h3>
-<div class=""defect-card"">
-  <a href=""https://www.tapd.cn/..."" target=""_blank"" class=""defect-link"">问题描述：XXX功能异常无法使用</a>
-  <div class=""defect-doc-links"">
-    <a href=""https://xxx.yuque.com/..."" target=""_blank"" class=""doc-link"">https://xxx.yuque.com/...《溯源报告》</a>
-  </div>
-  <div class=""defect-meta"">处理人：张三 | 创建人：李四</div>
-</div>
-```
-
-### 缺陷分析页（挂起 / 临时解决 / 未及时处理）
-如果 dim 29 (挂起)、dim 30 (临时解决)、dim 22 (未及时处理) 的 details 数组非空，**必须**生成「缺陷分析」幻灯片（可拆分多页）：
-- 每个类别作为独立分区，标题如「挂起：N个」「临时解决：N个」「未及时处理：N个」
-- 每条缺陷用**带编号的列表**展示：
-  - 缺陷标题作为**可点击超链接**跳转 TAPD
-  - 如果 `描述中的链接` 非空，在标题下方额外渲染为独立链接行（语雀等外部文档链接）
-  - 标题后面或下方显示「处理人：XXX，创建人：YYY」
-- 链接样式：蓝色文字 (`color: #38bdf8` 深色模式 / `color: #1d4ed8` 浅色模式)，hover 加下划线
-
-### 结构归母分析页
-如果 dim 28 的 groups 数组非空，**必须**生成「结构归母分析」幻灯片（可拆分多页）：
-- 先用柱状图或进度条展示各归母类别的数量排名
-- 然后每个归母类别下列出其对应的缺陷明细：
-  - 归母类别名作为小标题
-  - 每条缺陷：标题（可点击超链接跳转TAPD） + 缺陷等级标签 + 处理人
-  - 为开会讨论方便，**标记代表性案例**（每个类别默认标记前 2-3 条作为讨论重点，用高亮边框或星标图标区分）
-- 如果缺陷过多（单个类别超过 8 条），仅展示前 5 条并注明「还有 N 条...」
-
-### 通用链接样式
-所有缺陷链接必须使用以下样式：
-```css
-.defect-link {
-  color: #38bdf8; text-decoration: none; border-bottom: 1px dashed rgba(56,189,248,0.4);
-  transition: all 200ms ease; cursor: pointer;
-}
-.defect-link:hover { color: #7dd3fc; border-bottom-color: #7dd3fc; }
-.doc-link {
-  color: #38bdf8; text-decoration: none; font-size: 14px; word-break: break-all;
-  border-bottom: 1px dashed rgba(56,189,248,0.3); transition: all 200ms ease; cursor: pointer;
-}
-.doc-link:hover { color: #7dd3fc; border-bottom-color: #7dd3fc; }
-.defect-doc-links { margin: 6px 0 4px 0; padding-left: 8px; border-left: 2px solid rgba(56,189,248,0.3); }
-.defect-meta { font-size: 13px; opacity: 0.65; margin-top: 4px; }
-```";
-
-        if (!string.IsNullOrWhiteSpace(styleDesc))
-        {
-            systemPrompt += $@"
-
-## 视觉风格
-{styleDesc}";
-        }
-        else
-        {
-            // 默认深色玻璃拟态风格
-            systemPrompt += @"
-
-## 视觉风格
-深色玻璃拟态风格 (dark glassmorphism)：
-- 背景：深色渐变 (#0f0f23 → #171738)
-- 卡片：半透明毛玻璃 (rgba(255,255,255,0.05) + backdrop-filter: blur(15px))，1px solid rgba(255,255,255,0.1) 边框
-- 标题：渐变色文字 (linear-gradient 亮青 → 金色)
-- 强调色：亮青 #22d3ee、金色 #f59e0b、蓝色 #3b82f6
-- 导航圆点：半透明白色，active 状态发光
-- 字体：系统字体栈 (-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)";
-        }
-
-        if (includeCharts)
-        {
-            systemPrompt += @"
-
-## 图表要求
-- 优先使用**纯 CSS + HTML**实现简单图表（进度条、占比条、数字卡片）
-- 如果数据复杂确实需要饼图/折线图/柱状图，使用 Chart.js (CDN: https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.7/chart.umd.min.js)
-- **Chart.js 必须容错加载**，使用以下模式：
-```html
-<script src=""https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.7/chart.umd.min.js"" onerror=""window.__chartjsFailed=true""></script>
-<script>
-// 每个图表初始化都包裹在检查中
-function safeChart(canvasId, config) {
-  if (window.__chartjsFailed || typeof Chart === 'undefined') {
-    var el = document.getElementById(canvasId);
-    if (el) el.parentElement.innerHTML = '<div style=""padding:20px;text-align:center;opacity:0.5"">图表库加载失败，请在新标签页打开查看</div>';
-    return;
-  }
-  new Chart(document.getElementById(canvasId), config);
-}
-</script>
-```
-- 图表配色与整体风格协调（深色背景下使用明亮色系）
-- 每个图表独占或最多两个共享一张幻灯片
-- 图表需要有清晰的标题和图例
-- canvas 需设置合理的 max-height，避免图表过大";
-        }
-
-        systemPrompt += @"
-
-## 专业 UI 设计规范 (ui-ux-pro-max)
-
-### 图标与视觉元素
-- **禁止使用 emoji 作为 UI 图标**。用内联 SVG 图标替代，推荐 Heroicons/Lucide 风格：
-  ```html
-  <!-- 正确：内联 SVG 图标 -->
-  <svg viewBox=""0 0 24 24"" width=""20"" height=""20"" fill=""none"" stroke=""currentColor"" stroke-width=""2""><path d=""M13 7l5 5m0 0l-5 5m5-5H6""/></svg>
-  <!-- 错误：emoji 图标 -->
-  <span>[chart]</span>
-  ```
-- 所有图标统一尺寸：KPI 卡片图标 32×32，正文图标 20×20，导航图标 16×16
-
-### 交互与动效
-- 所有可点击元素（卡片、按钮、链接、导航点）必须设置 `cursor: pointer`
-- Hover 状态使用 `transition: all 200ms ease`，变化属性：颜色、透明度、box-shadow
-- **禁止** hover 时 `transform: scale()` 导致布局偏移，改用 `box-shadow` 或 `border-color` 变化
-- 微交互动画时长：150-300ms，缓动函数 `cubic-bezier(0.4, 0, 0.2, 1)`
-- 入场动画：卡片 staggered fadeIn（每张延迟 80ms），使用 `@keyframes` + `animation-delay`
-
-### 排版系统
-- 字体栈：`'Inter', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif`
-- 数据看板备选：`'Fira Code', 'JetBrains Mono', monospace`（用于数字/代码）
-- 字体层级：封面标题 48-64px/700, 章节标题 28-36px/600, 正文 16px/400, 辅助 13px/400
-- 正文行高 1.6-1.75，每行限制 65-75 字符（`max-width: 65ch`）
-- 大数字使用 `font-variant-numeric: tabular-nums` 等宽对齐
-- 渐变标题：`background: linear-gradient(...); -webkit-background-clip: text; -webkit-text-fill-color: transparent`
-
-### 深色模式专业配色
-- 背景层次：底层 #0a0a1a → 卡片 rgba(255,255,255,0.04) → 悬浮 rgba(255,255,255,0.08)
-- 文字层次：主文字 rgba(255,255,255,0.92) → 次要 rgba(255,255,255,0.6) → 禁用 rgba(255,255,255,0.3)
-- 边框：默认 rgba(255,255,255,0.08)，hover rgba(255,255,255,0.15)
-- 发光效果：`box-shadow: 0 0 20px rgba(56,189,248,0.08), 0 8px 32px rgba(0,0,0,0.3)`
-- 图表配色序列（深色友好）：#38bdf8(天蓝) #a78bfa(紫) #34d399(绿) #fbbf24(金) #fb7185(粉) #22d3ee(青)
-
-### 图表配色科学
-- 分类数据：最多 6 种颜色，超过则合并为""其他""
-- 趋势数据：单色渐变（#1e40af → #38bdf8）表示从低到高
-- 对比数据：对比色对（#34d399 正面 / #fb7185 负面）
-- 饼图/环形图：填充透明度 0.8，描边 2px #0a0a1a 分隔
-- 图表区域 `border-radius: 12px` + 适当 padding
-
-### 卡片设计系统
-```css
-.glass-card {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px; padding: 24px;
-  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-.glass-card:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-}
-```
-
-## 响应式与打印
-- 桌面：幻灯片内容居中，最大宽度 1200px
-- 移动端 (@media max-width: 768px)：padding 缩小为 24px 16px，卡片单列，字体缩小一级
-- @media print：page-break-after: always，隐藏导航，白色背景，文字改深色
-
-## 质量标准（交付检查清单）
-- 每张幻灯片留白充足，内容不超过面积 60%
-- 文字对比度 WCAG AA (4.5:1)，深色背景主文字不低于 rgba(255,255,255,0.87)
-- 动画必须 `@media (prefers-reduced-motion: reduce)` 禁用检测
-- 表格横向滚动（overflow-x: auto），表头固定背景色
-- 所有可交互元素带 `cursor: pointer`
-- **无 emoji 图标**，全部使用内联 SVG
-- 导航圆点和页码指示器 `z-index: 50` 悬浮于内容上方";
-
-        var userPrompt = string.IsNullOrWhiteSpace(reportTemplate)
-            ? $"请根据以下数据生成一份精美的 HTML 网页报告：\n\n{inputText}"
-            : $"{reportTemplate}\n\n## 数据\n\n{inputText}";
-
-        if (!string.IsNullOrWhiteSpace(title))
-            userPrompt = $"网页标题：{title}\n\n{userPrompt}";
-
-        var request = new PrdAgent.Core.LlmGateway.GatewayRequest
-        {
-            AppCallerCode = PrdAgent.Core.Models.AppCallerRegistry.WorkflowAgent.WebpageGenerator.Code,
-            ModelType = "code",
-            TimeoutSeconds = 300,
-            RequestBody = new System.Text.Json.Nodes.JsonObject
-            {
-                ["messages"] = new System.Text.Json.Nodes.JsonArray
-                {
-                    new System.Text.Json.Nodes.JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new System.Text.Json.Nodes.JsonObject { ["role"] = "user", ["content"] = userPrompt }
-                }
-            }
-        };
-
-        logs.AppendLine($"  SystemPrompt: {systemPrompt.Length} chars");
-        logs.AppendLine($"  UserPrompt: {userPrompt.Length} chars (估算 {EstimateTokens(userPrompt)} tokens)");
-        logs.AppendLine("  --- 调用 LLM Gateway (streaming) ---");
-
-        // ── 流式调用 ──
-        var contentBuilder = new StringBuilder();
-        var model = "(unknown)";
-        int inputTokens = 0, outputTokens = 0;
-        string? errorCode = null, errorMessage = null;
-
-        const int CHUNK_BATCH_SIZE = 200;
-        var pendingChunk = new StringBuilder();
-        var streamSw = Stopwatch.StartNew();
-
-        if (emitEvent != null)
-            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name });
-
-        try
-        {
-            await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
-            {
-                switch (chunk.Type)
-                {
-                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Start:
-                        model = chunk.Resolution?.ActualModel ?? "(unknown)";
-                        if (emitEvent != null)
-                            await emitEvent("llm-stream-start", new { nodeId = node.NodeId, nodeName = node.Name, model });
-                        break;
-
-                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Text:
-                        if (!string.IsNullOrEmpty(chunk.Content))
-                        {
-                            contentBuilder.Append(chunk.Content);
-                            pendingChunk.Append(chunk.Content);
-                            if (emitEvent != null && pendingChunk.Length >= CHUNK_BATCH_SIZE)
-                            {
-                                await emitEvent("llm-chunk", new
-                                {
-                                    nodeId = node.NodeId,
-                                    content = pendingChunk.ToString(),
-                                    accumulatedLength = contentBuilder.Length,
-                                });
-                                pendingChunk.Clear();
-                            }
-                        }
-                        break;
-
-                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Done:
-                        inputTokens = chunk.TokenUsage?.InputTokens ?? 0;
-                        outputTokens = chunk.TokenUsage?.OutputTokens ?? 0;
-                        break;
-
-                    case PrdAgent.Core.LlmGateway.GatewayChunkType.Error:
-                        errorCode = "STREAM_ERROR";
-                        errorMessage = chunk.Error;
-                        break;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            errorCode = "STREAM_EXCEPTION";
-            errorMessage = ex.Message;
-        }
-
-        if (emitEvent != null && pendingChunk.Length > 0)
-        {
-            await emitEvent("llm-chunk", new
-            {
-                nodeId = node.NodeId,
-                content = pendingChunk.ToString(),
-                accumulatedLength = contentBuilder.Length,
-            });
-        }
-
-        streamSw.Stop();
-        var htmlContent = contentBuilder.ToString();
-
-        // 清理 LLM 可能添加的 markdown 代码块标记和多余内容
-        // 策略：优先提取 <!DOCTYPE html> ... </html> 之间的完整 HTML 文档
-        var doctypeIdx = htmlContent.IndexOf("<!DOCTYPE html", StringComparison.OrdinalIgnoreCase);
-        if (doctypeIdx < 0) doctypeIdx = htmlContent.IndexOf("<html", StringComparison.OrdinalIgnoreCase);
-        var htmlEndIdx = htmlContent.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
-        if (doctypeIdx >= 0 && htmlEndIdx > doctypeIdx)
-        {
-            htmlContent = htmlContent[doctypeIdx..(htmlEndIdx + "</html>".Length)];
-        }
-        else
-        {
-            // 回退：简单清理 markdown 围栏
-            if (htmlContent.StartsWith("```html", StringComparison.OrdinalIgnoreCase))
-                htmlContent = htmlContent["```html".Length..];
-            else if (htmlContent.StartsWith("```"))
-                htmlContent = htmlContent[3..];
-            if (htmlContent.EndsWith("```"))
-                htmlContent = htmlContent[..^3];
-        }
-        htmlContent = htmlContent.Trim();
-
-        if (emitEvent != null)
-        {
-            await emitEvent("llm-stream-end", new
-            {
-                nodeId = node.NodeId,
-                totalLength = htmlContent.Length,
-                durationMs = streamSw.ElapsedMilliseconds,
-                model, inputTokens, outputTokens,
-            });
-        }
-
-        logs.AppendLine($"  Model: {model}");
-        logs.AppendLine($"  Tokens: input={inputTokens} output={outputTokens}");
-        logs.AppendLine($"  Streaming duration: {streamSw.ElapsedMilliseconds}ms");
-        logs.AppendLine($"  HTML output: {htmlContent.Length} chars");
-
-        if (!string.IsNullOrWhiteSpace(errorCode))
-            logs.AppendLine($"  Gateway 错误: [{errorCode}] {errorMessage}");
-
-        if (string.IsNullOrWhiteSpace(htmlContent))
-        {
-            var reason = !string.IsNullOrWhiteSpace(errorMessage) ? $"Gateway 错误: {errorMessage}" : "LLM 未返回内容";
-            logs.AppendLine($"  警告: 网页内容为空 ({reason})");
-        }
-
-        // ── CDN 资源内联：下载外部 JS/CSS 并嵌入 HTML，避免内网无法访问 ──
-        var factory = sp.GetRequiredService<IHttpClientFactory>();
-        htmlContent = await InlineExternalResourcesAsync(factory, htmlContent, logs);
-
-        var fileName = !string.IsNullOrWhiteSpace(title) ? $"{title}.html" : "网页报告.html";
-        var artifact = MakeTextArtifact(node, "webpage-out", fileName, htmlContent, "text/html");
-        return new CapsuleResult(new List<ExecutionArtifact> { artifact }, logs.ToString());
+        if (designInvocation == null)
+            throw new InvalidOperationException("网页报告缺少服务器确认的任务身份，未发送模型请求");
+        return sp.GetRequiredService<IWorkflowWebpageDesignService>()
+            .ExecuteAsync(node, variables, inputArtifacts, designInvocation, emitEvent);
     }
 
     public static CapsuleResult ExecuteFileExporter(WorkflowNode node, List<ExecutionArtifact> inputArtifacts)
@@ -4404,7 +3966,7 @@ function safeChart(canvasId, config) {
 
     public static async Task<CapsuleResult> ExecuteSitePublisherAsync(
         IServiceProvider sp, WorkflowNode node, Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts)
+        List<ExecutionArtifact> inputArtifacts, WorkflowDesignInvocation? designInvocation = null)
     {
         var siteService = sp.GetRequiredService<PrdAgent.Core.Interfaces.IHostedSiteService>();
         var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("CapsuleExecutor.SitePublisher");
@@ -4412,6 +3974,7 @@ function safeChart(canvasId, config) {
 
         // 1. 从上游产物中提取 HTML 内容
         var htmlContent = "";
+        ExecutionArtifact? selectedArtifact = null;
         foreach (var input in inputArtifacts)
         {
             var content = input.InlineContent ?? "";
@@ -4421,6 +3984,7 @@ function safeChart(canvasId, config) {
                                                || content.Contains("<html", StringComparison.OrdinalIgnoreCase))
             {
                 htmlContent = content;
+                selectedArtifact = input;
                 sb.AppendLine($"[输入] 使用产物 '{input.Name}' ({input.SizeBytes} bytes) 作为 HTML 源");
                 break;
             }
@@ -4433,6 +3997,7 @@ function safeChart(canvasId, config) {
                 .FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.InlineContent));
             if (firstContent != null)
             {
+                selectedArtifact = firstContent;
                 htmlContent = $"<!DOCTYPE html><html><head><meta charset='utf-8'><title>Auto Generated</title></head><body><pre>{System.Net.WebUtility.HtmlEncode(firstContent.InlineContent!)}</pre></body></html>";
                 sb.AppendLine($"[输入] 无 HTML 产物，将 '{firstContent.Name}' 包装为纯文本 HTML");
             }
@@ -4457,7 +4022,7 @@ function safeChart(canvasId, config) {
             title = $"工作流自动发布 - {DateTime.Now:yyyy-MM-dd HH:mm}";
 
         // 3. 确定 userId（从执行上下文变量中获取）
-        var userId = variables.GetValueOrDefault("__triggeredBy") ?? "system";
+        var userId = designInvocation?.UserId ?? variables.GetValueOrDefault("__triggeredBy") ?? "system";
         var executionId = variables.GetValueOrDefault("__executionId") ?? "";
 
         sb.AppendLine($"[配置] 标题={title}, 文件夹={folder}, 标签=[{string.Join(", ", tags)}]");
@@ -4467,7 +4032,14 @@ function safeChart(canvasId, config) {
         logger.LogInformation("SitePublisher: Publishing HTML ({Length} chars) for user {UserId}",
             htmlContent.Length, userId);
 
-        var site = await siteService.CreateFromContentAsync(
+        var retained = selectedArtifact?.DesignDelivery == null ? null : await sp.GetRequiredService<IWorkflowWebpageDesignService>()
+            .ResolveDeliveryAsync(selectedArtifact, designInvocation);
+        var site = retained != null
+            ? await siteService.UpdateAsync(retained.Id, userId, title,
+                string.IsNullOrWhiteSpace(description) ? null : description, tags,
+                string.IsNullOrWhiteSpace(folder) ? null : folder, null, CancellationToken.None)
+                ?? throw new InvalidOperationException("原网页报告已变化，发布未覆盖任何内容")
+            : await siteService.CreateFromContentAsync(
             userId: userId,
             htmlContent: htmlContent,
             title: title,

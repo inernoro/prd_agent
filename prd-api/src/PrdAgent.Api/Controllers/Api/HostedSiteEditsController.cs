@@ -734,7 +734,12 @@ public sealed class HostedSiteEditsController : ControllerBase
                 current,
                 CancellationToken.None);
             var items = await _revisions.ListAsync(siteId, userId, CancellationToken.None);
-            return Ok(ApiResponse<object>.Ok(items.Select(x => ToDto(x, current.ContentVersion)).ToList()));
+            var publishedOrder = await _db.HostedSiteRevisions.Find(x => x.SiteId == siteId
+                    && x.Status == HostedSiteRevisionStatuses.Published && x.PublishedContentVersion != null)
+                .Project(x => new { x.Id, x.PublishedContentVersion }).SortBy(x => x.PublishedContentVersion).ThenBy(x => x.Id)
+                .ToListAsync(CancellationToken.None);
+            var numbers = publishedOrder.Select((item, index) => (item.Id, Number: (long)index + 1)).ToDictionary(item => item.Id, item => item.Number);
+            return Ok(ApiResponse<object>.Ok(items.Select(x => ToDto(x, current.ContentVersion, numbers.GetValueOrDefault(x.Id))).ToList()));
         }
         catch (KeyNotFoundException)
         {
@@ -960,8 +965,10 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
     }
 
-    private static object ToDto(HostedSiteRevision item, DateTime? currentContentVersion) => new
+    private static object ToDto(HostedSiteRevision item, DateTime? currentContentVersion, long versionNumber = 0) => new
     {
+        contentVersionKey = item.PublishedContentVersion.HasValue ? HostedSiteCommentRules.VersionKey(item.PublishedContentVersion.Value) : null,
+        versionLabel = versionNumber > 0 ? "V" + versionNumber : null,
         item.Id,
         item.SiteId,
         item.Status,
@@ -1023,6 +1030,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.CancelRequestedAt,
         run.CancelledAt,
         run.CreatedAt,
+        run.CompletedAt,
         styleId = run.DesignDirection?.StyleId,
         styleName = run.DesignDirection?.StyleName,
         promptFingerprint = run.DesignDirection?.PromptFingerprint,

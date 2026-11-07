@@ -38,6 +38,7 @@ import {
   type SelfMonitoringState,
 } from '../../src/services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
+import { createSelfCheckAuth, SELF_CHECK_HEADER } from '../../src/services/self-check-auth.js';
 import type { Project } from '../../src/types.js';
 
 const NOW = Date.parse('2026-09-16T10:00:00Z');
@@ -64,7 +65,7 @@ function healthyDeps(overrides: Partial<SelfCheckDeps> = {}): SelfCheckDeps {
     processStartedAt: () => NOW - 2 * HOUR,
     diskUsage: () => ({ totalBytes: 100, freeBytes: 60 }),
     dockerPing: async () => ({ ok: true, ms: 120, detail: '27.1.1' }),
-    httpStats: async () => ({ requests: 400, serverErrors: 2, branchesP95Ms: 380, branchesRequests: 10 }),
+    httpStats: async () => ({ requests: 400, serverErrors: 2, branchesP95Ms: 380, branchesRequests: 10, widgetStreamFailures: 0 }),
     liveAlarmChannels: () => 1,
     selfStatus: () => ({ ready: true, bundleStale: false, headSha: 'abc1234', currentBranch: 'main' }),
     storeBackend: () => 'mongo-split',
@@ -74,8 +75,20 @@ function healthyDeps(overrides: Partial<SelfCheckDeps> = {}): SelfCheckDeps {
 
 const URL_ = selfCheckUrl(7000);
 
+it('流恢复的200不抵消原上游失败，声明六小时常设监控且未知日志不能报零', async () => {
+  const doc = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 5, serverErrors: 0,
+    branchesP95Ms: 1, branchesRequests: 5, widgetStreamFailures: 1 }) }));
+  expect(doc.checks['api.widget-stream-failures-6h']).toMatchObject({ status: 'fail', observedValue: 1 });
+  const { monitors, rejected } = discoverMonitors(doc, URL_);
+  expect(rejected).toEqual([]);
+  expect(monitors.find(m => m.componentId === 'api.widget-stream-failures-6h')).toMatchObject({ intervalSeconds: 21600, failuresToAlarm: 1 });
+  const missing = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 5, serverErrors: 0,
+    branchesP95Ms: 1, branchesRequests: 5 }) }));
+  expect(missing.checks['api.widget-stream-failures-6h']).toMatchObject({ status: 'warn', observedValue: null });
+});
+
 describe('协议一致性：自检文档喂给 CDS 自己的解析器', () => {
-  it('13 条监控一条不落、零拒收，且全部落在 production', async () => {
+  it('14 条监控一条不落、零拒收，且全部落在 production', async () => {
     const doc = await buildSelfCheck(healthyDeps());
     const { monitors, rejected } = discoverMonitors(doc, URL_);
     expect(rejected).toEqual([]);
@@ -83,6 +96,7 @@ describe('协议一致性：自检文档喂给 CDS 自己的解析器', () => {
       'alarm.live-channels',
       'api.branches-p95-ms',
       'api.error-rate-30m',
+      'api.widget-stream-failures-6h',
       'build.oldest-wait-minutes',
       'build.queue-waiting',
       'deploy.failure-rate-24h',
@@ -96,7 +110,7 @@ describe('协议一致性：自检文档喂给 CDS 自己的解析器', () => {
     ]);
     for (const m of monitors) {
       expect(m.environment, m.componentId).toBe('production');
-      expect(m.intervalSeconds, m.componentId).toBe(300);
+      expect(m.intervalSeconds, m.componentId).toBe(m.componentId === 'api.widget-stream-failures-6h' ? 21600 : 300);
     }
   });
 
@@ -342,6 +356,31 @@ describe('启动引导：幂等、可回生', () => {
     expect(again.createdProject).toBe(true);
     expect(state.projects).toHaveLength(1);
   });
+
+  it.each(['http://127.0.0.1:7000', 'http://localhost:7100'])(
+    '启动只清理旧默认自检，保留显式项目监督来源及内部鉴权：%s', (origin) => {
+      const state = fakeState();
+      const old = ensureSelfMonitoring(state, 6900, NOW);
+      const projectUrl = `${origin}${SELF_CHECK_PATH}?projectInspection=project-a`;
+      const externalUrl = 'https://health.example.test/health';
+      state.projects[0].monitorEndpoints!.push(projectUrl, externalUrl);
+
+      const next = ensureSelfMonitoring(state, 7000, NOW + 1000);
+      expect(next.retiredEndpoints).toEqual([old.url]);
+      expect(next.addedEndpoint).toBe(true);
+      expect(state.projects[0].monitorEndpoints).toEqual([projectUrl, externalUrl, next.url]);
+      const again = ensureSelfMonitoring(state, 7000, NOW + 2000);
+      expect(again).toMatchObject({ createdProject: false, addedEndpoint: false, retiredEndpoints: [] });
+      expect(state.projects[0].monitorEndpoints).toEqual([projectUrl, externalUrl, next.url]);
+
+      const auth = createSelfCheckAuth('local-test-token');
+      expect(isSelfCheckEndpoint(projectUrl)).toBe(true);
+      expect(auth.headersFor(projectUrl)).toEqual({ [SELF_CHECK_HEADER]: 'local-test-token' });
+      expect(auth.verify({ remoteAddress: '127.0.0.1', header: auth.headersFor(projectUrl)[SELF_CHECK_HEADER] })).toBe(true);
+      expect(auth.headersFor(externalUrl)).toEqual({});
+      expect(auth.verify({ remoteAddress: '192.0.2.1', header: 'local-test-token' })).toBe(false);
+    },
+  );
 
   it('内置端点只认本机回环 + 自检路径', () => {
     expect(isSelfCheckEndpoint('http://127.0.0.1:7000/api/self-check')).toBe(true);

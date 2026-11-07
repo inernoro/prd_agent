@@ -1,3 +1,4 @@
+import { SettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Copy, GitBranch, Network, RefreshCw, RotateCw } from 'lucide-react';
 
@@ -1483,11 +1484,7 @@ function SelfUpdateStatusPanel({
   restarting: boolean;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return (
-      <div className="rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-        正在检查 GitHub 远端 + 自更新流水…
-      </div>
-    );
+    return <SettingsContentSkeleton label="读取自更新状态" />;
   }
   if (state.status === 'error') {
     return (
@@ -1705,9 +1702,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
   const manualRefresh = onManualRefresh;
 
   if (historyState.status === 'loading') {
-    return (
-      <div className="py-8 text-center text-sm text-muted-foreground">加载中…</div>
-    );
+    return <SettingsContentSkeleton label="读取自更新历史" />;
   }
   if (historyState.status === 'error') {
     return (
@@ -1781,7 +1776,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                           <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateModeClass(mode)}`}>
                             {selfUpdateModeLabel(mode)}
                           </span>
-                        ) : <span className="text-xs text-muted-foreground">未标记</span>}
+                        ) : <span className="text-xs text-muted-foreground">{isRestartCancelled(rec) ? '未执行重启' : '未标记'}</span>}
                       </td>
                       <td className="px-3 py-2 align-middle text-xs text-muted-foreground">
                         {selfUpdateTriggerLabel(rec.trigger)}
@@ -1833,7 +1828,9 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
             <div>
               <div className="mb-1.5 text-xs font-medium text-muted-foreground">更新路径</div>
               <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
-                {selfUpdateModeDescription(selected.updateMode || (selected.noOp ? 'noOp' : undefined))}
+                {isRestartCancelled(selected)
+                  ? '等待其他项目操作超时，本次重启已取消，其他项目继续运行。'
+                  : selfUpdateModeDescription(selected.updateMode || (selected.noOp ? 'noOp' : undefined))}
               </div>
             </div>
             {selected.timings ? <SelfUpdateStageBar timings={selected.timings} totalMs={selected.durationMs} /> : null}
@@ -1947,10 +1944,14 @@ function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
   }
 }
 
+function isRestartCancelled(record: SelfUpdateRecord): boolean {
+  return record.status === 'aborted' && record.failure?.stage === 'restart-drain';
+}
+
 function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success': return '成功';
-    case 'aborted': return '中止(校验未过)';
+    case 'aborted': return '已中止';
     case 'deferred': return '已延后';
     case 'failed':  return '失败';
   }

@@ -140,6 +140,9 @@ public sealed class GatewayRuntimeGrantRecord
     public string UserId { get; set; } = string.Empty;
     public string AppCallerCode { get; set; } = string.Empty;
     public string Environment { get; set; } = string.Empty;
+    /// <summary>受信业务用途。缺失的旧设计grant仍为chat，不消费客户端自报类型。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? ModelType { get; set; }
     public string Model { get; set; } = string.Empty;
     public string? ModelPoolId { get; set; }
     public string? PinnedPlatformId { get; set; }
@@ -205,6 +208,22 @@ public sealed class GatewayRuntimeBudgetScopeRecord
     /// 不能抢走人工保存的冻结额度；缺失时，已绑定本 scope 的 PPT 物理请求必须默认拒绝。
     /// </summary>
     public GatewayPptCompletionBudgetRecord? PptCompletion { get; set; }
+    // 根层扩展由旧版本已有 BsonIgnoreExtraElements 忽略，不改变历史嵌套合同的形状。
+    [BsonIgnoreIfNull] public string? PptOperationPurpose { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationRunId { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationRequestHash { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationBaseFingerprint { get; set; }
+    [BsonIgnoreIfNull] public string? PptPendingManualRunId { get; set; }
+    [BsonIgnoreIfNull] public string? PptManualRequestHash { get; set; }
+    [BsonIgnoreIfNull] public string? PptManualBaseFingerprint { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPolicyId { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPolicyFingerprint { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPriceBasis { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPriceSource { get; set; }
+    [BsonIgnoreIfNull] public DateTime? PptModificationPriceObservedAtUtc { get; set; }
+    [BsonIgnoreIfNull] public string? PptModificationPriceSourceUrl { get; set; }
+    [BsonIgnoreIfNull] public bool? PptModificationPriceIsEstimate { get; set; }
+
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -438,4 +457,10 @@ public sealed class GatewayOfferingRateWindowRecord
     public DateTime WindowStart { get; set; }
     public long Count { get; set; }
     public DateTime ExpiresAt { get; set; }
+}
+
+public static class GatewayPptCompletionPurposes
+{
+    public const string Completion = "completion";
+    public const string Modification = "modification";
 }

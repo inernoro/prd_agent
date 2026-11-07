@@ -622,7 +622,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endpoint = string.IsNullOrWhiteSpace(activeResolution.OfferingEndpointPath)
                     ? activeAdapter.BuildEndpoint(activeResolution.ApiUrl!, request.ModelType)
                     : BuildOfferingEndpoint(activeResolution.ApiUrl!, activeResolution.OfferingEndpointPath);
-                var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache);
+                var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache,
+                    IsThinkingEffective(request.IncludeThinking, request.ModelType));
                 ApplyOpenRouterAttribution(httpRequest, activeResolution.ApiUrl, request.AppCallerCode);
 
                 if (logId == null)
@@ -890,6 +891,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (adapter == null)
                 {
                     terminalError = $"不支持的平台类型: {resolution.PlatformType}";
+                    terminalErrorCode = "UNSUPPORTED_PLATFORM";
                     terminalStatusCode = 400;
                     if (attemptIndex == 0)
                         CompleteLastSendAttempt(providerAttempts, 400, 0, terminalError);
@@ -918,6 +920,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (TryBuildCapabilityFailure(request, resolution, requestBody, out var capabilityError))
                 {
                     terminalError = capabilityError!.ErrorMessage ?? "模型能力不匹配";
+                    terminalErrorCode = capabilityError.ErrorCode;
                     terminalStatusCode = capabilityError.StatusCode;
                     CompleteLastSendAttempt(providerAttempts, capabilityError.StatusCode, 0, terminalError);
                     if (attemptIndex < retryResolutions.Count - 1)
@@ -932,6 +935,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 if (!concurrency.Allowed)
                 {
                     terminalError = ProviderAdmissionMessage(concurrency.ErrorCode);
+                    terminalErrorCode = concurrency.ErrorCode;
                     terminalStatusCode = 429;
                     CompleteLastSendAttempt(providerAttempts, 429, 0, terminalError);
                     if (attemptIndex < retryResolutions.Count - 1)
@@ -947,7 +951,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var endpoint = string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath)
                     ? adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType)
                     : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
-                var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+                var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache,
+                    IsThinkingEffective(request.IncludeThinking, request.ModelType));
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
                 if (admit is not null)
@@ -1019,7 +1024,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
                     terminalError = sendMsg;
-                    terminalErrorCode = (sendException as TaskExecutionAdmissionException)?.Code;
+                    terminalErrorCode = (sendException as TaskExecutionAdmissionException)?.Code ?? (sendCode switch
+                    {
+                        499 => "CANCELLED",
+                        504 => "TIMEOUT",
+                        502 => "NETWORK_ERROR",
+                        _ => "GATEWAY_ERROR"
+                    });
                     terminalStatusCode = sendCode;
                     authorizationRejectedBeforeSend = sendException is TaskExecutionAdmissionException
                         && providerAttempts.All(attempt => attempt.ReachedProvider == false);
@@ -1052,6 +1063,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var errorBody = await rawResponse.Content.ReadAsStringAsync(ct);
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)rawResponse.StatusCode}";
                 terminalError = errorMsg;
+                terminalErrorCode = "LLM_ERROR";
                 terminalStatusCode = (int)rawResponse.StatusCode;
                 CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, errorMsg);
                 if (HasTrackedHealthRoute(resolution))
@@ -1094,8 +1106,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ? new GatewayStreamRejectedBeforeSend
                     {
                         Type = GatewayChunkType.Error, Error = terminalError ?? "流式请求失败", ErrorCode = terminalErrorCode,
+                        Resolution = resolution.ToGatewayResolution(),
                     }
-                    : GatewayStreamChunk.Fail(terminalError ?? "流式请求失败", terminalErrorCode);
+                    : GatewayStreamChunk.Fail(terminalError ?? "流式请求失败", terminalErrorCode ?? "LLM_ERROR",
+                        resolution.ToGatewayResolution());
                 yield break;
             }
 
@@ -1845,7 +1859,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
-    private static GatewayRawRequest RebuildCanonicalImageRequest(
+    internal static GatewayRawRequest RebuildCanonicalImageRequest(
         GatewayRawRequest source,
         ModelResolutionResult resolution)
     {
@@ -1964,9 +1978,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         else
         {
+            // openai 是 wire 协议；火山仍有自己的 generations JSON 图片输入契约。
+            var adapterType = normalizedProtocol == "openai"
+                && (string.Equals(resolution.PlatformType, "volces", StringComparison.OrdinalIgnoreCase)
+                    || LLM.Adapters.ImageGenPlatformAdapterFactory.IsVolcesApi(resolution.ApiUrl))
+                    ? "volces" : normalizedProtocol;
             var adapter = LLM.Adapters.ImageGenPlatformAdapterFactory.GetAdapter(
-                resolution.ApiUrl, resolution.ActualModel, normalizedProtocol);
-            if (images.Count == 0)
+                resolution.ApiUrl, resolution.ActualModel, adapterType);
+            if (images.Count == 0 || adapter.PlatformType == "volces")
             {
                 var built = ImageGenRequestBuilder.BuildStandardGeneration(
                     resolution.ActualModel!,
@@ -1977,6 +1996,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     adapter,
                     applyAdaptiveSizePrompt: false);
                 body = JsonNode.Parse(adapter.SerializeRequest(built.RequestBody))?.AsObject() ?? new JsonObject();
+                // 方舟的参考图是 generations JSON 的 image 字段，不使用 OpenAI 的 edits multipart。
+                if (images.Count == 1) body["image"] = images[0];
+                else if (images.Count > 1)
+                {
+                    var references = new JsonArray();
+                    foreach (var image in images) references.Add(image);
+                    body["image"] = references;
+                }
                 endpointPath = "images/generations";
             }
             else
@@ -3601,6 +3628,23 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
 
         var result = await _modelResolver.ResolveAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        return result.ToGatewayResolution();
+    }
+
+    /// <inheritdoc />
+    public async Task<GatewayModelResolution> ResolveModelMetadataAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+    {
+        if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
+            return new GatewayModelResolution { Success = false, ErrorMessage = error, ResolutionType = "NotFound" };
+
+        var result = await _modelResolver.ResolveMetadataAsync(
+            appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
         return result.ToGatewayResolution();
     }
 

@@ -19959,39 +19959,8 @@ static string ResolveLogCostStatus(BsonDocument d)
 /// 金额证据性质。供应商实际账单永远优先于请求完成时的估算快照；存量日志没有 CostKind 时
 /// 按已有事实回退，绝不把 APIYI 的人工价格表伪装成供应商实际结算。
 /// </summary>
-static string ResolveLogCostKind(BsonDocument d)
-{
-    if (d.AsNullableDecimal("ProviderReportedCost") is not null)
-    {
-        return GatewayCostKindNames.ProviderActual;
-    }
-
-    var stored = d.AsNullableString("CostKind")?.Trim().ToLowerInvariant();
-    if (GatewayCostKindNames.All.Contains(stored, StringComparer.Ordinal))
-    {
-        return stored!;
-    }
-
-    var status = ResolveLogCostStatus(d);
-    if (status == GatewayCostStatusNames.NoUsage) return GatewayCostKindNames.NoUsage;
-    if (status != GatewayCostStatusNames.Priced) return GatewayCostKindNames.Unpriced;
-
-    var provider = string.Join(' ', new[]
-    {
-        d.AsNullableString("Provider"),
-        d.AsNullableString("PlatformId"),
-        d.AsNullableString("PlatformName"),
-    }.Where(value => !string.IsNullOrWhiteSpace(value)));
-    if (provider.Contains("apiyi", StringComparison.OrdinalIgnoreCase)
-        || provider.Equals("openai", StringComparison.OrdinalIgnoreCase))
-    {
-        return GatewayCostKindNames.OfficialBaselineEstimate;
-    }
-
-    return string.Equals(d.AsNullableString("PriceSource")?.Trim(), "upstream", StringComparison.OrdinalIgnoreCase)
-        ? GatewayCostKindNames.ProviderPolicyEstimate
-        : GatewayCostKindNames.OfficialBaselineEstimate;
-}
+static string ResolveLogCostKind(BsonDocument d) =>
+    LegacyLogCostKindPolicy.Resolve(d, ResolveLogCostStatus(d));
 
 /// <summary>
 /// 网关写进日志的成本状态取值。console-api 是独立工程、引用不到网关那份常量，

@@ -45,9 +45,9 @@
     "prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs": {
       "calls": {
         "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
-        "call:GetStreamAsync:22e94c739530da230a0eb0f8": 1
+        "call:GetStreamAsync:04ef5a26ede4a31168c2c9ec": 1
       },
-      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+      "purpose": "既有缺陷权限校验后的附件代理读取，经历史附件解析器恢复同key地址；不发送模型请求，保留全HttpClient出口守卫。"
     },
     "prd-api/src/PrdAgent.Api/Controllers/Api/DesignArtifactRuntimeController.cs": {
       "calls": {
@@ -189,10 +189,11 @@
     "prd-api/src/PrdAgent.Api/Program.cs": {
       "calls": {
         "new:HttpClientHandler:7bea2d90c3b06fea1ad75704": 1,
+        "new:HttpClientHandler:9c61d19cea3e678653110bcb": 1,
         "new:SocketsHttpHandler:0a19d9f99aa8623e7c16a558": 1,
         "new:SocketsHttpHandler:d00295f24a464f73b6417fea": 1
       },
-      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝；主干新增HistoricalAsset命名客户端仅探测历史附件，禁自动重定向。"
     },
     "prd-api/src/PrdAgent.Api/Services/AdminPushNotificationService.cs": {
       "calls": {
@@ -768,6 +769,13 @@
         "call:CreateClient:c732572d6e67305342700fce": 1
       },
       "purpose": "任务金额包装器只创建回到自身的GatewayLLMClient，全部发送复用既有统一网关；不创建HTTP客户端或供应商SDK，新调用仍须逐指纹审计"
+    },
+    "prd-api/src/PrdAgent.Api/Services/HistoricalAssetUrlResolver.cs": {
+      "calls": {
+        "call:CreateClient:efd694db8d145e7518fe6ef0": 1,
+        "call:SendAsync:a3851ba27f5f964ceb55f063": 1
+      },
+      "purpose": "主干历史附件兼容：只对管理员配置的HTTPS COS公域及固定业务key作有时限HEAD探测，禁重定向并校验长度、目标与审计；无模型发送。"
     }
   },
   "packages": {
@@ -793,6 +801,7 @@
       "Swashbuckle.AspNetCore"
     ],
     "prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj": [
+      "AngleSharp",
       "BCrypt.Net-Next",
       "MongoDB.Bson",
       "System.IdentityModel.Tokens.Jwt"

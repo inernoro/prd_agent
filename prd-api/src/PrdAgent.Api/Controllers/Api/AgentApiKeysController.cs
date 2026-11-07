@@ -1,4 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers; // OpenApiController.ScopeCall（位于父命名空间，显式 using 让跨命名空间引用更清晰）
@@ -248,7 +251,10 @@ public class AgentApiKeysController : ControllerBase
         public string? Name { get; set; }
         public string? Description { get; set; }
         public List<string>? Scopes { get; set; }
+        /// <summary>接入台逐能力更新：仅替换指定能力，其他存储授权保持不变。</summary>
+        public Dictionary<string, string>? McpCapabilityAccess { get; set; }
         public bool? IsActive { get; set; }
+        public bool? WebPublicExposureAllowed { get; set; }
 
         // 接入台（MCP）配额上限。null = 不改；配额触顶时的提示就是指这里，
         // 光有提示没有入口等于告诉用户一条走不通的路。
@@ -307,9 +313,55 @@ public class AgentApiKeysController : ControllerBase
         return scopes == null || scopes.All(string.IsNullOrWhiteSpace);
     }
 
+    internal static bool TryApplyMcpCapabilityAccess(
+        AgentApiKey key, IReadOnlyList<string> permissions, IReadOnlyDictionary<string, string> changes,
+        out List<string> scopes, out string? error)
+    {
+        // 自动转手动快照当前能力；手动档从存储清单出发，不能用有效权限投影覆盖它。
+        scopes = key.ScopeMode == AgentApiKeyScopeMode.Auto
+            ? McpCapabilityCatalog.AutoScopesFor(permissions).ToList()
+            : key.Scopes.ToList();
+        error = null;
+        foreach (var (capability, level) in changes)
+        {
+            var cap = McpCapabilityCatalog.All.FirstOrDefault(item => item.Key == capability);
+            if (cap == null || level is not ("none" or "read" or "write")
+                || (level == "read" && cap.ReadScope == null) || (level == "write" && cap.WriteScope == null))
+            {
+                error = "无效的能力或授权档位。";
+                return false;
+            }
+            var added = new List<string>();
+            if (level != "none" && cap.ReadScope != null) added.Add(cap.ReadScope);
+            if (level == "write" && cap.WriteScope != null) added.Add(cap.WriteScope);
+            if (added.Any(scope => McpCapabilityCatalog.IsIssuancePermissionChecked(scope)
+                && !McpCapabilityCatalog.PermissionsAllowScope(permissions, scope)))
+            {
+                error = "当前账号无权授予所选能力。";
+                return false;
+            }
+            var replaced = cap.AllScopes().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            scopes.RemoveAll(scope => replaced.Contains(scope));
+            scopes.AddRange(added);
+        }
+        return true;
+    }
+
     [HttpPatch("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpdateRequest req, CancellationToken ct)
     {
+        // 默认认证策略兼容 AgentApiKey；改独立授权时必须另外验证真实用户 JWT，不能相信同一调用方的声明。
+        if (req.WebPublicExposureAllowed.HasValue)
+        {
+            var jwt = await HttpContext.AuthenticateAsync(JwtBearerDefaults.AuthenticationScheme);
+            var jwtUserId = jwt.Principal?.FindFirst("sub")?.Value
+                ?? jwt.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var callerUserId = this.GetUserIdOrNull();
+            if (!jwt.Succeeded || string.IsNullOrWhiteSpace(callerUserId)
+                || !string.Equals(jwtUserId, callerUserId, StringComparison.Ordinal))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "请登录 MAP，在智能体接入台的客户端设置中调整对外发布授权"));
+        }
         var userId = this.GetRequiredUserId();
         var key = await _keyService.GetByIdAsync(id, ct);
         if (key == null || key.OwnerUserId != userId)
@@ -326,7 +378,16 @@ public class AgentApiKeysController : ControllerBase
                 return BadScopeMode(req.ScopeMode);
             explicitScopeMode = parsedMode;
         }
-        if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
+        if (req.McpCapabilityAccess != null)
+        {
+            if (req.Scopes != null || explicitScopeMode == AgentApiKeyScopeMode.Auto)
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "逐能力更新不能与完整授权清单或自动模式同时提交。"));
+            if (!TryApplyMcpCapabilityAccess(key, ownedPermissions, req.McpCapabilityAccess, out var scopes, out var error))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", error!));
+            req.Scopes = scopes;
+            explicitScopeMode = AgentApiKeyScopeMode.Manual;
+        }
+        else if (explicitScopeMode == AgentApiKeyScopeMode.Auto)
         {
             req.Scopes = null;
         }
@@ -399,11 +460,23 @@ public class AgentApiKeysController : ControllerBase
                 "更新固定模型时必须同时传 mcpLiteraryImageModelMode=fixed。"));
         }
 
+        if (req.WebPublicExposureAllowed == true)
+        {
+            var resultingMode = ResultingScopeMode(key.ScopeMode, explicitScopeMode, req.Scopes != null);
+            var resultingScopes = McpCapabilityCatalog.EffectiveScopesFor(
+                resultingMode, req.Scopes ?? key.Scopes, ownedPermissions);
+            if (!AgentApiKey.IsUsableAt(key, DateTime.UtcNow, out _)
+                || !resultingScopes.Contains(McpCapabilityCatalog.ScopeWebPagesWrite, StringComparer.OrdinalIgnoreCase))
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "当前客户端没有可用的网页写入权限，请先恢复密钥或网页写入授权"));
+        }
+
         await _keyService.UpdateMetadataAsync(
             id, req.Name, req.Description, req.Scopes, req.IsActive, ct,
             new AgentApiKeyQuotaPatch(req.McpDailyImageQuota, req.McpDailyWriteQuota, req.McpRateLimitPerMin),
             explicitScopeMode,
-            literaryImageModelPatch);
+            literaryImageModelPatch,
+            req.WebPublicExposureAllowed);
 
         var reloaded = await _keyService.GetByIdAsync(id, ct);
         return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
@@ -492,6 +565,7 @@ public class AgentApiKeysController : ControllerBase
             // 这件事已经在两处投影上各漏过一次。
             scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, now),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            webPublicExposureAllowed = k.WebPublicExposureAllowed,
             mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
                 ? "fixed"
                 : "follow-user-panel",

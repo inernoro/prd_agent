@@ -3,8 +3,6 @@
  * These endpoints are the "hands" that do the actual Docker/Git work.
  */
 import { Router } from 'express';
-import { access } from 'node:fs/promises';
-import path from 'node:path';
 import type { BuildProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import type { ContainerService } from '../services/container.js';
@@ -12,12 +10,14 @@ import { WorktreeService, deploymentNeedsSourceCheckout } from '../services/work
 import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
-import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { admittedArtifactProfile, artifactInspectionContext, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { componentInputComparator } from '../services/prebuilt-reuse.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError, type BranchOperationTrigger } from '../services/branch-operation-coordinator.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { prepareServiceReplacement, reserveServiceReplacements, replacementLaunchEntry, preserveReplacementNames, commitServiceReplacements } from '../services/service-replacement.js';
 import { applyDeployReadinessFloor, resolveDeployReadinessFloorSeconds } from '../services/container.js';
+import { executorDeploymentOwners, remoteIdentity, type RemoteExecutionReceipt } from '../services/remote-deployment-owner.js';
 
 export interface ExecutorRouterDeps {
   stateService: StateService;
@@ -31,6 +31,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
   const { stateService, worktreeService, containerService, shell, config } = deps;
   const router = Router();
   const preparations = new BranchOperationCoordinator();
+  const remoteOwners = executorDeploymentOwners(stateService);
 
   // ── Auth middleware: verify executor token ──
   router.use((req, res, next) => {
@@ -61,6 +62,22 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     return { ...cdsEnv, ...mirrorEnv, ...customEnv };
   }
 
+  function artifactOwnerGuard(branchId: string, branchName: string, projectId: string, assertCurrent: () => void): { assertCurrent: () => void; worktree?: WorktreeService } {
+    const entry = stateService.getBranch(branchId), project = stateService.getProject(projectId), repoRoot = config.repoRoot;
+    const worktreeBase = config.worktreeBase, worktreePath = entry?.worktreePath;
+    const mappedProject = stateService.resolveProjectForAutoBuild(repoRoot), projectRepoRoot = stateService.getProjectRepoRoot(projectId, repoRoot);
+    const check = () => {
+      assertCurrent();
+      if (stateService.getProject(projectId) !== project || config.repoRoot !== repoRoot
+        || config.worktreeBase !== worktreeBase || entry?.worktreePath !== worktreePath
+        || stateService.resolveProjectForAutoBuild(repoRoot) !== mappedProject || stateService.getProjectRepoRoot(projectId, repoRoot) !== projectRepoRoot
+        || stateService.getBranch(branchId) !== entry || entry && ((entry.projectId || 'default') !== projectId || entry.branch !== branchName)) {
+        throw new BranchOperationSupersededError('', branchId, 'executor-artifact-owner');
+      }
+    };
+    return { assertCurrent: check, worktree: project && mappedProject === project && projectRepoRoot === repoRoot ? worktreeService : undefined };
+  }
+
   // ── GET /exec/status — current load and branch status ──
   router.get('/status', (_req, res) => {
     const branches = stateService.getAllBranches();
@@ -73,21 +90,45 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // 只核验产物，不创建worktree、容器或修改项目/分支状态；使用本执行器daemon及registry访问。
   router.post('/artifact-preflight', async (req, res) => {
-    const { profiles, commitSha } = req.body || {};
+    const { profiles, commitSha, owner, remainingMs } = req.body || {};
     if (!Array.isArray(profiles) || profiles.length > 256 || typeof commitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(commitSha)
       || !profiles.every(profile => profile && typeof profile.id === 'string' && profile.id.length <= 256
         && typeof profile.dockerImage === 'string' && profile.dockerImage.length <= 4096)) {
       res.status(400).json({ error: '产物核验输入无效' }); return;
     }
+    if (owner !== undefined && (!owner || !['branchId', 'branchName', 'projectId'].every(key => typeof owner[key] === 'string'
+      && owner[key].length > 0 && owner[key].length <= 1024) || typeof remainingMs !== 'number' || !Number.isFinite(remainingMs) || remainingMs <= 0)) {
+      res.status(400).json({ error: '产物核验归属或剩余时间无效' }); return;
+    }
+    let preparation: ReturnType<BranchOperationCoordinator['beginDeploymentPreparation']> | undefined, closed = false;
+    const onClose = () => { closed = true; preparation?.release(); };
+    res.once('close', onClose);
     try {
-      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, () => {});
+      const assertRequest = () => { if (closed) throw new Error('产物核验请求已结束'); preparation?.assertCurrent(); };
+      const qualification = owner ? artifactOwnerGuard(owner.branchId, owner.branchName, owner.projectId, assertRequest) : { assertCurrent: assertRequest, worktree: undefined };
+      const { assertCurrent } = qualification;
+      assertCurrent();
+      if (owner) preparation = preparations.beginDeploymentPreparation({ branchId: owner.branchId, projectId: owner.projectId,
+        kind: 'deploy', trigger: 'system', commitSha, commitPinned: true, source: 'executor.artifact-preflight' });
+      const context = artifactInspectionContext(shell, qualification.worktree, config.repoRoot, assertCurrent, owner ? remainingMs : 120_000);
+      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, assertCurrent, context);
+      context.remainingMs();
       res.json(result);
     } catch {
       res.status(503).json({ error: '产物核验暂不可用，尚未开始部署' });
-    }
+    } finally { preparation?.release(); res.off('close', onClose); }
   });
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
+  router.post('/deployment-owner', (req, res) => {
+    const owner = remoteIdentity(req.body);
+    if (!owner || !['claim', 'renew', 'revoke'].includes(req.body.action)) { res.status(400).json({ error: '远端原代次身份无效' }); return; }
+    try {
+      if (req.body.action === 'revoke') res.json({ qualified: remoteOwners.revoke(owner) });
+      else res.json({ qualified: true, admissionId: remoteOwners.claim(owner).admissionId });
+    } catch { res.status(409).json({ qualified: false, error: '远端原代次已结束，请查看最新部署' }); }
+  });
+
   router.post('/deploy', async (req, res) => {
     const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger, commitSha, artifactCommitSha } = req.body as {
       branchId: string;
@@ -118,6 +159,12 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     // 调用可能省略 profiles 字段,profilesData.map / .length 直接 throw → 把一次合法的「空清单 teardown」
     // 变成不透明的部署错误。归一为 []，让下方孤儿收敛 + 空清单落 idle 的路径正常走。
     let profilesData = Array.isArray(profilesRaw) ? profilesRaw : [];
+    const remoteOwner = remoteIdentity(req.body);
+    let remoteExecution: { assertCurrent: () => void; receipt: () => RemoteExecutionReceipt } | undefined;
+    try {
+      if (remoteOwner) remoteExecution = remoteOwners.begin(remoteOwner, req.body.admissionId);
+      else if (remoteOwners.protected(branchId) || req.body.operationGeneration !== undefined) throw new Error('缺少有效远端原代次身份');
+    } catch { res.status(409).json({ error: '远端原代次已结束或重复受理，请查看最新部署' }); return; }
 
     // SSE response
     res.writeHead(200, {
@@ -128,6 +175,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     });
 
     const sendEvent = (event: string, data: unknown) => {
+      if (res.writableEnded || res.destroyed) return;
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* */ }
     };
 
@@ -138,10 +186,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     let expectedProject = currentEntry?.projectId, expectedBranch = currentEntry?.branch;
     const target = artifactCommitSha ?? commitSha;
     const assertCurrent = () => {
+      remoteExecution?.assertCurrent();
       preparation?.assertCurrent();
       if (stateService.getBranch(branchId) !== currentEntry
         || (currentEntry && (currentEntry.projectId !== expectedProject || currentEntry.branch !== expectedBranch))) throw new BranchOperationSupersededError('', branchId, 'executor-owner');
     };
+    const reportWait = () => { try { if (remoteExecution) sendEvent('phase-wait', remoteExecution.receipt()); } catch { /* 原资格检查会阻止后续副作用，不伪造完成。 */ } };
+    const waitTimer = remoteExecution ? setInterval(reportWait, 10_000) : undefined;
+    waitTimer?.unref(); reportWait();
     try {
       // Ensure worktree exists.
       // P4 Part 18 (G1.2): executor routes stay on the single
@@ -190,6 +242,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           message: '预构建部署的完整目标尚未确认，尚未受理；请由Master等待齐备产物后重试，旧服务继续保留',
           ...(currentEntry ? { services: currentEntry.services } : {}) }); return;
       }
+      const { assertCurrent: assertArtifactOwner, worktree: artifactWorktree } = artifactOwnerGuard(branchId, branchName, resolvedProjectId, assertCurrent);
+      if (requiresArtifactAdmission) assertArtifactOwner();
       const allowedTriggers: BranchOperationTrigger[] = ['manual', 'webhook', 'auto-lifecycle', 'scheduler', 'janitor', 'system'];
       preparation = preparations.beginDeploymentPreparation({ branchId, projectId: actualProjectId, kind: 'deploy',
         trigger: allowedTriggers.includes(trigger as BranchOperationTrigger) ? trigger as BranchOperationTrigger : 'manual',
@@ -199,7 +253,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       if (requiresArtifactAdmission) {
         sendEvent('step', { step: 'artifact-preflight', status: 'running', title: '正在核验全部必需镜像及本地产物' });
         try {
-          admission = await containerService.inspectDeploymentArtifacts(profilesData as BuildProfile[], target!, assertCurrent, { inspectLocalArtifacts: true });
+          const context = artifactInspectionContext(shell, artifactWorktree, config.repoRoot, assertArtifactOwner);
+          admission = await containerService.inspectDeploymentArtifacts(profilesData as BuildProfile[], target!, assertArtifactOwner, { ...context, inspectLocalArtifacts: true });
         } catch (error) {
           assertCurrent();
           if (error instanceof BranchOperationSupersededError) throw error;
@@ -240,6 +295,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             services: {},
             status: 'building',
             createdAt: new Date().toISOString(),
+            ...(remoteOwner ? { remoteDeployment: { ...remoteOwner, revoked: false } } : {}),
           };
           assertCurrent();
           stateService.addBranch(entry); currentEntry = entry; expectedProject = entry.projectId; expectedBranch = entry.branch;
@@ -271,6 +327,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             profileId: sid,
             requestId: requestId || null,
             operationId: operationId || null,
+            operationGeneration: remoteOwner?.operationGeneration,
             actor: actor || 'executor',
             trigger: trigger || 'executor-deploy',
             operation: 'executor-deploy-remove-orphan-service',
@@ -306,15 +363,15 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         pullResult = { head: targetCommit, after: targetCommit.slice(0, 7), afterFull: targetCommit, sourcePath: entry.worktreePath };
         sendEvent('step', { step: 'artifact-target', status: 'done', title: `本次直接部署已核验产物 ${targetCommit.slice(0, 7)}`, artifactCommitSha: targetCommit });
       } else {
-        // 产物部署未建工作树；首次明确切源码时只为既有内部工作树路径创建，不处理外部路径。
-        if (entry.worktreePath === WorktreeService.worktreePathFor(config.worktreeBase, entry.projectId || resolvedProjectId, branchId)) {
-          let missing = false;
-          try { await access(path.join(entry.worktreePath, '.git')); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') missing = true; else throw error; }
-          assertCurrent();
-          if (missing) { await worktreeService.create(config.repoRoot, entry.branch, entry.worktreePath); assertCurrent(); }
-        }
         sendEvent('step', { step: 'pull', status: 'running', title: '正在拉取最新代码...' });
-        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, admission?.targetCommitSha || commitSha);
+        const sourceOwner = artifactOwnerGuard(branchId, entry.branch, entry.projectId || resolvedProjectId, assertCurrent);
+        const recovery = sourceOwner.worktree
+          && entry.worktreePath === WorktreeService.worktreePathFor(config.worktreeBase, entry.projectId || resolvedProjectId, entry.id)
+          ? { kind: 'managed-missing' as const, worktreeBase: config.worktreeBase,
+            projectId: entry.projectId || resolvedProjectId, branchId: entry.id, assertCurrent: sourceOwner.assertCurrent }
+          : { kind: 'existing-only' as const };
+        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath,
+          admission?.targetCommitSha || commitSha, config.repoRoot, recovery);
         assertCurrent();
         sendEvent('step', { step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`,
           head: pullResult.head, after: pullResult.after, afterFull: pullResult.afterFull });
@@ -411,8 +468,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             }, mergedEnv, {
               requestId: requestId || null,
               operationId: operationId || null,
+              operationGeneration: remoteOwner?.operationGeneration,
               assertCurrent,
               artifactCommitSha: admission?.targetCommitSha,
+              isComponentUnchangedSince: componentInputComparator(shell, config.repoRoot, assertCurrent),
               sourceCheckout: artifactOnly ? undefined : { path: pullResult.sourcePath, commitSha: pullResult.afterFull },
               actor: actor || 'executor',
               trigger: trigger || 'executor-deploy',
@@ -459,7 +518,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // Update overall status
       assertCurrent();
       await commitServiceReplacements({ entry, profileIds: profilesData.map(profile => profile.id), state: stateService,
-        container: containerService, assertCurrent });
+        container: containerService, operationId: operationId || undefined, operationGeneration: remoteOwner?.operationGeneration, assertCurrent });
+      assertCurrent();
       const statuses = Object.values(entry.services).map(s => s.status);
       // 无服务(期望清单为空 / 已全部收敛拆除) → idle，与 master 端空清单清理一致（Bugbot Medium）：
       // 否则空 services 会落到 'error'，心跳同步把一次成功的「清空」误标为失败。
@@ -506,6 +566,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         ...(failedEntry ? { services: failedEntry.services } : {}),
       });
     } finally {
+      if (waitTimer) clearInterval(waitTimer);
       preparation?.release();
       res.end();
     }

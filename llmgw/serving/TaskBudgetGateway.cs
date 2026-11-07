@@ -183,6 +183,9 @@ public sealed class TaskBudgetGateway(
     public Task<GatewayModelResolution> ResolveModelAsync(string appCallerCode, string modelType, string? expectedModel = null,
         string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
         => inner.ResolveModelAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+    public Task<GatewayModelResolution> ResolveModelMetadataAsync(string appCallerCode, string modelType, string? expectedModel = null,
+        string? pinnedPlatformId = null, string? pinnedModelId = null, CancellationToken ct = default)
+        => inner.ResolveModelMetadataAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
     public Task<GatewayModelResolution> ResolveOfferingAsync(string appCallerCode, string modelType, string offeringId, CancellationToken ct = default)
         => inner.ResolveOfferingAsync(appCallerCode, modelType, offeringId, ct);
     public Task<GatewayModelResolution> ResolveRequiredLogicalModelAsync(string appCallerCode, string modelType, string logicalModelPublicId, CancellationToken ct = default)

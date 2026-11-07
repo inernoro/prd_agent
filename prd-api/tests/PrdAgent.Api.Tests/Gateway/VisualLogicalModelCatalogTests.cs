@@ -89,6 +89,7 @@ public sealed class VisualLogicalModelCatalogTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ApiKeyCrypto:Secret"] = "visual-model-catalog-test-only-2026",
+            ["LlmGateway:ModelCatalogGateRecheckSeconds"] = "0",
         }).Build();
         async Task Insert<T>(string collection, T value)
         {
@@ -127,6 +128,8 @@ public sealed class VisualLogicalModelCatalogTests
                 await Insert("llmgw_models", new LLMModel
                 {
                     Id = id + "-upstream", ModelName = upstream, PlatformId = "provider", Enabled = true, Protocol = "openai",
+                    MaxTokens = 8192, InputPricePerMillion = 3m, OutputPricePerMillion = 12m,
+                    PriceCurrency = "USD", PriceSource = "fixture", PriceObservedAt = DateTime.UtcNow.AddMinutes(-1),
                 });
                 await Insert("llmgw_logical_models", new GatewayLogicalModel
                 {
@@ -172,6 +175,19 @@ public sealed class VisualLogicalModelCatalogTests
                     .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
                     .Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1))
                     .Unset(x => x.HalfOpenLeaseUntil));
+            // 修改预算只读元信息后，真实业务请求仍应拥有认领恢复探针的机会。
+            var budgetMetadata = await resolver.ResolveMetadataAsync(caller, "generation", "image2");
+            Assert.True(budgetMetadata.Success, budgetMetadata.ErrorMessage);
+            Assert.Equal("image2-offering", budgetMetadata.OfferingId);
+            Assert.Equal("测试上游", budgetMetadata.ActualPlatformName);
+            Assert.Equal(8192, budgetMetadata.MaxTokens);
+            Assert.Equal(3m, budgetMetadata.InputPricePerMillion);
+            Assert.Equal(12m, budgetMetadata.OutputPricePerMillion);
+            Assert.Equal("USD", budgetMetadata.PriceCurrency);
+            Assert.Equal("fixture", budgetMetadata.PriceSource);
+            Assert.NotNull(budgetMetadata.PriceObservedAt);
+            var afterMetadataRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Null(afterMetadataRead.HalfOpenLeaseUntil);
             var halfOpenCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
             var halfOpenMember = Assert.Single(halfOpenCatalog[0].Models);
             Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
@@ -185,11 +201,52 @@ public sealed class VisualLogicalModelCatalogTests
                 Builders<GatewayModelOffering>.Update
                     .Set(x => x.LastFailedAt, DateTime.UtcNow)
                     .Set(x => x.ManualRecoveryAt, DateTime.UtcNow));
+            await Insert("llmgw_models", new LLMModel
+            {
+                Id = "blocked-upstream", ModelName = "future-unapproved-probe-1699", PlatformId = "provider", Enabled = true,
+            });
+            await gateway.Database.GetCollection<BsonDocument>("llmgw_models").UpdateOneAsync(
+                new BsonDocument("_id", "image2-upstream"), Builders<BsonDocument>.Update.Set("AllowedOutsideCatalog", true));
+            await gateway.Database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName).InsertManyAsync(
+                GatewayCatalogMigrations.RequiredIds.Select(id => new BsonDocument
+                {
+                    ["_id"] = id, [GatewayCatalogMigrations.CompletedAtField] = DateTime.UtcNow,
+                }));
+            Assert.True(await GatewayCatalogGate.EnforcesAsync(config, gateway.Database, default));
+            foreach (var (id, target, priority) in new[] { ("missing-probe", "missing-target", -2), ("blocked-probe", "blocked-upstream", -1) })
+                await Insert("llmgw_model_offerings", new GatewayModelOffering
+                {
+                    Id = id, LogicalModelId = "image2", TargetId = target, Protocol = "openai", Priority = priority,
+                    HealthStatus = ModelHealthStatus.Unavailable, LastFailedAt = DateTime.UtcNow.AddHours(-1),
+                });
             var manualCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
             Assert.True(Assert.Single(manualCatalog[0].Models).IsRecoveryProbeAvailable);
+            Assert.Equal("gpt-image-2", Assert.Single(manualCatalog[0].Models).ActualModelId);
             Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 2));
+            var recoveryMetadata = await resolver.ResolveMetadataAsync(caller, "generation", "image2");
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 0));
+            Assert.All(await offerings.Find(x => x.LogicalModelId == "image2").ToListAsync(),
+                offering => Assert.Null(offering.HalfOpenLeaseUntil));
+            Assert.Empty(await gateway.Database.GetCollection<BsonDocument>("system.profile")
+                .Find(new BsonDocument("command.findAndModify", "llmgw_model_offerings")).ToListAsync());
+            Assert.True(recoveryMetadata.Success, recoveryMetadata.ErrorMessage);
+            Assert.Equal("image2-offering", recoveryMetadata.OfferingId);
+            await Insert("llmgw_model_offerings", new GatewayModelOffering
+            {
+                Id = "é-later-probe", LogicalModelId = "image2", TargetId = "unneeded-later-target", Protocol = "openai", Priority = 100,
+                HealthStatus = ModelHealthStatus.Unavailable, LastFailedAt = DateTime.UtcNow.AddHours(-1),
+            });
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 2));
             var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
+            await gateway.Database.RunCommandAsync<BsonDocument>(new BsonDocument("profile", 0));
+            Assert.Empty(await gateway.Database.GetCollection<BsonDocument>("system.profile")
+                .Find(new BsonDocument { ["command.find"] = "llmgw_models", ["command.filter._id"] = "unneeded-later-target" })
+                .ToListAsync());
             Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
+            Assert.Equal("image2-offering", recoveryAttempt.OfferingId);
+            Assert.All(await offerings.Find(x => x.Id == "missing-probe" || x.Id == "blocked-probe").ToListAsync(),
+                offering => Assert.Null(offering.HalfOpenLeaseUntil));
             var afterRecoveryAttempt = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
             Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
             var leasedCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");

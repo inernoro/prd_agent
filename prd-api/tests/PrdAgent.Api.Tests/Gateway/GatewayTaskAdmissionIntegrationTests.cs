@@ -352,6 +352,36 @@ public sealed class GatewayTaskAdmissionIntegrationTests
     }
 
     [Fact]
+    public async Task SidecarMetadataIgnoresOfferingAndPinsWithoutClaimingExecution()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.PermitAsync(maxCalls: 1);
+        var (grant, key) = await database.SidecarAsync(permit);
+        grant.PinnedPlatformId = "signed-platform"; grant.PinnedModelId = "signed-model";
+        await database.Grants.ReplaceOneAsync(x => x.Id == grant.Id, grant);
+        var gateway = new Mock<PrdAgent.Core.LlmGateway.ILlmGateway>(MockBehavior.Strict);
+        gateway.Setup(x => x.ResolveModelMetadataAsync(Caller, "chat", grant.Model,
+                grant.PinnedPlatformId, grant.PinnedModelId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayModelResolution { Success = true, ActualModel = grant.Model });
+        await using var host = await Server(database, implementation: gateway.Object);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/resolve")
+        {
+            Content = JsonContent.Create(new { AppCallerCode = Caller, ModelType = "chat",
+                ExpectedModel = "untrusted-model", PinnedPlatformId = "untrusted-platform",
+                PinnedModelId = "untrusted-pin", OfferingId = "untrusted-offering" }),
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key);
+        using var response = await host.GetTestClient().SendAsync(request);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        response.Headers.GetValues(PrdAgent.Core.LlmGateway.ILlmGateway.MetadataResolutionPurposeHeader)
+            .ShouldContain(PrdAgent.Core.LlmGateway.ILlmGateway.ReadOnlyMetadataPurpose);
+        gateway.VerifyAll(); gateway.VerifyNoOtherCalls();
+        (await database.Permits.Find(x => x.Id == permit.Id).SingleAsync()).CallCount.ShouldBe(0);
+        (await database.Grants.Find(x => x.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(0);
+        database.PaidCalls.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task MissingAdmissionServiceFailsClosed()
     {
         await using var database = await TestDatabase.CreateAsync();

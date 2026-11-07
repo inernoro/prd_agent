@@ -14,6 +14,17 @@ const cleanupBudgetMs = 300;
 const cleanupPollMs = 20;
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
+// Date、轮询与步骤取消共用同一时钟；真实 journal IO 不推进测试预算。
+function useProbeClock() {
+  vi.useFakeTimers();
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), milliseconds);
+    return controller.signal;
+  });
+  return () => { timeout.mockRestore(); vi.clearAllTimers(); vi.useRealTimers(); };
+}
+
 function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean;
   removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean; delayedRemovalReply?: boolean; keepRemovalVisible?: boolean; delayedRemovalMs?: number;
   earlyRemovalExpiry?: 'deadline' | 'cancelled'; cleanupBudgetMs?: number; cleanupPollMs?: number } = {}) {
@@ -86,26 +97,29 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 
 describe('capability probe cancellation reconciliation', () => {
   it.each(['deadline', 'cancelled'] as const)('已确认 CID 在原窗口内收到 %s 后仍按同一有限期限核实清理', async code => {
+    const restoreClock = useProbeClock();
     const f = fixture(true, { earlyRemovalExpiry: code });
-    let restoreClock = () => {}, restoreRemove = () => {};
-    if (code === 'deadline') {
-      const runtime = f.runtime as any;
-      const remove = runtime.removeConfirmedProbeContainer.bind(runtime);
-      const intercepted = vi.spyOn(runtime, 'removeConfirmedProbeContainer').mockImplementation(async (...args: any[]) => {
-        try { return await remove(...args); }
-        catch (error) {
-          // 仅固定原 D 交界的两次读钟；不改生产期限或真实 AbortSignal。
-          const clock = vi.spyOn(Date, 'now').mockReturnValue(args[2]);
-          clock.mockReturnValueOnce(args[2] - 1);
-          restoreClock = () => clock.mockRestore();
-          throw error;
-        }
-      });
-      restoreRemove = () => intercepted.mockRestore();
-    }
+    const runtime = f.runtime as any;
+    const interrupted = deferred<number>(), release = deferred<void>();
+    const remove = runtime.removeConfirmedProbeContainer.bind(runtime);
+    const intercepted = vi.spyOn(runtime, 'removeConfirmedProbeContainer').mockImplementation(async (...args: any[]) => {
+      try { return await remove(...args); }
+      catch (error) {
+        interrupted.resolve(args[2]);
+        await release.promise;
+        throw error;
+      }
+    });
     try {
       const probe = f.runtime.capability(true); await f.accepted.promise;
-      await expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined(); await probe;
+      const closing = expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined();
+      f.reveal();
+      const deadline = await Promise.race([interrupted.promise, closing.then(() => { throw new Error('未收到预期的删除中断'); })]);
+      // 中断证据已经发生在原期限内；到原截止才交回，避免原生轮询先于虚拟时钟越界。
+      if (code === 'deadline') await vi.advanceTimersByTimeAsync(deadline - Date.now());
+      release.resolve();
+      await vi.advanceTimersByTimeAsync(5);
+      await closing; await probe;
       const early = f.events.find(event => event.action === 'agent.probe.cleanup.step.interrupted' && event.details.outcome === code);
       expect(early).toBeDefined();
       expect(early.details.finishedAt).toBeLessThan(early.details.deadline);
@@ -122,21 +136,15 @@ describe('capability probe cancellation reconciliation', () => {
       expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmed')).toBe(true);
       expect(f.visible).toBe(false);
     } finally {
-      restoreClock(); restoreRemove();
+      release.resolve(); intercepted.mockRestore();
       await f.runtime.closeCapabilityProbes().catch(() => undefined);
+      restoreClock();
       fs.rmSync(f.rootDir, { recursive: true, force: true });
     }
   });
 
   it('uses the fixed confirmed-resource window after one step expires, without extending any step or reissuing a name', async () => {
-    vi.useFakeTimers();
-    // Node's native AbortSignal.timeout does not follow Vitest's clock.
-    // Keep cancellation and Date.now on the same deterministic timeline.
-    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
-      const controller = new AbortController();
-      setTimeout(() => controller.abort(), milliseconds);
-      return controller.signal;
-    });
+    const restoreClock = useProbeClock();
     const f = fixture(true, { delayedRemovalMs: 80, cleanupBudgetMs: 60, cleanupPollMs: 5 });
     try {
       const probe = f.runtime.capability(true); await f.accepted.promise;
@@ -158,7 +166,7 @@ describe('capability probe cancellation reconciliation', () => {
       expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmed')).toBe(true);
       expect(f.visible).toBe(false);
     } finally {
-      timeout.mockRestore(); vi.clearAllTimers(); vi.useRealTimers();
+      restoreClock();
       fs.rmSync(f.rootDir, { recursive: true, force: true });
     }
   });
