@@ -6,6 +6,7 @@ import {validateBoundedStorageProof} from './bounded-storage-provider.js';
 import {withWritableSourceLayer} from './source-workspace.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { cdsEventsBus } from './cds-events-bus.js';
 import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
 import { worktreePathActivity } from './worktree-path-activity.js';
@@ -3836,6 +3837,32 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.save();
   }
 
+  /** 申请者离线后仍关闭过期审批与未领取的一次授权，清除待交付明文。 */
+  expireBootstrapAccessRequests(now = Date.now()): void {
+    const expiredIds: string[] = [];
+    for (const item of this.state.accessRequests || []) {
+      if (item.kind !== 'bootstrap' || item.createdProject
+        || !['pending', 'approved'].includes(item.status)) continue;
+      const key = (this.state.globalAgentKeys || []).find(k => k.id === item.issuedKeyId);
+      const requestDeadline = Date.parse(item.expiresAt || '') || Date.parse(item.createdAt) + 600_000;
+      const keyDeadline = Date.parse(key?.expiresAt || '');
+      const deadline = item.deliveredAt
+        ? keyDeadline || Date.parse(item.deliveredAt) + 300_000
+        : Math.min(requestDeadline, keyDeadline || Infinity);
+      if (deadline > now && !key?.revokedAt) continue;
+      if (key && !key.revokedAt) key.revokedAt = new Date(now).toISOString();
+      item.status = 'expired';
+      item.decidedAt = new Date(now).toISOString();
+      delete item.issuedKeyPlaintext;
+      expiredIds.push(item.id);
+    }
+    if (expiredIds.length) {
+      this.save();
+      const pendingCount = this.listAccessRequests().filter(item => item.status === 'pending').length;
+      for (const requestId of expiredIds) cdsEventsBus.publish('access-request.decided', { requestId, status: 'expired', pendingCount });
+    }
+  }
+
   listAccessRequests(): AccessRequest[] {
     return this.state.accessRequests || [];
   }
@@ -3937,10 +3964,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    */
   findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string; access: AgentKeyAccess } | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
+    this.expireBootstrapAccessRequests();
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const entry of this.state.globalAgentKeys || []) {
-      if (entry.revokedAt) continue;
+      if (entry.revokedAt || (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now())) continue;
       try {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;
