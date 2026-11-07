@@ -29,6 +29,67 @@ const selectors = {
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
 const browser = await chromium.launch({ headless: true });
 const results = [];
+
+// REG-stsmk-report-external-link-001: real built viewer, isolated synthetic APIs only.
+async function verifyAuthenticatedReportNavigation() {
+  for (const format of ['html', 'md']) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
+    const supervisorId = '1'.repeat(32), appendixId = '2'.repeat(32), missingId = '3'.repeat(32);
+    const project = 'fixture-project', folder = '4'.repeat(32), title = `受保护主管-${format}`;
+    const reports = [
+      { id: supervisorId, title, format, projectId: project, folderId: folder, sizeBytes: 300, createdAt: '2026-11-07T00:00:00Z' },
+      { id: appendixId, title: `技术附录-${format}`, format, projectId: project, folderId: folder, sizeBytes: 100, createdAt: '2026-11-07T00:00:00Z' },
+    ];
+    const target = `${base}/reports?project=${project}&report=${appendixId}`;
+    const missing = `${base}/reports?project=${project}&report=${missingId}`;
+    const raw = format === 'html'
+      ? `<h1>${title}</h1><a target="_blank" href="${target}">打开技术附录</a><a target="_blank" href="${missing}">未列出报告</a>`
+      : `# ${title}\n\n[打开技术附录](${target})\n\n[未列出报告](${missing})`;
+    const rawRequests = [];
+    await context.route('**/api/**', async route => {
+      const p = new URL(route.request().url()).pathname.replace(/^\/_cds/, '');
+      if (p === '/api/auth/status') return route.fulfill({ json: { authenticated: true, enabled: true, mode: 'basic', user: { id: 'fixture-owner', name: '合成验收账号', isSystemOwner: true } } });
+      if (/\/raw$/.test(p)) {
+        rawRequests.push(p);
+        if (p === `/api/reports/${supervisorId}/raw`) return route.fulfill({ contentType: 'text/plain', body: raw });
+        if (p === `/api/reports/${appendixId}/raw`) return route.fulfill({ contentType: 'text/plain', body: `<h1>APPENDIX-${format}</h1>` });
+        return route.fulfill({ status: 403, json: { message: '不可访问的合成报告' } });
+      }
+      if (p === '/api/reports') return route.fulfill({ json: { reports } });
+      if (p === '/api/report-folders') return route.fulfill({ json: { folders: [] } });
+      if (p === '/api/reports/overview' || p === '/api/reports/pipeline') return route.fulfill({ status: 503, json: { message: '本项只验证报告查看器' } });
+      if (isEventStream(p)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
+      return route.fulfill({ json: resolveFixture(p) ?? {} });
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${base}/reports?project=${project}&report=${supervisorId}`);
+      let frame = page.frameLocator(`iframe[title="${title}"]`);
+      await frame.getByRole('heading', { name: title }).waitFor();
+      await page.evaluate((reportId) => window.postMessage({ type: 'cds:authenticated-report-navigation', reportId }, location.origin), appendixId);
+      await frame.getByRole('heading', { name: title }).waitFor();
+      await frame.getByRole('link', { name: '未列出报告' }).click();
+      await page.getByRole('alert').filter({ hasText: '无法打开该报告' }).waitFor();
+      assert(!rawRequests.some(p => p.includes(missingId)), 'frame must not request an ID outside the authenticated list');
+      await frame.getByRole('link', { name: '打开技术附录' }).click();
+      await page.waitForURL(url => url.searchParams.get('report') === appendixId);
+      frame = page.frameLocator(`iframe[title="技术附录-${format}"]`);
+      await frame.getByRole('heading', { name: `APPENDIX-${format}` }).waitFor();
+      assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts');
+      assert.equal(context.pages().length, 1, 'report navigation must not open a popup');
+      assert.equal(new URL(page.url()).searchParams.get('folder'), folder, 'folder comes from authenticated metadata');
+      assert(await frame.locator('body').evaluate(() => { try { void window.parent.document.body; return false; } catch { return true; } }), 'frame remains isolated from authenticated parent');
+      await page.reload();
+      await frame.getByRole('heading', { name: `APPENDIX-${format}` }).waitFor();
+      await page.screenshot({ path: path.join(out, `report-auth-navigation-${format}.jpg`) });
+      console.log(`PASS REG-stsmk-report-external-link-001 ${format}: protected navigation, refresh, missing-report rejection, unchanged sandbox`);
+    } catch (error) {
+      await page.screenshot({ path: path.join(out, `failure-report-navigation-${format}.jpg`) });
+      throw error;
+    } finally { await context.close(); }
+  }
+}
+
 try {
   for (const scene of scenes.filter(s => s.scope !== 'standalone' && s.route !== '/branch-panel' && (!only || only.includes(s.route)))) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 940 } });
@@ -123,6 +184,7 @@ try {
   }
   if (!before && !only) {
     try {
+      await verifyAuthenticatedReportNavigation();
       await verifyPublicLoading(browser, base, out);
       const settings = await verifySettingsRefresh(browser, base, out);
       await fs.writeFile(path.join(out, 'project-settings-refresh-result.json'), JSON.stringify(settings,null,2));
