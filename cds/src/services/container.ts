@@ -3240,6 +3240,7 @@ export class ContainerService {
     });
     context.assertCurrent?.('before stop sentinel');
     await this.writeStopSentinel(containerName, reason, context.assertCurrent);
+    context.assertCurrent?.('after stop sentinel');
     this.noteLifecycleIntent(containerName, context.kind ?? 'cds-stop', reason, {
       projectId: context.projectId ?? null,
       branchId: context.branchId ?? null,

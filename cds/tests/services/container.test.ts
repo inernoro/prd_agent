@@ -922,6 +922,7 @@ describe('ContainerService', () => {
     });
 
     it.each(['sentinel', 'stop'])('原清理通道等待%s期间资格失效时，不发出迟到命令或释放后继责任', async boundary => {
+      clearContainerLifecycleIntentsForTest();
       let current = true;
       const commands: string[] = [], stopped = vi.fn();
       const guarded = new ContainerService({ exec: async (command, options) => {
@@ -932,6 +933,9 @@ describe('ContainerService', () => {
       vi.spyOn(guarded as any, 'captureContainerDiagnostics').mockResolvedValue({});
       await expect(guarded.stop('cds-feature-a-api', '原停止', { assertCurrent: () => { if (!current) throw new Error('原停止资格失效'); } }, stopped))
         .rejects.toThrow('原停止资格失效');
+      const intent = findRecentContainerLifecycleIntent('cds-feature-a-api');
+      clearContainerLifecycleIntentsForTest();
+      if (boundary === 'sentinel') expect(intent).toBeUndefined();
       expect(commands.some(command => command.startsWith('docker stop') || command.includes('[CDS-STOP]'))).toBe(boundary !== 'sentinel');
       expect(commands.some(command => command.startsWith('docker stop'))).toBe(false);
       expect(stopped).not.toHaveBeenCalled();

@@ -14314,8 +14314,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ── Pre-allocate ports (before parallel execution) ──
       const liveUsedPorts = await collectListeningPorts(shell);
+      const firstStartProfileIds = new Set<string>();
       for (const profile of profiles) {
         if (!entry.services[profile.id]) {
+          firstStartProfileIds.add(profile.id);
           const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
           liveUsedPorts.add(hostPort);
           entry.services[profile.id] = {
@@ -14484,6 +14486,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const releaseBuildSlot = () => buildSlot?.release();
           if (isPrebuiltDeploy) {
             sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+          } else if (!firstStartProfileIds.has(profile.id)) {
+            // 既有服务先排编译队列，避免等待期间移除旧容器或执行 stop-first。
+            buildSlot = await acquireGateSlot();
           }
 
           logEvent({
@@ -15470,7 +15475,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
-      if (!entry.services[profile.id]) {
+      const firstServiceStart = !entry.services[profile.id];
+      if (firstServiceStart) {
         const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         entry.services[profile.id] = {
           profileId: profile.id,
@@ -15604,6 +15610,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const releaseBuildSlot = () => buildSlot?.release();
       if (effectiveProfile.prebuiltImage === true) {
         sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+      } else if (!firstServiceStart) {
+        buildSlot = await acquireGateSlot();
       }
 
       try {

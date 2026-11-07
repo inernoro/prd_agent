@@ -29,7 +29,7 @@ import { refreshArtifactWaiters, requestArtifactWaitRefresh } from '../../src/se
 import { componentInputComparator } from '../../src/services/prebuilt-reuse.js';
 import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import { ManagedProjectService } from '../../src/services/managed-project.js';
-import { buildGateStatus, setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
+import { acquireBuildSlot, buildGateStatus, setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -4608,6 +4608,41 @@ describe('Branch Routes', () => {
         setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
       }
     });
+
+    it.each([['', 'start-first'], ['/api', 'start-first'], ['', 'stop-first'], ['/api', 'stop-first']] as const)(
+      '既有源码服务%s按%s更新排队时保留旧实例，获编译槽后才替换', async (profilePath, updateOrder) => {
+        await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.',
+          command: 'node server.js', containerPort: 3000, updateOrder });
+        const id = 'source-existing-queue', oldCid = 'a'.repeat(64);
+        stateService.addBranch({ id, projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', id),
+          status: 'running', createdAt: new Date().toISOString(), services: { api: { profileId: 'api',
+            containerName: 'old-api', containerId: oldCid, hostPort: 10001, status: 'running' } } });
+        let oldStopped = false;
+        const inspect = containerService.inspectOwnedRuntime.bind(containerService), originalStop = containerService.stop.bind(containerService);
+        vi.spyOn(containerService, 'inspectOwnedRuntime').mockImplementation(async (...args) =>
+          args[2].containerName === 'old-api' ? (oldStopped ? null : { ...args[2], containerId: oldCid })
+            : !args[2].containerId && !args[2].creationIssued ? null : inspect(...args));
+        const stop = vi.spyOn(containerService, 'stop').mockImplementation(async (name, reason, context, onStopped) => {
+          if (name !== oldCid) return originalStop(name, reason, context, onStopped);
+          oldStopped = true; await onStopped?.();
+        });
+        const run = vi.spyOn(containerService, 'runService');
+        setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
+        const slots = await Promise.all(Array.from({ length: buildGateStatus().max }, () => acquireBuildSlot()));
+        let active: ReturnType<typeof request> | undefined;
+        try {
+          active = request(server, 'POST', `/api/branches/${id}/deploy${profilePath}`, { commitSha: 'a'.repeat(40) });
+          await vi.waitFor(() => expect(buildGateStatus().waiters.some(item => item.branchId === id)).toBe(true));
+          expect(stop).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
+          expect(mock.commands.some(command => /^docker rm\b/.test(command))).toBe(false);
+        } finally {
+          for (const slot of slots) slot.release();
+          if (active) { const response = await active; expect(response.status).toBe(200);
+            const completed = await waitForAcceptedRun(response); expect(completed.failure?.summary || '').toBe('');
+            expect(completed.status).toBe('running'); }
+          setBuildGateHostLoadProvider(null);
+        }
+      });
 
     it('最新请求回到当前A时取消旧待办B，不在A完成后重放B', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
