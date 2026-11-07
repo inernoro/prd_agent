@@ -3496,7 +3496,9 @@ export function createServer(deps: ServerDeps): express.Express {
     }),
   );
 
-  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot));
+  // esbuild将发布入口扁平到dist，目录回退应与实际SPA产物同址。
+  app.use('/api', createInstanceCatalogRouter(deps.config.repoRoot,
+    path.resolve(__dirname, '..', 'web', 'dist', 'cds-instances.json')));
 
   app.use(createHumanProjectAccessMiddleware(deps.stateService));
   if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));

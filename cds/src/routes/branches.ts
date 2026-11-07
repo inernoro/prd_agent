@@ -3293,9 +3293,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (run?.status === 'cancelled' || run?.status === 'failed') throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '受理期间原部署已结束');
       decision?.lease?.assertCurrent('after-admission-persistence');
     } catch (err) {
+      const superseded = err instanceof BranchOperationSupersededError;
+      const failedRun = run || (decision && deploymentRunService?.getForOperation(decision.operationId, decision.generation));
+      try {
+        if (!superseded) serverEventLogStore?.record({
+          category: 'system', severity: 'error', source: 'branch-deployment-admission', action: 'branch.deployment.admission-failed',
+          message: '部署受理失败，尚未开始执行；旧服务保留，请按请求标识查看诊断原因',
+          projectId: entry.projectId || 'default', branchId: entry.id, profileId: input.profileId || null,
+          requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+          operationId: decision?.operationId || null, operationKind: input.kind,
+          operationTrigger: triggerFromRequest(req), operationSource: input.source, commitSha: input.commitSha || null,
+          error: { code: 'deployment_admission_failed', message: maskSecretsText(err instanceof Error ? err.message : String(err), { mask: true }).slice(0, 1200) },
+          details: { operationGeneration: decision?.generation, admissionStatus: decision?.status, runId: failedRun?.id || null },
+        });
+      } catch { /* 诊断故障不能阻止原租约释放与拒绝执行。 */ }
       if (decision?.lease) completeBranchOperation(decision.lease, err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed');
       else if (decision) branchOperationCoordinator?.abandonAdmission(decision.operationId, decision.generation);
-      const superseded = err instanceof BranchOperationSupersededError;
       res.status(superseded ? 409 : 503).json({ error: superseded
         ? '部署已被更新的操作取代，请查看最新部署结果'
         : '部署记录暂未能可靠保存，尚未开始执行，请稍后重试' });
@@ -14466,9 +14479,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 极速版（prebuilt）：仅拉镜像 + 启动，零编译，不占构建槽。
           const isPrebuiltDeploy = effectiveProfile.prebuiltImage === true;
           let buildSlot: BuildSlot | null = null;
+          const releaseBuildSlot = () => buildSlot?.release();
           if (isPrebuiltDeploy) {
             sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
           } else {
+            // 既有服务先排编译队列，避免等待期间移除旧容器或执行 stop-first。
             buildSlot = await acquireGateSlot();
           }
 
@@ -14631,7 +14646,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   if (line.trim()) logDeploy(id, line);
                 }
               });
-              if (ready) buildSlot?.release();
+              if (ready) releaseBuildSlot();
             }
 
             // Always run the port-level readiness probe (even after a
@@ -14722,7 +14737,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } finally {
             // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
             clearQueueTimer();
-            buildSlot?.release();
+            releaseBuildSlot();
           }
         }, {
           // Superseded 优先（整个 run 收敛为 cancelled）；真实构建错误次之；
@@ -15586,6 +15601,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       };
       let buildSlot: BuildSlot | null = null;
+      const releaseBuildSlot = () => buildSlot?.release();
       if (effectiveProfile.prebuiltImage === true) {
         sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
       } else {
@@ -15688,7 +15704,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
           });
           ready = signalReady;
-          if (signalReady) buildSlot?.release();
+          if (signalReady) releaseBuildSlot();
         }
         if (!profile.startupSignal || ready) {
           advanceDeploymentRun(deploymentRun?.id, 'verifying', {
@@ -15755,7 +15771,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } finally {
         // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
         clearQueueTimer();
-        buildSlot?.release();
+        releaseBuildSlot();
         // 排队 chip 兜底清理（部署 throw 也不许留下「排队中」残影）。
         deployQueueTracker.dispose();
       }
@@ -27051,7 +27067,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       warnings.push({ level: 'warning', code: 'load-high', message: `主机负载偏高（loadPercent ${loadPercent}%），临近过载。` });
     }
     if (runningContainers > cores * 2) {
-      warnings.push({ level: 'warning', code: 'too-many-containers', message: `运行容器 ${runningContainers} 个，超过核数 2 倍（${cores * 2}）：CPU 严重争抢，构建变慢。` });
+      warnings.push({ level: 'warning', code: 'too-many-containers', message: `已登记执行器报告的运行容器较多（${runningContainers} 个）；请结合各节点 CPU、内存与启动队列判断容量。` });
     }
     // 2026-09-08 宿主过载复盘：master 自己有没有被饿、构建准入有没有被负载收紧，
     // 与 /healthz pressure 同口径（判据常量同源）。
