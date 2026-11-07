@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 const SRC = fs.readFileSync(path.resolve(__dirname, '../../web/src/pages/ReportsPage.tsx'), 'utf8');
 
@@ -24,8 +25,28 @@ describe('验收报告主页 · 桌面端返回入口', () => {
     expect(tag.includes('onClick={onBack}')).toBe(true);
   });
 
-  it('阅读器的 onBack 复位 selected，让页面回到结论首页', () => {
-    expect(SRC).toContain('onBack={() => setSelected(null)}');
+  it('阅读器返回同时复位选择和报告深链，保留项目与文件夹', () => {
+    const wiring = /<ReportViewer\b[^>]*onBack=\{(\w+)\}/.exec(SRC);
+    expect(wiring, '阅读器必须接入返回处理').toBeTruthy();
+    const handler = new RegExp(`const ${wiring![1]} = useCallback\\(\\(\\) => \\{([\\s\\S]*?)\\n  \\}, \\[` ).exec(SRC);
+    expect(handler, '找不到实际返回处理').toBeTruthy();
+    let selected: string | null = 'old-report';
+    let params = new URLSearchParams('project=prd-agent&folder=owned-folder&report=old-report');
+    let replacesHistory = false;
+    const back = runInNewContext(`(() => { ${handler![1]} })`, {
+      URLSearchParams,
+      setSelected: (value: null) => { selected = value; },
+      setSearchParams: (update: (current: URLSearchParams) => URLSearchParams, options: { replace?: boolean }) => {
+        params = update(params);
+        replacesHistory = options.replace === true;
+      },
+    });
+    back();
+    expect(selected).toBeNull();
+    expect(params.has('report')).toBe(false);
+    expect(params.get('project')).toBe('prd-agent');
+    expect(params.get('folder')).toBe('owned-folder');
+    expect(replacesHistory).toBe(true);
   });
 
   it('未选中报告时渲染结论首页，选中后才回到列表 + 阅读器', () => {
