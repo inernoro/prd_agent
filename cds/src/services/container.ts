@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { serviceRuntimeRefs, runtimeRef } from './service-runtime.js';
 import { StaticWebService } from './static-web.js';
-import { deploymentPhaseBudget, type DeploymentPhaseOwner } from './deployment-phase-budget.js';
+import { deploymentPhaseBudget, type DeploymentPhaseOwner, type SourceStartAdmission } from './deployment-phase-budget.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { ContainerLogStreamHub, ContainerLogStreamEnd } from './container-log-stream-hub.js';
@@ -1682,6 +1682,7 @@ export class ContainerService {
        * 失败风暴让编译绕过闸门（2026-07-16 队列堵死复盘）。
        */
       onSourceCompileFallback?: () => Promise<void>;
+      sourceStartAdmission?: SourceStartAdmission;
       /**
        * 版本台账里该分支该服务的历史构建镜像（由新到旧）。预构建镜像拉不到时，
        * 用来找「上一版可复用镜像」，避免明明组件没改却在宿主全量重编
@@ -2296,11 +2297,14 @@ export class ContainerService {
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
-      releaseStart = await deploymentPhaseBudget.acquire('start', phaseOwner,
-        { check: () => {
-          phaseCheck();
-          if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) !== installedPhaseOwner) throw new Error('部署启动阶段已结束');
-        }, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+      const startCheck = () => {
+        phaseCheck();
+        if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) !== installedPhaseOwner) throw new Error('部署启动阶段已结束');
+      };
+      releaseStart = context.sourceStartAdmission && !context.sourceStartAdmission.consumed
+        ? context.sourceStartAdmission.take(service.containerName, phaseOwner, profile.resources?.memoryMB, startCheck)
+        : await deploymentPhaseBudget.acquire('start', phaseOwner,
+          { check: startCheck, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
       releaseOwnMemory = deploymentPhaseBudget.captureMemoryRelease(service.containerName, phaseOwner);
       phaseCheck();
       installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };

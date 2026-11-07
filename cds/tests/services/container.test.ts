@@ -7,8 +7,8 @@ import { clearContainerLifecycleIntentsForTest, findRecentContainerLifecycleInte
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
-import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider } from '../../src/services/deployment-phase-budget.js';
-import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
+import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
+import { buildGateStatus, setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 
 // Parse generated argv through the actual host shell without invoking Docker or a workload.
 function dockerArgv(command: string): string[] {
@@ -97,6 +97,67 @@ describe('ContainerService', () => {
   }
 
   describe('runService', () => {
+    it('启动容量等待期间不申请源码编译槽，容量恢复后才创建运行容器', async () => {
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+      const warming = ['owned-warm-a', 'owned-warm-b', 'owned-warm-c'];
+      for (const key of warming) { const release = await deploymentPhaseBudget.acquire('start', {}, { reservationKey: key }); release(); }
+      const runtime = makeService(), entry = makeEntry(), profile = makeProfile();
+      const owner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id };
+      const pending = deploymentPhaseBudget.acquireSourceStart(owner, runtime.containerName, { holder: owner });
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'c'.repeat(64), stderr: '', exitCode: 0 }));
+      const running = pending.then(admission => service.runService(entry, profile, runtime, undefined, undefined, { sourceStartAdmission: admission }));
+      const settled = running.catch(error => error);
+      try {
+        expect(deploymentPhaseBudget.snapshot().start.queued[0].reason).toBe('cpu-startup-capacity');
+        expect(buildGateStatus().holders.some(item => item.branchId === entry.id)).toBe(false);
+        expect(mock.commands.some(command => command.startsWith('docker run'))).toBe(false);
+        deploymentPhaseBudget.releaseMemory(warming[0]); await running;
+        expect(mock.commands.some(command => command.startsWith('docker run'))).toBe(true);
+        expect((await pending).consumed).toBe(true);
+      } finally {
+        for (const key of warming) deploymentPhaseBudget.releaseMemory(key);
+        (await pending).dispose(); await settled; deploymentPhaseBudget.releaseMemory(runtime.containerName); setBuildGateHostLoadProvider(null);
+      }
+    });
+
+    it('历史未知预约不冒充就绪，饱和负载下新run必须等前个真实readiness才启动', async () => {
+      const historical = makeEntry(), profile = makeProfile();
+      historical.services = Object.fromEntries([0, 1, 2].map(index => [`old-${index}`,
+        { ...makeService(), profileId: `old-${index}`, containerName: `old-${index}`, status: 'error', creationIssued: true }]));
+      await restoreDeploymentMemoryReservations([historical], () => []);
+      const restored = deploymentPhaseBudget.memorySnapshot();
+      setBuildGateHostLoadProvider(() => ({ load1: 18, cores: 18 }));
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'c'.repeat(64), stderr: '', exitCode: 0 }));
+      const entry = makeEntry(), first = { ...makeService(), containerName: 'current-first' }, second = { ...makeService(), containerName: 'current-second' };
+      const owner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id };
+      let entered!: () => void, finish!: () => void;
+      const probing = new Promise<void>(resolve => { entered = resolve; }), response = new Promise<void>(resolve => { finish = resolve; });
+      const probe = vi.spyOn(service as any, 'waitForReadinessUnbudgeted').mockImplementationOnce(async () => { entered(); await response; return true; }).mockResolvedValue(true);
+      const firstAdmission = await deploymentPhaseBudget.acquireSourceStart(owner, first.containerName, { holder: owner });
+      let secondAdmission: typeof firstAdmission | undefined;
+      let next: Promise<void> | undefined, ready: Promise<boolean> | undefined;
+      try {
+        await service.runService(entry, profile, first, undefined, undefined, { sourceStartAdmission: firstAdmission });
+        next = deploymentPhaseBudget.acquireSourceStart(owner, second.containerName, { holder: owner }).then(async admission => {
+          secondAdmission = admission; await service.runService(entry, profile, second, undefined, undefined, { sourceStartAdmission: admission });
+        });
+        expect(deploymentPhaseBudget.snapshot().start.queued[0].reason).toBe('cpu-startup-capacity');
+        expect(buildGateStatus().active).toBe(1);
+        ready = service.waitForReadiness(first.hostPort, undefined, undefined, undefined, first.containerName); await probing;
+        expect(secondAdmission).toBeUndefined(); expect(deploymentPhaseBudget.memorySnapshot()).toHaveLength(4);
+        finish(); expect(await ready).toBe(true); await next;
+        expect(secondAdmission?.consumed).toBe(true);
+        expect(deploymentPhaseBudget.memorySnapshot().filter(item => item.key.startsWith('old-'))).toEqual(restored);
+        expect(Object.values(historical.services).every(item => item.status === 'error')).toBe(true);
+        expect(await service.waitForReadiness(second.hostPort, undefined, undefined, undefined, second.containerName)).toBe(true);
+        expect(deploymentPhaseBudget.memorySnapshot()).toEqual(restored);
+      } finally {
+        finish(); firstAdmission.dispose(); for (const key of ['current-first', 'current-second', 'old-0', 'old-1', 'old-2']) deploymentPhaseBudget.releaseMemory(key);
+        await ready?.catch(() => undefined); await next?.catch(() => undefined); secondAdmission?.dispose(); probe.mockRestore(); setBuildGateHostLoadProvider(null);
+      }
+    });
     // waitForContainerAlive polls with real setTimeout delays (5×3s).
     // Stub it out for tests that don't specifically test health-check behavior.
     let aliveStub: ReturnType<typeof vi.spyOn>;

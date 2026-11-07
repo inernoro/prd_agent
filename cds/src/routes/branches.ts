@@ -10,7 +10,7 @@ import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.
 import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
 import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
-import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
+import { deploymentPhaseBudget, type SourceStartAdmission } from '../services/deployment-phase-budget.js';
 import { remoteProxyOwner, readOwnedRemoteChunk, type RemoteDeploymentIdentity } from '../services/remote-deployment-owner.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
 import { replaceDirectoriesAtomically, type AtomicDirectoryReplacement } from '../services/atomic-directory-replacement.js';
@@ -1748,6 +1748,7 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
+  sourceStartAdmission?: SourceStartAdmission;
   sourceCheckout?: { path: string; commitSha: string };
   /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
   ledgerImages?: readonly string[];
@@ -1843,6 +1844,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           } : undefined,
           sourceCheckout: options.sourceCheckout,
           onSourceCompileFallback: options.onSourceCompileFallback,
+          sourceStartAdmission: options.sourceStartAdmission,
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
           latestCommitSha: options.latestCommitSha,
@@ -14312,8 +14314,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ── Pre-allocate ports (before parallel execution) ──
       const liveUsedPorts = await collectListeningPorts(shell);
+      const firstStartProfileIds = new Set<string>();
       for (const profile of profiles) {
         if (!entry.services[profile.id]) {
+          firstStartProfileIds.add(profile.id);
           const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
           liveUsedPorts.add(hostPort);
           entry.services[profile.id] = {
@@ -14479,9 +14483,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 极速版（prebuilt）：仅拉镜像 + 启动，零编译，不占构建槽。
           const isPrebuiltDeploy = effectiveProfile.prebuiltImage === true;
           let buildSlot: BuildSlot | null = null;
-          const releaseBuildSlot = () => buildSlot?.release();
+          let sourceStartAdmission: SourceStartAdmission | undefined;
+          const releaseBuildSlot = () => { sourceStartAdmission?.dispose(); buildSlot?.release(); };
           if (isPrebuiltDeploy) {
             sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+          } else if (firstStartProfileIds.has(profile.id) && !effectiveProfile.staticWeb && !effectiveProfile.managedBuild) {
+            sendSSE(res, 'log', { profileId: profile.id, chunk: '首次源码服务按项目轮转等待启动容量与编译槽，等待期间不占任一槽位\n' });
+            sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
+              { projectId: entry.projectId, branchId: id, profileId: profile.id,
+                operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation },
+              entry.services[profile.id].containerName,
+              { holder: { projectId: entry.projectId, branchId: id, profileId: profile.id, runId: deploymentRun?.id,
+                operationId: branchOperationLease?.operationId, label: effectiveProfile.name }, signal: gateAbort.signal, isCancelled: leaseCancelled },
+              { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
+                check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
+            buildSlot = sourceStartAdmission.buildSlot;
           } else {
             // 既有服务先排编译队列，避免等待期间移除旧容器或执行 stop-first。
             buildSlot = await acquireGateSlot();
@@ -14560,6 +14576,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               trigger: triggerFromRequest(req),
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
               operationGeneration: branchOperationLease?.generation,
+              sourceStartAdmission,
               // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
@@ -15470,7 +15487,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
-      if (!entry.services[profile.id]) {
+      const firstServiceStart = !entry.services[profile.id];
+      if (firstServiceStart) {
         const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         entry.services[profile.id] = {
           profileId: profile.id,
@@ -15601,9 +15619,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       };
       let buildSlot: BuildSlot | null = null;
-      const releaseBuildSlot = () => buildSlot?.release();
+      let sourceStartAdmission: SourceStartAdmission | undefined;
+      const releaseBuildSlot = () => { sourceStartAdmission?.dispose(); buildSlot?.release(); };
       if (effectiveProfile.prebuiltImage === true) {
         sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
+      } else if (firstServiceStart && !effectiveProfile.staticWeb && !effectiveProfile.managedBuild) {
+        sendSSE(res, 'log', { profileId: profile.id, chunk: '首次源码服务按项目轮转等待启动容量与编译槽，等待期间不占任一槽位\n' });
+        sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
+          { projectId: entry.projectId, branchId: id, profileId: profile.id,
+            operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation }, svc.containerName,
+          { holder: { projectId: entry.projectId, branchId: id, profileId: profile.id, runId: deploymentRun?.id,
+            operationId: branchOperationLease?.operationId, label: effectiveProfile.name }, signal: gateAbort.signal, isCancelled: leaseCancelled },
+          { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
+            check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
+        buildSlot = sourceStartAdmission.buildSlot;
       } else {
         buildSlot = await acquireGateSlot();
       }
@@ -15643,6 +15672,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
           operationGeneration: branchOperationLease?.generation,
+          sourceStartAdmission,
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();

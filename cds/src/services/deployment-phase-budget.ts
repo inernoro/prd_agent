@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import type { BranchEntry, BuildProfile, IShellExecutor, ServiceRuntimeRef } from '../types.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
 import { ProjectAdmissionOrder } from './project-admission-order.js';
-import { buildLoadPressure, type BuildLoadPressure } from './build-gate.js';
+import { buildLoadPressure, tryAcquireBuildSlot, type BuildLoadPressure, type BuildSlot, type AcquireOptions } from './build-gate.js';
 import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
 let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
@@ -53,12 +53,19 @@ export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
 export const DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS = 20 * 60_000;
 export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null; operationGeneration?: number }
+export interface SourceStartAdmission {
+  readonly buildSlot: BuildSlot;
+  readonly consumed: boolean;
+  take(key: string, owner: DeploymentPhaseOwner, memoryMB: number | undefined, check: () => void): () => void;
+  dispose(): void;
+}
 interface Request {
   owner: DeploymentPhaseOwner; check?: () => void; signal?: AbortSignal;
   resolve: (release: () => void) => void; reject: (error: Error) => void;
   abort?: () => void; memoryMB: number; enqueuedAt: number; waitId: string;
   reservationKey?: string;
   pids: number;
+  tryAcquireBuild?: () => boolean;
 }
 
 /** 阶段互不占槽；旧服务的物理占用已在可用内存内，新启动额外预留控制面余量。 */
@@ -82,7 +89,8 @@ export class DeploymentPhaseBudget {
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
         reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom'
           : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom'
-          : phase === 'start' && !this.cpuAllows(request) ? 'cpu-startup-capacity' : 'phase-capacity' })),
+          : phase === 'start' && !this.cpuAllows(request) ? 'cpu-startup-capacity'
+          : phase === 'start' && request.tryAcquireBuild && (this.active.get(phase)?.size || 0) < this.limits[phase] ? 'build-capacity' : 'phase-capacity' })),
     }]));
   }
 
@@ -159,6 +167,8 @@ export class DeploymentPhaseBudget {
 
   acquire(phase: DeploymentPhase, owner: DeploymentPhaseOwner, options: {
     check?: () => void; signal?: AbortSignal; memoryMB?: number; reservationKey?: string; pids?: number;
+    /** 仅在启动资源均可授予时同步取得配套构建槽，失败仍留队且不占启动资源。 */
+    tryAcquireBuild?: () => boolean;
   } = {}): Promise<() => void> {
     try { options.check?.(); } catch (error) { return Promise.reject(error); }
     if (options.signal?.aborted) return Promise.reject(new Error('部署阶段等待已取消'));
@@ -168,7 +178,8 @@ export class DeploymentPhaseBudget {
     return new Promise((resolve, reject) => {
       const request: Request = { owner, check: options.check, signal: options.signal, resolve, reject,
         memoryMB: phase === 'start' ? Math.max(1, options.memoryMB || 512) : 0, pids: phase === 'start' ? Math.max(1, options.pids || 64) : 0,
-        enqueuedAt: Date.now(), reservationKey: options.reservationKey, waitId: String(++this.nextWaitId) };
+        enqueuedAt: Date.now(), reservationKey: options.reservationKey, waitId: String(++this.nextWaitId),
+        tryAcquireBuild: phase === 'start' ? options.tryAcquireBuild : undefined };
       request.abort = () => {
         const index = waiting.indexOf(request);
         if (index >= 0) { waiting.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!);
@@ -182,6 +193,44 @@ export class DeploymentPhaseBudget {
     });
   }
 
+  /** 只供首次源码启动；编译与启动一起授予，已有服务仍沿原编译排队保护。 */
+  async acquireSourceStart(owner: DeploymentPhaseOwner, key: string,
+    buildOptions: Pick<AcquireOptions, 'holder' | 'signal' | 'isCancelled'>,
+    options: { check?: () => void; signal?: AbortSignal; memoryMB?: number } = {}): Promise<SourceStartAdmission> {
+    const capturedOwner = { ...owner };
+    let buildSlot: BuildSlot | undefined;
+    let currentCheck = () => {
+      options.check?.();
+      if (options.signal?.aborted || buildOptions.signal?.aborted || buildOptions.isCancelled?.()) throw new Error('部署阶段等待已取消');
+    };
+    const releaseStart = await this.acquire('start', capturedOwner, { ...options, reservationKey: key,
+      check: () => currentCheck?.(), tryAcquireBuild: () => {
+        if (this.memoryReservations.has(key)) throw new Error('首次启动身份已有物理预约，请先核对原运行状态');
+        buildSlot = tryAcquireBuildSlot(buildOptions);
+        return !!buildSlot;
+      } });
+    const reservation = this.memoryReservations.get(key), releaseMemory = this.captureMemoryRelease(key, capturedOwner);
+    let consumed = false, disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true; releaseStart();
+      if (!consumed) releaseMemory();
+      buildSlot!.release();
+    };
+    try { currentCheck?.(); } catch (error) { dispose(); throw error; }
+    return { buildSlot: buildSlot!, get consumed() { return consumed; }, dispose,
+      take: (actualKey, actualOwner, memoryMB, check) => {
+        if (disposed || consumed || actualKey !== key || this.memoryReservations.get(key) !== reservation
+          || Math.max(1, memoryMB || 512) !== reservation?.memoryMB
+          || (['projectId', 'branchId', 'profileId', 'operationId', 'operationGeneration'] as const)
+            .some(field => actualOwner[field] !== capturedOwner[field])) throw new Error('首次启动准入身份或资源已变化');
+        const priorCheck = currentCheck;
+        currentCheck = () => { priorCheck?.(); check(); };
+        currentCheck(); consumed = true;
+        return releaseStart;
+      } };
+  }
+
   pump(): void {
     for (const [phase, queue] of this.waiting) {
       const active = this.active.get(phase) || new Set<Request>(); this.active.set(phase, active);
@@ -191,13 +240,23 @@ export class DeploymentPhaseBudget {
           if (Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new Error('部署阶段等待超时，旧服务保持可用');
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
+      const unavailable = new Set<Request>();
       while (active.size < this.limits[phase] && queue.length) {
         const order = this.projectOrders.get(phase) || new ProjectAdmissionOrder();
         this.projectOrders.set(phase, order);
-        const index = order.next(queue, request => request.owner.projectId,
-          request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey)
-            && this.pidsAllow(request) && this.cpuAllows(request));
-        if (index < 0) break;
+        // 联合准入尚缺物理资源或本轮确认缺编译槽时，不挡同项目已持编译槽的更新。
+        // 普通请求和其余合格请求仍沿原项目轮转与项目内部顺序，避免半份资源相互等待。
+        const eligible = (request: Request) => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey)
+          && this.pidsAllow(request) && this.cpuAllows(request);
+        const available = queue.filter(request => !unavailable.has(request) && (!request.tryAcquireBuild || eligible(request)));
+        const eligibleIndex = order.next(available, request => request.owner.projectId, eligible);
+        if (eligibleIndex < 0) break;
+        const candidate = available[eligibleIndex], index = queue.indexOf(candidate);
+        try {
+          if (candidate.tryAcquireBuild && !candidate.tryAcquireBuild()) { unavailable.add(candidate); continue; }
+        } catch (error) {
+          queue.splice(index, 1); candidate.signal?.removeEventListener('abort', candidate.abort!); candidate.reject(error as Error); continue;
+        }
         const [request] = queue.splice(index, 1);
         request.signal?.removeEventListener('abort', request.abort!);
         active.add(request); order.grant(request.owner.projectId);

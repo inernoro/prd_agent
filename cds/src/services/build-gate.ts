@@ -256,6 +256,15 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
  * 调用方拿到 BuildSlot 后必须在 finally 中 release()。
  * 排队中被 signal abort 或转移时 isCancelled 判真 → 以 BuildSlotCancelledError 拒绝。
  */
+/** 同步配套准入：不插队、不排队，也不持半份槽位等待另一种资源。 */
+export function tryAcquireBuildSlot(opts?: Pick<AcquireOptions, 'holder' | 'signal' | 'isCancelled'>): BuildSlot | undefined {
+  if (opts?.signal?.aborted || opts?.isCancelled?.()) throw new BuildSlotCancelledError('配套准入前操作已取消/失效');
+  if (waiters.length || !admissionAllowed()) return undefined;
+  active += 1;
+  projectOrder.grant(opts?.holder?.projectId);
+  return grantSlot(opts?.holder);
+}
+
 export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot> {
   if (opts?.signal?.aborted) {
     throw new BuildSlotCancelledError('进入排队前已被取消');
