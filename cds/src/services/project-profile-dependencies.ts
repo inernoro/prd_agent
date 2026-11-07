@@ -22,7 +22,12 @@ interface DependencyProfile {
 export function normalizeProjectProfileDependencies<T extends DependencyProfile>(
   profiles: T[],
   idSuffix: string,
+  overrides?: Readonly<Record<string, { dependsOn?: string[] }>>,
 ): T[] {
+  // 分支把共享依赖换成独立服务后，启动分层必须与实际生效配置一致。
+  // 只复制显式覆盖的依赖，项目底座及其他分支保持原样。
+  if (overrides) profiles = profiles.map(profile => overrides[profile.id]?.dependsOn != null
+    ? { ...profile, dependsOn: overrides[profile.id].dependsOn } : profile);
   if (!idSuffix) return profiles;
 
   const profileIds = new Set(profiles.map((profile) => profile.id));

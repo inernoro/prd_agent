@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
+import { servingRuntime } from '../../src/services/service-runtime.js';
 import { StaticWebService } from '../../src/services/static-web.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { ObservationStreamExecutor } from '../../src/services/observation-stream-executor.js';
@@ -33,6 +34,7 @@ function fixture(options: { startup?: ObservationStreamExecutor; logs?: Containe
     fs.mkdirSync(path.join(destination, 'assets'));
     fs.writeFileSync(path.join(destination, 'index.html'), `<html><main>${content}</main><script type="module" src="/assets/index-12345678.js"></script></html>`);
     fs.writeFileSync(path.join(destination, 'assets/index-12345678.js'), 'export default 42');
+    fs.writeFileSync(path.join(destination, 'runtime-config.json'), JSON.stringify({ VITE_TARGET_SHA: null, VITE_BUILD_ID: null }));
     return ok();
   });
   shell.addResponsePattern(/^docker rm -f /, () => ok());
@@ -50,6 +52,27 @@ function fixture(options: { startup?: ObservationStreamExecutor; logs?: Containe
 }
 
 describe('正常部署入口的非容器前端', () => {
+  it.each([
+    { name: '全新分支尚无提交缓存', recordedCommit: undefined, pinnedCommit: undefined },
+    { name: '已有提交缓存与固定值均落后于本次产物', recordedCommit: 'c'.repeat(40), pinnedCommit: 'd'.repeat(40) },
+  ])('$name 时公开配置仍采用本次已核验产物提交', async ({ recordedCommit, pinnedCommit }) => {
+    const f = fixture();
+    const revision = 'b'.repeat(40);
+    f.entry.githubCommitSha = recordedCommit;
+    f.entry.pinnedCommit = pinnedCommit;
+    f.profile.env = { IMP_TARGET_SHA: '${CDS_COMMIT_SHA}', VITE_TARGET_SHA: '${CDS_COMMIT_SHA}' };
+    f.profile.staticWeb!.runtimeConfig = true;
+    await f.manager.runService(f.entry, f.profile, f.service, undefined, undefined, { artifactCommitSha: revision });
+    const response = await fetch(`http://127.0.0.1:${f.service.hostPort}/runtime-config`);
+    expect(response.status).toBe(200);
+    const script = await response.text();
+    expect(script).toContain(`"VITE_TARGET_SHA":"${revision}"`);
+    expect(script).toContain(`"VITE_BUILD_ID":"${revision.slice(0, 12)}"`);
+    expect(f.entry.githubCommitSha).toBe(recordedCommit);
+    expect(f.entry.pinnedCommit).toBe(pinnedCommit);
+    expect(f.shell.commands.some(command => /^docker (run|start|restart)\b/.test(command))).toBe(false);
+  });
+
   it.each(['owned', 'direct'] as const)('删除前旧入口前置条件拒绝时，保留真实静态监听器与产物 %s', async mode => {
     const f = fixture(); await f.manager.runService(f.entry, f.profile, f.service);
     const runtime = f.service.staticWeb!;
@@ -165,7 +188,7 @@ describe('正常部署入口的非容器前端', () => {
     await vm.runInNewContext(script, {
       containerService: restored, stateService: { getAllBranches: () => [f.entry], getProjects: () => [] },
       os, Date, activeServerEventLogStore: null, console: { warn: vi.fn() },
-      reconcileHostRebootBranch, shouldPruneDeletedBranchStartupResidue,
+      reconcileHostRebootBranch, shouldPruneDeletedBranchStartupResidue, servingRuntime,
     });
     expect(f.service.status).toBe('running');
     expect(f.service.errorMessage).toBeUndefined();
