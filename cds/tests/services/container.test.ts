@@ -7,6 +7,8 @@ import { clearContainerLifecycleIntentsForTest, findRecentContainerLifecycleInte
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
+import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider } from '../../src/services/deployment-phase-budget.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 
 // Parse generated argv through the actual host shell without invoking Docker or a workload.
 function dockerArgv(command: string): string[] {
@@ -102,6 +104,29 @@ describe('ContainerService', () => {
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     });
     afterEach(() => { aliveStub?.mockRestore(); });
+
+    it('原日志信号后HTTP就绪阶段继续受同一操作资格保护，过期不占探测槽', async () => {
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      setDeploymentPhaseMemoryProvider(() => 10000);
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+      const runtime = makeService(); let current = true;
+      const signal = vi.spyOn(service as any, 'waitForStartupSignalUnbudgeted').mockResolvedValue(true);
+      const probe = vi.spyOn(service as any, 'waitForReadinessUnbudgeted').mockResolvedValue(true);
+      try {
+        await service.runService(makeEntry(), makeProfile({ startupSignal: 'ready' }), runtime, undefined, undefined,
+          { assertCurrent: () => { if (!current) throw new Error('原部署资格失效'); } });
+        expect(await service.waitForStartupSignal(runtime.containerName, 'ready')).toBe(true);
+        current = false;
+        await expect(service.waitForReadiness(runtime.hostPort, undefined, undefined, undefined, runtime.containerName))
+          .rejects.toThrow('原部署资格失效');
+        expect(probe).not.toHaveBeenCalled();
+        expect(deploymentPhaseBudget.snapshot().ready.active).toEqual([]);
+      } finally {
+        signal.mockRestore(); probe.mockRestore(); deploymentPhaseBudget.releaseMemory(runtime.containerName);
+        setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
+      }
+    });
 
     it('should run docker container with correct mounts and env', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

@@ -2617,15 +2617,12 @@ export class ContainerService {
   ): Promise<boolean> {
     const scope = this.runtimePhaseOwners.get(containerName);
     const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName, scope?.owner);
-    try {
-      scope?.check?.();
-      const ready = await this.waitForStartupSignalUnbudgeted(containerName, signal, onOutput, timeoutSeconds);
-      scope?.check?.();
-      if (ready) releaseMemory();
-      return ready;
-    } finally {
-      if (this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
-    }
+    scope?.check?.();
+    const ready = await this.waitForStartupSignalUnbudgeted(containerName, signal, onOutput, timeoutSeconds);
+    scope?.check?.();
+    if (ready) releaseMemory();
+    // 日志信号后仍可能继续HTTP探测，操作资格由后续就绪阶段结算。
+    return ready;
   }
 
   private async waitForStartupSignalUnbudgeted(
