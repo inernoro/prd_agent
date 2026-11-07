@@ -22,6 +22,7 @@ import {
   createLogicalModel,
   createModelOffering,
   deleteLogicalModel,
+  getExchangeMeta,
   getExchanges,
   getLogicalModels,
   getLogicalModelUsage,
@@ -36,6 +37,7 @@ import type {
   CreateLogicalModelRequest,
   CreateModelOfferingRequest,
   ExchangeItem,
+  ExchangeOptionItem,
   LogicalModelItem,
   LogicalModelUsageItem,
   ModelItem,
@@ -70,6 +72,8 @@ export function LogicalModelsPage() {
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
+  const [modelTypes, setModelTypes] = useState<ExchangeOptionItem[]>([]);
+  const [modelTypesError, setModelTypesError] = useState<string | null>(null);
   // 近 30 天用量：列表那条趋势线与花费列的唯一数据源。拉不到就整列不渲染，
   // 不画一条假的平滑曲线——「没数据」和「用量平稳」是两件事，画成一样会误导。
   const [usage, setUsage] = useState<Map<string, LogicalModelUsageItem> | null>(null);
@@ -98,9 +102,11 @@ export function LogicalModelsPage() {
 
   async function reload() {
     setError(null);
-    const [logicalRes, modelsRes, exchangesRes, usageRes] = await Promise.all([
-      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }), getLogicalModelUsage(30),
+    const [logicalRes, modelsRes, exchangesRes, usageRes, metaRes] = await Promise.all([
+      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }), getLogicalModelUsage(30), getExchangeMeta(),
     ]);
+    setModelTypes(metaRes.success ? metaRes.data.modelTypes : []);
+    setModelTypesError(metaRes.success && metaRes.data.modelTypes.length > 0 ? null : '模型用途目录暂不可用，请刷新后再创建。');
     if (!logicalRes.success) {
       setError(logicalRes.error?.message || '加载逻辑模型失败');
       setItems([]);
@@ -121,6 +127,10 @@ export function LogicalModelsPage() {
 
   async function submitLogical(event: React.FormEvent) {
     event.preventDefault();
+    if (!modelTypes.some((type) => type.value === draft.modelType)) {
+      failNotice('请选择当前网关支持的模型用途；目录不可用时请刷新重试。');
+      return;
+    }
     setBusy('create-logical');
     setNotice(null);
     const request = {
@@ -375,6 +385,7 @@ export function LogicalModelsPage() {
         {createOpen && canWrite ? (
           <Card style={CARD_BODY}>
             <form onSubmit={submitLogical}>
+              {modelTypesError ? <InlineAlert tone="error">{modelTypesError}</InlineAlert> : null}
               <FormGrid>
                 <label style={labelStyle}>
                   <span>公开模型标识</span>
@@ -386,12 +397,17 @@ export function LogicalModelsPage() {
                 </label>
                 <label style={labelStyle}>
                   <span>模型类型</span>
-                  <select value={draft.modelType} onChange={(e) => setDraft((x) => ({ ...x, modelType: e.target.value }))} style={inputStyle}>
-                    <option value="generation">generation</option>
-                    <option value="vision">vision</option>
-                    <option value="chat">chat</option>
-                    <option value="code">code</option>
-                    <option value="video-gen">video-gen</option>
+                  <select aria-label="模型类型" disabled={modelTypes.length === 0} value={modelTypes.length ? draft.modelType : ''} onChange={(e) => {
+                    const modelType = e.target.value;
+                    setDraft((x) => {
+                      const defaultImageCapabilities = x.capabilities.length === DEFAULT_IMAGE_GENERATION_CAPABILITIES.length
+                        && x.capabilities.every((value, index) => value === DEFAULT_IMAGE_GENERATION_CAPABILITIES[index]);
+                      return { ...x, modelType, capabilities: modelType === 'generation' && x.capabilities.length === 0
+                        ? defaultImageGenerationCapabilities() : modelType !== 'generation' && defaultImageCapabilities ? [] : x.capabilities };
+                    });
+                  }} style={inputStyle}>
+                    {modelTypes.length === 0 ? <option value="">用途目录暂不可用</option> : null}
+                    {modelTypes.map((type) => <option key={type.value} value={type.value}>{type.label}（{type.value}）</option>)}
                   </select>
                 </label>
                 <label style={labelStyle}>
@@ -426,7 +442,7 @@ export function LogicalModelsPage() {
                   </span>
                   <input value={draft.allowedAppCallerCodes.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, allowedAppCallerCodes: e.target.value.split(',').filter(Boolean) }))} style={inputStyle} />
                 </label>
-                <Button type="submit" variant="primary" size="sm" disabled={busy === 'create-logical'}>{busy === 'create-logical' ? '保存中' : '保存逻辑模型'}</Button>
+                <Button type="submit" variant="primary" size="sm" disabled={busy === 'create-logical' || !modelTypes.some((type) => type.value === draft.modelType)}>{busy === 'create-logical' ? '保存中' : '保存逻辑模型'}</Button>
               </FormGrid>
             </form>
           </Card>
@@ -647,7 +663,9 @@ export function LogicalModelsPage() {
                               <span>
                                 上游模型标识
                                 <HelpPopover label="上游模型标识">
-                                  留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。
+                                  {offeringDraft.targetKind === 'exchange'
+                                    ? '请填写所选 Exchange 已启用的模型映射标识；同一 Exchange 有多个映射时，按本逻辑模型的用途选择。'
+                                    : '留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。'}
                                   协议与 Endpoint path 两栏同理，填了才覆盖。
                                 </HelpPopover>
                               </span>
