@@ -114,6 +114,7 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
       }
       next();
     });
+    app.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled' }));
     app.use('/api', createProjectsRouter({ stateService, shell, config: { reposBase: tmpDir } as any }));
 
     server = listenLoopbackFixture(app);
@@ -152,6 +153,30 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
       expect(result.body.project.name).toBe(name);
       expect(stateService.findGlobalAgentKeyForAuth(delivered.body.authorizationKey)).toBeNull();
     } finally { await new Promise<void>(resolve => combined.close(() => resolve())); }
+  });
+
+  it('页面式一次授权创建后保留的项目不会被过期扫描抹去回执', async () => {
+    const plaintext = 'cdsg_local-retained-project';
+    const crypto = await import('node:crypto');
+    const now = new Date().toISOString(), future = new Date(Date.now() + 300_000).toISOString();
+    stateService.addGlobalAgentKey({ id: 'retained-key', label: '一次建项目', scope: 'rw',
+      hash: crypto.createHash('sha256').update(plaintext).digest('hex'),
+      access: { canCreateProjects: true, projects: [] }, oneTime: true,
+      creationTarget: { name: 'Retained project', repository: 'github.com/acme/retained' }, createdAt: now, expiresAt: future });
+    stateService.addAccessRequest({ id: 'retained-request', kind: 'bootstrap', projectId: '__new_project__',
+      agentName: '本机合成', purpose: '保留创建回执', pollTokenHash: 'a'.repeat(64), status: 'approved',
+      createdAt: now, expiresAt: future, issuedKeyId: 'retained-key', creationReceiptEnabled: true });
+    const result = await request(server, 'POST', '/api/projects', {
+      name: 'Retained project', gitRepoUrl: 'https://github.com/acme/retained', infraPresets: ['memcached'],
+    }, { 'X-AI-Access-Key': plaintext });
+    expect(result.status).toBe(409);
+    const project = result.body.project;
+    expect(stateService.getProject(project.id)).toBeDefined();
+    expect(stateService.getGlobalAgentKeys().find(key => key.id === 'retained-key')!.revokedAt).toBeTruthy();
+    const snapshot = await request(server, 'GET', '/api/access-requests');
+    expect(snapshot.body.requests.find((item: any) => item.id === 'retained-request')).toMatchObject({
+      status: 'approved', createdProject: { id: project.id, name: project.name, createdAt: project.createdAt },
+    });
   });
 
   it('sign + list + revoke happy path for cdsg_ keys', async () => {

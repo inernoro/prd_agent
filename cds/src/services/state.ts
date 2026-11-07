@@ -6,6 +6,7 @@ import {validateBoundedStorageProof} from './bounded-storage-provider.js';
 import {withWritableSourceLayer} from './source-workspace.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { cdsEventsBus } from './cds-events-bus.js';
 import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
 import { worktreePathActivity } from './worktree-path-activity.js';
@@ -3837,7 +3838,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
 
   /** 申请者离线后仍关闭过期审批与未领取的一次授权，清除待交付明文。 */
   expireBootstrapAccessRequests(now = Date.now()): void {
-    let changed = false;
+    const expiredIds: string[] = [];
     for (const item of this.state.accessRequests || []) {
       if (item.kind !== 'bootstrap' || item.createdProject
         || !['pending', 'approved'].includes(item.status)) continue;
@@ -3850,9 +3851,13 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       item.status = 'expired';
       item.decidedAt = new Date(now).toISOString();
       delete item.issuedKeyPlaintext;
-      changed = true;
+      expiredIds.push(item.id);
     }
-    if (changed) this.save();
+    if (expiredIds.length) {
+      this.save();
+      const pendingCount = this.listAccessRequests().filter(item => item.status === 'pending').length;
+      for (const requestId of expiredIds) cdsEventsBus.publish('access-request.decided', { requestId, status: 'expired', pendingCount });
+    }
   }
 
   listAccessRequests(): AccessRequest[] {

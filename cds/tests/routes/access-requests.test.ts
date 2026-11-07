@@ -21,6 +21,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createAccessRequestsRouter } from '../../src/routes/access-requests.js';
 import { StateService } from '../../src/services/state.js';
+import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 async function request(
@@ -327,6 +328,28 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(stateService.getAccessRequest(id)!.status).toBe('expired');
     expect(stateService.findGlobalAgentKeyForAuth(legacy)).toMatchObject({ keyId: 'legacy-unrelated', access: { canCreateProjects: false, projects: ['proj-a'] } });
     expect(stateService.getGlobalAgentKeys().find(k => k.id === 'legacy-unrelated')!.revokedAt).toBeUndefined();
+  });
+
+  it.each(['pending', 'approved'])('过期的%s申请发送原审批刷新事件且不重复', async status => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'Expiry event', repository: 'https://github.com/acme/expiry' },
+    });
+    const id = init.body.requestId;
+    if (status === 'approved') await request(server, 'POST', `/api/access-requests/${id}/approve`, {});
+    const plaintext = stateService.getAccessRequest(id)!.issuedKeyPlaintext;
+    const events: unknown[] = [];
+    const unsubscribe = cdsEventsBus.subscribe(event => { if (event.type === 'access-request.decided') events.push(event.data); });
+    try {
+      stateService.updateAccessRequest(id, { expiresAt: new Date(Date.now() - 1).toISOString() });
+      if (plaintext) expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
+      const snapshot = await request(server, 'GET', '/api/access-requests');
+      expect(snapshot.body.pendingCount).toBe(0);
+      expect(events).toEqual([{ requestId: id, status: 'expired', pendingCount: 0 }]);
+      await request(server, 'GET', '/api/access-requests');
+      expect(events).toHaveLength(1);
+      expect(JSON.stringify(events)).not.toContain(init.body.pollToken);
+      if (plaintext) expect(JSON.stringify(events)).not.toContain(plaintext);
+    } finally { unsubscribe(); }
   });
 
   it('实际公共网关允许原票据撤销入口且不放行其他写法', () => {
