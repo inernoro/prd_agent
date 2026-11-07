@@ -14397,9 +14397,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (layerSignal.aborted) gateAbort.abort();
           else layerSignal.addEventListener('abort', () => gateAbort.abort(), { once: true });
           const leaseCancelled = () => !!branchOperationLease && !branchOperationLease.isCurrent();
-          const acquireGateSlot = async (): Promise<BuildSlot> => {
+          const acquireGateSlot = async (acquire: typeof acquireBuildSlot = acquireBuildSlot): Promise<BuildSlot> => {
             try {
-              const slot = await acquireBuildSlot({
+              const slot = await acquire({
                 holder: {
                   projectId: entry.projectId,
                   branchId: id,
@@ -14489,15 +14489,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
           } else if (firstStartProfileIds.has(profile.id) && !effectiveProfile.staticWeb && !effectiveProfile.managedBuild) {
             sendSSE(res, 'log', { profileId: profile.id, chunk: '首次源码服务按项目轮转等待启动容量与编译槽，等待期间不占任一槽位\n' });
-            sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
-              { projectId: entry.projectId, branchId: id, profileId: profile.id,
-                operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation },
-              entry.services[profile.id].containerName,
-              { holder: { projectId: entry.projectId, branchId: id, profileId: profile.id, runId: deploymentRun?.id,
-                operationId: branchOperationLease?.operationId, label: effectiveProfile.name }, signal: gateAbort.signal, isCancelled: leaseCancelled },
-              { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
-                check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
-            buildSlot = sourceStartAdmission.buildSlot;
+            buildSlot = await acquireGateSlot(async options => {
+              sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
+                { projectId: entry.projectId, branchId: id, profileId: profile.id,
+                  operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation },
+                entry.services[profile.id].containerName,
+                options || {},
+                { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
+                  check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
+              return sourceStartAdmission.buildSlot;
+            });
           } else {
             // 既有服务先排编译队列，避免等待期间移除旧容器或执行 stop-first。
             buildSlot = await acquireGateSlot();
@@ -15543,9 +15544,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           queueRefreshTimer = undefined;
         }
       };
-      const acquireGateSlot = async (): Promise<BuildSlot> => {
+      const acquireGateSlot = async (acquire: typeof acquireBuildSlot = acquireBuildSlot): Promise<BuildSlot> => {
         try {
-          const slot = await acquireBuildSlot({
+          const slot = await acquire({
             holder: {
               projectId: entry.projectId,
               branchId: id,
@@ -15625,14 +15626,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
       } else if (firstServiceStart && !effectiveProfile.staticWeb && !effectiveProfile.managedBuild) {
         sendSSE(res, 'log', { profileId: profile.id, chunk: '首次源码服务按项目轮转等待启动容量与编译槽，等待期间不占任一槽位\n' });
-        sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
-          { projectId: entry.projectId, branchId: id, profileId: profile.id,
-            operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation }, svc.containerName,
-          { holder: { projectId: entry.projectId, branchId: id, profileId: profile.id, runId: deploymentRun?.id,
-            operationId: branchOperationLease?.operationId, label: effectiveProfile.name }, signal: gateAbort.signal, isCancelled: leaseCancelled },
-          { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
-            check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
-        buildSlot = sourceStartAdmission.buildSlot;
+        buildSlot = await acquireGateSlot(async options => {
+          sourceStartAdmission = await deploymentPhaseBudget.acquireSourceStart(
+            { projectId: entry.projectId, branchId: id, profileId: profile.id,
+              operationId: branchOperationLease?.operationId ?? null, operationGeneration: branchOperationLease?.generation }, svc.containerName,
+            options || {},
+            { signal: gateAbort.signal, memoryMB: effectiveProfile.resources?.memoryMB,
+              check: () => assertBranchOperationCurrent(branchOperationLease, `first-source-admission-${profile.id}`) });
+          return sourceStartAdmission.buildSlot;
+        });
       } else {
         buildSlot = await acquireGateSlot();
       }

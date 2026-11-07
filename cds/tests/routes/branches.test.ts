@@ -4644,6 +4644,33 @@ describe('Branch Routes', () => {
         }
       });
 
+    it.each(['', '/api'])('首次源码%s联合等待在原分支队列可见，等待时长不计编译并在完成后结清', async profilePath => {
+      vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-08T00:00:00.000Z'));
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      const id = 'source-joint-visible';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/joint-visible', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
+      const slots = await Promise.all(Array.from({ length: buildGateStatus().max }, () => acquireBuildSlot()));
+      let active: ReturnType<typeof request> | undefined;
+      try {
+        active = request(server, 'POST', `/api/branches/${id}/deploy${profilePath}`, { commitSha: 'a'.repeat(40) });
+        await vi.waitFor(() => expect(stateService.getBranch(id)?.buildQueue?.serviceIds || []).toContain('api'));
+        const visible = await request(server, 'GET', `/api/branches/${id}`);
+        expect(visible.status).toBe(200); expect((visible.body as any).branch.buildQueue.serviceIds).toEqual(['api']);
+        expect(buildGateStatus().holders.some(holder => holder.branchId === id)).toBe(false);
+        expect(deploymentPhaseBudget.snapshot().start.active.some(owner => owner.branchId === id)).toBe(false);
+        const queuedAt = Date.parse((visible.body as any).branch.buildQueue.queuedAt);
+        expect(Number.isFinite(queuedAt)).toBe(true); vi.setSystemTime(new Date(queuedAt + 2000));
+      } finally {
+        for (const slot of slots) slot.release();
+        if (active) { const response = await active; expect(response.status).toBe(200); expect((await waitForAcceptedRun(response)).status).toBe('running'); }
+        setBuildGateHostLoadProvider(null); vi.useRealTimers();
+      }
+      expect(stateService.getBranch(id)?.buildQueue).toBeUndefined();
+      expect(stateService.getBranch(id)?.lastDeployQueueWaitMs).toBeGreaterThanOrEqual(2000);
+    });
+
     it('首次与既有源码部署混跑时保持一致槽位顺序，不相互锁住编译与启动容量', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.',
         command: 'node server.js', containerPort: 3000 });

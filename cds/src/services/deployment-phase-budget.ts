@@ -3,7 +3,8 @@ import { readFile } from 'node:fs/promises';
 import type { BranchEntry, BuildProfile, IShellExecutor, ServiceRuntimeRef } from '../types.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
 import { ProjectAdmissionOrder } from './project-admission-order.js';
-import { buildLoadPressure, tryAcquireBuildSlot, type BuildLoadPressure, type BuildSlot, type AcquireOptions } from './build-gate.js';
+import { buildLoadPressure, buildGateStatus, registerJointBuildSlot, pumpWaiters as pumpBuildWaiters,
+  type BuildLoadPressure, type BuildSlot, type AcquireOptions } from './build-gate.js';
 import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
 let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
@@ -164,6 +165,9 @@ export class DeploymentPhaseBudget {
     const limit = pressure.ratio >= HOST_LOAD_SATURATED_RATIO ? 1 : this.limits.start;
     return warming < limit;
   }
+  private startAllows(request: Request): boolean {
+    return this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request) && this.cpuAllows(request);
+  }
 
   acquire(phase: DeploymentPhase, owner: DeploymentPhaseOwner, options: {
     check?: () => void; signal?: AbortSignal; memoryMB?: number; reservationKey?: string; pids?: number;
@@ -195,40 +199,58 @@ export class DeploymentPhaseBudget {
 
   /** 只供首次源码启动；编译与启动一起授予，已有服务仍沿原编译排队保护。 */
   async acquireSourceStart(owner: DeploymentPhaseOwner, key: string,
-    buildOptions: Pick<AcquireOptions, 'holder' | 'signal' | 'isCancelled'>,
+    buildOptions: AcquireOptions,
     options: { check?: () => void; signal?: AbortSignal; memoryMB?: number } = {}): Promise<SourceStartAdmission> {
     const capturedOwner = { ...owner };
-    let buildSlot: BuildSlot | undefined;
+    let buildSlot: BuildSlot | undefined, queueError: unknown;
     let currentCheck = () => {
+      if (queueError !== undefined) throw queueError;
       options.check?.();
       if (options.signal?.aborted || buildOptions.signal?.aborted || buildOptions.isCancelled?.()) throw new Error('部署阶段等待已取消');
     };
-    const releaseStart = await this.acquire('start', capturedOwner, { ...options, reservationKey: key,
-      check: () => currentCheck?.(), tryAcquireBuild: () => {
-        if (this.memoryReservations.has(key)) throw new Error('首次启动身份已有物理预约，请先核对原运行状态');
-        buildSlot = tryAcquireBuildSlot(buildOptions);
-        return !!buildSlot;
-      } });
-    const reservation = this.memoryReservations.get(key), releaseMemory = this.captureMemoryRelease(key, capturedOwner);
-    let consumed = false, disposed = false;
-    const dispose = () => {
-      if (disposed) return;
-      disposed = true; releaseStart();
-      if (!consumed) releaseMemory();
-      buildSlot!.release();
+    let tryBuild!: () => boolean;
+    const registration = registerJointBuildSlot({ ...buildOptions, holder: buildOptions.holder
+      ?? { ...capturedOwner, operationId: capturedOwner.operationId ?? undefined } }, () => {
+      if (!tryBuild) return false;
+      try { currentCheck(); } catch { return false; }
+      const queue = this.waiting.get('start') || [], index = queue.findIndex(request => request.tryAcquireBuild === tryBuild);
+      if (index < 0 || (this.active.get('start')?.size || 0) >= this.limits.start || !this.startAllows(queue[index])) return false;
+      return !queue.slice(0, index).some(prior => (prior.owner.projectId || '_unknown') === (capturedOwner.projectId || '_unknown')
+        && (!prior.tryAcquireBuild || this.startAllows(prior)));
+    });
+    tryBuild = () => {
+      if (this.memoryReservations.has(key)) throw new Error('首次启动身份已有物理预约，请先核对原运行状态');
+      buildSlot = registration.tryAcquire(); return !!buildSlot;
     };
-    try { currentCheck?.(); } catch (error) { dispose(); throw error; }
-    return { buildSlot: buildSlot!, get consumed() { return consumed; }, dispose,
-      take: (actualKey, actualOwner, memoryMB, check) => {
-        if (disposed || consumed || actualKey !== key || this.memoryReservations.get(key) !== reservation
-          || Math.max(1, memoryMB || 512) !== reservation?.memoryMB
-          || (['projectId', 'branchId', 'profileId', 'operationId', 'operationGeneration'] as const)
-            .some(field => actualOwner[field] !== capturedOwner[field])) throw new Error('首次启动准入身份或资源已变化');
-        const priorCheck = currentCheck;
-        currentCheck = () => { priorCheck?.(); check(); };
-        currentCheck(); consumed = true;
-        return releaseStart;
-      } };
+    const enqueuedAt = Date.now(), pending = this.acquire('start', capturedOwner,
+      { ...options, reservationKey: key, check: () => currentCheck(), tryAcquireBuild: tryBuild });
+    let queued = false, queueEnded = false, releaseStart: (() => void) | undefined, memoryCleanup: (() => boolean) | undefined;
+    const finishQueue = () => { if (queued && !queueEnded) { queueEnded = true; buildOptions.onStart?.({ waitedMs: Date.now() - enqueuedAt }); } };
+    try {
+      if (!buildSlot) { queued = true; const status = buildGateStatus();
+        buildOptions.onQueued?.({ ahead: Math.max(0, status.queued - 1), active: status.active, max: status.max }); }
+      const release = await pending; releaseStart = release;
+      const reservation = this.memoryReservations.get(key), releaseMemory = this.captureMemoryRelease(key, capturedOwner);
+      memoryCleanup = releaseMemory; finishQueue(); currentCheck();
+      let consumed = false, disposed = false;
+      const dispose = () => { if (disposed) return; disposed = true; release(); if (!consumed) releaseMemory(); buildSlot!.release(); };
+      return { buildSlot: buildSlot!, get consumed() { return consumed; }, dispose,
+        take: (actualKey, actualOwner, memoryMB, check) => {
+          if (disposed || consumed || actualKey !== key || this.memoryReservations.get(key) !== reservation
+            || Math.max(1, memoryMB || 512) !== reservation?.memoryMB
+            || (['projectId', 'branchId', 'profileId', 'operationId', 'operationGeneration'] as const)
+              .some(field => actualOwner[field] !== capturedOwner[field])) throw new Error('首次启动准入身份或资源已变化');
+          const priorCheck = currentCheck; currentCheck = () => { priorCheck(); check(); };
+          currentCheck(); consumed = true; return release;
+        } };
+    } catch (error) {
+      queueError = error; this.pump();
+      releaseStart ??= await pending.catch(() => undefined);
+      if (releaseStart && !memoryCleanup) memoryCleanup = this.captureMemoryRelease(key, capturedOwner);
+      releaseStart?.(); memoryCleanup?.(); buildSlot?.release();
+      try { finishQueue(); } catch { /* 保留原失败，资源已按捕获身份归还。 */ }
+      throw error;
+    } finally { registration.dispose(); }
   }
 
   pump(): void {
@@ -246,8 +268,7 @@ export class DeploymentPhaseBudget {
         this.projectOrders.set(phase, order);
         // 联合准入尚缺物理资源或本轮确认缺编译槽时，不挡同项目已持编译槽的更新。
         // 普通请求和其余合格请求仍沿原项目轮转与项目内部顺序，避免半份资源相互等待。
-        const eligible = (request: Request) => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey)
-          && this.pidsAllow(request) && this.cpuAllows(request);
+        const eligible = (request: Request) => phase !== 'start' || this.startAllows(request);
         const available = queue.filter(request => !unavailable.has(request) && (!request.tryAcquireBuild || eligible(request)));
         const eligibleIndex = order.next(available, request => request.owner.projectId, eligible);
         if (eligibleIndex < 0) break;
@@ -269,6 +290,7 @@ export class DeploymentPhaseBudget {
       }
     }
     if (this.timer && ![...this.waiting.values()].some(queue => queue.length)) { clearInterval(this.timer); this.timer = undefined; }
+    pumpBuildWaiters();
   }
 
   async run<T>(phase: DeploymentPhase, owner: DeploymentPhaseOwner, task: () => Promise<T>,

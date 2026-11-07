@@ -21,7 +21,8 @@ describe('部署阶段容量准入', () => {
       expect(budget.snapshot().start.queued[0].reason).toBe('build-capacity');
       const existing = await budget.acquire('start', { projectId: 'existing' }, { reservationKey: 'existing' });
       existing(); budget.releaseMemory('existing');
-      expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });
+      expect(buildGateStatus()).toMatchObject({ active: 1, queued: 1 });
+      expect(buildGateStatus().waiters[0].projectId).toBe('cold');
       occupied.release(); budget.pump(); const admission = await pending;
       expect(budget.snapshot().start.active).toHaveLength(1); expect(buildGateStatus().active).toBe(1);
       admission.take('candidate', owner, 512, () => {})();
@@ -81,6 +82,54 @@ describe('部署阶段容量准入', () => {
       admission.dispose(); admission.dispose();
       expect(budget.memorySnapshot()).toEqual([{ key: 'candidate', memoryMB: 700, pids: 64, owner: { ...owner, operationGeneration: 2 } }]);
     } finally { admission.dispose(); budget.releaseMemory('candidate'); }
+  });
+
+  it('已有更新持续排队时，另一项目更早且合格的首次源码仍按项目轮转获准', async () => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot({ holder: { projectId: 'busy' } });
+    const budget = new DeploymentPhaseBudget(() => 10000), ac = new AbortController(), order: string[] = [];
+    const cold = budget.acquireSourceStart({ projectId: 'cold' }, 'cold', { holder: { projectId: 'cold' } }, { signal: ac.signal })
+      .then(admission => { order.push('cold'); admission.dispose(); });
+    const updates = Array.from({ length: 5 }, (_, index) => acquireBuildSlot({ holder: { projectId: 'busy' }, signal: ac.signal })
+      .then(slot => { order.push(`update-${index}`); slot.release(); }));
+    const settled = Promise.all([cold, ...updates]); settled.catch(() => {});
+    try {
+      occupied.release(); await settled;
+      expect(order.indexOf('cold')).toBeLessThan(3);
+      expect(order).toHaveLength(6);
+    } finally { ac.abort(); occupied.release(); await settled.catch(() => {}); }
+    expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
+    expect(budget.memorySnapshot()).toEqual([]);
+  });
+
+  it('首次源码物理资源不合格时不挡已有编译等待者，也不持有半份容量', async () => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot({ holder: { projectId: 'busy' } });
+    const budget = new DeploymentPhaseBudget(() => 2200), ac = new AbortController(); let ran = false;
+    const cold = budget.acquireSourceStart({ projectId: 'cold' }, 'cold', { holder: { projectId: 'cold' } }, { signal: ac.signal, memoryMB: 2048 })
+      .then(admission => { ran = true; admission.dispose(); }).catch(() => {});
+    const updates = Array.from({ length: 5 }, () => acquireBuildSlot({ holder: { projectId: 'busy' }, signal: ac.signal }).then(slot => slot.release()));
+    try {
+      occupied.release(); await Promise.all(updates);
+      expect(ran).toBe(false); expect(budget.snapshot().start.active).toEqual([]);
+      expect(budget.memorySnapshot()).toEqual([]);
+    } finally { ac.abort(); occupied.release(); await cold; await Promise.allSettled(updates); }
+    expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
+  });
+
+  it.each(['abort', 'save-error'] as const)('联合排队通知%s仍结清原排队及两份未授予资源', async mode => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot(), budget = new DeploymentPhaseBudget(() => 10000), ac = new AbortController();
+    const ended = vi.fn();
+    try {
+      await expect(budget.acquireSourceStart({ projectId: 'p' }, 'candidate', {
+        signal: ac.signal, onQueued: () => { if (mode === 'abort') ac.abort(); else throw new Error('queue save refused'); }, onStart: ended,
+      }, { signal: ac.signal })).rejects.toThrow(mode === 'abort' ? '取消' : 'queue save refused');
+      expect(ended).toHaveBeenCalledTimes(1);
+      expect(budget.snapshot().start).toMatchObject({ active: [], queued: [] });
+      expect(budget.memorySnapshot()).toEqual([]);
+      expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });
+    } finally { ac.abort(); occupied.release(); }
   });
 
   it('尚未创建的准入收尾只释放捕获预约，同名后继和原有未知责任均保持', async () => {

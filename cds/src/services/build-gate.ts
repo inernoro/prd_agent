@@ -25,11 +25,11 @@
  *   在上调后立即唤醒排队者（旧实现只在 release 时唤醒，上调不生效）。
  *
  * 语义要点：
- * - 按项目最近准入轮转，同项目保留先进先出；排队数是等待总数，不是跨项目固定名次。
+ * - 按项目最近准入轮转，同项目合格请求保留先进先出；排队数是等待总数，不是跨项目固定名次。
  * - 槽位转移（slot transfer）：release 时若有等待者，直接把槽位交给它而**不**
  *   先 active--，避免「release 与被唤醒者的 active++ 之间插入一个快路径 acquire」
- *   导致瞬时超额（over-subscription）。active 只在快路径 acquire 与 pumpWaiters
- *   唤醒时 +1，只在 release 且无存活等待者时 -1。
+ *   导致瞬时超额（over-subscription）。联合等待只登记顺序；轮到它时先归还槽位，
+ *   原阶段复查再同步核对两种资源并共同授予，期间不持有半份容量。
  * - 纯内存、单进程：CDS 是单 Node 进程（见根 CLAUDE.md 单线程讨论），无需跨进程
  *   锁；check 与 active++ 之间没有 await，天然原子。
  */
@@ -169,14 +169,22 @@ interface Waiter {
   isCancelled?: () => boolean;
   /** 移除 abort listener（防泄漏），出队（无论 resolve/reject）时调用。 */
   cleanup?: () => void;
+  /** 联合请求仅登记公平排队；物理启动资格不全时不阻挡普通编译。 */
+  jointReady?: () => boolean;
 }
 
 let active = 0;
 const waiters: Waiter[] = [];
 const projectOrder = new ProjectAdmissionOrder();
+function nextWaiter(): Waiter | undefined {
+  const eligible = waiters.filter(item => !item.jointReady || item.jointReady());
+  const index = projectOrder.next(eligible, item => item.holder?.projectId);
+  return index < 0 ? undefined : eligible[index];
+}
 function takeNextWaiter(): Waiter | undefined {
-  const index = projectOrder.next(waiters, item => item.holder?.projectId);
-  return index < 0 ? undefined : waiters.splice(index, 1)[0];
+  const next = nextWaiter();
+  if (next && !next.jointReady) waiters.splice(waiters.indexOf(next), 1);
+  return next;
 }
 /** 活跃持有者明细（token → 身份 + 拿到槽的时刻）。 */
 const holders = new Map<symbol, BuildGateHolder & { acquiredAt: string }>();
@@ -236,6 +244,10 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
       // 槽位转移：跳过（并拒绝）已取消的等待者，交给第一个仍存活的。
       let next = takeNextWaiter();
       while (next) {
+        if (next.jointReady) {
+          // 仅让出公平顺序，不授予半份编译槽；原阶段复查会同步重新核对两种容量。
+          active -= 1; ensureLoadPump(); return;
+        }
         next.cleanup?.();
         if (next.isCancelled?.()) {
           next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
@@ -263,6 +275,27 @@ export function tryAcquireBuildSlot(opts?: Pick<AcquireOptions, 'holder' | 'sign
   active += 1;
   projectOrder.grant(opts?.holder?.projectId);
   return grantSlot(opts?.holder);
+}
+
+/** 登记联合请求参与同一项目轮转，实际取槽仍须同时满足外部物理资格。 */
+export function registerJointBuildSlot(opts: Pick<AcquireOptions, 'holder' | 'signal' | 'isCancelled'>,
+  ready: () => boolean): { tryAcquire(): BuildSlot | undefined; dispose(): void } {
+  const waiter: Waiter = { enqueuedAt: Date.now(), holder: opts.holder, isCancelled: opts.isCancelled,
+    resolve: () => {}, reject: () => {}, jointReady: ready };
+  waiters.push(waiter); pumpWaiters();
+  return {
+    tryAcquire() {
+      if (opts.signal?.aborted || opts.isCancelled?.()) throw new BuildSlotCancelledError('配套准入前操作已取消/失效');
+      if (!waiters.includes(waiter) || !admissionAllowed() || nextWaiter() !== waiter) return undefined;
+      waiters.splice(waiters.indexOf(waiter), 1);
+      active += 1; projectOrder.grant(opts.holder?.projectId);
+      return grantSlot(opts.holder);
+    },
+    dispose() {
+      const index = waiters.indexOf(waiter);
+      if (index >= 0) { waiters.splice(index, 1); pumpWaiters(); }
+    },
+  };
 }
 
 export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot> {
@@ -322,7 +355,8 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
 export function pumpWaiters(): number {
   let woken = 0;
   while (admissionAllowed() && waiters.length > 0) {
-    const next = takeNextWaiter()!;
+    const next = takeNextWaiter();
+    if (!next || next.jointReady) break;
     next.cleanup?.();
     if (next.isCancelled?.()) {
       next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
