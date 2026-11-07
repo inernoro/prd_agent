@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
-import { AppRail, canManageSystemSettings, canUseConsolePreview, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
+import { AppRail, canManageSystemSettings, canShowProjectActions, canUseConsolePreview, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
 import { settingsTabForViewer } from '../../web/src/pages/CdsSettingsPage';
 import { ExtraServicesPanel } from '../../web/src/components/branch/ExtraServicesPanel';
 import { VariablesPanel, SettingsPanel, availableDrawerLogModes } from '../../web/src/components/BranchDetailDrawer';
@@ -269,5 +269,18 @@ describe('human project access UI wiring', () => {
     for (const status of [{ enabled: true, user: { isSystemOwner: true } }, { enabled: false }]) {
       expect(render(status)).toContain('添加服务');
     }
+  });
+});
+
+
+describe('项目管理等待轮廓不等同于系统所有者', () => {
+  it('未知身份和普通成员不画管理操作，既有SSO管理项目但不获得系统设置权限', () => {
+    expect(canShowProjectActions(null)).toBe(false);
+    expect(canShowProjectActions({ enabled: true, user: { isSystemOwner: false } })).toBe(false);
+    expect(canShowProjectActions({ enabled: true, user: { isSystemOwner: true } })).toBe(true);
+    expect(canShowProjectActions({ enabled: false })).toBe(true);
+    const sso = { enabled: true, mode: 'sso', user: { isSystemOwner: false } };
+    expect(canShowProjectActions(sso)).toBe(true);
+    expect(canManageSystemSettings(sso)).toBe(false);
   });
 });

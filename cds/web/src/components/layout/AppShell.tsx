@@ -137,6 +137,11 @@ export function canManageSystemSettings(status: ShellAuthStatus | null): boolean
   return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
 }
 
+/** Loading contour only: verified ticket SSO manages projects without being a system owner. */
+export function canShowProjectActions(status: ShellAuthStatus | null): boolean {
+  return canManageSystemSettings(status) || status?.mode === 'sso';
+}
+
 export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通账号，请联系系统所有者切换为多域名预览。';
 
 /** Simple/port previews require owner routing writes; members retain multi-domain previews. */
@@ -153,6 +158,10 @@ export const ConsoleAuthContext = createContext<{
 /** UI affordances use the same server-authenticated owner decision as route mounting. */
 export function useCanManageConsole(): boolean {
   return canManageSystemSettings(useContext(ConsoleAuthContext).status);
+}
+
+export function useCanShowProjectActions(): boolean {
+  return canShowProjectActions(useContext(ConsoleAuthContext).status);
 }
 
 /** Never mount owner pages (and their effects) for members or unresolved authentication. */
@@ -243,7 +252,7 @@ export function ConsoleLayout(): JSX.Element {
 function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
   const scene = loadingSceneForPath(pathname);
-  const canManageProjects = useCanManageConsole();
+  const canManageProjects = useCanShowProjectActions();
   const projectList = pathname === '/project-list';
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;

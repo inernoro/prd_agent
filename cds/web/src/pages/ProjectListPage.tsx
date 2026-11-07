@@ -50,7 +50,7 @@ import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { useNowTick } from '@/hooks/useNowTick';
 import { readProjectInventoryPreferences, writeProjectInventoryPreferences, type ProjectInventoryPreferences } from '@/lib/projectInventoryPreferences';
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanShowProjectActions } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { ProjectInventorySections } from '@/components/project/ProjectInventorySections';
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
@@ -457,7 +457,7 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
-  const consoleOwner = useCanManageConsole();
+  const canShowProjectActions = useCanShowProjectActions();
   const events = useCdsEvents();
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -696,7 +696,7 @@ export function ProjectListPage(): JSX.Element {
 
   const projects = state.status === 'ok' ? state.projects : [];
   const canManageProjects = state.status === 'ok' && state.canManageProjects;
-  const showProjectCreator = state.status === 'ok' ? state.canManageProjects : consoleOwner;
+  const showProjectCreator = state.status === 'ok' ? state.canManageProjects : canShowProjectActions;
   const legacy = state.status === 'ok' ? state.legacy : null;
   const pendingImportCount = pendingImports.pendingCount || 0;
   const serviceLabels = useMemo(() => new Map(projects.map(project =>

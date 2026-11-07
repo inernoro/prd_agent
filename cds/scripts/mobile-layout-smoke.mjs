@@ -646,23 +646,24 @@ async function checkProjectEnvironmentRefresh(browser) {
   } finally { release?.(); await context.close(); }
 }
 
-async function checkMemberProjectSkeleton(browser) {
+async function checkNonOwnerProjectSkeleton(browser, ticketSso = false) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   try {
     await installFixtures(context);
     const auth = resolveFixture('/api/auth/status');
-    const projectResult = { ...resolveFixture('/api/projects'), canManageProjects: false };
+    const projectResult = { ...resolveFixture('/api/projects'), canManageProjects: ticketSso };
+    const label = ticketSso ? 'ticket-sso' : 'member';
     await context.route('**/api/auth/status', route => route.fulfill({ status: 200, contentType: 'application/json',
-      body: JSON.stringify({ ...auth, user: { ...auth.user, isSystemOwner: false } }) }));
+      body: JSON.stringify({ ...auth, mode: ticketSso ? 'sso' : auth.mode, user: { ...auth.user, isSystemOwner: false } }) }));
     await context.route('**/api/projects', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(projectResult) }));
     const page = await context.newPage(); await page.goto(`${baseUrl}/project-list`);
     await page.locator('.cds-project-card[data-project-id]').first().waitFor();
-    assertOk(await page.locator('.cds-project-inventory-actions').count() === 0, '普通成员不得出现管理操作');
+    assertOk(await page.locator('.cds-project-inventory-actions').count() === (ticketSso ? 1 : 0), `${label}: 项目管理操作必须匹配既有权限`);
     for (const view of ['列表视图', '卡片视图']) {
       await page.getByRole('button', { name: view, exact: true }).click();
-      await checkProjectSkeletonAlignment(page, `member:${view}`, projectResult);
+      await checkProjectSkeletonAlignment(page, `${label}:${view}`, projectResult);
     }
-    console.log('PASS member-project-skeleton: 普通成员代码、数据等待和正文均无管理操作且保持对齐');
+    console.log(`PASS ${label}-project-skeleton: 代码、数据等待和正文管理能力一致且保持对齐`);
   } finally { await context.close(); }
 }
 
@@ -709,7 +710,8 @@ async function checkEmptyProjectEntry(browser) {
 
 async function checkProjectReviewRegressions(browser) {
   await checkProjectEnvironmentRefresh(browser);
-  await checkMemberProjectSkeleton(browser);
+  await checkNonOwnerProjectSkeleton(browser);
+  await checkNonOwnerProjectSkeleton(browser, true);
   await checkProjectListContinuity(browser);
   await checkEmptyProjectEntry(browser);
 }
