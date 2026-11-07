@@ -39,6 +39,7 @@ async function verifyAuthenticatedReportNavigation() {
     const reports = [
       { id: supervisorId, title, format, projectId: canonicalProject, projectSlug: project, folderId: folder, sizeBytes: 300, createdAt: '2026-11-07T00:00:00Z' },
       { id: appendixId, title: `技术附录-${format}`, format, projectId: canonicalProject, projectSlug: project, folderId: folder, sizeBytes: 100, createdAt: '2026-11-07T00:00:00Z' },
+      { id: '6'.repeat(32), title: '其他文件夹报告', format, projectId: canonicalProject, folderId: '5'.repeat(32), sizeBytes: 100, createdAt: '2026-11-07T00:00:00Z' },
     ];
     const target = `${base}/reports?project=${project}&report=${appendixId}`;
     const missing = `${base}/reports?project=${project}&report=${missingId}`;
@@ -54,14 +55,25 @@ async function verifyAuthenticatedReportNavigation() {
         rawRequests.push(p);
         if (p === `/api/reports/${supervisorId}/raw`) return route.fulfill({ contentType: 'text/plain', body: raw });
         if (p === `/api/reports/${appendixId}/raw`) return route.fulfill({ contentType: 'text/plain', body: `<h1>APPENDIX-${format}</h1>` });
+        if (p === `/api/reports/${'7'.repeat(32)}/raw`) return route.fulfill({ contentType: 'text/plain', body: '<h1>CREATED</h1>' });
         return route.fulfill({ status: 403, json: { message: '不可访问的合成报告' } });
       }
       if (p === '/api/reports') {
+        if (route.request().method() === 'POST') {
+          const input = route.request().postDataJSON();
+          assert.equal(input.title, '合成新报告');
+          const report = { ...reports[0], id: '7'.repeat(32), title: input.title, format: 'html', projectId: input.projectId || null, projectSlug: input.projectId ? project : null, folderId: input.folderId || null };
+          reports.push(report);
+          return route.fulfill({ json: { report } });
+        }
         if (++listRequests > 1 && rejectUnexpectedListReload) return route.fulfill({ status: 503, json: { message: '不得因同项目导航重新读取列表' } });
         return route.fulfill({ json: { reports } });
       }
       if (p === '/api/projects') return route.fulfill({ json: { projects: [{ id: canonicalProject, slug: project, name: '合成验收项目' }] } });
-      if (p === '/api/report-folders') return route.fulfill({ json: { folders: [] } });
+      if (p === '/api/report-folders') return route.fulfill({ json: { folders: [
+        { id: folder, name: '当前文件夹', projectId: canonicalProject },
+        { id: '5'.repeat(32), name: '另一文件夹', projectId: canonicalProject },
+      ] } });
       if (p === '/api/cds-system/connections') return route.fulfill({ json: { connections: [] } });
       if (p === '/api/auth/activity') return route.fulfill({ json: { activity: [] } });
       if (p === '/api/reports/overview' || p === '/api/reports/pipeline') return route.fulfill({ status: 503, json: { message: '本项只验证报告查看器' } });
@@ -78,6 +90,7 @@ async function verifyAuthenticatedReportNavigation() {
       }
       let frame = page.frameLocator(`iframe[title="${title}"]`);
       await frame.getByRole('heading', { name: title }).waitFor();
+      await page.getByRole('button', { name: '打开报告：其他文件夹报告', exact: true }).waitFor();
       await page.evaluate((reportId) => window.postMessage({ type: 'cds:authenticated-report-navigation', reportId }, location.origin), appendixId);
       await frame.getByRole('heading', { name: title }).waitFor();
       await frame.getByRole('link', { name: '未列出报告' }).click();
@@ -89,7 +102,7 @@ async function verifyAuthenticatedReportNavigation() {
       await frame.getByRole('heading', { name: `APPENDIX-${format}` }).waitFor();
       assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts');
       assert.equal(context.pages().length, 1, 'report navigation must not open a popup');
-      assert.equal(new URL(page.url()).searchParams.get('folder'), folder, 'folder comes from authenticated metadata');
+      assert.equal(new URL(page.url()).searchParams.get('folder'), null, 'report selection preserves the current list filter');
       assert.equal(new URL(page.url()).searchParams.get('project'), format === 'html' ? canonicalProject : null, 'same-project navigation preserves the existing list scope');
       assert.equal(listRequests, 1, 'navigation must use the already authenticated list');
       assert(await frame.locator('body').evaluate(() => { try { void window.parent.document.body; return false; } catch { return true; } }), 'frame remains isolated from authenticated parent');
@@ -104,7 +117,21 @@ async function verifyAuthenticatedReportNavigation() {
       await page.reload();
       await frame.getByRole('heading', { name: `APPENDIX-${format}` }).waitFor();
       await page.screenshot({ path: path.join(out, `report-auth-navigation-${format}.jpg`) });
-      console.log(`PASS REG-stsmk-report-external-link-001 ${format}: protected navigation, Back/Forward, refresh, missing-report rejection, unchanged sandbox`);
+      // An existing report URL must not override an explicit newly-created selection.
+      await page.getByRole('button', { name: '新建报告', exact: true }).first().click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByPlaceholder('例如：登录页视觉验收 2026-06-20').fill('合成新报告');
+      await dialog.locator('textarea').fill('<h1>CREATED</h1>');
+      await dialog.getByRole('button', { name: '创建报告', exact: true }).click();
+      await page.waitForURL(url => url.searchParams.get('report') === '7'.repeat(32));
+      await page.frameLocator('iframe[title="合成新报告"]').getByRole('heading', { name: 'CREATED' }).waitFor();
+      await page.getByRole('button', { name: '返回报告首页', exact: true }).click();
+      await page.waitForURL(url => !url.searchParams.has('report'));
+      await page.locator('iframe').waitFor({ state: 'detached' });
+      await page.reload();
+      await page.getByText('合成新报告', { exact: true }).first().waitFor();
+      assert.equal(await page.locator('iframe').count(), 0, 'return to homepage survives refresh');
+      console.log(`PASS REG-stsmk-report-external-link-001 ${format}: protected navigation, filters, Back/Forward, refresh, create/home, missing-report rejection, unchanged sandbox`);
     } catch (error) {
       await page.screenshot({ path: path.join(out, `failure-report-navigation-${format}.jpg`) });
       console.log(`REPORT_NAV_DIAGNOSTIC ${format}: ${JSON.stringify({ url: page.url(), body: (await page.locator('body').innerText()).slice(0, 2000), rawRequests })}`);

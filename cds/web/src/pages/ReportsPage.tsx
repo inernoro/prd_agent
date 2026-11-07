@@ -437,8 +437,7 @@ export function ReportsPage(): JSX.Element {
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set('report', report.id);
-      if (report.folderId) next.set('folder', report.folderId);
-      else next.delete('folder');
+      // Selection records history without replacing All/Recent/Failed filters.
       return next;
     }, { replace: true });
   }, [setSearchParams]);
@@ -453,12 +452,19 @@ export function ReportsPage(): JSX.Element {
       // Keep the existing scope: canonicalizing a slug/global view would refetch
       // the list and clear the report that has just been selected.
       next.set('report', target.id);
-      if (target.folderId) next.set('folder', target.folderId);
-      else next.delete('folder');
       return next;
     });
     return true;
   }, [allReports, selected?.projectId, setSearchParams]);
+
+  const handleCloseReport = useCallback(() => {
+    setSelected(null);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('report');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   // 从列表发起的弹窗动作先关移动端抽屉：抽屉 z-[90] 高于 Dialog(z-50)，不关的话
   // 删除确认/重命名/新建文件夹弹窗会被抽屉整体盖住（Codex review P2）。z-index 刻度
@@ -484,8 +490,8 @@ export function ReportsPage(): JSX.Element {
     setCreateOpen(false);
     setToast(`已创建报告「${report.title}」`);
     setState((cur) => (cur.status === 'ok' ? { status: 'ok', reports: [report, ...cur.reports] } : cur));
-    setSelected(report);
-  }, []);
+    handleSelectReport(report);
+  }, [handleSelectReport]);
 
   const handleDelete = useCallback(async (report: AcceptanceReport) => {
     try {
@@ -734,7 +740,7 @@ export function ReportsPage(): JSX.Element {
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
-                    <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} onReportLink={handleLinkedReport} />
+                    <ReportViewer report={selected} onBack={handleCloseReport} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} onReportLink={handleLinkedReport} />
                   </>
                 )}
               </div>
