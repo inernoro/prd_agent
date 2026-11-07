@@ -1748,7 +1748,6 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
-  onBeforeSourceStart?: () => Promise<void>;
   sourceCheckout?: { path: string; commitSha: string };
   /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
   ledgerImages?: readonly string[];
@@ -1844,7 +1843,6 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           } : undefined,
           sourceCheckout: options.sourceCheckout,
           onSourceCompileFallback: options.onSourceCompileFallback,
-          onBeforeSourceStart: options.onBeforeSourceStart,
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
           latestCommitSha: options.latestCommitSha,
@@ -14314,10 +14312,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ── Pre-allocate ports (before parallel execution) ──
       const liveUsedPorts = await collectListeningPorts(shell);
-      const firstStartProfileIds = new Set<string>();
       for (const profile of profiles) {
         if (!entry.services[profile.id]) {
-          firstStartProfileIds.add(profile.id);
           const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
           liveUsedPorts.add(hostPort);
           entry.services[profile.id] = {
@@ -14486,7 +14482,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const releaseBuildSlot = () => buildSlot?.release();
           if (isPrebuiltDeploy) {
             sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
-          } else if (!firstStartProfileIds.has(profile.id)) {
+          } else {
             // 既有服务先排编译队列，避免等待期间移除旧容器或执行 stop-first。
             buildSlot = await acquireGateSlot();
           }
@@ -14564,7 +14560,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
               trigger: triggerFromRequest(req),
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
               operationGeneration: branchOperationLease?.generation,
-              onBeforeSourceStart: async () => { if (!buildSlot) buildSlot = await acquireGateSlot(); },
               // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
@@ -15475,8 +15470,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
-      const firstServiceStart = !entry.services[profile.id];
-      if (firstServiceStart) {
+      if (!entry.services[profile.id]) {
         const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         entry.services[profile.id] = {
           profileId: profile.id,
@@ -15610,7 +15604,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const releaseBuildSlot = () => buildSlot?.release();
       if (effectiveProfile.prebuiltImage === true) {
         sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
-      } else if (!firstServiceStart) {
+      } else {
         buildSlot = await acquireGateSlot();
       }
 
@@ -15649,7 +15643,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
           operationGeneration: branchOperationLease?.generation,
-          onBeforeSourceStart: async () => { if (!buildSlot) buildSlot = await acquireGateSlot(); },
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();

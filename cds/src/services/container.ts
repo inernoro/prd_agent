@@ -1682,8 +1682,6 @@ export class ContainerService {
        * 失败风暴让编译绕过闸门（2026-07-16 队列堵死复盘）。
        */
       onSourceCompileFallback?: () => Promise<void>;
-      /** 原源码进程取得启动容量后才申请编译槽，等待容量时不占编译槽。 */
-      onBeforeSourceStart?: () => Promise<void>;
       /**
        * 版本台账里该分支该服务的历史构建镜像（由新到旧）。预构建镜像拉不到时，
        * 用来找「上一版可复用镜像」，避免明明组件没改却在宿主全量重编
@@ -2304,8 +2302,6 @@ export class ContainerService {
           if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) !== installedPhaseOwner) throw new Error('部署启动阶段已结束');
         }, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
       releaseOwnMemory = deploymentPhaseBudget.captureMemoryRelease(service.containerName, phaseOwner);
-      phaseCheck();
-      if (!profile.prebuiltImage) await context.onBeforeSourceStart?.();
       phaseCheck();
       installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
       this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);

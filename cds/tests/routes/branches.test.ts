@@ -4583,32 +4583,6 @@ describe('Branch Routes', () => {
       } finally { flush.mockRestore(); record.mockRestore(); }
     });
 
-    it.each(['', '/api'])('原源码部署%s等待真实启动容量时不占编译槽，准入后才编译', async profilePath => {
-      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
-      const id = 'source-capacity-gate', warming = ['warming-a', 'warming-b', 'warming-c'];
-      stateService.addBranch({ id, projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', id),
-        status: 'idle', createdAt: new Date().toISOString(), services: {} });
-      setDeploymentPhaseMemoryProvider(() => 10000); setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
-      let active: ReturnType<typeof request> | undefined;
-      try {
-        for (const key of warming) {
-          const release = await deploymentPhaseBudget.acquire('start', { projectId: key }, { reservationKey: key });
-          release();
-        }
-        active = request(server, 'POST', `/api/branches/${id}/deploy${profilePath}`, { commitSha: 'a'.repeat(40) });
-        await vi.waitFor(() => expect(deploymentPhaseBudget.snapshot().start.queued.some(item => item.branchId === id && item.reason === 'cpu-startup-capacity')).toBe(true));
-        expect(buildGateStatus().holders.some(holder => holder.branchId === id)).toBe(false);
-        expect(mock.commands.some(command => isAppLaunchCommand(command))).toBe(false);
-      } finally {
-        for (const key of warming) deploymentPhaseBudget.releaseMemory(key);
-        if (active) {
-          const response = await active; expect(response.status).toBe(200);
-          expect((await waitForAcceptedRun(response)).status).toBe('running');
-        }
-        setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
-      }
-    });
-
     it.each([['', 'start-first'], ['/api', 'start-first'], ['', 'stop-first'], ['/api', 'stop-first']] as const)(
       '既有源码服务%s按%s更新排队时保留旧实例，获编译槽后才替换', async (profilePath, updateOrder) => {
         await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.',
@@ -4643,6 +4617,46 @@ describe('Branch Routes', () => {
           setBuildGateHostLoadProvider(null);
         }
       });
+
+    it('首次与既有源码部署混跑时保持一致槽位顺序，不相互锁住编译与启动容量', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.',
+        command: 'node server.js', containerPort: 3000 });
+      const updates = ['update-a', 'update-b', 'update-c'], cold = ['cold-a', 'cold-b', 'cold-c'];
+      for (const id of [...updates, ...cold]) {
+        const oldName = `old-${id}`;
+        stateService.addBranch({ id, projectId: 'default', branch: `feature/${id}`, worktreePath: path.join(tmpDir, 'worktrees', id),
+          status: updates.includes(id) ? 'running' : 'idle', createdAt: new Date().toISOString(),
+          services: updates.includes(id) ? { api: { profileId: 'api', containerName: oldName,
+            containerId: createHash('sha256').update(oldName).digest('hex'), hostPort: stateService.allocatePort(config.portStart), status: 'running' } } : {} });
+      }
+      const originalAcquire = deploymentPhaseBudget.acquire.bind(deploymentPhaseBudget), atStartup = new Set<string>();
+      const cleanupCold: Array<() => void> = [], active: Array<ReturnType<typeof request>> = [];
+      let allowUpdates!: () => void;
+      const paused = new Promise<void>(resolve => { allowUpdates = resolve; });
+      const acquire = vi.spyOn(deploymentPhaseBudget, 'acquire').mockImplementation(async (phase, owner, options) => {
+        if (phase === 'start' && updates.includes(owner.branchId || '')) { atStartup.add(owner.branchId!); await paused; }
+        const release = await originalAcquire(phase, owner, options);
+        if (phase === 'start' && cold.includes(owner.branchId || '')) {
+          const releaseMemory = options?.reservationKey ? deploymentPhaseBudget.captureMemoryRelease(options.reservationKey, owner) : () => false;
+          cleanupCold.push(() => { release(); releaseMemory(); });
+        }
+        return release;
+      });
+      setDeploymentPhaseMemoryProvider(() => 100000); setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
+      try {
+        for (const id of updates) active.push(request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40) }));
+        await vi.waitFor(() => expect(atStartup.size).toBe(3));
+        for (const id of cold) active.push(request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40) }));
+        await vi.waitFor(() => expect(buildGateStatus().waiters.filter(item => cold.includes(item.branchId || ''))).toHaveLength(3));
+        allowUpdates();
+        await vi.waitFor(() => expect(mock.commands.some(command => isAppLaunchCommand(command))).toBe(true));
+      } finally {
+        allowUpdates(); for (const release of cleanupCold) release();
+        for (const pending of active) { const response = await pending; expect(response.status).toBe(200);
+          expect((await waitForAcceptedRun(response)).status).toBe('running'); }
+        acquire.mockRestore(); setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
+      }
+    });
 
     it('最新请求回到当前A时取消旧待办B，不在A完成后重放B', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
