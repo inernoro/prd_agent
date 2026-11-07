@@ -1,10 +1,45 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DeploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
 
+import { setBuildGateHostLoadProvider, type BuildLoadPressure } from '../../src/services/build-gate.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry } from '../../src/types.js';
 
 describe('部署阶段容量准入', () => {
+  beforeEach(() => setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 })));
+  afterEach(() => setBuildGateHostLoadProvider(null));
+  it('创建回执归还阶段槽后，未就绪的三份预留仍阻止第四次启动', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000);
+    for (const projectId of ['a', 'b', 'c']) {
+      const release = await budget.acquire('start', { projectId }, { reservationKey: projectId });
+      release();
+    }
+    let admitted = false;
+    const next = budget.acquire('start', { projectId: 'd' }, { reservationKey: 'd' }).then(release => {
+      admitted = true; release();
+    });
+    await Promise.resolve();
+    expect(admitted).toBe(false);
+    expect((budget.snapshot().start as { queued: Array<{ reason: string }> }).queued[0].reason).toBe('cpu-startup-capacity');
+    budget.releaseMemory('a'); await next;
+    for (const key of ['b', 'c', 'd']) budget.releaseMemory(key);
+  });
+
+  it('宿主达到既有饱和线时只保留一份启动期预留，恢复容量后半秒内推进', async () => {
+    let load1 = 18;
+    setBuildGateHostLoadProvider(() => ({ load1, cores: 18 }));
+    const budget = new DeploymentPhaseBudget(() => 10000);
+    const first = await budget.acquire('start', { projectId: 'a' }, { reservationKey: 'a' });
+    first();
+    let admitted = false;
+    const second = budget.acquire('start', { projectId: 'b' }, { reservationKey: 'b' }).then(release => {
+      admitted = true; release();
+    });
+    await Promise.resolve(); expect(admitted).toBe(false);
+    expect((budget.snapshot().start as { queued: Array<{ reason: string }> }).queued[0].reason).toBe('cpu-startup-capacity');
+    load1 = 8; await second; expect(admitted).toBe(true);
+    budget.releaseMemory('a'); budget.releaseMemory('b');
+  });
   it('三个项目都有资格时，单项目积压不能使第三项目超过三个释放轮次才获准', async () => {
     const budget = new DeploymentPhaseBudget(() => 10000, { pull: 1 });
     const first = await budget.acquire('pull', { projectId: 'a' });
@@ -133,5 +168,71 @@ describe('重启后的部署内存预留', () => {
     await restoreDeploymentMemoryReservations([f.branch], () => [], { shell: f.shell, budget: f.budget });
     expect(f.budget.memorySnapshot()).toHaveLength(1);
     expect(f.shell.commands.every(command => command.startsWith('docker inspect '))).toBe(true);
+  });
+});
+
+
+const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api', operationId: 'op-old', operationGeneration: 1 };
+const idlePressure = (): BuildLoadPressure => ({ load1: 0, cores: 18, ratio: 0, factor: 1.2, saturated: false });
+
+describe('启动期CPU占位与物理责任分离', () => {
+  it('有效的三份新启动阻塞第四份，失效资格只退出CPU且不泄露检查函数', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => 256, idlePressure);
+    const valid = [true, true, true];
+    for (let index = 0; index < 3; index++) {
+      const release = await budget.acquire('start', { ...owner, operationId: `op-${index}` }, {
+        reservationKey: `warm-${index}`, check: () => { if (!valid[index]) throw new Error('资格失效'); } });
+      release();
+    }
+    const before = budget.memorySnapshot();
+    expect(before.every(item => Object.keys(item).sort().join(',') === 'key,memoryMB,owner,pids')).toBe(true);
+    expect(budget.snapshot().start.active).toEqual([]);
+    let admitted = false;
+    const abort = new AbortController();
+    const next = budget.acquire('start', { ...owner, operationId: 'next' }, { reservationKey: 'next', signal: abort.signal })
+      .then(release => { admitted = true; return release; }, () => undefined);
+    try {
+      await Promise.resolve(); expect(admitted).toBe(false);
+      expect(budget.snapshot().start.queued[0].reason).toBe('cpu-startup-capacity');
+      valid[0] = false; budget.pump(); await Promise.resolve();
+      expect(admitted).toBe(true);
+      expect(budget.memorySnapshot().filter(item => item.key.startsWith('warm-'))).toEqual(before);
+    } finally { abort.abort(); (await next)?.(); for (const item of budget.memorySnapshot()) budget.releaseMemory(item.key); }
+  });
+
+  it.each(['memory-headroom', 'pid-headroom'] as const)('失效启动资格仍保留%s的原始物理保护', async reason => {
+    let memory = reason === 'memory-headroom' ? 2000 : 10000;
+    let pids = reason === 'pid-headroom' ? 96 : 256;
+    let current = true;
+    const budget = new DeploymentPhaseBudget(() => memory, {}, 1024, () => pids, idlePressure);
+    const release = await budget.acquire('start', owner, { reservationKey: 'obsolete',
+      check: () => { if (!current) throw new Error('资格失效'); } });
+    release(); current = false;
+    const before = budget.memorySnapshot();
+    const abort = new AbortController(); let admitted = false;
+    const next = budget.acquire('start', { ...owner, operationId: 'next' }, { reservationKey: 'next', signal: abort.signal })
+      .then(released => { admitted = true; return released; }, () => undefined);
+    try {
+      await Promise.resolve(); expect(admitted).toBe(false);
+      expect(budget.snapshot().start.queued[0].reason).toBe(reason);
+      expect(budget.memorySnapshot()).toEqual(before);
+      memory = 10000; pids = 256; budget.pump(); await Promise.resolve();
+      expect(admitted).toBe(true);
+      expect(budget.memorySnapshot().find(item => item.key === 'obsolete')).toEqual(before[0]);
+    } finally { abort.abort(); (await next)?.(); for (const item of budget.memorySnapshot()) budget.releaseMemory(item.key); }
+  });
+});
+
+describe('原阶段迟到结果保护', () => {
+  it('实际阶段任务await结束后资格已失效时不能发布迟到结果', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => Infinity, idlePressure);
+    let entered!: () => void, finish!: () => void, current = true;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const response = new Promise<void>(resolve => { finish = resolve; });
+    const task = budget.run('ready', owner, async () => { entered(); await response; return true; },
+      { check: () => { if (!current) throw new Error('superseded'); } });
+    const rejected = expect(task).rejects.toThrow('superseded');
+    await started; current = false; finish(); await rejected;
+    expect(budget.snapshot().ready.active).toEqual([]);
   });
 });
