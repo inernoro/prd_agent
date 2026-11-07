@@ -105,6 +105,26 @@ describe('ContainerService', () => {
     });
     afterEach(() => { aliveStub?.mockRestore(); });
 
+    it.each(['run', 'alive'] as const)('原无取消回调启动在%s失败后不再占CPU，未确认内存仍保留', async boundary => {
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      if (boundary === 'run') mock.addResponsePatternFirst(/docker run/, () => ({ stdout: '', stderr: '原启动失败', exitCode: 1 }));
+      else aliveStub.mockRejectedValueOnce(new Error('原启动失败'));
+      setDeploymentPhaseMemoryProvider(() => 10000); setBuildGateHostLoadProvider(() => ({ load1: 18, cores: 18 }));
+      const runtime = makeService(), abort = new AbortController(); let grant: (() => void) | undefined;
+      let next: Promise<void> | undefined;
+      try {
+        await expect(service.runService(makeEntry(), makeProfile(), runtime)).rejects.toThrow('原启动失败');
+        next = deploymentPhaseBudget.acquire('start', { projectId: 'next' }, { reservationKey: 'next-runtime', signal: abort.signal })
+          .then(release => { grant = release; }, () => {});
+        await Promise.resolve(); expect(grant).toBeTypeOf('function');
+        expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === runtime.containerName)).toBe(true);
+      } finally {
+        abort.abort(); await next; grant?.(); deploymentPhaseBudget.releaseMemory(runtime.containerName); deploymentPhaseBudget.releaseMemory('next-runtime');
+        setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
+      }
+    });
+
     it.each(['ready', 'timeout', 'error', 'replaced'] as const)('原日志信号%s后HTTP仅保留成功交接的操作资格，失败不残留旧资格', async outcome => {
       mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));

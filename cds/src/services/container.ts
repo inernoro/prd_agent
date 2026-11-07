@@ -1691,6 +1691,7 @@ export class ContainerService {
     service.staticWeb = undefined; service.runtimeKind = undefined;
     let shell = this.qualifiedShell(context.assertCurrent);
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId, operationGeneration: context.operationGeneration };
+    let installedPhaseOwner: { owner: DeploymentPhaseOwner; check: () => void } | undefined; // 仅CPU占位跟随持有者结束。
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
@@ -2229,9 +2230,13 @@ export class ContainerService {
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
       releaseStart = await deploymentPhaseBudget.acquire('start', phaseOwner,
-        { check: phaseCheck, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+        { check: () => {
+          phaseCheck();
+          if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) !== installedPhaseOwner) throw new Error('部署启动阶段已结束');
+        }, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
       phaseCheck();
-      this.runtimePhaseOwners.set(service.containerName, { owner: phaseOwner, check: phaseCheck });
+      installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
+      this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
       phaseCheck();
@@ -2387,7 +2392,7 @@ export class ContainerService {
         throw err;
       }
     } catch (error) {
-      this.runtimePhaseOwners.delete(service.containerName);
+      if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) === installedPhaseOwner) this.runtimePhaseOwners.delete(service.containerName);
       throw error;
     } finally {
       releaseStart?.();

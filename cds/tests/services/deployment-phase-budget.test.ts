@@ -8,22 +8,6 @@ import type { BranchEntry } from '../../src/types.js';
 describe('部署阶段容量准入', () => {
   beforeEach(() => setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 })));
   afterEach(() => setBuildGateHostLoadProvider(null));
-  it('创建回执归还阶段槽后，未就绪的三份预留仍阻止第四次启动', async () => {
-    const budget = new DeploymentPhaseBudget(() => 10000);
-    for (const projectId of ['a', 'b', 'c']) {
-      const release = await budget.acquire('start', { projectId }, { reservationKey: projectId });
-      release();
-    }
-    let admitted = false;
-    const next = budget.acquire('start', { projectId: 'd' }, { reservationKey: 'd' }).then(release => {
-      admitted = true; release();
-    });
-    await Promise.resolve();
-    expect(admitted).toBe(false);
-    expect((budget.snapshot().start as { queued: Array<{ reason: string }> }).queued[0].reason).toBe('cpu-startup-capacity');
-    budget.releaseMemory('a'); await next;
-    for (const key of ['b', 'c', 'd']) budget.releaseMemory(key);
-  });
 
   it('宿主达到既有饱和线时只保留一份启动期预留，恢复容量后半秒内推进', async () => {
     let load1 = 18;
@@ -171,17 +155,16 @@ describe('重启后的部署内存预留', () => {
   });
 });
 
-
 const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api', operationId: 'op-old', operationGeneration: 1 };
 const idlePressure = (): BuildLoadPressure => ({ load1: 0, cores: 18, ratio: 0, factor: 1.2, saturated: false });
 
 describe('启动期CPU占位与物理责任分离', () => {
-  it('有效的三份新启动阻塞第四份，失效资格只退出CPU且不泄露检查函数', async () => {
+  it.each(['qualification', 'physical'] as const)('三份启动在%s结算前阻止第四份，资格和物理责任分别保留', async mode => {
     const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => 256, idlePressure);
     const valid = [true, true, true];
     for (let index = 0; index < 3; index++) {
-      const release = await budget.acquire('start', { ...owner, operationId: `op-${index}` }, {
-        reservationKey: `warm-${index}`, check: () => { if (!valid[index]) throw new Error('资格失效'); } });
+      const release = await budget.acquire('start', { ...owner, projectId: mode === 'physical' ? String(index) : owner.projectId, operationId: `op-${index}` }, {
+        reservationKey: `warm-${index}`, check: mode === 'qualification' ? () => { if (!valid[index]) throw new Error('资格失效'); } : undefined });
       release();
     }
     const before = budget.memorySnapshot();
@@ -194,9 +177,10 @@ describe('启动期CPU占位与物理责任分离', () => {
     try {
       await Promise.resolve(); expect(admitted).toBe(false);
       expect(budget.snapshot().start.queued[0].reason).toBe('cpu-startup-capacity');
-      valid[0] = false; budget.pump(); await Promise.resolve();
+      if (mode === 'qualification') valid[0] = false; else budget.releaseMemory('warm-0');
+      budget.pump(); await Promise.resolve();
       expect(admitted).toBe(true);
-      expect(budget.memorySnapshot().filter(item => item.key.startsWith('warm-'))).toEqual(before);
+      expect(budget.memorySnapshot().filter(item => item.key.startsWith('warm-'))).toEqual(mode === 'qualification' ? before : before.slice(1));
     } finally { abort.abort(); (await next)?.(); for (const item of budget.memorySnapshot()) budget.releaseMemory(item.key); }
   });
 
@@ -221,9 +205,6 @@ describe('启动期CPU占位与物理责任分离', () => {
       expect(budget.memorySnapshot().find(item => item.key === 'obsolete')).toEqual(before[0]);
     } finally { abort.abort(); (await next)?.(); for (const item of budget.memorySnapshot()) budget.releaseMemory(item.key); }
   });
-});
-
-describe('原阶段迟到结果保护', () => {
   it('实际阶段任务await结束后资格已失效时不能发布迟到结果', async () => {
     const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => Infinity, idlePressure);
     let entered!: () => void, finish!: () => void, current = true;
