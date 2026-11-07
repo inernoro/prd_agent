@@ -68,7 +68,7 @@ export class DeploymentPhaseBudget {
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
   private readonly projectOrders = new Map<DeploymentPhase, ProjectAdmissionOrder>();
   private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner;
-    startup?: { check?: () => void } }>();
+    startup?: { check?: () => void }; recovered?: boolean; containerId?: string }>();
   private timer?: NodeJS.Timeout;
   private readonly limits: Record<DeploymentPhase, number>;
   constructor(private readonly availableMemoryMB: () => number = () => memoryProvider(),
@@ -99,8 +99,9 @@ export class DeploymentPhaseBudget {
   }
 
   releaseMemory(key: string): void { this.memoryReservations.delete(key); this.pump(); }
-  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64): void {
-    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
+  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64, recovered = false, containerId?: string): void {
+    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner, recovered,
+      containerId: containerId && /^[a-f0-9]{64}$/.test(containerId) ? containerId : undefined });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, { memoryMB, pids, owner }]) => ({ key, memoryMB, pids, owner })); }
   /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
@@ -114,6 +115,25 @@ export class DeploymentPhaseBudget {
     };
   }
 
+  /** 真实盘点只释放同一份已终结预约；读取期间的新预约或在途创建不能被旧回执清掉。 */
+  async reconcileMemoryReservations(unused: (key: string, owner: DeploymentPhaseOwner, containerId?: string) => Promise<boolean>,
+    options: { recoveredOnly?: boolean; afterKey?: string } = {}): Promise<{ released: string[]; retained: string[] }> {
+    const released: string[] = [], retained: string[] = [];
+    const activeStart = (key: string) => [...(this.active.get('start') || [])].some(request => request.reservationKey === key);
+    const candidates = [...this.memoryReservations].filter(([, reservation]) => !options.recoveredOnly || reservation.recovered);
+    const after = candidates.findIndex(([key]) => key === options.afterKey);
+    const ordered = after < 0 ? candidates : [...candidates.slice(after + 1), ...candidates.slice(0, after + 1)];
+    for (const [key, reservation] of ordered) {
+      let confirmed = false;
+      if (!activeStart(key)) {
+        try { confirmed = await unused(key, { ...reservation.owner }, reservation.containerId); } catch { /* 未确认仍保留 */ }
+      }
+      if (confirmed && this.memoryReservations.get(key) === reservation && !activeStart(key)) {
+        this.releaseMemory(key); released.push(key);
+      } else retained.push(key);
+    }
+    return { released, retained };
+  }
   private memoryAllows(memoryMB: number, key?: string): boolean {
     const available = this.availableMemoryMB();
     const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
@@ -211,6 +231,9 @@ export async function restoreDeploymentMemoryReservations(
     const hints = new Map(profiles(branch).map(profile => [profile.id, profile.resources?.memoryMB || 512]));
     for (const service of Object.values(branch.services)) for (const runtime of serviceRuntimeRefs(service)) {
       if (runtime.staticWeb || runtime.runtimeKind === 'static') continue;
+      const serving = service.servingRuntime;
+      if (serving?.containerId && /^[a-f0-9]{64}$/.test(serving.containerId)
+        && serving.containerName === runtime.containerName && serving.containerId === runtime.containerId) continue;
       const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
       if (incomplete) candidates.push({ branch, profileId: service.profileId, runtime, memoryMB: hints.get(service.profileId) || 512 });
@@ -219,7 +242,8 @@ export async function restoreDeploymentMemoryReservations(
   // A stopped immutable container cannot consume a startup reservation. Verify its
   // identity and terminal Docker state without changing the retained runtime or container.
   const receipts = new Map<string, { status: string; project: string; branch: string; profile: string }>();
-  const ids = [...new Set(candidates.map(item => item.runtime.containerId).filter((id): id is string => !!id && /^[a-f0-9]{64}$/.test(id)))];
+  const absentIds = new Set<string>();
+  const ids = [...new Set(candidates.map(item => item.runtime.containerId).filter((id): id is string => !!id && /^[a-f0-9]{64}$/.test(id)))].slice(0, 64);
   if (options.shell && ids.length) {
     const format = '{"id":{{json .Id}},"status":{{json .State.Status}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}}}';
     try {
@@ -230,12 +254,16 @@ export async function restoreDeploymentMemoryReservations(
           if (ids.includes(receipt.id)) receipts.set(receipt.id, receipt);
         } catch { /* Missing or malformed receipts retain their reservation. */ }
       }
+      if (result.exitCode !== 0) for (const match of result.stderr.matchAll(/No such (?:container|object):\s*([a-f0-9]{64})\b/gi)) {
+        if (ids.includes(match[1]) && !receipts.has(match[1])) absentIds.add(match[1]);
+      }
     } catch { /* Unavailable Docker is unknown, not evidence of a stopped runtime. */ }
   }
   for (const { branch, profileId, runtime, memoryMB } of candidates) {
     const receipt = runtime.containerId ? receipts.get(runtime.containerId) : undefined;
     const stopped = receipt && ['exited', 'dead'].includes(receipt.status)
       && receipt.project === (branch.projectId || '_unknown') && receipt.branch === branch.id && receipt.profile === profileId;
-    if (!stopped) budget.reserveKnownMemory(runtime.containerName, memoryMB, { projectId: branch.projectId, branchId: branch.id, profileId });
+    if (!stopped && !(runtime.containerId && absentIds.has(runtime.containerId))) budget.reserveKnownMemory(runtime.containerName, memoryMB,
+      { projectId: branch.projectId, branchId: branch.id, profileId }, 64, true, runtime.containerId);
   }
 }
