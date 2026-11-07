@@ -1756,7 +1756,7 @@ export class ContainerService {
     let installedPhaseOwner: { owner: DeploymentPhaseOwner; check: () => void } | undefined; // 仅CPU占位跟随持有者结束。
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined, releaseOwnMemory: (() => boolean) | undefined;
-    let creationIssued = false, runtimeCommandSettled = false;
+    let creationIssued = false, runtimeCommandSettled = false, activationIssued = false;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -2304,7 +2304,7 @@ export class ContainerService {
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
       phaseCheck();
-      creationIssued = true;
+      creationIssued = true; activationIssued = !mustCreateBeforeStart;
       const result = await shell.exec(runCmd);
       runtimeCommandSettled = true;
       phaseCheck();
@@ -2383,7 +2383,7 @@ export class ContainerService {
         await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
         phaseCheck();
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
-        runtimeCommandSettled = false;
+        runtimeCommandSettled = false; activationIssued = true;
         const startRes = await shell.exec(`docker start ${acknowledgedId}`);
         runtimeCommandSettled = true;
         phaseCheck();
@@ -2476,10 +2476,11 @@ export class ContainerService {
       if (releaseStart) {
         releaseStart(); releaseStart = undefined;
         if (!creationIssued) releaseOwnMemory?.();
-        else if (runtimeCommandSettled) await deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner) =>
-          key === service.containerName && owner.operationId === context.operationId
-            && owner.operationGeneration === context.operationGeneration
-            && await this.isDeploymentRuntimeUnused(entry, profile.id, runtimeRef(service), 5000, runtimeCommandSettled));
+        else if (runtimeCommandSettled) {
+          try {
+            if (await this.isDeploymentRuntimeUnused(entry, profile.id, runtimeRef(service), 5000, activationIssued)) releaseOwnMemory?.();
+          } catch { /* 物理核验未知时保留原预约和原错误，不重新认领同名新责任。 */ }
+        }
       }
       throw error;
     } finally {

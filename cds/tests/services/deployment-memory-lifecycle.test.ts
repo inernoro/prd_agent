@@ -268,6 +268,21 @@ describe('原创建与就绪资格记录保留', () => {
     return prepared;
   }
 
+  it.each(['storage', 'persist', 'network'] as const)('create后%s失败且尚未发start时，created身份继续保留预约', async stage => {
+    const error = new Error(`create后${stage}失败`);
+    const { candidate, entry } = prepareSplitRun(() => ({ stdout: '', stderr: '', exitCode: 0 }), () =>
+      ({ ...inspection(false), stdout: JSON.stringify({ id: runtime.containerId, running: false,
+        restarting: false, status: 'created', project: 'p1', branch: 'b1', profile: 'api' }) }));
+    if (stage === 'storage') vi.spyOn(service as any, 'inspectCreatedStorageContainer').mockRejectedValueOnce(error);
+    if (stage === 'network') mock.addResponsePatternFirst(/docker network connect/, () => ({ stdout: '', stderr: error.message, exitCode: 1 }));
+    await expect(service.runService(entry, profile, candidate, undefined, undefined, { ...owner,
+      onRuntimeCreated: async item => { if (stage === 'persist' && item.containerId) throw error; },
+    })).rejects.toThrow(error.message);
+    expect(mock.commands.some(command => command.startsWith('docker create'))).toBe(true);
+    expect(mock.commands.some(command => command.startsWith('docker start'))).toBe(false);
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ key: candidate.containerName, owner })]);
+  });
+
   it.each(['created', 'absent'] as const)('create已确认但start结果未知时，%s快照不能退还责任', async state => {
     const { candidate, entry } = prepareSplitRun(() => { throw new Error('启动结果未知'); }, () =>
       state === 'absent' ? absent() : { ...inspection(false), stdout: JSON.stringify({
@@ -310,6 +325,36 @@ describe('原创建与就绪资格记录保留', () => {
     finish({ stdout: '', stderr: '', exitCode: 0 }); await rejected;
     expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ key: candidate.containerName,
       memoryMB: 768, owner: nextOwner })]);
+  });
+
+  it('原无操作代次调用的旧start失败回执也保留同名新run的预约和资格', async () => {
+    const previousOwner = { ...owner, operationId: undefined, operationGeneration: undefined };
+    const nextId = 'b'.repeat(64);
+    const { candidate, entry } = prepareSplitRun(() => ({ stdout: '', stderr: '', exitCode: 0 }),
+      () => ({ stdout: '', stderr: `Error: No such object: ${runtime.containerId}`, exitCode: 1 }));
+    let entered!: () => void, finish!: (result: ExecResult) => void, calls = 0, newCurrent = true;
+    const starting = new Promise<void>(resolve => { entered = resolve; });
+    const response = new Promise<ExecResult>(resolve => { finish = resolve; });
+    const delayed = new ContainerService(withDelayedMemoryStorageImages({ exec: (command, options) => {
+      options?.beforeStart?.();
+      if (command.startsWith('docker start') && calls++ === 0) { entered(); return response; }
+      return mock.exec(command, options);
+    } }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
+    vi.spyOn(delayed as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    const old = delayed.runService(entry, profile, candidate, undefined, undefined, previousOwner);
+    const rejected = expect(old).rejects.toThrow('旧start无代次明确失败');
+    await starting;
+    mock.addResponsePatternFirst(/docker create/, () => ({ stdout: nextId, stderr: '', exitCode: 0 }));
+    const next = { ...candidate, containerId: undefined };
+    await delayed.runService(entry, { ...profile, resources: { memoryMB: 768 } }, next, undefined, undefined,
+      { ...previousOwner, assertCurrent: () => { if (!newCurrent) throw new Error('新资格失效'); } });
+    expect(next.containerId).toBe(nextId);
+    finish({ stdout: '', stderr: '旧start无代次明确失败', exitCode: 1 }); await rejected;
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ key: next.containerName,
+      memoryMB: 768, owner: previousOwner })]);
+    newCurrent = false;
+    await expect(delayed.waitForReadiness(next.hostPort, undefined, undefined, undefined, next.containerName))
+      .rejects.toThrow('新资格失效');
   });
 
   it('旧start明确失败的迟到结果不释放同名称新run的预约或资格', async () => {
