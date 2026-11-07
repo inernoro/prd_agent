@@ -43,6 +43,57 @@ public sealed class GatewayMinimumProtectionIntegrationTests
     private static readonly string AutomaticPermitId = Guid.NewGuid().ToString("N");
 
     [Fact]
+    public async Task ManualIndexOptionsCannotBlockRuntimeMinimumProtection()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.Windows.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+            Builders<BsonDocument>.IndexKeys.Ascending("ExpiresAt"),
+            new CreateIndexOptions { Name = "ttl_llmgw_consumption_windows", ExpireAfter = TimeSpan.FromSeconds(7) }));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["LlmGateway:MinimumProtection:AppCallerPerHour"] = "1" }).Build();
+        var coordinator = new GatewayMinimumProtectionCoordinator(database.Data, config,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayMinimumProtectionCoordinator>.Instance);
+        var first = await coordinator.CheckAsync(Tenant, Caller, "chat", null, "first", GatewayMinimumRequestIdentity.General, null, null, default);
+        var second = await coordinator.CheckAsync(Tenant, Caller, "chat", null, "second", GatewayMinimumRequestIdentity.General, null, null, default);
+        first.Rejected.ShouldBeFalse(); second.Rejected.ShouldBeTrue(); second.Count.ShouldBe(2);
+        using var cursor = await database.Windows.Indexes.ListAsync();
+        var ttl = (await cursor.ToListAsync()).Single(x => x["name"] == "ttl_llmgw_consumption_windows");
+        ttl["expireAfterSeconds"].ToInt64().ShouldBe(7);
+        (await database.Alerts.CountDocumentsAsync(new BsonDocument("Kind", "blocked"))).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RequestPathDoesNotCreateFixedOrDynamicIndexes()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.Data.Database.CreateCollectionAsync(GatewayMinimumProtectionCoordinator.WindowsCollection);
+        await database.Data.Database.CreateCollectionAsync(GatewayMinimumProtectionCoordinator.AlertsCollection);
+        await SeedDynamicHistory(database);
+        var policy = DynamicPolicy();
+        policy["LlmGateway:MinimumProtection:AppCallerPerHour"] = "20";
+        var coordinator = new GatewayMinimumProtectionCoordinator(database.Data,
+            new ConfigurationBuilder().AddInMemoryCollection(policy).Build(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayMinimumProtectionCoordinator>.Instance);
+        for (var i = 0; i < 6; i++)
+            (await coordinator.CheckAsync(Tenant, Caller, "chat", null, $"without-ddl-{i}",
+                GatewayMinimumRequestIdentity.General, null, null, default)).Rejected.ShouldBeFalse();
+        var alert = await database.Alerts.Find(new BsonDocument("Metric", "request_rate_baseline")).SingleAsync();
+        alert["Count"].ToInt64().ShouldBe(6);
+        alert["BaselineAverage"].ToDecimal().ShouldBe(2m);
+        foreach (var collection in new[] { database.Windows, database.Alerts })
+        {
+            using var cursor = await collection.Indexes.ListAsync();
+            var indexes = await cursor.ToListAsync();
+            indexes.Count.ShouldBe(1);
+            indexes[0]["name"].AsString.ShouldBe("_id_");
+            // Mongo内建唯一_id约束始终保留；不依赖在请求路径执行任何DDL。
+            await collection.InsertOneAsync(new BsonDocument("_id", "assert-built-in-unique"));
+            await Should.ThrowAsync<MongoWriteException>(() =>
+                collection.InsertOneAsync(new BsonDocument("_id", "assert-built-in-unique")));
+        }
+    }
+
+    [Fact]
     public async Task MissingPoliciesAreBoundedAcrossTwoServingInstancesBeforeUpstream()
     {
         await using var database = await DiagnosticDatabase.CreateAsync();
