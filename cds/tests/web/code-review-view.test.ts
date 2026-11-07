@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { CodeReviewTask } from '../../web/src/lib/codeReviews.js';
-import { explainReviewError, needsReviewAttention, reviewCoverage, reviewPage, reviewTaskLabel, selectReviewFocus, summarizeReviews } from '../../web/src/lib/codeReviewView.js';
+import { explainReviewError, latestReviewTasks, needsReviewAttention, reviewCoverage, reviewPage, reviewTaskLabel, selectReviewFocus, summarizeReviews } from '../../web/src/lib/codeReviewView.js';
 import { ReviewDetail, ReviewTaskList } from '../../web/src/pages/CodeReviewsPage.js';
 
 function task(input: Partial<CodeReviewTask> = {}): CodeReviewTask {
@@ -112,5 +112,20 @@ describe('整仓审查首页的单任务焦点', () => {
     const second = task({ id: 'second', updatedAt: '2026-11-09T00:00:00Z' });
     expect(selectReviewFocus([first, second])?.id).toBe('first');
     expect(selectReviewFocus([])).toBeUndefined();
+  });
+});
+
+
+describe('最近审查与历史记录', () => {
+  it('默认保留每项目最新源码任务及所有导入档案，历史搜索仍能找到旧提交', () => {
+    const old = task({ id: 'old', commitSha: 'abc-old-sha' });
+    const recent = task({ id: 'recent', createdAt: '2026-11-07T10:00:00Z', progress: { totalFiles: 10, scannedFiles: 4 } });
+    const archive = task({ id: 'import', sourceType: 'report' });
+    const other = task({ id: 'other', projectId: 'other' });
+    const all = [old, recent, archive, other];
+    expect(latestReviewTasks(all).map(item => item.id)).toEqual(['recent', 'other', 'import']);
+    expect(latestReviewTasks(all)[0].progress).toEqual({ totalFiles: 10, scannedFiles: 4 });
+    expect(reviewPage(all, 'abc-old-sha', 'all', 0).items).toEqual([old]);
+    expect(all).toHaveLength(4);
   });
 });

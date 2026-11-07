@@ -1,6 +1,18 @@
 import { CODE_REVIEW_STATUS, type CodeReviewTask } from './codeReviews';
 
 export const REVIEW_PAGE_SIZE = 20;
+
+/** One latest source review per project; old executions remain separately accessible. */
+export function latestReviewTasks(tasks: CodeReviewTask[]): CodeReviewTask[] {
+  const latest = new Map<string, CodeReviewTask>();
+  const archives: CodeReviewTask[] = [];
+  for (const task of tasks) {
+    if (task.sourceType === 'report') { archives.push(task); continue; }
+    const previous = latest.get(task.projectId);
+    if (!previous || Date.parse(task.createdAt) > Date.parse(previous.createdAt)) latest.set(task.projectId, task);
+  }
+  return [...latest.values(), ...archives].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
 export type ReviewFilter = 'all' | 'active' | 'attention' | 'reports' | 'archives';
 export type ReviewTone = 'neutral' | 'warning' | 'error';
 
@@ -94,7 +106,7 @@ export function reviewPage(tasks: CodeReviewTask[], query: string, filter: Revie
       || filter === 'attention' && needsReviewAttention(task)
       || filter === 'reports' && task.sourceType !== 'report' && Boolean(task.reportId)
       || filter === 'archives' && task.sourceType === 'report';
-    return matches && (!search || [task.title, task.sourceName, task.id, task.error || ''].some(value => value.toLocaleLowerCase().includes(search)));
+    return matches && (!search || [task.title, task.sourceName, task.id, task.commitSha || '', task.sourceHash || '', task.ref || '', task.error || ''].some(value => value.toLocaleLowerCase().includes(search)));
   });
   const pages = Math.max(1, Math.ceil(filtered.length / REVIEW_PAGE_SIZE));
   const current = Math.min(Math.max(0, Number.isFinite(page) ? Math.floor(page) : 0), pages - 1);

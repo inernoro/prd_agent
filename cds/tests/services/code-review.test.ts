@@ -421,6 +421,60 @@ describe('代码审查任务完整闭环', () => {
     server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     return `http://127.0.0.1:${(server.address() as any).port}/api/code-reviews`;
   }
+  it('结构化结果持久化后可独立读取，分页与原始报告不触发再次分析', async () => {
+    run.mockImplementation(async () => ({ ...result(), findings: Array.from({ length: 125 }, (_, i) => ({
+      ...result().findings[0], severity: i < 3 ? 'high' : 'low', title: `问题 ${i}`, codeSnippet: '<script>not executed</script>', aiExplanation: '原始解释',
+    })) }));
+    const task = await submit(); await service.pump(); await state.flush();
+    expect(state.getCodeReviewTask(task.id)?.resultKey).toBeTruthy();
+    expect(publicCodeReviewTask(service.get(task.id))).not.toHaveProperty('resultKey');
+    const original = await state.readAcceptanceReportContentAsync(service.get(task.id).reportId!);
+    const restored = new StateService(path.join(dir, 'state.json')); restored.load();
+    state = restored; service = make();
+    const first = await service.result(task.id, { limit: 2 });
+    expect(first.result).toMatchObject({ projectId: 'a', taskId: task.id, summary: { high: 3, low: 122 },
+      page: { offset: 0, limit: 2, total: 125, nextOffset: 2 }, coverage: { complete: true, scannedFiles: 1, totalFiles: 1 } });
+    expect(first.result?.findings[0]).toMatchObject({ codeSnippet: '<script>not executed</script>', aiExplanation: '原始解释', verified: false });
+    expect((await service.result(task.id, { offset: 124, limit: 2 })).result?.page.nextOffset).toBeNull();
+    expect((await service.result(task.id, { severity: 'high', query: '问题 1' })).result?.page.total).toBe(1);
+    expect(first.reportUrl).toContain(`project=a&task=${task.id}&report=1`);
+    expect(original).toContain('代码审查报告'); expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('读取既有中断任务只取回原生结果并缓存，不重试、不归档、不改变失败状态', async () => {
+    const readExisting = vi.fn(async () => ({ ...result(), totalFiles: 2, scannedFiles: 1 }));
+    run.mockImplementationOnce(async input => {
+      await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '分析中', engineTaskId: 'stopped-native' });
+      throw new Error('模型服务不可用');
+    });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump();
+    const pages = await Promise.all([service.result(task.id), service.result(task.id)]);
+    expect(pages[0].result).toMatchObject({ coverage: { complete: false, scannedFiles: 1, totalFiles: 2 }, findings: [{ verified: false }] });
+    await service.result(task.id);
+    expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'stopped-native' });
+    expect(service.get(task.id).reportId).toBeUndefined(); expect(state.listAcceptanceReports('a')).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+    const base = await serve();
+    const downloaded = await fetch(`${base}/${task.id}/report/download`, { headers: { 'x-project': 'a' } });
+    expect(downloaded.status).toBe(200); expect(await downloaded.text()).toContain('部分代码审查结果');
+    expect(service.get(task.id).status).toBe('failed'); expect(state.listAcceptanceReports('a')).toHaveLength(0);
+    expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('结果接口沿用项目权限并拒绝无效分页，失败与无报告不冒充零问题', async () => {
+    const task = await submit(); const base = await serve();
+    const read = async (suffix: string, projectId = 'a') => fetch(`${base}/${task.id}?includeResult=1${suffix}`, { headers: { 'x-project': projectId } });
+    expect((await read('', 'b')).status).toBe(403);
+    for (const suffix of ['&offset=-1', '&limit=101', '&limit=0', '&severity=unknown', '&offset=Infinity']) expect((await read(suffix)).status).toBe(400);
+    const pending = await (await read('')).json();
+    expect(pending.result).toBeNull(); expect(pending.resultUnavailableReason).toContain('尚无已保存');
+    await service.pump();
+    const completed = await (await read('&limit=1')).json();
+    expect(completed.result.findings).toHaveLength(1); expect(completed.result.page.total).toBe(1);
+    expect(completed.task).not.toHaveProperty('resultKey'); expect(completed.task).not.toHaveProperty('inputKey');
+    expect((await (await fetch(`${base}/${task.id}`, { headers: { 'x-project': 'a' } })).json())).not.toHaveProperty('result');
+    expect(run).toHaveBeenCalledTimes(1);
+  });
   it('能力声明条件重试，HTTP匹配失败版本时仍使用原任务与固定源码', async () => {
     run.mockRejectedValueOnce(new Error('模型任务失败'));
     const task = await submit(); await service.pump(); const failed = service.get(task.id); const base = await serve();

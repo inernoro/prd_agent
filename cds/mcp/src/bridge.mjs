@@ -22,7 +22,8 @@ const submitSchema = z.object({
   message: 'zipPath 与 githubUrl 必须且只能提供一个',
 }).refine((input) => !input.zipPath || !input.ref, { message: 'ZIP 不接受仓库 ref' });
 const uploadSchema = z.object({ filePath: z.string().min(1), title: common.title.unwrap(), idempotencyKey: common.idempotencyKey }).strict();
-const getSchema = z.object({ taskId: id }).strict();
+const getSchema = z.object({ taskId: id, offset: z.number().int().min(0).optional(), limit: z.number().int().min(1).max(100).optional(),
+  severity: z.enum(['critical', 'high', 'medium', 'low', 'info']).optional(), query: z.string().max(300).optional() }).strict();
 const listSchema = z.object({}).strict();
 const inputSchemas = {
   cds_code_review_submit: submitSchema,
@@ -54,8 +55,11 @@ export const TOOLS = [
   },
   {
     name: 'cds_code_review_get', title: '查询代码审查任务',
-    description: '查看当前项目的审查进度、失败原因、报告与邮件投递状态。',
-    inputSchema: { type: 'object', properties: { taskId: stringProperty('任务 ID') }, required: ['taskId'], additionalProperties: false },
+    description: '查看当前项目的审查进度、已保存的结构化问题、真实覆盖范围、报告阅读链接与邮件投递状态。不执行或重试审查；问题默认每页 50 条，按 nextOffset 继续读取。',
+    inputSchema: { type: 'object', properties: { taskId: stringProperty('任务 ID'),
+      offset: { type: 'integer', minimum: 0, description: '问题分页起点，默认 0' },
+      limit: { type: 'integer', minimum: 1, maximum: 100, description: '每页问题数，默认 50' },
+      severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low', 'info'] }, query: stringProperty('搜索问题或文件路径') }, required: ['taskId'], additionalProperties: false },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -241,8 +245,16 @@ export function createBridge(credentials, { fetchImpl = fetch, dispatcher } = {}
       }
       if (name === 'cds_code_review_get') {
         const args = getSchema.parse(input);
-        const result = await request('GET', `/api/code-reviews/${encodeURIComponent(args.taskId)}`);
+        const query = new URLSearchParams({ includeResult: '1' });
+        for (const field of ['offset', 'limit', 'severity']) if (args[field] !== undefined) query.set(field, String(args[field]));
+        if (args.query !== undefined) query.set('q', args.query);
+        const result = await request('GET', `/api/code-reviews/${encodeURIComponent(args.taskId)}?${query}`);
         assertProject(result.task);
+        if (result.task.id !== args.taskId) throw new Error('CDS 返回任务与请求不匹配');
+        if (result.result) {
+          assertProject(result.result);
+          if (result.result.taskId !== args.taskId) throw new Error('CDS 返回问题与请求任务不匹配');
+        }
         return result;
       }
       if (name === 'cds_code_review_list') {

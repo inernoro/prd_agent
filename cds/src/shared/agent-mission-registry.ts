@@ -50,7 +50,7 @@ type CapabilitySeed = readonly [
 ];
 
 const CDS_AGENT_CAPABILITY_SEEDS = [
-  ['code-reviews', '代码审查任务与报告上传', 'code-reviews.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'code-review', 'ZIP/GitHub 固定快照；四个本地 stdio MCP 工具仅限项目任务与报告，复用项目权限；settings 仅限无项目作用域的管理员或 bootstrap 配置引擎引用，不暴露 settings MCP 工具；取消可停止任务，报告上传按内容去重，邮件仅在提交者指定时发送'],
+  ['code-reviews', '代码审查任务与报告上传', 'code-reviews.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'code-review', 'ZIP/GitHub 固定快照；四个本地 stdio MCP 工具复用项目权限，get 可分页读取已保存的问题、覆盖说明和报告链接，不触发分析；settings 仅限无项目作用域的管理员或 bootstrap 配置引擎引用，不暴露 settings MCP 工具；取消可停止任务，报告上传按内容去重，邮件仅在提交者指定时发送'],
   ['identity-connections', '原账号设备接入与恢复', 'identity-connections.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect --recover', '匿名只能提交仓库恢复申请；原账号与原项目由系统所有者核对，历史匿名凭据归属也必须明确人工确认'],
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],

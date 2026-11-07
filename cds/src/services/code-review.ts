@@ -10,6 +10,8 @@ import { CDS_AGENT_CAPABILITY_DEFINITIONS } from '../shared/agent-mission-regist
 import { runCodeReviewStaticAnalysis } from './code-review-static.js';
 import { resolveCodeReviewEngineConfig } from './code-review-settings.js';
 import { CodeReviewUpstreamHttpError } from './code-review-audit.js';
+import type { CodeReviewResult } from '../shared/code-review-result.js';
+import { archivedCodeReviewResult, pageCodeReviewResult, sortCodeReviewFindings } from './code-review-result.js';
 
 export class CodeReviewError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -42,12 +44,12 @@ export interface CodeReviewDeps {
   state: StateService;
   inputs: CodeReviewInputs;
   mail: CodeReviewMail;
-  engine?: Pick<CodeReviewEngine, 'run'>;
+  engine?: Pick<CodeReviewEngine, 'run'> & Partial<Pick<CodeReviewEngine, 'readExisting'>>;
   publicBaseUrl: string;
   ownerScope: string;
   githubToken?: (projectId: string, githubUrl: string) => Promise<string | undefined>;
   autoStart?: boolean;
-  resolveEngine?: () => Pick<CodeReviewEngine, 'run'> | undefined;
+  resolveEngine?: () => (Pick<CodeReviewEngine, 'run'> & Partial<Pick<CodeReviewEngine, 'readExisting'>>) | undefined;
 }
 export interface SubmitCodeReview {
   projectId: string;
@@ -72,6 +74,7 @@ export class CodeReviewService {
   private submissions = Promise.resolve();
   private engineProbeTimer?: ReturnType<typeof setTimeout>;
   private dispatchNotBefore = 0;
+  private readingResults = new Map<string, Promise<CodeReviewResult | null>>();
   constructor(readonly deps: CodeReviewDeps) {}
   private engine() {
     if (this.deps.engine) return this.deps.engine;
@@ -88,6 +91,67 @@ export class CodeReviewService {
     const task = this.deps.state.getCodeReviewTask(id);
     if (!task) throw new CodeReviewError(404, '审查任务不存在');
     return task;
+  }
+  /** Read existing evidence only; never creates, retries or resumes an analysis task. */
+  async result(id: string, options: { offset?: number; limit?: number; severity?: string; query?: string } = {}) {
+    const task = this.get(id);
+    let result: CodeReviewResult | null = null;
+    if (task.resultKey) {
+      result = JSON.parse((await this.deps.inputs.get(task.resultKey)).toString('utf8')) as CodeReviewResult;
+      if (result.version !== 1 || result.taskId !== task.id || result.projectId !== task.projectId || !Array.isArray(result.findings)) {
+        throw new CodeReviewError(502, '结果记录无法读取，请重试或查看原始报告');
+      }
+    } else if (task.reportId && task.sourceType !== 'report') {
+      const meta = this.deps.state.getAcceptanceReport(task.reportId);
+      if (meta?.projectId === task.projectId && meta.format === 'md') {
+        const content = await this.deps.state.readAcceptanceReportContentAsync(meta.id);
+        if (content) result = archivedCodeReviewResult(task, content);
+      }
+    }
+    if (!result && task.sourceType !== 'report' && task.engineTaskId && terminal.has(task.status)) {
+      const engine = this.engine();
+      if (engine?.readExisting) {
+        let reading = this.readingResults.get(id);
+        if (!reading) {
+          reading = (async () => {
+            const upstream = await engine.readExisting!(task.engineTaskId!, { signal: AbortSignal.timeout(60_000), audit: event => this.audit(id, event) });
+            if (!upstream) return null;
+            const saved: CodeReviewResult = { version: 1, taskId: id, projectId: task.projectId, sourceHash: task.sourceHash,
+              commitSha: task.commitSha, origin: 'analysis', findings: sortCodeReviewFindings(upstream.findings),
+              notes: [...upstream.notes, '读取已停止任务的既有结果，未重新执行分析。任务失败或取消状态保持原样。'] };
+            const key = await this.deps.inputs.put(`${id}-existing-result-v1`, task.projectId, Buffer.from(JSON.stringify(saved)));
+            const current = this.get(id);
+            if (current.engineTaskId === task.engineTaskId && terminal.has(current.status) && !current.resultKey) {
+              current.resultKey = key;
+              current.findingsSummary = {};
+              for (const finding of saved.findings) current.findingsSummary[finding.severity] = (current.findingsSummary[finding.severity] || 0) + 1;
+              await this.deps.state.putCodeReviewTask(current);
+            }
+            return saved;
+          })().finally(() => { this.readingResults.delete(id); });
+          this.readingResults.set(id, reading);
+        }
+        result = await reading;
+      }
+    }
+    const url = new URL('/code-reviews', this.deps.publicBaseUrl);
+    url.searchParams.set('project', task.projectId); url.searchParams.set('task', id);
+    if (task.reportId) url.searchParams.set('report', '1');
+    return { result: result ? pageCodeReviewResult(task, result, options) : null, reportUrl: url.href,
+      downloadUrl: task.reportId || result ? new URL(`/api/code-reviews/${encodeURIComponent(id)}/report/download`, this.deps.publicBaseUrl).href : null,
+      resultUnavailableReason: result ? undefined : task.sourceType === 'report'
+        ? '这是导入的原始报告，请阅读原文。未将文档声明当作实际扫描结果。'
+        : task.reportId ? '历史报告未保存可完整还原的问题数据，请阅读原始报告。' : '本次审查尚无已保存的问题明细，请查看当前进度。' };
+  }
+  async exportPartialResult(id: string): Promise<string> {
+    const read = await this.result(id);
+    const task = this.get(id);
+    if (!read.result || !task.resultKey) throw new CodeReviewError(404, '报告尚未归档，也没有可下载的已保存结果');
+    const result = JSON.parse((await this.deps.inputs.get(task.resultKey)).toString('utf8')) as CodeReviewResult;
+    if (result.taskId !== id || result.projectId !== task.projectId) throw new CodeReviewError(502, '结果记录无法读取，请重试');
+    return ['# 部分代码审查结果', '', '本次审查尚未完成。以下为已保存的分析发现，不代表全仓通过，也未改变任务状态或生成完成报告。', '',
+      renderCodeReviewReport(task, { findings: result.findings, totalFiles: task.progress.totalFiles, scannedFiles: task.progress.scannedFiles,
+        skippedFiles: task.inputSkippedFiles || 0, notes: result.notes, engineTaskId: task.engineTaskId || '' })].join('\n');
   }
   private async save(task: CodeReviewTask) {
     const current = this.deps.state.getCodeReviewTask(task.id);
@@ -300,6 +364,10 @@ export class CodeReviewService {
       result.totalFiles = Math.max(result.totalFiles, selectedFiles);
       result.skippedFiles = (task.inputSkippedFiles || 0) + Math.max(0, result.totalFiles - result.scannedFiles);
       task.engineTaskId = result.engineTaskId; task.status = 'archiving'; task.phase = '正在归档报告'; await this.save(task);
+      const structured: CodeReviewResult = { version: 1, taskId: id, projectId: task.projectId, sourceHash: task.sourceHash,
+        commitSha: task.commitSha, origin: 'analysis', findings: sortCodeReviewFindings(result.findings), notes: result.notes };
+      task.resultKey = await this.deps.inputs.put(`${id}-result-v1`, task.projectId, Buffer.from(JSON.stringify(structured)));
+      await this.save(task);
       const found = this.deps.state.listAcceptanceReports(task.projectId).find((r) => r.reviewTaskId === id);
       const report = found || await this.deps.state.createAcceptanceReportAsync({
         title: `代码审查报告 · ${task.sourceName}${task.commitSha ? `@${task.commitSha.slice(0, 8)}` : ''} · ${new Date().toISOString().slice(0, 10)}`,

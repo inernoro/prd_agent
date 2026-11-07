@@ -29,6 +29,7 @@ import {
   RotateCw,
   Rocket,
   Search,
+  SearchCode,
   Server,
   Settings,
   Square,
@@ -4083,6 +4084,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
           right={
             <>
               <PaletteHint />
+              <Button asChild variant="ghost" size="sm" title="审查当前项目代码">
+                <Link to={`/code-reviews?project=${encodeURIComponent(projectId)}`}>
+                  <SearchCode />代码审查
+                </Link>
+              </Button>
               <Button asChild variant="ghost" size="sm" title="项目列表">
                 <Link to="/project-list">
                   <ArrowLeft />

@@ -31,12 +31,13 @@ export interface CodeReviewTask {
   ownerScope: string;
   idempotencyKey?: string;
   inputKey?: string;
+  resultKey?: string;
   audit?: Array<Record<string, unknown>>;
   auditHeadKey?: string;
   auditCount?: number;
 }
-export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'ownerScope' | 'idempotencyKey' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested'>;
+export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'resultKey' | 'ownerScope' | 'idempotencyKey' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested'>;
 export function publicCodeReviewTask(task: CodeReviewTask): PublicCodeReviewTask {
-  const { inputKey: _i, ownerScope: _o, idempotencyKey: _k, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, ...visible } = task;
+  const { inputKey: _i, resultKey: _result, ownerScope: _o, idempotencyKey: _k, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, ...visible } = task;
   return visible;
 }

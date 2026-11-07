@@ -8,6 +8,7 @@ import {
   type CodeReviewTask,
 } from '../../web/src/lib/codeReviews.js';
 import { buildCodeReviewDocument, ReviewDetail } from '../../web/src/pages/CodeReviewsPage.js';
+import { FindingDetail } from '../../web/src/pages/code-reviews/ReviewReportReader.js';
 import { AppRail } from '../../web/src/components/layout/AppShell.js';
 
 const { MemoryRouter } = createRequire(path.resolve('web/package.json'))('react-router-dom');
@@ -137,8 +138,30 @@ describe('code review task reading', () => {
       const html = buildCodeReviewDocument('# 发现\n<script>alert(1)</script>', format, 'light');
       expect(html).toContain("default-src 'none'");
       expect(html).toContain("form-action 'none'");
-      expect(html).toContain('color-scheme:light');
+      if (format === 'md') expect(html).toContain('color-scheme:light');
+      else expect(html).not.toContain('body{'); // Imported HTML retains its own presentation.
     }
     expect(buildCodeReviewDocument('# 质量审查', 'md', 'dark')).toContain('<h1>质量审查</h1>');
+  });
+});
+
+
+describe('原始证据与原版文档', () => {
+  it('发现中的 HTML 仅作为源码文本展示，缺失的代码与解释不补写', () => {
+    const finding = { filePath: 'src/a.ts', line: 12, category: 'security' as const, severity: 'high' as const, message: '<script>unsafe()</script>', tool: 'DeepAudit', verified: false as const };
+    const missing = renderToStaticMarkup(createElement(FindingDetail, { finding }));
+    expect(missing).toContain('&lt;script&gt;unsafe()&lt;/script&gt;');
+    expect(missing).not.toContain('<script>'); expect(missing).not.toContain('代码证据'); expect(missing).not.toContain('AI 解释');
+    const full = renderToStaticMarkup(createElement(FindingDetail, { finding: { ...finding, codeSnippet: '<img onerror="unsafe()">', aiExplanation: '原始解释' } }));
+    expect(full).toContain('代码证据'); expect(full).toContain('&lt;img'); expect(full).toContain('原始解释');
+  });
+  it('原版 HTML 保留布局，仅允许可信尺寸脚本运行，非法 nonce 不启用脚本', () => {
+    const original = '<html><style>body{background:navy}</style><body>原版</body></html>';
+    const token = '12345678-1234-1234-1234-123456789abc';
+    const document = buildCodeReviewDocument(original, 'html', 'dark', token);
+    expect(document).toContain(original); expect(document).toContain(`script-src 'nonce-${token}'`);
+    expect(document).toContain(`<script nonce="${token}">`);
+    expect(document).not.toContain('color-scheme:dark');
+    expect(buildCodeReviewDocument(original, 'html', 'dark', 'injected')).not.toContain('<script');
   });
 });

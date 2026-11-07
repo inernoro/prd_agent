@@ -3650,11 +3650,20 @@ def cmd_code_review_task(args: argparse.Namespace) -> None:
     project = _code_review_project(args)
     endpoint = "/api/code-reviews/" + urllib.parse.quote(args.id, safe="")
     method = "GET"
+    if args.sub == "show" and getattr(args, "results", False):
+        query = {"includeResult": "1", "offset": args.offset, "limit": args.limit}
+        if args.severity:
+            query["severity"] = args.severity
+        endpoint += "?" + urllib.parse.urlencode(query)
     if args.sub != "show":
         endpoint += {"cancel": "/cancel", "retry": "/retry", "mail-retry": "/delivery/retry"}[args.sub]
         method = "POST"
     result = _code_review_request(method, endpoint, {} if method == "POST" else None)
     _code_review_assert_project(result, project)
+    if args.sub == "show" and getattr(args, "results", False) and result.get("result") is not None:
+        _code_review_assert_project(result, project, "result")
+        if result["result"].get("taskId") != args.id:
+            die("CDS 返回问题与请求任务不匹配")
     ok(result)
 
 
@@ -10742,6 +10751,11 @@ def _build_parser() -> argparse.ArgumentParser:
     for action, help_text in (("show", "查询进度和结果"), ("cancel", "取消任务"), ("retry", "重试失败任务"), ("mail-retry", "只重试邮件投递")):
         review_task = review.add_parser(action, help=help_text)
         review_task.add_argument("id"); review_task.add_argument("--project")
+        if action == "show":
+            review_task.add_argument("--results", action="store_true", help="读取已保存的问题、真实覆盖和报告链接，不执行分析")
+            review_task.add_argument("--offset", type=int, default=0)
+            review_task.add_argument("--limit", type=int, default=50)
+            review_task.add_argument("--severity", choices=["critical", "high", "medium", "low", "info"])
         review_task.set_defaults(func=cmd_code_review_task)
     review_upload = review.add_parser("upload-report", help="将已有 HTML/Markdown 报告归档为代码审查报告")
     review_upload.add_argument("--file", required=True); review_upload.add_argument("--title", required=True)

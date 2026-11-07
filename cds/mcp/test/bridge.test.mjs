@@ -31,6 +31,7 @@ before(async () => {
     for await (const chunk of req) chunks.push(chunk);
     const body = Buffer.concat(chunks).toString();
     requests.push({ method: req.method, url: req.url, headers: req.headers, body });
+    const url = new URL(req.url, 'http://localhost');
     res.setHeader('content-type', 'application/json');
     if (req.headers['x-ai-access-key'] !== key) { res.writeHead(401); res.end('{}'); return; }
     if (req.url === '/api/code-reviews/capabilities') {
@@ -38,10 +39,20 @@ before(async () => {
       return;
     }
     if (req.url.includes('redirect')) { res.writeHead(302, { location: host + '/credential-sink' }); res.end('{}'); return; }
-    if (req.url.endsWith('/wrong-project')) { res.end(JSON.stringify({ task: { ...task, projectId: 'other' } })); return; }
-    if (req.url.endsWith('/secret-error')) { res.writeHead(502); res.end(JSON.stringify({ message: `upstream ${key} SMTP_PASSWORD=private-password` })); return; }
+    if (url.pathname.endsWith('/wrong-result-project') || url.pathname.endsWith('/wrong-result-task')) {
+      res.end(JSON.stringify({ task: { ...task, id: url.pathname.split('/').at(-1) },
+        result: { projectId: url.pathname.endsWith('/wrong-result-project') ? 'other' : task.projectId, taskId: 'another-task' } })); return;
+    }
+    if (url.pathname.endsWith('/wrong-project')) { res.end(JSON.stringify({ task: { ...task, projectId: 'other' } })); return; }
+    if (url.pathname.endsWith('/secret-error')) { res.writeHead(502); res.end(JSON.stringify({ message: `upstream ${key} SMTP_PASSWORD=private-password` })); return; }
     if (req.url.endsWith('/reports')) { res.end(JSON.stringify({ report: { id: 'report-1', projectId: 'project-one', reportType: 'code-review' } })); return; }
-    if (req.url.includes('?')) { res.end(JSON.stringify({ tasks: [task] })); return; }
+    if (url.searchParams.has('projectId')) { res.end(JSON.stringify({ tasks: [task] })); return; }
+    if (url.searchParams.has('includeResult')) {
+      res.end(JSON.stringify({ task, result: { taskId: task.id, projectId: task.projectId,
+        findings: [{ filePath: 'src/a.ts', severity: 'high', message: '原始问题', verified: false }],
+        coverage: { totalFiles: 10, scannedFiles: 4, complete: false }, page: { offset: Number(url.searchParams.get('offset') || 0), nextOffset: 50 } },
+        reportUrl: host + '/code-reviews?project=project-one&task=task-1&report=1' })); return;
+    }
     res.writeHead(req.method === 'POST' ? 202 : 200);
     res.end(JSON.stringify({ task }));
   });
@@ -72,7 +83,11 @@ test('real stdio client discovers and calls all four project-scoped tools', asyn
     assert.equal(tools.find((tool) => tool.name === 'cds_code_review_get').annotations.readOnlyHint, true);
     assert.equal(tools[0].annotations.destructiveHint, false);
     assert.deepEqual(parsed(await client.callTool({ name: 'cds_code_review_list', arguments: {} })), { tasks: [task] });
-    assert.deepEqual(parsed(await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'task-1' } })), { task });
+    const read = parsed(await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'task-1', offset: 50, severity: 'high' } }));
+    assert.deepEqual(read.task, task); assert.equal(read.result.coverage.complete, false);
+    assert.equal(read.result.findings[0].filePath, 'src/a.ts'); assert.equal(read.result.findings[0].verified, false);
+    assert.equal(read.result.page.offset, 50); assert.ok(read.reportUrl.includes('task=task-1'));
+    assert.ok(requests.at(-1).url.includes('includeResult=1')); assert.ok(requests.at(-1).url.includes('severity=high'));
     const submitted = await client.callTool({ name: 'cds_code_review_submit', arguments: { githubUrl: 'https://github.com/inernoro/prd_agent', ref: 'main', email: 'owner@example.com', idempotencyKey: 'same-submission' } });
     assert.equal(submitted.isError, undefined);
     assert.equal(parsed(submitted).task.id, 'task-1');
@@ -217,4 +232,19 @@ test('workspace credentials schema is strict, ignores env overrides, and require
       await assert.rejects(readProjectCredentials(another));
     }
   } finally { await fs.rm(another, { recursive: true, force: true }); }
+});
+
+
+test('structured results reject cross-project/task responses and invalid paging before requests', async () => {
+  await withClient(async client => {
+    await client.listTools();
+    for (const taskId of ['wrong-result-project', 'wrong-result-task']) {
+      assert.equal((await client.callTool({ name: 'cds_code_review_get', arguments: { taskId } })).isError, true);
+    }
+    const count = requests.length;
+    for (const args of [{ offset: -1 }, { limit: 101 }, { limit: 0 }, { severity: 'unknown' }]) {
+      assert.equal((await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'task-1', ...args } })).isError, true);
+    }
+    assert.equal(requests.length, count);
+  });
 });

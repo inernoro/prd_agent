@@ -334,6 +334,7 @@ $CLI code-review submit --zip-file source.zip --exclude 'vendor/**' --project <i
 $CLI code-review submit --zip-file source.zip --email owner@example.com --idempotency-key <same-submission>
 $CLI code-review list --project <id>
 $CLI code-review show <taskId>
+$CLI code-review show <taskId> --results --limit 50
 $CLI code-review cancel <taskId>
 $CLI code-review retry <taskId>
 $CLI code-review mail-retry <taskId>
@@ -343,6 +344,8 @@ $CLI code-review upload-report --file review.md --title "代码审查报告" --p
 省略 `--project` 时读取项目凭据中的 projectId；项目级 key 不能覆盖为另一个项目。
 submit 返回异步任务，不代表扫描完成。用 show 查询到完成状态与 reportId 后，才能声称报告已归档。
 所有报告在 CDS《代码审查报告》栏目留档，邮件失败不影响已归档的结果，也不重新扫描代码。
+MCP 的 get 与 CLI show --results 可读取已保存的结构化问题、实际覆盖和报告深链；按 nextOffset 分页。
+导入报告或不能完整还原的历史档案保留原文，不把空的结构化结果当成零问题。
 
 ## Agent 使用任务调度口令的标准流程
 

@@ -45,6 +45,8 @@ class CodeReviewCliTest(unittest.TestCase):
                     task["projectId"] = "other"
                 if self.path.endswith("/reports"):
                     result = {"report": {"id": "report-1", "projectId": "project-one", "reportType": "code-review"}}
+                elif "includeResult=1" in self.path:
+                    result = {"task": task, "result": {"projectId": "project-one", "taskId": task["id"], "findings": [], "coverage": {"complete": False}}}
                 elif "?" in self.path:
                     result = {"tasks": [task]}
                 else:
@@ -131,6 +133,14 @@ class CodeReviewCliTest(unittest.TestCase):
         code, output = self.call("show", "wrong-project")
         self.assertEqual(code, 1)
         self.assertFalse(output["ok"])
+
+    def test_structured_results_keep_explicit_pagination_and_project_scope(self):
+        code, output = self.call("show", "task-1", "--results", "--offset", "50", "--limit", "25", "--severity", "high")
+        self.assertEqual(code, 0, output)
+        self.assertIn("includeResult=1", self.requests[-1]["path"])
+        for part in ("offset=50", "limit=25", "severity=high"):
+            self.assertIn(part, self.requests[-1]["path"])
+        self.assertFalse(output["data"]["result"]["coverage"]["complete"])
 
     def test_invalid_file_or_zip_ref_fails_before_network(self):
         for args in (("submit", "--zip-file", "review.md"), ("submit", "--zip-file", "code.zip", "--ref", "main"), ("upload-report", "--file", "code.zip", "--title", "bad")):
