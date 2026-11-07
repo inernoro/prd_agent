@@ -779,6 +779,59 @@ export class ContainerService {
   async closeStaticWebRuntimes(): Promise<void> { await this.staticSites?.close(); }
 
   private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
+  private recoveredMemoryAfterKey?: string;
+
+  /** 冷恢复与已确认结束的创建共用同一真实盘点；未知或在途创建不能仅凭缺席快照释放。 */
+  async reconcileDeploymentMemoryReservations(branches: readonly BranchEntry[], options: {
+    creationSettled: (owner: DeploymentPhaseOwner, runtime: import('../types.js').ServiceRuntimeRef) => boolean;
+    recoveredOnly?: boolean;
+  } = { creationSettled: () => false }): Promise<{ released: string[]; retained: string[] }> {
+    if (isPreviewInstance()) return { released: [], retained: deploymentPhaseBudget.memorySnapshot().map(item => item.key) };
+    const deadline = performance.now() + 15_000;
+    let checked = 0;
+    const refs = new Map<string, { entry: BranchEntry; profileId: string; runtime: import('../types.js').ServiceRuntimeRef } | null>();
+    for (const entry of branches) for (const service of Object.values(entry.services)) for (const runtime of serviceRuntimeRefs(service)) {
+      const previous = refs.get(runtime.containerName);
+      if (refs.has(runtime.containerName) && (!previous || previous.entry.id !== entry.id
+        || previous.entry.projectId !== entry.projectId || previous.profileId !== service.profileId)) refs.set(runtime.containerName, null);
+      else refs.set(runtime.containerName, { entry, profileId: service.profileId, runtime: runtimeRef(runtime) });
+    }
+    return deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner, containerId) => {
+      let item = refs.get(key);
+      // 冷恢复预约可能比服务记录活得更久：替换/清理会移走旧引用，不能因此永远漏回收。
+      // 只使用预约捕获的不可变CID，不以可复用名称或服务状态推断Docker已终结。
+      if (containerId && item !== null) {
+        const entry = branches.find(branch => branch.id === owner.branchId && branch.projectId === owner.projectId);
+        if (entry && owner.profileId && entry.services[owner.profileId]) item = {
+          entry, profileId: owner.profileId, runtime: { containerName: key, containerId, hostPort: 0 },
+        };
+      }
+      if (!item || item.entry.id !== owner.branchId || item.entry.projectId !== owner.projectId
+        || item.profileId !== owner.profileId || !options.creationSettled(owner, item.runtime)) return false;
+      const remaining = deadline - performance.now();
+      if (checked >= 64 || remaining <= 0) return false;
+      checked += 1;
+      if (options.recoveredOnly) this.recoveredMemoryAfterKey = key;
+      const unused = await this.isDeploymentRuntimeUnused(item.entry, item.profileId, item.runtime, Math.min(5000, remaining));
+      return unused && options.creationSettled(owner, item.runtime);
+    }, { recoveredOnly: options.recoveredOnly, afterKey: options.recoveredOnly ? this.recoveredMemoryAfterKey : undefined });
+  }
+
+  private async isDeploymentRuntimeUnused(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, timeoutMs = 5000, activationSettled = false): Promise<boolean> {
+    const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"restarting":{{json .State.Restarting}},"status":{{json .State.Status}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}}}';
+    const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`,
+      { timeout: Math.max(1, Math.floor(timeoutMs)), executionLane: 'observation' });
+    if (result.exitCode !== 0) return /No such (?:container|object):/i.test(combinedOutput(result));
+    let value: { id?: string; running?: boolean; restarting?: boolean; status?: string; project?: string; branch?: string; profile?: string };
+    try { value = JSON.parse(result.stdout); } catch { return false; }
+    return typeof value?.id === 'string' && /^[a-f0-9]{64}$/.test(value.id)
+      && (!runtime.containerId || value.id === runtime.containerId)
+      && value.project === (entry.projectId || '_unknown') && value.branch === entry.id && value.profile === profileId
+      && value.running === false && value.restarting === false
+      // 冷恢复的CID只证明create已返回，created仍可能有旧start在途；当前命令已终结才可退还。
+      && (value.status === 'exited' || value.status === 'dead' || activationSettled && value.status === 'created');
+  }
+
   /** Private receipts cannot be asserted by an HTTP profile or transferred across daemons. */
   private readonly admittedProfileStorage = new WeakMap<BuildProfile, { planDigest: string; imageId: string; imageReference: string; checkBindMounts: () => void }>();
   private readonly admittedInfraStorage = new WeakMap<InfraService, { planDigest: string; imageId: string; imageReference: string; originalContainerId?: string }>();
@@ -910,10 +963,19 @@ export class ContainerService {
 
   async stopRuntimeGroup(service: ServiceState, reason?: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
     const failures: unknown[] = [];
-    const runtimes = serviceRuntimeRefs(service).map(runtime => ({ runtime,
+    const runtimes = serviceRuntimeRefs(service).map(runtime => ({ runtime: runtimeRef(runtime),
       releaseMemory: deploymentPhaseBudget.captureMemoryRelease(runtime.containerName) }));
     for (const { runtime, releaseMemory } of runtimes) {
-      try { await this.stop(runtime.containerId || runtime.containerName, reason, context, releaseMemory); }
+      try {
+        if (runtime.creationIssued && !runtime.containerId) {
+          if (!context.branchId || !context.projectId) throw new ContainerStopUnconfirmedError(undefined);
+          const owned = await this.inspectOwnedRuntime({ id: context.branchId, projectId: context.projectId } as BranchEntry,
+            context.profileId || service.profileId, runtime, false);
+          if (!owned) throw new ContainerStopUnconfirmedError(undefined);
+          Object.assign(runtime, owned);
+        }
+        await this.stop(runtime.containerId || runtime.containerName, reason, context, releaseMemory);
+      }
       catch (error) { failures.push(error); }
     }
     if (failures.length === 1) throw failures[0];
@@ -1693,7 +1755,8 @@ export class ContainerService {
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId, operationGeneration: context.operationGeneration };
     let installedPhaseOwner: { owner: DeploymentPhaseOwner; check: () => void } | undefined; // 仅CPU占位跟随持有者结束。
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
-    let releaseStart: (() => void) | undefined;
+    let releaseStart: (() => void) | undefined, releaseOwnMemory: (() => boolean) | undefined;
+    let creationIssued = false, runtimeCommandSettled = false;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -2234,13 +2297,17 @@ export class ContainerService {
           phaseCheck();
           if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) !== installedPhaseOwner) throw new Error('部署启动阶段已结束');
         }, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+      releaseOwnMemory = deploymentPhaseBudget.captureMemoryRelease(service.containerName, phaseOwner);
       phaseCheck();
       installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
       this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
       phaseCheck();
+      creationIssued = true;
       const result = await shell.exec(runCmd);
+      runtimeCommandSettled = true;
+      phaseCheck();
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
           severity: 'error',
@@ -2270,7 +2337,10 @@ export class ContainerService {
       }
       const acknowledgedId = result.stdout.trim();
       if (mustCreateBeforeStart && !/^[a-f0-9]{64}$/.test(acknowledgedId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
-      if (mustCreateBeforeStart) await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
+      if (mustCreateBeforeStart) {
+        await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
+        phaseCheck();
+      }
       if (/^[a-f0-9]{64}$/.test(acknowledgedId)) {
         service.containerId = acknowledgedId;
         this.forgetStoppedStaticSiteName(service.containerName);
@@ -2289,6 +2359,7 @@ export class ContainerService {
       service.sourceCheckoutPath = !profile.prebuiltImage ? sourceCheckout?.path : undefined;
       service.sourceCommitSha = !profile.prebuiltImage ? sourceCheckout?.commitSha : undefined;
       await context.onRuntimeCreated?.(service);
+      phaseCheck();
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
@@ -2302,14 +2373,20 @@ export class ContainerService {
           operationId: context.operationId ?? undefined,
           assertCurrent: context.assertCurrent,
         });
+        phaseCheck();
         service.connectedNetworks.push(sharedNet);
         await context.onRuntimeCreated?.(service);
+        phaseCheck();
       }
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
       if (mustCreateBeforeStart) {
         await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
+        phaseCheck();
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
+        runtimeCommandSettled = false;
         const startRes = await shell.exec(`docker start ${acknowledgedId}`);
+        runtimeCommandSettled = true;
+        phaseCheck();
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',
@@ -2368,8 +2445,11 @@ export class ContainerService {
       // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
       try {
         await this.waitForContainerAlive(service.containerName, onOutput);
+        phaseCheck();
       } catch (err) {
+        phaseCheck();
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 300);
+        phaseCheck();
         const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
         this.recordContainerEvent({
           severity: 'error',
@@ -2393,6 +2473,14 @@ export class ContainerService {
       }
     } catch (error) {
       if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) === installedPhaseOwner) this.runtimePhaseOwners.delete(service.containerName);
+      if (releaseStart) {
+        releaseStart(); releaseStart = undefined;
+        if (!creationIssued) releaseOwnMemory?.();
+        else if (runtimeCommandSettled) await deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner) =>
+          key === service.containerName && owner.operationId === context.operationId
+            && owner.operationGeneration === context.operationGeneration
+            && await this.isDeploymentRuntimeUnused(entry, profile.id, runtimeRef(service), 5000, runtimeCommandSettled));
+      }
       throw error;
     } finally {
       releaseStart?.();
