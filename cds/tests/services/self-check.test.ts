@@ -38,6 +38,7 @@ import {
   type SelfMonitoringState,
 } from '../../src/services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
+import { createSelfCheckAuth, SELF_CHECK_HEADER } from '../../src/services/self-check-auth.js';
 import type { Project } from '../../src/types.js';
 
 const NOW = Date.parse('2026-09-16T10:00:00Z');
@@ -355,6 +356,31 @@ describe('启动引导：幂等、可回生', () => {
     expect(again.createdProject).toBe(true);
     expect(state.projects).toHaveLength(1);
   });
+
+  it.each(['http://127.0.0.1:7000', 'http://localhost:7100'])(
+    '启动只清理旧默认自检，保留显式项目监督来源及内部鉴权：%s', (origin) => {
+      const state = fakeState();
+      const old = ensureSelfMonitoring(state, 6900, NOW);
+      const projectUrl = `${origin}${SELF_CHECK_PATH}?projectInspection=project-a`;
+      const externalUrl = 'https://health.example.test/health';
+      state.projects[0].monitorEndpoints!.push(projectUrl, externalUrl);
+
+      const next = ensureSelfMonitoring(state, 7000, NOW + 1000);
+      expect(next.retiredEndpoints).toEqual([old.url]);
+      expect(next.addedEndpoint).toBe(true);
+      expect(state.projects[0].monitorEndpoints).toEqual([projectUrl, externalUrl, next.url]);
+      const again = ensureSelfMonitoring(state, 7000, NOW + 2000);
+      expect(again).toMatchObject({ createdProject: false, addedEndpoint: false, retiredEndpoints: [] });
+      expect(state.projects[0].monitorEndpoints).toEqual([projectUrl, externalUrl, next.url]);
+
+      const auth = createSelfCheckAuth('local-test-token');
+      expect(isSelfCheckEndpoint(projectUrl)).toBe(true);
+      expect(auth.headersFor(projectUrl)).toEqual({ [SELF_CHECK_HEADER]: 'local-test-token' });
+      expect(auth.verify({ remoteAddress: '127.0.0.1', header: auth.headersFor(projectUrl)[SELF_CHECK_HEADER] })).toBe(true);
+      expect(auth.headersFor(externalUrl)).toEqual({});
+      expect(auth.verify({ remoteAddress: '192.0.2.1', header: 'local-test-token' })).toBe(false);
+    },
+  );
 
   it('内置端点只认本机回环 + 自检路径', () => {
     expect(isSelfCheckEndpoint('http://127.0.0.1:7000/api/self-check')).toBe(true);

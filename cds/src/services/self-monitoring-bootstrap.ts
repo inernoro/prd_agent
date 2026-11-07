@@ -68,8 +68,9 @@ export function ensureSelfMonitoring(state: SelfMonitoringState, port: number, n
   const before = state.getProjects().find((p) => p.id === SELF_PROJECT_ID)?.monitorEndpoints ?? [];
   // 换了 masterPort 的迁移安装：旧端口那条回环端点永远打不通，而「打不通就保持监控不动」
   // 会让十三条死监控一直挂着、拔掉接口又把所有回环自检地址都当内置拒掉。内置端点只有
-  // 当前这一条，别的回环自检地址在这里退掉（Codex #1543 P2）。
-  const retiredEndpoints = before.filter((u) => u !== url && isSelfCheckEndpoint(u) && state.removeMonitorEndpoint(SELF_PROJECT_ID, u));
+  // 当前这一条，只退掉没有查询参数的旧默认地址；显式登记的项目监督来源必须保留。
+  const retiredEndpoints = before.filter((u) => u !== url && isSelfCheckEndpoint(u)
+    && new URL(u).search === '' && state.removeMonitorEndpoint(SELF_PROJECT_ID, u));
   const addedEndpoint = !before.includes(url) && state.addMonitorEndpoint(SELF_PROJECT_ID, url);
   return { projectId: SELF_PROJECT_ID, url, createdProject, addedEndpoint, retiredEndpoints };
 }

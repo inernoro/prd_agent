@@ -29,6 +29,7 @@ const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').the
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
+const ProjectStatusPage = lazy(() => import('@/pages/ProjectStatusPage').then((m) => ({ default: m.ProjectStatusPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then((m) => ({ default: m.StatusPage })));
 const TaskSchedulePage = lazy(() => import('@/pages/TaskSchedulePage').then((m) => ({ default: m.TaskSchedulePage })));
 
@@ -290,6 +291,7 @@ export function App(): JSX.Element {
               <Route path="/release-console" element={<ReleaseConsolePage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/status" element={<StatusPage />} />
+              <Route path="/status/:projectId" element={<ProjectStatusPage />} />
               <Route path="/task-schedule" element={<TaskSchedulePage />} />
               <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
               <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
