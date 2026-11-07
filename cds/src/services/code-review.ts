@@ -66,6 +66,8 @@ export interface SubmitCodeReview {
 /** Persistent orchestration; one task at a time per deployment, never run repository scripts. */
 export class CodeReviewService {
   private readonly auditCursorKey = randomBytes(32);
+  // Immutable chain positions let original numeric-before clients continue without changing their request shape.
+  private readonly auditLegacyContinuations = new Map<string, string>();
   private active = new Map<string, AbortController>();
   private pumping = false;
   private stopped = false;
@@ -210,6 +212,8 @@ export class CodeReviewService {
           || !Number.isSafeInteger(value.before) || value.before < 1 || before !== undefined && before !== value.before) throw new Error('scope mismatch');
         key = value.key; before = value.before;
       } catch { throw new CodeReviewError(400, '审计分页游标无效或已失效，请从第一页重新读取'); }
+    } else if (before !== undefined) {
+      key = this.auditLegacyContinuations.get(JSON.stringify([id, task.projectId, before])) ?? key;
     }
     let examined = 0;
     let nextBefore = before;
@@ -224,6 +228,15 @@ export class CodeReviewService {
     }
     let nextCursor: string | undefined;
     if (key) {
+      if (nextBefore !== undefined) {
+        const hint = JSON.stringify([id, task.projectId, nextBefore]);
+        this.auditLegacyContinuations.delete(hint);
+        this.auditLegacyContinuations.set(hint, key);
+        // Hints are disposable, not evidence: after eviction/restart a deep seek resumes the bounded walk.
+        if (this.auditLegacyContinuations.size > 256) {
+          this.auditLegacyContinuations.delete(this.auditLegacyContinuations.keys().next().value!);
+        }
+      }
       const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', this.auditCursorKey, iv);
       const payload = Buffer.from(JSON.stringify({ taskId: id, projectId: task.projectId, key, before: nextBefore }));
       const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);

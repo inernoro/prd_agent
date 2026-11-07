@@ -426,6 +426,55 @@ describe('代码审查任务完整闭环', () => {
     } finally { read.mockRestore(); }
     expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
+  it('原HTTP仅before顺序读完五千条审计，保留每次读取上限且新头不打乱历史', async () => {
+    const task = await submit();
+    for (let sequence = 1; sequence <= 5005; sequence++) blobs.set(`legacy-http-${sequence}`, Buffer.from(JSON.stringify({
+      sequence, event: { sequence }, previousKey: sequence > 1 ? `legacy-http-${sequence - 1}` : undefined,
+    })));
+    task.auditCount = 5005; task.auditHeadKey = 'legacy-http-5005'; await state.putCodeReviewTask(task);
+    const base = await serve(), headers = { 'x-project': 'a' }, read = vi.spyOn(inputs, 'get');
+    const seen: number[] = []; let before: number | undefined;
+    try {
+      for (let pageNumber = 0; pageNumber < 60; pageNumber++) {
+        const priorReads = read.mock.calls.length;
+        const response = await fetch(`${base}/${task.id}/audit${before ? `?before=${before}` : ''}`, { headers });
+        expect(response.status).toBe(200);
+        const page = await response.json();
+        expect(read.mock.calls.length - priorReads).toBeLessThanOrEqual(4000);
+        expect(page.events.length).toBeGreaterThan(0);
+        seen.push(...page.events.map((event: { sequence: number }) => event.sequence));
+        if (pageNumber === 0) {
+          blobs.set('legacy-http-new', Buffer.from(JSON.stringify({ sequence: 5006, event: { sequence: 5006 }, previousKey: 'legacy-http-5005' })));
+          task.auditCount = 5006; task.auditHeadKey = 'legacy-http-new'; await state.putCodeReviewTask(task);
+        }
+        before = page.nextBefore;
+        if (before === undefined) break;
+      }
+      expect(before).toBeUndefined();
+      expect(seen).toEqual(Array.from({ length: 5005 }, (_, index) => 5005 - index));
+    } finally { read.mockRestore(); }
+    expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+  it('重启丢失提示后原before深页仍能有界推进，不返回永久相同空页', async () => {
+    const task = await submit();
+    for (let sequence = 1; sequence <= 5005; sequence++) blobs.set(`legacy-restart-${sequence}`, Buffer.from(JSON.stringify({
+      sequence, event: { sequence }, previousKey: sequence > 1 ? `legacy-restart-${sequence - 1}` : undefined,
+    })));
+    task.auditCount = 5005; task.auditHeadKey = 'legacy-restart-5005'; await state.putCodeReviewTask(task);
+    service = make();
+    const read = vi.spyOn(inputs, 'get');
+    try {
+      const pending = await service.auditPage(task.id, 1006);
+      expect(pending.events).toEqual([]); expect(pending.nextBefore).toBe(1006);
+      expect(read).toHaveBeenCalledTimes(4000);
+      const page = await service.auditPage(task.id, pending.nextBefore);
+      expect(read.mock.calls.length - 4000).toBeLessThanOrEqual(4000);
+      expect(page.events).toHaveLength(100);
+      expect(page.events[0]).toMatchObject({ sequence: 1005 });
+      expect(page.nextBefore).toBe(906);
+    } finally { read.mockRestore(); }
+    expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
   it('重启时无引擎编号的运行任务明确失败，不偷偷创建第二次扫描', async () => {
     const task = await submit(); task.status = 'running'; await state.putCodeReviewTask(task);
     service = make(); await service.start();
