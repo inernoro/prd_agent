@@ -153,10 +153,22 @@ describe('项目总览实际通知分类与调度请求', () => {
 });
 async function setup(scope?: string, globalProjects?: string[] | 'all') {
   const project = { id: 'a', slug: 'alias-a', name: '甲项目' } as Project;
+  const source = fs.readFileSync(path.resolve('src/server.ts'), 'utf8');
+  const file = ts.createSourceFile('server.ts', source, ts.ScriptTarget.Latest, true);
+  const stamp = file.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'stampSingleProjectScope');
+  expect(stamp).toBeDefined();
+  const context = { stamp: null as unknown as (request: unknown, match: unknown) => void };
+  vm.runInNewContext(ts.transpileModule(`${stamp!.getText(file)}; stamp = stampSingleProjectScope;`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText, context);
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => {
     if (scope) (req as unknown as { cdsProjectKey: unknown }).cdsProjectKey = { projectId: scope };
-    if (globalProjects !== undefined) (req as unknown as { cdsAccess: unknown }).cdsAccess = { keyId: 'owned-test-global', access: { projects: globalProjects } };
+    if (globalProjects !== undefined) {
+      const match = { keyId: 'owned-test-global', access: { projects: globalProjects } };
+      (req as unknown as { cdsAccess: unknown }).cdsAccess = match;
+      context.stamp(req, match);
+    }
     next();
   });
   app.use('/api', createProjectInspectionsRouter({ getProject: id => ['a', 'alias-a'].includes(id) ? project : undefined, save: (_id, entries) => { project.monitoringInspections = entries; } }));
@@ -240,6 +252,30 @@ describe('原常设自检实际HTTP接线', () => {
   });
 });
 describe('项目定期实测与通知回填', () => {
+  it.each([
+    { label: '仅创建项目', projects: [] as string[], allowed: false },
+    { label: '其他单项目', projects: ['b'], allowed: false },
+    { label: '已授权单项目', projects: ['a'], allowed: true },
+    { label: '全项目', projects: 'all' as const, allowed: true },
+  ])('全局凭据$label范围的回写与专用回读遵守同一项目授权', async ({ projects, allowed }) => {
+    const { request, project } = await setup(undefined, projects);
+    project.monitoringInspections = [parseProjectInspection('models', input(), 'project:a', now)];
+    const before = JSON.stringify(project), next = { ...input(), name: '本项目更新' };
+    const written = await request('PUT', '/projects/alias-a/inspection-checks/models', next);
+    expect(written.status).toBe(allowed ? 200 : 403);
+    if (!allowed) { expect(JSON.stringify(project)).toBe(before); return; }
+    const read = await request('GET', '/projects/a/inspection-checks');
+    expect(read.status).toBe(200); expect(read.data.inspections).toHaveLength(1);
+    expect(read.data.inspections[0]).toEqual(written.data.inspection);
+    expect(read.data.inspections[0].name).toBe('本项目更新');
+  });
+  it.each(['b', 'missing'])('获准本项目的全局凭据仍不能回写%s，原数据保持', async target => {
+    const { request, project } = await setup(undefined, ['a']);
+    project.monitoringInspections = [parseProjectInspection('models', input(), 'project:a', now)];
+    const before = JSON.stringify(project);
+    expect((await request('PUT', `/projects/${target}/inspection-checks/models`, input())).status).toBe(403);
+    expect(JSON.stringify(project)).toBe(before);
+  });
   it.each([{ projects: [] as string[] }, { projects: ['b'] }, { projects: ['a'] }, { projects: 'all' as const }])('全局项目范围%j在真实读取入口遵守既有项目权限', async ({ projects }) => {
     const allowed = projects === 'all' || projects.includes('a');
     const { request, project } = await setup(undefined, projects === 'all' ? projects : [...projects]);
