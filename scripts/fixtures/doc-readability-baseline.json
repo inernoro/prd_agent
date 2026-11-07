@@ -7,7 +7,9 @@
     "rule": 0,
     "guide": 0,
     "report": 32,
-    "debt": 0
+    "debt": 0,
+    "adr": 0,
+    "pdr": 0
   },
   "bare_refs": {
     "spec": 0,
@@ -16,7 +18,9 @@
     "rule": 0,
     "guide": 0,
     "report": 0,
-    "debt": 0
+    "debt": 0,
+    "adr": 0,
+    "pdr": 0
   },
   "impl_code": {
     "spec": 0,
@@ -25,16 +29,20 @@
     "rule": 37,
     "guide": 65,
     "report": 5,
-    "debt": 0
+    "debt": 0,
+    "adr": 0,
+    "pdr": 0
   },
   "source_refs": {
     "spec": 15,
-    "design": 178,
+    "design": 177,
     "plan": 21,
     "rule": 41,
     "guide": 101,
     "report": 52,
-    "debt": 213
+    "debt": 213,
+    "adr": 0,
+    "pdr": 0
   },
   "rules_missing": 0,
   "skills_missing": 0,
@@ -416,12 +424,6 @@
       "bare": 0,
       "impl": 0,
       "src": 3
-    },
-    "design.product-agent.md": {
-      "missing": 0,
-      "bare": 0,
-      "impl": 0,
-      "src": 1
     },
     "design.skill.marketplace-open-api.md": {
       "missing": 0,
