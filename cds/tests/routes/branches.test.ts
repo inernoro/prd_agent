@@ -350,7 +350,8 @@ describe('Branch Routes', () => {
     const worktreeService = new WorktreeService(mock, config.repoRoot);
     containerService = new ContainerService(mock, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     (containerService as any).waitForContainerAlive = async () => undefined;
-    (containerService as any).waitForReadiness = async () => true;
+    // 保留真实就绪确认的预约结算，仅替换网络探测。
+    (containerService as any).waitForReadinessUnbudgeted = async () => true;
     registryNodes = [];
     const registry = {
       getAll: () => registryNodes,
