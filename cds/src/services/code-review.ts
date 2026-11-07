@@ -150,6 +150,9 @@ export class CodeReviewService {
       if (task.delivery.status === 'sending') {
         task.delivery.status = 'failed'; task.delivery.error = '发送期间实例重启，投递结果未知，请核对邮箱后重试';
         await this.save(task);
+      } else if (task.status === 'completed' && task.reportId && task.delivery.status === 'pending') {
+        task.delivery.status = 'failed'; task.delivery.error = '报告已归档，但投递尚未开始，请手动重试邮件';
+        await this.save(task);
       }
       if (!terminal.has(task.status) && task.status !== 'queued' && !task.engineTaskId) {
         task.status = 'failed'; task.phase = '审查中断'; task.error = '实例重启时未取得引擎任务编号，请重试';

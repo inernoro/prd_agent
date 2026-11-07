@@ -75,6 +75,23 @@ describe('代码审查任务完整闭环', () => {
     expect(send.mock.calls[1][0].url).toContain('/code-reviews?project=a&task=');
     await expect(service.deliver(task.id)).rejects.toThrow('已发送');
   });
+  it.each(['pending', 'sending'] as const)('重启恢复已归档的%s邮件为可手动重试，启动不自动外发', async (deliveryStatus) => {
+    const task = await submit({ email: 'owner@example.com' });
+    const report = await state.createAcceptanceReportAsync({ title: '原已归档审查', format: 'md', content: '# 原报告',
+      reportType: 'code-review', reviewTaskId: task.id, projectId: task.projectId, createdBy: task.createdBy });
+    task.status = 'completed'; task.phase = '审查完成，报告已归档'; task.reportId = report.id;
+    task.delivery.status = deliveryStatus; await state.putCodeReviewTask(task);
+    const foreign = { ...task, id: 'foreign-delivery', ownerScope: 'other-instance', delivery: { ...task.delivery } };
+    await state.putCodeReviewTask(foreign);
+    service = make(); await service.start();
+    expect(service.get(task.id)).toMatchObject({ status: 'completed', reportId: report.id, delivery: { status: 'failed' } });
+    expect(service.get(task.id).delivery.error).toContain('重试');
+    expect(service.get(foreign.id).delivery.status).toBe(deliveryStatus);
+    expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+    await service.deliver(task.id);
+    expect(service.get(task.id).delivery.status).toBe('sent'); expect(send).toHaveBeenCalledTimes(1);
+    expect(run).not.toHaveBeenCalled(); expect(state.listAcceptanceReports('a')).toHaveLength(1);
+  });
   it('报告归档失败后重试复用已完成的引擎任务', async () => {
     const archive = state.createAcceptanceReportAsync.bind(state);
     vi.spyOn(state, 'createAcceptanceReportAsync').mockRejectedValueOnce(new Error('对象存储暂时不可用')).mockImplementation(archive);
