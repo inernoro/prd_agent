@@ -25,7 +25,7 @@ describe('验收报告主页 · 桌面端返回入口', () => {
     expect(tag.includes('onClick={onBack}')).toBe(true);
   });
 
-  it('阅读器返回同时复位选择和报告深链，保留项目与文件夹', () => {
+  it('阅读器返回先提交无报告地址，保留范围且不抢先改变页面', () => {
     const wiring = /<ReportViewer\b[^>]*onBack=\{(\w+)\}/.exec(SRC);
     expect(wiring, '阅读器必须接入返回处理').toBeTruthy();
     const handler = new RegExp(`const ${wiring![1]} = useCallback\\(\\(\\) => \\{([\\s\\S]*?)\\n  \\}, \\[` ).exec(SRC);
@@ -42,7 +42,7 @@ describe('验收报告主页 · 桌面端返回入口', () => {
       },
     });
     back();
-    expect(selected).toBeNull();
+    expect(selected).toBe('old-report');
     expect(params.has('report')).toBe(false);
     expect(params.get('project')).toBe('prd-agent');
     expect(params.get('folder')).toBe('owned-folder');

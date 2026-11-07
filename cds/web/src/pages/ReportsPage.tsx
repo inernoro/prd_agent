@@ -426,7 +426,6 @@ export function ReportsPage(): JSX.Element {
   }, [projectId, activeProjectFilter]);
 
   const handleCloseReport = useCallback(() => {
-    setSelected(null);
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.delete('report');
