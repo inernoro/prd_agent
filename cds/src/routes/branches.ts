@@ -25256,7 +25256,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               currentSha: currentFullSha,
               targetSha: targetFullSha,
               targetBranch: branch,
-              hint: '新版 cdscli 可传 --transition-intent、--expected-from-sha 和 --reason；普通重启不要切分支。',
+              hint: '发布先合入当前完整提交并验证；明确回滚才传 --transition-intent rollback、--expected-from-sha 和 --reason。普通重启不要切分支。',
             },
           });
           return;
