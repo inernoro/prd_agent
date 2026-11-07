@@ -283,7 +283,7 @@ async def instant_analysis(
     except Exception as e:
         # 分析失败，返回错误信息
         error_msg = str(e)
-        print(f"❌ 即时分析失败: {error_msg}")
+        print(f" 即时分析失败: {error_msg}")
         raise HTTPException(
             status_code=500, 
             detail=f"代码分析失败: {error_msg}"

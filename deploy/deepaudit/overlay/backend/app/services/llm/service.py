@@ -57,7 +57,7 @@ class LLMService:
         """
         获取LLM配置
         
-        🔥 优先级（从高到低）：
+         优先级（从高到低）：
         1. 数据库用户配置（系统配置页面保存的配置）
         2. 环境变量配置（.env 文件中的配置）
         
@@ -66,11 +66,11 @@ class LLMService:
         if self._config is None:
             user_llm_config = self._user_config.get('llmConfig', {})
             
-            # 🔥 Provider 优先级：用户配置 > 环境变量
+            #  Provider 优先级：用户配置 > 环境变量
             provider_str = user_llm_config.get('llmProvider') or getattr(settings, 'LLM_PROVIDER', 'openai')
             provider = self._parse_provider(provider_str)
             
-            # 🔥 API Key 优先级：用户配置 > 环境变量通用配置 > 环境变量平台专属配置
+            #  API Key 优先级：用户配置 > 环境变量通用配置 > 环境变量平台专属配置
             api_key = (
                 user_llm_config.get('llmApiKey') or
                 getattr(settings, 'LLM_API_KEY', '') or
@@ -78,21 +78,21 @@ class LLMService:
                 self._get_provider_api_key(provider)
             )
             
-            # 🔥 Base URL 优先级：用户配置 > 环境变量
+            #  Base URL 优先级：用户配置 > 环境变量
             base_url = (
                 user_llm_config.get('llmBaseUrl') or
                 getattr(settings, 'LLM_BASE_URL', None) or
                 self._get_provider_base_url(provider)
             )
             
-            # 🔥 Model 优先级：用户配置 > 环境变量 > 默认模型
+            #  Model 优先级：用户配置 > 环境变量 > 默认模型
             model = (
                 user_llm_config.get('llmModel') or
                 getattr(settings, 'LLM_MODEL', '') or
                 DEFAULT_MODELS.get(provider, 'gpt-4o-mini')
             )
             
-            # 🔥 Timeout 优先级：用户配置（毫秒） > 环境变量（秒）
+            #  Timeout 优先级：用户配置（毫秒） > 环境变量（秒）
             timeout_ms = user_llm_config.get('llmTimeout')
             if timeout_ms:
                 # 用户配置是毫秒，转换为秒
@@ -101,10 +101,10 @@ class LLMService:
                 # 环境变量是秒
                 timeout = int(getattr(settings, 'LLM_TIMEOUT', 150))
             
-            # 🔥 Temperature 优先级：用户配置 > 环境变量
+            #  Temperature 优先级：用户配置 > 环境变量
             temperature = user_llm_config.get('llmTemperature') if user_llm_config.get('llmTemperature') is not None else float(getattr(settings, 'LLM_TEMPERATURE', 0.1))
             
-            # 🔥 Max Tokens 优先级：用户配置 > 环境变量
+            #  Max Tokens 优先级：用户配置 > 环境变量
             max_tokens = user_llm_config.get('llmMaxTokens') or int(getattr(settings, 'LLM_MAX_TOKENS', 4096))
             
             self._config = LLMConfig(
@@ -226,7 +226,7 @@ class LLMService:
 }"""
 
         if is_chinese:
-            return f"""⚠️⚠️⚠️ 只输出JSON，禁止输出其他任何格式！禁止markdown！禁止文本分析！⚠️⚠️⚠️
+            return f""" 只输出JSON，禁止输出其他任何格式！禁止markdown！禁止文本分析！
 
 你是一个专业的代码审计助手。你的任务是分析代码并返回严格符合JSON Schema的结果。
 
@@ -279,9 +279,9 @@ class LLMService:
 - 禁止在JSON字符串值中使用真实换行符，必须用\\n转义
 - 禁止输出markdown代码块标记（如```json）
 
-⚠️ 重要提醒：line字段必须从代码左侧的行号标注中读取，不要猜测或填0！"""
+ 重要提醒：line字段必须从代码左侧的行号标注中读取，不要猜测或填0！"""
         else:
-            return f"""⚠️⚠️⚠️ OUTPUT JSON ONLY! NO OTHER FORMAT! NO MARKDOWN! NO TEXT ANALYSIS! ⚠️⚠️⚠️
+            return f""" OUTPUT JSON ONLY! NO OTHER FORMAT! NO MARKDOWN! NO TEXT ANALYSIS!
 
 You are a professional code auditing assistant. Your task is to analyze code and return results in strict JSON Schema format.
 
@@ -334,7 +334,7 @@ Note:
 - NO real newline characters in JSON string values - must use \\n
 - NO markdown code block markers (like ```json)
 
-⚠️ CRITICAL: Read line numbers from the "lineNumber|" prefix on the left of each code line. Do NOT guess or use 0!"""
+ CRITICAL: Read line numbers from the "lineNumber|" prefix on the left of each code line. Do NOT guess or use 0!"""
 
     async def analyze_code(self, code: str, language: str) -> Dict[str, Any]:
         """
@@ -360,7 +360,7 @@ Note:
         if is_chinese:
             user_prompt = f"""编程语言: {language}
 
-⚠️ 代码已标注行号（格式：行号| 代码内容），请根据行号准确填写 line 字段！
+ 代码已标注行号（格式：行号| 代码内容），请根据行号准确填写 line 字段！
 
 请分析以下代码:
 
@@ -368,7 +368,7 @@ Note:
         else:
             user_prompt = f"""Programming Language: {language}
 
-⚠️ Code is annotated with line numbers (format: lineNumber| code), please fill the 'line' field accurately based on these numbers!
+ Code is annotated with line numbers (format: lineNumber| code), please fill the 'line' field accurately based on these numbers!
 
 Please analyze the following code:
 
@@ -391,7 +391,7 @@ Please analyze the following code:
             content = response.content
             
             # 记录 LLM 原始响应（用于调试）
-            logger.info(f"📥 LLM 原始响应长度: {len(content) if content else 0} 字符")
+            logger.info(f" LLM 原始响应长度: {len(content) if content else 0} 字符")
             
             # 检查响应内容是否为空
             if not content or not content.strip():
@@ -405,7 +405,7 @@ Please analyze the following code:
             
             # 记录解析后的问题数量
             issues_count = len(result.get("issues", []))
-            logger.info(f"📊 LLM 分析结果: 发现 {issues_count} 个问题, 质量评分: {result.get('quality_score', 'N/A')}")
+            logger.info(f" LLM 分析结果: 发现 {issues_count} 个问题, 质量评分: {result.get('quality_score', 'N/A')}")
             
             # 检查解析结果是否有效（不是默认响应）
             if result == self._get_default_response():
@@ -429,7 +429,7 @@ Please analyze the following code:
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        🔥 Agent 使用的聊天完成接口（支持工具调用）
+         Agent 使用的聊天完成接口（支持工具调用）
 
         Args:
             messages: 消息列表，格式为 [{"role": "user", "content": "..."}]
@@ -482,7 +482,7 @@ Please analyze the following code:
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        🔥 Agent 使用的原始聊天完成接口（兼容旧接口）
+         Agent 使用的原始聊天完成接口（兼容旧接口）
 
         Args:
             messages: 消息列表，格式为 [{"role": "user", "content": "..."}]
@@ -686,7 +686,7 @@ Please analyze the following code:
                 result = attempt()
                 if result and isinstance(result, dict):
                     if i > 0:
-                        logger.info(f"✅ JSON解析成功（方法 {i + 1}/{len(attempts)}）")
+                        logger.info(f" JSON解析成功（方法 {i + 1}/{len(attempts)}）")
                     return result
             except Exception as e:
                 last_error = e
@@ -694,7 +694,7 @@ Please analyze the following code:
                     logger.debug("JSON parser attempt failed: %s", type(e).__name__)
         
         # 所有尝试都失败
-        logger.error("❌ 无法解析LLM响应为JSON")
+        logger.error(" 无法解析LLM响应为JSON")
         logger.error(f"原始内容长度: {len(text)} 字符")
         if last_error:
             logger.error("Parser error type: %s", type(last_error).__name__)
@@ -813,7 +813,7 @@ Please analyze the following code:
         repaired = repair_json(json_str, return_objects=True)
         
         if isinstance(repaired, dict):
-            logger.info("✅ json-repair 库成功修复 JSON")
+            logger.info(" json-repair 库成功修复 JSON")
             return repaired
         
         raise ValueError(f"json-repair returned unexpected type: {type(repaired)}")
@@ -1045,7 +1045,7 @@ Please analyze the following code:
                 if template:
                     output_language = self._get_output_language()
                     custom_prompt = template.content_zh if output_language == 'zh-CN' else template.content_en
-                    logger.info(f"📋 使用默认提示词模板: {template.name}")
+                    logger.info(f" 使用默认提示词模板: {template.name}")
 
             # 获取规则集
             if rule_set_id:

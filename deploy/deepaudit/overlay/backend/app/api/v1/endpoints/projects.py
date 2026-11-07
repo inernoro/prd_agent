@@ -177,14 +177,14 @@ async def get_stats(
     )
     issues = issues_result.scalars().all()
 
-    # 🔥 同时统计新的 AgentTask
+    #  同时统计新的 AgentTask
     agent_tasks_result = await db.execute(
         select(AgentTask).where(AgentTask.project_id.in_(project_ids)) if project_ids else select(AgentTask).where(False)
     )
     agent_tasks = agent_tasks_result.scalars().all()
     agent_task_ids = [t.id for t in agent_tasks]
 
-    # 🔥 统计 AgentFinding
+    #  统计 AgentFinding
     agent_findings_result = await db.execute(
         select(AgentFinding).where(AgentFinding.task_id.in_(agent_task_ids)) if agent_task_ids else select(AgentFinding).where(False)
     )
@@ -388,9 +388,9 @@ async def get_project_files(
     if project.source_type == "zip":
         # Handle ZIP project
         zip_path = await load_project_zip(id)
-        print(f"📦 ZIP项目 {id} 文件路径: {zip_path}")
+        print(f" ZIP项目 {id} 文件路径: {zip_path}")
         if not zip_path or not os.path.exists(zip_path):
-            print(f"⚠️ ZIP文件不存在: {zip_path}")
+            print(f" ZIP文件不存在: {zip_path}")
             return []
             
         try:
@@ -456,7 +456,7 @@ async def get_project_files(
                         detail="仓库使用SSH URL，但未配置SSH密钥。请先在设置中生成SSH密钥。"
                     )
 
-                print(f"🔐 使用SSH方式获取文件列表: {project.repository_url}")
+                print(f" 使用SSH方式获取文件列表: {project.repository_url}")
                 files_with_content = GitSSHOperations.get_repo_files_via_ssh(
                     project.repository_url,
                     ssh_private_key,

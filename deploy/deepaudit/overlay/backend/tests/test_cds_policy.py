@@ -98,5 +98,42 @@ class StaticRunnerPromptContext(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(scope['_active_tasks'])
 
 
+class StaticRunnerResultContract(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_issues_never_commits_completed_file_but_explicit_empty_list_does(self):
+        source = ROOT / 'backend/app/services/static_runner.py'
+        tree = ast.parse(source.read_text())
+        analyze = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == '_analyze')
+        for analysis, expected in [({'error': 'analysis unavailable'}, 'failed'), ({}, 'failed'),
+                                   ({'issues': None}, 'failed'), ({'issues': []}, 'completed')]:
+            with self.subTest(analysis=analysis):
+                task_type, file_type = object(), object()
+                task = SimpleNamespace(status='running', scanned_files=0, error_code=None)
+                record = SimpleNamespace(status='pending', error_code=None, line_count=0, quality_score=None)
+                db = SimpleNamespace(get=AsyncMock(side_effect=lambda model, _id: task if model is task_type else record),
+                    execute=AsyncMock(), commit=AsyncMock(), add=Mock())
+                class Database:
+                    async def __aenter__(self): return db
+                    async def __aexit__(self, *args): pass
+                class Statement:
+                    def where(self, *args): return self
+                async def aggregate(_db, current):
+                    current.scanned_files = int(record.status == 'completed')
+                service = SimpleNamespace(analyze_code=AsyncMock(return_value=analysis))
+                scope = dict(asyncio=asyncio, datetime=datetime, timezone=timezone, json=json,
+                    read_file=lambda *_args: 'original full file', AuditTask=task_type, AuditFileResult=file_type,
+                    AuditIssue=SimpleNamespace(task_id=None, file_path=None), delete=lambda _model: Statement(),
+                    classify_scan_error=lambda _error: 'ANALYSIS_FAILED', _aggregate=aggregate, record_scan_error=Mock())
+                exec(compile(ast.Module(body=[analyze], type_ignores=[]), str(source), 'exec'), scope)
+                await scope['_analyze']('fixed-task', Database, service, None,
+                    [{'id': 'fixed-file', 'file_path': 'original.py'}], {'llm_concurrency': 1, 'llm_gap_ms': 0},
+                    SimpleNamespace(is_cancelled=lambda _id: False), lambda _path: 'python')
+                self.assertEqual(record.status, expected)
+                self.assertEqual(task.status, expected)
+                self.assertEqual(task.scanned_files, int(expected == 'completed'))
+                self.assertEqual(record.error_code, None if expected == 'completed' else 'ANALYSIS_FAILED')
+                service.analyze_code.assert_awaited_once_with('original full file', 'python')
+                db.add.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

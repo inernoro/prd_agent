@@ -71,7 +71,7 @@ class TaskControlManager:
     def cancel_task(self, task_id: str):
         """取消任务"""
         self._cancelled_tasks.add(task_id)
-        print(f"🛑 任务 {task_id} 已标记为取消")
+        print(f" 任务 {task_id} 已标记为取消")
     
     def is_cancelled(self, task_id: str) -> bool:
         """检查任务是否被取消"""

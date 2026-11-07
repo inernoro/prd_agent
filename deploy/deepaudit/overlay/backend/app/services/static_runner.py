@@ -171,7 +171,7 @@ async def _analyze(task_id, factory, service, context, pending, options, control
                     analysis = await service.analyze_code_with_custom_prompt(content, language, context[0], context[1])
                 else:
                     analysis = await service.analyze_code(content, language)
-                if not isinstance(analysis, dict) or not isinstance(analysis.get('issues', []), list):
+                if not isinstance(analysis, dict) or not isinstance(analysis.get('issues'), list):
                     raise ValueError('Invalid analysis result')
                 await results.put((row, analysis, content.count('\n') + 1, None))
             except asyncio.CancelledError:

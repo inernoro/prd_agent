@@ -23,17 +23,17 @@ import { generateSSHKey, getSSHKey, deleteSSHKey, testSSHKey, clearKnownHosts } 
 
 // LLM Providers - 2025
 const LLM_PROVIDERS = [
-  { value: 'openai', label: 'OpenAI GPT', icon: '🟢', category: 'litellm', hint: 'gpt-5, gpt-5-mini, o3 等' },
-  { value: 'claude', label: 'Anthropic Claude', icon: '🟣', category: 'litellm', hint: 'claude-sonnet-4.5, claude-opus-4 等' },
-  { value: 'gemini', label: 'Google Gemini', icon: '🔵', category: 'litellm', hint: 'gemini-3-pro, gemini-3-flash 等' },
-  { value: 'deepseek', label: 'DeepSeek', icon: '🔷', category: 'litellm', hint: 'deepseek-v3.1-terminus, deepseek-v3 等' },
-  { value: 'qwen', label: '通义千问', icon: '🟠', category: 'litellm', hint: 'qwen3-max-instruct, qwen3-plus 等' },
-  { value: 'zhipu', label: '智谱AI (GLM)', icon: '🔴', category: 'litellm', hint: 'glm-4.6, glm-4.5-flash 等' },
-  { value: 'moonshot', label: 'Moonshot (Kimi)', icon: '🌙', category: 'litellm', hint: 'kimi-k2, kimi-k1.5 等' },
-  { value: 'ollama', label: 'Ollama 本地', icon: '🖥️', category: 'litellm', hint: 'llama3.3-70b, qwen3-8b 等' },
-  { value: 'baidu', label: '百度文心', icon: '📘', category: 'native', hint: 'ernie-4.5 (需要 API_KEY:SECRET_KEY)' },
-  { value: 'minimax', label: 'MiniMax', icon: '⚡', category: 'native', hint: 'minimax-m2, minimax-m1 等' },
-  { value: 'doubao', label: '字节豆包', icon: '🎯', category: 'native', hint: 'doubao-1.6-pro, doubao-1.5-pro 等' },
+  { value: 'openai', label: 'OpenAI GPT', icon: Globe, category: 'litellm', hint: 'gpt-5, gpt-5-mini, o3 等' },
+  { value: 'claude', label: 'Anthropic Claude', icon: Brain, category: 'litellm', hint: 'claude-sonnet-4.5, claude-opus-4 等' },
+  { value: 'gemini', label: 'Google Gemini', icon: Globe, category: 'litellm', hint: 'gemini-3-pro, gemini-3-flash 等' },
+  { value: 'deepseek', label: 'DeepSeek', icon: Brain, category: 'litellm', hint: 'deepseek-v3.1-terminus, deepseek-v3 等' },
+  { value: 'qwen', label: '通义千问', icon: Globe, category: 'litellm', hint: 'qwen3-max-instruct, qwen3-plus 等' },
+  { value: 'zhipu', label: '智谱AI (GLM)', icon: Brain, category: 'litellm', hint: 'glm-4.6, glm-4.5-flash 等' },
+  { value: 'moonshot', label: 'Moonshot (Kimi)', icon: Globe, category: 'litellm', hint: 'kimi-k2, kimi-k1.5 等' },
+  { value: 'ollama', label: 'Ollama 本地', icon: Terminal, category: 'litellm', hint: 'llama3.3-70b, qwen3-8b 等' },
+  { value: 'baidu', label: '百度文心', icon: Brain, category: 'native', hint: 'ernie-4.5 (需要 API_KEY:SECRET_KEY)' },
+  { value: 'minimax', label: 'MiniMax', icon: Zap, category: 'native', hint: 'minimax-m2, minimax-m1 等' },
+  { value: 'doubao', label: '字节豆包', icon: Brain, category: 'native', hint: 'doubao-1.6-pro, doubao-1.5-pro 等' },
 ];
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -109,7 +109,7 @@ export function SystemConfig() {
 
         setConfig(newConfig);
 
-        console.log('✓ 配置已加载:', {
+        console.log(' 配置已加载:', {
           provider: llmConfig.llmProvider,
           hasApiKey: !!llmConfig.llmApiKey,
           model: llmConfig.llmModel,
@@ -412,7 +412,7 @@ export function SystemConfig() {
                   {LLM_PROVIDERS.filter(p => p.category === 'litellm').map(p => (
                     <SelectItem key={p.value} value={p.value} className="font-mono">
                       <span className="flex items-center gap-2">
-                        <span>{p.icon}</span>
+                        <p.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                         <span>{p.label}</span>
                         <span className="text-xs text-muted-foreground">- {p.hint}</span>
                       </span>
@@ -422,7 +422,7 @@ export function SystemConfig() {
                   {LLM_PROVIDERS.filter(p => p.category === 'native').map(p => (
                     <SelectItem key={p.value} value={p.value} className="font-mono">
                       <span className="flex items-center gap-2">
-                        <span>{p.icon}</span>
+                        <p.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
                         <span>{p.label}</span>
                         <span className="text-xs text-muted-foreground">- {p.hint}</span>
                       </span>
@@ -765,8 +765,8 @@ export function SystemConfig() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="cyber-dialog border-border">
-                    <SelectItem value="zh-CN" className="font-mono">🇨🇳 中文</SelectItem>
-                    <SelectItem value="en-US" className="font-mono">🇺🇸 English</SelectItem>
+                    <SelectItem value="zh-CN" className="font-mono"> 中文</SelectItem>
+                    <SelectItem value="en-US" className="font-mono"> English</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">代码审查结果的输出语言</p>

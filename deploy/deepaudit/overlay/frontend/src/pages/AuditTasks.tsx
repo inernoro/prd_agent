@@ -741,7 +741,7 @@ export default function AuditTasks() {
                     <div className="flex gap-3">
                       {(task.status === 'running' || task.status === 'pending') && (
                         <>
-                          {/* 🔥 查看终端实时流按钮 */}
+                          {/*  查看终端实时流按钮 */}
                           <Link to={`/agent-audit/${task.id}`}>
                             <Button size="sm" className="cyber-btn bg-sky-500/90 border-sky-500/50 text-foreground hover:bg-sky-500 h-9">
                               <Terminal className="w-4 h-4 mr-2" />
