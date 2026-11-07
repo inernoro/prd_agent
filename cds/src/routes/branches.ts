@@ -17075,7 +17075,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 这两个字段没有任何客户端用「省略」表达清空（要清由 web-entry-config 显式写），
       // 所以请求体没提就从已存的覆盖里原样带过来，不管它的人不许毁它。
       const prevOverride = stateService.getBranchProfileOverride(id, profileId);
-      const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry'> = {
+      const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry' | 'dependsOn'> = {
+        ...(body.dependsOn === undefined && prevOverride?.dependsOn != null
+          ? { dependsOn: prevOverride.dependsOn } : {}),
         ...(body.subdomain === undefined && prevOverride?.subdomain !== undefined
           ? { subdomain: prevOverride.subdomain } : {}),
         ...(body.webEntry === undefined && prevOverride?.webEntry !== undefined

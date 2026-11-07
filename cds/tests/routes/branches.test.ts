@@ -2473,6 +2473,21 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.api.dependsOn).toEqual(['fresh-mysql']);
     });
 
+    it.each([{ dependsOn: ['fresh-mysql'] }, { dependsOn: [] }])('编辑其他配置保留分支依赖 $dependsOn，显式 null 恢复项目依赖', async ({ dependsOn }) => {
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: '.', command: 'run', containerPort: 8080, projectId: 'default', dependsOn: ['shared-db'] });
+      seedBranch('b1'); seedBranch('b2');
+      expect((await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dependsOn })).status).toBe(200);
+      const edited = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8081, activeDeployMode: 'express' });
+      expect(edited.status).toBe(200);
+      expect((edited.body as any).override.dependsOn).toEqual(dependsOn);
+      expect((edited.body as any).effective.dependsOn).toEqual(dependsOn);
+      expect(stateService.getBranch('b2')!.profileOverrides?.api).toBeUndefined();
+      expect(stateService.getBuildProfile('api')!.dependsOn).toEqual(['shared-db']);
+      const inherited = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { dependsOn: null });
+      expect(inherited.status).toBe(200);
+      expect((inherited.body as any).effective.dependsOn).toEqual(['shared-db']);
+    });
+
     it('round-trips a branch HTTP readiness path through the override API and effective profile', async () => {
       stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default', readinessProbe: { path: '/health', noHttp: true } });
       seedBranch('b1');
