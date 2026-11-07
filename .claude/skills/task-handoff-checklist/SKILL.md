@@ -1,6 +1,5 @@
 ---
 name: task-handoff-checklist
-version: 2.0.0
 description: 根据当前分支真实差异生成面向下一位负责人和非技术决策者的交接清单，覆盖入口、文档、契约、测试、发布、安全和遗留风险。触发词：/handoff、任务交接、生成交接清单。
 allowed-tools: Read Bash Glob Grep
 ---
@@ -14,6 +13,8 @@ allowed-tools: Read Bash Glob Grep
 - 跨多个文件、模块或接口的任务完成后。
 - 需要换人、提 PR、发布或交给产品负责人验收时。
 - 小型文字修改可直接给简短说明，无需强行生成大报告。
+
+涉及生成类产物的分阶段验收、存量结果恢复或会话归档时，按需阅读[生成类交付与归档参考](reference/generative-delivery-closeout.md)。普通交接无需加载该参考。
 
 ## Phase 1：建立事实范围
 
