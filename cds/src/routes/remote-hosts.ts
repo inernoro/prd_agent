@@ -72,7 +72,7 @@ const AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS = [0, 250, 750] as const;
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs' | 'getEnv'>;
   config?: Pick<CdsConfig, 'portStart'>;
   shell?: IShellExecutor;
   agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
@@ -2334,7 +2334,7 @@ interface CdsManagedRuntimeReconcileOptions {
   force?: boolean;
   hostPort?: number;
   now: string;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks' | 'getLogs' | 'getEnv'>;
   portStart?: number;
 }
 
@@ -2701,6 +2701,7 @@ async function startCdsManagedRuntimeContainer(
         logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
         if (logs.length > 20) logs.splice(0, logs.length - 20);
       },
+      serviceState.containerName,
     );
 
     assertCurrent();

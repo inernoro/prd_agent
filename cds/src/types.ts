@@ -40,6 +40,31 @@ export type ServiceRole = 'web' | 'api' | 'worker';
 export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
 
 /** A build profile defines how to build/run a specific type of project */
+export interface StaticWebConfig {
+  /** Explicit contract: this frontend has no consumers through Docker DNS. */
+  browserOnly?: boolean;
+  /** Public frontend directory inside the verified CI image; the image is never started. */
+  imagePath: string;
+  basePath?: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
+export interface StaticWebRuntime {
+  browserOnly?: boolean;
+  id: string;
+  serviceName: string;
+  projectId: string;
+  branchId: string;
+  profileId: string;
+  image: string;
+  revision: string;
+  rootDirectory: string;
+  basePath: string;
+  runtimeConfig?: boolean;
+  proxyRules?: Array<{ pathPrefix: string; profileId: string }>;
+}
+
 export interface BuildProfile {
   id: string;
   /**
@@ -50,6 +75,8 @@ export interface BuildProfile {
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
+  /** A frontend served as files by the shared CDS process, without an application container. */
+  staticWeb?: StaticWebConfig;
   /** Working directory relative to worktree root (derived from volume mount host path) */
   workDir: string;
   /**
@@ -428,6 +455,7 @@ export interface ReadinessProbe {
 
 /** A deploy mode override — alternative command/image/env for a build profile */
 export interface DeployModeOverride {
+  staticWeb?: StaticWebConfig;
   /** Human-readable label shown in dropdown (e.g., "开发模式", "静态部署") */
   label: string;
   /** Override command (replaces profile.command when this mode is active) */
@@ -498,6 +526,7 @@ export interface DeployModeOverride {
  * See the helper `resolveEffectiveProfile()` in services/container.ts.
  */
 export interface BuildProfileOverride {
+  staticWeb?: StaticWebConfig;
   /** Override Docker image (replaces baseline.dockerImage) */
   dockerImage?: string;
   /** Override run command (replaces baseline.command) */
@@ -1296,6 +1325,8 @@ export interface BranchEntry {
 /** State of a single service (one build profile instance) within a branch */
 /** 可切换入口的实际运行身份；不保存环境变量或构建日志。 */
 export interface ServiceRuntimeRef {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
   containerName: string;
   hostPort: number;
   containerId?: string;
@@ -1310,6 +1341,8 @@ export interface ServiceRuntimeRef {
 }
 
 export interface ServiceState {
+  runtimeKind?: 'static';
+  staticWeb?: StaticWebRuntime;
   profileId: string;
   containerName: string;
   /** Host port allocated for this service */
@@ -1433,6 +1466,7 @@ export interface DeploymentVersionProfile {
   artifactImage: string;
   /** 版本创建时的完整CI输入范围；历史重放不得借当前配置缩窄等价证明。 */
   buildScope?: string[];
+  staticWeb?: StaticWebConfig;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   reusable: boolean;
   reuseBlockedReason?: string;
@@ -2412,6 +2446,8 @@ export interface CdsState {
    * 标记 rejected。与 pendingImports 平级放顶层,审批盒一次列出所有项目的待批申请。
    */
   accessRequests?: AccessRequest[];
+  /** 批准式设备接入/全失联恢复；凭据交付信封由发起方票据加密。 */
+  identityConnections?: IdentityConnection[];
   /**
    * FU-04 — worktree directory layout version.
    *
@@ -4301,6 +4337,9 @@ export interface Project {
 export interface AgentKey {
   /** Random 8-hex id, used for revocation by keyId. */
   id: string;
+  /** 明确人工核对的历史凭据归属审计，不按名称推断。 */
+  claimedAt?: string;
+  claimedBy?: string;
   /** Human-readable label, e.g. "签发于 2026-04-18 10:32" or user-supplied. */
   label: string;
   /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
@@ -4347,6 +4386,26 @@ export interface AgentKey {
  * 批准时把全权项目 AgentKey 的**明文**临时挂在 issuedKeyPlaintext 上,发起方凭
  * pollToken 轮询取走一次;取走后明文清空、deliveredAt 落时间戳(一次性交付)。
  */
+export interface IdentityConnection {
+  id: string;
+  repository: string;
+  projectHint?: string;
+  agentName: string;
+  pollTokenHash: string;
+  status: 'pending' | 'approved' | 'delivered' | 'rejected';
+  createdAt: string;
+  expiresAt: string;
+  projectId?: string;
+  userId?: string;
+  principalId?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  userCredentialId?: string;
+  projectCredentialId?: string;
+  /** AES-GCM；只有持有pollToken的发起方请求时才能解封。 */
+  envelope?: { iv: string; tag: string; ciphertext: string };
+}
+
 export interface AccessRequest {
   /** Random 12-hex id. */
   id: string;
@@ -4360,8 +4419,10 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
-  /** Agent 申报的建项目目标，仅供审批核对，不改变一次建项目的权限范围。 */
+  /** Agent 申报的建项目目标；新审批按规范化仓库和名称绑定一次建项目权限。 */
   requestedProject?: { name: string; repository?: string };
+  /** 服务端已验证并将审批限制到目标；旧记录缺省不作绑定声明。 */
+  targetBound?: boolean;
   /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
   createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
@@ -4461,6 +4522,8 @@ export interface UserCredential {
   /** `uc_` + 12 hex */
   id: string;
   principalId: string;
+  /** 设备交接只恢复当前项目；缺省保留旧用户凭据行为。 */
+  projectIds?: string[];
   /** sha256(明文 `cdsu_<suffix>`) */
   hash: string;
   label?: string;
@@ -4542,6 +4605,8 @@ export interface GlobalAgentKey {
   access?: AgentKeyAccess;
   /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
   oneTime?: boolean;
+  /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
+  creationTarget?: { name: string; repository: string };
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

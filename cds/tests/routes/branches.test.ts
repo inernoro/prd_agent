@@ -8149,6 +8149,73 @@ describe('Branch Routes', () => {
 
   // ── 轻量重启 + 分支系统日志（2026-05-18）──
 
+  describe('POST /api/branches/:id/recover-runtime', () => {
+    it.each([{ executorId: 'master-compat', status: 200 }, { executorId: 'embedded', status: 200 },
+      { executorId: 'executor-remote', status: 409 }])('已有归属$executorId使用统一恢复准入，远端不执行本机命令', async ({ executorId, status }) => {
+      stateService.addBranch({ id: 'recover-owner', branch: 'recover-owner', projectId: 'default', worktreePath: '/tmp/wt/recover-owner',
+        executorId, githubCommitSha: 'a'.repeat(40), services: {}, status: 'error', createdAt: new Date().toISOString() });
+      mock.commands.length = 0;
+      const response = await request(server, 'POST', '/api/branches/recover-owner/recover-runtime', { expectedCommitSha: 'b'.repeat(40), expectedContainers: {} });
+      expect(response.status).toBe(status);
+      if (status === 200) expect(String(response.body)).toContain('恢复目标提交已变化');
+      else expect(response.body).toEqual({ error: '远端执行器恢复请在所属执行器执行' });
+      expect(mock.commands).toEqual([]);
+      expect(operationEvents.some(event => event.branchId === 'recover-owner' && event.action === 'branch.operation.failed')).toBe(status === 200);
+    });
+
+    it('真实恢复流的断线心跳抛错被忽略，恢复租约仍能正常收尾', async () => {
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'node:20', workDir: '.', containerPort: 3000 });
+      stateService.addBranch({ id: 'recover-stream', branch: 'recover-stream', projectId: 'default', worktreePath: '/tmp/wt/recover-stream',
+        githubCommitSha: 'a'.repeat(40), services: { api: { profileId: 'api', containerName: 'stream-api', containerId: 'b'.repeat(64), hostPort: 3000, status: 'running' } },
+        status: 'error', createdAt: new Date().toISOString() });
+      let release!: () => void, entered!: () => void, opened!: (response: http.IncomingMessage) => void;
+      const waiting = new Promise<null>(resolve => { release = () => resolve(null); });
+      const inspecting = new Promise<void>(resolve => { entered = resolve; });
+      const ready = new Promise<http.IncomingMessage>(resolve => { opened = resolve; });
+      const inspect = vi.spyOn(containerService, 'inspectOwnedRuntime').mockImplementation(async () => { entered(); return waiting; });
+      const originalWrite = http.ServerResponse.prototype.write;
+      const write = vi.spyOn(http.ServerResponse.prototype, 'write').mockImplementation(function (this: http.ServerResponse, chunk: any, ...args: any[]) {
+        if (String(chunk).startsWith(': heartbeat')) throw new Error('client disconnected');
+        return Reflect.apply(originalWrite, this, [chunk, ...args]) as boolean;
+      });
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      const payload = JSON.stringify({ expectedCommitSha: 'a'.repeat(40), expectedContainers: { api: 'b'.repeat(64) } });
+      const finished = new Promise<void>((resolve, reject) => {
+        const req = http.request({ hostname: '127.0.0.1', port: (server.address() as { port: number }).port,
+          method: 'POST', path: '/api/branches/recover-stream/recover-runtime', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, response => {
+          response.resume(); opened(response); response.on('end', resolve); response.on('error', reject);
+        });
+        req.on('error', reject); req.end(payload);
+      });
+      try {
+        expect((await ready).statusCode).toBe(200); await inspecting;
+        expect(() => vi.advanceTimersByTime(5000)).not.toThrow();
+      } finally { release(); await finished; write.mockRestore(); inspect.mockRestore(); vi.useRealTimers(); }
+      expect(operationEvents.some(event => event.branchId === 'recover-stream' && event.action === 'branch.operation.failed')).toBe(true);
+    });
+
+    it('不存在和缺少精确身份时拒绝，不能触发宿主命令', async () => {
+      expect((await request(server, 'POST', '/api/branches/nope/recover-runtime')).status).toBe(404);
+      stateService.addBranch({ id: 'recover', branch: 'recover', projectId: 'default', worktreePath: '/tmp/wt/recover',
+        services: {}, status: 'error', createdAt: new Date().toISOString() });
+      mock.commands.length = 0;
+      expect((await request(server, 'POST', '/api/branches/recover/recover-runtime', {})).status).toBe(400);
+      expect(mock.commands).toEqual([]);
+    });
+
+    it('过期提交保留失败状态，恢复租约正常收尾且不执行 Docker', async () => {
+      stateService.addBranch({ id: 'recover', branch: 'recover', projectId: 'default', worktreePath: '/tmp/wt/recover',
+        githubCommitSha: 'a'.repeat(40), services: {}, status: 'error', errorMessage: 'original failure', createdAt: new Date().toISOString() });
+      mock.commands.length = 0;
+      const response = await request(server, 'POST', '/api/branches/recover/recover-runtime', { expectedCommitSha: 'b'.repeat(40), expectedContainers: {} });
+      expect(String(response.body)).toContain('恢复目标提交已变化');
+      expect(response.headers.connection).toBe('close');
+      expect(stateService.getBranch('recover')?.errorMessage).toBe('original failure');
+      expect(mock.commands).toEqual([]);
+      expect(operationEvents.some(event => event.branchId === 'recover' && event.action === 'branch.operation.failed')).toBe(true);
+    });
+  });
+
   describe('POST /api/branches/:id/restart', () => {
     it('404 when branch does not exist', async () => {
       const res = await request(server, 'POST', '/api/branches/nope/restart');

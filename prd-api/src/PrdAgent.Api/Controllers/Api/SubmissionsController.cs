@@ -907,10 +907,18 @@ public class SubmissionsController : ControllerBase
 
             // 查重
             var existing = await _db.Submissions
-                .Find(x => x.ImageAssetId == request.ImageAssetId)
+                .Find(x => x.ImageAssetId == request.ImageAssetId && x.OwnerUserId == userId && x.ContentType == "visual")
                 .FirstOrDefaultAsync();
             if (existing != null)
+            {
+                if (!existing.IsPublic && request.IsPublic != false && LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger))
+                {
+                    await _db.Submissions.UpdateOneAsync(x => x.Id == existing.Id && x.OwnerUserId == userId,
+                        Builders<Submission>.Update.Set(x => x.IsPublic, true).Set(x => x.UpdatedAt, DateTime.UtcNow));
+                    existing.IsPublic = true;
+                }
                 return Ok(ApiResponse<object>.Ok(new { submission = existing, created = false }));
+            }
 
             var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
             var displayName = ResolveDisplayName(currentUser, username, userId);
@@ -936,6 +944,18 @@ public class SubmissionsController : ControllerBase
             };
 
             await _db.Submissions.InsertOneAsync(submission);
+            if (!LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger)
+                && !string.IsNullOrWhiteSpace(asset.WorkspaceId))
+            {
+                var suppressedNow = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+                    _db, [asset.WorkspaceId], CancellationToken.None);
+                if (suppressedNow.Contains(asset.WorkspaceId))
+                {
+                    await _db.Submissions.UpdateOneAsync(x => x.Id == submission.Id && x.OwnerUserId == userId,
+                        Builders<Submission>.Update.Set(x => x.IsPublic, false).Set(x => x.UpdatedAt, DateTime.UtcNow));
+                    submission.IsPublic = false;
+                }
+            }
             return Ok(ApiResponse<object>.Ok(new { submission, created = true }));
         }
 
@@ -1149,6 +1169,10 @@ public class SubmissionsController : ControllerBase
     {
         var userId = GetUserId();
         var username = GetUsername();
+        var trigger = LiteraryWorkspacePublicationPolicy.NormalizeTrigger(request.Trigger);
+        if (!LiteraryWorkspacePublicationPolicy.IsKnownTrigger(trigger))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SUBMISSION_TRIGGER", "trigger 必须为 manual 或 auto"));
+        var isManual = LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger);
 
         if (request.ImageAssetIds == null || request.ImageAssetIds.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("EMPTY", "imageAssetIds 不能为空"));
@@ -1168,27 +1192,39 @@ public class SubmissionsController : ControllerBase
         var displayName = ResolveDisplayName(currentUser, username, userId);
 
         // 过滤已投稿的
-        var existingAssetIds = (await _db.Submissions
-            .Find(x => request.ImageAssetIds.Contains(x.ImageAssetId!))
-            .Project(x => x.ImageAssetId)
-            .ToListAsync())
-            .ToHashSet();
+        var existingSubmissions = await _db.Submissions
+            .Find(x => request.ImageAssetIds.Contains(x.ImageAssetId!) && x.OwnerUserId == userId && x.ContentType == "visual")
+            .ToListAsync();
+        var existingByAsset = existingSubmissions.Where(x => x.ImageAssetId != null)
+            .GroupBy(x => x.ImageAssetId!, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
 
         var newSubmissions = new List<Submission>();
-        var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
-            _db,
-            assets.Select(x => x.WorkspaceId),
-            CancellationToken.None);
+        var protectedWorkspaceIds = isManual ? new HashSet<string>(StringComparer.Ordinal)
+            : await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+                _db, assets.Select(x => x.WorkspaceId), CancellationToken.None);
         var protectedAssets = 0;
+        var republished = 0;
         // 按 WorkspaceId 分组构建快照，避免重复查询
         var snapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
-            if (existingAssetIds.Contains(asset.Id)) continue;
             if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
                 && protectedWorkspaceIds.Contains(asset.WorkspaceId))
             {
                 protectedAssets++;
+                continue;
+            }
+            if (existingByAsset.TryGetValue(asset.Id, out var existing))
+            {
+                // 关闭开关不会删除作品、点赞或历史；只有明确手动投稿才能恢复已撤回的投稿。
+                if (isManual && !existing.IsPublic)
+                {
+                    var restored = await _db.Submissions.UpdateManyAsync(
+                        x => x.ImageAssetId == asset.Id && x.OwnerUserId == userId && x.ContentType == "visual" && !x.IsPublic,
+                        Builders<Submission>.Update.Set(x => x.IsPublic, true).Set(x => x.UpdatedAt, DateTime.UtcNow));
+                    if (restored.ModifiedCount > 0) republished++;
+                }
                 continue;
             }
 
@@ -1223,7 +1259,21 @@ public class SubmissionsController : ControllerBase
         if (newSubmissions.Count > 0)
             await _db.Submissions.InsertManyAsync(newSubmissions);
 
-        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count, protectedAssets }));
+        // 自动投稿可能在关闭开关之前开始、在撤回之后才写完；落库后复核关闭意图，防止重新公开。
+        if (!isManual && newSubmissions.Count > 0)
+        {
+            var suppressedNow = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+                _db, newSubmissions.Select(x => x.WorkspaceId), CancellationToken.None);
+            if (suppressedNow.Count > 0)
+            {
+                var insertedIds = newSubmissions.Select(x => x.Id).ToList();
+                await _db.Submissions.UpdateManyAsync(
+                    x => insertedIds.Contains(x.Id) && x.OwnerUserId == userId && suppressedNow.Contains(x.WorkspaceId!),
+                    Builders<Submission>.Update.Set(x => x.IsPublic, false).Set(x => x.UpdatedAt, DateTime.UtcNow));
+                protectedAssets += newSubmissions.RemoveAll(x => suppressedNow.Contains(x.WorkspaceId ?? string.Empty));
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count + republished, protectedAssets }));
     }
 
     /// <summary>
@@ -1239,7 +1289,7 @@ public class SubmissionsController : ControllerBase
             var submission = await _db.Submissions
                 .Find(x => x.ImageAssetId == imageAssetId && x.OwnerUserId == userId)
                 .FirstOrDefaultAsync();
-            return Ok(ApiResponse<object>.Ok(new { submitted = submission != null, submissionId = submission?.Id }));
+            return Ok(ApiResponse<object>.Ok(new { submitted = submission?.IsPublic == true, submissionId = submission?.Id }));
         }
 
         if (!string.IsNullOrWhiteSpace(workspaceId))
@@ -1767,4 +1817,5 @@ public class ToggleVisibilityRequest
 public class AutoSubmitRequest
 {
     public List<string> ImageAssetIds { get; set; } = new();
+    public string? Trigger { get; set; }
 }

@@ -7,6 +7,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { serviceRuntimeRefs, runtimeRef } from './service-runtime.js';
+import { StaticWebService } from './static-web.js';
 import { deploymentPhaseBudget, type DeploymentPhaseOwner } from './deployment-phase-budget.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -60,6 +61,7 @@ import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from 
  * config.dockerNetwork 共享网络,保持 backward compat。
  */
 export interface ProjectNetworkResolver {
+  getServiceRuntime?(branchId: string, profileId: string): import('../types.js').ServiceRuntimeRef | undefined;
   /** 当前受管容器身份；保留的历史运行不能覆盖它的巡检结果。 */
   getAppContainerName?(branchId: string, profileId: string): string | undefined;
   /** 返回该项目的 dockerNetwork,缺失则返回 undefined（调用方走 config 兜底）。 */
@@ -248,6 +250,7 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
       // 自带 ENTRYPOINT/CMD 启动。
       command: override.command ?? (willBePrebuilt ? '' : profile.command),
       dockerImage: override.dockerImage ?? profile.dockerImage,
+      staticWeb: override.staticWeb ?? profile.staticWeb,
       env: override.env
         ? { ...profile.env, ...override.env }
         : profile.env,
@@ -384,6 +387,7 @@ export function applyProfileOverride(baseline: BuildProfile, rawOverride?: Build
   if (!override) return baseline;
   return {
     ...baseline,
+    ...(override.staticWeb !== undefined ? { staticWeb: override.staticWeb } : {}),
     ...(override.dockerImage !== undefined ? { dockerImage: override.dockerImage } : {}),
     ...(override.command !== undefined ? { command: override.command } : {}),
     ...(override.containerWorkDir !== undefined ? { containerWorkDir: override.containerWorkDir } : {}),
@@ -708,11 +712,137 @@ export class ContainerRemovalPrerequisiteError extends Error {
 }
 
 export class ContainerService {
+  private staticSites?: StaticWebService;
+  private readonly stoppedStaticSites = new Map<string, { runtime: import('../types.js').StaticWebRuntime; port: number }>();
+
+  private forgetStoppedStaticSiteName(name: string): void {
+    for (const [id, site] of this.stoppedStaticSites) if (site.runtime.serviceName === name) this.stoppedStaticSites.delete(id);
+  }
+
+  private staticWebService(): StaticWebService {
+    return this.staticSites ??= new StaticWebService({
+      rootDirectory: path.join(this.config.repoRoot, '.cds-static-previews'),
+      resolveUpstream: (identity, profileId) => {
+        const active = this.networkResolver?.getServiceRuntime?.(identity.branchId, profileId);
+        return active && active.hostPort > 0 ? { host: '127.0.0.1', port: active.hostPort } : undefined;
+      },
+      exportFiles: async (image, imagePath, destination, check, identity) => {
+        const shell = this.qualifiedShell(check);
+        const name = `cds-static-export-${randomBytes(12).toString('hex')}`;
+        // No source, data or anonymous image volume may be attached to this stopped exporter.
+        const plan = profileStoragePlan({ id: identity.branchId, projectId: identity.projectId, worktreePath: this.config.repoRoot },
+          { id: name, name, projectId: identity.projectId, dockerImage: image, workDir: '.', containerPort: 80, prebuiltImage: true, cacheMounts: [] }, this.config);
+        const fixed = await resolveStorageImage(shell, image, plan, true);
+        let id: string | undefined;
+        try {
+          check();
+          const result = await shell.exec(`docker create --read-only --network none --name ${this.shellQuote(name)} ${this.appLabels(identity.projectId, identity.branchId, identity.profileId, 'static-export')} ${this.shellQuote(fixed)}`);
+          if (result.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(result.stdout.trim())) throw new Error('静态产物导出身份未确认');
+          id = result.stdout.trim();
+          await this.inspectCreatedStorageContainer(shell, id, name, fixed, plan);
+          check();
+          const copied = await shell.exec(`docker cp ${this.shellQuote(`${id}:${imagePath.replace(/\/$/, '')}/.`)} ${this.shellQuote(destination)}`, { timeout: 60_000 });
+          if (copied.exitCode !== 0) throw new Error('静态产物读取失败，请检查镜像中的前端目录');
+          check();
+        } finally {
+          if (id) await this.cleanupTemporaryContainer(id, { id: identity.branchId, projectId: identity.projectId } as BranchEntry, identity.profileId);
+        }
+      },
+    });
+  }
+
+  async restoreStaticWebRuntimes(branches: readonly BranchEntry[]): Promise<void> {
+    const restored = new Set<string>();
+    for (const branch of branches) for (const service of Object.values(branch.services)) {
+      if (branch.executorId && this.config.mode !== 'executor') continue;
+      for (const runtime of serviceRuntimeRefs(service).filter(runtime => runtime === service || runtime === service.servingRuntime)) {
+        if (!runtime.staticWeb || restored.has(runtime.staticWeb.id)) continue;
+        try {
+          if (runtime.staticWeb.branchId !== branch.id || runtime.staticWeb.projectId !== branch.projectId
+            || runtime.staticWeb.profileId !== service.profileId || runtime.containerId !== runtime.staticWeb.id) throw new Error('静态预览恢复归属不一致');
+          if (['idle', 'stopped', 'stopping'].includes(service.status)) {
+            this.stoppedStaticSites.set(runtime.staticWeb.id, { runtime: runtime.staticWeb, port: runtime.hostPort });
+          } else await this.staticWebService().start(runtime.staticWeb, runtime.hostPort);
+          restored.add(runtime.staticWeb.id);
+        } catch (error) {
+          if (runtime.containerName === service.containerName) {
+            service.status = 'error'; service.errorMessage = '静态预览恢复失败，请重新部署该服务';
+          }
+          this.recordContainerEvent({ severity: 'error', source: 'static-web', action: 'static.restore.failed',
+            projectId: branch.projectId, branchId: branch.id, profileId: service.profileId,
+            message: '静态预览恢复失败，该站点需要重新部署', error: { message: (error as Error).message } });
+        }
+      }
+    }
+  }
+
+  async closeStaticWebRuntimes(): Promise<void> { await this.staticSites?.close(); }
+
   private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
+  private recoveredMemoryAfterKey?: string;
+
+  /** 冷恢复与已确认结束的创建共用同一真实盘点；未知或在途创建不能仅凭缺席快照释放。 */
+  async reconcileDeploymentMemoryReservations(branches: readonly BranchEntry[], options: {
+    creationSettled: (owner: DeploymentPhaseOwner, runtime: import('../types.js').ServiceRuntimeRef) => boolean;
+    recoveredOnly?: boolean;
+  } = { creationSettled: () => false }): Promise<{ released: string[]; retained: string[] }> {
+    if (isPreviewInstance()) return { released: [], retained: deploymentPhaseBudget.memorySnapshot().map(item => item.key) };
+    const deadline = performance.now() + 15_000;
+    let checked = 0;
+    const refs = new Map<string, { entry: BranchEntry; profileId: string; runtime: import('../types.js').ServiceRuntimeRef } | null>();
+    for (const entry of branches) for (const service of Object.values(entry.services)) for (const runtime of serviceRuntimeRefs(service)) {
+      const previous = refs.get(runtime.containerName);
+      if (refs.has(runtime.containerName) && (!previous || previous.entry.id !== entry.id
+        || previous.entry.projectId !== entry.projectId || previous.profileId !== service.profileId)) refs.set(runtime.containerName, null);
+      else refs.set(runtime.containerName, { entry, profileId: service.profileId, runtime: runtimeRef(runtime) });
+    }
+    return deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner, containerId) => {
+      let item = refs.get(key);
+      // 冷恢复预约可能比服务记录活得更久：替换/清理会移走旧引用，不能因此永远漏回收。
+      // 只使用预约捕获的不可变CID，不以可复用名称或服务状态推断Docker已终结。
+      if (containerId && item !== null) {
+        const entry = branches.find(branch => branch.id === owner.branchId && branch.projectId === owner.projectId);
+        if (entry && owner.profileId && entry.services[owner.profileId]) item = {
+          entry, profileId: owner.profileId, runtime: { containerName: key, containerId, hostPort: 0 },
+        };
+      }
+      if (!item || item.entry.id !== owner.branchId || item.entry.projectId !== owner.projectId
+        || item.profileId !== owner.profileId || !options.creationSettled(owner, item.runtime)) return false;
+      const remaining = deadline - performance.now();
+      if (checked >= 64 || remaining <= 0) return false;
+      checked += 1;
+      if (options.recoveredOnly) this.recoveredMemoryAfterKey = key;
+      const unused = await this.isDeploymentRuntimeUnused(item.entry, item.profileId, item.runtime, Math.min(5000, remaining));
+      return unused && options.creationSettled(owner, item.runtime);
+    }, { recoveredOnly: options.recoveredOnly, afterKey: options.recoveredOnly ? this.recoveredMemoryAfterKey : undefined });
+  }
+
+  private async isDeploymentRuntimeUnused(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, timeoutMs = 5000, activationSettled = false): Promise<boolean> {
+    const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"restarting":{{json .State.Restarting}},"status":{{json .State.Status}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}}}';
+    const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`,
+      { timeout: Math.max(1, Math.floor(timeoutMs)), executionLane: 'observation' });
+    if (result.exitCode !== 0) return /No such (?:container|object):/i.test(combinedOutput(result));
+    let value: { id?: string; running?: boolean; restarting?: boolean; status?: string; project?: string; branch?: string; profile?: string };
+    try { value = JSON.parse(result.stdout); } catch { return false; }
+    return typeof value?.id === 'string' && /^[a-f0-9]{64}$/.test(value.id)
+      && (!runtime.containerId || value.id === runtime.containerId)
+      && value.project === (entry.projectId || '_unknown') && value.branch === entry.id && value.profile === profileId
+      && value.running === false && value.restarting === false
+      // 冷恢复的CID只证明create已返回，created仍可能有旧start在途；当前命令已终结才可退还。
+      && (value.status === 'exited' || value.status === 'dead' || activationSettled && value.status === 'created');
+  }
+
   /** Private receipts cannot be asserted by an HTTP profile or transferred across daemons. */
   private readonly admittedProfileStorage = new WeakMap<BuildProfile, { planDigest: string; imageId: string; imageReference: string; checkBindMounts: () => void }>();
   private readonly admittedInfraStorage = new WeakMap<InfraService, { planDigest: string; imageId: string; imageReference: string; originalContainerId?: string }>();
   async inspectOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, requireRunning = true): Promise<import('../types.js').ServiceRuntimeRef | null> {
+    if (runtime.staticWeb) {
+      if (runtime.staticWeb.projectId !== entry.projectId || runtime.staticWeb.branchId !== entry.id || runtime.staticWeb.profileId !== profileId
+        || runtime.containerId !== runtime.staticWeb.id) throw new Error('静态预览运行归属不一致');
+      const active = this.staticSites?.inspect(runtime.containerId);
+      if (requireRunning && !active) return null;
+      return { ...runtimeRef(runtime), aliasNetworks: [], connectedNetworks: [], networkName: undefined };
+    }
     const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}},"networks":{{json .NetworkSettings.Networks}}}';
     const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`, { timeout: 5000, executionLane: 'observation' });
     if (result.exitCode !== 0) {
@@ -733,6 +863,18 @@ export class ContainerService {
   }
   async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
     context: ContainerRemoveContext = {}): Promise<void> {
+    if (runtime.staticWeb) {
+      await this.inspectOwnedRuntime(entry, profileId, runtime, false);
+      context.assertCurrent?.('before static runtime retirement');
+      await context.beforeRemove?.();
+      context.assertCurrent?.('after static retirement prerequisite');
+      await this.staticWebService().stop(runtime.staticWeb.id);
+      context.assertCurrent?.('after static runtime stop');
+      await context.beforeRemove?.();
+      context.assertCurrent?.('before static runtime artifact discard');
+      await this.staticWebService().discard(runtime.staticWeb);
+      return;
+    }
     const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(runtime.containerName);
     const owned = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
     context.assertCurrent?.('after runtime retirement identity');
@@ -752,6 +894,7 @@ export class ContainerService {
     entry: BranchEntry, profile: BuildProfile, service: ServiceState, network: string,
     assertCurrent?: (step: string) => void,
   ): Promise<void> {
+    if (service.staticWeb) return;
     const shell = this.qualifiedShell(assertCurrent);
     assertCurrent?.('before replacement peer network');
     await this.ensureReplacementNetwork(entry, network, assertCurrent);
@@ -767,6 +910,34 @@ export class ContainerService {
     if (result.exitCode !== 0 && !/already exists/i.test(combinedOutput(result))) throw new Error('新服务网络准备失败，旧入口保持原版本');
     service.connectedNetworks = [...new Set([...(service.connectedNetworks || []), network])];
     service.aliasNetworks = [...new Set([...(service.aliasNetworks || []), ...(service.networkName ? [service.networkName] : []), network])];
+  }
+
+  async isolateReplacementPeer(entry: BranchEntry, service: ServiceState, network: string,
+    assertCurrent: (step: string) => void, protectedNetworks: readonly string[] = []): Promise<void> {
+    const actual = await this.inspectOwnedRuntime(entry, service.profileId, service);
+    assertCurrent('recovery isolation identity');
+    if (!actual || actual.containerId !== service.containerId) throw new Error('恢复网络前容器身份已变化');
+    const canonical = branchAppNetworkName(entry.id);
+    const prefix = `${canonical.slice(0, 27)}-r-`;
+    if (!entry.replacementNetworks?.includes(network) || !network.startsWith(prefix)) throw new Error('恢复网络不属于当前分支');
+    const shell = this.qualifiedShell(assertCurrent);
+    for (const previous of new Set([actual.networkName, ...(actual.connectedNetworks || [])])) {
+      if (!previous || previous === network || protectedNetworks.includes(previous)) continue;
+      if (previous !== canonical && !(previous.startsWith(prefix) && /^[a-f0-9]{32}$/.test(previous.slice(prefix.length)))) continue;
+      if (previous !== canonical) {
+        const ownership = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(previous)}`);
+        if (ownership.exitCode !== 0) throw new Error('旧分支网络归属读取失败');
+        const labels = JSON.parse(ownership.stdout);
+        if (labels?.['cds.branch.id'] !== entry.id || labels?.['cds.project.id'] !== (entry.projectId || '_unknown'))
+          throw new Error('旧网络属于其他分支，拒绝摘除');
+      }
+      const result = await shell.exec(`docker network disconnect ${this.shellQuote(previous)} ${this.shellQuote(actual.containerId!)}`);
+      if (result.exitCode !== 0) throw new Error('当前容器旧分支网络摘除失败；未发布恢复结果');
+    }
+    const after = await this.inspectOwnedRuntime(entry, service.profileId, { ...service, networkName: network });
+    assertCurrent('recovery isolation verified');
+    if (!after || after.networkName !== network || !after.aliasNetworks?.includes(network)) throw new Error('恢复网络未确认');
+    Object.assign(service, after);
   }
 
   private async ensureReplacementNetwork(entry: BranchEntry, network: string, assertCurrent?: (step: string) => void): Promise<void> {
@@ -792,10 +963,19 @@ export class ContainerService {
 
   async stopRuntimeGroup(service: ServiceState, reason?: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
     const failures: unknown[] = [];
-    const runtimes = serviceRuntimeRefs(service).map(runtime => ({ runtime,
+    const runtimes = serviceRuntimeRefs(service).map(runtime => ({ runtime: runtimeRef(runtime),
       releaseMemory: deploymentPhaseBudget.captureMemoryRelease(runtime.containerName) }));
     for (const { runtime, releaseMemory } of runtimes) {
-      try { await this.stop(runtime.containerId || runtime.containerName, reason, context, releaseMemory); }
+      try {
+        if (runtime.creationIssued && !runtime.containerId) {
+          if (!context.branchId || !context.projectId) throw new ContainerStopUnconfirmedError(undefined);
+          const owned = await this.inspectOwnedRuntime({ id: context.branchId, projectId: context.projectId } as BranchEntry,
+            context.profileId || service.profileId, runtime, false);
+          if (!owned) throw new ContainerStopUnconfirmedError(undefined);
+          Object.assign(runtime, owned);
+        }
+        await this.stop(runtime.containerId || runtime.containerName, reason, context, releaseMemory);
+      }
       catch (error) { failures.push(error); }
     }
     if (failures.length === 1) throw failures[0];
@@ -1531,10 +1711,53 @@ export class ContainerService {
     entry = {...entry};
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
+    if (profile.staticWeb) {
+      if (!profile.prebuiltImage || profile.managedBuild) throw new Error('静态文件模式只接收 CI 预构建前端产物');
+      if (entry.executorId || this.config.mode === 'executor') throw new Error('静态文件预览目前仅支持 CDS 主机部署，请选择主机执行');
+      const target = context.artifactCommitSha || entry.pinnedCommit || entry.ciTargetSha || entry.githubCommitSha;
+      if (!target) throw new Error('静态文件部署缺少目标提交');
+      const check = () => context.assertCurrent?.(`static web deployment ${profile.id}`);
+      onOutput?.('── 核验静态前端产物，不启动前端应用容器 ──\n');
+      const admitted = await this.inspectDeploymentArtifacts([profile], target, check,
+        { inspectLocalArtifacts: profile.localArtifact, isComponentUnchangedSince: context.isComponentUnchangedSince });
+      if (admitted.state !== 'ready' || admitted.artifacts.length !== 1) throw new Error('静态前端 CI 产物尚未核验就绪');
+      const artifact = admitted.artifacts[0];
+      check();
+      const runtime = await this.staticWebService().prepare({
+        identity: { projectId: entry.projectId!, branchId: entry.id, profileId: profile.id },
+        serviceName: service.containerName, image: artifact.image, revision: artifact.revision, config: profile.staticWeb,
+        env: this.resolveProfileRuntimeEnv(entry, profile, customEnv), check,
+      });
+      try { check(); }
+      catch (error) { await this.staticWebService().discard(runtime); throw error; }
+      service.runtimeKind = 'static'; service.staticWeb = runtime; service.containerId = runtime.id; service.creationIssued = true;
+      service.deployedImage = artifact.image; service.deployedMode = profile.activeDeployMode;
+      service.networkName = undefined; service.aliasNetworks = []; service.connectedNetworks = [];
+      try {
+        await context.onRuntimeCreated?.(service);
+        check();
+        service.hostPort = await this.staticWebService().start(runtime, service.hostPort);
+        check();
+        this.forgetStoppedStaticSiteName(service.containerName);
+      } catch (error) {
+        await this.staticWebService().stop(runtime.id);
+        await this.staticWebService().discard(runtime);
+        throw error;
+      }
+      this.recordContainerEvent({ severity: 'info', source: 'static-web', action: 'static.start.ready',
+        projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId,
+        message: '静态文件预览已就绪，无独立前端容器', details: { image: artifact.image, revision: artifact.revision, runtimeId: runtime.id } });
+      onOutput?.('── 静态文件入口已就绪，复用 CDS 进程 ──\n');
+      return;
+    }
+    service.staticWeb = undefined; service.runtimeKind = undefined;
     let shell = this.qualifiedShell(context.assertCurrent);
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId, operationGeneration: context.operationGeneration };
+    let installedPhaseOwner: { owner: DeploymentPhaseOwner; check: () => void } | undefined; // 仅CPU占位跟随持有者结束。
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
-    let releaseStart: (() => void) | undefined;
+    let releaseStart: (() => void) | undefined, releaseOwnMemory: (() => boolean) | undefined;
+    let creationIssued = false, runtimeCommandSettled = false, activationIssued = false;
+    let attemptRuntime: import('../types.js').ServiceRuntimeRef | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -2039,9 +2262,10 @@ export class ContainerService {
       const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
       const mustCreateBeforeStart = attachSharedBeforeStart || acceptedStoragePlan.mounts.some(m => m.kind === 'volume');
       const dockerCreateVerb = mustCreateBeforeStart ? 'docker create' : 'docker run -d';
+      attemptRuntime = { containerName: service.containerName, hostPort: service.hostPort };
       const runCmd = [
         dockerCreateVerb,
-        `--name ${service.containerName}`,
+        `--name ${attemptRuntime.containerName}`,
         `--network ${netPlan.runNetwork}`,
         ...profileAliasFlags,
         `-p 127.0.0.1:${service.hostPort}:${profile.containerPort}`,
@@ -2071,13 +2295,23 @@ export class ContainerService {
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
       releaseStart = await deploymentPhaseBudget.acquire('start', phaseOwner,
-        { check: phaseCheck, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+        { check: () => {
+          phaseCheck();
+          if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) !== installedPhaseOwner) throw new Error('部署启动阶段已结束');
+        }, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+      releaseOwnMemory = deploymentPhaseBudget.captureMemoryRelease(service.containerName, phaseOwner);
       phaseCheck();
-      this.runtimePhaseOwners.set(service.containerName, { owner: phaseOwner, check: phaseCheck });
+      installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
+      this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
       phaseCheck();
+      creationIssued = true; activationIssued = !mustCreateBeforeStart;
       const result = await shell.exec(runCmd);
+      runtimeCommandSettled = true;
+      const acknowledgedId = result.stdout.trim();
+      if (attemptRuntime && result.exitCode === 0 && /^[a-f0-9]{64}$/.test(acknowledgedId)) attemptRuntime.containerId = acknowledgedId;
+      phaseCheck();
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
           severity: 'error',
@@ -2105,10 +2339,15 @@ export class ContainerService {
         });
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
-      const acknowledgedId = result.stdout.trim();
       if (mustCreateBeforeStart && !/^[a-f0-9]{64}$/.test(acknowledgedId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
-      if (mustCreateBeforeStart) await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
-      if (/^[a-f0-9]{64}$/.test(acknowledgedId)) service.containerId = acknowledgedId;
+      if (mustCreateBeforeStart) {
+        await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
+        phaseCheck();
+      }
+      if (/^[a-f0-9]{64}$/.test(acknowledgedId)) {
+        service.containerId = acknowledgedId;
+        this.forgetStoppedStaticSiteName(service.containerName);
+      }
       // 2026-06-24（Bugbot Medium「Fallback mode not recorded」）：在 runService 内
       // 权威钉住**实际**启动用的 deploy mode —— profile 此刻已是回退后的真实 profile
       // （极速版镜像缺失自动回退源码时 = static）。否则上层用未变的 effectiveProfile.
@@ -2123,6 +2362,7 @@ export class ContainerService {
       service.sourceCheckoutPath = !profile.prebuiltImage ? sourceCheckout?.path : undefined;
       service.sourceCommitSha = !profile.prebuiltImage ? sourceCheckout?.commitSha : undefined;
       await context.onRuntimeCreated?.(service);
+      phaseCheck();
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
@@ -2136,14 +2376,20 @@ export class ContainerService {
           operationId: context.operationId ?? undefined,
           assertCurrent: context.assertCurrent,
         });
+        phaseCheck();
         service.connectedNetworks.push(sharedNet);
         await context.onRuntimeCreated?.(service);
+        phaseCheck();
       }
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
       if (mustCreateBeforeStart) {
         await this.inspectCreatedStorageContainer(shell, acknowledgedId, service.containerName, runImage, runtimeStoragePlan);
+        phaseCheck();
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
+        runtimeCommandSettled = false; activationIssued = true;
         const startRes = await shell.exec(`docker start ${acknowledgedId}`);
+        runtimeCommandSettled = true;
+        phaseCheck();
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',
@@ -2202,8 +2448,11 @@ export class ContainerService {
       // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
       try {
         await this.waitForContainerAlive(service.containerName, onOutput);
+        phaseCheck();
       } catch (err) {
+        phaseCheck();
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 300);
+        phaseCheck();
         const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
         this.recordContainerEvent({
           severity: 'error',
@@ -2226,7 +2475,16 @@ export class ContainerService {
         throw err;
       }
     } catch (error) {
-      this.runtimePhaseOwners.delete(service.containerName);
+      if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) === installedPhaseOwner) this.runtimePhaseOwners.delete(service.containerName);
+      if (releaseStart) {
+        releaseStart(); releaseStart = undefined;
+        if (!creationIssued) releaseOwnMemory?.();
+        else if (runtimeCommandSettled && attemptRuntime) {
+          try {
+            if (await this.isDeploymentRuntimeUnused(entry, profile.id, attemptRuntime, 5000, activationIssued)) releaseOwnMemory?.();
+          } catch { /* 物理核验未知时保留原预约和原错误，不重新认领同名新责任。 */ }
+        }
+      }
       throw error;
     } finally {
       releaseStart?.();
@@ -2454,7 +2712,34 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     timeoutSeconds = 300,
   ): Promise<boolean> {
+    const scope = this.runtimePhaseOwners.get(containerName);
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName, scope?.owner);
+    let handedOff = false;
+    try {
+      scope?.check?.();
+      const ready = await this.waitForStartupSignalUnbudgeted(containerName, signal, onOutput, timeoutSeconds);
+      scope?.check?.();
+      if (ready) releaseMemory();
+      // 只有成功才向后续HTTP阶段交接资格，失败结束时也不能删除同名新持有者。
+      handedOff = ready;
+      return ready;
+    } finally {
+      if (!handedOff && this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
+    }
+  }
+
+  private async waitForStartupSignalUnbudgeted(
+    containerName: string,
+    signal: string,
+    onOutput?: (chunk: string) => void,
+    timeoutSeconds = 300,
+  ): Promise<boolean> {
     if (isPreviewInstance()) { onOutput?.(`${previewInstanceBlockedMessage('docker')}\n`); return false; }
+    if (this.staticWebLogMessage(containerName) !== undefined) {
+      const listening = this.staticSites?.has(containerName) === true;
+      onOutput?.(listening ? '── 静态站已建立监听，后续仍须通过实际HTTP就绪探测 ──\n' : '── 静态站当前未运行，无法继续就绪探测 ──\n');
+      return listening;
+    }
     if (this.startupStreams) {
       // 只保留跨帧匹配所需尾部，不把启动前的大量日志复制到Master。
       if (!signal || signal.length > 64 * 1024) return false;
@@ -2537,12 +2822,15 @@ export class ContainerService {
     containerName?: string,
   ): Promise<boolean> {
     const scope = containerName ? this.runtimePhaseOwners.get(containerName) : undefined;
+    const releaseMemory = containerName ? deploymentPhaseBudget.captureMemoryRelease(containerName, scope?.owner) : undefined;
     try {
       const ready = await deploymentPhaseBudget.run('ready', scope?.owner || {},
         () => this.waitForReadinessUnbudgeted(hostPort, probe, onAttempt, onOutput, containerName), { check: scope?.check });
-      if (ready && containerName) deploymentPhaseBudget.releaseMemory(containerName);
+      if (ready) releaseMemory?.();
       return ready;
-    } finally { if (containerName) this.runtimePhaseOwners.delete(containerName); }
+    } finally {
+      if (containerName && this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
+    }
   }
 
   private async waitForReadinessUnbudgeted(
@@ -2565,6 +2853,7 @@ export class ContainerService {
     let consecutiveDead = 0;
     const containerGaveUp = async (attempt: number): Promise<boolean> => {
       if (!containerName || attempt % 5 !== 0) return false;
+      if (this.staticWebLogMessage(containerName) !== undefined) return !this.staticSites?.has(containerName);
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
         { timeout: 5000, executionLane: 'observation' },
@@ -2705,6 +2994,19 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason' | 'assertCurrent'> = {},
   ): Promise<boolean> {
+    const activeStatic = this.staticSites?.inspect(containerName);
+    const stoppedStatic = [...this.stoppedStaticSites.values()].find(site => site.runtime.id === containerName || site.runtime.serviceName === containerName);
+    const staticSite = activeStatic || stoppedStatic;
+    if (staticSite) {
+      context.assertCurrent?.('before static preview restart');
+      await this.staticWebService().stop(staticSite.runtime.id);
+      context.assertCurrent?.('after static preview stop');
+      await this.staticWebService().start(staticSite.runtime, staticSite.port);
+      try { context.assertCurrent?.('after static preview restart'); }
+      catch (error) { await this.staticWebService().stop(staticSite.runtime.id); throw error; }
+      this.stoppedStaticSites.delete(staticSite.runtime.id);
+      return true;
+    }
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before restart identity');
     const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
@@ -2896,6 +3198,13 @@ export class ContainerService {
   }
 
   private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
+    const staticSite = this.staticSites?.inspect(containerName);
+    if (staticSite) {
+      this.stoppedStaticSites.set(staticSite.runtime.id, { runtime: staticSite.runtime, port: staticSite.port });
+      await this.staticSites!.stop(staticSite.runtime.id);
+      return;
+    }
+    if (containerName.startsWith('static:') || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return;
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
@@ -2974,6 +3283,21 @@ export class ContainerService {
    * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
    */
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
+    if (this.staticSites?.has(containerName) || containerName.startsWith('static:')
+      || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) {
+      context.assertCurrent?.('before static site removal');
+      const runtime = this.staticSites?.inspect(containerName)?.runtime
+        || [...this.stoppedStaticSites.values()].find(site => site.runtime.id === containerName || site.runtime.serviceName === containerName)?.runtime;
+      await context.beforeRemove?.();
+      context.assertCurrent?.('after static site removal prerequisite');
+      await this.staticSites?.stop(containerName);
+      context.assertCurrent?.('after static site stop');
+      await context.beforeRemove?.();
+      context.assertCurrent?.('before static site artifact discard');
+      if (runtime) await this.staticWebService().discard(runtime);
+      for (const [id, site] of this.stoppedStaticSites) if (id === containerName || site.runtime.serviceName === containerName) this.stoppedStaticSites.delete(id);
+      return;
+    }
     const terminal = ['branch-delete', 'executor-delete-branch', 'build-profile-delete', 'cleanup-stopped'].includes(context.operation || '');
     return deploymentPhaseBudget.run(terminal ? 'terminal' : 'cleanup', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
       profileId: context.profileId || undefined, operationId: context.operationId, operationGeneration: context.operationGeneration },
@@ -3076,6 +3400,8 @@ export class ContainerService {
   }
 
   async isRunning(containerName: string): Promise<boolean> {
+    if (this.staticSites?.has(containerName)) return true;
+    if (containerName.startsWith('static:') || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return false;
     const result = await this.shell.exec(
       `docker inspect --format="{{.State.Running}}" ${containerName}`,
       { timeout: 5000, executionLane: 'observation' },
@@ -3097,6 +3423,13 @@ export class ContainerService {
    */
   async getRunningContainerNames(): Promise<Set<string>> {
     return (await this.getRunningContainerNamesSnapshot()) ?? new Set<string>();
+  }
+
+  /** Application liveness includes static listeners; physical container accounting remains Docker-only. */
+  async getRunningServiceNames(): Promise<Set<string>> {
+    const names = await this.getRunningContainerNames();
+    for (const name of this.staticSites?.names() || []) names.add(name);
+    return names;
   }
 
   /**
@@ -3137,7 +3470,8 @@ export class ContainerService {
     // 的名字一定不是合法容器名 → 直接拒绝(reject 比 escape 更安全:不需要
     // 信任任何 escape 函数实现的正确性)。
     const validName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
-    const safeNames = containerNames.filter((n) => validName.test(n));
+    const safeNames = containerNames.filter((n) => validName.test(n) && !this.staticSites?.has(n)
+      && ![...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === n));
     if (safeNames.length === 0) return out;
     // \t 分隔字段,后续 JS split('\t') 解析。每行一条容器。
     // 字段顺序固定不能改 — 解析按 index 取值。
@@ -3181,7 +3515,17 @@ export class ContainerService {
     return out;
   }
 
+  private staticWebLogMessage(containerName: string): string | undefined {
+    const staticSite = this.staticSites?.inspect(containerName);
+    if (staticSite) return `静态文件预览运行中；产物提交 ${staticSite.runtime.revision}，无独立前端容器。`;
+    if ([...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return '静态文件预览当前未运行。';
+    if (containerName.startsWith('static:')) return '静态文件预览当前未运行。';
+    return undefined;
+  }
+
   async getLogs(containerName: string, tail = 500): Promise<string> {
+    const staticMessage = this.staticWebLogMessage(containerName);
+    if (staticMessage !== undefined) return staticMessage;
     const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`, { timeout: 7000, executionLane: 'observation' });
     return combinedOutput(result);
   }
@@ -3198,6 +3542,15 @@ export class ContainerService {
     scope = '',
   ): AbortController {
     const ac = new AbortController();
+    const staticMessage = this.staticWebLogMessage(containerName);
+    if (staticMessage !== undefined) {
+      queueMicrotask(() => {
+        if (ac.signal.aborted) return;
+        onData(`${staticMessage}\n`);
+        onClose({ reason: 'closed' });
+      });
+      return ac;
+    }
     if (isPreviewInstance()) {
       queueMicrotask(() => {
         if (ac.signal.aborted) return;
@@ -3212,6 +3565,7 @@ export class ContainerService {
   }
 
   async getEnv(containerName: string): Promise<string> {
+    if (this.staticWebLogMessage(containerName) !== undefined) return '# 静态文件预览没有独立容器环境变量；运行配置沿用原构建配置。\n';
     // Use docker inspect instead of docker exec to support stopped containers
     const result = await this.shell.exec(
       `docker inspect ${containerName} --format='{{range .Config.Env}}{{println .}}{{end}}'`,

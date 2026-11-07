@@ -871,6 +871,14 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
     };
   }
   if (!live) {
+    if (routes.every((route) => route.health === 'disabled')) {
+      return {
+        text: '线路已手动停用',
+        dot: 'var(--warn)',
+        tone: 'warn',
+        advice: '所有上游线路都已手动停用，这个模型当前不会承接请求。请在下方启用至少一条线路；手动停用不会在冷却后自动恢复。',
+      };
+    }
     return blocked.length > 0
       ? {
           text: '无可用线路',
@@ -883,9 +891,8 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
           text: '无可用线路',
           dot: 'var(--err)',
           tone: 'warn',
-          advice: '所有上游线路都被连续失败摘掉了，这个模型当前会解析失败。'
-            + '冷却期满系统会自己拿一条真实请求去试探；先去查上游密钥与配额，'
-            + '修好之后可以在展开里点「手动恢复」不等冷却。',
+          advice: '这个模型当前没有可用线路。手动停用的线路需要在下方重新启用；'
+            + '连续失败的线路才会在冷却后试探恢复，也可点「手动恢复」不等冷却。若仍不可用，请检查上游密钥与配额。',
         };
   }
   if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
