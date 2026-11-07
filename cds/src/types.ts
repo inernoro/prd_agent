@@ -4430,7 +4430,9 @@ export interface AccessRequest {
   /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
   createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
+  /** 首次建项目申请的等待截止时间；不依赖 Agent 进程存活。 */
+  expiresAt?: string;
   /** ISO submit time. */
   createdAt: string;
   /** Set when status flips away from 'pending'. */
@@ -4611,6 +4613,8 @@ export interface GlobalAgentKey {
   oneTime?: boolean;
   /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
   creationTarget?: { name: string; repository: string };
+  /** 一次性创建凭据的硬截止时间；存量非一次性 key 不受影响。 */
+  expiresAt?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

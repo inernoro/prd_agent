@@ -655,7 +655,7 @@ def test_recovery_ticket_is_private_while_writing_and_failure_leaves_no_secret_f
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
-def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interrupt(workspace, monkeypatch, capsys, interrupt):
+def test_bootstrap_wait_timeout_or_interrupt_cancels_only_own_request(workspace, monkeypatch, interrupt):
     subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
     calls = []
     ticks = [0]
@@ -668,7 +668,7 @@ def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interr
     def fake_request(method, path, body=None, extra_headers=None, **kwargs):
         calls.append((method, path, extra_headers))
         if method == "POST":
-            assert "waitSeconds" not in body
+            assert body["waitSeconds"] == 10
             return 201, {"requestId": "r", "pollToken": "poll"}, {}
         assert extra_headers == {"X-Poll-Token": "poll"}
         return 200, {"status": "pending"}, {}
@@ -681,10 +681,21 @@ def test_bootstrap_wait_preserves_supported_server_contract_on_timeout_or_interr
         code, output = run_command(argv)
         assert code == 2
         assert "poll" not in output
-    assert all(method in ("POST", "GET") for method, _, _ in calls)
-    assert "仍可能待审批" in capsys.readouterr().err
+    assert calls[-1] == ("DELETE", "/api/bootstrap-access-requests/r", {"X-Poll-Token": "poll"})
     assert not (workspace / ".cds/credentials.json").exists()
 
+
+@pytest.mark.parametrize("terminal", ["expired", "cancelled"])
+def test_bootstrap_terminal_message_is_kept_without_credentials(workspace, monkeypatch, terminal):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
+    def request(method, path, **kwargs):
+        if method == "POST": return 201, {"requestId": "terminal", "pollToken": "own-poll"}, {}
+        return 200, {"status": terminal, "message": "本次授权已结束，请重新发起"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
+    code, output = run_command(["connect", "--host", "https://cds.example", "--new-project", "--create-project", "demo"])
+    assert code == 2 and "本次授权已结束，请重新发起" in output and "无法识别授权状态" not in output
+    assert not (workspace / ".cds/credentials.json").exists()
 
 @pytest.mark.parametrize("saved_user", [True, False])
 def test_replacement_approval_never_loses_validated_user_identity(workspace, monkeypatch, saved_user):

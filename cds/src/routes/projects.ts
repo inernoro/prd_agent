@@ -3276,7 +3276,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
     // 真实项目已保存即消费授权，即使后续签发项目密钥失败也不能再创建副本。
-    if (creationKeyId) stateService.revokeGlobalAgentKey(creationKeyId);
+    if (creationKeyId) {
+      stateService.revokeGlobalAgentKey(creationKeyId);
+      // 后续基础设施配置可能等待或保留项目后失败；先记录已经发生的创建事实。
+      const accessRequest = stateService.listAccessRequests().find(item =>
+        item.kind === 'bootstrap' && item.status === 'approved' && item.issuedKeyId === creationKeyId);
+      if (accessRequest) {
+        stateService.updateAccessRequest(accessRequest.id, {
+          createdProject: { id: newProject.id, name: newProject.name, createdAt: newProject.createdAt },
+        });
+        cdsEventsBus.publish('access-request.progress', { requestId: accessRequest.id, stage: 'project-created', projectId: newProject.id });
+      }
+    }
 
     // 少绕路:创建弹窗就地粘贴的项目环境变量,在建项目时一并写入(不必等克隆后再单独配)。
     const userEnvEntries: Array<[string, string]> = [];
@@ -3401,25 +3412,6 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         } catch {
           // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
           issuedProjectKey = undefined;
-        }
-      }
-    }
-
-    // 页面批准产生的一次性 bootstrap key 只允许成功创建一个项目。项目级 key
-    // 已保存后立即吊销 bootstrap，避免长期保留可继续建项目的机器凭据。手动签发的
-    // create-only key 未标 oneTime，保持原有可重复建项目行为。
-    if (callerAccess) {
-      const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
-      if (callerKey?.oneTime) {
-        const accessRequest = stateService.listAccessRequests().find((item) =>
-          item.kind === 'bootstrap' && item.status === 'approved' && item.issuedKeyId === callerAccess.keyId);
-        if (accessRequest) {
-          stateService.updateAccessRequest(accessRequest.id, {
-            createdProject: { id: newProject.id, name: newProject.name, createdAt: newProject.createdAt },
-          });
-          cdsEventsBus.publish('access-request.progress', {
-            requestId: accessRequest.id, stage: 'project-created', projectId: newProject.id,
-          });
         }
       }
     }
