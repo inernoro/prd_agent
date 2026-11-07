@@ -432,12 +432,22 @@ export function ReportsPage(): JSX.Element {
   const handleSelectReport = useCallback((report: AcceptanceReport) => {
     setSelected(report);
     setNavDrawerOpen(false);
-  }, []);
+    // Record a list selection before a report link pushes the next entry, so
+    // browser Back can restore the report the reader actually left.
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('report', report.id);
+      if (report.folderId) next.set('folder', report.folderId);
+      else next.delete('folder');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const handleLinkedReport = useCallback((id: string): boolean => {
     const target = listedReportTarget(selected?.projectId, id, allReports);
     if (!target) return false;
-    handleSelectReport(target);
+    setSelected(target);
+    setNavDrawerOpen(false);
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       // Keep the existing scope: canonicalizing a slug/global view would refetch
@@ -448,7 +458,7 @@ export function ReportsPage(): JSX.Element {
       return next;
     });
     return true;
-  }, [allReports, selected?.projectId, handleSelectReport, setSearchParams]);
+  }, [allReports, selected?.projectId, setSearchParams]);
 
   // 从列表发起的弹窗动作先关移动端抽屉：抽屉 z-[90] 高于 Dialog(z-50)，不关的话
   // 删除确认/重命名/新建文件夹弹窗会被抽屉整体盖住（Codex review P2）。z-index 刻度

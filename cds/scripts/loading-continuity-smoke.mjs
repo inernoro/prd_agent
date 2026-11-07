@@ -71,7 +71,11 @@ async function verifyAuthenticatedReportNavigation() {
     const page = await context.newPage();
     try {
       const scope = format === 'html' ? `project=${canonicalProject}&` : '';
-      await page.goto(`${base}/reports?${scope}report=${supervisorId}`);
+      await page.goto(format === 'html' ? `${base}/reports?${scope}report=${supervisorId}` : `${base}/reports`);
+      if (format === 'md') {
+        await page.getByText(title, { exact: true }).first().click();
+        await page.waitForURL(url => url.searchParams.get('report') === supervisorId);
+      }
       let frame = page.frameLocator(`iframe[title="${title}"]`);
       await frame.getByRole('heading', { name: title }).waitFor();
       await page.evaluate((reportId) => window.postMessage({ type: 'cds:authenticated-report-navigation', reportId }, location.origin), appendixId);
@@ -89,11 +93,18 @@ async function verifyAuthenticatedReportNavigation() {
       assert.equal(new URL(page.url()).searchParams.get('project'), format === 'html' ? canonicalProject : null, 'same-project navigation preserves the existing list scope');
       assert.equal(listRequests, 1, 'navigation must use the already authenticated list');
       assert(await frame.locator('body').evaluate(() => { try { void window.parent.document.body; return false; } catch { return true; } }), 'frame remains isolated from authenticated parent');
+      await page.goBack();
+      await page.waitForURL(url => url.searchParams.get('report') === supervisorId);
+      await page.frameLocator(`iframe[title="${title}"]`).getByRole('heading', { name: title }).waitFor();
+      await page.goForward();
+      await page.waitForURL(url => url.searchParams.get('report') === appendixId);
+      await frame.getByRole('heading', { name: `APPENDIX-${format}` }).waitFor();
+      assert.equal(listRequests, 1, 'Back and Forward must retain the authenticated list');
       rejectUnexpectedListReload = false;
       await page.reload();
       await frame.getByRole('heading', { name: `APPENDIX-${format}` }).waitFor();
       await page.screenshot({ path: path.join(out, `report-auth-navigation-${format}.jpg`) });
-      console.log(`PASS REG-stsmk-report-external-link-001 ${format}: protected navigation, refresh, missing-report rejection, unchanged sandbox`);
+      console.log(`PASS REG-stsmk-report-external-link-001 ${format}: protected navigation, Back/Forward, refresh, missing-report rejection, unchanged sandbox`);
     } catch (error) {
       await page.screenshot({ path: path.join(out, `failure-report-navigation-${format}.jpg`) });
       console.log(`REPORT_NAV_DIAGNOSTIC ${format}: ${JSON.stringify({ url: page.url(), body: (await page.locator('body').innerText()).slice(0, 2000), rawRequests })}`);
