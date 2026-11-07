@@ -68,3 +68,5 @@ HTTPS 为默认要求，只有回环地址允许 HTTP。网络请求沿用 HTTP(
 pnpm --dir cds/mcp test
 pnpm --dir cds/mcp check
 ```
+
+首次读取较大的历史结果时，`cds_code_review_get` 会立即返回 `result: null, resultLoading: true`。继续按同一 taskId 查询，后台只整理引擎已有问题，完成后返回分页结果；不会恢复审查或改变失败状态。

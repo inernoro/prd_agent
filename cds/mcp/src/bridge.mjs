@@ -55,7 +55,7 @@ export const TOOLS = [
   },
   {
     name: 'cds_code_review_get', title: '查询代码审查任务',
-    description: '查看当前项目的审查进度、已保存的结构化问题、真实覆盖范围、报告阅读链接与邮件投递状态。不执行或重试审查；问题默认每页 50 条，按 nextOffset 继续读取。',
+    description: '查看当前项目的审查进度、结构化问题、覆盖范围、报告链接与投递状态。首次整理返回 resultLoading=true 时继续查询同一任务；不会重试审查。问题默认每页 50 条，按 nextOffset 继续读取。',
     inputSchema: { type: 'object', properties: { taskId: stringProperty('任务 ID'),
       offset: { type: 'integer', minimum: 0, description: '问题分页起点，默认 0' },
       limit: { type: 'integer', minimum: 1, maximum: 100, description: '每页问题数，默认 50' },

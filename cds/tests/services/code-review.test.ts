@@ -449,7 +449,8 @@ describe('代码审查任务完整闭环', () => {
     service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
     const task = await submit(); await service.pump();
     const pages = await Promise.all([service.result(task.id), service.result(task.id)]);
-    expect(pages[0].result).toMatchObject({ coverage: { complete: false, scannedFiles: 1, totalFiles: 2 }, findings: [{ verified: false }] });
+    expect(pages[0]).toMatchObject({ result: null, resultLoading: true });
+    await vi.waitFor(async () => expect((await service.result(task.id)).result).toMatchObject({ coverage: { complete: false, scannedFiles: 1, totalFiles: 2 }, findings: [{ verified: false }] }));
     await service.result(task.id);
     expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
     expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'stopped-native' });
@@ -460,6 +461,48 @@ describe('代码审查任务完整闭环', () => {
     expect(downloaded.status).toBe(200); expect(await downloaded.text()).toContain('部分代码审查结果');
     expect(service.get(task.id).status).toBe('failed'); expect(state.listAcceptanceReports('a')).toHaveLength(0);
     expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+    await service.retry(task.id);
+    expect(service.get(task.id).resultKey).toBeUndefined(); expect(service.get(task.id).findingsSummary).toBeUndefined();
+    expect((await service.result(task.id)).result).toBeNull(); expect(readExisting).toHaveBeenCalledTimes(1);
+  });
+  it('一万多条中断结果在后台单次整理，HTTP立即返回可轮询状态并复用热缓存', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const readExisting = vi.fn(async () => { await gate; return { ...result(), findings: Array.from({ length: 14_441 }, () => result().findings[0]) }; });
+    run.mockImplementationOnce(async input => { await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '已停止', engineTaskId: 'large-native' }); throw new Error('模型已停止'); });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump(); const base = await serve();
+    const response = await fetch(`${base}/${task.id}?includeResult=1`, { headers: { 'x-project': 'a' } });
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ result: null, resultLoading: true, task: { status: 'failed' } });
+    await service.result(task.id); expect(readExisting).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(async () => expect((await service.result(task.id, { limit: 2 })).result?.page.total).toBe(14_441));
+    const read = vi.spyOn(inputs, 'get');
+    expect((await service.result(task.id, { offset: 100, limit: 2 })).result?.findings).toHaveLength(2);
+    expect(read).not.toHaveBeenCalled(); expect(run).toHaveBeenCalledTimes(1);
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', progress: { totalFiles: 2, scannedFiles: 1 } });
+    expect(state.listAcceptanceReports('a')).toHaveLength(0);
+  });
+  it('整理错误作为结果读取状态返回，冷却期间不重复请求且不产生未处理拒绝', async () => {
+    const readExisting = vi.fn().mockRejectedValue(new Error('private upstream failure'));
+    run.mockImplementationOnce(async input => { await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '已停止', engineTaskId: 'error-native' }); throw new Error('模型已停止'); });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump();
+    expect((await service.result(task.id)).resultLoading).toBe(true);
+    await vi.waitFor(async () => expect((await service.result(task.id)).resultLoading).toBe(false));
+    const failed = await service.result(task.id); expect(failed.result).toBeNull(); expect(failed.resultUnavailableReason).toContain('稍后重新读取');
+    expect(JSON.stringify(failed)).not.toContain('private upstream failure'); expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('停止CDS会中止已有结果整理，不将停止后的响应写成新结果', async () => {
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    let signal!: AbortSignal;
+    const readExisting = vi.fn(async (_id, input) => { signal = input.signal; await gate; return result(); });
+    run.mockImplementationOnce(async input => { await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '已停止', engineTaskId: 'shutdown-native' }); throw new Error('模型已停止'); });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump(); await service.result(task.id);
+    service.stop(); expect(signal.aborted).toBe(true); release();
+    await vi.waitFor(async () => expect((await service.result(task.id)).resultLoading).toBe(false));
+    expect(service.get(task.id).resultKey).toBeUndefined(); expect(service.get(task.id).status).toBe('failed'); expect(readExisting).toHaveBeenCalledTimes(1);
   });
   it('结果接口沿用项目权限并拒绝无效分页，失败与无报告不冒充零问题', async () => {
     const task = await submit(); const base = await serve();

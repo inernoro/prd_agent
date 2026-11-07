@@ -43,6 +43,7 @@ before(async () => {
       res.end(JSON.stringify({ task: { ...task, id: url.pathname.split('/').at(-1) },
         result: { projectId: url.pathname.endsWith('/wrong-result-project') ? 'other' : task.projectId, taskId: 'another-task' } })); return;
     }
+    if (url.pathname.endsWith('/loading-task')) { res.end(JSON.stringify({ task: { ...task, id: 'loading-task', status: 'failed' }, result: null, resultLoading: true })); return; }
     if (url.pathname.endsWith('/wrong-project')) { res.end(JSON.stringify({ task: { ...task, projectId: 'other' } })); return; }
     if (url.pathname.endsWith('/secret-error')) { res.writeHead(502); res.end(JSON.stringify({ message: `upstream ${key} SMTP_PASSWORD=private-password` })); return; }
     if (req.url.endsWith('/reports')) { res.end(JSON.stringify({ report: { id: 'report-1', projectId: 'project-one', reportType: 'code-review' } })); return; }
@@ -246,5 +247,15 @@ test('structured results reject cross-project/task responses and invalid paging 
       assert.equal((await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'task-1', ...args } })).isError, true);
     }
     assert.equal(requests.length, count);
+  });
+});
+
+
+test('cold historical results remain pollable without retrying a review', async () => {
+  await withClient(async client => {
+    await client.listTools();
+    const response = await client.callTool({ name: 'cds_code_review_get', arguments: { taskId: 'loading-task' } });
+    assert.equal(response.isError, undefined); assert.equal(parsed(response).resultLoading, true);
+    assert.equal(parsed(response).task.status, 'failed'); assert.equal(requests.at(-1).method, 'GET');
   });
 });

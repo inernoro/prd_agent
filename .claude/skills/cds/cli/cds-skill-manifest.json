@@ -9,7 +9,7 @@
     "preview-url"
   ],
   "files": {
-    "cds/SKILL.md": "5a759a8ed76632fc64fa10dc5037438733e6d1c6a3bde3c180fe76e27c26f22e",
+    "cds/SKILL.md": "c90282d13560c332a9a162e9c6fe5e9ec58183d7d66214307393e5e999027995",
     "cds/cli/acceptance/.gitignore": "5875f28fb25c8a9449faa5ebb5100a488f79ea807932fb21fb52ce48fcab1db0",
     "cds/cli/acceptance/build_report_html.py": "332ef0716bfc531f3c815acc783695121fb1a6fe25c5001312b4cd34ff7ce9af",
     "cds/cli/acceptance/cds-harness.mjs": "be6a9af00cb5ae704a6f08f295795d3921d9f860447bf9b5dc207faf2e9cef75",
@@ -64,5 +64,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-07T20:54:48.333605+00:00"
+  "generatedAt": "2026-11-07T21:27:06.519460+00:00"
 }

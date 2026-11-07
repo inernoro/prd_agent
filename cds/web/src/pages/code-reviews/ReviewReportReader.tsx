@@ -38,6 +38,11 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
   useEffect(() => { alive.current = true; return () => { alive.current = false; for (const url of downloadUrls) URL.revokeObjectURL(url); }; }, [downloadUrls]);
   useEffect(() => { const timer = window.setTimeout(() => { setSearch(query); setOffset(0); }, 250); return () => window.clearTimeout(timer); }, [query]);
   useEffect(() => {
+    if (!read?.resultLoading) return;
+    const timer = window.setTimeout(() => setAttempt(n => n + 1), 2000);
+    return () => window.clearTimeout(timer);
+  }, [read]);
+  useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError('');
     void readCodeReview(task.id, { offset, severity, query: search }, controller.signal)
@@ -97,6 +102,7 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
       {tab === 'original' ? original ? <ReportDocument {...original.report} content={original.content} /> : originalError ? <div className="space-y-3"><ErrorNotice message={originalError} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载</Button></div> : task.reportId ? <ContentLoading label="正在读取原始报告" variant="panel" /> : <p className="py-8 text-base text-muted-foreground">报告尚未归档，请在审查详情中查看进度。</p> : null}
       {tab === 'findings' ? error ? <div className="space-y-3"><ErrorNotice message={error} /><Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新加载问题</Button></div>
         : !read ? <ContentLoading label="正在读取问题明细" variant="panel" /> : !result ? <div className="space-y-4 py-6"><p className="text-base text-muted-foreground">{read.resultUnavailableReason}</p>
+          {read.resultLoading ? <ContentLoading label="正在整理已有问题，不会重新执行审查" variant="inline" /> : task.sourceType !== 'report' ? <Button variant="outline" onClick={() => setAttempt(n => n + 1)}>重新读取问题</Button> : null}
           <Button variant="outline" onClick={() => setTab(task.reportId ? 'original' : 'details')}>{task.reportId ? '阅读原始报告' : '查看审查进度'}</Button></div>
         : <div className="space-y-4"><p className="text-base text-muted-foreground">{totalFindings} 项待验证发现{REVIEW_SEVERITIES.filter(key => result.summary[key]).map(key => ` · ${REVIEW_SEVERITY_LABELS[key]} ${result.summary[key]}`).join('')}</p>
           <div className="grid items-start gap-6 lg:grid-cols-[24rem_minmax(0,1fr)]">

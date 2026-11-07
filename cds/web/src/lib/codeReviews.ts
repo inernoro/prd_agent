@@ -67,6 +67,7 @@ export async function listCodeReviews(projectId: string, signal?: AbortSignal): 
 export interface CodeReviewRead {
   task: CodeReviewTask;
   result: CodeReviewResultPage | null;
+  resultLoading?: boolean;
   reportUrl: string;
   downloadUrl?: string | null;
   resultUnavailableReason?: string;
