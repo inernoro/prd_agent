@@ -15,7 +15,7 @@ function fixture() {
   const running = new Set([old.containerId]);
   const state = { save: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), allocatePort: () => 10002,
     getEffectiveProfilesForBranch: vi.fn(() => [profile]) } as unknown as StateService;
-  const stop = vi.fn(async (id: string) => { running.delete(id); });
+  const stop = vi.fn(async (id: string, _reason?: string, _context?: unknown, onStopped?: () => unknown | Promise<unknown>) => { running.delete(id); await onStopped?.(); });
   const container = { stop, inspectOwnedRuntime: vi.fn(async (_entry, _id, runtime) => running.has(runtime.containerId) ? { ...runtime } : null),
     connectReplacementPeer: vi.fn(), removeOwnedRuntime: vi.fn(), cleanupUnusedReplacementNetworks: vi.fn() } as unknown as ContainerService;
   reserveServiceReplacements({ entry, profileIds: [profile.id], state, portStart: 10000, operationId: 'operation' });
@@ -36,7 +36,7 @@ describe('显式先停后启与冷启动网络', () => {
       let cancelled = false;
       const stopping = container.stop(name, 'replacement-stop-first', { ...owner,
         assertCurrent: () => { if (cancelled) throw new Error('superseded'); } });
-      cancelled = true; release();
+      cancelled = true; deploymentPhaseBudget.pump();
       await expect(stopping).rejects.toThrow('superseded');
       expect(shell.commands.some(command => /^docker (stop|exec)\b/.test(command))).toBe(false);
       expect(deploymentPhaseBudget.memorySnapshot().find(row => row.key === name)?.memoryMB).toBe(128);
@@ -63,6 +63,42 @@ describe('显式先停后启与冷启动网络', () => {
       const reservation = deploymentPhaseBudget.memorySnapshot().find(row => row.key === f.old.containerName);
       if (superseded) expect(reservation).toMatchObject({ memoryMB: 256, owner: { operationId: 'new' } });
       else expect(reservation).toBeUndefined();
+    } finally { deploymentPhaseBudget.releaseMemory(f.old.containerName); }
+  });
+
+  it.each([false, true])('物理停止后取消仍结算原实例并保护后继指针和预约，已有后继=%s', async successor => {
+    const f = fixture(), owner = { projectId: 'project', branchId: 'branch', operationId: 'operation' };
+    deploymentPhaseBudget.reserveKnownMemory(f.old.containerName, 128, owner);
+    let cancelled = false;
+    const next = { containerName: 'next-db', containerId: 'b'.repeat(64), hostPort: 10004 };
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker inspect /, () => ({ exitCode: 0, stderr: '', stdout: JSON.stringify([
+      { Id: f.old.containerId, Name: '/' + f.old.containerName, State: { Running: f.running.has(f.old.containerId), Status: f.running.has(f.old.containerId) ? 'running' : 'exited', ExitCode: 0 } },
+    ]) }));
+    shell.addResponsePattern(/docker stop /, () => {
+      f.running.delete(f.old.containerId); cancelled = true;
+      if (successor) {
+        Object.assign(f.service, next); f.service.servingRuntime = { ...next };
+        deploymentPhaseBudget.reserveKnownMemory(f.old.containerName, 256, { ...owner, operationId: 'next' });
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+    const manager = new ContainerService(shell, {} as CdsConfig);
+    f.container.stop = manager.stop.bind(manager);
+    try {
+      await expect(prepareServiceReplacement({ ...f, assertCurrent: () => { if (cancelled) throw new Error('superseded'); } })).rejects.toThrow('superseded');
+      expect(shell.commands).toContain('docker stop ' + f.old.containerId);
+      const reservation = deploymentPhaseBudget.memorySnapshot().find(row => row.key === f.old.containerName);
+      if (successor) {
+        expect(f.service.servingRuntime).toMatchObject(next);
+        expect(f.service.status).toBe('running');
+        expect(reservation).toMatchObject({ memoryMB: 256, owner: { operationId: 'next' } });
+      } else {
+        expect(f.service.servingRuntime).toBeUndefined();
+        expect(f.service.status).toBe('stopped');
+        expect(reservation).toBeUndefined();
+        expect(f.state.flush).toHaveBeenCalled();
+      }
     } finally { deploymentPhaseBudget.releaseMemory(f.old.containerName); }
   });
 

@@ -3117,23 +3117,25 @@ export class ContainerService {
     // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
     // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
     context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'assertCurrent'> = {},
-    releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName),
+    onStopped: () => unknown | Promise<unknown> = deploymentPhaseBudget.captureMemoryRelease(containerName),
   ): Promise<void> {
     return deploymentPhaseBudget.run('terminal', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
       profileId: context.profileId || undefined, operationId: context.operationId },
-      () => this.stopUnbudgeted(containerName, reason, context, releaseMemory));
+      () => this.stopUnbudgeted(containerName, reason, context, onStopped),
+      { check: () => context.assertCurrent?.('terminal stop admission') });
   }
 
   private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {},
-    releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName)): Promise<void> {
+    onStopped: () => unknown | Promise<unknown> = () => undefined): Promise<void> {
     const requestedAt = Date.now();
     const staticSite = this.staticSites?.inspect(containerName);
     if (staticSite) {
       this.stoppedStaticSites.set(staticSite.runtime.id, { runtime: staticSite.runtime, port: staticSite.port });
       await this.staticSites!.stop(staticSite.runtime.id);
+      await onStopped();
       return;
     }
-    if (containerName.startsWith('static:') || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) return;
+    if (containerName.startsWith('static:') || [...this.stoppedStaticSites.values()].some(site => site.runtime.serviceName === containerName)) { await onStopped(); return; }
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
@@ -3173,7 +3175,6 @@ export class ContainerService {
     });
     context.assertCurrent?.('before docker stop');
     const result = await this.shell.exec(`docker stop ${containerName}`, { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
-    context.assertCurrent?.('after docker stop');
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
     const confirmed = state?.running === false
@@ -3209,7 +3210,7 @@ export class ContainerService {
       },
     });
     if (!confirmed) throw new ContainerStopUnconfirmedError(typeof state?.running === 'boolean' ? state.running : undefined);
-    releaseMemory();
+    await onStopped();
   }
 
   /**

@@ -75,16 +75,29 @@ export async function prepareServiceReplacement(options: {
       const owned = await container.inspectOwnedRuntime(entry, profile.id, runtime);
       assertCurrent?.('after stop-first identity');
       if (!owned) continue;
+      const servingBeforeStop = service.servingRuntime;
+      const settleStoppedRuntime = async () => {
+        const released = releaseMemory();
+        let changed = false;
+        // 物理停止已经完成；只结算仍指向原实例的字段，不覆盖后继发布的指针。
+        if (servingBeforeStop && service.servingRuntime === servingBeforeStop
+          && servingBeforeStop.containerId === owned.containerId && servingBeforeStop.containerName === owned.containerName) {
+          service.servingRuntime = undefined; changed = true;
+        }
+        if (!service.servingRuntime && service.containerId === owned.containerId
+          && service.containerName === owned.containerName && service.status === 'running') {
+          service.status = 'stopped'; changed = true;
+        }
+        if (changed) { state.save([{ kind: 'branches', id: entry.id }]); await state.flush(); }
+        return released;
+      };
       await stop(owned.containerId!, 'replacement-stop-first', { projectId: entry.projectId,
         branchId: entry.id, profileId: profile.id, operationId: options.operationId,
-        operation: 'replacement-stop-first', source: 'service-replacement', assertCurrent }, releaseMemory);
+        operation: 'replacement-stop-first', source: 'service-replacement', assertCurrent }, settleStoppedRuntime);
       assertCurrent?.('after stop-first stop');
       if (await container.inspectOwnedRuntime(entry, profile.id, owned)) throw new Error('旧实例停止未确认，未启动独占数据卷的候选');
       assertCurrent?.('after stop-first confirmation');
     }
-    // 不再向已主动停止的旧入口导流；失败时保留数据与运行身份，后续托管部署可以恢复。
-    service.servingRuntime = undefined;
-    state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
   }
   if (!service.servingRuntime && !service.pendingRuntime) return service;
   assertCurrent?.('before candidate prepare');
