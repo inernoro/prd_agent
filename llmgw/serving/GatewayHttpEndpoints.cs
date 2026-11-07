@@ -3961,7 +3961,19 @@ public static class GatewayHttpEndpoints
             }
             result["tools"] = declarations;
         }
-        CopyJsonField(claudeBody, result, "tool_choice");
+        if (claudeBody["tool_choice"] is JsonObject nativeChoice)
+        {
+            result["tool_choice"] = ReadString(nativeChoice, "type") switch
+            {
+                "tool" when ReadString(nativeChoice, "name") is { Length: > 0 } toolName
+                    => new JsonObject { ["type"] = "function", ["function"] = new JsonObject { ["name"] = toolName } },
+                "any" => JsonValue.Create("required"),
+                "auto" => JsonValue.Create("auto"),
+                "none" => JsonValue.Create("none"),
+                _ => nativeChoice.DeepClone(),
+            };
+        }
+        else CopyJsonField(claudeBody, result, "tool_choice");
         if (claudeBody.TryGetPropertyValue("stop_sequences", out var stop) && stop is not null)
             result["stop"] = stop.DeepClone();
 

@@ -14,6 +14,7 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
     private static readonly HashSet<string> LegacyInteractiveOperations = new[]
     {
         "PrdAgent.Api.Controllers.Api.ModelLabController|RunStream",
+        "PrdAgent.Api.Controllers.Api.PlatformsController|ReclassifyModels",
         "PrdAgent.Api.Controllers.Api.LlmGatewayOpsCanaryController|RunAsrCanary",
         "PrdAgent.Api.Controllers.MessagesController|SendMessage ResendMessage",
         "PrdAgent.Api.Controllers.ChatRunsController|CreateRun",
@@ -89,6 +90,7 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
     public static async Task<bool> IsMcpToolCallAsync(HttpContext http, CancellationToken ct)
     {
         http.Request.EnableBuffering();
+        http.Request.Body.Position = 0;
         try
         {
             using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: ct);
@@ -124,6 +126,7 @@ public sealed record TaskBusinessIntent(string Key, string Fingerprint, string S
         else if (http.Request.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) == true)
         {
             http.Request.EnableBuffering();
+            http.Request.Body.Position = 0;
             try
             {
                 using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: ct);

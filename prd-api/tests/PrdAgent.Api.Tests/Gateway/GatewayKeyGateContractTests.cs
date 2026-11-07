@@ -3873,6 +3873,46 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    [Theory]
+    [InlineData("tool")]
+    [InlineData("any")]
+    [InlineData("auto")]
+    [InlineData("none")]
+    public async Task ClaudeCompatibleEndpoint_NormalizesNativeToolChoice(string choice)
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = GatewayAuthorizedTaskFixture.Client(app);
+            var toolChoice = new JsonObject { ["type"] = choice };
+            if (choice == "tool") toolChoice["name"] = "synthetic_future_tool";
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/messages")
+            {
+                Content = JsonContent.Create(new JsonObject
+                {
+                    ["model"] = "synthetic-claude", ["max_tokens"] = 32,
+                    ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "synthetic" }),
+                    ["tools"] = new JsonArray(new JsonObject { ["name"] = "synthetic_future_tool",
+                        ["input_schema"] = new JsonObject { ["type"] = "object" } }),
+                    ["tool_choice"] = toolChoice,
+                }),
+            };
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+            using var response = await client.SendAsync(request);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var canonical = gateway.LastRequest!.RequestBody!["tool_choice"]!;
+            if (choice == "tool")
+            {
+                canonical["type"]!.GetValue<string>().ShouldBe("function");
+                canonical["function"]!["name"]!.GetValue<string>().ShouldBe("synthetic_future_tool");
+            }
+            else canonical.GetValue<string>().ShouldBe(choice == "any" ? "required" : choice);
+        }
+        finally { await app.StopAsync(); }
+    }
+
     [Fact]
     public async Task ClaudeCompatibleEndpoint_PreservesToolUse()
     {

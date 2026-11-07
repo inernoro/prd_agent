@@ -14,6 +14,11 @@ public sealed class TaskAdmissionMiddleware(RequestDelegate next)
         http.Response.Body = capture;
         try
         {
+            var action = http.GetEndpoint()?.Metadata
+                .GetMetadata<Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor>();
+            if (action is not null && TaskAdmissionPolicies.Find(action.ControllerTypeInfo.FullName!, action.ActionName) is not null
+                && http.Request.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) == true)
+                http.Request.EnableBuffering();
             var identity = await admission.AdmitRequestAsync(http, CancellationToken.None);
             using var execution = TaskExecutionContext.Enter(identity);
             await next(http);

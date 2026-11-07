@@ -29,6 +29,8 @@ public static class TaskAdmissionPolicies
         // 多能力工具与工作流只可用平台注册的有限能力，不接受未注册 caller 或任意字符串。
         var all = AppCallerRegistrationService.GetAllDefinitions().Select(x => x.AppCode).Distinct().ToArray();
         Add("ModelLabController", "RunStream", new[] { "prd-agent-web.model-lab." });
+        Register("PlatformsController", "ReclassifyModels",
+            new[] { AppCallerRegistry.Admin.Platforms.Reclassify }, false, 128);
         Register("LlmGatewayOpsCanaryController", "RunAsrCanary",
             new[] { AppCallerRegistry.TranscriptAgent.Transcribe.Audio }, false, 1, 1);
         Add("MessagesController", "SendMessage ResendMessage", new[] { "prd-agent-desktop.", "prd-agent.guide", "prd-agent.skill-gen" }, root: true);
