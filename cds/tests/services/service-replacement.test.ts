@@ -1,24 +1,28 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BranchEntry, ServiceState } from '../../src/types.js';
 import type { StateService } from '../../src/services/state.js';
-import { ContainerService } from '../../src/services/container.js';
+import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import type { CdsConfig, ExecOptions, IShellExecutor } from '../../src/types.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { commitServiceReplacements, replacementLaunchEntry, reserveServiceReplacements } from '../../src/services/service-replacement.js';
+import { assertBrowserOnlyStaticConsumers, commitServiceReplacements, prepareServiceReplacement, replacementLaunchEntry, reserveServiceReplacements } from '../../src/services/service-replacement.js';
 import { resolveBranchUpstream } from '../../src/services/proxy.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
 function fixture() {
   const service: ServiceState = { profileId: 'api', containerName: 'new-api', hostPort: 10002, status: 'starting',
     networkName: 'new-network', servingRuntime: { containerName: 'old-api', containerId: 'a'.repeat(64), hostPort: 10001, networkName: 'old-network' } };
-  const entry = { id: 'branch', projectId: 'project', services: { api: service } } as BranchEntry;
+  const entry = { id: 'branch', branch: 'feature', projectId: 'project', services: { api: service } } as BranchEntry;
   let port = 10010;
   const state = { save: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), allocatePort: () => port++,
+    getCdsEnvVars: () => ({}), getMirrorEnvVars: () => ({}), getCustomEnvScope: () => ({}),
+    getCustomEnvRaw: () => ({}),
+    getAllBranches: () => [], getState: () => ({ projects: [] }),
     appendContainerLogArchive: vi.fn((_id, snapshot) => ({ ...snapshot, capturedAt: '2026-11-05T00:00:00Z' })) } as unknown as StateService;
   const container = { cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined), removeOwnedRuntime: vi.fn().mockResolvedValue(undefined),
-    getLogs: vi.fn().mockResolvedValue(''),
+    getLogs: vi.fn().mockResolvedValue(''), getEnv: vi.fn().mockResolvedValue(''),
     inspectOwnedRuntime: vi.fn().mockImplementation(async (_entry, _id, runtime) =>
       ({ ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName] })) } as unknown as ContainerService;
   return { entry, service, state, container };
@@ -289,4 +293,123 @@ describe('就绪切换与保旧回退', () => {
     expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
   });
 
+});
+
+describe('静态预览版本切换', () => {
+  it('静态候选只预约端口，不创建替换网络，也不继承旧容器身份', () => {
+    const f = fixture();
+    reserveServiceReplacements({ ...f, profileIds: ['api'], staticProfileIds: ['api'], portStart: 10000, operationId: 'static-operation' });
+    expect(f.entry.replacementNetwork).toBeUndefined();
+    expect(f.service.pendingRuntime).toMatchObject({ runtimeKind: 'static', hostPort: 10010 });
+    expect(f.service.pendingRuntime?.containerId).toBeUndefined();
+    expect(replacementLaunchEntry(f.entry).services.api.runtimeKind).toBe('static');
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+  });
+
+  it('旧静态监听器在新版持久化后回收；当前和候选身份始终保护', async () => {
+    const f = fixture(); f.service.status = 'running'; f.service.runtimeKind = 'static';
+    const old = { ...f.service.servingRuntime!, networkName: undefined, staticWeb: { id: 'static:old' } };
+    f.service.servingRuntime = old as ServiceState;
+    f.service.retainedRuntimes = [{ ...f.service, staticWeb: { id: 'static:current' } } as ServiceState];
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(1);
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledWith(f.entry, 'api', expect.objectContaining({ containerName: 'old-api' }), expect.any(Object));
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+  });
+});
+
+describe('仅浏览器前端容器退役合同', () => {
+  it('读取实际环境期间服务身份变化，旧回执不能删除旧前端或覆盖新消费者', async () => {
+    const f = browserFixture();
+    vi.mocked(f.container.getEnv).mockImplementation(async () => {
+      f.entry.services.backend.containerId = 'c'.repeat(64);
+      return 'TARGET=https://external.example/path\n';
+    });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('当前服务身份已变化');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.entry.services.backend.containerId).toBe('c'.repeat(64));
+    expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(true);
+  });
+  it.each(['internal-alias', 'container-name', 'unavailable', 'unconfirmed', 'external', 'credentialed', 'uppercase', 'multiple-urls', 'multiple-external', 'multiple-external-ports', 'uppercase-container', 'uppercase-profile', 'credentialed-comma'])('配置已改外部地址，实际运行消费者=%s 时只凭真实证据退役', async kind => {
+    const f = browserFixture(), shell = new MockShellExecutor(), profileId = kind === 'uppercase-profile' ? 'API' : 'api';
+    if (profileId !== 'api') { delete f.entry.services.api; f.entry.services[profileId] = f.service; f.service.profileId = profileId; }
+    if (kind === 'uppercase-container') f.service.servingRuntime!.containerName = 'OLD-API';
+    Object.assign(f.state, { getEffectiveProfilesForBranch: () => [{ id: profileId }, { id: 'backend', env: { TARGET: 'https://external.example/path' } }] });
+    const target = { 'internal-alias': 'http://api:80/path', 'container-name': 'http://old-api:80/path',
+      credentialed: 'http://fixture-user:fixture-pass@api:80/path', uppercase: 'http://API:80/path',
+      'multiple-urls': 'http://external.example,http://api:80/path', 'multiple-external': 'http://external.example,http://other.example',
+      'multiple-external-ports': 'https://external.example:443,http://other.example:80',
+      'uppercase-container': 'http://old-api:80/path', 'uppercase-profile': 'http://api:80/path', 'credentialed-comma': 'http://fixture,user:pass@api:80/path' }[kind] || 'https://external.example/path';
+    shell.addResponsePattern(/docker inspect/, () => kind === 'unavailable'
+      ? { stdout: '', stderr: 'environment unavailable', exitCode: 1 }
+      : { stdout: `TARGET=${target}\n`, stderr: '', exitCode: 0 });
+    const native = new ContainerService(shell, {} as CdsConfig);
+    f.container.getEnv = native.getEnv.bind(native);
+    if (kind === 'unconfirmed') vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, id, runtime) => id === 'backend' ? null : { ...runtime, aliasNetworks: runtime.aliasNetworks || [runtime.networkName!] });
+    await expect(commitServiceReplacements({ ...f, profileIds: [profileId] })).resolves.toBeUndefined();
+    const externalOnly = kind === 'external' || kind.startsWith('multiple-external');
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(externalOnly ? 1 : 0);
+    expect(f.service.retainedRuntimes?.some(runtime => runtime.containerId === 'a'.repeat(64))).toBe(!externalOnly);
+    expect(f.entry.services.backend.containerId).toBe('b'.repeat(64));
+    expect(shell.commands).toHaveLength(kind === 'unconfirmed' ? 0 : 1);
+    for (const command of shell.commands) { expect(command).toContain('docker inspect ' + 'b'.repeat(64)); expect(command).not.toContain('unchanged-backend'); }
+  });
+  it.each(['project', 'legacy-project', 'branch', 'mode', 'external', 'legacy-external', 'list-external'])('按实际运行环境解析 %s 消费者，保留外部地址控制', async layer => {
+    const f = browserFixture(), internal = 'http://api:80/path', external = layer === 'list-external' ? 'https://external.example:443,http://other.example:80' : 'https://external.example/path';
+    const externalOnly = layer.endsWith('external');
+    const projectEnv = { FRONTEND_URL: layer === 'branch' || externalOnly ? external : internal };
+    const branchEnv = layer === 'branch' ? { FRONTEND_URL: internal } : {};
+    const peer = { id: 'backend', dockerImage: 'example/backend:1', env: { TARGET: '${FRONTEND_URL}' },
+      ...(layer === 'mode' ? { env: { TARGET: external }, activeDeployMode: 'consume', deployModes: { consume: { env: { TARGET: '${FRONTEND_URL}' } } } } : {}) };
+    Object.assign(f.state, { getCustomEnvScope: (scope: string) => scope === f.entry.id ? branchEnv : layer.startsWith('legacy-') ? {} : projectEnv,
+      getCustomEnvRaw: () => ({ project: projectEnv }),
+      getEffectiveProfilesForBranch: () => [{ id: 'api' }, peer] });
+    const runtime = (new ContainerService({} as never, { jwt: { issuer: 'fixture' } } as CdsConfig) as any)
+      .resolveProfileRuntimeEnv(f.entry, resolveEffectiveProfile(peer as never, f.entry), { ...projectEnv, ...branchEnv });
+    expect(runtime.TARGET).toBe(externalOnly ? external : internal);
+    if (externalOnly) await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).resolves.toBeUndefined();
+    else await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('仍声明依赖');
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(externalOnly ? 1 : 0);
+    expect(f.entry.services.backend.containerId).toBe('b'.repeat(64));
+  });
+  it.each([true, false])('首次实际准备也核对容器消费者=%s，校验在任何容器操作之前', async referenced => {
+    const f = fixture(); f.service.servingRuntime = undefined; f.service.pendingRuntime = undefined;
+    Object.assign(f.state, { getProject: () => ({ id: 'project', slug: 'project' }), getEffectiveProfilesForBranch: () => [
+      { id: 'api' }, { id: 'backend', calls: referenced ? ['api'] : [] },
+    ] });
+    const prepare = prepareServiceReplacement({ ...f, profile: { id: 'api', staticWeb: { browserOnly: true } } as never, portStart: 10010 });
+    if (referenced) await expect(prepare).rejects.toThrow('仍声明依赖');
+    else await expect(prepare).resolves.toBe(f.service);
+    expect(f.container.inspectOwnedRuntime).not.toHaveBeenCalled();
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+  function browserFixture() {
+    const f = fixture(); f.service.status = 'running'; f.service.containerId = 'static:new';
+    f.service.staticWeb = { id: 'static:new', browserOnly: true } as NonNullable<ServiceState['staticWeb']>;
+    f.service.networkName = undefined; f.service.aliasNetworks = [];
+    f.entry.services.backend = { profileId: 'backend', containerName: 'unchanged-backend', hostPort: 10003, status: 'running', networkName: 'old-network', containerId: 'b'.repeat(64) };
+    Object.assign(f.state, { getProject: () => ({ id: 'project', slug: 'project' }), getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend', env: {} }] });
+    return f;
+  }
+  it('明确声明无容器消费者后，只退役旧前端，后端身份和网络保持', async () => {
+    const f = browserFixture();
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(1);
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledWith(f.entry, 'api', expect.objectContaining({ containerId: 'a'.repeat(64) }), expect.any(Object));
+    expect(f.entry.services.backend.containerId).toBe('b'.repeat(64));
+    expect(f.entry.services.backend.networkName).toBe('old-network');
+  });
+  it('没有明确合同仍保留可能被容器消费者使用的旧前端', async () => {
+    const f = browserFixture(); f.service.staticWeb!.browserOnly = false;
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+  it.each(['calls', 'dependsOn', 'url'])('发现 %s 反向依赖则拒绝，不会退役旧前端', async kind => {
+    const f = browserFixture();
+    Object.assign(f.state, { getEffectiveProfilesForBranch: () => [{ id: 'api' }, { id: 'backend',
+      ...(kind === 'url' ? { env: { TARGET: 'http://api:80/path' } } : { [kind]: ['api'] }) }] });
+    expect(() => assertBrowserOnlyStaticConsumers(f.entry, 'api', f.state)).toThrow('仍声明依赖');
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('仍声明依赖');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
 });

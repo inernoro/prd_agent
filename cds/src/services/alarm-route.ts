@@ -1,4 +1,6 @@
 import { identityLabel, type AlarmIdentity } from './alarm-identity.js';
+import { classifyAlert as sharedClassifyAlert, type AlarmEventKind } from '../shared/alarm-classification.js';
+export type { AlarmEventKind } from '../shared/alarm-classification.js';
 /*
  * alarm-route —— 「哪些出问题通知谁」的判定层，纯函数。
  *
@@ -31,7 +33,6 @@ export type AlarmChannelKind = 'bark' | 'webhook' | 'map';
  * 就有 5 条推送打到手机。**合并的那一档里，业务的份额接近于零**——
  * 它名义上叫「恢复」，实际上是「分支预览重建播报」。
  */
-export type AlarmEventKind = 'business-down' | 'business-recovered' | 'infra-down' | 'infra-recovered';
 
 export const ALARM_EVENT_KINDS: ReadonlyArray<AlarmEventKind> = [
   'business-down', 'business-recovered', 'infra-down', 'infra-recovered',
@@ -168,9 +169,7 @@ export interface AlarmEvent {
  * （能用状态就用状态，拿不到状态才退回匹配字符串）。
  */
 export function classifyAlert(type: UptimeAlertEventType, source: ProbeSource): AlarmEventKind {
-  const business = source === 'custom';
-  if (type === 'uptime.target.recovered') return business ? 'business-recovered' : 'infra-recovered';
-  return business ? 'business-down' : 'infra-down';
+  return sharedClassifyAlert(type, source);
 }
 
 /**

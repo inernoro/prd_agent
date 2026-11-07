@@ -153,6 +153,8 @@ type CapabilitySeed = readonly [
 ];
 
 const CDS_AGENT_CAPABILITY_SEEDS = [
+  ['identity-connections', '原账号设备接入与恢复', 'identity-connections.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect --recover', '匿名只能提交仓库恢复申请；原账号与原项目由系统所有者核对，历史匿名凭据归属也必须明确人工确认'],
+  ['instance-catalog', '主备 CDS 实例目录', 'instance-catalog.ts', 'mixed', 'project', 'read-only', 'direct', 'cds', 'instance', '只读公共地址；实例独立授权，切换不迁移数据库或接管流量'],
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
   ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
@@ -206,6 +208,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['topology', '服务关系图、拓扑体检与引用切换', 'topology.ts', 'project', 'project', 'write', 'direct', 'cds', 'verify / topology', '体检与读图只读；切换引用（PUT references）会写该服务的分支覆盖并要求重新部署，所以整组按写能力对待；修正 compose 仍回写仓库根再导入'],
   ['alarm-channels', '通知通道：哪些出问题通知谁（Bark / Webhook / MAP）', 'alarm-channels.ts', 'system', 'human-only', 'write', 'guided', 'cds', 'monitor', '通道是系统级的，项目级 Key 一律 403；密钥只写不读（读接口只回名字、末四位与指纹）；「演练」会真的往外发一条通知，不是干跑'],
   ['uptime', '监控中心：存活探测、故障时间线与自定义监控', 'uptime.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'monitor', '探测结果只读，可用率与故障判定以探测器采样为准；自定义监控的增删改与「立即探测」是写操作，项目级 Key 只能改自己项目的目标，不代表可直接重启服务'],
+  ['project-inspections', '项目巡检：逐项实测结果与通知回执', 'project-inspections.ts', 'project', 'project', 'write', 'direct', 'cds', '', '仅回填自己项目的实测事实，不创建新调度，不改变通知通道；不能把回填声明当作独立探测或手机已读证明'],
   ['public-status', '公开状态页：匿名只读面板与项目侧开关', 'public-status.ts', 'project', 'project', 'write', 'guided', 'cds', 'monitor', '读取那条是匿名的（token 自鉴权），载荷由白名单构造，只出业务名与红黄绿；开关是写操作且对外可见——开公开页等于把这几条业务的红绿交给任何拿到链接的人，必须由人确认'],
   ['workspaces', '工作区、成员与邀请', 'workspaces.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '成员角色和邀请变更必须由工作区管理员确认'],
   ['server-control-plane', '健康、观测、AI 配对与系统状态', 'server.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'health / auth / self', '公开探针只读，AI 批准和系统写操作保持人类边界'],
@@ -276,7 +279,7 @@ export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, reado
   rollback: ['deployment-versions', 'releases', 'snapshots'],
   tasks: ['scheduled-jobs'],
   reports: ['reports'],
-  general: ['branches', 'projects', 'server-control-plane'],
+  general: ['branches', 'projects', 'server-control-plane', 'project-inspections'],
 };
 
 export function getAgentCapabilitiesForMission(

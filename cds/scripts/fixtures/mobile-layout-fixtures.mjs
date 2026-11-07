@@ -145,9 +145,14 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
+  '/api/instance-catalog': { version: 1, instances: [
+    { id: 'primary', name: '合成主实例', role: 'primary', url: 'https://primary.example.invalid' },
+    { id: 'standby', name: '合成备用实例', role: 'standby', url: 'https://standby.example.invalid' },
+  ] },
   '/api/auth/status': { authenticated: true, enabled: true, user: { name: '布局冒烟', isSystemOwner: true } },
   '/api/instance-mode': { mode: 'master' },
   '/api/notices': { notices: [] },
+  '/api/notices/read-all': { ok: true, changed: 0 },
   '/api/projects': { projects: [project] },
   '/api/config': { previewDomain: 'example.invalid', version: 'fixture' },
   '/api/legacy-cleanup/status': { pending: false },

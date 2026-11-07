@@ -1,3 +1,5 @@
+import { inspectionHealthDocument } from './services/project-inspections.js';
+import { createProjectInspectionsRouter } from './routes/project-inspections.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
 import { AlarmRelay, registerAlarmRelayRoutes } from './services/alarm-relay.js';
@@ -34,7 +36,7 @@ import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
-import { ContainerService, resolveEffectiveProfile } from './services/container.js';
+import { ContainerService, resolveEffectiveProfile, computeProfileAliases } from './services/container.js';
 import { deploymentInputBranch } from './services/deployment-input.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv, resolveBranchPublishedEntrypoints } from './services/preview-entrypoints.js';
 import { parseCdsRefs, resolveCdsRef, cdsRefResolverDepsFromState } from './services/cross-project-refs.js';
@@ -57,6 +59,7 @@ import {
   buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
+  redisUsernameFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
   shouldSkipOffsiteThisRound, INFRA_BACKUP_HEALTH_FILE, INFRA_BACKUP_INTERVAL_MS, backupFailureReason,
@@ -119,9 +122,10 @@ import { AsyncStuckDeployReconciler } from './services/async-stuck-deploy-reconc
 import { createReleaseGitRunner } from './services/release-git-reader.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
-import { serviceRuntimeRefs } from './services/service-runtime.js';
+import { serviceRuntimeRefs, servingRuntime } from './services/service-runtime.js';
 import { stopServiceForCooling } from './services/scheduler-service-stop.js';
 import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
+import { isRemoteExecutorOwned } from './services/executor-ownership.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
@@ -168,7 +172,7 @@ import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-r
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
-import { buildSelfCheck, readSelfCheckRuntimeStatus, wireSchedulerPreviewActivitySelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { buildSelfCheck, readHttpSelfCheckStats, readSelfCheckRuntimeStatus, wireSchedulerPreviewActivitySelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
 import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from './services/self-status-cache.js';
 import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
@@ -876,7 +880,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               `docker exec -i ${shq(t.containerName)} sh -s`,
               {
                 timeout: 120_000,
-                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t)),
+                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t), redisUsernameFromServiceDefinition(t, stateService.getCustomEnv(t.projectId))),
               },
             );
             if (redisProbe.exitCode !== 0) {
@@ -2095,8 +2099,6 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
-await restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch),
-  { shell: isPreviewInstance() ? undefined : shell });
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2125,9 +2127,11 @@ try {
 // See doc/guide.cds.env.md §3 and doc/design.cds.fu-02-auth-store-mongo.md.
 let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
 const activeHttpLogStore = httpLogStoreFromEnv();
+let activeHttpLogStoreReady = false;
 if (activeHttpLogStore) {
   try {
     await activeHttpLogStore.init();
+    activeHttpLogStoreReady = true;
     console.log('  [http-log] persistent request logging enabled (collection=cds_http_logs)');
   } catch (err) {
     console.warn(`  [http-log] init failed, persistent request logging disabled: ${(err as Error).message}`);
@@ -2564,6 +2568,14 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  getServiceRuntime: (branchId, profileId) => {
+    const branch = stateService.getBranch(branchId);
+    if (!branch) return undefined;
+    const project = branch.projectId ? stateService.getProject(branch.projectId) : undefined;
+    const markers = [branch.projectId, project?.slug].filter((value): value is string => Boolean(value));
+    const ids = Object.keys(branch.services).filter(id => id === profileId || computeProfileAliases(id, markers).includes(profileId));
+    return ids.length === 1 ? servingRuntime(branch.services[ids[0]]) || undefined : undefined;
+  },
   storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
   resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
   getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
@@ -2593,6 +2605,21 @@ const containerService = new ContainerService(shell, config, {
   // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
 }, activeServerEventLogStore, startupStreams, userLogHub);
+
+await containerService.restoreStaticWebRuntimes(stateService.getAllBranches());
+// 对外受理部署前恢复并核对历史预约；只读 Docker 实况，未知结果保留，绝不停止或删除容器。
+const localMemoryBranches = stateService.getAllBranches().filter(branch =>
+  config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
+await restoreDeploymentMemoryReservations(localMemoryBranches, branch => stateService.getEffectiveProfilesForBranch(branch));
+const memoryRecovery = await containerService.reconcileDeploymentMemoryReservations(localMemoryBranches, {
+  recoveredOnly: true,
+  // 旧CLI结束不等于daemon创建结束；无不可变CID时不能凭一次缺席释放未知创建责任。
+  creationSettled: (_owner, runtime) => Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
+});
+if (memoryRecovery.released.length || memoryRecovery.retained.length) console.log(
+  `  [deployment-memory] 已核实释放 ${memoryRecovery.released.length} 项历史预约，保留 ${memoryRecovery.retained.length} 项待确认预约`,
+);
+
 
 // 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
 // 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。
@@ -2833,9 +2860,28 @@ if (config.mode !== 'executor' && !isPreviewInstance()) {
 // SIGTERM/self-update 触发 master 退出前,drain SSE / abort worker run / flush mongo。
 const gracefulShutdownController = createGracefulShutdownController();
 const resourceShutdownTasks = new Set<() => Promise<void>>();
+resourceShutdownTasks.add(() => containerService.closeStaticWebRuntimes());
 let dashboardHttpServer: http.Server | null = null;
 let workerHttpServer: http.Server | null = null;
 let shutdownInProgress = false;
+// 首轮盘点有读取上限。后台仅续扫原冷恢复预约，不把新操作的额度当历史尾项释放。
+let memoryReconciliationRunning = false;
+const deploymentMemoryReconciler = setInterval(() => {
+  if (shutdownInProgress || memoryReconciliationRunning) return;
+  memoryReconciliationRunning = true;
+  const localBranches = stateService.getAllBranches().filter(branch =>
+    config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
+  void containerService.reconcileDeploymentMemoryReservations(localBranches, {
+    recoveredOnly: true,
+    creationSettled: (_owner, runtime) => !shutdownInProgress && Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
+  }).then(result => {
+    if (result.released.length) console.log(`[deployment-memory] 后台已核实释放 ${result.released.length} 项历史预约`);
+  }).catch(() => console.warn('[deployment-memory] 后台盘点未确认，保留历史预约'))
+    .finally(() => { memoryReconciliationRunning = false; });
+}, 60_000);
+deploymentMemoryReconciler.unref?.();
+
+
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
@@ -4088,6 +4134,8 @@ janitorService.setRemoveFn(async (slug: string) => {
         continue;
       }
       for (const [profileId, svc] of Object.entries(branch.services)) {
+        // 静态监听器已由 restoreStaticWebRuntimes 恢复；没有 Docker 容器不代表产物丢失。
+        if (servingRuntime(svc)?.staticWeb) continue;
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
         if (found) {
@@ -4792,6 +4840,7 @@ async function shutdown(signal: string): Promise<void> {
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   if (infraExposureAudit) clearInterval(infraExposureAudit);
   if (infraAutoBackup) clearInterval(infraAutoBackup);
+  clearInterval(deploymentMemoryReconciler);
   clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
   if (infrastructureHealthWatchdog) clearInterval(infrastructureHealthWatchdog);
@@ -6360,25 +6409,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         return { ok: false, ms: Date.now() - startedAt, detail: (err as Error).message };
       }
     },
-    httpStats: async (sinceMs) => {
-      const store = activeHttpLogStore;
-      if (!store?.findRecent) return null;
-      // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
-      // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
-      const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
-      const branches = rows
-        .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
-        .map((r) => r.durationMs)
-        .filter((ms) => Number.isFinite(ms));
-      const sorted = [...branches].sort((a, b) => a - b);
-      const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
-      return {
-        requests: rows.length,
-        serverErrors: rows.filter((r) => r.status >= 500).length,
-        branchesP95Ms: p95,
-        branchesRequests: branches.length,
-      };
-    },
+    httpStats: (sinceMs) => readHttpSelfCheckStats(activeHttpLogStore, activeHttpLogStoreReady, sinceMs),
     // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
     liveAlarmChannels: () => countLiveAlarmChannels(
       stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),
@@ -6387,7 +6418,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache),
     storeBackend: () => stateService.getBackingStore().kind,
   };
-  // 13 条监控各自打一次这个端点，一轮就是 13 次 docker version + 13 次 Mongo 查询。
+  // 多条监控各自打一次这个端点；同轮共享结果，避免重复 Docker 和 Mongo 查询。
   // 短缓存让同一轮里的探测共用一份文档：15 秒内的重复请求拿同一个 promise。
   const SELF_CHECK_CACHE_MS = 15_000;
   let selfCheckCache: { at: number; doc: Promise<Awaited<ReturnType<typeof buildSelfCheck>>> } | null = null;
@@ -6406,12 +6437,20 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       return;
     }
     try {
+      if (req.query.projectInspection !== undefined) {
+        if (typeof req.query.projectInspection !== 'string') { res.status(400).json({ error: 'invalid_project' }); return; }
+        const project = stateService.getProject(req.query.projectInspection);
+        if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+        res.setHeader('content-type', 'application/health+json; charset=utf-8');
+        res.status(200).json(inspectionHealthDocument(project.monitoringInspections || []));
+        return;
+      }
       const doc = await cachedSelfCheck();
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
       res.status(200).json(doc);
     } catch (err) {
       // 自检本身炸了（比如 Mongo 抖一下）回 503，让发现器按「端点打不通」处理——已登记的
-      // 13 条监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
+      // 原监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
       // 一条声明都没有」，把全部自监控当场下线（Codex #1543 P1）。
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
       res.status(503).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message });
@@ -6429,6 +6468,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   setInterval(() => { void runDiscovery().catch(() => undefined); }, discoveryIntervalMs).unref?.();
   void runDiscovery().catch(() => undefined);
 
+  app.use('/api', createProjectInspectionsRouter({
+    getProject: (id) => stateService.getProject(id),
+    save: (id, monitoringInspections) => { stateService.updateProject(id, { monitoringInspections }); },
+  }));
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
     listProjectPreviewHosts,

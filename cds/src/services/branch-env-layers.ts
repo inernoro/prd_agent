@@ -40,7 +40,7 @@ export function resolveBranchEnvLayers(
   const cdsEnv = stateService.getCdsEnvVars(projectId);
   const mirrorEnv = stateService.getMirrorEnvVars();
   const rawGlobal = project?.inheritGlobalEnv === true ? stateService.getCustomEnvScope('_global') : {};
-  const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
+  const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvRaw()[projectId] || {};
   const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
   const derivedReserved: Record<string, string> = {};
   if (project) {

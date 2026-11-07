@@ -18,7 +18,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { SkillProxy, SkillProxyError, isSafeSkillKey, readCappedBody } from '../services/skill-proxy.js';
 import { buildAgentSetupGuide, buildAgentTaskGuide } from '../services/agent-setup-guide.js';
-import { buildCdsSkillManifest } from '../services/cds-skill-manifest.js';
+import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
 import { AGENT_SETUP_MIN_CLI_VERSION, AGENT_SETUP_VERSION, CDS_SKILL_KEYS, parseAgentSetupSelection } from '../shared/agent-setup.js';
 
 const execFileAsync = promisify(execFile);
@@ -141,7 +141,7 @@ async function buildCdsSkillPack(skillsRoot: string): Promise<Buffer | null> {
     const stageDir = path.join(tmpDir, 'skills');
     await fs.promises.mkdir(stageDir, { recursive: true });
     for (const key of present) {
-      await fs.promises.cp(path.join(skillsRoot, key), path.join(stageDir, key), { recursive: true });
+      await copyCdsSkillSource(path.join(skillsRoot, key), path.join(stageDir, key));
     }
     const manifest = await buildCdsSkillManifest(stageDir);
     await fs.promises.writeFile(path.join(stageDir, 'cds/cli/cds-skill-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

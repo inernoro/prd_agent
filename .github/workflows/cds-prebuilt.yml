@@ -12,6 +12,7 @@ on:
     branches: ["**"]
     paths:
       - "cds/**"
+      - "cds-instances.json"
       - ".github/workflows/cds-prebuilt.yml"
       - ".claude/skills/cds/**"
       - ".claude/skills/cds-project-scan/**"
@@ -27,7 +28,8 @@ env:
 jobs:
   build-and-push:
     name: Build & Push CDS Prebuilt
-    runs-on: ubuntu-latest
+    # 浏览器验收与管理端使用同一受支持LTS，避免新runner字体依赖安装超时。
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -54,6 +56,9 @@ jobs:
           pnpm -C cds install --frozen-lockfile
           pnpm -C cds/web install --frozen-lockfile
           pnpm -C cds exec playwright install --with-deps chromium
+
+      - name: Install design runtime test dependencies
+        run: pnpm -C design-runtime/opendesign install --frozen-lockfile
 
       # 类型门：把 self-update 现有的 tsc --noEmit 校验挪到 CI。两端都过才出产物，
       # 等于「预构建产物天生已通过类型检查」，本机自更新不必再花 52s 跑 tsc。

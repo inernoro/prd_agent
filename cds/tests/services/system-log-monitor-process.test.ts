@@ -72,7 +72,8 @@ describe('系统journal独立读取与真实收尾', () => {
     const sentinel = path.join(f.dir, 'must-not-exist');
     process.env.CDS_JOURNAL_BACKFILL_SINCE = `15 minutes ago $(touch '${sentinel}')`;
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
-    await monitor.start(); await until(() => rows.some(row => row.action === 'journal.tail'));
+    await monitor.start(); await until(() => rows.some(row => row.action === 'journal.tail')
+      && rows.some(row => row.action === 'tail.stderr' && row.message.includes('synthetic-journal-stderr')));
     const trace = await f.trace();
     if (process.env.CDS_JOURNAL_REFERENCE === '1') console.info(JSON.stringify({ referenceTrace: trace, rows: rows.map(row => ({ action: row.action, message: row.message.length < 200 ? row.message : row.message.length })) }));
     expect(trace).toHaveLength(2); expect(trace.every(row => row.ppid !== process.pid)).toBe(true);

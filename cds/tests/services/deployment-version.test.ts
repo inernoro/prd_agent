@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DeploymentVersionService, isImmutableImageReference } from '../../src/services/deployment-version.js';
+import { resolveEffectiveProfile } from '../../src/services/container.js';
 import { StateService } from '../../src/services/state.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
 
@@ -62,6 +63,42 @@ describe('DeploymentVersionService', () => {
   ])('构建、回退或数据库配置改变不得并入同提交旧目标: %j', (changed) => {
     const service = new DeploymentVersionService(stateService);
     expect(service.computeConfigHash([{ ...profile(), ...changed }], {})).not.toBe(service.computeConfigHash([profile()], {}));
+  });
+
+  it('静态模式配置进入版本快照，冷重载与物化保持准确配置且没有共享可变引用', async () => {
+    const service = new DeploymentVersionService(stateService);
+    const baseline = profile({ deployModes: { 'static-files': { label: '静态文件', prebuilt: true,
+      staticWeb: { imagePath: '/usr/share/nginx/html', basePath: '/site', proxyRules: [{ pathPrefix: '/api', profileId: 'api' }] } } } });
+    branch.profileOverrides = { web: { activeDeployMode: 'static-files' } };
+    const effective = resolveEffectiveProfile(baseline, branch);
+    const expected = structuredClone(effective.staticWeb);
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: '1234567', configHash: 'h',
+      profiles: [effective], branch, createdByRunId: 'run-static' });
+    expect(version.profiles[0]).toMatchObject({ staticWeb: expected });
+    effective.staticWeb!.basePath = '/changed';
+    await stateService.flush();
+    const reloaded = new StateService(path.join(tmpDir, 'state.json')); reloaded.load();
+    const stored = reloaded.getDeploymentVersion(version.id)!;
+    const materialized = new DeploymentVersionService(reloaded).materializeProfiles(stored, [baseline])[0];
+    expect(materialized.staticWeb).toEqual(expected);
+    expect(materialized.deployModes).toBeUndefined();
+    materialized.staticWeb!.proxyRules![0].profileId = 'different';
+    expect(stored.profiles[0]).toMatchObject({ staticWeb: expected });
+  });
+
+  it('普通容器旧版本物化不得继承当前静态声明', () => {
+    const service = new DeploymentVersionService(stateService);
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: '1234567', configHash: 'h',
+      profiles: [profile()], branch, createdByRunId: 'run-container' });
+    expect(service.materializeProfiles(version, [profile({ staticWeb: { imagePath: '/new-site' } })])[0].staticWeb).toBeUndefined();
+  });
+
+  it('静态运行配置改变参与目标身份，普通容器既有配置hash保持', () => {
+    const service = new DeploymentVersionService(stateService);
+    expect(service.computeConfigHash([profile()], {})).toBe('5aea919abf431f140cfecc70837ddd8d99fcba7d06b7a9889d09d2bb449f3583');
+    const a = profile({ staticWeb: { imagePath: '/site-a' } });
+    const b = profile({ staticWeb: { imagePath: '/site-b' } });
+    expect(service.computeConfigHash([a], {})).not.toBe(service.computeConfigHash([b], {}));
   });
 
   it('creates an immutable content-addressed version and reuses the same identity', () => {

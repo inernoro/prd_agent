@@ -12,6 +12,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
+import vm from 'node:vm';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
   buildForceSyncBody,
@@ -26,6 +30,58 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
+
+describe('实际重启取消记录的历史展示', () => {
+  function actualDisplay(recordOverride?: Record<string, unknown>) {
+    const backend = fs.readFileSync(path.resolve('src/routes/branches.ts'), 'utf8');
+    const backendFile = ts.createSourceFile('branches.ts', backend, ts.ScriptTarget.Latest, true);
+    let record = '';
+    const visitRecord = (node: ts.Node): void => {
+      if (!record && ts.isCallExpression(node) && node.expression.getText(backendFile) === 'stateService.recordSelfUpdate'
+        && node.arguments[0]?.getText(backendFile).includes("stage: 'restart-drain'")) record = node.arguments[0].getText(backendFile);
+      ts.forEachChild(node, visitRecord);
+    };
+    visitRecord(backendFile); expect(record).toBeTruthy();
+    const text = fs.readFileSync(path.resolve('web/src/pages/cds-settings/tabs/MaintenanceTab.tsx'), 'utf8');
+    const file = ts.createSourceFile('MaintenanceTab.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const declarations = file.statements.filter(node => ts.isFunctionDeclaration(node)
+      && ['isRestartCancelled', 'selfUpdateModeDescription', 'selfUpdateStatusLabel'].includes(node.name?.text || ''));
+    let mode = '', detail = '';
+    const visitDisplay = (node: ts.Node): void => {
+      if (ts.isConditionalExpression(node) && node.condition.getText(file) === 'mode'
+        && node.whenTrue.getText(file).includes('selfUpdateModeLabel(mode)')) mode = node.getText(file);
+      if (ts.isJsxExpression(node) && node.expression?.getText(file).includes('selfUpdateModeDescription(selected.updateMode')) detail = node.expression.getText(file);
+      ts.forEachChild(node, visitDisplay);
+    };
+    visitDisplay(file); expect(mode).toBeTruthy(); expect(detail).toBeTruthy();
+    const context = { createElement, branch: 'main', fullSha: HEAD, startedAt: Date.now(), actor: 'owned-test',
+      err: { message: '其他操作未完成', remaining: ['owned-operation'] }, record: null as unknown,
+      mode: undefined, rec: null as unknown, selected: null as unknown, result: null as unknown };
+    const run = (code: string) => vm.runInNewContext(ts.transpileModule(code, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, jsxFactory: 'createElement' },
+    }).outputText, context);
+    run(declarations.map(node => node.getText(file)).join('\n'));
+    run(`record = (${record});`);
+    expect(context.record).toMatchObject({ status: 'aborted', failure: { stage: 'restart-drain' } });
+    expect(context.record).not.toHaveProperty('updateMode');
+    context.rec = context.selected = recordOverride || context.record;
+    run(`result = { label: selfUpdateStatusLabel(rec.status), mode: (${mode}), detail: (${detail}) };`);
+    const result = context.result as { label: string; mode: never; detail: string };
+    return { ...result, mode: renderToStaticMarkup(result.mode).replace(/<[^>]*>/g, '') };
+  }
+  it.each([
+    { field: 'label' as const, expected: '已中止' },
+    { field: 'mode' as const, expected: '未执行重启' },
+    { field: 'detail' as const, expected: '等待其他项目操作超时，本次重启已取消，其他项目继续运行。' },
+  ])('真实后端取消记录的$field保持原说明', ({ field, expected }) => {
+    expect(actualDisplay()[field]).toBe(expected);
+  });
+  it('其他阶段的中止不冒称重启被取消，保留原普通更新说明', () => {
+    const display = actualDisplay({ status: 'aborted', failure: { stage: 'build' } });
+    expect(display.mode).toBe('未标记');
+    expect(display.detail).not.toContain('重启已取消');
+  });
+});
 
 describe('buildForceSyncBody', () => {
   it('三个声明字段一个不漏', () => {
@@ -54,7 +110,7 @@ describe('buildForceSyncBody', () => {
  * body 照样"看起来对"，而线上照样被拒。
  */
 describe('前端组的 body 能过后端闸门', () => {
-  it('非快进切换 + 完整声明 → 放行', () => {
+  it('普通非继承发布被拒；相同声明在人工强制通道仍可使用', () => {
     const body = buildForceSyncBody({
       headSha: HEAD, targetBranch: 'claude/x', intent: 'release', reason: '从 CDS 系统设置强制发布到 claude/x',
     });
@@ -66,8 +122,9 @@ describe('前端组的 body 能过后端闸门', () => {
       expectedFromSha: body.expectedFromSha,
       reason: body.transitionReason,
     });
-    expect(decision.allowed).toBe(true);
-    expect(decision).toMatchObject({ mode: 'release' });
+    expect(decision).toMatchObject({ allowed: false, code: 'release_requires_inherited_revision' });
+    expect(resolveForceSyncTransition({ currentSha: HEAD, targetSha: TARGET, targetContainsCurrent: false,
+      intent: body.transitionIntent, reason: body.transitionReason })).toMatchObject({ mode: 'release' });
   });
 
   it('回滚同样放行', () => {
@@ -133,7 +190,8 @@ describe('默认原因与校验', () => {
         currentSha: HEAD, targetSha: TARGET, targetContainsCurrent: false,
         intent, expectedFromSha: HEAD, reason,
       });
-      expect(decision.allowed, `${intent}: ${reason}`).toBe(true);
+      expect(decision, `${intent}: ${reason}`).toMatchObject(intent === 'rollback'
+        ? { allowed: true } : { allowed: false, code: 'release_requires_inherited_revision' });
     }
   });
 

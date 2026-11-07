@@ -1,3 +1,4 @@
+import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -9,7 +10,7 @@ import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDi
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
-import { ProjectListSummarySkeleton, pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import { ListLoadingBoundary, ListLoadingFeedback } from '@/components/skeletons/ListLoadingBoundary';
 import {
   requestAgentAccess,
@@ -136,6 +137,11 @@ export function canManageSystemSettings(status: ShellAuthStatus | null): boolean
   return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
 }
 
+/** Loading contour only: verified ticket SSO manages projects without being a system owner. */
+export function canShowProjectActions(status: ShellAuthStatus | null): boolean {
+  return canManageSystemSettings(status) || status?.mode === 'sso';
+}
+
 export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通账号，请联系系统所有者切换为多域名预览。';
 
 /** Simple/port previews require owner routing writes; members retain multi-domain previews. */
@@ -152,6 +158,10 @@ export const ConsoleAuthContext = createContext<{
 /** UI affordances use the same server-authenticated owner decision as route mounting. */
 export function useCanManageConsole(): boolean {
   return canManageSystemSettings(useContext(ConsoleAuthContext).status);
+}
+
+export function useCanShowProjectActions(): boolean {
+  return canShowProjectActions(useContext(ConsoleAuthContext).status);
 }
 
 /** Never mount owner pages (and their effects) for members or unresolved authentication. */
@@ -242,18 +252,15 @@ export function ConsoleLayout(): JSX.Element {
 function ConsoleRouteFallback(): JSX.Element {
   const { pathname } = useLocation();
   const scene = loadingSceneForPath(pathname);
+  const canManageProjects = useCanShowProjectActions();
   const projectList = pathname === '/project-list';
-  const consoleOwner = useCanManageConsole();
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
   return (
     <>
       {listPage ? <TopBar
-        centerWide={projectList}
         left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
-        center={branchList || consoleOwner ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : (
-          <div className="flex h-9 min-w-0 items-center gap-3 text-sm text-muted-foreground"><ProjectListSummarySkeleton /></div>
-        )}
+        center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
       /> : <header className="cds-topbar" aria-hidden>
         <span className="cds-topbar-brand">
           <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
@@ -267,7 +274,7 @@ function ConsoleRouteFallback(): JSX.Element {
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
         <div className={cn('cds-workspace cds-workspace--fluid', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
-          {pageSkeletonForPath(pathname)}
+          {pageSkeletonForPath(pathname, { canManageProjects })}
           <ListLoadingFeedback />
         </div>
       </main>
@@ -1142,6 +1149,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             : null}
         </div>
       ) : null}
+      <InstanceSwitcher />
       <div id="cds-information-center-host" className="relative shrink-0" />
     </header>
   );

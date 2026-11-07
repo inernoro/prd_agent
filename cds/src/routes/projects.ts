@@ -2,6 +2,7 @@ import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-pl
 import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { addressWriteLocked } from '../services/preview-address-settings.js';
+import { bootstrapRepository, MAX_PROJECT_NAME_LENGTH } from '../services/bootstrap-target.js';
 /**
  * Projects API router.
  *
@@ -133,7 +134,7 @@ export const LEGACY_PROJECT_ID = 'default';
  * Maximum length of `Project.name` we accept on POST. Long names would
  * overflow the UI card and the docker network name derivation.
  */
-const MAX_NAME_LENGTH = 60;
+const MAX_NAME_LENGTH = MAX_PROJECT_NAME_LENGTH;
 
 /**
  * Regex for acceptable slugs. Matches kebab/alphanumeric and forbids
@@ -322,6 +323,8 @@ function formatKeyPreview(plaintext: string): string {
   if (suffix.length <= 16) return plaintext;
   return prefix + suffix.slice(0, 12) + '…' + suffix.slice(-4);
 }
+
+const bootstrapCreations = new WeakMap<StateService, Set<string>>();
 
 /**
  * Mint a project-scoped `cdsp_` Agent Key and persist it under the project.
@@ -1739,11 +1742,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         req as unknown as { cdsPrincipal?: { principalId: string } }
       ).cdsPrincipal?.principalId;
       const grants = principalId ? stateService.getProjectGrants() : [];
+      const credentialId = (req as unknown as { cdsPrincipal?: { credentialId: string } }).cdsPrincipal?.credentialId;
+      const projectIds = stateService.getUserCredentials().find(c => c.id === credentialId)?.projectIds;
       const projects = stateService
         .getProjects()
         .filter((project) => canHumanAccessProject(req, stateService, project.id))
         .filter((project) => !projectScope || project.id === projectScope)
-        .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id));
+        .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id))
+        .filter((project) => !projectIds || projectIds.includes(project.id));
       const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
@@ -2882,6 +2888,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   //   409 { error: 'duplicate', field }
   //   500 { error: 'docker', message } — docker create failed
   router.post('/projects', async (req, res) => {
+    const userCredentialId = (req as unknown as { cdsPrincipal?: { credentialId: string } }).cdsPrincipal?.credentialId;
+    if (stateService.getUserCredentials().find(c => c.id === userCredentialId)?.projectIds) {
+      res.status(403).json({ error: 'recovery_credential_project_only', message: '恢复凭据只能连接已核对的原项目，不能创建项目。' }); return;
+    }
     // 建项目授权判定。注意:单项目作用域的 cdsg_ key 现在也会 stamp cdsProjectKey
     // (作为 cdsp_ 别名继承逐路由防护,见 server.ts stampSingleProjectScope),所以这里
     // **必须先看 cdsAccess**:凡带 cdsAccess 的一律按 access.canCreateProjects 判定,
@@ -2960,6 +2970,27 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // (injected at clone time via _injectGithubTokenIfPossible).
     const rawGitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
     const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
+    const creationKey = callerAccess ? stateService.getGlobalAgentKeys().find((key) => key.id === callerAccess.keyId) : undefined;
+    if (creationKey?.oneTime) {
+      if (creationKey.revokedAt) {
+        res.status(403).json({ error: 'bootstrap_consumed', message: '一次建项目授权已失效，请连接原项目。' });
+        return;
+      }
+      const target = creationKey.creationTarget;
+      if (!target || name !== target.name || bootstrapRepository(rawGitRepoUrl) !== target.repository) {
+        res.status(403).json({ error: 'bootstrap_target_mismatch', message: '本次授权只能创建批准的项目和仓库。请恢复原目标；需要更换目标时重新申请。' });
+        return;
+      }
+    }
+    let activeCreations = bootstrapCreations.get(stateService);
+    if (!activeCreations) { activeCreations = new Set(); bootstrapCreations.set(stateService, activeCreations); }
+    const creationKeyId = creationKey?.oneTime ? creationKey.id : undefined;
+    if (creationKeyId && activeCreations.has(creationKeyId)) {
+      res.status(409).json({ error: 'bootstrap_in_progress', message: '这条申请正在创建项目，请等待原操作完成，不要重复创建。' });
+      return;
+    }
+    if (creationKeyId) activeCreations.add(creationKeyId);
+    try {
     const githubCredentialUserId = requestUserId(req);
     const hasCurrentUserGithubCredential = Boolean(
       githubCredentialUserId && stateService.getGithubDeviceAuth(githubCredentialUserId),
@@ -3224,6 +3255,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
+    if (creationKeyId && creationKey?.revokedAt) {
+      await removeDockerNetwork(network).catch(() => { /* 仅清理本次新建网络 */ });
+      res.status(403).json({ error: 'bootstrap_revoked', message: '创建期间授权已撤销，未创建项目。请重新申请。' });
+      return;
+    }
+
     try {
       stateService.addProject(newProject, { ...projectIdentityActorFromRequest(req),
         slugSource: slugProvidedExplicitly ? 'explicit' : repoSlugFromGitUrl ? 'repository' : 'name' });
@@ -3238,6 +3275,20 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+    // 真实项目已保存即消费授权，即使后续签发项目密钥失败也不能再创建副本。
+    if (creationKeyId) {
+      stateService.revokeGlobalAgentKey(creationKeyId);
+      // 后续基础设施配置可能等待或保留项目后失败；先记录已经发生的创建事实。
+      const accessRequest = stateService.listAccessRequests().find(item =>
+        item.kind === 'bootstrap' && item.status === 'approved' && item.issuedKeyId === creationKeyId);
+      if (accessRequest) {
+        stateService.updateAccessRequest(accessRequest.id, {
+          createdProject: { id: newProject.id, name: newProject.name, createdAt: newProject.createdAt },
+        });
+        cdsEventsBus.publish('access-request.progress', { requestId: accessRequest.id, stage: 'project-created', projectId: newProject.id });
+      }
+    }
+
     // 少绕路:创建弹窗就地粘贴的项目环境变量,在建项目时一并写入(不必等克隆后再单独配)。
     const userEnvEntries: Array<[string, string]> = [];
     if (body.customEnv && typeof body.customEnv === 'object') {
@@ -3365,26 +3416,6 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    // 页面批准产生的一次性 bootstrap key 只允许成功创建一个项目。项目级 key
-    // 已签发后立即吊销 bootstrap，避免长期保留可继续建项目的机器凭据。手动签发的
-    // create-only key 未标 oneTime，保持原有可重复建项目行为。
-    if (callerAccess) {
-      const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
-      if (callerKey?.oneTime && issuedProjectKey) {
-        stateService.revokeGlobalAgentKey(callerAccess.keyId);
-        const accessRequest = stateService.listAccessRequests().find((item) =>
-          item.kind === 'bootstrap' && item.status === 'approved' && item.issuedKeyId === callerAccess.keyId);
-        if (accessRequest) {
-          stateService.updateAccessRequest(accessRequest.id, {
-            createdProject: { id: newProject.id, name: newProject.name, createdAt: newProject.createdAt },
-          });
-          cdsEventsBus.publish('access-request.progress', {
-            requestId: accessRequest.id, stage: 'project-created', projectId: newProject.id,
-          });
-        }
-      }
-    }
-
     res.status(201).json({
       project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
@@ -3418,6 +3449,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 可直接切到这把 key 做后续部署/操作。全权 key 或人类 cookie 建项目时不返回。
       issuedProjectKey,
     });
+    } finally {
+      if (creationKeyId) activeCreations.delete(creationKeyId);
+    }
   });
 
   /**
