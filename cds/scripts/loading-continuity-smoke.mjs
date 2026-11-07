@@ -131,6 +131,12 @@ async function verifyAuthenticatedReportNavigation() {
       await page.reload();
       await page.getByText('合成新报告', { exact: true }).first().waitFor();
       assert.equal(await page.locator('iframe').count(), 0, 'return to homepage survives refresh');
+      await page.goBack();
+      await page.waitForURL(url => url.searchParams.get('report') === supervisorId);
+      await page.frameLocator(`iframe[title="${title}"]`).getByRole('heading', { name: title }).waitFor();
+      await page.goForward();
+      await page.waitForURL(url => !url.searchParams.has('report'));
+      await page.locator('iframe').waitFor({ state: 'detached' });
       console.log(`PASS REG-stsmk-report-external-link-001 ${format}: protected navigation, filters, Back/Forward, refresh, create/home, missing-report rejection, unchanged sandbox`);
     } catch (error) {
       await page.screenshot({ path: path.join(out, `failure-report-navigation-${format}.jpg`) });

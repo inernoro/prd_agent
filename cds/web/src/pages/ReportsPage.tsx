@@ -297,15 +297,17 @@ export function ReportsPage(): JSX.Element {
   // 直达深链：报告加载完成后，按 ?folder= / ?report= 自动激活文件夹并打开对应报告。
   // 用 identity-guard 的函数式 setState 避免重复触发（命中即稳定，不抖动）。
   useEffect(() => {
-    if (state.status !== 'ok') return;
     if (folderParam && folders.some((f) => f.id === folderParam)) {
       setActiveFolder((prev) => (prev === folderParam ? prev : folderParam));
     }
-    if (reportParam) {
-      const r = state.reports.find((x) => x.id === reportParam);
-      if (r) setSelected((prev) => (prev?.id === r.id ? prev : r));
-    }
-  }, [state, folders, folderParam, reportParam]);
+  }, [folders, folderParam]);
+
+  useEffect(() => {
+    if (state.status !== 'ok') return;
+    const target = state.reports.find((report) => report.id === reportParam) ?? null;
+    // Back/Forward may restore a homepage URL: never retain a stale report.
+    setSelected((prev) => (prev?.id === target?.id ? prev : target));
+  }, [state, reportParam]);
 
   // 项目列表用于关联下拉 + 当前项目名展示（best-effort，失败不阻断）。
   useEffect(() => {
