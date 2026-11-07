@@ -56,6 +56,7 @@ async function verifyAuthenticatedReportNavigation() {
         return route.fulfill({ status: 403, json: { message: '不可访问的合成报告' } });
       }
       if (p === '/api/reports') return route.fulfill({ json: { reports } });
+      if (p === '/api/projects') return route.fulfill({ json: { projects: [{ id: canonicalProject, slug: project, name: '合成验收项目' }] } });
       if (p === '/api/report-folders') return route.fulfill({ json: { folders: [] } });
       if (p === '/api/reports/overview' || p === '/api/reports/pipeline') return route.fulfill({ status: 503, json: { message: '本项只验证报告查看器' } });
       if (isEventStream(p)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
@@ -63,7 +64,7 @@ async function verifyAuthenticatedReportNavigation() {
     });
     const page = await context.newPage();
     try {
-      await page.goto(`${base}/reports?project=${project}&report=${supervisorId}`);
+      await page.goto(`${base}/reports?project=${canonicalProject}&report=${supervisorId}`);
       let frame = page.frameLocator(`iframe[title="${title}"]`);
       await frame.getByRole('heading', { name: title }).waitFor();
       await page.evaluate((reportId) => window.postMessage({ type: 'cds:authenticated-report-navigation', reportId }, location.origin), appendixId);
