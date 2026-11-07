@@ -160,6 +160,22 @@ public class VideoAgentController : ControllerBase
         }
     }
 
+    [HttpDelete("projects/{projectId}")]
+    public async Task<IActionResult> DeleteEmptyProject(string projectId, CancellationToken ct)
+    {
+        try
+        {
+            return await _videoGenService.DeleteEmptyProjectAsync(projectId, GetAdminId(), AppKey, ct)
+                ? Ok(ApiResponse<bool>.Ok(true))
+                : NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频项目不存在"));
+        }
+        catch (InvalidOperationException)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "项目仍有任务或素材，请先完成任务和素材清理后再删除"));
+        }
+    }
+
     [HttpGet("projects/{projectId}/exports")]
     public async Task<IActionResult> ListProjectExports(string projectId, CancellationToken ct)
     {

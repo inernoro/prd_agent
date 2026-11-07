@@ -11,6 +11,8 @@ public interface IVideoGenService
     Task<VideoProject?> GetProjectAsync(string projectId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
     Task<List<VideoProject>> ListProjectsAsync(string ownerAdminId, string? appKey = null, CancellationToken ct = default);
     Task<VideoProject> UpdateProjectAsync(string projectId, string ownerAdminId, UpdateVideoProjectRequest request, string? appKey = null, CancellationToken ct = default);
+    /// <summary>回收尚未关联任务、导出或素材的自有空项目，不删除任何资产。</summary>
+    Task<bool> DeleteEmptyProjectAsync(string projectId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 
     /// <summary>
     /// 创建视频生成任务（插入 MongoDB，Worker 自动拾取）
