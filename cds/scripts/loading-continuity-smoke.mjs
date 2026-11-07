@@ -58,6 +58,8 @@ async function verifyAuthenticatedReportNavigation() {
       if (p === '/api/reports') return route.fulfill({ json: { reports } });
       if (p === '/api/projects') return route.fulfill({ json: { projects: [{ id: canonicalProject, slug: project, name: '合成验收项目' }] } });
       if (p === '/api/report-folders') return route.fulfill({ json: { folders: [] } });
+      if (p === '/api/cds-system/connections') return route.fulfill({ json: { connections: [] } });
+      if (p === '/api/auth/activity') return route.fulfill({ json: { activity: [] } });
       if (p === '/api/reports/overview' || p === '/api/reports/pipeline') return route.fulfill({ status: 503, json: { message: '本项只验证报告查看器' } });
       if (isEventStream(p)) return route.fulfill({ contentType: 'text/event-stream', body: ': fixture\n\n' });
       return route.fulfill({ json: resolveFixture(p) ?? {} });
@@ -86,6 +88,7 @@ async function verifyAuthenticatedReportNavigation() {
       console.log(`PASS REG-stsmk-report-external-link-001 ${format}: protected navigation, refresh, missing-report rejection, unchanged sandbox`);
     } catch (error) {
       await page.screenshot({ path: path.join(out, `failure-report-navigation-${format}.jpg`) });
+      console.log(`REPORT_NAV_DIAGNOSTIC ${format}: ${JSON.stringify({ url: page.url(), body: (await page.locator('body').innerText()).slice(0, 2000), rawRequests })}`);
       throw error;
     } finally { await context.close(); }
   }
