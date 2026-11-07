@@ -498,8 +498,7 @@ describe('部署心跳过期后的精确租约回收', () => {
       expect(transported).toEqual([]); expect(events).toEqual([]);
       clock = new Date(clock.getTime() + 16 * 60_000); vi.setSystemTime(clock);
       releaseBlocker();
-      await vi.waitFor(() => expect(fs.existsSync(entered)).toBe(true));
-      const commandIdentity = JSON.parse(fs.readFileSync(entered, 'utf8'));
+      const commandIdentity = await vi.waitFor(() => JSON.parse(fs.readFileSync(entered, 'utf8')));
       expect(commandIdentity).toMatchObject({ phase: 'stop' }); expect(commandIdentity.pid).toBeGreaterThan(1);
       expect(settled).toBe(false); expect(fs.existsSync(path.join(directory, 'stop.returned'))).toBe(false);
       expect(authorizations).toEqual([{ phase: 'stop', entered: false, current: true }]);
