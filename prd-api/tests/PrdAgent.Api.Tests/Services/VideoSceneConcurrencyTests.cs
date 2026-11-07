@@ -5,10 +5,13 @@ using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
 using Xunit;
@@ -17,6 +20,75 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class VideoSceneConcurrencyTests
 {
+    [Theory]
+    [InlineData(VideoGenRunStatus.Rendering)]
+    [InlineData(VideoGenRunStatus.Scripting)]
+    public async Task CancelActiveRunRevokesLeaseAndLeavesTerminalDeletableTask(string status)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync("video-agent", test.OwnerId,
+            new CreateVideoProjectRequest { Title = "synthetic-cancellation" });
+        var run = NewRun("cancel-active", test.OwnerId, SceneItemStatus.Draft);
+        run.Status = status; run.ProjectId = project.Id;
+        var (coordinator, lease) = await test.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        await test.Context.VideoProjects.UpdateOneAsync(x => x.Id == project.Id,
+            Builders<VideoProject>.Update.Set(x => x.LatestRunId, run.Id).Set(x => x.Status, VideoProjectStatus.Rendering));
+
+        (await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+
+        var cancelled = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        cancelled.CancelRequested.ShouldBeTrue(); cancelled.EndedAt.ShouldNotBeNull();
+        (await coordinator.ValidateAsync(lease.Proof, false, default)).ShouldBeFalse();
+        (await test.Context.VideoProjects.Find(x => x.Id == project.Id).SingleAsync()).Status.ShouldBe(VideoProjectStatus.Draft);
+        using (TaskExecutionContext.Enter(lease.Identity))
+        {
+            foreach (var lateStatus in new[] { VideoGenRunStatus.Completed, VideoGenRunStatus.Failed })
+            {
+                var rejected = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => test.Context.VideoGenRuns.UpdateOneAsync(
+                    x => x.Id == run.Id, Builders<VideoGenRun>.Update.Set(x => x.Status, lateStatus)));
+                rejected.Code.ShouldBe("TASK_EXECUTION_LEASE_INVALID");
+            }
+        }
+        (await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        test.AssertCancellationEventOnce(run.Id);
+        var deleted = await service.DeleteRunAsync(run.Id, test.OwnerId, appKey: run.AppKey);
+        deleted.ShouldNotBeNull(); deleted.Deleted.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(VideoGenRunStatus.Completed)]
+    [InlineData(VideoGenRunStatus.Failed)]
+    [InlineData(VideoGenRunStatus.Cancelled)]
+    public async Task CancelRequestPreservesAnAlreadyTerminalOutcome(string status)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-terminal", test.OwnerId, SceneItemStatus.Draft);
+        var endedAt = DateTime.UtcNow.AddMinutes(-1);
+        run.Status = status; run.EndedAt = endedAt;
+        await test.SaveRunAsync(run);
+        (await test.CreateService().CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        var stored = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        stored.Status.ShouldBe(status);
+        Assert.NotNull(stored.EndedAt);
+        stored.EndedAt.Value.ShouldBe(endedAt, TimeSpan.FromMilliseconds(1));
+    }
+
+    [Fact]
+    public async Task UnownedCancellationCannotRevokeAnotherVideosLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-owner-boundary", test.OwnerId, SceneItemStatus.Draft);
+        run.Status = VideoGenRunStatus.Rendering;
+        var (coordinator, lease) = await test.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        (await test.CreateService().CancelRunAsync(run.Id, "other-owner", run.AppKey)).ShouldBeFalse();
+        (await test.CreateService().CancelRunAsync(run.Id, test.OwnerId, "other-app")).ShouldBeFalse();
+        (await coordinator.ValidateAsync(lease.Proof, false, default)).ShouldBeTrue();
+    }
+
     [Fact]
     public async Task DeleteCompletedRun_ShouldRemoveOwnedArtifactRunExportAndEmptyProject()
     {
@@ -373,6 +445,34 @@ public class VideoSceneConcurrencyTests
         public string OwnerId { get; }
 
         public Task SaveRunAsync(VideoGenRun run) => Context.VideoGenRuns.InsertOneAsync(run);
+
+        public async Task<(TaskExecutionCoordinator Coordinator, TaskExecutionLease Lease)> SaveAuthorizedRunAsync(VideoGenRun run)
+        {
+            var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                ?? throw new InvalidOperationException("租约取消回归必须提供独占Mongo");
+            var coordinator = new TaskExecutionCoordinator(new LlmGatewayDataContext(connection, _databaseName));
+            var key = Guid.NewGuid().ToString("N");
+            var permit = new GatewayTaskPermitRecord
+            {
+                Id = TaskExecutionCoordinator.BusinessId(GatewayTenantDefaults.InternalTenantId, OwnerId, "video-cancellation-fixture", key),
+                ExecutionContractVersion = TaskExecutionCoordinator.ContractVersion,
+                BusinessKeyHash = TaskExecutionCoordinator.Fingerprint(key), RequestFingerprint = TaskExecutionCoordinator.Fingerprint("synthetic-video"),
+                TenantId = GatewayTenantDefaults.InternalTenantId, ActorUserId = OwnerId, SubjectUserIds = [OwnerId],
+                TriggerCredentialId = "synthetic-session", Origin = TaskExecutionOrigins.Interactive,
+                SourceDeployment = "synthetic-deployment", SourceTask = "video-cancellation-fixture",
+                AllowedAppCallerCodes = [AppCallerRegistry.VideoAgent.Script.Chat], MaxRuns = 2, MaxCalls = 4,
+                CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1),
+            };
+            await coordinator.RegisterAsync(permit, false, default);
+            run.TaskPermitId = permit.Id; await SaveRunAsync(run);
+            var lease = await coordinator.AcquireAsync(permit.Id, run.Id, default)
+                ?? throw new InvalidOperationException("合成视频租约未领取成功");
+            return (coordinator, lease);
+        }
+
+        public void AssertCancellationEventOnce(string runId)
+            => _runStore.Verify(x => x.AppendEventAsync(RunKinds.VideoGen, runId, "run.cancelled", It.IsAny<object>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
 
         public static async Task<VideoSceneTestDatabase> CreateAsync()
         {
