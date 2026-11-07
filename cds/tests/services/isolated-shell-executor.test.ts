@@ -347,6 +347,17 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect(state.stdout.trim()).toMatch(/^(Z.*)?$/);
   });
 
+  it('shell已退出而后台后代仍持有输出流时，确认清理后正常完成', async () => {
+    const e = executor({ concurrency: 1 }); await e.start();
+    const dir = await directory(), pidFile = path.join(dir, 'open-output-child.pid');
+    const result = await e.exec(`sleep 30 & echo $! > ${quote(pidFile)}; exit 0`, { ...observation, timeout: 1500 });
+    expect(result.exitCode).toBe(0);
+    const pid = await readReadyFixturePid(pidFile); expect(pid).toBeGreaterThan(1);
+    const state = await new ShellExecutor().exec(`ps -o stat= -p ${pid}`);
+    expect(state.stdout.trim()).toMatch(/^(Z.*)?$/);
+    expect(e.getStats().active).toBe(0);
+  });
+
   it('保留真实 stdout/stderr、stdin、cwd、非零退出与流式输出契约', async () => {
     const e = executor();
     const cwd = await directory();
