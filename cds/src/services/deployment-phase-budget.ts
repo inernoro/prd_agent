@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import type { BranchEntry, BuildProfile, IShellExecutor, ServiceRuntimeRef } from '../types.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
 import { ProjectAdmissionOrder } from './project-admission-order.js';
+import { buildLoadPressure, type BuildLoadPressure } from './build-gate.js';
+import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
 let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
 let memoryRead: Promise<void> | undefined;
@@ -65,19 +67,22 @@ export class DeploymentPhaseBudget {
   private readonly active = new Map<DeploymentPhase, Set<Request>>();
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
   private readonly projectOrders = new Map<DeploymentPhase, ProjectAdmissionOrder>();
-  private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner }>();
+  private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner;
+    startup?: { check?: () => void } }>();
   private timer?: NodeJS.Timeout;
   private readonly limits: Record<DeploymentPhase, number>;
   constructor(private readonly availableMemoryMB: () => number = () => memoryProvider(),
     limits: Partial<Record<DeploymentPhase, number>> = {},
-    private readonly headroomMB = 1024, private readonly availablePids = sampleHostAvailablePids) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
+    private readonly headroomMB = 1024, private readonly availablePids = sampleHostAvailablePids,
+    private readonly hostLoad: () => BuildLoadPressure = buildLoadPressure) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
 
   snapshot() {
     return Object.fromEntries((['pull', 'start', 'ready', 'cleanup', 'terminal'] as const).map(phase => [phase, {
       limit: this.limits[phase], active: [...(this.active.get(phase) || [])].map(request => ({ ...request.owner, memoryMB: request.memoryMB })),
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
         reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom'
-          : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom' : 'phase-capacity' })),
+          : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom'
+          : phase === 'start' && !this.cpuAllows(request) ? 'cpu-startup-capacity' : 'phase-capacity' })),
     }]));
   }
 
@@ -97,7 +102,7 @@ export class DeploymentPhaseBudget {
   reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64): void {
     this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
   }
-  memorySnapshot() { return [...this.memoryReservations].map(([key, value]) => ({ key, ...value })); }
+  memorySnapshot() { return [...this.memoryReservations].map(([key, { memoryMB, pids, owner }]) => ({ key, memoryMB, pids, owner })); }
   /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
   captureMemoryRelease(key: string, owner?: DeploymentPhaseOwner): () => boolean {
     const reservation = this.memoryReservations.get(key);
@@ -119,6 +124,17 @@ export class DeploymentPhaseBudget {
     const reserved = [...this.memoryReservations].reduce((sum, [key, value]) => sum + (key === request.reservationKey ? 0 : value.pids), 0)
       + [...(this.active.get('start') || [])].filter(item => !item.reservationKey).reduce((sum, item) => sum + item.pids, 0);
     return this.availablePids() >= reserved + request.pids;
+  }
+
+  private cpuAllows(request: Request): boolean {
+    // 历史物理责任不是本进程的启动体；资格失效只归还CPU占位，内存和PID仍须真实回收证明。
+    const current = (check?: () => void) => { try { check?.(); return true; } catch { return false; } };
+    const warming = [...this.memoryReservations].filter(([key, value]) => key !== request.reservationKey
+      && value.startup && current(value.startup.check)).length
+      + [...(this.active.get('start') || [])].filter(item => !item.reservationKey && current(item.check)).length;
+    const pressure = this.hostLoad();
+    const limit = pressure.ratio >= HOST_LOAD_SATURATED_RATIO ? 1 : this.limits.start;
+    return warming < limit;
   }
 
   acquire(phase: DeploymentPhase, owner: DeploymentPhaseOwner, options: {
@@ -159,12 +175,16 @@ export class DeploymentPhaseBudget {
         const order = this.projectOrders.get(phase) || new ProjectAdmissionOrder();
         this.projectOrders.set(phase, order);
         const index = order.next(queue, request => request.owner.projectId,
-          request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request));
+          request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey)
+            && this.pidsAllow(request) && this.cpuAllows(request));
         if (index < 0) break;
         const [request] = queue.splice(index, 1);
         request.signal?.removeEventListener('abort', request.abort!);
         active.add(request); order.grant(request.owner.projectId);
-        if (phase === 'start' && request.reservationKey) this.reserveKnownMemory(request.reservationKey, request.memoryMB, request.owner, request.pids);
+        if (phase === 'start' && request.reservationKey) {
+          this.reserveKnownMemory(request.reservationKey, request.memoryMB, request.owner, request.pids);
+          this.memoryReservations.get(request.reservationKey)!.startup = { check: request.check };
+        }
         let released = false;
         request.resolve(() => { if (released) return; released = true; active.delete(request); this.pump(); });
       }
@@ -175,7 +195,7 @@ export class DeploymentPhaseBudget {
   async run<T>(phase: DeploymentPhase, owner: DeploymentPhaseOwner, task: () => Promise<T>,
     options: Parameters<DeploymentPhaseBudget['acquire']>[2] = {}): Promise<T> {
     const release = await this.acquire(phase, owner, options);
-    try { options.check?.(); return await task(); } finally { release(); }
+    try { options.check?.(); const result = await task(); options.check?.(); return result; } finally { release(); }
   }
 }
 

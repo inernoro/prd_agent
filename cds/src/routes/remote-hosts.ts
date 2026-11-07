@@ -2701,6 +2701,7 @@ async function startCdsManagedRuntimeContainer(
         logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
         if (logs.length > 20) logs.splice(0, logs.length - 20);
       },
+      serviceState.containerName,
     );
 
     assertCurrent();

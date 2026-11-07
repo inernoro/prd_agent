@@ -7,6 +7,8 @@ import { clearContainerLifecycleIntentsForTest, findRecentContainerLifecycleInte
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
+import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider } from '../../src/services/deployment-phase-budget.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 
 // Parse generated argv through the actual host shell without invoking Docker or a workload.
 function dockerArgv(command: string): string[] {
@@ -102,6 +104,58 @@ describe('ContainerService', () => {
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     });
     afterEach(() => { aliveStub?.mockRestore(); });
+
+    it.each(['run', 'alive'] as const)('原无取消回调启动在%s失败后不再占CPU，未确认内存仍保留', async boundary => {
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      if (boundary === 'run') mock.addResponsePatternFirst(/docker run/, () => ({ stdout: '', stderr: '原启动失败', exitCode: 1 }));
+      else aliveStub.mockRejectedValueOnce(new Error('原启动失败'));
+      setDeploymentPhaseMemoryProvider(() => 10000); setBuildGateHostLoadProvider(() => ({ load1: 18, cores: 18 }));
+      const runtime = makeService(), abort = new AbortController(); let grant: (() => void) | undefined;
+      let next: Promise<void> | undefined;
+      try {
+        await expect(service.runService(makeEntry(), makeProfile(), runtime)).rejects.toThrow('原启动失败');
+        next = deploymentPhaseBudget.acquire('start', { projectId: 'next' }, { reservationKey: 'next-runtime', signal: abort.signal })
+          .then(release => { grant = release; }, () => {});
+        await Promise.resolve(); expect(grant).toBeTypeOf('function');
+        expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === runtime.containerName)).toBe(true);
+      } finally {
+        abort.abort(); await next; grant?.(); deploymentPhaseBudget.releaseMemory(runtime.containerName); deploymentPhaseBudget.releaseMemory('next-runtime');
+        setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
+      }
+    });
+
+    it.each(['ready', 'timeout', 'error', 'replaced'] as const)('原日志信号%s后HTTP仅保留成功交接的操作资格，失败不残留旧资格', async outcome => {
+      mock.addResponsePattern(/docker network inspect|docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'a'.repeat(64), stderr: '', exitCode: 0 }));
+      setDeploymentPhaseMemoryProvider(() => 10000);
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+      const runtime = makeService(); let current = true;
+      const signal = vi.spyOn(service as any, 'waitForStartupSignalUnbudgeted').mockResolvedValue(true);
+      const probe = vi.spyOn(service as any, 'waitForReadinessUnbudgeted').mockResolvedValue(true);
+      try {
+        await service.runService(makeEntry(), makeProfile({ startupSignal: 'ready' }), runtime, undefined, undefined,
+          { assertCurrent: () => { if (!current) throw new Error('原部署资格失效'); } });
+        if (outcome === 'timeout') signal.mockResolvedValue(false);
+        if (outcome === 'error') signal.mockRejectedValue(new Error('原日志读取失败'));
+        if (outcome === 'replaced') signal.mockImplementation(async () => {
+          await service.runService(makeEntry(), makeProfile(), runtime, undefined, undefined,
+            { assertCurrent: () => { if (!current) throw new Error('新部署资格失效'); } });
+          return false;
+        });
+        if (outcome === 'error') await expect(service.waitForStartupSignal(runtime.containerName, 'ready')).rejects.toThrow('原日志读取失败');
+        else expect(await service.waitForStartupSignal(runtime.containerName, 'ready')).toBe(outcome === 'ready');
+        if (outcome !== 'ready') expect(deploymentPhaseBudget.memorySnapshot().some(item => item.key === runtime.containerName)).toBe(true);
+        current = false;
+        const readiness = service.waitForReadiness(runtime.hostPort, undefined, undefined, undefined, runtime.containerName);
+        if (outcome === 'ready' || outcome === 'replaced') { await expect(readiness).rejects.toThrow(outcome === 'ready' ? '原部署资格失效' : '新部署资格失效'); expect(probe).not.toHaveBeenCalled(); }
+        else { await expect(readiness).resolves.toBe(true); expect(probe).toHaveBeenCalledOnce(); }
+        expect(deploymentPhaseBudget.snapshot().ready.active).toEqual([]);
+      } finally {
+        signal.mockRestore(); probe.mockRestore(); deploymentPhaseBudget.releaseMemory(runtime.containerName);
+        setDeploymentPhaseMemoryProvider(null); setBuildGateHostLoadProvider(null);
+      }
+    });
 
     it('should run docker container with correct mounts and env', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
