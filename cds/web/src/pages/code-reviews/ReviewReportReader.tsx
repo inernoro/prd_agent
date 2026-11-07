@@ -17,6 +17,22 @@ const severityClass = (severity: string): string => severity === 'critical' || s
   ? 'bg-[hsl(var(--bad-soft))] text-[hsl(var(--bad))]' : severity === 'medium' ? 'bg-warn-soft text-warn' : 'bg-muted text-muted-foreground';
 const findingTitle = (finding: CodeReviewFinding): string => finding.title || finding.message.split('\n').find(line => line.trim()) || '未提供标题';
 
+export function readableAiExplanation(raw: string): Array<{ label?: string; text: string }> {
+  const text = (value: unknown): string => value == null ? '' : typeof value === 'string' ? value
+    : Array.isArray(value) ? value.map(item => typeof item === 'string' ? item : JSON.stringify(item, null, 2)).join('\n')
+      : typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value);
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.entries(value).map(([key, value]) => ({
+        label: key === 'what' ? '问题说明' : key === 'why' ? '形成原因' : key === 'how' ? '修复思路' : key === 'learn_more' ? '参考资料' : key,
+        text: text(value),
+      })).filter(part => part.text.trim());
+    }
+    return text(value).trim() ? [{ text: text(value) }] : [];
+  } catch { return raw.trim() ? [{ text: raw }] : []; }
+}
+
 export function ReviewReportReader({ task, projectName, onBack, onAction, pending }: { task: CodeReviewTask; projectName: string; onBack: () => void;
   onAction: (action: 'cancel' | 'retry' | 'delivery/retry') => void; pending: boolean }): JSX.Element {
   const [params, setParams] = useSearchParams();
@@ -126,14 +142,19 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
 }
 
 export function FindingDetail({ finding }: { finding: CodeReviewFinding }): JSX.Element {
+  const title = findingTitle(finding);
+  const rest = finding.message.startsWith(`${title}\n\n`) ? finding.message.slice(title.length).trimStart() : '';
+  const explanation = finding.aiExplanation ? readableAiExplanation(finding.aiExplanation) : [];
   return <article aria-label="问题证据详情" className="min-w-0 space-y-5 rounded-lg border border-border bg-card p-5 lg:p-6">
     <div className="flex flex-wrap gap-2 text-sm"><span className={`rounded px-3 py-1 ${severityClass(finding.severity)}`}>{REVIEW_SEVERITY_LABELS[finding.severity]}</span><span className="rounded bg-muted px-3 py-1 text-muted-foreground">{REVIEW_CATEGORIES[finding.category]} · 待验证</span></div>
-    <h2 className="break-words text-2xl font-semibold">{findingTitle(finding)}</h2>
+    <h2 className="break-words text-2xl font-semibold">{title}</h2>
     <p className="break-all font-mono text-sm text-muted-foreground">{finding.filePath}{finding.line ? `:${finding.line}${finding.endLine ? `–${finding.endLine}` : ''}` : ''}</p>
-    <section className="space-y-2"><h3 className="text-base font-medium">问题原因</h3><p className="whitespace-pre-wrap break-words text-base leading-7">{finding.message}</p></section>
+    <section className="space-y-2"><h3 className="text-base font-medium">问题原因</h3><p className="whitespace-pre-wrap break-words text-base leading-7">{rest || finding.message}</p></section>
     {finding.codeSnippet ? <section className="space-y-2"><h3 className="text-base font-medium">代码证据</h3><pre className="max-w-full overflow-x-auto rounded-md bg-[hsl(var(--code-bg))] p-4 font-mono text-sm leading-6 text-[hsl(var(--code-fg))]"><code>{finding.codeSnippet}</code></pre></section> : null}
     <section className="space-y-2"><h3 className="text-base font-medium">修复建议</h3><p className="whitespace-pre-wrap break-words text-base leading-7">{finding.suggestion || '原始结果未提供修复建议，请结合业务语义核实。'}</p></section>
-    {finding.aiExplanation ? <section className="space-y-2"><h3 className="text-base font-medium">AI 解释</h3><p className="whitespace-pre-wrap break-words text-base leading-7 text-muted-foreground">{finding.aiExplanation}</p></section> : null}
+    {explanation.length ? <section className="space-y-3"><h3 className="text-base font-medium">AI 解释</h3><dl className="space-y-3">{explanation.map((part, index) => <div key={index} className="space-y-1">
+      {part.label ? <dt className="text-sm font-medium">{part.label}</dt> : null}<dd className="whitespace-pre-wrap break-words text-base leading-7 text-muted-foreground">{part.text}</dd>
+    </div>)}</dl></section> : null}
     <p className="border-t border-border pt-3 text-sm leading-5 text-muted-foreground">来源：{finding.tool} · 未做运行期验证。原始发现与验证结论分开保留。</p>
   </article>;
 }

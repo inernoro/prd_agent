@@ -8,7 +8,7 @@ import {
   type CodeReviewTask,
 } from '../../web/src/lib/codeReviews.js';
 import { buildCodeReviewDocument, ReviewDetail } from '../../web/src/pages/CodeReviewsPage.js';
-import { FindingDetail } from '../../web/src/pages/code-reviews/ReviewReportReader.js';
+import { FindingDetail, readableAiExplanation } from '../../web/src/pages/code-reviews/ReviewReportReader.js';
 import { AppRail } from '../../web/src/components/layout/AppShell.js';
 
 const { MemoryRouter } = createRequire(path.resolve('web/package.json'))('react-router-dom');
@@ -176,5 +176,22 @@ describe('报告自动跳转隔离', () => {
       expect(rendered).toContain('body{color:navy}'); expect(rendered).toContain('class="original"');
       expect(rendered).toContain('&lt;meta http-equiv="refresh"&gt;');
     }
+  });
+});
+
+
+describe('原生解释面向人阅读', () => {
+  it('解开 JSON Unicode 并展示中文字段，保留原文与参考资料', () => {
+    const raw = '{"what":"\\u8bf7\\u6c42\\u4f2a\\u9020","why":"地址缺少校验","how":"限制上游","learn_more":["CWE-918"]}';
+    expect(readableAiExplanation(raw)).toEqual([{ label: '问题说明', text: '请求伪造' }, { label: '形成原因', text: '地址缺少校验' }, { label: '修复思路', text: '限制上游' }, { label: '参考资料', text: 'CWE-918' }]);
+    expect(readableAiExplanation('原始解释')).toEqual([{ text: '原始解释' }]);
+    expect(readableAiExplanation('null')).toEqual([]); expect(readableAiExplanation('{}')).toEqual([]);
+  });
+  it('只去除重复标题，JSON 内 HTML 与特殊键始终按文本显示', () => {
+    const finding = { title: '唯一标题', message: '唯一标题\n\n真正原因', filePath: 'src/a.ts', category: 'security' as const, severity: 'high' as const, verified: false as const, tool: 'DeepAudit', aiExplanation: '{"what":"<script>unsafe()</script>","__proto__":"原始字段"}' };
+    const rendered = renderToStaticMarkup(createElement(FindingDetail, { finding }));
+    expect(rendered.match(/唯一标题/g)).toHaveLength(1); expect(rendered).toContain('真正原因');
+    expect(rendered).toContain('&lt;script&gt;unsafe()&lt;/script&gt;'); expect(rendered).not.toContain('<script>'); expect(rendered).toContain('原始字段');
+    expect(finding.aiExplanation).toContain('what');
   });
 });
