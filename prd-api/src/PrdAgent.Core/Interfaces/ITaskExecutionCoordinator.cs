@@ -13,6 +13,17 @@ public interface ITaskExecutionCoordinator
     Task<bool> ValidateHashAsync(string permitId, string? runId, string ownerHash, long fence,
         bool beforeDispatch, CancellationToken ct, string? businessRunId = null);
     Task<bool> CompleteAsync(TaskExecutionLeaseProof proof, CancellationToken ct);
+    Task BindVideoReceiptAsync(string permitId, string runId, VideoReceiptTarget target, string tenantId, CancellationToken ct)
+        => Task.FromException(new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_UNSUPPORTED", "当前执行器不支持受限核账。"));
+    Task<TaskExecutionLease> AcquireVideoReceiptAsync(string permitId, string runId, CancellationToken ct)
+        => Task.FromException<TaskExecutionLease>(new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_UNSUPPORTED", "当前执行器不支持受限核账。"));
+    Task<bool> ValidateVideoReceiptAsync(TaskExecutionLeaseProof proof, VideoReceiptTarget target, bool beforeDispatch, CancellationToken ct)
+        => Task.FromResult(false);
+    Task<bool> RenewVideoReceiptAsync(TaskExecutionLeaseProof proof, VideoReceiptTarget target, CancellationToken ct)
+        => Task.FromResult(false);
+    Task<bool> ReleaseVideoReceiptAsync(TaskExecutionLeaseProof proof, VideoReceiptTarget target, CancellationToken ct)
+        => Task.FromResult(false);
+    Task RevokeVideoReceiptAsync(string permitId, string runId, CancellationToken ct) => RevokeAsync(permitId, runId, ct);
     Task<bool> TryReleaseForRetryAsync(TaskExecutionLeaseProof proof, CancellationToken ct);
     Task RevokeAsync(string permitId, string? runId, CancellationToken ct);
     Task ChangeActorAuthorizationAsync(string tenantId, string actorId, bool enabled, CancellationToken ct);
@@ -47,18 +58,20 @@ public sealed class TaskExecutionLease : IAsyncDisposable
     private readonly CancellationTokenSource _lost = new();
     private readonly Task _renewal;
     private readonly bool _borrowed;
+    private readonly VideoReceiptTarget? _videoReceipt;
     private int _disposed;
 
     public TaskExecutionLeaseProof Proof { get; }
-    public TaskExecutionIdentity Identity => new(Proof.PermitId, Proof.RunId, Proof);
+    public TaskExecutionIdentity Identity => new(Proof.PermitId, Proof.RunId, Proof, _videoReceipt);
     public CancellationToken LostToken => _lost.Token;
     public bool IsLost => _lost.IsCancellationRequested;
 
-    public TaskExecutionLease(ITaskExecutionCoordinator coordinator, TaskExecutionLeaseProof proof, bool borrowed = false)
+    public TaskExecutionLease(ITaskExecutionCoordinator coordinator, TaskExecutionLeaseProof proof, bool borrowed = false, VideoReceiptTarget? videoReceipt = null)
     {
         _coordinator = coordinator;
         Proof = proof;
         _borrowed = borrowed;
+        _videoReceipt = videoReceipt;
         _renewal = borrowed ? Task.CompletedTask : RenewAsync();
     }
 
@@ -69,7 +82,8 @@ public sealed class TaskExecutionLease : IAsyncDisposable
             while (!_stop.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(10), _stop.Token);
-                if (!await _coordinator.RenewAsync(Proof, _stop.Token))
+                if (!await (_videoReceipt is null ? _coordinator.RenewAsync(Proof, _stop.Token)
+                    : _coordinator.RenewVideoReceiptAsync(Proof, _videoReceipt, _stop.Token)))
                 {
                     _lost.Cancel();
                     return;
@@ -82,7 +96,7 @@ public sealed class TaskExecutionLease : IAsyncDisposable
 
     /// <summary>仅独占租约可以交还明确未发送的任务；代次与发送计数由持久协调器原子核验。</summary>
     public Task<bool> TryReleaseForRetryAsync(CancellationToken ct = default)
-        => _borrowed || Volatile.Read(ref _disposed) != 0
+        => _borrowed || _videoReceipt is not null || Volatile.Read(ref _disposed) != 0
             ? Task.FromResult(false)
             : _coordinator.TryReleaseForRetryAsync(Proof, ct);
 
@@ -92,12 +106,17 @@ public sealed class TaskExecutionLease : IAsyncDisposable
         _stop.Cancel();
         try { await _renewal; }
         catch (OperationCanceledException) { }
-        if (!_borrowed)
+        if (!_borrowed && _videoReceipt is null)
         {
             try
             {
                 if (!await _coordinator.CompleteAsync(Proof, CancellationToken.None)) _lost.Cancel();
             }
+            catch { _lost.Cancel(); }
+        }
+        if (_videoReceipt is not null)
+        {
+            try { await _coordinator.ReleaseVideoReceiptAsync(Proof, _videoReceipt, CancellationToken.None); }
             catch { _lost.Cancel(); }
         }
         _stop.Dispose();

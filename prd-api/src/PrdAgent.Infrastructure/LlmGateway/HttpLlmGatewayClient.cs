@@ -292,6 +292,12 @@ public sealed class HttpLlmGatewayClient
         // 先核验任务，再落盘 multipart：没有许可的旧任务不能先消耗对象存储。
         var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
         using var authorizedMessage = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw");
+        if (TaskExecutionContext.Current?.VideoReceipt is { } receipt)
+        {
+            if (!receipt.Matches(request, resolution))
+                throw new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_TARGET_DENIED", "核账只能查询原视频作业、模型与供应通道。");
+            authorizedMessage.Options.Set(AuthorizedGatewayRequest.RawOperation, request);
+        }
         ApplyRoutingHeaders(authorizedMessage, request.AppCallerCode, httpTaggedContext);
         try
         {

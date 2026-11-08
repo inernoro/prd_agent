@@ -1465,6 +1465,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         CancellationToken ct = default)
     {
         _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
+        _invocationAuthority?.AssertRawTarget(request, resolution);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
             return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
 
