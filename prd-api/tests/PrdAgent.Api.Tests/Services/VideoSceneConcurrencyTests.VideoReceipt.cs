@@ -60,6 +60,7 @@ public partial class VideoSceneConcurrencyTests
     [InlineData("permit")]
     [InlineData("expiry")]
     [InlineData("delete")]
+    [InlineData("delete-intent")]
     [InlineData("call-cap")]
     public async Task CancelledReceipt_RevocationAndOriginalLimitsStillDeny(string stop)
     {
@@ -81,6 +82,7 @@ public partial class VideoSceneConcurrencyTests
             case "permit": await coordinator.RevokeAsync(run.TaskPermitId!, null, default); break;
             case "expiry": await permits.UpdateOneAsync(x => x.Id == run.TaskPermitId, Builders<GatewayTaskPermitRecord>.Update.Set(x => x.ExpiresAt, DateTime.UtcNow.AddSeconds(-1))); break;
             case "delete": await test.Context.VideoGenRuns.DeleteOneAsync(x => x.Id == run.Id); break;
+            case "delete-intent": await test.Context.VideoGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<VideoGenRun>.Update.Set(x => x.DeletionRequestedAt, DateTime.UtcNow)); break;
             case "call-cap": await permits.UpdateOneAsync(x => x.Id == run.TaskPermitId, Builders<GatewayTaskPermitRecord>.Update.Set(x => x.CallCount, 4)); break;
         }
         // A previously reserved last call may commit a receipt; a new call must never obtain fresh allowance.

@@ -151,7 +151,7 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
                 ["OwnerAdminId"] = target.OwnerId, ["Mode"] = VideoGenMode.Direct,
                 ["DirectVideoJobId"] = target.JobId, ["DirectVideoModel"] = target.Model,
                 ["DirectVideoOfferingId"] = target.OfferingId, ["CancelRequested"] = true,
-                ["Status"] = VideoGenRunStatus.Cancelled
+                ["Status"] = VideoGenRunStatus.Cancelled, ["DeletionRequestedAt"] = BsonNull.Value
             };
             return;
         }
@@ -230,7 +230,9 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
             if (document is not ITaskAuthorizedRun task || string.IsNullOrWhiteSpace(task.TaskPermitId)) continue; // 旧记录本身没有可用的新执行授权。
             if (document is VideoGenRun video)
             {
-                if (method.Contains("Delete", StringComparison.Ordinal))
+                if (method.Contains("Delete", StringComparison.Ordinal)
+                    || set?.GetValue("DeletionRequestedAt", BsonNull.Value).IsBsonNull == false
+                    || replacement is VideoGenRun { DeletionRequestedAt: not null })
                     await coordinator.RevokeVideoReceiptAsync(task.TaskPermitId, video.Id, CancellationToken.None);
                 else if (video.Mode == VideoGenMode.Direct && !string.IsNullOrWhiteSpace(video.DirectVideoJobId)
                     && !string.IsNullOrWhiteSpace(video.DirectVideoModel) && !string.IsNullOrWhiteSpace(video.DirectVideoOfferingId)
@@ -274,10 +276,11 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
         if (type?.IsEnum == true && Enum.TryParse(type, "Cancelled", out var value)) values.Add(Convert.ToInt32(value));
         return values;
     }
-    private static bool IsLifecycleField(string field) => field is "CancelRequested" or "CancelRequestedAt" or "Status" or "State"
+    private static bool IsLifecycleField(string field) => field is "DeletionRequestedAt" or "CancelRequested" or "CancelRequestedAt" or "Status" or "State"
         or "TaskPermitId" or "RevokedAt" or "IsActive" or "Scopes" or "ScopeMode" or "ApiKeyHash" or "OwnerUserId" or "ExpiresAt";
     private static bool IsCancellation(string field, BsonValue value)
     {
+        if (typeof(T) == typeof(VideoGenRun) && field == "DeletionRequestedAt") return !value.IsBsonNull;
         if (field == "CancelRequested") return value.IsBoolean && value.AsBoolean;
         if (field == "CancelRequestedAt") return !value.IsBsonNull;
         if (field is not ("Status" or "State")) return false;
