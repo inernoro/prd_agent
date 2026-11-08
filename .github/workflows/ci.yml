@@ -112,6 +112,8 @@ jobs:
               - '.github/workflows/ci.yml'
             release_scripts:
               - 'exec_dep.sh'
+              - '.github/workflows/web-latest-pages.yml'
+              - 'scripts/lib/release-artifacts.py'
               - 'scripts/lib/static-release.sh'
               - 'scripts/lib/gateway-bind-mount.sh'
               - 'scripts/prd-agent-public-surface-smoke.py'
