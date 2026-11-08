@@ -80,6 +80,10 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.process.start()
         self.addCleanup(self.network.stop)
         self.addCleanup(self.process.stop)
+        configuration = mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_PREFIX": "",
+            "PRD_AGENT_ARTIFACT_DIAGNOSTICS": str(self.root / "public-download-diagnostics.jsonl")})
+        configuration.start()
+        self.addCleanup(configuration.stop)
 
     def make_bundle(self, label="original", commit=COMMIT_A, ref=None, payload=b"original application"):
         ref = ref or "sha-" + commit
@@ -561,6 +565,56 @@ class ReleaseArtifactTests(unittest.TestCase):
                 artifacts.read_url("https://github.com/example/map/asset", limit=3)
         with self.assertRaises(artifacts.ArtifactError):
             artifacts.read_url("http://github.com/example/map/asset")
+
+    def test_configured_public_prefix_fetches_verified_bundle_without_tokens_and_explicit_base_wins(self):
+        directory = self.make_bundle()
+        canonical = artifacts.urls(REPO, REF_A)
+        prefix = "https://get.miduo.org/"
+        expected = [prefix + url for url in canonical]
+        source = (ROOT / ".github/workflows/web-latest-pages.yml").read_text()
+        workflow_env = source.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0]
+        self.assertRegex(workflow_env, r"(?m)^  PRD_AGENT_RELEASE_DOWNLOAD_PREFIX: https://get\.miduo\.org/$")
+        requests = []
+
+        def download(request, **kwargs):
+            requests.append(request)
+            self.assertIn(request.full_url, expected)
+            return io.BytesIO((directory / request.full_url.rsplit("/", 1)[1]).read_bytes())
+        with mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_PREFIX": prefix,
+                "GH_TOKEN": "test-credential-must-never-be-forwarded", "GITHUB_TOKEN": "another-test-credential"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=download):
+            self.assertEqual(artifacts.urls(REPO, REF_A), expected)
+            explicit = "https://audited.invalid/fixed-bundle"
+            self.assertEqual(artifacts.urls(REPO, REF_A, explicit), [explicit + "/" + name for name in artifacts.names(REF_A)])
+            result = artifacts.fetch(REPO, REF_A, self.root / "prefixed-fetch", commit=COMMIT_A)
+        self.assertEqual(result["urls"], expected)
+        self.assertEqual(result["zipSha256"], artifacts.validate(directory, REF_A)["zipSha256"])
+        self.assertEqual([request.full_url for request in requests], expected)
+        for request in requests:
+            self.assertNotIn("authorization", {name.lower() for name in request.headers})
+            self.assertNotIn("credential", json.dumps(request.headers))
+
+    def test_public_source_failure_records_safe_diagnostics_without_fallback_and_404_latest_stays_absent(self):
+        directory = self.make_bundle()
+        prefix = "https://get.miduo.org/"
+        diagnostic = Path(os.environ["PRD_AGENT_ARTIFACT_DIAGNOSTICS"])
+        secret_reason = "https://signed.invalid/file?token=must-not-appear"
+        with mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_PREFIX": prefix}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=urllib.error.HTTPError("https://public.invalid", 503, secret_reason, {}, None)) as opening:
+            with self.assertRaises(artifacts.ArtifactError) as caught:
+                artifacts.fetch(REPO, REF_A, self.root / "unavailable-fetch")
+        self.assertEqual(opening.call_count, 1)
+        self.assertTrue(opening.call_args.args[0].full_url.startswith(prefix))
+        self.assertNotIn(secret_reason, str(caught.exception))
+        records = [json.loads(line) for line in diagnostic.read_text().splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(set(records[0]), {"operation", "endpoint", "httpStatus", "errorType", "reasonType"})
+        self.assertEqual(records[0]["httpStatus"], 503)
+        self.assertEqual(records[0]["errorType"], "HTTPError")
+        self.assertNotIn("token=", diagnostic.read_text())
+        self.assertEqual(list((self.root / "unavailable-fetch").iterdir()), [])
+        with mock.patch.dict(os.environ, {"PUBLISH_LATEST": "false"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=urllib.error.HTTPError("https://pages.invalid/latest", 404, secret_reason, {}, None)) as opening:
+            artifacts.pages(directory, REF_A, self.root / "empty-old-pages", REPO)
+        self.assertEqual(opening.call_count, 3)
+        self.assertFalse((self.root / "empty-old-pages/prd-admin-dist-latest.zip").exists())
 
     def test_network_and_gh_errors_do_not_leak_signed_urls(self):
         signed = "https://private.invalid/asset?secret=must-not-appear"

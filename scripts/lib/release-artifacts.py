@@ -41,7 +41,11 @@ def names(ref):
 def urls(repo, ref, base=None):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise ArtifactError("Invalid repository identity")
-    base = base or f"https://github.com/{repo}/releases/download/web-{checked_ref(ref)}"
+    if base is None:
+        base = f"https://github.com/{repo}/releases/download/web-{checked_ref(ref)}"
+        prefix = os.environ.get("PRD_AGENT_RELEASE_DOWNLOAD_PREFIX", "")
+        if prefix:
+            base = prefix.rstrip("/") + "/" + base
     return [base.rstrip("/") + "/" + name for name in names(ref)]
 
 
@@ -54,7 +58,12 @@ def read_url(url, limit=100 * 1024 * 1024):
             data = response.read(limit + 1)
     except (urllib.error.URLError, TimeoutError) as error:
         status = getattr(error, "code", "unavailable")
-        raise ArtifactError(f"Artifact source unavailable ({status}); no Pages fallback") from None
+        reason_type = type(getattr(error, "reason", error)).__name__
+        path = Path(os.environ.get("PRD_AGENT_ARTIFACT_DIAGNOSTICS", str(Path(tempfile.gettempdir()) / f"map-release-artifact-diagnostics-{os.getpid()}.jsonl")))
+        with path.open("a") as log:
+            log.write(json.dumps({"operation": "public_artifact_get", "endpoint": url.split("?")[0],
+                                  "httpStatus": status, "errorType": type(error).__name__, "reasonType": reason_type}) + "\n")
+        raise ArtifactError(f"Artifact source unavailable ({status}); reasonType={reason_type}; no Pages fallback; diagnostic={path}") from None
     if len(data) > limit:
         raise ArtifactError("Artifact exceeds the supported size")
     return data
