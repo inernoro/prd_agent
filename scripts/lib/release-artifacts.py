@@ -125,7 +125,21 @@ def gh(*args, missing_ok=False):
 
 def release(repo, ref):
     data = gh("api", f"repos/{repo}/releases/tags/web-{checked_ref(ref)}", missing_ok=True)
-    return None if data is None else json.loads(data)
+    if data is not None:
+        return json.loads(data)
+    # A new draft does not create its Git tag until publication. Discover it
+    # by ID rather than incorrectly treating a tag-endpoint 404 as absence.
+    matches = []
+    for number in range(1, 1001):
+        page = json.loads(gh("api", f"repos/{repo}/releases?per_page=100&page={number}"))
+        matches.extend(item for item in page if item["tag_name"] == "web-" + ref)
+        if len(page) < 100:
+            break
+    else:
+        raise ArtifactError("Release listing exceeded the supported safety bound")
+    if len(matches) > 1:
+        raise ArtifactError("Multiple drafts claim this ref; manual original-bundle recovery required")
+    return matches[0] if matches else None
 
 
 def restore(repo, ref, output, commit=None):
@@ -252,37 +266,60 @@ cat "$bridge_dir/evidence.json"
 '''
 
 
-def publish(repo, ref, directory):
+def publish(repo, ref, directory, resume_id=None, original_sha256=None):
     # Per-ref workflow concurrency serializes writers. Also handle a create race
     # without clobber: a winner must already be complete and validate publicly.
     local = validate(directory, ref)
+    if (resume_id is None) != (original_sha256 is None):
+        raise ArtifactError("Draft recovery requires both the exact release ID and original workflow ZIP hash")
+    if original_sha256 and original_sha256 != local["zipSha256"]:
+        raise ArtifactError("Recovery ZIP is not the audited original workflow bundle")
     existing = release(repo, ref)
+    if resume_id is not None and (existing is None or not existing.get("draft")):
+        raise ArtifactError("Recovery requires the matching existing unpublished draft; no new release was created")
     if existing and not existing.get("draft"):
         with tempfile.TemporaryDirectory() as temporary:
             return {"reused": True, **restore(repo, ref, temporary, local["commit"])}
     if existing:
         # A draft might still belong to another writer. Never take it over.
-        raise ArtifactError("Unpublished draft exists; recover the original workflow bundle, never overwrite")
+        if resume_id != existing["id"] or not original_sha256 or original_sha256 != local["zipSha256"]:
+            raise ArtifactError("Unpublished draft exists; explicit ID and original workflow ZIP hash required to recover")
+        if existing.get("target_commitish") != local["commit"]:
+            raise ArtifactError("Draft target commit does not match the original workflow bundle")
     else:
         manifest = json.loads((Path(directory) / names(ref)[2]).read_text())
         try:
-            gh("api", f"repos/{repo}/releases", "-f", f"tag_name=web-{ref}", "-f", f"target_commitish={manifest['commit']}",
-               "-f", f"name=Web bundle {ref}", "-F", "draft=true", "-f", "make_latest=false")
+            existing = json.loads(gh("api", f"repos/{repo}/releases", "-f", f"tag_name=web-{ref}", "-f", f"target_commitish={manifest['commit']}",
+               "-f", f"name=Web bundle {ref}", "-F", "draft=true", "-f", "make_latest=false"))
         except ArtifactError:
             winner = release(repo, ref)
             if winner and not winner.get("draft"):
                 with tempfile.TemporaryDirectory() as temporary:
                     return {"reused": True, **restore(repo, ref, temporary, local["commit"])}
             raise
-    gh("release", "upload", f"web-{ref}", *[str(Path(directory) / n) for n in names(ref)], "--repo", repo)
-    # Verify the exact remote draft bytes before making the set consumable.
+    release_id = existing["id"]
+    # Use IDs throughout the draft phase: there may not yet be a Git tag.
     with tempfile.TemporaryDirectory() as temporary:
-        gh("release", "download", f"web-{ref}", "--repo", repo, "--dir", temporary)
+        assets = {asset["name"]: asset for asset in existing.get("assets", [])}
+        if set(assets) - set(names(ref)):
+            raise ArtifactError("Draft has unrelated assets; refusing to change it")
+        # First verify every existing byte before uploading anything missing.
+        for name, asset in assets.items():
+            data = gh("api", f"repos/{repo}/releases/assets/{asset['id']}", "-H", "Accept: application/octet-stream")
+            if data != (Path(directory) / name).read_bytes():
+                raise ArtifactError("Draft assets differ from the original bundle; refusing to overwrite")
+            (Path(temporary) / name).write_bytes(data)
+        for name in names(ref):
+            if name not in assets:
+                asset = json.loads(gh("api", f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={name}",
+                                      "--method", "POST", "-H", "Content-Type: application/octet-stream", "--input", str(Path(directory) / name)))
+                data = gh("api", f"repos/{repo}/releases/assets/{asset['id']}", "-H", "Accept: application/octet-stream")
+                (Path(temporary) / name).write_bytes(data)
         remote = validate(temporary, ref)
         local = validate(directory, ref)
         if remote["files"] != local["files"]:
             raise ArtifactError("Remote draft bytes differ from the original bundle")
-    gh("release", "edit", f"web-{ref}", "--repo", repo, "--draft=false", "--latest=false")
+    gh("api", f"repos/{repo}/releases/{release_id}", "--method", "PATCH", "-F", "draft=false", "-f", "make_latest=false")
     with tempfile.TemporaryDirectory() as temporary:
         return {"reused": False, **fetch(repo, ref, temporary)}
 
@@ -299,10 +336,14 @@ def main():
     parser.add_argument("--base-url")
     parser.add_argument("--github-output")
     parser.add_argument("--env-file", help="For the audited legacy consumer bridge; written only after full validation")
+    parser.add_argument("--resume-draft-id", type=int, help="Explicit recovery only, with the original workflow bundle hash")
+    parser.add_argument("--original-sha256")
     args = parser.parse_args()
     try:
         if args.env_file and args.command != "fetch":
             raise ArtifactError("Only a validated fetch can export legacy consumer inputs")
+        if (args.resume_draft_id or args.original_sha256) and args.command != "publish":
+            raise ArtifactError("Draft recovery is only supported by publish")
         if args.command == "bundle":
             result = bundle(args.dist, args.directory, args.repo, args.commit, args.ref)
         elif args.command == "alias":
@@ -316,7 +357,7 @@ def main():
         elif args.command == "restore":
             result = restore(args.repo, args.ref, args.directory, args.commit)
         else:
-            result = publish(args.repo, args.ref, args.directory)
+            result = publish(args.repo, args.ref, args.directory, args.resume_draft_id, args.original_sha256)
         if args.github_output:
             with open(args.github_output, "a") as output:
                 output.write("exists=" + str(result.get("exists", False)).lower() + "\n")

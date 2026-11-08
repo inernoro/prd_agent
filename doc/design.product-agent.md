@@ -67,7 +67,7 @@
 
 - [doc/spec.srs.md](./spec.srs.md) 附录D：需求可追溯矩阵 RTM（方法论来源）
 - [doc/design.defect-agent.md](./design.defect-agent.md)：缺陷管理（追溯引用对接）
-- `.claude/rules/app-identity.md`：appKey 隔离
+- 按平台应用身份约束隔离 appKey
 - [doc/debt.product-agent.md](./debt.product-agent.md)：已知边界与后续债务
 
 ## 九、风险

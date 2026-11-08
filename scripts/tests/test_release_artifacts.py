@@ -119,8 +119,9 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.resign_zip(directory)
 
     def published(self, ref=REF_A, draft=False, asset_names=None):
-        return {"draft": draft, "assets": [{"name": name} for name in (
-            artifacts.names(ref) if asset_names is None else asset_names)]}
+        return {"id": 701, "tag_name": "web-" + ref, "target_commitish": ref[4:] if ref.startswith("sha-") else COMMIT_A,
+                "draft": draft, "assets": [{"id": 800 + index, "name": name} for index, name in enumerate(
+                    artifacts.names(ref) if asset_names is None else asset_names)]}
 
     def public_reader(self, bundles):
         payloads = {url: (directory / name).read_bytes()
@@ -308,13 +309,35 @@ class ReleaseArtifactTests(unittest.TestCase):
                     artifacts.publish(REPO, REF_A, directory)
                 self.assertEqual(gh.call_count, 1)
 
-    def publishing_gh(self, remote, calls):
+    def publishing_gh(self, remote, calls, existing=None):
+        assets = {asset["id"]: asset["name"] for asset in (existing or {}).get("assets", [])}
+
         def run(*args, **kwargs):
             calls.append(args)
-            if args[:2] == ("release", "download"):
-                output = Path(args[args.index("--dir") + 1])
-                for name in artifacts.names(REF_A):
-                    shutil.copyfile(remote / name, output / name)
+            self.assertEqual(args[0], "api", "Draft operations must use IDs, not tag-based gh release commands")
+            endpoint = args[1]
+            if endpoint == f"repos/{REPO}/releases":
+                return json.dumps(self.published(draft=True, asset_names=[])).encode()
+            upload_prefix = f"https://uploads.github.com/repos/{REPO}/releases/701/assets?name="
+            if endpoint.startswith(upload_prefix):
+                name = endpoint.removeprefix(upload_prefix)
+                self.assertIn(name, artifacts.names(REF_A))
+                self.assertEqual(args[args.index("--method") + 1], "POST")
+                self.assertIn("Content-Type: application/octet-stream", args)
+                self.assertEqual(Path(args[args.index("--input") + 1]).name, name)
+                asset_id = 900 + len(assets)
+                assets[asset_id] = name
+                return json.dumps({"id": asset_id, "name": name}).encode()
+            read_prefix = f"repos/{REPO}/releases/assets/"
+            if endpoint.startswith(read_prefix):
+                self.assertIn("Accept: application/octet-stream", args)
+                name = assets[int(endpoint.removeprefix(read_prefix))]
+                path = remote / name
+                return path.read_bytes() if path.exists() else b""
+            self.assertEqual(endpoint, f"repos/{REPO}/releases/701")
+            self.assertEqual(args[args.index("--method") + 1], "PATCH")
+            self.assertIn("draft=false", args)
+            self.assertIn("make_latest=false", args)
             return b"{}"
         return run
 
@@ -324,13 +347,16 @@ class ReleaseArtifactTests(unittest.TestCase):
         with mock.patch.object(artifacts, "release", return_value=None), mock.patch.object(artifacts, "gh", side_effect=self.publishing_gh(directory, calls)), mock.patch.object(artifacts, "read_url", side_effect=self.public_reader({REF_A: directory})):
             result = artifacts.publish(REPO, REF_A, directory)
         self.assertFalse(result["reused"])
-        self.assertEqual([call[:2] for call in calls], [("api", f"repos/{REPO}/releases"), ("release", "upload"), ("release", "download"), ("release", "edit")])
+        self.assertEqual(calls[0][:2], ("api", f"repos/{REPO}/releases"))
         self.assertIn("make_latest=false", calls[0])
         self.assertIn("draft=true", calls[0])
-        self.assertIn("--latest=false", calls[-1])
-        self.assertIn("--draft=false", calls[-1])
+        self.assertEqual(len(calls), 8)  # create, three upload/read pairs, publish
+        self.assertEqual([call[1].rsplit("?name=", 1)[-1] for call in calls[1:-1:2]], artifacts.names(REF_A))
+        self.assertIn("make_latest=false", calls[-1])
+        self.assertIn("draft=false", calls[-1])
+        self.assertEqual(calls[-1][:4], ("api", f"repos/{REPO}/releases/701", "--method", "PATCH"))
         self.assertFalse(any("--clobber" in call for call in calls))
-        self.assertEqual([Path(arg).name for arg in calls[1][3:6]], artifacts.names(REF_A))
+        self.assertFalse(any("/releases/tags/" in call[1] for call in calls))
 
     def test_publish_validates_every_local_file_before_any_github_operation(self):
         for label in ("missing-manifest", "bad-hash", "bad-entry"):
@@ -356,19 +382,96 @@ class ReleaseArtifactTests(unittest.TestCase):
         for remote in (different, incomplete):
             with self.subTest(remote=remote.name):
                 calls = []
-
-                def run(*args, **kwargs):
-                    calls.append(args)
-                    if args[:2] == ("release", "download"):
-                        output = Path(args[args.index("--dir") + 1])
-                        for source in remote.iterdir():
-                            shutil.copyfile(source, output / source.name)
-                    return b"{}"
-                with mock.patch.object(artifacts, "release", return_value=None), mock.patch.object(artifacts, "gh", side_effect=run), mock.patch.object(artifacts, "read_url") as read:
+                with mock.patch.object(artifacts, "release", return_value=None), mock.patch.object(artifacts, "gh", side_effect=self.publishing_gh(remote, calls)), mock.patch.object(artifacts, "read_url") as read:
                     with self.assertRaises(artifacts.ArtifactError):
                         artifacts.publish(REPO, REF_A, local)
-                self.assertFalse(any(call[:2] == ("release", "edit") for call in calls))
+                self.assertFalse(any("PATCH" in call for call in calls))
                 read.assert_not_called()
+
+    def test_release_finds_tagless_draft_on_later_paginated_page(self):
+        draft = self.published(draft=True, asset_names=[])
+        other = self.published(REF_B, draft=True)
+        with mock.patch.object(artifacts, "gh", side_effect=[None, json.dumps([other] * 100).encode(), json.dumps([draft]).encode()]) as gh:
+            self.assertEqual(artifacts.release(REPO, REF_A), draft)
+        self.assertEqual(gh.call_args_list, [
+            mock.call("api", f"repos/{REPO}/releases/tags/web-{REF_A}", missing_ok=True),
+            mock.call("api", f"repos/{REPO}/releases?per_page=100&page=1"),
+            mock.call("api", f"repos/{REPO}/releases?per_page=100&page=2")])
+
+    def test_release_does_not_list_when_tag_endpoint_finds_published_release(self):
+        existing = self.published()
+        with mock.patch.object(artifacts, "gh", return_value=json.dumps(existing).encode()) as gh:
+            self.assertEqual(artifacts.release(REPO, REF_A), existing)
+        self.assertEqual(gh.call_count, 1)
+
+    def test_release_pagination_absence_and_duplicate_ref_fail_closed(self):
+        for records, duplicate in (([[self.published(REF_B)]], False),
+                                   ([[self.published(draft=True)] + [self.published(REF_B)] * 99, [self.published(draft=True)]], True)):
+            with self.subTest(duplicate=duplicate), mock.patch.object(artifacts, "gh", side_effect=[None, *[json.dumps(page).encode() for page in records]]) as gh:
+                if duplicate:
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.release(REPO, REF_A)
+                else:
+                    self.assertIsNone(artifacts.release(REPO, REF_A))
+                self.assertEqual(gh.call_count, 1 + len(records))
+
+    def test_explicit_resume_verifies_all_original_assets_before_uploading_only_missing(self):
+        directory = self.make_bundle()
+        digest = artifacts.validate(directory, REF_A)["zipSha256"]
+        for count in (0, 1, 3):
+            with self.subTest(existing_assets=count):
+                existing = self.published(draft=True, asset_names=artifacts.names(REF_A)[:count])
+                calls = []
+                with mock.patch.object(artifacts, "release", return_value=existing), mock.patch.object(artifacts, "gh", side_effect=self.publishing_gh(directory, calls, existing)), mock.patch.object(artifacts, "read_url", side_effect=self.public_reader({REF_A: directory})):
+                    result = artifacts.publish(REPO, REF_A, directory, resume_id=701, original_sha256=digest)
+                self.assertFalse(result["reused"])
+                self.assertEqual(result["zipSha256"], digest)
+                self.assertEqual([call[1] for call in calls[:count]], [f"repos/{REPO}/releases/assets/{800 + index}" for index in range(count)])
+                uploads = [call[1].rsplit("?name=", 1)[1] for call in calls if call[1].startswith("https://uploads.github.com/")]
+                self.assertEqual(uploads, artifacts.names(REF_A)[count:])
+                self.assertEqual(calls[-1][:4], ("api", f"repos/{REPO}/releases/701", "--method", "PATCH"))
+                self.assertFalse(any(call[1] == f"repos/{REPO}/releases" for call in calls))
+                self.assertFalse(any("--clobber" in call for call in calls))
+
+    def test_resume_requires_matching_id_original_hash_and_target_before_remote_mutation(self):
+        directory = self.make_bundle()
+        digest = artifacts.validate(directory, REF_A)["zipSha256"]
+        wrong_target = self.published(draft=True, asset_names=[])
+        wrong_target["target_commitish"] = COMMIT_B
+        cases = ((self.published(draft=True, asset_names=[]), 702, digest),
+                 (self.published(draft=True, asset_names=[]), 701, None),
+                 (self.published(draft=True, asset_names=[]), None, digest),
+                 (self.published(draft=True, asset_names=[]), 701, "0" * 64),
+                 (wrong_target, 701, digest), (None, 701, digest),
+                 (None, 701, None), (None, None, digest))
+        for existing, resume_id, original_hash in cases:
+            with self.subTest(existing=existing, resume_id=resume_id, original_hash=original_hash), mock.patch.object(artifacts, "release", return_value=existing), mock.patch.object(artifacts, "gh") as gh, mock.patch.object(artifacts, "read_url") as read:
+                with self.assertRaises(artifacts.ArtifactError):
+                    artifacts.publish(REPO, REF_A, directory, resume_id=resume_id, original_sha256=original_hash)
+                gh.assert_not_called()
+                read.assert_not_called()
+
+    def test_resume_rejects_conflicting_or_unrelated_existing_assets_before_any_upload(self):
+        original = self.make_bundle()
+        changed = self.make_bundle("conflicting-remote", payload=b"different bytes must never overwrite original")
+        digest = artifacts.validate(original, REF_A)["zipSha256"]
+        for unrelated in (False, True):
+            with self.subTest(unrelated=unrelated):
+                existing = self.published(draft=True, asset_names=["unrelated.zip"] if unrelated else artifacts.names(REF_A)[:1])
+                calls = []
+                with mock.patch.object(artifacts, "release", return_value=existing), mock.patch.object(artifacts, "gh", side_effect=self.publishing_gh(changed, calls, existing)), mock.patch.object(artifacts, "read_url") as read:
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.publish(REPO, REF_A, original, resume_id=701, original_sha256=digest)
+                self.assertTrue(all("/releases/assets/" in call[1] for call in calls))
+                read.assert_not_called()
+
+    def test_cli_recovery_arguments_are_publish_only(self):
+        for command in ("fetch", "bundle", "restore", "pages", "alias", "validate"):
+            with self.subTest(command=command), mock.patch.object(artifacts, command) as operation:
+                status, _, _ = self.cli(command, "--ref", REF_A, "--directory", str(self.root),
+                    "--resume-draft-id", "701", "--original-sha256", "0" * 64)
+                self.assertEqual(status, 1)
+                operation.assert_not_called()
 
     def test_release_tag_alias_preserves_original_zip_and_requires_expected_commit(self):
         directory = self.make_bundle()
