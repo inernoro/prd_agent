@@ -291,7 +291,12 @@ public class ProductScheduledNotificationLifecycleTests
         public MongoDbContext Db { get; }
         public IDataProtectionProvider Protection { get; } = new EphemeralDataProtectionProvider();
         public FakeHttp Http { get; } = new();
-        public IConfiguration Configuration { get; } = new ConfigurationBuilder().Build();
+        public IConfiguration Configuration { get; } = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                [PrdAgent.Infrastructure.Security.DeploymentAuthority.DeploymentIdentityKey] = "scheduled-notification:test",
+                [PrdAgent.Infrastructure.Security.DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+            }).Build();
 
         public Fixture()
         {

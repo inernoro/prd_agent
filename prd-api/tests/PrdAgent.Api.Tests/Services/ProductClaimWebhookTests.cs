@@ -357,7 +357,7 @@ public class ProductClaimWebhookTests
             await File.WriteAllBytesAsync(Path.Combine(SeedDirectory, "url.enc"), rsa.Encrypt(Encoding.UTF8.GetBytes(url), RSAEncryptionPadding.OaepSHA256));
         }
         public Task<bool> BootstrapAsync(bool preview = false) => ProductClaimWebhookBootstrap.TryInitializeAsync(Db, Protection,
-            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["CDS_PROJECT_ID"] = preview ? "prd-agent" : null }).Build(), SeedDirectory);
+            BuildConfiguration(preview), SeedDirectory);
         public Fixture()
         {
             var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27018";
@@ -376,11 +376,16 @@ public class ProductClaimWebhookTests
         }
         public ProductClaimWebhookController Controller(bool admin = true, bool preview = false)
         {
-            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
-                ["CDS_PROJECT_ID"] = preview ? "prd-agent" : null,
-            }).Build();
+            var configuration = BuildConfiguration(preview);
             return new(Db, Protection, configuration) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", admin ? "admin" : "member") }, "test")) } } };
         }
+        private static IConfiguration BuildConfiguration(bool preview) => new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CDS_PROJECT_ID"] = preview ? "prd-agent" : null,
+                [PrdAgent.Infrastructure.Security.DeploymentAuthority.DeploymentIdentityKey] = "claim-webhook:test",
+                [PrdAgent.Infrastructure.Security.DeploymentAuthority.SharedScheduledWorkEnabledKey] = "true",
+            }).Build();
         public async Task AddPendingAsync()
         {
             var item = new ProductInitiation { Id = "t", TCode = "T1.2.3", OwnerId = "owner", OwnerName = "负责人", PlanName = "测试方案" };
