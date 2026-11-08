@@ -12,6 +12,35 @@ let root = '';
 afterEach(async () => { if (root) await fs.rm(root, { recursive: true, force: true }); });
 
 describe('CDS 分支的真实 Git 源码快照', () => {
+  it.each(['export-ignore', 'export-subst'])('导出属性不能静默遗漏或改变已选择的提交源码：%s', async (attribute) => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-review-attributes-'));
+    const origin = path.join(root, 'origin.git'), repo = path.join(root, 'repo');
+    const git = (args: string[], cwd = root) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git(['init', '--bare', origin]); git(['clone', origin, repo]);
+    git(['config', 'user.email', 'fixture@example.invalid'], repo); git(['config', 'user.name', 'Local fixture'], repo);
+    git(['checkout', '-b', 'main'], repo);
+    await fs.mkdir(path.join(repo, 'tests'));
+    await fs.writeFile(path.join(repo, 'main.py'), 'print("selected main")\n');
+    const selectedSource = 'revision = "$Format:%H$"\n';
+    await fs.writeFile(path.join(repo, 'tests/security.py'), selectedSource);
+    await fs.writeFile(path.join(repo, '.gitattributes'), `tests/security.py ${attribute}\n`);
+    git(['add', '.'], repo); git(['commit', '-m', '固定导出属性反例'], repo); git(['push', 'origin', 'main'], repo);
+    const commit = git(['rev-parse', 'HEAD'], repo);
+    const real = new ShellExecutor();
+    const shell: IShellExecutor = { exec: real.exec.bind(real), execBackgroundObservation: async (command, options) => real.exec(command, options) };
+    const service = new WorktreeService(shell);
+    const control = { signal: new AbortController().signal, assertCurrent: () => undefined };
+    await expect(service.exportCodeReviewSnapshot(repo, 'main', [], control)).rejects.toThrow('源码快照与所选提交不一致');
+    // Explicit source exclusions remain valid; an archive attribute is not an exclusion policy.
+    const captured = await service.exportCodeReviewSnapshot(repo, 'main', ['tests'], control);
+    expect(captured.commitSha).toBe(commit);
+    expect(captured.skippedFiles).toBe(2);
+    const verified = await readCodeReviewSnapshot(captured.zip, [], false);
+    expect(verified.files.map(file => file.name)).toEqual(['main.py']);
+    expect(verified.files[0].data.toString()).toBe('print("selected main")\n');
+    expect(git(['show', 'HEAD:tests/security.py'], repo)).toBe(selectedSource.trim());
+    expect(git(['status', '--porcelain'], repo)).toBe('');
+  }, 15_000);
   it('兼容未保留 legacy 标记的旧项目，仅明确的实例归属可使用全局根，否则读取自己的受管工作树', () => {
     const project = { id: 'existing' }, branch = { projectId: 'existing', worktreePath: '/managed/existing/main' };
     expect(codeReviewRepositoryRoot(project, branch, '/global/root', 'existing')).toBe('/global/root');

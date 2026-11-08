@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { BuildProfile, ExecOptions, IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
@@ -10,7 +10,7 @@ import { fetchWithLockRetry } from './git-fetch-retry.js';
 import { readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity, worktreePathActivity, WorktreePathActivity } from './worktree-path-activity.js';
 import { hasDatabaseInitializationSource } from './stack-detector.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
-import { CODE_REVIEW_ZIP_LIMITS, shouldIncludeCodeReviewPath } from './code-review-source.js';
+import { CODE_REVIEW_ZIP_LIMITS, readCodeReviewSnapshot, shouldIncludeCodeReviewPath } from './code-review-source.js';
 
 // 同一控制进程/规范repoRoot共用；元数据清理未知时复用现有活动围栏，不放行后继写入。
 const repositoryMutations = new Map<string, Promise<void>>();
@@ -181,15 +181,16 @@ export class WorktreeService {
       if (!/^[a-f0-9]{40}$/.test(commitSha)) throw new Error('无法固定 CDS 分支提交');
       const tree = await observe(`git ls-tree -r -l -z ${quote(commitSha)}`);
       if (tree && !tree.endsWith('\0')) throw new Error('仓库目录读取不完整');
-      const paths: string[] = []; let skippedFiles = 0;
+      const paths: string[] = []; const selectedBlobs = new Map<string, string>(); let skippedFiles = 0;
       for (const row of tree.split('\0').filter(Boolean)) {
-        const tab = row.indexOf('\t'); const [mode, type, , size] = row.slice(0, tab).trim().split(/\s+/);
+        const tab = row.indexOf('\t'); const [mode, type, blobSha, size] = row.slice(0, tab).trim().split(/\s+/);
         const name = row.slice(tab + 1);
         if (tab < 0) throw new Error('仓库目录格式无效');
         if (shouldIncludeCodeReviewPath(name, excludePatterns) && mode === '120000') throw new Error('审查范围包含符号链接，请先排除该路径');
         if (type !== 'blob' || !['100644', '100755'].includes(mode) || !shouldIncludeCodeReviewPath(name, excludePatterns)
           || !Number.isSafeInteger(Number(size)) || Number(size) > CODE_REVIEW_ZIP_LIMITS.file) { skippedFiles++; continue; }
         paths.push(name);
+        selectedBlobs.set(name, blobSha);
       }
       if (!paths.length) throw new Error('所选分支没有符合规则的源码文件');
       if (paths.length > CODE_REVIEW_ZIP_LIMITS.entries || Buffer.byteLength(JSON.stringify(paths)) > 1024 * 1024) throw new Error('所选分支源码数量或路径总长度超过上限');
@@ -202,7 +203,14 @@ export class WorktreeService {
         await observe([process.execPath, '-e', script, repoRoot, commitSha, target].map(quote).join(' '), JSON.stringify(paths));
         const info = await fs.promises.stat(target); assertCurrent();
         if (info.size > CODE_REVIEW_ZIP_LIMITS.compressed) throw new Error('源码快照超过 100 MiB');
-        return { zip: await fs.promises.readFile(target), commitSha, skippedFiles };
+        const zip = await fs.promises.readFile(target);
+        const snapshot = await readCodeReviewSnapshot(zip, excludePatterns, false); assertCurrent();
+        // Git export attributes may omit or substitute files: surviving ZIP counts are not the selected manifest.
+        if (snapshot.files.length !== selectedBlobs.size || snapshot.files.some(file =>
+          createHash('sha1').update(`blob ${file.data.length}\0`).update(file.data).digest('hex') !== selectedBlobs.get(file.name))) {
+          throw new Error('源码快照与所选提交不一致，请检查仓库导出规则或改用 ZIP');
+        }
+        return { zip, commitSha, skippedFiles };
       } finally { await fs.promises.rm(temporary, { recursive: true, force: true }); }
     }), true);
   }
