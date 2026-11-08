@@ -1431,6 +1431,109 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         self.assertIsNotNone(run, "Expected a shell block in " + name)
         return textwrap.dedent(run.group(1))
 
+    def test_pages_main_head_check_runs_real_script_and_skips_superseded_or_invalid_candidates(self):
+        run = self.workflow_run("pages", "Check current main before Pages writes")
+        current = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": COMMIT_A},
+                   "unrelated_metadata": "private-head-metadata-must-not-be-persisted"}
+        stale = {**current, "object": {"type": "commit", "sha": COMMIT_B}}
+        cases = [("current-push", current, 200, "push", "true", "valid"),
+                 ("current-manual", current, 200, "workflow_dispatch", "true", "valid"),
+                 ("stale", stale, 200, "push", "false", "superseded"),
+                 ("wrong-ref", {**current, "ref": "refs/heads/other"}, 200, "push", None, "rejected"),
+                 ("wrong-type", {**current, "object": {"type": "tag", "sha": COMMIT_A}}, 200, "push", None, "rejected"),
+                 ("bad-sha", {**current, "object": {"type": "commit", "sha": "private-head-metadata-must-not-be-persisted"}}, 200, "push", None, "rejected"),
+                 ("missing-sha", {**current, "object": {"type": "commit"}}, 200, "push", None, "rejected"),
+                 ("null-sha", {**current, "object": {"type": "commit", "sha": None}}, 200, "push", None, "rejected"),
+                 ("empty-sha", {**current, "object": {"type": "commit", "sha": ""}}, 200, "push", None, "rejected"),
+                 ("whitespace-sha", {**current, "object": {"type": "commit", "sha": "  "}}, 200, "push", None, "rejected"),
+                 ("wrong-sha-type", {**current, "object": {"type": "commit", "sha": 123}}, 200, "push", None, "rejected"),
+                 ("missing-object", {"ref": "refs/heads/main"}, 200, "push", None, "rejected"),
+                 ("wrong-shape", [], 200, "push", None, "rejected"),
+                 ("invalid-json", "not-json-private-head-metadata-must-not-be-persisted", 200, "push", None, "rejected"),
+                 ("lookup-failed", {"message": "Not Found"}, 404, "push", None, "rejected")]
+        for label, payload, status, event, publish, outcome in cases:
+            with self.subTest(case=label):
+                working = self.root / ("main-head-" + label)
+                (working / "scripts/lib").mkdir(parents=True)
+                (working / "bin").mkdir()
+                shutil.copyfile(SCRIPT, working / "scripts/lib" / SCRIPT.name)
+                fixture = working / "head-response"
+                fixture.write_text(payload if isinstance(payload, str) else json.dumps(payload))
+                log = working / "gh-calls.jsonl"
+                gh = working / "bin/gh"
+                gh.write_text("#!" + sys.executable + "\nimport json, os, pathlib, sys\nwith open(os.environ['TEST_GH_LOG'], 'a') as log:\n log.write(json.dumps(sys.argv[1:]) + '\\n')\nstatus = int(os.environ['TEST_HEAD_STATUS'])\nsys.stdout.write(f'HTTP/2.0 {status} Test\\r\\nContent-Type: application/json\\r\\nX-GitHub-Request-Id: AB12:CD34:EF56:7890:ABCD:1234\\r\\n\\r\\n')\nsys.stdout.write(pathlib.Path(os.environ['TEST_HEAD_SOURCE']).read_text())\nif status >= 400:\n sys.stderr.write(f'gh: HTTP {status}\\n')\n raise SystemExit(1)\n")
+                gh.chmod(0o755)
+                output = working / "step-output"
+                audit = working / "main-head-audit.jsonl"
+                environment = self.subprocess_network_fixture(working)
+                environment.update(PATH=str(working / "bin") + os.pathsep + os.environ["PATH"],
+                    GITHUB_REPOSITORY=REPO, GITHUB_SHA=COMMIT_A, GITHUB_EVENT_NAME=event,
+                    GITHUB_OUTPUT=str(output), GH_TOKEN="test-workflow-token-never-forwarded",
+                    PRD_AGENT_ARTIFACT_AUDIT_PATH=str(audit), PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID="main-head-" + label,
+                    TEST_GH_LOG=str(log), TEST_HEAD_SOURCE=str(fixture), TEST_HEAD_STATUS=str(status))
+                result = REAL_RUN(["sh", "-eu", "-c", run], cwd=working, env=environment, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, publish is not None, result.stderr)
+                self.assertEqual(output.read_text() if output.exists() else None,
+                                 "publish=" + publish + "\n" if publish is not None else None)
+                calls = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][0:2], ["api", f"repos/{REPO}/git/ref/heads/main"])
+                self.assertIn("--include", calls[0])
+                records = [json.loads(line) for line in audit.read_text().splitlines()]
+                cli = [record for record in records if record.get("event") == "github_cli" and record.get("phase") == "finish"]
+                self.assertEqual(len(cli), 1)
+                self.assertEqual(cli[0]["response"]["httpStatus"], status)
+                self.assertEqual(cli[0]["response"]["contentType"], "application/json")
+                self.assertEqual(cli[0]["response"]["upstreamRequestId"]["X-GitHub-Request-Id"]["value"], "AB12:CD34:EF56:7890:ABCD:1234")
+                decision = [record for record in records if record.get("event") == "artifact_validation"
+                            and record.get("decision", {}).get("stage") == "pages_main_head"]
+                self.assertEqual(len(decision), 1)
+                self.assertEqual(decision[0]["decision"]["outcome"], outcome)
+                self.assertLess(records.index(cli[0]), records.index(decision[0]))
+                states = decision[0]["states"]
+                expected_fields = {
+                    "wrong-ref": ("ref", "format_error"), "wrong-type": ("object.type", "format_error"),
+                    "bad-sha": ("object.sha", "format_error"), "missing-sha": ("object.sha", "missing"),
+                    "null-sha": ("object.sha", "null"), "empty-sha": ("object.sha", "empty"),
+                    "whitespace-sha": ("object.sha", "whitespace"), "wrong-sha-type": ("object.sha", "type_error"),
+                    "missing-object": ("object", "missing"), "wrong-shape": ("ref", "container_type_error")}
+                if label in expected_fields:
+                    field, state = expected_fields[label]
+                    self.assertEqual(states["fieldStates"][field]["state"], state)
+                if label in ("invalid-json", "lookup-failed"):
+                    self.assertFalse(states["responseParsed"])
+                    self.assertEqual(states["fieldStates"], {})
+                if publish is not None:
+                    self.assertEqual(states["candidateCommit"], COMMIT_A)
+                    self.assertEqual(states["mainCommit"], COMMIT_A if publish == "true" else COMMIT_B)
+                    self.assertEqual(states["candidateIsCurrent"], publish == "true")
+                    self.assertEqual(set(states["fieldStates"]), {"ref", "object", "object.type", "object.sha"})
+                    self.assertTrue(all(field["state"] == "valid" for field in states["fieldStates"].values()))
+                self.assertNotIn("private-head-metadata-must-not-be-persisted", audit.read_text())
+                self.assertNotIn("test-workflow-token-never-forwarded", audit.read_text())
+                self.assertFalse((self.root / "network.log").exists(), "The head check must not fetch or prepare Pages")
+
+    def test_all_pages_writes_require_current_main_output_and_audit_upload_remains_unconditional(self):
+        pages = self.workflow_job("pages")
+        steps = re.split(r"^      - ", pages.split("    steps:\n", 1)[1], flags=re.M)[1:]
+        writing = [step for step in steps if any(target in step for target in (
+            "name: Prepare Pages from the retained bundle", "uses: actions/configure-pages@v5",
+            "uses: actions/upload-pages-artifact@v3", "uses: actions/deploy-pages@v4"))]
+        self.assertEqual(len(writing), 4)
+        for step in writing:
+            self.assertRegex(step, r"(?m)^        if: steps\.main-head\.outputs\.publish == 'true'$")
+        self.assertLess(pages.index("Check current main before Pages writes"), pages.index("Prepare Pages from the retained bundle"))
+        audit = next(step for step in steps if "name: Preserve safe third-party response audit" in step)
+        self.assertRegex(audit, r"(?m)^        if: always\(\)$")
+        self.assertIn("uses: actions/upload-artifact@v4", audit)
+        self.assertNotIn("main-head.outputs.publish", audit)
+        permission = re.search(r"^    permissions:\n(.*?)(?=^    [a-z-]+:)", pages, re.M | re.S).group(1)
+        self.assertEqual(textwrap.dedent(permission).strip(), "contents: read\npages: write\nid-token: write")
+        retain = self.workflow_job("retain")
+        self.assertIn("group: web-bundle-${{ github.sha }}", retain)
+        self.assertIn("cancel-in-progress: false", retain)
+        self.assertNotIn("main-head", retain)
+
     def test_workflow_push_and_manual_paths_fetch_retained_canonical_pages_bundle(self):
         run = self.workflow_run("pages", "Prepare Pages from the retained bundle")
         cases = (("push", False, "", True), ("workflow_dispatch", False, "release-qa", False),

@@ -225,7 +225,52 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check current main before Pages writes
+        id: main-head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util, json, os, re
+          spec = importlib.util.spec_from_file_location('release_artifacts', 'scripts/lib/release-artifacts.py')
+          artifacts = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(artifacts)
+          repo, candidate = os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA']
+          artifacts._AUDIT_CONTEXT.update(repo=repo, ref='sha-' + candidate, sourceCommit=candidate)
+          states = {'candidateCommit': candidate if re.fullmatch(r'[0-9a-f]{40}', candidate) else None,
+              'mainCommit': None, 'responseParsed': False, 'fieldStates': {}}
+          try:
+              if states['candidateCommit'] is None or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+                  raise ValueError('Invalid workflow identity')
+              head = json.loads(artifacts.gh('api', f'repos/{repo}/git/ref/heads/main'))
+              states['responseParsed'] = True
+              target = head.get('object') if isinstance(head, dict) else None
+              sha = target.get('sha') if isinstance(target, dict) else None
+              states['fieldStates'] = {
+                  'ref': artifacts._field_state(head, 'ref', str, r'refs/heads/main'),
+                  'object': artifacts._field_state(head, 'object', dict),
+                  'object.type': artifacts._field_state(target, 'type', str, r'commit'),
+                  'object.sha': artifacts._field_state(target, 'sha', str, r'[0-9a-f]{40}')}
+              states.update(refMatches=isinstance(head, dict) and head.get('ref') == 'refs/heads/main',
+                  objectIsCommit=isinstance(target, dict) and target.get('type') == 'commit',
+                  mainCommit=sha if isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{40}', sha) else None)
+              if not states['refMatches'] or not states['objectIsCommit'] or states['mainCommit'] is None:
+                  raise ValueError('Invalid main reference response')
+          except artifacts.AuditPersistenceError:
+              raise
+          except (artifacts.ArtifactError, KeyError, TypeError, ValueError) as error:
+              artifacts.audit_validation('pages_main_head', 'rejected', {**states, 'errorType': type(error).__name__})
+              raise SystemExit('Main reference check rejected; see response audit') from None
+          current = states['mainCommit'] == candidate
+          artifacts.audit_validation('pages_main_head', 'valid' if current else 'superseded',
+              {**states, 'candidateIsCurrent': current})
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('publish=' + str(current).lower() + '\n')
+          if not current:
+              print('Pages skipped: this candidate has been superseded by current main.')
+          PY
       - name: Prepare Pages from the retained bundle
+        if: steps.main-head.outputs.publish == 'true'
         env:
           PUBLISH_LATEST: ${{ github.event_name == 'push' || inputs.publish_latest == true }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -236,10 +281,13 @@ jobs:
             python3 scripts/lib/release-artifacts.py fetch --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" --commit "$GITHUB_SHA" --directory site
           fi
       - uses: actions/configure-pages@v5
+        if: steps.main-head.outputs.publish == 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.main-head.outputs.publish == 'true'
         with:
           path: site
       - name: Deploy to GitHub Pages
+        if: steps.main-head.outputs.publish == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
       - name: Preserve safe third-party response audit
