@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Behavior checks for retained release bundles; never contacts GitHub or Pages."""
 import hashlib
+import http.client
+from datetime import datetime
+from email.message import Message
 import importlib.util
 import io
 import json
@@ -30,6 +33,19 @@ REF_A = "sha-" + COMMIT_A
 REF_B = "sha-" + COMMIT_B
 REAL_RUN = subprocess.run
 ROOT = SCRIPT.parents[2]
+
+
+class PublicHttpResponse(io.BytesIO):
+    """A real-shaped urllib response: status and case-insensitive safe headers."""
+    def __init__(self, body, status=200, headers=None):
+        super().__init__(body)
+        self.status = status
+        self.headers = Message()
+        for key, value in (headers or {}).items():
+            self.headers[key] = value
+
+    def getcode(self):
+        return self.status
 
 # Frozen from f29d1c0da65acafdd3e150fdcb14d4c086296ab4:exec_dep.sh,
 # lines 1079-1107 and the original DIST_SHA256 expression. This deliberately
@@ -73,6 +89,7 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.audit_path = self.root / "public-download-diagnostics.jsonl"
         # A forgotten mock must fail instead of using a developer's credentials.
         self.network = mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=AssertionError("Unexpected network"))
         self.process = mock.patch.object(artifacts.subprocess, "run", side_effect=AssertionError("Unexpected process"))
@@ -82,7 +99,8 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.addCleanup(self.process.stop)
         configuration = mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_PREFIX": "",
             "PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT": "browser",
-            "PRD_AGENT_ARTIFACT_DIAGNOSTICS": str(self.root / "public-download-diagnostics.jsonl")})
+            "PRD_AGENT_ARTIFACT_DIAGNOSTICS": str(self.audit_path),
+            "PRD_AGENT_ARTIFACT_AUDIT_PATH": str(self.audit_path)})
         configuration.start()
         self.addCleanup(configuration.stop)
         sleeping = mock.patch.object(artifacts.time, "sleep")
@@ -104,6 +122,42 @@ class ReleaseArtifactTests(unittest.TestCase):
         (dist / "assets" / f"index-{commit}.css").write_text("body { color: black; }")
         artifacts.bundle(dist, output, REPO, commit, ref)
         return output
+
+    def audit_records(self, event=None, phase=None):
+        records = [json.loads(line) for line in self.audit_path.read_text().splitlines()]
+        return [record for record in records if (event is None or record.get("event") == event)
+                and (phase is None or record.get("phase") == phase)]
+
+    def assert_attempt_audit(self, record, status, received=True):
+        self.assertEqual(record["schemaVersion"], 1)
+        self.assertEqual(record["event"], "public_artifact_get")
+        self.assertEqual(record["phase"], "finish")
+        self.assertTrue(record["traceId"])
+        self.assertTrue(record["callId"])
+        self.assertIsInstance(record["attempt"], int)
+        self.assertEqual(record["request"]["method"], "GET")
+        self.assertTrue(record["request"]["endpoint"].startswith("https://"))
+        self.assertEqual(record["response"]["received"], received)
+        self.assertEqual(record["response"]["httpStatus"], status)
+        self.assertTrue(record["response"]["bodyOmitted"])
+        self.assertTrue(record["response"]["omissionReason"])
+        if record["response"]["truncated"] is None:
+            self.assertEqual(record["response"]["truncationReason"], "bounded_error_prefix_at_limit_total_size_unknown")
+            self.assertIsNone(record["response"]["declaredBodyBytes"])
+            self.assertIs(record["response"]["bodyReadComplete"], False)
+            self.assertEqual(record["response"]["bodyObservedBytes"], 4096)
+            self.assertEqual(record["configuration"]["snapshotLimit"], 4096)
+        else:
+            self.assertIsInstance(record["response"]["truncated"], bool)
+        started = datetime.fromisoformat(record["timing"]["startedAt"].replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(record["timing"]["finishedAt"].replace("Z", "+00:00"))
+        self.assertIsNotNone(started.tzinfo)
+        self.assertIsNotNone(finished.tzinfo)
+        self.assertLessEqual(started, finished)
+        self.assertGreaterEqual(record["timing"]["durationMs"], 0)
+        self.assertTrue(record["configuration"]["timeoutSeconds"] > 0)
+        self.assertTrue(record["configuration"]["byteLimit"] > 0)
+        self.assertTrue(record["configuration"]["snapshotLimit"] > 0)
 
     def manifest(self, directory, ref=REF_A):
         return directory / artifacts.names(ref)[2]
@@ -610,14 +664,13 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.assertEqual(self.sleeping.call_args_list, [mock.call(1), mock.call(2)])
         self.assertTrue(opening.call_args.args[0].full_url.startswith(prefix))
         self.assertNotIn(secret_reason, str(caught.exception))
-        records = [json.loads(line) for line in diagnostic.read_text().splitlines()]
+        records = self.audit_records("public_artifact_get", "finish")
         self.assertEqual(len(records), 3)
-        self.assertEqual(set(records[0]), {"operation", "endpoint", "httpStatus", "errorType", "reasonType",
-            "attempt", "willRetrySameUrl", "delaySeconds", "responseBytesCaptured", "responsePrefixSha256"})
+        for record in records:
+            self.assert_attempt_audit(record, 503)
         self.assertEqual([record["attempt"] for record in records], [1, 2, 3])
-        self.assertEqual([record["willRetrySameUrl"] for record in records], [True, True, False])
-        self.assertEqual(records[0]["httpStatus"], 503)
-        self.assertEqual(records[0]["errorType"], "HTTPError")
+        self.assertEqual([record["decision"]["willRetrySameUrl"] for record in records], [True, True, False])
+        self.assertEqual(records[0]["decision"]["errorType"], "HTTPError")
         self.assertNotIn("token=", diagnostic.read_text())
         self.assertEqual(list((self.root / "unavailable-fetch").iterdir()), [])
         with mock.patch.dict(os.environ, {"PUBLISH_LATEST": "false"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=urllib.error.HTTPError("https://pages.invalid/latest", 404, secret_reason, {}, None)) as opening:
@@ -705,6 +758,288 @@ class ReleaseArtifactTests(unittest.TestCase):
                 operation.assert_not_called()
                 self.assertFalse((self.root / "inputs.env").exists())
 
+    def test_audit_write_failure_is_visible_and_never_returns_success_or_retries_get(self):
+        url = "https://api.github.com/repos/example/map/releases/assets/800"
+        for phase in ("before-request", "after-response"):
+            for failed_http in (False, True):
+                with self.subTest(phase=phase, failed_http=failed_http):
+                    self.sleeping.reset_mock()
+                    self.diagnostics_output.seek(0)
+                    self.diagnostics_output.truncate()
+                    blocked = self.root / f"audit-failure-{phase}-{failed_http}"
+                    if phase == "before-request":
+                        blocked.mkdir()
+
+                    def upstream(*args, **kwargs):
+                        # The start record was durable. Lose the destination
+                        # before finishing so this failure cannot be classified
+                        # as a transient upstream 503 and cause another GET.
+                        blocked.unlink()
+                        blocked.mkdir()
+                        if failed_http:
+                            raise urllib.error.HTTPError(url, 503, "upstream failure", {}, io.BytesIO(b"must not be logged"))
+                        return PublicHttpResponse(b"original bytes", headers={"Content-Type": "application/zip"})
+                    with mock.patch.dict(os.environ, {"PRD_AGENT_ARTIFACT_AUDIT_PATH": str(blocked)}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=upstream) as opening:
+                        with self.assertRaisesRegex(artifacts.ArtifactError, "Audit persistence failed"):
+                            artifacts.read_url(url)
+                    self.assertEqual(opening.call_count, 0 if phase == "before-request" else 1)
+                    self.sleeping.assert_not_called()
+                    self.assertIn("audit", self.diagnostics_output.getvalue().lower())
+                    self.assertNotIn("must not be logged", self.diagnostics_output.getvalue())
+                    self.assertFalse(self.audit_path.exists(), "Audit failure must not silently switch to the legacy path")
+
+    def test_successful_public_response_is_persisted_with_safe_headers_timing_and_body_omission(self):
+        body = b"\x00original retained media bytes\xff" * 200
+        response = PublicHttpResponse(body, headers={"Content-Type": "application/zip",
+            "Content-Length": str(len(body)), "X-GitHub-Request-Id": "AB12:CD34:EF56:7890:ABCD:1234",
+            "X-MS-Request-Id": "12345678-1234-4234-8234-123456789abc",
+            "Location": "https://blob.invalid/download?signature=never-save-location",
+            "Set-Cookie": "session=must-not-be-persisted", "Authorization": "Bearer never-save-this"})
+        url = "https://username:private-password@api.github.com/repos/example/map/releases/assets/800?signature=never-save-query"
+        def opening(*args, **kwargs):
+            self.assertEqual(len(self.audit_records("public_artifact_get", "start")), 1)
+            self.assertEqual(self.audit_records("public_artifact_get", "finish"), [])
+            return response
+        with mock.patch.dict(os.environ, {"PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID": "release-audit-test",
+                "GITHUB_REPOSITORY": REPO}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=opening):
+            self.assertEqual(artifacts.read_url(url), body)
+        records = self.audit_records("public_artifact_get", "finish")
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assert_attempt_audit(record, 200)
+        self.assertEqual(record["attempt"], 1)
+        self.assertEqual(record["traceId"], "release-audit-test")
+        self.assertEqual(record["request"]["endpoint"], "https://api.github.com/repos/example/map/releases/assets/800")
+        self.assertEqual(record["response"]["contentType"], "application/zip")
+        self.assertEqual(record["response"]["responseState"], "received")
+        self.assertEqual(record["response"]["contentTypeState"], "valid")
+        self.assertIn("AB12:CD34:EF56:7890:ABCD:1234", json.dumps(record["response"]["upstreamRequestId"]))
+        self.assertEqual(record["response"]["upstreamRequestId"]["X-MS-Request-Id"],
+                         {"state": "valid", "value": "12345678-1234-4234-8234-123456789abc"})
+        self.assertEqual(record["response"]["bodyObservedBytes"], len(body))
+        snapshot_limit = record["configuration"]["snapshotLimit"]
+        self.assertEqual(record["response"]["prefixSha256"], hashlib.sha256(body[:snapshot_limit]).hexdigest())
+        self.assertEqual(record["response"]["truncated"], len(body) > snapshot_limit)
+        self.assertEqual(record["decision"]["outcome"], "success")
+        self.assertTrue(record["configuration"]["buildFingerprint"])
+        self.assertTrue(record["configuration"]["instance"])
+        persisted = self.audit_path.read_text()
+        for secret in ("private-password", "never-save-query", "never-save-location", "must-not-be-persisted", "never-save-this", "original retained media bytes"):
+            self.assertNotIn(secret, persisted)
+        # CDS may expose only a truncated stderr tail. The full record must be
+        # independently retrievable from the audit file after the call returns.
+        self.diagnostics_output.seek(0)
+        self.diagnostics_output.truncate()
+        self.assertEqual(self.audit_records("public_artifact_get", "finish"), records)
+
+    def test_retry_success_and_no_response_have_distinct_persistent_attempts_and_safe_request_id_state(self):
+        url = "https://api.github.com/repos/example/map/releases/assets/800"
+        private_body = b'<html>password=private-response-value; https://signed.invalid/?signature=do-not-save</html>'
+        invalid_request_id = "user@example.invalid?access_token=never-persist-header"
+        failure = urllib.error.HTTPError(url, 502, "not safe to echo", {"Content-Type": "text/html",
+            "X-GitHub-Request-Id": "BEEF:0123:4567:89AB:CDEF:0000"}, io.BytesIO(private_body))
+        success = PublicHttpResponse(b"published bytes", headers={"Content-Type": "application/octet-stream",
+            "X-Request-Id": invalid_request_id})
+        with mock.patch.dict(os.environ, {"PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID": "one-release-request"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=[failure, success]):
+            self.assertEqual(artifacts.read_url(url), b"published bytes")
+        with mock.patch.dict(os.environ, {"PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID": "one-release-request"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=TimeoutError("network stage never returned headers")):
+            with self.assertRaises(artifacts.ArtifactError):
+                artifacts.read_url(url)
+        records = self.audit_records("public_artifact_get", "finish")
+        self.assertEqual(len(records), 3)
+        for record, status, received in zip(records, (502, 200, None), (True, True, False)):
+            self.assert_attempt_audit(record, status, received)
+        self.assertEqual([record["attempt"] for record in records], [1, 2, 1])
+        self.assertEqual(len({record["traceId"] for record in records}), 1)
+        self.assertEqual(records[0]["callId"], records[1]["callId"])
+        self.assertNotEqual(records[1]["callId"], records[2]["callId"])
+        self.assertEqual(records[1]["decision"]["outcome"], "success")
+        self.assertNotEqual(records[0]["decision"]["outcome"], "success")
+        self.assertNotEqual(records[2]["decision"]["outcome"], "success")
+        self.assertTrue(records[2]["decision"]["errorType"])
+        self.assertEqual(records[0]["response"]["contentType"], "text/html")
+        self.assertIn("BEEF:0123:4567:89AB:CDEF:0000", json.dumps(records[0]["response"]["upstreamRequestId"]))
+        self.assertIn(hashlib.sha256(invalid_request_id.encode()).hexdigest(), json.dumps(records[1]["response"]))
+        self.assertEqual(records[2]["response"]["bodyObservedBytes"], 0)
+        self.assertEqual(records[2]["response"]["responseState"], "not_received")
+        persisted = self.audit_path.read_text()
+        for sensitive in (invalid_request_id, "private-response-value", "do-not-save", "not safe to echo", "network stage never returned headers"):
+            self.assertNotIn(sensitive, persisted)
+        partial = b"partial-private-media-must-not-be-logged" * 200
+        errors = (TimeoutError("body-timeout-user-document-must-not-appear"),
+                  http.client.IncompleteRead(partial, len(partial) + 100))
+        for error in errors:
+            with self.subTest(response_body_error=type(error).__name__):
+                self.sleeping.reset_mock()
+                response = PublicHttpResponse(b"", headers={"Content-Type": "application/octet-stream",
+                    "Content-Length": str(len(partial) + 100), "X-GitHub-Request-Id": "FACE:0123:4567:89AB:CDEF:0000"})
+                with mock.patch.object(response, "read", side_effect=error), mock.patch.object(artifacts.urllib.request, "urlopen", return_value=response) as opening:
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.read_url(url)
+                self.assertEqual(opening.call_count, 1)
+                self.sleeping.assert_not_called()
+                record = self.audit_records("public_artifact_get", "finish")[-1]
+                self.assert_attempt_audit(record, 200, received=True)
+                self.assertEqual(record["attempt"], 1)
+                self.assertEqual(record["decision"]["outcome"], "error")
+                self.assertEqual(record["decision"]["failureStage"], "response_body")
+                self.assertEqual(record["decision"]["errorType"], type(error).__name__)
+                self.assertFalse(record["decision"]["willRetrySameUrl"])
+                self.assertEqual(record["response"]["contentType"], "application/octet-stream")
+                self.assertEqual(record["response"]["upstreamRequestId"]["X-GitHub-Request-Id"],
+                                 {"state": "valid", "value": "FACE:0123:4567:89AB:CDEF:0000"})
+                captured = partial if isinstance(error, http.client.IncompleteRead) else None
+                self.assertEqual(record["response"]["bodyObservedBytes"], len(captured) if captured is not None else 0)
+                self.assertEqual(record["response"]["prefixSha256"], hashlib.sha256(captured[:4096]).hexdigest() if captured is not None else None)
+                self.assertIsNone(record["response"]["fullBodySha256"])
+                self.assertLessEqual(record["response"]["digestInputBytes"], 4096)
+                persisted = self.audit_path.read_text()
+                self.assertNotIn("partial-private-media-must-not-be-logged", persisted)
+                self.assertNotIn("body-timeout-user-document-must-not-appear", persisted)
+
+    def test_http_200_metadata_field_rejections_and_bundle_hash_rejection_are_persisted(self):
+        cases = (("missing", None), ("null", None), ("empty", ""), ("whitespace", "  "),
+                 ("type_error", ["not-a-commit"]), ("format_error", "bad-commit-private-value"), ("valid", COMMIT_A))
+        for expected_state, value in cases:
+            with self.subTest(field_state=expected_state):
+                if self.audit_path.exists():
+                    self.audit_path.unlink()
+                metadata = self.published()
+                if expected_state == "missing":
+                    del metadata["target_commitish"]
+                else:
+                    metadata["target_commitish"] = value
+                body = json.dumps(metadata).encode()
+                with mock.patch.dict(os.environ, {"PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID": "metadata-predicate-test"}), mock.patch.object(artifacts.urllib.request, "urlopen",
+                        return_value=PublicHttpResponse(body, headers={"Content-Type": "application/json"})):
+                    if expected_state == "valid":
+                        sources, _ = artifacts.api_sources(REPO, REF_A)
+                        self.assertEqual(len(sources), 3)
+                    else:
+                        with self.assertRaises(artifacts.ArtifactError):
+                            artifacts.api_sources(REPO, REF_A)
+                records = self.audit_records()
+                completed = [record for record in records if record.get("event") == "public_artifact_get" and record.get("phase") == "finish"]
+                self.assertEqual(len(completed), 1)
+                self.assert_attempt_audit(completed[0], 200)
+                decisions = [record for record in records if record.get("event") == "artifact_validation"
+                             and record.get("decision", {}).get("stage") == "release_metadata"]
+                self.assertEqual(len(decisions), 1)
+                decision = decisions[0]
+                self.assertLess(records.index(completed[0]), records.index(decision), "Upstream response must be durable before local conversion")
+                self.assertEqual(decision["traceId"], completed[0]["traceId"])
+                field_records = [record for record in records if record.get("event") == "artifact_validation"
+                                 and record.get("decision", {}).get("stage") == "release_metadata_fields"]
+                self.assertEqual(len(field_records), 1)
+                self.assertEqual(field_records[0]["states"]["parseStatus"], "valid_json")
+                self.assertLess(records.index(completed[0]), records.index(field_records[0]))
+                self.assertLess(records.index(field_records[0]), records.index(decision))
+                field = field_records[0]["states"]["fieldStates"]["target_commitish"]
+                self.assertEqual(field["state"], expected_state)
+                if expected_state != "missing":
+                    self.assertEqual(field["type"], type(value).__name__)
+                self.assertEqual(decision["decision"]["outcome"] == "rejected", expected_state != "valid")
+                self.assertNotIn("bad-commit-private-value", self.audit_path.read_text())
+        self.audit_path.unlink()
+        invalid_body = b'{"message": "sensitive-invalid-json-value",'
+        with mock.patch.object(artifacts.urllib.request, "urlopen", return_value=PublicHttpResponse(
+                invalid_body, headers={"Content-Type": "application/json"})):
+            with self.assertRaises(artifacts.ArtifactError):
+                artifacts.api_sources(REPO, REF_A)
+        parsing = [record for record in self.audit_records("artifact_validation")
+                   if record["decision"].get("stage") == "release_metadata_fields"]
+        self.assertEqual(len(parsing), 1)
+        self.assertEqual(parsing[0]["states"]["parseStatus"], "invalid_json")
+        self.assertEqual(parsing[0]["decision"]["outcome"], "rejected")
+        self.assertEqual(parsing[0]["states"]["fieldStates"], {})
+        self.assertNotIn("sensitive-invalid-json-value", self.audit_path.read_text())
+        if self.audit_path.exists():
+            self.audit_path.unlink()
+        directory = self.make_bundle("audited-hash-reject")
+        self.update_manifest(directory, webSha256="0" * 64)
+        # Discard fixture creation audit; this assertion concerns the actual
+        # successful GETs followed by this invocation's failed local predicate.
+        self.audit_path.unlink(missing_ok=True)
+        with mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=lambda request, **kwargs: PublicHttpResponse(
+                (directory / request.full_url.rsplit("/", 1)[1]).read_bytes(), headers={"Content-Type": "application/octet-stream"})):
+            with self.assertRaises(artifacts.ArtifactError):
+                artifacts.fetch(REPO, REF_A, self.root / "audited-hash-rejected-output")
+        completed = self.audit_records("public_artifact_get", "finish")
+        self.assertEqual(len(completed), 3)
+        self.assertTrue(all(record["decision"]["outcome"] == "success" for record in completed))
+        rejected = [record for record in self.audit_records("artifact_validation")
+                    if record["decision"].get("stage") == "bundle_validation" and record["decision"]["outcome"] == "rejected"]
+        self.assertEqual(len(rejected), 1, "HTTP success must not replace a failed hash-validation decision")
+        self.assertEqual(rejected[0]["states"]["reasonCode"], "digest_mismatch")
+        self.assertEqual(list((self.root / "audited-hash-rejected-output").iterdir()), [])
+
+    def test_github_cli_header_audit_preserves_binary_expected_404_and_unexposed_status(self):
+        body = b"PK\x00\xfforiginal ZIP bytes\r\nHTTP/1.1 is part of the artifact\x00"
+        redirect = b"HTTP/2.0 302 Found\r\nLocation: https://signed.invalid/?access_token=never-log-redirect\r\n\r\n"
+        headers = b"HTTP/2.0 200 OK\r\nContent-Type: application/octet-stream\r\nX-GitHub-Request-Id: BEEF:0123:4567:89AB:CDEF:0000\r\nSet-Cookie: session=never-log-cookie\r\n\r\n"
+        result = mock.Mock(returncode=0, stdout=redirect + headers + body, stderr=b"")
+        with mock.patch.object(artifacts.subprocess, "run", return_value=result) as process:
+            returned = artifacts.gh("api", f"repos/{REPO}/releases/assets/800", "-H", "Accept: application/octet-stream")
+        self.assertEqual(returned, body)
+        self.assertIn("--include", process.call_args.args[0])
+        records = self.audit_records("github_cli", "finish")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["response"]["httpStatus"], 200)
+        self.assertEqual(records[0]["response"]["contentType"], "application/octet-stream")
+        self.assertEqual(records[0]["response"]["fullBodySha256"], hashlib.sha256(body).hexdigest())
+        self.assertEqual(records[0]["decision"]["parseStatus"], "not_applicable_binary")
+        self.assertTrue(records[0]["response"]["bodyOmitted"])
+        self.assertNotIn("never-log-redirect", self.audit_path.read_text())
+        self.assertNotIn("never-log-cookie", self.audit_path.read_text())
+        self.audit_path.unlink()
+        not_found = b'{"message":"Not Found","access_token":"never-log-json-token"}'
+        result = mock.Mock(returncode=1, stdout=b"HTTP/2.0 404 Not Found\r\nContent-Type: application/json\r\n\r\n" + not_found,
+                           stderr=b"gh: Not Found (HTTP 404)")
+        with mock.patch.object(artifacts.subprocess, "run", return_value=result):
+            self.assertIsNone(artifacts.gh("api", f"repos/{REPO}/releases/tags/web-{REF_A}", missing_ok=True))
+        records = self.audit_records("github_cli", "finish")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["response"]["httpStatus"], 404)
+        self.assertEqual(records[0]["decision"]["outcome"], "not_found_expected")
+        self.assertEqual(records[0]["decision"]["remoteMessage"], "Not Found")
+        self.assertNotIn("never-log-json-token", self.audit_path.read_text())
+        self.audit_path.unlink()
+        for nested in ({"access_token": "never-log-nested-credential"}, [{"password": "never-log-nested-credential"}]):
+            with self.subTest(nested_message_type=type(nested).__name__):
+                nested_body = json.dumps({"message": nested, "status": 401}).encode()
+                response = b"HTTP/2.0 401 Unauthorized\r\nContent-Type: application/json\r\nLocation: https://signed.invalid/?sig=never-log-nested-location\r\n\r\n" + nested_body
+                with mock.patch.object(artifacts.subprocess, "run", return_value=mock.Mock(returncode=1, stdout=response, stderr=b"gh: HTTP 401")):
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.gh("api", f"repos/{REPO}/releases/701")
+                record = self.audit_records("github_cli", "finish")[0]
+                self.assertEqual(record["response"]["httpStatus"], 401)
+                self.assertIsNone(record["decision"]["remoteMessage"])
+                self.assertIsNone(record["response"]["upstreamReason"])
+                self.assertTrue(record["response"]["upstreamReasonOmissionReason"])
+                self.assertEqual(record["response"]["upstreamBusinessCode"], 401)
+                self.assertNotIn("never-log-nested-credential", self.audit_path.read_text())
+                self.assertNotIn("never-log-nested-location", self.audit_path.read_text())
+                self.audit_path.unlink()
+                error = urllib.error.HTTPError("https://api.github.com/test", 401, "no raw reason",
+                    {"Content-Type": "application/json", "Location": "https://signed.invalid/?sig=never-log-nested-location"}, io.BytesIO(nested_body))
+                with mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=error):
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.read_url("https://api.github.com/test")
+                record = self.audit_records("public_artifact_get", "finish")[0]
+                self.assertIsNone(record["response"]["upstreamReason"])
+                self.assertEqual(record["response"]["upstreamBusinessCode"], 401)
+                self.assertNotIn("never-log-nested-credential", self.audit_path.read_text())
+                self.assertNotIn("never-log-nested-location", self.audit_path.read_text())
+                self.audit_path.unlink()
+        plain = b'{"id":701}'
+        with mock.patch.object(artifacts.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=plain, stderr=b"")):
+            self.assertEqual(artifacts.gh("api", f"repos/{REPO}/releases/701"), plain)
+        record = self.audit_records("github_cli", "finish")[0]
+        self.assertIsNone(record["response"]["httpStatus"])
+        self.assertIsNone(record["response"]["contentType"])
+        self.assertEqual(record["response"]["headerOmissionReason"], "not_exposed_by_cli")
+        self.assertEqual(record["response"]["responseState"], "not_exposed_by_cli")
+
     def test_transient_502_and_504_retry_exact_same_public_request_then_return_original_bytes(self):
         url = f"https://api.github.com/repos/{REPO}/releases/assets/800"
         diagnostic = Path(os.environ["PRD_AGENT_ARTIFACT_DIAGNOSTICS"])
@@ -718,7 +1053,7 @@ class ReleaseArtifactTests(unittest.TestCase):
                 self.diagnostics_output.truncate()
                 responses = [urllib.error.HTTPError(url, status, "https://signed.invalid/?token=not-for-log",
                     {} if retry_after is None else {"Retry-After": retry_after}, io.BytesIO(response_body))
-                    for status in (502, 504)] + [io.BytesIO(b"original published bytes")]
+                    for status in (502, 504)] + [PublicHttpResponse(b"original published bytes")]
                 with mock.patch.dict(os.environ, {"GH_TOKEN": "credential-never-forward"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=responses) as opening:
                     result = artifacts.read_url(url)
                 self.assertEqual(result, b"original published bytes")
@@ -731,12 +1066,20 @@ class ReleaseArtifactTests(unittest.TestCase):
                 self.assertNotIn("authorization", {name.lower() for name in calls[0].args[0].headers})
                 self.assertEqual(self.sleeping.call_args_list,
                     [mock.call(1), mock.call(2)] if retry_after is None else [mock.call(4), mock.call(4)])
-                records = [json.loads(line) for line in diagnostic.read_text().splitlines()]
-                self.assertEqual([record["httpStatus"] for record in records], [502, 504])
-                self.assertEqual([record["attempt"] for record in records], [1, 2])
-                self.assertTrue(all(record["willRetrySameUrl"] for record in records))
-                self.assertTrue(all(record["responseBytesCaptured"] == 4096 for record in records))
-                self.assertTrue(all(record["responsePrefixSha256"] == hashlib.sha256(response_body[:4096]).hexdigest() for record in records))
+                records = self.audit_records("public_artifact_get", "finish")
+                self.assertEqual([record["response"]["httpStatus"] for record in records], [502, 504, 200])
+                failures = [record for record in records if record["decision"]["outcome"] != "success"]
+                self.assertEqual(len(failures), 2)
+                self.assertEqual([record["attempt"] for record in failures], [1, 2])
+                self.assertTrue(all(record["decision"]["willRetrySameUrl"] for record in failures))
+                self.assertTrue(all(record["response"]["bodyObservedBytes"] == 4096 for record in failures))
+                self.assertTrue(all(record["response"]["prefixSha256"] == hashlib.sha256(response_body[:4096]).hexdigest() for record in failures))
+                for record in failures:
+                    self.assert_attempt_audit(record, record["response"]["httpStatus"])
+                    self.assertIsNone(record["response"]["truncated"])
+                    self.assertEqual(record["response"]["truncationReason"], "bounded_error_prefix_at_limit_total_size_unknown")
+                    self.assertIsNone(record["response"]["declaredBodyBytes"])
+                    self.assertIs(record["response"]["bodyReadComplete"], False)
                 self.assertNotIn("private response", diagnostic.read_text() + self.diagnostics_output.getvalue())
                 self.assertNotIn("token=", diagnostic.read_text() + self.diagnostics_output.getvalue())
 
@@ -817,7 +1160,8 @@ class ReleaseArtifactTests(unittest.TestCase):
         with mock.patch.object(artifacts, "read_url", side_effect=payloads.__getitem__):
             status, output, errors = self.cli("fetch", "--repo", REPO, "--ref", REF_A, "--commit", COMMIT_A,
                 "--base-url", base, "--directory", str(self.root / "fetched"), "--env-file", str(env_file))
-        self.assertEqual((status, errors), (0, ""))
+        self.assertEqual(status, 0)
+        self.assertTrue(all(line.startswith("Artifact audit:") for line in errors.splitlines()), errors)
         self.assertEqual(json.loads(output)["commit"], COMMIT_A)
         child = REAL_RUN(["sh", "-c", '. "$1"; sh -c \'printf "%s\\n" "$DIST_URL" "$DIST_SHA256_URL" "$DIST_MANIFEST_URL" "$DIST_SHA256"\'', "bridge", str(env_file)], capture_output=True, text=True)
         self.assertEqual(child.returncode, 0, child.stderr)
@@ -1166,22 +1510,41 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
             with self.subTest(case=label):
                 working = self.root / label
                 (working / "bin").mkdir(parents=True)
+                (working / "scripts/lib").mkdir(parents=True)
+                shutil.copyfile(SCRIPT, working / "scripts/lib" / SCRIPT.name)
                 source = working / "source-run.json"
                 source.write_text(json.dumps(record))
                 log = working / "gh-calls.jsonl"
                 gh = working / "bin/gh"
-                gh.write_text("#!" + sys.executable + "\nimport json, os, pathlib, sys\nwith open(os.environ['TEST_GH_LOG'], 'a') as log:\n log.write(json.dumps(sys.argv[1:]) + '\\n')\nsys.stdout.write(pathlib.Path(os.environ['TEST_RUN_SOURCE']).read_text())\n")
+                gh.write_text("#!" + sys.executable + "\nimport json, os, pathlib, sys\nwith open(os.environ['TEST_GH_LOG'], 'a') as log:\n log.write(json.dumps(sys.argv[1:]) + '\\n')\nif '--include' in sys.argv:\n sys.stdout.write('HTTP/2.0 200 OK\\r\\nContent-Type: application/json\\r\\nX-GitHub-Request-Id: TEST-IDENTITY-001\\r\\n\\r\\n')\nsys.stdout.write(pathlib.Path(os.environ['TEST_RUN_SOURCE']).read_text())\n")
                 gh.chmod(0o755)
                 environment = dict(os.environ, PATH=str(working / "bin") + os.pathsep + os.environ["PATH"],
                     GITHUB_REPOSITORY=REPO, ORIGINAL_RUN=run_id, ORIGINAL_COMMIT=commit, ORIGINAL_SHA256=digest,
-                    TEST_GH_LOG=str(log), TEST_RUN_SOURCE=str(source))
+                    TEST_GH_LOG=str(log), TEST_RUN_SOURCE=str(source),
+                    PRD_AGENT_ARTIFACT_AUDIT_PATH=str(working / "identity-audit.jsonl"),
+                    PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID="migration-identity-test")
                 result = REAL_RUN(["sh", "-eu", "-c", run], cwd=working, env=environment, capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, label == "valid")
                 if label in ("bad-run", "missing-commit", "bad-hash"):
                     self.assertFalse(log.exists(), "Malformed input must fail before even reading the source run")
                 else:
-                    self.assertEqual([json.loads(line) for line in log.read_text().splitlines()],
-                                     [["api", f"repos/{REPO}/actions/runs/{run_id}"]])
+                    calls = [json.loads(line) for line in log.read_text().splitlines()]
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(calls[0][0], "api")
+                    self.assertIn(f"repos/{REPO}/actions/runs/{run_id}", calls[0])
+                    self.assertIn("--include", calls[0])
+                    audits = [json.loads(line) for line in (working / "identity-audit.jsonl").read_text().splitlines()]
+                    cli = [record for record in audits if record.get("event") == "github_cli" and record.get("phase") == "finish"]
+                    self.assertEqual(len(cli), 1)
+                    self.assertEqual(cli[0]["traceId"], "migration-identity-test")
+                    self.assertEqual(cli[0]["response"]["httpStatus"], 200)
+                    self.assertEqual(cli[0]["response"]["contentType"], "application/json")
+                    self.assertTrue(cli[0]["response"]["bodyOmitted"])
+                    identity = [record for record in audits if record.get("event") == "artifact_validation"
+                                and record.get("decision", {}).get("stage") == "original_workflow_identity"]
+                    self.assertEqual(len(identity), 1)
+                    self.assertLess(audits.index(cli[0]), audits.index(identity[0]))
+                    self.assertEqual(identity[0]["decision"]["outcome"], "valid" if label == "valid" else "rejected")
 
     def test_migration_step_imports_original_bytes_before_mocked_publish_and_stops_on_failure(self):
         run = self.workflow_run("retain-existing", "Retain the original bytes without rebuilding")

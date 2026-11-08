@@ -39,6 +39,9 @@ jobs:
   retain-existing:
     if: inputs.retain_from_run != '' || inputs.retain_commit != '' || inputs.retain_original_sha256 != '' || inputs.retain_draft_id != ''
     runs-on: ubuntu-latest
+    env:
+      PRD_AGENT_ARTIFACT_AUDIT_PATH: /tmp/map-release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-retain-existing.jsonl
+      PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}-retain-existing
     permissions:
       contents: write
       actions: read
@@ -57,14 +60,32 @@ jobs:
           printf '%s' "$ORIGINAL_RUN" | grep -Eq '^[0-9]+$'
           printf '%s' "$ORIGINAL_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
           printf '%s' "$ORIGINAL_SHA256" | grep -Eq '^[0-9a-f]{64}$'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN" > original-run.json
           python3 - <<'PY'
-          import json, os
-          run = json.load(open('original-run.json'))
-          assert run['head_sha'] == os.environ['ORIGINAL_COMMIT']
-          assert run['conclusion'] == 'success' and run['status'] == 'completed'
-          assert run['repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
-          assert run['path'] == '.github/workflows/web-latest-pages.yml'
+          import importlib.util, json, os
+          spec = importlib.util.spec_from_file_location('release_artifacts', 'scripts/lib/release-artifacts.py')
+          artifacts = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(artifacts)
+          artifacts._AUDIT_CONTEXT.update(repo=os.environ['GITHUB_REPOSITORY'],
+              ref='sha-' + os.environ['ORIGINAL_COMMIT'], sourceCommit=os.environ['ORIGINAL_COMMIT'])
+          states = {'sourceRunId': int(os.environ['ORIGINAL_RUN']),
+              'sourceCommit': os.environ['ORIGINAL_COMMIT'], 'responseParsed': False}
+          try:
+              run = json.loads(artifacts.gh('api', f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['ORIGINAL_RUN']}"))
+              states['responseParsed'] = True
+              assert isinstance(run, dict)
+              repository = run.get('repository')
+              states.update(commitMatches=run.get('head_sha') == os.environ['ORIGINAL_COMMIT'],
+                  runSucceeded=run.get('conclusion') == 'success' and run.get('status') == 'completed',
+                  repositoryMatches=isinstance(repository, dict) and repository.get('full_name') == os.environ['GITHUB_REPOSITORY'],
+                  workflowMatches=run.get('path') == '.github/workflows/web-latest-pages.yml')
+              assert run['head_sha'] == os.environ['ORIGINAL_COMMIT']
+              assert run['conclusion'] == 'success' and run['status'] == 'completed'
+              assert run['repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
+              assert run['path'] == '.github/workflows/web-latest-pages.yml'
+          except (artifacts.ArtifactError, AssertionError, KeyError, TypeError, ValueError):
+              artifacts.audit_validation('original_workflow_identity', 'rejected', states)
+              raise SystemExit('Original workflow identity rejected; see response audit') from None
+          artifacts.audit_validation('original_workflow_identity', 'valid', states)
           PY
       - uses: actions/download-artifact@v4
         with:
@@ -86,11 +107,22 @@ jobs:
           else
             python3 scripts/lib/release-artifacts.py publish --repo "$GITHUB_REPOSITORY" --ref "sha-$ORIGINAL_COMMIT" --directory inherited
           fi
+      - name: Preserve safe third-party response audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-retain-existing
+          path: ${{ env.PRD_AGENT_ARTIFACT_AUDIT_PATH }}
+          if-no-files-found: warn
+          retention-days: 7
 
   build:
     needs: retain-existing
     if: always() && !cancelled() && (needs.retain-existing.result == 'success' || needs.retain-existing.result == 'skipped')
     runs-on: ubuntu-latest
+    env:
+      PRD_AGENT_ARTIFACT_AUDIT_PATH: /tmp/map-release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-build.jsonl
+      PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}-build
     steps:
       - uses: actions/checkout@v4
       - name: Reuse an already published commit bundle
@@ -124,11 +156,22 @@ jobs:
           name: web-bundle
           path: bundle/
           retention-days: 7
+      - name: Preserve safe third-party response audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-build
+          path: ${{ env.PRD_AGENT_ARTIFACT_AUDIT_PATH }}
+          if-no-files-found: warn
+          retention-days: 7
 
   retain:
     needs: build
     if: always() && !cancelled() && needs.build.result == 'success'
     runs-on: ubuntu-latest
+    env:
+      PRD_AGENT_ARTIFACT_AUDIT_PATH: /tmp/map-release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-retain.jsonl
+      PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}-retain
     # Only the storage writer has release-write access. No PAT or account grant.
     permissions:
       contents: write
@@ -152,6 +195,14 @@ jobs:
             python3 scripts/lib/release-artifacts.py alias --source-ref "sha-$GITHUB_SHA" --ref "$RELEASE_TAG" --directory canonical
             python3 scripts/lib/release-artifacts.py publish --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" --directory canonical
           fi
+      - name: Preserve safe third-party response audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-retain
+          path: ${{ env.PRD_AGENT_ARTIFACT_AUDIT_PATH }}
+          if-no-files-found: warn
+          retention-days: 7
 
   pages:
     needs: retain
@@ -159,6 +210,9 @@ jobs:
     # retained bundle without requesting a Pages deployment.
     if: always() && !cancelled() && needs.retain.result == 'success' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      PRD_AGENT_ARTIFACT_AUDIT_PATH: /tmp/map-release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-pages.jsonl
+      PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}-pages
     permissions:
       contents: read
       pages: write
@@ -188,3 +242,11 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Preserve safe third-party response audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-audit-${{ github.run_id }}-${{ github.run_attempt }}-pages
+          path: ${{ env.PRD_AGENT_ARTIFACT_AUDIT_PATH }}
+          if-no-files-found: warn
+          retention-days: 7

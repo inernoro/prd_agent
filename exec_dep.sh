@@ -59,6 +59,7 @@ set -eu
 #   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
 #   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
 #   - LLMGW_SERVING_PROBE_JSON_OUT / LLMGW_SERVING_PROBE_REPORT_MD：保存 post-deploy serving probe 证据
+#   - LLMGW_RELEASE_FEATURES：本次发布启用的模型功能（逗号分隔）；兼容默认 defect-agent，显式 none 表示不交付模型功能；不检查未选 Agent
 #   - LLMGW_GATE_RUN_SMOKE：发布后是否运行 gw-smoke.py（会真调模型）；显式给了探测 key 或业务 smoke key 时默认 1，否则默认 0
 #   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
 #   - GW_SMOKE_JSON_OUT / GW_SMOKE_REPORT_MD：保存 post-deploy D 层 smoke 证据
@@ -709,6 +710,10 @@ release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 release_evidence_id="$(date -u '+%Y%m%dT%H%M%SZ')_${TAG}_$$"
 release_evidence_dir="${PRD_AGENT_RELEASE_EVIDENCE_DIR:-${HOME:-.}/prd-agent-release-evidence}"
 release_evidence_file="$release_evidence_dir/${release_evidence_id}.json"
+# Keep full safe response metadata beside the existing release evidence, outside
+# temporary staging; CDS console summaries may truncate individual log lines.
+export PRD_AGENT_ARTIFACT_AUDIT_PATH="$release_evidence_dir/${release_evidence_id}.artifact-audit.jsonl"
+export PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID="$release_evidence_id"
 public_smoke_json="$tmp_dir/public-surface.json"
 rollback_smoke_json="$tmp_dir/public-surface-rollback.json"
 asset_storage_readiness_json="$tmp_dir/asset-storage-readiness.json"
@@ -1090,6 +1095,7 @@ case "$reuse_static_dist" in
     else
       retained_base="${PRD_AGENT_RELEASE_ASSET_BASE_URL:-}"
       release_failure_stage="static-retained-artifact"
+      mkdir -p "$release_evidence_dir"
       if [ -n "$retained_base" ]; then
         python3 scripts/lib/release-artifacts.py fetch --repo "$REPO" --ref "$TAG" \
           --base-url "$retained_base" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
@@ -1499,6 +1505,7 @@ run_llmgw_post_deploy_verification_if_needed() {
   smoke_key="${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}"
   protocol_canary_key="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY:-$smoke_key}"
   expect_commit="${LLMGW_POST_DEPLOY_EXPECT_COMMIT:-}"
+  release_features="${LLMGW_RELEASE_FEATURES:-defect-agent}"
 
   if [ -z "$gate_base" ]; then
     echo "ERROR: LLM Gateway post-deploy verification missing gate base." >&2
@@ -1527,8 +1534,9 @@ run_llmgw_post_deploy_verification_if_needed() {
     probe_args="$probe_args --expect-commit $expect_commit"
   fi
   echo "LLM Gateway post-deploy serving probe: required (readyz with key + healthz commit stability + no-key auth)"
+  echo "LLM Gateway release feature scope: $release_features (read-only metadata routing; no model calls)"
   # shellcheck disable=SC2086
-  LLMGW_GATE_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py $probe_args
+  LLMGW_GATE_KEY="$gate_key" LLMGW_RELEASE_FEATURES="$release_features" python3 scripts/llmgw-serving-probe.py $probe_args
 
   if [ "${LLMGW_POST_DEPLOY_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
