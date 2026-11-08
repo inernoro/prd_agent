@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.4"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.20.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3624,6 +3624,8 @@ def _code_review_multipart(fields: dict[str, Any], filename: str, content: bytes
 def cmd_code_review_submit(args: argparse.Namespace) -> None:
     project = _code_review_project(args)
     fields: dict[str, Any] = {"projectId": project}
+    if args.ref and not args.github:
+        die("只有 --github 来源接受 --ref；CDS 分支请使用 --branch-id")
     for name in ("title", "email", "idempotency_key"):
         if value := getattr(args, name, None):
             fields["idempotencyKey" if name == "idempotency_key" else name] = value
@@ -3637,7 +3639,7 @@ def cmd_code_review_submit(args: argparse.Namespace) -> None:
         body, headers = _code_review_multipart(fields, filename, content, "application/zip")
         result = _code_review_request("POST", "/api/code-reviews", body, headers)
     else:
-        fields.update({"sourceType": "github", "githubUrl": args.github})
+        fields.update({"sourceType": "cds", "branchId": args.branch_id} if args.branch_id else {"sourceType": "github", "githubUrl": args.github})
         if args.ref:
             fields["ref"] = args.ref
         if args.exclude:
@@ -3654,6 +3656,11 @@ def cmd_code_review_list(args: argparse.Namespace) -> None:
         die("CDS 返回任务列表格式错误")
     for task in result["tasks"]:
         _code_review_assert_project({"task": task}, project)
+    if args.include_branches:
+        branches = _code_review_request("GET", "/api/code-reviews/branches?" + urllib.parse.urlencode({"projectId": project})).get("branches")
+        if not isinstance(branches, list) or any(not isinstance(branch, dict) or not isinstance(branch.get("id"), str) or not isinstance(branch.get("branch"), str) for branch in branches):
+            die("CDS 返回分支列表格式错误")
+        result["branches"] = [{key: branch.get(key) for key in ("id", "branch", "status")} for branch in branches]
     ok(result)
 
 
@@ -3661,11 +3668,20 @@ def cmd_code_review_task(args: argparse.Namespace) -> None:
     project = _code_review_project(args)
     endpoint = "/api/code-reviews/" + urllib.parse.quote(args.id, safe="")
     method = "GET"
+    if args.sub == "show" and getattr(args, "results", False):
+        query = {"includeResult": "1", "offset": args.offset, "limit": args.limit}
+        if args.severity:
+            query["severity"] = args.severity
+        endpoint += "?" + urllib.parse.urlencode(query)
     if args.sub != "show":
         endpoint += {"cancel": "/cancel", "retry": "/retry", "mail-retry": "/delivery/retry"}[args.sub]
         method = "POST"
     result = _code_review_request(method, endpoint, {} if method == "POST" else None)
     _code_review_assert_project(result, project)
+    if args.sub == "show" and getattr(args, "results", False) and result.get("result") is not None:
+        _code_review_assert_project(result, project, "result")
+        if result["result"].get("taskId") != args.id:
+            die("CDS 返回问题与请求任务不匹配")
     ok(result)
 
 
@@ -10806,11 +10822,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sd.set_defaults(func=cmd_schedule_delete)
 
     # 代码审查：异步任务与已有报告上传，共用 CDS 项目级鉴权。
-    review = sub.add_parser("code-review", help="代码审查：ZIP/GitHub 提交、任务、邮件重试、报告上传").add_subparsers(dest="sub", required=True)
+    review = sub.add_parser("code-review", help="代码审查：ZIP/GitHub/CDS 分支提交、任务、邮件重试、报告上传").add_subparsers(dest="sub", required=True)
     review_submit = review.add_parser("submit", help="提交源码审查，默认归档 CDS；--email 额外发送邮件")
     review_source = review_submit.add_mutually_exclusive_group(required=True)
     review_source.add_argument("--zip-file", help="本地 ZIP 文件路径")
     review_source.add_argument("--github", help="GitHub 仓库 HTTPS 地址")
+    review_source.add_argument("--branch-id", help="当前项目的 CDS 分支 ID，使用 list --include-branches 查询")
     review_submit.add_argument("--project"); review_submit.add_argument("--ref")
     review_submit.add_argument("--title"); review_submit.add_argument("--email")
     review_submit.add_argument("--exclude", action="append", default=[], help="排除目录或模式，可重复")
@@ -10818,9 +10835,15 @@ def _build_parser() -> argparse.ArgumentParser:
     review_submit.set_defaults(func=cmd_code_review_submit)
     review_list = review.add_parser("list", help="列出当前项目的任务及报告")
     review_list.add_argument("--project"); review_list.set_defaults(func=cmd_code_review_list)
+    review_list.add_argument("--include-branches", action="store_true", help="附带当前项目可审查的 CDS 分支 ID 与名称")
     for action, help_text in (("show", "查询进度和结果"), ("cancel", "取消任务"), ("retry", "重试失败任务"), ("mail-retry", "只重试邮件投递")):
         review_task = review.add_parser(action, help=help_text)
         review_task.add_argument("id"); review_task.add_argument("--project")
+        if action == "show":
+            review_task.add_argument("--results", action="store_true", help="读取已保存的问题、真实覆盖和报告链接，不执行分析")
+            review_task.add_argument("--offset", type=int, default=0)
+            review_task.add_argument("--limit", type=int, default=50)
+            review_task.add_argument("--severity", choices=["critical", "high", "medium", "low", "info"])
         review_task.set_defaults(func=cmd_code_review_task)
     review_upload = review.add_parser("upload-report", help="将已有 HTML/Markdown 报告归档为代码审查报告")
     review_upload.add_argument("--file", required=True); review_upload.add_argument("--title", required=True)

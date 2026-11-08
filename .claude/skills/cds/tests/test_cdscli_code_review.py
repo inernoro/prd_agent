@@ -45,6 +45,10 @@ class CodeReviewCliTest(unittest.TestCase):
                     task["projectId"] = "other"
                 if self.path.endswith("/reports"):
                     result = {"report": {"id": "report-1", "projectId": "project-one", "reportType": "code-review"}}
+                elif self.path.startswith("/api/code-reviews/branches?"):
+                    result = {"branches": [{"id": "branch-1", "branch": "feature/audit", "status": "idle"}]}
+                elif "includeResult=1" in self.path:
+                    result = {"task": task, "result": {"projectId": "project-one", "taskId": task["id"], "findings": [], "coverage": {"complete": False}}}
                 elif "?" in self.path:
                     result = {"tasks": [task]}
                 else:
@@ -98,6 +102,21 @@ class CodeReviewCliTest(unittest.TestCase):
         })
         self.assertEqual(output["data"]["task"]["id"], "task-1")
 
+    def test_cds_branch_discovery_and_submission_without_upload(self):
+        code, output = self.call("list", "--include-branches")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(output["data"]["branches"][0]["id"], "branch-1")
+        self.assertEqual(self.requests[-1]["path"], "/api/code-reviews/branches?projectId=project-one")
+        code, output = self.call("submit", "--branch-id", "branch-1", "--exclude", "vendor/")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(self.requests[-1]["body"]), {
+            "sourceType": "cds", "projectId": "project-one", "branchId": "branch-1", "excludePatterns": ["vendor/"],
+        })
+        count = len(self.requests)
+        code, _ = self.call("submit", "--branch-id", "branch-1", "--ref", "main")
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.requests), count)
+
     def test_zip_upload_and_report_upload_send_local_bytes(self):
         code, output = self.call("submit", "--zip-file", "code.zip", "--exclude", "vendor/**")
         self.assertEqual(code, 0, output)
@@ -131,6 +150,14 @@ class CodeReviewCliTest(unittest.TestCase):
         code, output = self.call("show", "wrong-project")
         self.assertEqual(code, 1)
         self.assertFalse(output["ok"])
+
+    def test_structured_results_keep_explicit_pagination_and_project_scope(self):
+        code, output = self.call("show", "task-1", "--results", "--offset", "50", "--limit", "25", "--severity", "high")
+        self.assertEqual(code, 0, output)
+        self.assertIn("includeResult=1", self.requests[-1]["path"])
+        for part in ("offset=50", "limit=25", "severity=high"):
+            self.assertIn(part, self.requests[-1]["path"])
+        self.assertFalse(output["data"]["result"]["coverage"]["complete"])
 
     def test_invalid_file_or_zip_ref_fails_before_network(self):
         for args in (("submit", "--zip-file", "review.md"), ("submit", "--zip-file", "code.zip", "--ref", "main"), ("upload-report", "--file", "code.zip", "--title", "bad")):

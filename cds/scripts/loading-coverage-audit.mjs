@@ -20,7 +20,7 @@ const progressOwners = new Map([
   ['IdentityRecoveryPanel', '已加载申请的待人工批准业务状态；保留原项目、账号选择与批准拒绝操作'],
 ]);
 export const loadingCondition = text => {
-  const positive = text.replace(/(['"])(.*?)\1/g, (match, quote, value) => ['loading', 'checking', 'pending'].includes(value) ? match : '""').replace(/!\s*\w*[Ll]oading\w*/g, 'false');
+  const positive = text.replace(/(['"])(.*?)\1/g, (match, quote, value) => ['loading', 'checking', 'pending'].includes(value) ? match : '""').replace(/!\s*(?:\w+\.)*\w*[Ll]oading\w*/g, 'false');
   return /!\s*(?:[\w.]*[Rr]eady|[\w.]*[Ll]oaded)\b/.test(positive) || /(?:===|==)\s*['"](?:loading|checking|pending)['"]/.test(positive) || /\b(?:\w*[Ll]oading|\w*[Ff]etching|discovering)\b/.test(positive);
 };
 function ownerOf(node, sf) {

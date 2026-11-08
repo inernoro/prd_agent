@@ -40,9 +40,9 @@ cwd = "/absolute/path/project"
 
 | 工具 | 输入 | 行为 |
 |---|---|---|
-| `cds_code_review_submit` | `zipPath` 或 `githubUrl`；可选 `ref`、`excludePatterns`、`title`、`email`、`idempotencyKey` | 创建异步审查任务；显式提供邮箱才额外发信 |
-| `cds_code_review_get` | `taskId` | 查询进度、失败原因、报告 ID 和投递状态 |
-| `cds_code_review_list` | 无 | 查询凭据绑定项目的任务与报告关联 |
+| `cds_code_review_submit` | `zipPath`、`githubUrl` 或当前项目 `branchId`（三选一）；可选 `ref`、`excludePatterns`、`title`、`email`、`idempotencyKey` | 创建异步审查任务；显式提供邮箱才额外发信 |
+| `cds_code_review_get` | `taskId`；可选 `offset`、`limit`、`severity`、`query` | 查询进度、结构化问题、覆盖范围、报告链接和投递状态；不触发分析 |
+| `cds_code_review_list` | 可选 `includeBranches` | 查询凭据绑定项目的任务与报告关联；为 true 时附带可审查分支 ID 与名称 |
 | `cds_code_review_report_upload` | `filePath`、`title`；可选 `idempotencyKey` | 上传已有 HTML/Markdown 报告，无需重新审查 |
 
 工具发现读取 CDS `/api/code-reviews/capabilities` 的共享能力目录，只展示服务端登记的工具。
@@ -53,6 +53,12 @@ cwd = "/absolute/path/project"
 ZIP 最大 100 MiB，报告最大 10 MiB。文件只在本机读取，以 multipart 字节上传；服务器不读取客户端路径。
 所有报告默认受 CDS 项目权限保护，不开启匿名分享。通过任务返回的报告 ID 打开 CDS 报告阅读器。
 
+查询结果保留原有 `task`，额外返回 `reportUrl` 和 `result`。`result.findings` 可直接用于定位文件、解释原因与生成修复建议；默认每页 50 条，使用 `result.page.nextOffset` 继续查询，统计与覆盖说明独立于当前页。所有引擎发现都保留未验证状态，不据此自动修改代码、合并或发布。
+
+新审查在私有对象存储中保留结构化原始字段；旧版 CDS Markdown 能完整还原时提供已有问题字段。导入文档或不能完整还原的历史报告返回 `result: null` 与原因，并保留原文阅读入口，不伪造结构化扫描结果。
+
+已停止的 DeepAudit 任务可以只读取既有问题并缓存到私有存储，不上传源码、不续跑、不调用模型，也不把失败状态改成完成。部分结果可下载为明确标注“未完成”的 Markdown；它不生成完成归档，不改变验收或发布结论。
+
 HTTPS 为默认要求，只有回环地址允许 HTTP。网络请求沿用 HTTP(S)_PROXY、NO_PROXY 和 Node CA 信任；
 不会跟随重定向传送项目凭据。错误中不返回凭据原文。
 
@@ -62,3 +68,10 @@ HTTPS 为默认要求，只有回环地址允许 HTTP。网络请求沿用 HTTP(
 pnpm --dir cds/mcp test
 pnpm --dir cds/mcp check
 ```
+
+首次读取较大的历史结果时，`cds_code_review_get` 会立即返回 `result: null, resultLoading: true`。继续按同一 taskId 查询，后台只整理引擎已有问题，完成后返回分页结果；不会恢复审查或改变失败状态。
+
+直接审查 CDS 已连接的项目：先调用 `cds_code_review_list({"includeBranches":true})`，
+用户选择返回的分支后调用 `cds_code_review_submit({"branchId":"所选分支ID"})`。
+无需上传文件或填写 GitHub URL。准备源码时复用现有项目仓库授权，同步远端分支并固定 SHA；
+审查不包含工作树未提交内容，不切换部署分支，也不运行项目脚本。`ref` 仅用于 GitHub 来源。

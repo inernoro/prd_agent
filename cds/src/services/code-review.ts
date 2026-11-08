@@ -10,6 +10,8 @@ import { CDS_AGENT_CAPABILITY_DEFINITIONS } from '../shared/agent-mission-regist
 import { runCodeReviewStaticAnalysis } from './code-review-static.js';
 import { currentCodeReviewEngineBinding, resolveCodeReviewEngineConfig } from './code-review-settings.js';
 import { CodeReviewUpstreamHttpError } from './code-review-audit.js';
+import type { CodeReviewResult } from '../shared/code-review-result.js';
+import { archivedCodeReviewResult, pageCodeReviewResult, sortCodeReviewFindings } from './code-review-result.js';
 
 export class CodeReviewError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -42,16 +44,20 @@ export interface CodeReviewDeps {
   state: StateService;
   inputs: CodeReviewInputs;
   mail: CodeReviewMail;
-  engine?: Pick<CodeReviewEngine, 'run'>;
+  engine?: Pick<CodeReviewEngine, 'run'> & Partial<Pick<CodeReviewEngine, 'readExisting'>>;
   publicBaseUrl: string;
   ownerScope: string;
   githubToken?: (projectId: string, githubUrl: string) => Promise<string | undefined>;
+  cdsSnapshot?: (input: { projectId: string; branchId: string; branchName: string; excludePatterns: string[]; signal: AbortSignal }) => Promise<{
+    zip: Buffer; commitSha: string; sourceName: string; skippedFiles: number;
+  }>;
   autoStart?: boolean;
-  resolveEngine?: (origin?: CodeReviewEngineBinding) => Pick<CodeReviewEngine, 'run'> | undefined;
+  resolveEngine?: (origin?: CodeReviewEngineBinding) => (Pick<CodeReviewEngine, 'run'> & Partial<Pick<CodeReviewEngine, 'readExisting'>>) | undefined;
 }
 export interface SubmitCodeReview {
   projectId: string;
-  sourceType: 'github' | 'zip';
+  sourceType: 'github' | 'zip' | 'cds';
+  branchId?: string;
   githubUrl?: string;
   ref?: string;
   zip?: Buffer;
@@ -75,6 +81,10 @@ export class CodeReviewService {
   private submissions = Promise.resolve();
   private engineProbeTimer?: ReturnType<typeof setTimeout>;
   private dispatchNotBefore = 0;
+  private readingResults = new Map<string, Promise<CodeReviewResult | null>>();
+  private resultReadControllers = new Map<string, AbortController>();
+  private resultReadFailures = new Map<string, number>();
+  private hotResult?: { key: string; result: CodeReviewResult };
   constructor(readonly deps: CodeReviewDeps) {}
   private engine(origin?: CodeReviewEngineBinding) {
     if (this.deps.engine) return this.deps.engine;
@@ -97,6 +107,84 @@ export class CodeReviewService {
     const task = this.deps.state.getCodeReviewTask(id);
     if (!task) throw new CodeReviewError(404, '审查任务不存在');
     return task;
+  }
+  /** Read existing evidence only; never creates, retries or resumes an analysis task. */
+  async result(id: string, options: { offset?: number; limit?: number; severity?: string; query?: string } = {}) {
+    const task = this.get(id);
+    let result: CodeReviewResult | null = null;
+    if (task.resultKey) {
+      result = this.hotResult?.key === task.resultKey ? this.hotResult.result
+        : JSON.parse((await this.deps.inputs.get(task.resultKey)).toString('utf8')) as CodeReviewResult;
+      if (result.version !== 1 || result.taskId !== task.id || result.projectId !== task.projectId || !Array.isArray(result.findings)) {
+        throw new CodeReviewError(502, '结果记录无法读取，请重试或查看原始报告');
+      }
+      this.hotResult = { key: task.resultKey, result };
+    } else if (task.reportId && task.sourceType !== 'report') {
+      const meta = this.deps.state.getAcceptanceReport(task.reportId);
+      if (meta?.projectId === task.projectId && meta.format === 'md') {
+        const content = await this.deps.state.readAcceptanceReportContentAsync(meta.id);
+        if (content) result = archivedCodeReviewResult(task, content);
+      }
+    }
+    if (!result && task.sourceType !== 'report' && task.engineTaskId && terminal.has(task.status)) {
+      const engine = this.engine(task.engineBinding);
+      if (engine?.readExisting && !this.stopped) {
+        let reading = this.readingResults.get(id);
+        const failedAt = this.resultReadFailures.get(id);
+        if (!reading && (failedAt === undefined || Date.now() - failedAt >= 15_000)) {
+          const controller = new AbortController();
+          const engineTaskId = task.engineTaskId;
+          this.resultReadControllers.set(id, controller);
+          this.resultReadFailures.delete(id);
+          reading = (async () => {
+            const upstream = await engine.readExisting!(engineTaskId, {
+              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15 * 60_000)]), audit: event => this.audit(id, event),
+            });
+            if (!upstream || controller.signal.aborted || this.stopped) return null;
+            const saved: CodeReviewResult = { version: 1, taskId: id, projectId: task.projectId, sourceHash: task.sourceHash,
+              commitSha: task.commitSha, origin: 'analysis', findings: sortCodeReviewFindings(upstream.findings),
+              notes: [...upstream.notes, '读取已停止任务的既有结果，未重新执行分析。任务失败或取消状态保持原样。'] };
+            const key = await this.deps.inputs.put(`${id}-existing-result-v1`, task.projectId, Buffer.from(JSON.stringify(saved)));
+            const current = this.get(id);
+            if (current.engineTaskId === engineTaskId && terminal.has(current.status) && !current.resultKey && !controller.signal.aborted && !this.stopped) {
+              current.resultKey = key;
+              current.findingsSummary = {};
+              for (const finding of saved.findings) current.findingsSummary[finding.severity] = (current.findingsSummary[finding.severity] || 0) + 1;
+              await this.deps.state.putCodeReviewTask(current);
+              this.hotResult = { key, result: saved };
+            }
+            return saved;
+          })();
+          this.readingResults.set(id, reading);
+          // Cold imports can exceed an HTTP/MCP request deadline. Keep one read-only
+          // import running and let clients poll; never leave a rejected promise unobserved.
+          void reading.catch(() => { if (!controller.signal.aborted) this.resultReadFailures.set(id, Date.now()); }).finally(() => {
+            this.readingResults.delete(id); this.resultReadControllers.delete(id);
+          });
+        }
+      }
+    }
+    const url = new URL('/code-reviews', this.deps.publicBaseUrl);
+    url.searchParams.set('project', task.projectId); url.searchParams.set('task', id);
+    if (task.reportId) url.searchParams.set('report', '1');
+    const resultLoading = !result && this.readingResults.has(id);
+    return { result: result ? pageCodeReviewResult(task, result, options) : null, resultLoading, reportUrl: url.href,
+      downloadUrl: task.reportId || result ? new URL(`/api/code-reviews/${encodeURIComponent(id)}/report/download`, this.deps.publicBaseUrl).href : null,
+      resultUnavailableReason: result ? undefined : resultLoading
+        ? '正在整理引擎中的已有问题，完成后自动显示，不会重新执行审查。'
+        : this.resultReadFailures.has(id) ? '已有问题暂时未能整理完成，请稍后重新读取。审查任务状态保持不变。' : task.sourceType === 'report'
+        ? '这是导入的原始报告，请阅读原文。未将文档声明当作实际扫描结果。'
+        : task.reportId ? '历史报告未保存可完整还原的问题数据，请阅读原始报告。' : '本次审查尚无已保存的问题明细，请查看当前进度。' };
+  }
+  async exportPartialResult(id: string): Promise<string> {
+    const read = await this.result(id);
+    const task = this.get(id);
+    if (!read.result || !task.resultKey) throw new CodeReviewError(404, '报告尚未归档，也没有可下载的已保存结果');
+    const result = JSON.parse((await this.deps.inputs.get(task.resultKey)).toString('utf8')) as CodeReviewResult;
+    if (result.taskId !== id || result.projectId !== task.projectId) throw new CodeReviewError(502, '结果记录无法读取，请重试');
+    return ['# 部分代码审查结果', '', '本次审查尚未完成。以下为已保存的分析发现，不代表全仓通过，也未改变任务状态或生成完成报告。', '',
+      renderCodeReviewReport(task, { findings: result.findings, totalFiles: task.progress.totalFiles, scannedFiles: task.progress.scannedFiles,
+        skippedFiles: task.inputSkippedFiles || 0, notes: result.notes, engineTaskId: task.engineTaskId || '' })].join('\n');
   }
   private async save(task: CodeReviewTask) {
     const current = this.deps.state.getCodeReviewTask(task.id);
@@ -122,11 +210,18 @@ export class CodeReviewService {
     if (input.email && !this.deps.mail.configured()) throw new CodeReviewError(503, '邮件通道未配置，请选择仅报告中心');
     if (input.excludePatterns && (!Array.isArray(input.excludePatterns) || input.excludePatterns.length > 100 || input.excludePatterns.some((p) => typeof p !== 'string' || p.length > 200))) throw new CodeReviewError(400, '排除目录格式不正确');
     if (input.ref && (typeof input.ref !== 'string' || input.ref.length > 255 || /[\r\n\0]/.test(input.ref))) throw new CodeReviewError(400, '仓库版本格式不正确');
-    if (input.sourceType === 'github') {
+    const branch = input.sourceType === 'cds' ? this.deps.state.getBranch(input.branchId || '') : undefined;
+    if (input.sourceType !== 'cds' && input.branchId) throw new CodeReviewError(400, '只有 CDS 来源接受分支 ID');
+    if (input.sourceType === 'cds') {
+      if (!branch || branch.projectId !== input.projectId) throw new CodeReviewError(403, '所选分支不属于当前项目');
+      if (branch.deleting || branch.mirror) throw new CodeReviewError(409, '所选分支正在删除或属于其他实例，请重新选择');
+      if (!this.deps.cdsSnapshot) throw new CodeReviewError(503, '当前实例尚未配置 CDS 分支源码读取');
+      if (input.zip || input.githubUrl || input.ref) throw new CodeReviewError(400, 'CDS 分支来源只接受当前项目的分支 ID');
+    } else if (input.sourceType === 'github') {
       try { parseCodeReviewGithubUrl(input.githubUrl || ''); } catch (error) { throw new CodeReviewError(400, (error as Error).message); }
     } else if (input.sourceType !== 'zip' || !input.zip?.length) throw new CodeReviewError(400, '请上传 ZIP 源码包');
     const idempotencyKey = createHash('sha256').update(JSON.stringify({ projectId: input.projectId, sourceType: input.sourceType,
-      githubUrl: input.githubUrl, ref: input.ref, hash: input.zip ? createHash('sha256').update(input.zip).digest('hex') : undefined,
+      githubUrl: input.githubUrl, ref: input.ref, branchId: input.branchId, hash: input.zip ? createHash('sha256').update(input.zip).digest('hex') : undefined,
       exclude: input.excludePatterns || [], email: input.email || '', key: input.idempotencyKey || '' })).digest('hex');
     // Without an explicit key, only deduplicate in-flight work; finished reviews can be requested again.
     const existing = this.list(input.projectId).find((t) => t.idempotencyKey === idempotencyKey && t.ownerScope === this.deps.ownerScope
@@ -134,7 +229,8 @@ export class CodeReviewService {
     if (existing) return existing;
     const now = new Date().toISOString();
     const task: CodeReviewTask = { id: randomUUID().replace(/-/g, ''), projectId: input.projectId, title: input.title?.trim().slice(0, 300) || '代码审查报告',
-      sourceType: input.sourceType, sourceName: input.sourceType === 'github' ? input.githubUrl! : (input.filename || 'source.zip').slice(0, 200),
+      sourceType: input.sourceType, sourceName: branch ? `CDS · ${branch.branch}` : input.sourceType === 'github' ? input.githubUrl! : (input.filename || 'source.zip').slice(0, 200),
+      branchId: branch?.id, branchName: branch?.branch,
       githubUrl: input.githubUrl, ref: input.ref, excludePatterns: input.excludePatterns || [], status: 'queued', phase: '等待审查',
       progress: { totalFiles: 0, scannedFiles: 0 }, delivery: { status: input.email ? 'pending' : 'not_requested', email: input.email },
       createdBy: input.createdBy, createdAt: now, updatedAt: now, ownerScope: this.deps.ownerScope, idempotencyKey };
@@ -172,6 +268,7 @@ export class CodeReviewService {
     if (this.engineProbeTimer) clearTimeout(this.engineProbeTimer);
     this.engineProbeTimer = undefined;
     for (const controller of this.active.values()) controller.abort(new CodeReviewWorkerStoppedError('CDS 实例停止跟踪'));
+    for (const controller of this.resultReadControllers.values()) controller.abort(new CodeReviewWorkerStoppedError('CDS 实例停止读取已有结果'));
   }
   async cancel(id: string) {
     const task = this.get(id); this.assertOwned(task);
@@ -189,6 +286,10 @@ export class CodeReviewService {
     if (!['failed', 'cancelled'].includes(task.status) || this.active.has(id)) throw new CodeReviewError(409, '仅可重试已停止的失败或取消任务');
     if (task.reportId) throw new CodeReviewError(409, '报告已归档，请单独重试邮件投递');
     task.status = 'queued'; task.phase = '等待重试'; task.error = undefined;
+    task.resultKey = undefined; task.findingsSummary = undefined;
+    if (this.hotResult?.result.taskId === id) this.hotResult = undefined;
+    this.resultReadFailures.delete(id);
+    this.resultReadControllers.get(id)?.abort(new CodeReviewWorkerStoppedError('审查任务已由用户重试'));
     task.engineRetryRequested = Boolean(task.engineTaskId && !task.engineCompleted);
     if (!task.engineTaskId) task.progress.scannedFiles = 0;
     // No await separates the conditional check from StateService's synchronous in-memory replacement before flush.
@@ -301,14 +402,18 @@ export class CodeReviewService {
       let task = this.get(id);
       task.status = 'preparing'; task.phase = '准备固定源码快照'; await this.save(task);
       if (!task.inputKey) {
-        const snapshot = await fetchCodeReviewGithubSnapshot({ githubUrl: task.githubUrl!, ref: task.ref,
+        const snapshot = task.sourceType === 'cds' ? await this.deps.cdsSnapshot!({ projectId: task.projectId,
+          branchId: task.branchId!, branchName: task.branchName!, excludePatterns: task.excludePatterns, signal: controller.signal })
+          : await fetchCodeReviewGithubSnapshot({ githubUrl: task.githubUrl!, ref: task.ref,
           token: await this.deps.githubToken?.(task.projectId, task.githubUrl!), signal: controller.signal,
           audit: async (e) => this.audit(id, e) });
-        const validated = await validateCodeReviewZip(snapshot.zip, task.excludePatterns);
+        const validated = await validateCodeReviewZip(snapshot.zip, task.excludePatterns, task.sourceType !== 'cds');
         task = this.get(id); this.checkActive(task, controller.signal);
         task.commitSha = snapshot.commitSha; task.sourceHash = createHash('sha256').update(snapshot.zip).digest('hex');
         task.sourceName = snapshot.sourceName; task.progress.totalFiles = validated.totalFiles;
-        task.inputSkippedFiles = validated.skippedFiles;
+        task.inputSkippedFiles = validated.skippedFiles + ('skippedFiles' in snapshot && typeof snapshot.skippedFiles === 'number' ? snapshot.skippedFiles : 0);
+        if (task.sourceType === 'cds') await this.audit(id, { operation: 'cds.branch_snapshot', outcome: 'success',
+          branchId: task.branchId, branchName: task.branchName, commitSha: snapshot.commitSha, sourceHash: task.sourceHash });
         task.inputKey = await this.deps.inputs.put(id, task.projectId, validated.zip);
         await this.save(task);
       }
@@ -352,11 +457,15 @@ export class CodeReviewService {
       result.totalFiles = Math.max(result.totalFiles, selectedFiles);
       result.skippedFiles = (task.inputSkippedFiles || 0) + Math.max(0, result.totalFiles - result.scannedFiles);
       task.engineTaskId = result.engineTaskId; task.status = 'archiving'; task.phase = '正在归档报告'; await this.save(task);
+      const structured: CodeReviewResult = { version: 1, taskId: id, projectId: task.projectId, sourceHash: task.sourceHash,
+        commitSha: task.commitSha, origin: 'analysis', findings: sortCodeReviewFindings(result.findings), notes: result.notes };
+      task.resultKey = await this.deps.inputs.put(`${id}-result-v1`, task.projectId, Buffer.from(JSON.stringify(structured)));
+      await this.save(task);
       const found = this.deps.state.listAcceptanceReports(task.projectId).find((r) => r.reviewTaskId === id);
       const report = found || await this.deps.state.createAcceptanceReportAsync({
         title: `代码审查报告 · ${task.sourceName}${task.commitSha ? `@${task.commitSha.slice(0, 8)}` : ''} · ${new Date().toISOString().slice(0, 10)}`,
         format: 'md', content: renderCodeReviewReport(task, result), reportType: 'code-review', reviewTaskId: id,
-        projectId: task.projectId, commitSha: task.commitSha, createdBy: task.createdBy,
+        projectId: task.projectId, branch: task.branchName, commitSha: task.commitSha, createdBy: task.createdBy,
         contentHash: task.sourceHash, sourceId: `code-review:${id}`,
       });
       task = this.get(id); this.checkActive(task, controller.signal);

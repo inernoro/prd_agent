@@ -1,4 +1,7 @@
 import { ApiError, apiRequest, apiUrl } from './api';
+import type { CodeReviewResultPage } from '../../../src/shared/code-review-result';
+export { REVIEW_CATEGORIES, REVIEW_SEVERITIES, REVIEW_SEVERITY_LABELS } from '../../../src/shared/code-review-result';
+export type { CodeReviewFinding, CodeReviewResultPage } from '../../../src/shared/code-review-result';
 
 export type CodeReviewStatus = 'queued' | 'preparing' | 'running' | 'archiving' | 'completed' | 'failed' | 'cancelled';
 
@@ -6,8 +9,13 @@ export interface CodeReviewTask {
   id: string;
   projectId: string;
   title: string;
-  sourceType: 'zip' | 'github' | 'report';
+  sourceType: 'zip' | 'github' | 'cds' | 'report';
   sourceName: string;
+  branchId?: string;
+  branchName?: string;
+  githubUrl?: string;
+  ref?: string;
+  excludePatterns?: string[];
   commitSha?: string;
   sourceHash?: string;
   inputSkippedFiles?: number;
@@ -29,7 +37,8 @@ export interface CodeReviewTask {
 
 export interface CodeReviewSubmission {
   projectId: string;
-  sourceType: 'zip' | 'github';
+  sourceType: 'zip' | 'github' | 'cds';
+  branchId?: string;
   file?: File;
   githubUrl?: string;
   ref?: string;
@@ -58,15 +67,52 @@ export async function listCodeReviews(projectId: string, signal?: AbortSignal): 
   return response.tasks;
 }
 
+export interface CodeReviewBranch { id: string; branch: string; status: string }
+export async function listCodeReviewBranches(projectId: string, signal?: AbortSignal): Promise<CodeReviewBranch[]> {
+  const response = await apiRequest<{ branches: CodeReviewBranch[] }>(`/api/code-reviews/branches?${new URLSearchParams({ projectId })}`, { signal });
+  return response.branches;
+}
+
+export interface CodeReviewRead {
+  task: CodeReviewTask;
+  result: CodeReviewResultPage | null;
+  resultLoading?: boolean;
+  reportUrl: string;
+  downloadUrl?: string | null;
+  resultUnavailableReason?: string;
+}
+export function readCodeReview(id: string, options: { offset?: number; limit?: number; severity?: string; query?: string } = {}, signal?: AbortSignal): Promise<CodeReviewRead> {
+  const query = new URLSearchParams({ includeResult: '1' });
+  if (options.offset !== undefined) query.set('offset', String(options.offset));
+  if (options.limit !== undefined) query.set('limit', String(options.limit));
+  if (options.severity) query.set('severity', options.severity);
+  if (options.query) query.set('q', options.query);
+  return apiRequest<CodeReviewRead>(`/api/code-reviews/${encodeURIComponent(id)}?${query}`, { signal });
+}
+
+export async function uploadCodeReviewReport(projectId: string, title: string, file: File, signal?: AbortSignal): Promise<CodeReviewTask> {
+  const form = new FormData();
+  form.set('projectId', projectId); form.set('title', title); form.set('file', file);
+  form.set('format', /\.(md|markdown)$/i.test(file.name) ? 'md' : 'html');
+  const response = await fetch(apiUrl('/api/code-reviews/reports'), { method: 'POST', body: form, credentials: 'include', signal });
+  const payload = await response.json() as { task?: CodeReviewTask; report?: { id: string }; message?: string };
+  if (!response.ok) throw new Error(payload.message || '报告未能保存，请重试');
+  if (payload.task) return payload.task;
+  // Content deduplication can return an existing archive instead of a new task.
+  const tasks = await listCodeReviews(projectId, signal);
+  const existing = tasks.find(task => task.reportId === payload.report?.id);
+  if (!existing) throw new Error('报告已保存，请返回列表刷新查看');
+  return existing;
+}
+
 export async function submitCodeReview(input: CodeReviewSubmission, signal?: AbortSignal): Promise<CodeReviewTask> {
-  if (input.sourceType === 'github') {
+  if (input.sourceType !== 'zip') {
     const { task } = await apiRequest<{ task: CodeReviewTask }>('/api/code-reviews', {
       method: 'POST',
       body: {
         projectId: input.projectId,
         sourceType: input.sourceType,
-        githubUrl: input.githubUrl,
-        ref: input.ref || undefined,
+        ...(input.sourceType === 'cds' ? { branchId: input.branchId } : { githubUrl: input.githubUrl, ref: input.ref || undefined }),
         excludePatterns: input.excludePatterns,
         email: input.email || undefined,
       },

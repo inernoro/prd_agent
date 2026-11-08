@@ -14,6 +14,7 @@ import { CodeReviewEngine, type CodeReviewEngineResult } from '../../src/service
 import { publicCodeReviewTask, type CodeReviewTask } from '../../src/shared/code-review.js';
 import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
 import { CodeReviewUpstreamHttpError } from '../../src/services/code-review-audit.js';
+import { readCodeReviewSnapshot } from '../../src/services/code-review-source.js';
 
 describe('代码审查任务完整闭环', () => {
   let dir: string, state: StateService, service: CodeReviewService, server: Server | undefined;
@@ -559,6 +560,136 @@ describe('代码审查任务完整闭环', () => {
       expect(read).not.toHaveBeenCalled();
     } finally { read.mockRestore(); }
     expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+  it('CDS 分支任务固定 SHA 与路径，重试复用快照，不重新读取发生变化的分支', async () => {
+    state.addBranch({ id: 'selected', projectId: 'a', branch: 'feature/audit', worktreePath: '/unused', services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    const cdsSnapshot = vi.fn(async () => ({ zip: zip(), commitSha: 'c'.repeat(40), sourceName: 'a · feature/audit', skippedFiles: 8 }));
+    service = new CodeReviewService({ ...service.deps, cdsSnapshot });
+    run.mockImplementationOnce(async () => { throw new Error('模型暂时不可用'); });
+    const task = await service.submit({ projectId: 'a', sourceType: 'cds', branchId: 'selected', createdBy: 'test', excludePatterns: ['vendor/'] });
+    expect(task).toMatchObject({ status: 'queued', branchId: 'selected', branchName: 'feature/audit' });
+    await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', commitSha: 'c'.repeat(40), inputSkippedFiles: 8 });
+    expect(cdsSnapshot).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'a', branchId: 'selected', branchName: 'feature/audit', excludePatterns: ['vendor/'] }));
+    const sent = await readCodeReviewSnapshot(run.mock.calls[0][0].zip);
+    expect(sent.files.map(file => file.name)).toEqual(['src/index.ts']);
+    await service.retry(task.id); await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'completed', commitSha: 'c'.repeat(40), branchName: 'feature/audit' });
+    expect(cdsSnapshot).toHaveBeenCalledTimes(1); expect(state.listAcceptanceReports('a')).toHaveLength(1);
+    expect(state.getAcceptanceReport(service.get(task.id).reportId!)?.branch).toBe('feature/audit');
+  });
+  it('分支列表和提交共享项目权限，跨项目分支与混合来源在读取仓库前被拒绝', async () => {
+    for (const projectId of ['a', 'b']) state.addBranch({ id: `branch-${projectId}`, projectId, branch: `feature/${projectId}`, worktreePath: '/unused', services: {}, status: 'idle', createdAt: new Date().toISOString() });
+    const cdsSnapshot = vi.fn(); service = new CodeReviewService({ ...service.deps, cdsSnapshot });
+    const url = await serve(), headers = { 'x-project': 'a', 'content-type': 'application/json' };
+    const branches = await fetch(`${url}/branches?projectId=a`, { headers });
+    expect(await branches.json()).toEqual({ branches: [{ id: 'branch-a', branch: 'feature/a', status: 'idle' }] });
+    expect((await fetch(`${url}/branches?projectId=b`, { headers })).status).toBe(403);
+    const post = (data: object) => fetch(url, { method: 'POST', headers, body: JSON.stringify({ projectId: 'a', sourceType: 'cds', ...data }) });
+    expect((await post({ branchId: 'branch-b' })).status).toBe(403);
+    expect((await post({ branchId: 'branch-a', githubUrl: 'https://github.com/a/b' })).status).toBe(400);
+    expect((await post({ branchId: 'branch-a', ref: 'main' })).status).toBe(400);
+    expect(cdsSnapshot).not.toHaveBeenCalled();
+    const accepted = await post({ branchId: 'branch-a' }); expect(accepted.status).toBe(202);
+    expect((await accepted.json()).task).toMatchObject({ sourceType: 'cds', branchId: 'branch-a', branchName: 'feature/a', status: 'queued' });
+    expect(cdsSnapshot).not.toHaveBeenCalled();
+  });
+  it('结构化结果持久化后可独立读取，分页与原始报告不触发再次分析', async () => {
+    run.mockImplementation(async () => ({ ...result(), findings: Array.from({ length: 125 }, (_, i) => ({
+      ...result().findings[0], severity: i < 3 ? 'high' : 'low', title: `问题 ${i}`, codeSnippet: '<script>not executed</script>', aiExplanation: '原始解释',
+    })) }));
+    const task = await submit(); await service.pump(); await state.flush();
+    expect(state.getCodeReviewTask(task.id)?.resultKey).toBeTruthy();
+    expect(publicCodeReviewTask(service.get(task.id))).not.toHaveProperty('resultKey');
+    const original = await state.readAcceptanceReportContentAsync(service.get(task.id).reportId!);
+    const restored = new StateService(path.join(dir, 'state.json')); restored.load();
+    state = restored; service = make();
+    const first = await service.result(task.id, { limit: 2 });
+    expect(first.result).toMatchObject({ projectId: 'a', taskId: task.id, summary: { high: 3, low: 122 },
+      page: { offset: 0, limit: 2, total: 125, nextOffset: 2 }, coverage: { complete: true, scannedFiles: 1, totalFiles: 1 } });
+    expect(first.result?.findings[0]).toMatchObject({ codeSnippet: '<script>not executed</script>', aiExplanation: '原始解释', verified: false });
+    expect((await service.result(task.id, { offset: 124, limit: 2 })).result?.page.nextOffset).toBeNull();
+    expect((await service.result(task.id, { severity: 'high', query: '问题 1' })).result?.page.total).toBe(1);
+    expect(first.reportUrl).toContain(`project=a&task=${task.id}&report=1`);
+    expect(original).toContain('代码审查报告'); expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('读取既有中断任务只取回原生结果并缓存，不重试、不归档、不改变失败状态', async () => {
+    const readExisting = vi.fn(async () => ({ ...result(), totalFiles: 2, scannedFiles: 1 }));
+    run.mockImplementationOnce(async input => {
+      await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '分析中', engineTaskId: 'stopped-native' });
+      throw new Error('模型服务不可用');
+    });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump();
+    const pages = await Promise.all([service.result(task.id), service.result(task.id)]);
+    expect(pages[0]).toMatchObject({ result: null, resultLoading: true });
+    await vi.waitFor(async () => expect((await service.result(task.id)).result).toMatchObject({ coverage: { complete: false, scannedFiles: 1, totalFiles: 2 }, findings: [{ verified: false }] }));
+    await service.result(task.id);
+    expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'stopped-native' });
+    expect(service.get(task.id).reportId).toBeUndefined(); expect(state.listAcceptanceReports('a')).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+    const base = await serve();
+    const downloaded = await fetch(`${base}/${task.id}/report/download`, { headers: { 'x-project': 'a' } });
+    expect(downloaded.status).toBe(200); expect(await downloaded.text()).toContain('部分代码审查结果');
+    expect(service.get(task.id).status).toBe('failed'); expect(state.listAcceptanceReports('a')).toHaveLength(0);
+    expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+    await service.retry(task.id);
+    expect(service.get(task.id).resultKey).toBeUndefined(); expect(service.get(task.id).findingsSummary).toBeUndefined();
+    expect((await service.result(task.id)).result).toBeNull(); expect(readExisting).toHaveBeenCalledTimes(1);
+  });
+  it('一万多条中断结果在后台单次整理，HTTP立即返回可轮询状态并复用热缓存', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const readExisting = vi.fn(async () => { await gate; return { ...result(), findings: Array.from({ length: 14_441 }, () => result().findings[0]) }; });
+    run.mockImplementationOnce(async input => { await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '已停止', engineTaskId: 'large-native' }); throw new Error('模型已停止'); });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump(); const base = await serve();
+    const response = await fetch(`${base}/${task.id}?includeResult=1`, { headers: { 'x-project': 'a' } });
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ result: null, resultLoading: true, task: { status: 'failed' } });
+    await service.result(task.id); expect(readExisting).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(async () => expect((await service.result(task.id, { limit: 2 })).result?.page.total).toBe(14_441));
+    const read = vi.spyOn(inputs, 'get');
+    expect((await service.result(task.id, { offset: 100, limit: 2 })).result?.findings).toHaveLength(2);
+    expect(read).not.toHaveBeenCalled(); expect(run).toHaveBeenCalledTimes(1);
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', progress: { totalFiles: 2, scannedFiles: 1 } });
+    expect(state.listAcceptanceReports('a')).toHaveLength(0);
+  });
+  it('整理错误作为结果读取状态返回，冷却期间不重复请求且不产生未处理拒绝', async () => {
+    const readExisting = vi.fn().mockRejectedValue(new Error('private upstream failure'));
+    run.mockImplementationOnce(async input => { await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '已停止', engineTaskId: 'error-native' }); throw new Error('模型已停止'); });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump();
+    expect((await service.result(task.id)).resultLoading).toBe(true);
+    await vi.waitFor(async () => expect((await service.result(task.id)).resultLoading).toBe(false));
+    const failed = await service.result(task.id); expect(failed.result).toBeNull(); expect(failed.resultUnavailableReason).toContain('稍后重新读取');
+    expect(JSON.stringify(failed)).not.toContain('private upstream failure'); expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
+  });
+  it('停止CDS会中止已有结果整理，不将停止后的响应写成新结果', async () => {
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    let signal!: AbortSignal;
+    const readExisting = vi.fn(async (_id, input) => { signal = input.signal; await gate; return result(); });
+    run.mockImplementationOnce(async input => { await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '已停止', engineTaskId: 'shutdown-native' }); throw new Error('模型已停止'); });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(); await service.pump(); await service.result(task.id);
+    service.stop(); expect(signal.aborted).toBe(true); release();
+    await vi.waitFor(async () => expect((await service.result(task.id)).resultLoading).toBe(false));
+    expect(service.get(task.id).resultKey).toBeUndefined(); expect(service.get(task.id).status).toBe('failed'); expect(readExisting).toHaveBeenCalledTimes(1);
+  });
+  it('结果接口沿用项目权限并拒绝无效分页，失败与无报告不冒充零问题', async () => {
+    const task = await submit(); const base = await serve();
+    const read = async (suffix: string, projectId = 'a') => fetch(`${base}/${task.id}?includeResult=1${suffix}`, { headers: { 'x-project': projectId } });
+    expect((await read('', 'b')).status).toBe(403);
+    for (const suffix of ['&offset=-1', '&limit=101', '&limit=0', '&severity=unknown', '&offset=Infinity']) expect((await read(suffix)).status).toBe(400);
+    const pending = await (await read('')).json();
+    expect(pending.result).toBeNull(); expect(pending.resultUnavailableReason).toContain('尚无已保存');
+    await service.pump();
+    const completed = await (await read('&limit=1')).json();
+    expect(completed.result.findings).toHaveLength(1); expect(completed.result.page.total).toBe(1);
+    expect(completed.task).not.toHaveProperty('resultKey'); expect(completed.task).not.toHaveProperty('inputKey');
+    expect((await (await fetch(`${base}/${task.id}`, { headers: { 'x-project': 'a' } })).json())).not.toHaveProperty('result');
+    expect(run).toHaveBeenCalledTimes(1);
   });
   it('能力声明条件重试，HTTP匹配失败版本时仍使用原任务与固定源码', async () => {
     run.mockRejectedValueOnce(new Error('模型任务失败'));

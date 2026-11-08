@@ -228,6 +228,12 @@ describe('持久化审查引擎绑定', () => {
     expect(requests.filter(url => url.endsWith('/scan/upload-zip'))).toHaveLength(1);
     // An unbound legacy row has no authoritative origin. Restore the known fixture engine explicitly.
     if (status === 'legacy-unbound') expect((await put('owner', binding)).status).toBe(200);
+    requests.length = 0;
+    expect((await service.result(original.id)).resultLoading).toBe(true);
+    await vi.waitFor(async () => expect((await service.result(original.id)).result?.coverage).toMatchObject({ complete: false, scannedFiles: 0, totalFiles: 1 }));
+    expect(new Set(requests.map(url => new URL(url).origin))).toEqual(new Set([binding.engineBaseUrl]));
+    expect(requests.some(url => url.endsWith('/scan/upload-zip') || url.endsWith('/resume'))).toBe(false);
+    expect(service.get(original.id).status).toBe(status === 'cancelled' ? 'cancelled' : 'failed');
     service.stop(); service = new CodeReviewService({ ...service.deps });
     await service.retry(original.id);
     state.setCustomEnv({}, 'engine'); requests.length = 0;

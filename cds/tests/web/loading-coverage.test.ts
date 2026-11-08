@@ -43,6 +43,22 @@ describe('内容加载覆盖守卫', () => {
       expect(covered.waits.some((row: { category: string }) => row.category === 'action')).toBe(true);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
+
+  it('已结束的属性加载状态不误报等待，同时继续检查真正的属性等待', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-loading-finished-'));
+    const file = path.join(dir, 'ReportReader.tsx');
+    try {
+      fs.writeFileSync(file, `function ReportReader(){return read && !result && !read.resultLoading && task.reportId ? <p>显示已归档报告</p> : read.resultLoading ? <ContentLoading label="整理已有问题"/> : null;}`);
+      const covered = auditLoadingCoverage(dir);
+      expect(covered.uncovered).toEqual([]);
+      expect(covered.waits).toHaveLength(1);
+      expect(covered.waits[0].category).toBe('skeleton');
+      fs.writeFileSync(file, `function ReportReader(){return read.resultLoading ? <p>整理已有问题</p> : null;}`);
+      const missing = auditLoadingCoverage(dir);
+      expect(missing.uncovered).toHaveLength(1);
+      expect(missing.uncovered[0].condition).toBe('read.resultLoading');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
 });
 
 describe('共享内容骨架', () => {

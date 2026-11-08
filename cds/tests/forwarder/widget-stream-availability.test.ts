@@ -99,7 +99,7 @@ it('TCP已连接的空活动流允许等待首个心跳，不将首事件等待�
   f.responses[0].write('event: heartbeat\ndata: {}\n\n');
   const s = await pending;
   await s.first;
-  expect(s.chunks.join('')).toContain('event: heartbeat');
+  await vi.waitFor(() => expect(s.chunks.join('')).toContain('event: heartbeat'));
   expect(s.chunks.join('')).not.toContain('reconnecting');
   s.res.destroy(); s.req.destroy();
 }, 5000);

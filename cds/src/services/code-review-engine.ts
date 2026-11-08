@@ -1,20 +1,12 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { CODE_REVIEW_ENGINE_FAILURE_REASONS, CodeReviewUpstreamHttpError, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
 import { readCodeReviewSnapshot } from './code-review-source.js';
+import type { CodeReviewFinding } from '../shared/code-review-result.js';
+export type { CodeReviewFinding } from '../shared/code-review-result.js';
 
 /** Stop local polling on CDS shutdown without cancelling the durable upstream task. */
 export class CodeReviewWorkerStoppedError extends Error {}
 
-export interface CodeReviewFinding {
-  filePath: string;
-  line?: number;
-  category: 'bug' | 'security' | 'performance' | 'style' | 'maintainability';
-  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
-  message: string;
-  suggestion?: string;
-  verified: false;
-  tool: string;
-}
 export interface CodeReviewEngineResult {
   findings: CodeReviewFinding[];
   totalFiles: number;
@@ -68,6 +60,96 @@ export class CodeReviewEngine {
     this.token = login.access_token;
   }
 
+  private requester(input: { signal: AbortSignal; audit: CodeReviewAudit }) {
+    return async (operation: string, path: string, init: RequestInit = {}): Promise<unknown> => {
+      const attempt = () => reviewJsonRequest(operation, `${this.base}${path}`, {
+        ...init, headers: { Authorization: `Bearer ${this.token}`, ...init.headers }, signal: input.signal,
+      }, input.audit, this.fetchImpl);
+      const attemptedToken = this.token;
+      try { return await attempt(); } catch (error) {
+        // An explicit token remains an administrator-owned credential. Only service logins can refresh.
+        if (!(error instanceof CodeReviewUpstreamHttpError) || error.status !== 401 || this.options.token
+          || !this.options.username || !this.options.password) throw error;
+        if (this.token === attemptedToken) await this.login(input.signal, input.audit);
+        return attempt(); // One retry, with independent audit evidence for every HTTP attempt.
+      }
+    };
+  }
+
+  /** Read a stopped native task without submission, resume, polling or model calls. */
+  async readExisting(engineTaskId: string, input: { signal: AbortSignal; audit: CodeReviewAudit }): Promise<CodeReviewEngineResult | null> {
+    if (!this.token) await this.login(input.signal, input.audit);
+    const request = this.requester(input);
+    const task = await request('deepaudit.read_existing_status', `/tasks/${encodeURIComponent(engineTaskId)}`) as EngineTask;
+    if (!task || task.id !== engineTaskId) throw new Error('DeepAudit 返回的任务身份不匹配，未读取问题明细');
+    if (!['completed', 'failed', 'cancelled'].includes(task.status)) return null;
+    hasIncompleteFiles(task); // Validates checkpoint counts; partial coverage remains explicit.
+    return this.readTaskResult(task, engineTaskId, request);
+  }
+
+  private async readTaskResult(task: EngineTask, engineTaskId: string,
+    request: (operation: string, path: string, init?: RequestInit) => Promise<unknown>): Promise<CodeReviewEngineResult> {
+    const taskPath = `/tasks/${encodeURIComponent(engineTaskId)}`;
+      let rawIssues: unknown[];
+      if (task.checkpoint_version === 1) {
+        const expected = task.issues_count;
+        if (expected !== undefined && (!Number.isInteger(expected) || expected < 0 || expected > MAX_FINDINGS)) {
+          throw new Error('DeepAudit 问题总数无效或超过安全处理上限，未归档不完整报告');
+        }
+        rawIssues = [];
+        const ids = new Set<string>();
+        let bytes = 0;
+        for (;;) {
+          const page = await request('deepaudit.task_findings', `${taskPath}/issues?offset=${rawIssues.length}&limit=200`);
+          if (!Array.isArray(page) || page.length > 200) throw new Error('DeepAudit 分页问题列表格式无效');
+          bytes += Buffer.byteLength(JSON.stringify(page));
+          if (rawIssues.length + page.length > MAX_FINDINGS || bytes > MAX_FINDING_BYTES) {
+            throw new Error('DeepAudit 问题列表超过安全处理上限，未归档不完整报告');
+          }
+          for (const issue of page) {
+            const id = issue && typeof issue === 'object' ? (issue as Record<string, unknown>).id : undefined;
+            if (typeof id !== 'string' || !id || ids.has(id)) throw new Error('DeepAudit 分页问题编号缺失或重复，未归档不完整报告');
+            ids.add(id);
+          }
+          rawIssues.push(...page);
+          if (expected !== undefined && rawIssues.length > expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
+          if (page.length < 200) break;
+        }
+        if (expected !== undefined && rawIssues.length !== expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
+      } else {
+        const legacy = await request('deepaudit.task_findings', `${taskPath}/issues`);
+        if (!Array.isArray(legacy)) throw new Error('DeepAudit 问题列表格式无效');
+        rawIssues = legacy;
+      }
+      const categories = ['bug', 'security', 'performance', 'style', 'maintainability'];
+      const severities = ['critical', 'high', 'medium', 'low', 'info'];
+      const findings = rawIssues.map((raw): CodeReviewFinding => {
+        const issue = raw as Record<string, unknown>;
+        const issueType = String(issue.issue_type ?? '').toLowerCase();
+        const category = categories.includes(issueType) ? issueType as CodeReviewFinding['category']
+          : /vuln|inject|xss|ssrf|secret|auth|crypto|security|traversal/.test(issueType) ? 'security' : 'bug';
+        const severity = String(issue.severity ?? '').toLowerCase();
+        // The ZIP scanner copies title into message; description holds the actual cause.
+        const explanation = [...new Set([issue.title, issue.message, issue.description]
+          .filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean))].join('\n\n');
+        return { id: typeof issue.id === 'string' ? issue.id : undefined, title: typeof issue.title === 'string' ? issue.title : undefined,
+          filePath: String(issue.file_path ?? 'unknown'), line: Number.isInteger(issue.line_number) && Number(issue.line_number) > 0 ? Number(issue.line_number) : undefined,
+          codeSnippet: typeof issue.code_snippet === 'string' ? issue.code_snippet : undefined,
+          aiExplanation: typeof issue.ai_explanation === 'string' ? issue.ai_explanation : undefined,
+          endLine: Number.isInteger(issue.end_line) && Number(issue.end_line) > 0 ? Number(issue.end_line) : undefined,
+          category, severity: severities.includes(severity) ? severity as CodeReviewFinding['severity'] : 'medium',
+          message: explanation || '未提供问题说明',
+          suggestion: issue.suggestion ? String(issue.suggestion) : undefined, verified: false, tool: 'DeepAudit AI' };
+      });
+      const totalFiles = Math.max(0, Number(task.total_files) || 0);
+      const scannedFiles = Math.max(0, Number(task.scanned_files) || 0);
+      return { findings, totalFiles, scannedFiles, skippedFiles: Math.max(0, totalFiles - scannedFiles), engineTaskId,
+        notes: ['采用 DeepAudit 静态与 AI 五维分析；未执行动态 PoC，发现均待人工复核。',
+          ...(task.checkpoint_version === 1 && Number(task.skipped_files) > 0 ? [`DeepAudit 按引擎政策跳过 ${task.skipped_files} 个文件；跳过不计为分析成功，不能视为审查通过。`] : []),
+          ...(scannedFiles < totalFiles ? [`DeepAudit 有 ${totalFiles - scannedFiles} 个文件未成功分析，不能视为全量通过。`] : []),
+          ...(totalFiles === 0 ? ['DeepAudit 未分析任何文件，检查支持语言、排除规则和模型配置。'] : [])] };
+  }
+
   async run(input: {
     taskId: string; zip: Buffer; signal: AbortSignal; excludePatterns: string[]; engineTaskId?: string; retryFailed?: boolean;
     onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string;
@@ -88,19 +170,7 @@ export class CodeReviewEngine {
       input.signal.throwIfAborted();
     }
     if (!this.token) await this.login(input.signal, input.audit);
-    const request = async (operation: string, path: string, init: RequestInit = {}): Promise<unknown> => {
-      const attempt = () => reviewJsonRequest(operation, `${this.base}${path}`, {
-        ...init, headers: { Authorization: `Bearer ${this.token}`, ...init.headers }, signal: input.signal,
-      }, input.audit, this.fetchImpl);
-      const attemptedToken = this.token;
-      try { return await attempt(); } catch (error) {
-        // An explicit token remains an administrator-owned credential. Only service logins can refresh.
-        if (!(error instanceof CodeReviewUpstreamHttpError) || error.status !== 401 || this.options.token
-          || !this.options.username || !this.options.password) throw error;
-        if (this.token === attemptedToken) await this.login(input.signal, input.audit);
-        return attempt(); // One retry, with independent audit evidence for every HTTP attempt.
-      }
-    };
+    const request = this.requester(input);
     let engineTaskId = input.engineTaskId;
     try {
       if (engineTaskId && input.retryFailed) {
@@ -161,60 +231,7 @@ export class CodeReviewEngine {
         if (task.status === 'cancelled') throw new Error(`DeepAudit 任务已取消（已分析 ${scannedFiles}/${totalFiles} 个文件），未形成代码质量结论。`);
         await delay(this.options.pollIntervalMs ?? 2000, undefined, { signal: input.signal });
       }
-      let rawIssues: unknown[];
-      if (task.checkpoint_version === 1) {
-        const expected = task.issues_count;
-        if (expected !== undefined && (!Number.isInteger(expected) || expected < 0 || expected > MAX_FINDINGS)) {
-          throw new Error('DeepAudit 问题总数无效或超过安全处理上限，未归档不完整报告');
-        }
-        rawIssues = [];
-        const ids = new Set<string>();
-        let bytes = 0;
-        for (;;) {
-          const page = await request('deepaudit.task_findings', `${taskPath}/issues?offset=${rawIssues.length}&limit=200`);
-          if (!Array.isArray(page) || page.length > 200) throw new Error('DeepAudit 分页问题列表格式无效');
-          bytes += Buffer.byteLength(JSON.stringify(page));
-          if (rawIssues.length + page.length > MAX_FINDINGS || bytes > MAX_FINDING_BYTES) {
-            throw new Error('DeepAudit 问题列表超过安全处理上限，未归档不完整报告');
-          }
-          for (const issue of page) {
-            const id = issue && typeof issue === 'object' ? (issue as Record<string, unknown>).id : undefined;
-            if (typeof id !== 'string' || !id || ids.has(id)) throw new Error('DeepAudit 分页问题编号缺失或重复，未归档不完整报告');
-            ids.add(id);
-          }
-          rawIssues.push(...page);
-          if (expected !== undefined && rawIssues.length > expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
-          if (page.length < 200) break;
-        }
-        if (expected !== undefined && rawIssues.length !== expected) throw new Error('DeepAudit 问题列表与总数不一致，未归档不完整报告');
-      } else {
-        const legacy = await request('deepaudit.task_findings', `${taskPath}/issues`);
-        if (!Array.isArray(legacy)) throw new Error('DeepAudit 问题列表格式无效');
-        rawIssues = legacy;
-      }
-      const categories = ['bug', 'security', 'performance', 'style', 'maintainability'];
-      const severities = ['critical', 'high', 'medium', 'low', 'info'];
-      const findings = rawIssues.map((raw): CodeReviewFinding => {
-        const issue = raw as Record<string, unknown>;
-        const issueType = String(issue.issue_type ?? '').toLowerCase();
-        const category = categories.includes(issueType) ? issueType as CodeReviewFinding['category']
-          : /vuln|inject|xss|ssrf|secret|auth|crypto|security|traversal/.test(issueType) ? 'security' : 'bug';
-        const severity = String(issue.severity ?? '').toLowerCase();
-        // The ZIP scanner copies title into message; description holds the actual cause.
-        const explanation = [...new Set([issue.title, issue.message, issue.description]
-          .filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean))].join('\n\n');
-        return { filePath: String(issue.file_path ?? 'unknown'), line: Number.isInteger(issue.line_number) && Number(issue.line_number) > 0 ? Number(issue.line_number) : undefined,
-          category, severity: severities.includes(severity) ? severity as CodeReviewFinding['severity'] : 'medium',
-          message: explanation || '未提供问题说明',
-          suggestion: issue.suggestion ? String(issue.suggestion) : undefined, verified: false, tool: 'DeepAudit AI' };
-      });
-      const totalFiles = Math.max(0, Number(task.total_files) || 0);
-      const scannedFiles = Math.max(0, Number(task.scanned_files) || 0);
-      return { findings, totalFiles, scannedFiles, skippedFiles: Math.max(0, totalFiles - scannedFiles), engineTaskId,
-        notes: ['采用 DeepAudit 静态与 AI 五维分析；未执行动态 PoC，发现均待人工复核。',
-          ...(task.checkpoint_version === 1 && Number(task.skipped_files) > 0 ? [`DeepAudit 按引擎政策跳过 ${task.skipped_files} 个文件；跳过不计为分析成功，不能视为审查通过。`] : []),
-          ...(scannedFiles < totalFiles ? [`DeepAudit 有 ${totalFiles - scannedFiles} 个文件未成功分析，不能视为全量通过。`] : []),
-          ...(totalFiles === 0 ? ['DeepAudit 未分析任何文件，检查支持语言、排除规则和模型配置。'] : [])] };
+      return await this.readTaskResult(task, engineTaskId, request);
     } catch (error) {
       if (engineTaskId && input.signal.aborted && !(input.signal.reason instanceof CodeReviewWorkerStoppedError)) {
         // Best-effort upstream cancellation uses an independent short timeout.

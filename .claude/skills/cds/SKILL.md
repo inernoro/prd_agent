@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.20.4
+  version: 0.20.5
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.20.4 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.20.5 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -337,7 +337,10 @@ $CLI code-review submit --github https://github.com/owner/repo --ref main --proj
 $CLI code-review submit --zip-file source.zip --exclude 'vendor/**' --project <id>
 $CLI code-review submit --zip-file source.zip --email owner@example.com --idempotency-key <same-submission>
 $CLI code-review list --project <id>
+$CLI code-review list --include-branches
+$CLI code-review submit --branch-id <branchId>
 $CLI code-review show <taskId>
+$CLI code-review show <taskId> --results --limit 50
 $CLI code-review cancel <taskId>
 $CLI code-review retry <taskId>
 $CLI code-review mail-retry <taskId>
@@ -347,6 +350,12 @@ $CLI code-review upload-report --file review.md --title "代码审查报告" --p
 省略 `--project` 时读取项目凭据中的 projectId；项目级 key 不能覆盖为另一个项目。
 submit 返回异步任务，不代表扫描完成。用 show 查询到完成状态与 reportId 后，才能声称报告已归档。
 所有报告在 CDS《代码审查报告》栏目留档，邮件失败不影响已归档的结果，也不重新扫描代码。
+MCP 的 get 与 CLI show --results 可读取已保存的结构化问题、实际覆盖和报告深链；按 nextOffset 分页。
+导入报告首个页签直接阅读原文；缺失结构化数据的历史档案在首屏展示归档正文，不把空结果当成零问题。
+
+网页提供“上传源码”和“CDS 项目”两个入口。CDS 项目模式必须主动选择分支，复用已有仓库授权；
+开始准备源码时同步远端分支并固定提交 SHA，不包含工作树未提交内容，不执行项目脚本。
+MCP list 使用 includeBranches=true 获取当前项目分支，再向 submit 传 branchId；与 zipPath、githubUrl 三选一，ref 仅适用于 GitHub。
 
 ## Agent 使用任务调度口令的标准流程
 
@@ -591,3 +600,5 @@ prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变
 用户身份与整个.cds连接同时丢失时，Agent在原仓库执行 `connect --host <原CDS主机> --recover`，自动读取origin；不能改用new-project猜建副本。仍有有效用户身份则自动从其授权项目查找唯一仓库；停用或撤权等待原权限恢复，已知失效身份不降匿名。多个匹配项目由管理员明确选择。网络/保存中断保留私有恢复票据，原命令继续同一申请，不反复批准；全部文件保存后确认领取。
 
 设备恢复签发的用户身份仅可发现和补回此次原项目，不能建项目、不能借原账号其他授权扩范围。管理员在用户管理核对历史匿名凭据的确切项目、凭据ID与原账号后确认归属；不按Agent名推断，不批量迁移。已撤销和已有归属不可认领，认领保留原范围并立即受账号/项目撤权约束。原授权对话框支持搜索和定位原项目，仅过滤展示，不自动恢复勾选。
+
+历史结果首次整理可能返回 `result: null, resultLoading: true`；继续查询同一任务直至返回分页结果。该过程只读取已有问题，不恢复收费审查。

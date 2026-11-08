@@ -3,6 +3,16 @@ import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
 import { buildZip } from '../utils/zip.js';
 import { readReviewResponse, redactReviewEvidence, reviewJsonRequest, type CodeReviewAudit } from './code-review-audit.js';
 import { redactBodyText } from './http-log-store.js';
+import type { BranchEntry, Project } from '../types.js';
+
+/** Only an explicitly owned root or this project's managed worktree may supply source. */
+export function codeReviewRepositoryRoot(project: Pick<Project, 'id' | 'repoPath'>,
+  branch: Pick<BranchEntry, 'projectId' | 'worktreePath'>, instanceRoot: string, instanceOwnerId?: string): string {
+  if (branch.projectId !== project.id) throw new Error('所选分支不属于当前项目');
+  const root = project.repoPath || (instanceOwnerId === project.id ? instanceRoot : branch.worktreePath);
+  if (!root) throw new Error('项目仓库尚未同步就绪，请等待同步完成或改用 ZIP');
+  return root;
+}
 
 export const CODE_REVIEW_ZIP_LIMITS = { compressed: 100 * 1024 * 1024, expanded: 1024 * 1024 * 1024,
   entries: 20_000, file: 200 * 1024 } as const;
@@ -31,7 +41,7 @@ function safePath(name: string): boolean {
     && !/^[a-zA-Z]:/.test(name) && !name.split('/').some((part) => part === '..' || part === '.');
 }
 
-function shouldInclude(name: string, patterns: string[]): boolean {
+export function shouldIncludeCodeReviewPath(name: string, patterns: string[] = []): boolean {
   const parts = name.split('/');
   const filename = parts.at(-1)!.toLowerCase();
   const extension = filename.slice(filename.lastIndexOf('.'));
@@ -42,10 +52,10 @@ function shouldInclude(name: string, patterns: string[]): boolean {
 }
 
 /** Parse and verify every entry without extracting it to disk; forward only the sanitized archive. */
-export async function validateCodeReviewZip(zip: Buffer, excludePatterns: string[] = []): Promise<{
+export async function validateCodeReviewZip(zip: Buffer, excludePatterns: string[] = [], normalizeWrapper = true): Promise<{
   zip: Buffer; totalFiles: number; skippedFiles: number;
 }> {
-  const result = await readCodeReviewSnapshot(zip, excludePatterns, true);
+  const result = await readCodeReviewSnapshot(zip, excludePatterns, normalizeWrapper);
   return { zip: result.zip, totalFiles: result.totalFiles, skippedFiles: result.skippedFiles };
 }
 
@@ -85,7 +95,7 @@ export async function readCodeReviewSnapshot(zip: Buffer, excludePatterns: strin
           seen.add(entry.fileName);
           expanded += entry.uncompressedSize;
           if (expanded > CODE_REVIEW_ZIP_LIMITS.expanded) throw new Error('ZIP 解压体积超过 1 GiB');
-          const include = shouldInclude(entry.fileName, excludePatterns) && entry.uncompressedSize <= CODE_REVIEW_ZIP_LIMITS.file;
+          const include = shouldIncludeCodeReviewPath(entry.fileName, excludePatterns) && entry.uncompressedSize <= CODE_REVIEW_ZIP_LIMITS.file;
           if (symlink && include) throw new Error('ZIP 审查范围内含符号链接');
           if (entry.fileName.endsWith('/') && !symlink) { archive.readEntry(); return; }
           if (!include) skippedFiles++;
