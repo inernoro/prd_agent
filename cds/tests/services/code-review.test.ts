@@ -410,6 +410,66 @@ describe('代码审查任务完整闭环', () => {
     expect(page.events).toHaveLength(23); expect(page.events.at(-1)).toMatchObject({ sequence: 0 });
   });
 
+  it.each([false, true])('取消和既有结果的并发审计保留完整链，其他任务同时读取=%s', async (readOtherTask) => {
+    let running = false, releaseFirst!: () => void, firstEntered!: () => void;
+    const firstWrite = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const firstStarted = new Promise<void>(resolve => { firstEntered = resolve; });
+    run.mockImplementationOnce(async input => {
+      await input.onProgress({ phase: '分析中', totalFiles: 1, scannedFiles: 1, engineTaskId: 'cancelled-native' });
+      return new Promise<CodeReviewEngineResult>((_resolve, reject) => {
+        input.signal.addEventListener('abort', () => {
+          void input.audit({ operation: 'deepaudit.cancel_task', outcome: 'success' })
+            .then(() => reject(input.signal.reason), reject);
+        }, { once: true });
+        running = true;
+      });
+    });
+    const readExisting = vi.fn(async (engineTaskId, input) => {
+      await input.audit({ operation: 'deepaudit.read_existing_status', engineTaskId, outcome: 'success' });
+      return { ...result(), engineTaskId };
+    });
+    service = new CodeReviewService({ ...service.deps, engine: { run, readExisting } });
+    const task = await submit(), originalPut = inputs.put;
+    let firstAudit = true;
+    const put = vi.spyOn(inputs, 'put').mockImplementation(async (id, projectId, data) => {
+      if (id.startsWith(`${task.id}-audit-`) && firstAudit) {
+        firstAudit = false; firstEntered(); await firstWrite;
+      }
+      return originalPut(id, projectId, data);
+    });
+    const pumping = service.pump();
+    try {
+      await vi.waitFor(() => expect(running).toBe(true));
+      await service.cancel(task.id); await firstStarted;
+      if (readOtherTask) {
+        const other = await submit({ title: '另一个已停止任务' });
+        other.status = 'failed'; other.engineTaskId = 'independent-native'; await state.putCodeReviewTask(other);
+        await service.result(other.id);
+        await vi.waitFor(async () => expect((await service.result(other.id)).result).not.toBeNull());
+        expect(service.get(other.id)).toMatchObject({ status: 'failed', auditCount: 1 });
+        expect((await service.auditPage(other.id)).events).toMatchObject([{ engineTaskId: 'independent-native' }]);
+      }
+      expect((await service.result(task.id)).resultLoading).toBe(true);
+      releaseFirst(); await pumping;
+      await vi.waitFor(async () => expect((await service.result(task.id)).result).not.toBeNull());
+      expect([...blobs.keys()].filter(key => key.startsWith(`${task.id}-audit-`))).toHaveLength(2);
+      expect(service.get(task.id)).toMatchObject({ status: 'cancelled', engineTaskId: 'cancelled-native', auditCount: 2 });
+      expect((await service.auditPage(task.id)).events).toMatchObject([
+        { operation: 'deepaudit.read_existing_status' }, { operation: 'deepaudit.cancel_task' },
+      ]);
+      await state.flush();
+      const reloaded = new StateService(path.join(dir, 'state.json')); reloaded.load();
+      const restored = new CodeReviewService({ ...service.deps, state: reloaded });
+      expect((await restored.auditPage(task.id)).events).toHaveLength(2);
+      expect(reloaded.getCodeReviewTask(task.id)?.auditCount).toBe(2);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(readExisting.mock.calls.filter(([id]) => id === 'cancelled-native')).toHaveLength(1);
+      expect(state.listAcceptanceReports('a')).toHaveLength(0); expect(send).not.toHaveBeenCalled();
+    } finally {
+      releaseFirst(); await pumping; put.mockRestore();
+    }
+  });
+
   it('五千条原审计证据有界分页直到首条，追加新头不改写原分页且不能跨任务使用游标', async () => {
     const task = await submit();
     for (let sequence = 1; sequence <= 5005; sequence++) blobs.set(`history-${sequence}`, Buffer.from(JSON.stringify({

@@ -74,6 +74,7 @@ export class CodeReviewService {
   private readonly auditCursorKey = randomBytes(32);
   // Immutable chain positions let original numeric-before clients continue without changing their request shape.
   private readonly auditLegacyContinuations = new Map<string, string>();
+  private readonly auditAppends = new Map<string, Promise<void>>();
   private active = new Map<string, AbortController>();
   private pumping = false;
   private stopped = false;
@@ -296,16 +297,26 @@ export class CodeReviewService {
     await this.save(task); if (this.deps.autoStart !== false) void this.pump(); return task;
   }
   private async audit(id: string, value: unknown) {
-    const task = this.get(id);
     const safe = maskSecretsInObject(value) as Record<string, unknown>;
-    // Linked evidence objects retain every attempt without growing the Mongo state document.
-    const sequence = (task.auditCount || 0) + 1;
-    const key = await this.deps.inputs.put(`${id}-audit-${randomUUID()}`, task.projectId,
-      Buffer.from(JSON.stringify({ sequence, event: safe, previousKey: task.auditHeadKey })));
-    const current = this.get(id);
-    current.auditHeadKey = key; current.auditCount = sequence;
-    current.audit = [...(current.audit || []), safe].slice(-20);
-    await this.save(current);
+    let release!: () => void;
+    const previous = this.auditAppends.get(id);
+    const appended = new Promise<void>(resolve => { release = resolve; });
+    this.auditAppends.set(id, appended);
+    await previous;
+    try {
+      // Cancellation and existing-result reads can overlap; serialize the whole linked append per task.
+      const task = this.get(id);
+      const sequence = (task.auditCount || 0) + 1;
+      const key = await this.deps.inputs.put(`${id}-audit-${randomUUID()}`, task.projectId,
+        Buffer.from(JSON.stringify({ sequence, event: safe, previousKey: task.auditHeadKey })));
+      const current = this.get(id);
+      current.auditHeadKey = key; current.auditCount = sequence;
+      current.audit = [...(current.audit || []), safe].slice(-20);
+      await this.save(current);
+    } finally {
+      release();
+      if (this.auditAppends.get(id) === appended) this.auditAppends.delete(id);
+    }
   }
   async auditPage(id: string, before?: number, cursor?: string) {
     const task = this.get(id);
