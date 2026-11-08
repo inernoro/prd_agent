@@ -124,6 +124,8 @@ jobs:
               - 'scripts/check-map-model-egress.py'
               - 'scripts/fixtures/map-model-egress-audit.json'
               - 'exec_dep.sh'
+              - '.github/workflows/web-latest-pages.yml'
+              - 'scripts/lib/release-artifacts.py'
               - 'scripts/lib/static-release.sh'
               - 'scripts/lib/gateway-bind-mount.sh'
               - 'scripts/prd-agent-public-surface-smoke.py'

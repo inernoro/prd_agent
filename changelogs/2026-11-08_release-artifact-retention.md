@@ -1,0 +1,1 @@
+| fix | platform | 固定提交静态发布包独立持久留存，发布与历史回滚严格校验原三件套，避免后续Pages覆盖，并保留逐次调用的安全审计证据；拦截过时main提交发布Pages，防止mutable latest倒退 |
