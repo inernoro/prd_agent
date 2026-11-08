@@ -1163,29 +1163,36 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
             self.assertIn("!cancelled()", condition, job)
             conditions[job] = condition
 
-        def allowed(job, results, cancelled=False):
+        def allowed(job, results, cancelled=False, ref="refs/heads/main"):
             expression = re.sub(r"needs\.([\w-]+)\.result", lambda item: repr(results[item.group(1)]), conditions[job])
             expression = expression.replace("always()", "True").replace("!cancelled()", str(not cancelled))
+            expression = expression.replace("github.ref", repr(ref))
             expression = expression.replace("&&", " and ").replace("||", " or ")
             return eval(expression, {"__builtins__": {}}, {})
 
         for job, parent in chain:
             for result in ("success", "skipped", "failure", "cancelled"):
                 for cancelled in (False, True):
-                    with self.subTest(job=job, parent_result=result, workflow_cancelled=cancelled):
-                        acceptable = result in (("success", "skipped") if job == "build" else ("success",))
-                        self.assertEqual(allowed(job, {parent: result}, cancelled), acceptable and not cancelled)
+                    for ref in ("refs/heads/main", "refs/heads/codex/retention-candidate"):
+                        with self.subTest(job=job, parent_result=result, workflow_cancelled=cancelled, ref=ref):
+                            acceptable = result in (("success", "skipped") if job == "build" else ("success",))
+                            publishable_ref = job != "pages" or ref == "refs/heads/main"
+                            self.assertEqual(allowed(job, {parent: result}, cancelled, ref), acceptable and not cancelled and publishable_ref)
 
         # Walk the actual dependency chain, including how a blocked job turns
         # into skipped for its successor, rather than checking build alone.
         for migration in ("skipped", "success", "failure", "cancelled"):
-            results = {"retain-existing": migration}
-            decisions = []
-            for job, _ in chain:
-                decision = allowed(job, results)
-                decisions.append(decision)
-                results[job] = "success" if decision else "skipped"
-            self.assertEqual(decisions, [migration in ("skipped", "success")] * 3)
+            for ref in ("refs/heads/main", "refs/heads/codex/retention-candidate"):
+                results = {"retain-existing": migration}
+                decisions = []
+                for job, _ in chain:
+                    decision = allowed(job, results, ref=ref)
+                    decisions.append(decision)
+                    results[job] = "success" if decision else "skipped"
+                expected = [migration in ("skipped", "success")] * 3
+                if ref != "refs/heads/main":
+                    expected[-1] = False
+                self.assertEqual(decisions, expected)
         for stopped_job in ("build", "retain"):
             for stopped_result in ("failure", "cancelled", "skipped"):
                 results = {"retain-existing": "skipped"}
@@ -1215,6 +1222,8 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         self.assertIn("contents: read", pages)
         self.assertIn("pages: write", pages)
         self.assertIn("id-token: write", pages)
+        self.assertRegex(pages, r"environment:\n      name: github-pages\n")
+        self.assertIn("uses: actions/deploy-pages@v4", pages)
         self.assertIn("group: pages", pages)
         self.assertIn("cancel-in-progress: false", pages)
         self.assertIn("PUBLISH_LATEST: ${{ github.event_name == 'push' || inputs.publish_latest == true }}", pages)
