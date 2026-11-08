@@ -28,6 +28,8 @@ public static class TaskAdmissionPolicies
         var result = new Dictionary<string, TaskAdmissionPolicy>(StringComparer.Ordinal);
         // 多能力工具与工作流只可用平台注册的有限能力，不接受未注册 caller 或任意字符串。
         var all = AppCallerRegistrationService.GetAllDefinitions().Select(x => x.AppCode).Distinct().ToArray();
+        Register("McpSpeechController", "Create", new[] { AppCallerRegistry.McpSpeech.Synthesize }, false, 1, 1);
+        Register("SpeechOpenApiController", "Create", new[] { AppCallerRegistry.McpSpeech.Synthesize }, false, 1, 1);
         Add("ModelLabController", "RunStream", new[] { "prd-agent-web.model-lab." });
         Register("LabController", "SimulateMessage",
             new[] { AppCallerRegistry.Desktop.Chat.SendMessageChat }, false, 128,

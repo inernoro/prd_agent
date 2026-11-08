@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
@@ -19,7 +20,8 @@ public sealed class SpeechGenerationService(
     IAssetStorage storage,
     SpeechQuotaService quota,
     IHostEnvironment host,
-    ILogger<SpeechGenerationService> logger)
+    ILogger<SpeechGenerationService> logger,
+    ITaskExecutionCoordinator? taskExecutions = null)
 {
     public const string AppKey = "mcp-speech";
     private static readonly DateTime ProcessStartedAt = DateTime.UtcNow;
@@ -172,6 +174,7 @@ public sealed class SpeechGenerationService(
         var metadata = await gateway.ResolveModelMetadataAsync(AppCallerRegistry.McpSpeech.Synthesize, ModelTypes.Tts, profile.ModelPoolId, ct: CancellationToken.None);
         ValidateResolution(profile, metadata);
         var run = new SpeechRun { Id = idem ?? Guid.NewGuid().ToString("N"), OwnerUserId = owner, AgentApiKeyId = keyId,
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Environment = EnvironmentId, DeploymentSlug = DeploymentScope.Current, RequestFingerprint = fingerprint,
             Title = string.IsNullOrWhiteSpace(request.Title) ? new string(request.Text.Take(40).ToArray()) : request.Title.Trim(), Text = request.Text,
             ProfileId = profile.Id, ProfileName = profile.Name, ProfileRevision = profile.Revision, ProfileSnapshot = profile,
@@ -257,6 +260,19 @@ public sealed class SpeechGenerationService(
         if (run == null) return false;
         try
         {
+            await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(taskExecutions, run.TaskPermitId, run.Id);
+            if (taskExecutionAttempt.ShouldSkip)
+            {
+                await db.SpeechRuns.UpdateOneAsync(x => x.Id == run.Id && x.WorkerId == workerId,
+                    Builders<SpeechRun>.Update.Set(x => x.Status, SpeechRunStatus.Queued)
+                        .Set(x => x.Stage, "等待原任务释放执行许可").Set(x => x.LeaseUntil, null).Set(x => x.WorkerId, null),
+                    cancellationToken: CancellationToken.None);
+                return false;
+            }
+            using var execution = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+                ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
+            if (taskExecutions is not null && taskExecutionAttempt.Lease is null)
+                throw new SpeechException("TASK_EXECUTION_NOT_ADMITTED", "此历史任务缺少执行许可，未调用语音上游；请重新明确提交生成。", 409);
             var currentProfile = (await GetSettingsAsync()).Profiles.FirstOrDefault(x => x.Id == run.ProfileId && x.Enabled);
             if (currentProfile == null || currentProfile.Revision != run.ProfileRevision)
                 throw new SpeechException("PROFILE_CHANGED", "生成前语音能力配置发生变化，任务未调用上游。请检查声音配置后重新生成。", 409);

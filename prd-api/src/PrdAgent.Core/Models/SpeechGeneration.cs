@@ -90,8 +90,9 @@ public sealed class SpeechPreset : SpeechOptions
 }
 
 [AppOwnership("mcp-speech", "基础语音", IsPrimary = true)]
-public sealed class SpeechRun
+public sealed class SpeechRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    [JsonIgnore] public string? TaskPermitId { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     [JsonIgnore] public string OwnerUserId { get; set; } = string.Empty;
     [JsonIgnore] public string? AgentApiKeyId { get; set; }

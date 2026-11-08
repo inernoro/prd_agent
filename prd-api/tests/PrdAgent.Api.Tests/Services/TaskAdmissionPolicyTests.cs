@@ -12,6 +12,30 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class TaskAdmissionPolicyTests
 {
     [Theory]
+    [InlineData("McpSpeechController")]
+    [InlineData("SpeechOpenApiController")]
+    public void SpeechCreation_IsLimitedToOneSpeechCall_AndReadOperationsHaveNoPaidAuthority(string controller)
+    {
+        var type = "PrdAgent.Api.Controllers.Api." + controller;
+        var policy = TaskAdmissionPolicies.Find(type, "Create")!;
+        Assert.Equal(new[] { PrdAgent.Core.Models.AppCallerRegistry.McpSpeech.Synthesize }, policy.AppCallers);
+        Assert.Equal(1, policy.InteractiveMaxCalls);
+        Assert.Equal(1, policy.AgentMaxCalls);
+        Assert.Null(TaskAdmissionPolicies.Find(type, "Capabilities"));
+        Assert.Null(TaskAdmissionPolicies.Find(type, "Runs"));
+        Assert.Null(TaskAdmissionPolicies.Find(type, "Audio"));
+        Assert.Null(TaskAdmissionPolicies.Find(type, "SavePreset"));
+    }
+
+    [Fact]
+    public void SpeechRun_PersistsTaskAuthorityWithoutExposingItInJson()
+    {
+        PrdAgent.Core.Interfaces.ITaskAuthorizedRun task = new PrdAgent.Core.Models.SpeechRun { TaskPermitId = "private-permit" };
+        Assert.Equal("private-permit", task.TaskPermitId);
+        Assert.DoesNotContain("private-permit", System.Text.Json.JsonSerializer.Serialize((PrdAgent.Core.Models.SpeechRun)task));
+    }
+
+    [Theory]
     [InlineData("Bearer", null, "admin", TaskExecutionOrigins.Interactive)]
     [InlineData("Bearer", "jwt", "desktop", TaskExecutionOrigins.Interactive)]
     [InlineData("ApiKey", "agent-apikey", "admin", TaskExecutionOrigins.Agent)]
