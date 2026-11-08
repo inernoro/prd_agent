@@ -37,7 +37,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 /// <summary>真实Mongo与生产端点装配；上游只计数，任何测试均不会产生外部费用。</summary>
 [Trait("Category", "Integration")]
-public sealed class GatewayTaskAdmissionIntegrationTests
+public sealed partial class GatewayTaskAdmissionIntegrationTests
 {
     private const string TransportKey = "phase1-isolated-transport-key";
     private const string Caller = "future-business.task-admission::chat";

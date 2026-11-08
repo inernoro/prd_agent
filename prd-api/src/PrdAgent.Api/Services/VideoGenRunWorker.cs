@@ -27,7 +27,7 @@ namespace PrdAgent.Api.Services;
 ///
 /// storyboard 模式先经 LLM 拆镜，再逐镜调用模型池，并由 ffmpeg 按项目时间线合成音视频和字幕。
 /// </summary>
-public class VideoGenRunWorker : BackgroundService
+public partial class VideoGenRunWorker : BackgroundService
 {
     private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private static readonly TimeSpan SceneClaimTimeout = TimeSpan.FromMinutes(2);
@@ -37,6 +37,9 @@ public class VideoGenRunWorker : BackgroundService
     private readonly IRunEventStore _runStore;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenRunWorker> _logger;
+    internal TimeSpan DirectVideoPollInterval { get; set; } = TimeSpan.FromSeconds(6);
+    internal TimeSpan DirectVideoPollingWindow { get; set; } = TimeSpan.FromMinutes(10);
+    private readonly Dictionary<string, DateTime> _unavailableReceipts = new(StringComparer.Ordinal);
 
     public VideoGenRunWorker(
         MongoDbContext db,
@@ -56,6 +59,7 @@ public class VideoGenRunWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var yieldQueuedOnce = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -65,7 +69,9 @@ public class VideoGenRunWorker : BackgroundService
                 // 路径 1: Queued → 根据 Mode 路由
                 //   - direct      → 直接走 ProcessDirectVideoGenAsync (Rendering)
                 //   - storyboard  → 走 ProcessScriptingAsync 拆分镜 (Scripting → Editing)
-                var queued = await ClaimQueuedRunAsync(stoppingToken);
+                // 队列处理后先让既有其它路径执行一轮，避免取消核对重入队后持续独占 worker。
+                var queued = yieldQueuedOnce ? null : await ClaimQueuedRunAsync(stoppingToken);
+                yieldQueuedOnce = queued != null;
                 if (queued != null)
                 {
                     _logger.LogInformation("[VideoGenWorker] Claimed run: runId={RunId}, mode={Mode}",
@@ -80,10 +86,20 @@ public class VideoGenRunWorker : BackgroundService
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "VideoGen 任务失败: runId={RunId}", queued.Id);
+                        if (queued.Mode == VideoGenMode.Direct
+                            && await _db.VideoGenRuns.Find(x => x.Id == queued.Id).FirstOrDefaultAsync(CancellationToken.None) is { } fresh
+                            && !string.IsNullOrWhiteSpace(fresh.DirectVideoJobId))
+                        {
+                            await FailDirectRunAsync(fresh, fresh.DirectVideoJobId, false, "VIDEOGEN_ERROR", ex.Message);
+                            continue;
+                        }
                         await FailRunAsync(queued, "VIDEOGEN_ERROR", ex.Message);
                     }
                     continue;
                 }
+
+                // 每轮最多读一份原作业收据，并继续让既有分镜/导出路径运行，不独占 worker。
+                await ResumeCancelledVideoReceiptAsync(stoppingToken);
 
                 // 路径 2: 原子领取 Editing 状态下待提交的单镜任务，再调 OpenRouter 生成
                 if (await RecoverStaleSceneClaimAsync(stoppingToken)) continue;
@@ -223,6 +239,7 @@ public class VideoGenRunWorker : BackgroundService
         var fb = Builders<VideoGenRun>.Filter;
         // 先 peek 看下 Mode（避免错误置 status）
         var pending = await _db.VideoGenRuns.Find(fb.Eq(x => x.Status, VideoGenRunStatus.Queued))
+            .SortBy(x => x.QueueEnteredAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id)
             .FirstOrDefaultAsync(ct);
         if (pending == null) return null;
 
@@ -240,7 +257,7 @@ public class VideoGenRunWorker : BackgroundService
             .Set(x => x.PhaseProgress, 1);
 
         var run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
-            fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
+            fb.Eq(x => x.Id, pending.Id) & fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
             update,
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
@@ -256,12 +273,18 @@ public class VideoGenRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
     {
+        if (_taskExecutions is not null && run.CancelRequested && !string.IsNullOrWhiteSpace(run.DirectVideoJobId))
+        {
+            await ReconcileCancelledVideoAsync(run);
+            return;
+        }
         await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
         if (taskExecutionAttempt.ShouldSkip) return;
         using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
             ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
-        // 领取前已请求取消（claim 仅过滤 Status==Queued、不看 CancelRequested）：直接置终态，不进入提交流程（Codex review）
-        if (run.CancelRequested) { await CancelRunAsync(run); return; }
+        var hasSubmittedJob = !string.IsNullOrWhiteSpace(run.DirectVideoJobId);
+        // 只有未提交的取消可以立即终结；已有作业必须继续核对上游终态和费用。
+        if (run.CancelRequested && !hasSubmittedJob) { await CancelRunAsync(run); return; }
 
         // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
         // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
@@ -272,7 +295,7 @@ public class VideoGenRunWorker : BackgroundService
         _logger.LogInformation("VideoGen 直出开始: runId={RunId}, userModel={Model}, duration={Duration}s",
             run.Id, run.DirectVideoModel, run.DirectDuration);
 
-        await PublishEventAsync(run.Id, "phase.changed", new { phase = "videogen-submitting", progress = 5 });
+        await PublishEventAsync(run.Id, "phase.changed", new { phase = hasSubmittedJob ? "videogen-polling" : "videogen-submitting", progress = 5 });
 
         using var scope = _scopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<IOpenRouterVideoClient>();
@@ -280,14 +303,14 @@ public class VideoGenRunWorker : BackgroundService
 
         // ─── 提交任务 ───
         var prompt = run.DirectPrompt ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(prompt))
+        if (!hasSubmittedJob && string.IsNullOrWhiteSpace(prompt))
         {
             await FailRunAsync(run, "EMPTY_PROMPT", "directPrompt 为空，无法生成视频");
             return;
         }
-        var directProject = await GetRunProjectAsync(run);
+        var directProject = hasSubmittedJob ? null : await GetRunProjectAsync(run);
         prompt = AppendAssetConstraints(prompt, directProject);
-        var directReferences = await SupportsReferenceAssetsAsync(run.DirectVideoModel)
+        var directReferences = !hasSubmittedJob && await SupportsReferenceAssetsAsync(run.DirectVideoModel)
             ? GetReferenceImageUrls(directProject)
             : [];
 
@@ -309,7 +332,8 @@ public class VideoGenRunWorker : BackgroundService
         // 提交前最后一道闸：领取后、提交到 OpenRouter 之前若收到取消请求（用户重新生成分镜 / 离开页面），
         // 置终态不提交，避免烧视频额度。覆盖「claim 与 submit 之间」的取消窗口（Codex review）。
         var freshBeforeSubmit = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
-        if (freshBeforeSubmit?.CancelRequested == true) { await CancelRunAsync(run); return; }
+        if (freshBeforeSubmit == null) return;
+        if (!hasSubmittedJob && freshBeforeSubmit.CancelRequested) { await CancelRunAsync(run); return; }
 
         using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
             RequestId: run.Id,
@@ -325,7 +349,9 @@ public class VideoGenRunWorker : BackgroundService
             RunId: run.Id,
             LogicalRequestId: run.Id));
 
-        var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
+        var submitResult = hasSubmittedJob
+            ? new OpenRouterVideoSubmitResult { Success = true, JobId = run.DirectVideoJobId, ActualModel = run.DirectVideoModel, OfferingId = run.DirectVideoOfferingId }
+            : await client.SubmitAsync(submitReq, CancellationToken.None);
         if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
         {
             await FailRunAsync(run, "OPENROUTER_SUBMIT_FAILED",
@@ -349,22 +375,21 @@ public class VideoGenRunWorker : BackgroundService
             new { phase = "videogen-polling", progress = 10, jobId = submitResult.JobId });
 
         // ─── 轮询 ───
-        const int pollIntervalSec = 6;
         const int maxWaitMinutes = 10;
-        var deadline = DateTime.UtcNow.AddMinutes(maxWaitMinutes);
+        var deadline = DateTime.UtcNow + DirectVideoPollingWindow;
         var progress = 10;
 
         while (DateTime.UtcNow < deadline)
         {
             // 用户取消
-            var fresh = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+            var fresh = await _db.VideoGenRuns.Find(DirectJobFilter(run, submitResult.JobId!)).FirstOrDefaultAsync(CancellationToken.None);
+            if (fresh == null) return;
             if (fresh?.CancelRequested == true)
             {
-                await CancelRunAsync(run);
-                return;
+                await UpdatePhaseAsync(run, "videogen-reconciling", progress);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), CancellationToken.None);
+            await Task.Delay(DirectVideoPollInterval, CancellationToken.None);
 
             OpenRouterVideoStatus status;
             try
@@ -388,6 +413,28 @@ public class VideoGenRunWorker : BackgroundService
                 continue;
             }
 
+            if (_taskExecutions is not null
+                && await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None) is { } cancelled
+                && cancelled.Status == VideoGenRunStatus.Cancelled && cancelled.CancelRequested)
+            {
+                await ReconcileCancelledVideoAsync(cancelled);
+                return;
+            }
+            fresh = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+                DirectJobFilter(run, submitResult.JobId!),
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.DirectVideoUpstreamStatus, status.Status)
+                    .Set(x => x.DirectVideoCost, status.Cost)
+                    .Set(x => x.DirectVideoReconciledAt, status.IsTerminal ? DateTime.UtcNow : (DateTime?)null),
+                new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+                CancellationToken.None);
+            if (fresh == null) return;
+            if (status.IsTerminal && fresh.CancelRequested)
+            {
+                await CancelRunAsync(run, submitResult.JobId);
+                return;
+            }
+
             if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
             {
                 // 关键：OpenRouter URL 需 API Key 鉴权才能播放，浏览器无法直接 <video src>。
@@ -407,6 +454,9 @@ public class VideoGenRunWorker : BackgroundService
                 string finalUrl;
                 try
                 {
+                    fresh = await _db.VideoGenRuns.Find(DirectJobFilter(run, submitResult.JobId!)).FirstOrDefaultAsync(CancellationToken.None);
+                    if (fresh == null) return;
+                    if (fresh.CancelRequested) { await CancelRunAsync(run, submitResult.JobId); return; }
                     var dl = string.IsNullOrWhiteSpace(submitResult.OfferingId)
                         ? await client.DownloadVideoBytesAsync(
                             appCallerCode,
@@ -421,9 +471,12 @@ public class VideoGenRunWorker : BackgroundService
                             submitResult.ActualModel,
                             submitResult.OfferingId,
                             CancellationToken.None);
+                    fresh = await _db.VideoGenRuns.Find(DirectJobFilter(run, submitResult.JobId!)).FirstOrDefaultAsync(CancellationToken.None);
+                    if (fresh == null) return;
+                    if (fresh.CancelRequested) { await CancelRunAsync(run, submitResult.JobId); return; }
                     if (!dl.Success || dl.Bytes == null || dl.Bytes.Length == 0)
                     {
-                        await FailRunAsync(run, "DOWNLOAD_FAILED",
+                        await FailDirectRunAsync(run, submitResult.JobId!, true, "DOWNLOAD_FAILED",
                             $"OpenRouter 视频下载失败: {dl.ErrorMessage ?? "二进制为空"}");
                         return;
                     }
@@ -442,8 +495,8 @@ public class VideoGenRunWorker : BackgroundService
                         throw new InvalidOperationException("视频资产摘要校验失败");
                     finalUrl = stored.Url;
 
-                    await _db.VideoGenRuns.UpdateOneAsync(
-                        x => x.Id == run.Id,
+                    var completed = await _db.VideoGenRuns.UpdateOneAsync(
+                        DirectJobFilter(run, submitResult.JobId!) & Builders<VideoGenRun>.Filter.Ne(x => x.CancelRequested, true),
                         Builders<VideoGenRun>.Update
                             .Set(x => x.Status, VideoGenRunStatus.Completed)
                             .Set(x => x.VideoAssetUrl, finalUrl)
@@ -453,6 +506,11 @@ public class VideoGenRunWorker : BackgroundService
                             .Set(x => x.PhaseProgress, 100)
                             .Set(x => x.EndedAt, DateTime.UtcNow),
                         cancellationToken: CancellationToken.None);
+                    if (completed.MatchedCount != 1)
+                    {
+                        await CancelRunAsync(run, submitResult.JobId);
+                        return;
+                    }
 
                     _logger.LogInformation("VideoGen 视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
                         run.Id, finalUrl, stored.SizeBytes);
@@ -460,7 +518,7 @@ public class VideoGenRunWorker : BackgroundService
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "VideoGen 下载/上传失败: runId={RunId}", run.Id);
-                    await FailRunAsync(run, "DOWNLOAD_FAILED", $"视频下载或上传 COS 失败: {ex.Message}");
+                    await FailDirectRunAsync(run, submitResult.JobId!, true, "DOWNLOAD_FAILED", $"视频下载或上传 COS 失败: {ex.Message}");
                     return;
                 }
 
@@ -479,7 +537,7 @@ public class VideoGenRunWorker : BackgroundService
 
             if (status.IsFailed)
             {
-                await FailRunAsync(run, "OPENROUTER_GEN_FAILED",
+                await FailDirectRunAsync(run, submitResult.JobId!, true, "OPENROUTER_GEN_FAILED",
                     status.ErrorMessage ?? $"OpenRouter 状态 = {status.Status}");
                 return;
             }
@@ -491,36 +549,54 @@ public class VideoGenRunWorker : BackgroundService
                 Builders<VideoGenRun>.Update.Set(x => x.PhaseProgress, progress),
                 cancellationToken: CancellationToken.None);
             await PublishEventAsync(run.Id, "phase.progress",
-                new { phase = "videogen-polling", progress, status = status.Status });
+                new { phase = fresh.CancelRequested ? "videogen-reconciling" : "videogen-polling", progress, status = status.Status });
         }
 
-        await FailRunAsync(run, "OPENROUTER_TIMEOUT", $"视频生成超过 {maxWaitMinutes} 分钟未完成");
+        await FailDirectRunAsync(run, submitResult.JobId!, false, "OPENROUTER_TIMEOUT", $"视频生成超过 {maxWaitMinutes} 分钟未完成");
     }
 
-    private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage)
+    private static FilterDefinition<VideoGenRun> DirectJobFilter(VideoGenRun run, string jobId)
+        => Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+           & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+           & Builders<VideoGenRun>.Filter.Eq(x => x.DirectVideoJobId, jobId);
+
+    private async Task FailDirectRunAsync(VideoGenRun run, string jobId, bool upstreamTerminal, string errorCode, string errorMessage)
+    {
+        await FailRunAsync(run, errorCode, errorMessage,
+            DirectJobFilter(run, jobId) & Builders<VideoGenRun>.Filter.Ne(x => x.CancelRequested, true));
+        await CancelRunAsync(run, jobId, upstreamTerminal);
+    }
+
+    private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage, FilterDefinition<VideoGenRun>? guard = null)
     {
         var userMessage = VideoGenerationUserError.ForPersistence(errorCode, errorMessage);
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var failed = await _db.VideoGenRuns.UpdateOneAsync(
+            guard ?? Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id),
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Failed)
                 .Set(x => x.ErrorCode, errorCode)
                 .Set(x => x.ErrorMessage, userMessage)
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (failed.MatchedCount != 1) return;
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
         await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = userMessage });
     }
 
-    private async Task CancelRunAsync(VideoGenRun run)
+    private async Task CancelRunAsync(VideoGenRun run, string? submittedJobId = null, bool upstreamTerminal = true)
     {
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.Status, VideoGenRunStatus.Cancelled)
-                .Set(x => x.EndedAt, DateTime.UtcNow),
+        var filter = submittedJobId == null ? Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+            : DirectJobFilter(run, submittedJobId) & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, true);
+        var update = Builders<VideoGenRun>.Update
+            .Set(x => x.Status, upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.Queued)
+            .Set(x => x.CurrentPhase, upstreamTerminal ? "cancelled" : "videogen-reconciling")
+            .Set(x => x.EndedAt, upstreamTerminal ? DateTime.UtcNow : (DateTime?)null);
+        var cancelled = await _db.VideoGenRuns.UpdateOneAsync(
+            filter,
+            upstreamTerminal ? update : update.Set(x => x.QueueEnteredAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (cancelled.ModifiedCount != 1 || !upstreamTerminal) return;
 
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 

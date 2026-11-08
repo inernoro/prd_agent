@@ -63,6 +63,8 @@ public sealed class TaskExecutionLeaseRecord
     public DateTime LeaseUntil { get; set; }
     public DateTime? FinishedAt { get; set; }
     public int DispatchCount { get; set; }
+    public PrdAgent.Core.Security.VideoReceiptTarget? VideoReceipt { get; set; }
+    public bool VideoReceiptRevoked { get; set; }
 }
 
 public static class TaskExecutionLeaseStates
@@ -71,6 +73,7 @@ public static class TaskExecutionLeaseStates
     public const string Running = "running";
     public const string Completed = "completed";
     public const string Cancelled = "cancelled";
+    public const string VideoReceipt = "video-receipt";
     public const string OutcomeUnknown = "outcome-unknown";
 }
 

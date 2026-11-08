@@ -5,7 +5,7 @@ namespace PrdAgent.Core.Security;
 /// 队列恢复必须通过服务端许可查询重新进入，禁止从用户 ID 自动创建此作用域。
 /// </summary>
 public sealed record TaskExecutionIdentity(string PermitId, string? RunId = null,
-    TaskExecutionLeaseProof? Lease = null);
+    TaskExecutionLeaseProof? Lease = null, VideoReceiptTarget? VideoReceipt = null);
 
 /// <summary>只由平台领取产生；token 仅在当前执行与统一传输中使用，数据库只保存其摘要。</summary>
 public sealed record TaskExecutionLeaseProof(string PermitId, string? RunId, string OwnerToken, long Fence);
@@ -14,6 +14,7 @@ public static class TaskExecutionHeaders
 {
     public const string LeaseToken = "X-Gateway-Task-Lease";
     public const string LeaseFence = "X-Gateway-Task-Fence";
+    public const string VideoReceipt = "X-Gateway-Video-Receipt";
 }
 
 public static class TaskExecutionContext

@@ -7,6 +7,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 
@@ -173,12 +174,33 @@ public sealed class GatewayTaskAdmission(
                 if (long.TryParse(http.Request.Headers[PrdAgent.Core.Security.TaskExecutionHeaders.LeaseFence], out var parsed)) fence = parsed;
             }
             var execution = permit.Executions.SingleOrDefault(x => x.OwnerHash == hash && x.Fence == fence);
+            var receiptHeader = http.Request.Headers[TaskExecutionHeaders.VideoReceipt].ToString();
+            var receipt = receiptHeader == "status" ? execution?.VideoReceipt : null;
+            var receiptValid = false;
+            if (receiptHeader.Length > 0)
+            {
+                if (receipt is null || authorization.RuntimeGrant is not null || !HttpMethods.IsPost(http.Request.Method)
+                    || http.Request.Path != "/gw/v1/raw" || execution is null || hash is null || fence is null
+                    || runIds.Count != 1 || !runIds.Contains(execution.RunId))
+                    return GatewayTaskAdmissionDecision.Deny("TASK_VIDEO_RECEIPT_SCOPE_DENIED", "核账请求超出原任务只读范围。");
+                http.Request.EnableBuffering();
+                GatewayRawRequest? raw;
+                try { raw = await JsonSerializer.DeserializeAsync<GatewayRawRequest>(http.Request.Body,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web), ct); }
+                catch (JsonException) { raw = null; }
+                finally { http.Request.Body.Position = 0; }
+                var proof = new TaskExecutionLeaseProof(permit.Id, execution.RunId,
+                    http.Request.Headers[TaskExecutionHeaders.LeaseToken].ToString(), fence.Value);
+                receiptValid = raw is not null && receipt.Matches(raw)
+                    && await _executions.ValidateVideoReceiptAsync(proof, receipt, false, ct);
+                if (!receiptValid) return GatewayTaskAdmissionDecision.Deny("TASK_VIDEO_RECEIPT_SCOPE_DENIED", "原作业核账权限或目标不匹配。");
+            }
             if (execution is null || fence is null || hash is null
                 || authorization.RuntimeGrant is { } leaseGrant && (leaseGrant.TaskLeaseRunId ?? "") != execution.RunId
-                || runIds.Any(id => permit.Executions.Any(x => x.RunId == id && x.State == TaskExecutionLeaseStates.Cancelled))
-                || !await _executions.ValidateHashAsync(permit.Id, execution.RunId, hash, fence.Value, false, ct))
+                || !receiptValid && (runIds.Any(id => permit.Executions.Any(x => x.RunId == id && x.State == TaskExecutionLeaseStates.Cancelled))
+                    || !await _executions.ValidateHashAsync(permit.Id, execution.RunId, hash, fence.Value, false, ct)))
                 return GatewayTaskAdmissionDecision.Deny("TASK_EXECUTION_LEASE_INVALID", "任务执行租约已失效、已取消或未领取，已停止本次调用；请查看任务状态。");
-            var leaseFact = new GatewayTaskLeaseFact(permit.Id, execution.RunId, hash, fence.Value);
+            var leaseFact = new GatewayTaskLeaseFact(permit.Id, execution.RunId, hash, fence.Value, receipt);
             http.Items[HttpContextLeaseKey] = leaseFact;
 
             if (authorization.RuntimeGrant is { UserId.Length: > 0 } runtimeGrant) declared.SubjectUserIds.Add(runtimeGrant.UserId);
@@ -187,6 +209,8 @@ public sealed class GatewayTaskAdmission(
                 : permit.ActorUserId;
             var subject = authorization.RuntimeGrant?.UserId ?? declared.SubjectUserId ?? defaultSubject;
             declared.SubjectUserIds.Add(subject);
+            if (receipt is not null && subject != receipt.OwnerId)
+                return GatewayTaskAdmissionDecision.Deny("TASK_VIDEO_RECEIPT_SCOPE_DENIED", "核账归属与原任务不匹配。");
             if (declared.SubjectUserIds.Count > 1 || declared.SubjectUserIds.Any(user => !permit.SubjectUserIds.Contains(user, StringComparer.Ordinal)
                 || permit.Origin != TaskExecutionOrigins.Scheduled && !permit.AllowDelegatedSubjects && user != permit.ActorUserId))
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_SUBJECT_DENIED", "当前任务授权与操作归属不匹配，已停止本次调用；请重新进入正确任务。");
@@ -218,7 +242,9 @@ public sealed class GatewayTaskAdmission(
                     Builders<GatewayTaskPermitRecord>.Filter.Eq(x => x.MaxCalls, permit.MaxCalls),
                     Builders<GatewayTaskPermitRecord>.Filter.Lt(x => x.CallCount, permit.MaxCalls));
                 foreach (var runId in runIds) filter &= Builders<GatewayTaskPermitRecord>.Filter.AnyEq(x => x.BoundRunIds, runId);
-                filter &= TaskExecutionCoordinator.CurrentLeaseFilter(permit.Id, execution.RunId, hash, fence.Value);
+                filter &= receipt is not null
+                    ? TaskExecutionCoordinator.CurrentVideoReceiptFilter(permit.Id, execution.RunId, hash, fence.Value, receipt)
+                    : TaskExecutionCoordinator.CurrentLeaseFilter(permit.Id, execution.RunId, hash, fence.Value);
                 foreach (var user in declared.SubjectUserIds) filter &= Builders<GatewayTaskPermitRecord>.Filter.AnyEq(x => x.SubjectUserIds, user);
                 permit = await collection.FindOneAndUpdateAsync(filter,
                     Builders<GatewayTaskPermitRecord>.Update.Inc(x => x.CallCount, 1),
@@ -335,4 +361,4 @@ public sealed class GatewayTaskAdmission(
     }
 }
 
-public sealed record GatewayTaskLeaseFact(string PermitId, string RunId, string OwnerHash, long Fence);
+public sealed record GatewayTaskLeaseFact(string PermitId, string RunId, string OwnerHash, long Fence, VideoReceiptTarget? VideoReceipt = null);

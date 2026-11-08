@@ -7,4 +7,5 @@ public interface IGatewayInvocationAuthority
 {
     void AssertAuthorized(string appCallerCode, GatewayRequestContext? context);
     Task AssertCurrentAsync(string appCallerCode, GatewayRequestContext? context, CancellationToken ct);
+    void AssertRawTarget(GatewayRawRequest request, GatewayModelResolution resolution) { }
 }

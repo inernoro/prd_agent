@@ -16,6 +16,15 @@ public sealed class GatewayInvocationAuthority(IHttpContextAccessor accessor, IC
     public const string PaidAdmissionKey = "llmgw.task.paid.admitted";
     public const string AdmittedCallerKey = "llmgw.task.admitted.caller";
     public const string TaskBudgetAdmissionKey = "llmgw.task.budget.physical-admission";
+    private const string VideoReceiptTargetKey = "llmgw.video-receipt.target-verified";
+
+    public void AssertRawTarget(GatewayRawRequest request, GatewayModelResolution resolution)
+    {
+        var http = accessor.HttpContext;
+        if (http?.Items[GatewayTaskAdmission.HttpContextLeaseKey] is not GatewayTaskLeaseFact { VideoReceipt: { } target }) return;
+        if (!target.Matches(request, resolution)) Deny();
+        http.Items[VideoReceiptTargetKey] = target;
+    }
 
     public void AssertAuthorized(string appCallerCode, GatewayRequestContext? context)
     {
@@ -68,7 +77,12 @@ public sealed class GatewayInvocationAuthority(IHttpContextAccessor accessor, IC
         var lease = (GatewayTaskLeaseFact)http.Items[GatewayTaskAdmission.HttpContextLeaseKey]!;
         var coordinator = executions ?? http.RequestServices.GetService<ITaskExecutionCoordinator>()
             ?? new TaskExecutionCoordinator(http.RequestServices.GetRequiredService<LlmGatewayDataContext>());
-        if (!await coordinator.ValidateHashAsync(lease.PermitId, lease.RunId, lease.OwnerHash, lease.Fence, true, ct, context?.RunId))
+        var valid = lease.VideoReceipt is { } target
+            ? http.Items[VideoReceiptTargetKey] is VideoReceiptTarget verified && verified == target
+                && await coordinator.ValidateVideoReceiptAsync(new(lease.PermitId, lease.RunId,
+                    http.Request.Headers[TaskExecutionHeaders.LeaseToken].ToString(), lease.Fence), target, true, ct)
+            : await coordinator.ValidateHashAsync(lease.PermitId, lease.RunId, lease.OwnerHash, lease.Fence, true, ct, context?.RunId);
+        if (!valid)
             throw new TaskExecutionAdmissionException("TASK_EXECUTION_LEASE_INVALID",
                 "任务执行授权已失效，已停止后续发送；请查看任务状态后重新提交。", 403);
         var permit = (GatewayTaskPermitRecord)http.Items[GatewayTaskAdmission.HttpContextPermitKey]!;
