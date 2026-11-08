@@ -155,7 +155,9 @@ jobs:
 
   pages:
     needs: retain
-    if: always() && !cancelled() && needs.retain.result == 'success'
+    # The protected environment permits main only. Feature runs publish the
+    # retained bundle without requesting a Pages deployment.
+    if: always() && !cancelled() && needs.retain.result == 'success' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
