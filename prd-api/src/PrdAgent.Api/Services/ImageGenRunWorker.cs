@@ -992,7 +992,7 @@ public class ImageGenRunWorker : BackgroundService
             ? ImageGenRunStatus.Cancelled
             : (final.Failed > 0 ? ImageGenRunStatus.Failed : ImageGenRunStatus.Completed);
 
-        await PersistTerminalStateAsync(run, final, nextStatus, ct);
+        if (!await PersistTerminalStateAsync(run, final, nextStatus, ct)) return;
 
         // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
         // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
@@ -1025,7 +1025,7 @@ public class ImageGenRunWorker : BackgroundService
                 string.IsNullOrWhiteSpace(firstErrorItem?.ErrorMessage) ? "生图失败，请重试。" : firstErrorItem.ErrorMessage)
             : new TerminalFailure(null, null);
 
-    internal async Task PersistTerminalStateAsync(
+    internal async Task<bool> PersistTerminalStateAsync(
         ImageGenRun run,
         ImageGenRun final,
         ImageGenRunStatus nextStatus,
@@ -1059,10 +1059,13 @@ public class ImageGenRunWorker : BackgroundService
                 .Unset(x => x.ErrorMessage);
         }
 
-        await _db.ImageGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var persisted = await _db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.OwnerAdminId == run.OwnerAdminId && x.AppKey == run.AppKey
+                && x.WorkspaceId == run.WorkspaceId && x.TaskPermitId == run.TaskPermitId
+                && x.Status == ImageGenRunStatus.Running,
             terminalUpdate,
             cancellationToken: ct);
+        if (persisted.ModifiedCount == 0) return false;
 
         await AppendEventAsync(run, "run", new
         {
@@ -1076,6 +1079,7 @@ public class ImageGenRunWorker : BackgroundService
             errorMessage = terminalFailure.ErrorMessage,
             endedAt
         }, ct);
+        return true;
     }
 
     private static string ResolveSize(ImageGenRun run, ImageGenRunPlanItem planItem)
