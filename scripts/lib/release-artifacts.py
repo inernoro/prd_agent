@@ -16,7 +16,9 @@ import subprocess
 import sys
 import tempfile
 import tarfile
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -53,17 +55,47 @@ def read_url(url, limit=100 * 1024 * 1024, accept="application/octet-stream"):
     if not url.startswith("https://"):
         raise ArtifactError("Artifact sources must use HTTPS")
     request = urllib.request.Request(url, headers={"User-Agent": "MAP-Release-Artifact/1.0", "Cache-Control": "no-cache", "Accept": accept})
-    try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            data = response.read(limit + 1)
-    except (urllib.error.URLError, TimeoutError) as error:
-        status = getattr(error, "code", "unavailable")
-        reason_type = type(getattr(error, "reason", error)).__name__
-        path = Path(os.environ.get("PRD_AGENT_ARTIFACT_DIAGNOSTICS", str(Path(tempfile.gettempdir()) / f"map-release-artifact-diagnostics-{os.getpid()}.jsonl")))
-        with path.open("a") as log:
-            log.write(json.dumps({"operation": "public_artifact_get", "endpoint": url.split("?")[0],
-                                  "httpStatus": status, "errorType": type(error).__name__, "reasonType": reason_type}) + "\n")
-        raise ArtifactError(f"Artifact source unavailable ({status}); reasonType={reason_type}; no Pages fallback; diagnostic={path}") from None
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                data = response.read(limit + 1)
+            break
+        except (urllib.error.URLError, TimeoutError) as error:
+            status = getattr(error, "code", "unavailable")
+            reason_type = type(getattr(error, "reason", error)).__name__
+            retry = status in {502, 503, 504} and attempt < 3
+            delay = float(attempt)
+            header = error.headers.get("Retry-After") if isinstance(error, urllib.error.HTTPError) and error.headers else None
+            if header is not None:
+                try:
+                    requested_delay = float(header)
+                    # A longer or date-based server limit is honored by stopping,
+                    # not by issuing a request before the requested time.
+                    if not 0 <= requested_delay <= 10:
+                        retry = False
+                    else:
+                        delay = max(delay, requested_delay)
+                except ValueError:
+                    retry = False
+            body = b""
+            if isinstance(error, urllib.error.HTTPError):
+                try:
+                    body = error.read(4096)
+                except (OSError, ValueError):
+                    pass
+            parts = urllib.parse.urlsplit(url)
+            diagnostic = {"operation": "public_artifact_get", "endpoint": f"{parts.scheme}://{parts.hostname or ''}{parts.path}",
+                          "httpStatus": status, "errorType": type(error).__name__, "reasonType": reason_type,
+                          "attempt": attempt, "willRetrySameUrl": retry, "delaySeconds": delay if retry else None,
+                          "responseBytesCaptured": len(body), "responsePrefixSha256": hashlib.sha256(body).hexdigest()}
+            path = Path(os.environ.get("PRD_AGENT_ARTIFACT_DIAGNOSTICS", str(Path(tempfile.gettempdir()) / f"map-release-artifact-diagnostics-{os.getpid()}.jsonl")))
+            with path.open("a") as log:
+                log.write(json.dumps(diagnostic) + "\n")
+            print("Artifact GET diagnostic: " + json.dumps(diagnostic), file=sys.stderr)
+            if retry:
+                time.sleep(delay)
+                continue
+            raise ArtifactError(f"Artifact source unavailable ({status}); reasonType={reason_type}; no Pages fallback; diagnostic={path}") from None
     if len(data) > limit:
         raise ArtifactError("Artifact exceeds the supported size")
     return data
