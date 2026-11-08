@@ -372,6 +372,30 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(events[0].evidence).toContain('not authorized');
     expect(events[2].evidence).toContain('未收到响应');
   });
+  it.each(['github.resolve_repository', 'github.resolve_commit'])('%s 保留有界脱敏的 JSON 失败原因，源码正文和实际请求令牌仍不进入证据', async (operation) => {
+    const events: CodeReviewAuditEvent[] = [], token = 'supplied-synthetic-long-credential';
+    const reason = `Resource not accessible by integration; ${token}; access_key=private-access-key; owner@example.invalid; `;
+    await expect(reviewJsonRequest(operation, 'https://api.github.com/repos/org/repo',
+      { headers: { Authorization: `Bearer ${token}` } }, async event => { events.push(event); },
+      (async () => Response.json({ message: reason + 'x'.repeat(5000), content: 'private-source-body',
+        nested: { message: 'private-nested-source' } }, { status: 403, headers: { 'x-github-request-id': 'synthetic-permission-request' } })) as typeof fetch)).rejects.toThrow('403');
+    expect(events[0]).toMatchObject({ operation, outcome: 'http_error', status: 403, truncated: true,
+      upstreamRequestId: 'synthetic-permission-request' });
+    const evidence = JSON.parse(events[0].evidence);
+    expect(evidence.message).toContain('Resource not accessible by integration');
+    expect(evidence.message.length).toBeLessThanOrEqual(1000);
+    expect(events[0].evidence.length).toBeLessThanOrEqual(4096);
+    expect(events[0].evidence).not.toMatch(/supplied-synthetic-long-credential|private-access-key|owner@example|private-source-body|private-nested-source/);
+  });
+  it.each([{ operation: 'deepaudit.task_status', status: 403 }, { operation: 'github.resolve_repository', status: 200 }])(
+    '$operation HTTP$status 不放宽成功响应或引擎源码消息的省略策略', async ({ operation, status }) => {
+      const events: CodeReviewAuditEvent[] = [];
+      const request = reviewJsonRequest(operation, 'https://synthetic.invalid/api', {}, async event => { events.push(event); },
+        (async () => Response.json({ message: 'private-source-message' }, { status })) as typeof fetch);
+      if (status === 200) await request; else await expect(request).rejects.toThrow('403');
+      expect(events[0].evidence).not.toContain('private-source-message');
+      expect(JSON.parse(events[0].evidence).message).toBe('[omitted private content]');
+    });
 
   it('retains only whitelisted network error types and cause codes without private messages or stacks', async () => {
     const events: CodeReviewAuditEvent[] = [];

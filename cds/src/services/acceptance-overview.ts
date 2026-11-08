@@ -161,6 +161,13 @@ export function parseReportTitle(title: string): ParsedReportTitle {
   return { kind, target: kind === '其他' ? title.trim() : m[2].trim(), targetDate: m[3] };
 }
 
+/** Persisted type controls code-review identity; other title categories keep their existing contract. */
+export function parseReportMetadata(report: AcceptanceReportMeta): ParsedReportTitle {
+  const parsed = parseReportTitle(report.title);
+  if (isCodeReviewReport(report)) return { ...parsed, kind: '代码审查报告' };
+  return parsed.kind === '代码审查报告' ? { ...parsed, kind: '其他' } : parsed;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 用调用方时区偏移把 ISO 时间落到 YYYY-MM-DD。offsetMinutes 与 Date#getTimezoneOffset 同号。 */
@@ -251,7 +258,7 @@ function toRef(r: AcceptanceReportMeta, parsed: ParsedReportTitle, version: numb
 export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: OverviewReportRef[]; superseded: OverviewReportRef[]; folded: number } {
   const groups = new Map<string, AcceptanceReportMeta[]>();
   for (const r of reports) {
-    const key = identityKey(r, parseReportTitle(r.title));
+    const key = identityKey(r, parseReportMetadata(r));
     const g = groups.get(key);
     if (g) g.push(r);
     else groups.set(key, [r]);
@@ -262,9 +269,9 @@ export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: O
   for (const g of groups.values()) {
     g.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const last = g[g.length - 1];
-    const parsed = parseReportTitle(last.title);
+    const parsed = parseReportMetadata(last);
     latest.push(toRef(last, parsed, g.length, g.slice(0, -1).map((x) => x.id)));
-    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportTitle(old.title), i + 1, [])));
+    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportMetadata(old), i + 1, [])));
     folded += g.length - 1;
   }
   latest.sort((a, b) => b.createdAt.localeCompare(a.createdAt));

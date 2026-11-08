@@ -71,7 +71,7 @@ export class CodeReviewEngine {
   async run(input: {
     taskId: string; zip: Buffer; signal: AbortSignal; excludePatterns: string[]; engineTaskId?: string; retryFailed?: boolean;
     onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string;
-      processedFiles?: number; failedFiles?: number; skippedFiles?: number }) => Promise<void>;
+      processedFiles?: number; failedFiles?: number; skippedFiles?: number; engineIdentityConfirmed?: boolean }) => Promise<void>;
     audit: CodeReviewAudit;
   }): Promise<CodeReviewEngineResult> {
     input.signal.throwIfAborted();
@@ -145,7 +145,8 @@ export class CodeReviewEngine {
         const scannedFiles = Math.max(0, Number(task.scanned_files) || 0);
         await input.onProgress({ phase: task.status === 'completed' ? 'DeepAudit 分析结束' : 'DeepAudit 正在分析源码',
           totalFiles, scannedFiles, engineTaskId,
-          processedFiles: task.processed_files, failedFiles: task.failed_files, skippedFiles: task.skipped_files });
+          processedFiles: task.processed_files, failedFiles: task.failed_files, skippedFiles: task.skipped_files,
+          engineIdentityConfirmed: true });
         if (task.status === 'completed') {
           if ((task.resumable === true || task.checkpoint_version === 1) && hasIncompleteFiles(task)) {
             throw new Error(`DeepAudit 整仓审查尚未完成（已分析 ${scannedFiles}/${totalFiles} 个文件）。已完成文件的分析结果已保留，请重试继续未完成部分；当前未形成完整代码质量结论。`);

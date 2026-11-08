@@ -27,7 +27,7 @@
  */
 import type { AcceptanceReportMeta, BranchEntry, BranchTombstone, Project } from '../types.js';
 import {
-  REPORT_KINDS, foldReportVersions, matchesChange, parseReportTitle, isCodeReviewReport,
+  REPORT_KINDS, foldReportVersions, matchesChange, isCodeReviewReport,
   type OverviewReportRef, type OverviewVerdict, type ReportKind,
 } from './acceptance-overview.js';
 
@@ -343,7 +343,7 @@ export function buildPipelineOverview(
       staleReports += 1;
     }
 
-    const seenKinds = new Set(projectRefs.map((r) => parseReportTitle(r.title).kind));
+    const seenKinds = new Set(projectRefs.map((r) => r.kind));
     const missingKinds = REPORT_KINDS.filter((k) => k !== '代码审查报告' && !seenKinds.has(k));
 
     for (const key of Object.keys(funnel) as Array<keyof PipelineFunnel>) total[key] += funnel[key];

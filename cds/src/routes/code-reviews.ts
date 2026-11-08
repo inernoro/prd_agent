@@ -79,7 +79,7 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
       if (service.list().some((task) => !['completed', 'failed', 'cancelled'].includes(task.status))) {
         throw new CodeReviewError(409, '存在未结束的审查任务，请完成或取消后再切换审查引擎');
       }
-      await service.retainEngineBindingsBeforeSettingsChange();
+      service.assertEngineSwitchOwnership();
     }
     await state.setCodeReviewSettings(settings);
     void service.pump();

@@ -507,6 +507,21 @@ describe('代码审查任务完整闭环', () => {
     expect(buildPipelineOverview(state.getProjects(), [], [], [report], { now })).toEqual(buildPipelineOverview(state.getProjects(), [], [], [], { now }));
     expect(buildPipelineSeries(state.getProjects(), [], [report], { now })).toEqual(buildPipelineSeries(state.getProjects(), [], [], { now }));
   });
+  it('显式验收与审查同标题不互相折叠或生成重复类别，任意标题的显式审查仍归审查类', () => {
+    const title = '代码审查报告 · 同一目标 · 2026-11-08';
+    const input = { title, format: 'md' as const, content: '# 合成分类报告', projectId: 'a', verdict: 'fail' as const, defectCounts: { p0: 1 } };
+    const acceptance = state.createAcceptanceReport({ ...input, reportType: 'acceptance' });
+    const review = state.createAcceptanceReport({ ...input, reportType: 'code-review' });
+    const otherReview = state.createAcceptanceReport({ ...input, title: '人工导入的审查结果', reportType: 'code-review' });
+    const to = new Date(Math.max(...[acceptance, review, otherReview].map(r => Date.parse(r.createdAt))) + 1);
+    const overview = buildReportsOverview([acceptance, review, otherReview], [], { to });
+    expect(overview.totals).toMatchObject({ counted: 1, fail: 1 });
+    expect(overview.reports).toHaveLength(3); expect(overview.supersededReports).toHaveLength(0);
+    expect(overview.reports.find(r => r.id === acceptance.id)?.kind).toBe('其他');
+    expect(overview.reports.find(r => r.id === review.id)?.kind).toBe('代码审查报告');
+    expect(overview.reports.find(r => r.id === otherReview.id)?.kind).toBe('代码审查报告');
+    expect(overview.kinds).toEqual([{ kind: '其他', count: 1 }, { kind: '代码审查报告', count: 2 }]);
+  });
   async function serve() {
     const app = express();
     app.use((req, _res, next) => {

@@ -82,18 +82,11 @@ export class CodeReviewService {
     const config = resolveCodeReviewEngineConfig(this.deps.state, process.env, origin);
     return config ? new CodeReviewEngine(config) : undefined;
   }
-  async retainEngineBindingsBeforeSettingsChange(): Promise<void> {
-    const unbound = this.list().filter(task => ['failed', 'cancelled'].includes(task.status) && task.engineTaskId && !task.engineBinding);
-    if (!unbound.length) return;
-    if (unbound.some(task => task.ownerScope !== this.deps.ownerScope)) {
+  assertEngineSwitchOwnership(): void {
+    if (this.list().some(task => ['failed', 'cancelled'].includes(task.status) && task.engineTaskId
+      && !task.engineBinding && task.ownerScope !== this.deps.ownerScope)) {
       throw new CodeReviewError(409, '其他实例的历史审查断点尚未绑定原引擎，请先在原实例核对');
     }
-    const origin = currentCodeReviewEngineBinding(this.deps.state);
-    if (!origin || !resolveCodeReviewEngineConfig(this.deps.state, process.env, origin)) {
-      throw new CodeReviewError(409, '历史审查断点的当前引擎引用不可用，请先恢复原引擎配置再切换');
-    }
-    // Upgrade old rows before changing the selector. No retry, reset, or upstream request occurs here.
-    for (const task of unbound) { task.engineBinding = origin; await this.save(task); }
   }
   capabilities() {
     return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(), conditionalRetry: true,
@@ -335,7 +328,11 @@ export class CodeReviewService {
           const newEngineTask = p.engineTaskId && current.engineTaskId && p.engineTaskId !== current.engineTaskId;
           current.status = 'running'; current.phase = p.phase; current.progress = { totalFiles: Math.max(current.progress.totalFiles, p.totalFiles),
             scannedFiles: newEngineTask ? p.scannedFiles : Math.max(current.progress.scannedFiles, p.scannedFiles) };
-          if (p.engineTaskId) { current.engineTaskId = p.engineTaskId; current.engineBinding = origin; }
+          if (p.engineTaskId) {
+            // A legacy ID can be announced before its first GET. Never infer its origin from that announcement.
+            if (origin && (current.engineBinding || current.engineTaskId !== p.engineTaskId || p.engineIdentityConfirmed)) current.engineBinding = origin;
+            current.engineTaskId = p.engineTaskId;
+          }
           await this.save(current);
         }, audit: async (e) => this.audit(id, e) });
       task = this.get(id); this.checkActive(task, controller.signal);

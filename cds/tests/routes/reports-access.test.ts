@@ -231,6 +231,7 @@ describe('Acceptance report routes — project-scoped key access', () => {
     const overview = buildReportsOverview([report], [], { to: new Date(Date.parse(report.createdAt) + 1) });
     expect(overview.totals.counted).toBe(1);
     expect(overview.totals.fail).toBe(1);
+    expect(overview.kinds).toEqual([{ kind: '其他', count: 1 }]);
   });
 
   it('project key cannot create a report under another project', async () => {

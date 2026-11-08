@@ -226,6 +226,8 @@ describe('持久化审查引擎绑定', () => {
     expect(switched.status).toBe(200);
     // No retry or upstream request may be caused by changing the system selector.
     expect(requests.filter(url => url.endsWith('/scan/upload-zip'))).toHaveLength(1);
+    // An unbound legacy row has no authoritative origin. Restore the known fixture engine explicitly.
+    if (status === 'legacy-unbound') expect((await put('owner', binding)).status).toBe(200);
     service.stop(); service = new CodeReviewService({ ...service.deps });
     await service.retry(original.id);
     state.setCustomEnv({}, 'engine'); requests.length = 0;
@@ -239,10 +241,40 @@ describe('持久化审查引擎绑定', () => {
     const visible = await (await fetch(`${base}/${original.id}`, { headers: { 'x-auth': 'owner' } })).json();
     expect(visible.task).not.toHaveProperty('engineBinding');
     expect(JSON.stringify(service.list())).not.toContain(account.CDS_SERVICE_PASSWORD);
+    if (status === 'legacy-unbound') expect((await put('owner', { engineProjectId: 'other', engineBaseUrl: 'http://new-engine.internal:8000' })).status).toBe(200);
     requests.length = 0;
     const next = await submit(); await service.pump();
     expect(service.get(next.id).status).toBe('completed');
     expect(new Set(requests.map(url => new URL(url).origin))).toEqual(new Set(['http://new-engine.internal:8000']));
+  });
+  it('来源未知的旧断点遇到错误引擎404不写入猜测关联，恢复正确配置后原任务可继续', async () => {
+    await state.setCodeReviewSettings(binding);
+    const task = await service.submit({ projectId: 'source', sourceType: 'zip',
+      zip: buildZip([{ name: 'main.ts', data: Buffer.from('const value = 1;') }]), createdBy: 'test' });
+    task.status = 'running'; task.engineTaskId = 'legacy-existing-task';
+    await state.putCodeReviewTask(task);
+    // Stored state from before origin references existed; its current selector was already changed.
+    await state.setCodeReviewSettings({ ...binding, engineBaseUrl: 'http://wrong-engine.internal:8000' });
+    const localFetch = fetch, requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith(`${base}/`)) return localFetch(url, init);
+      requests.push(url);
+      if (url.endsWith('/auth/login')) return Response.json({ access_token: 'synthetic-login-token' });
+      if (new URL(url).origin === 'http://wrong-engine.internal:8000') return Response.json({ detail: 'not found' }, { status: 404 });
+      if (new URL(url).pathname.endsWith('/issues')) return Response.json([]);
+      return Response.json({ id: 'legacy-existing-task', status: 'completed', total_files: 1, scanned_files: 1 });
+    }));
+    await service.start();
+    await vi.waitFor(() => expect(service.get(task.id).status).toBe('failed'));
+    expect(service.get(task.id).engineBinding).toBeUndefined();
+    expect((await put('owner', binding)).status).toBe(200);
+    expect(service.get(task.id).engineBinding).toBeUndefined();
+    requests.length = 0;
+    await service.retry(task.id); await service.pump();
+    expect(service.get(task.id)).toMatchObject({ status: 'completed', engineTaskId: task.engineTaskId,
+      inputKey: task.inputKey, sourceHash: task.sourceHash, engineBinding: { source: 'project', settings: binding } });
+    expect(new Set(requests.map(url => new URL(url).origin))).toEqual(new Set([binding.engineBaseUrl]));
+    expect(requests.some(url => url.endsWith('/scan/upload-zip') || url.endsWith('/projects/'))).toBe(false);
   });
   it('环境来源断点保留原地址，只用原环境轮换凭据且不借新项目或新地址的凭据', async () => {
     vi.stubEnv('CDS_DEEPAUDIT_BASE_URL', 'https://legacy.example/api/v1/');

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { redactBodyText } from './http-log-store.js';
 
 /** Bounded, redacted upstream evidence. Callers must persist each event with the CDS task. */
 export interface CodeReviewAuditEvent {
@@ -56,9 +57,22 @@ function safeSnapshot(value: unknown, depth = 0): unknown {
   return typeof value === 'string' ? redactReviewEvidence(value).slice(0, 300) : value;
 }
 
-export function reviewEvidence(value: unknown): { evidence: string; truncated: boolean } {
-  const content = JSON.stringify(safeSnapshot(value)) ?? 'null';
-  return { evidence: content.slice(0, 4096), truncated: content.length > 4096 };
+export function reviewEvidence(value: unknown, context?: { operation: string; status: number; authorization?: string | null }): { evidence: string; truncated: boolean } {
+  const snapshot = safeSnapshot(value);
+  let messageTruncated = false;
+  // GitHub resolution errors describe permission/ref failures, not scanned source. Keep only their root message.
+  if (context && context.status >= 400 && ['github.resolve_repository', 'github.resolve_commit'].includes(context.operation)
+    && value && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).message === 'string') {
+    let message = (value as { message: string }).message;
+    for (const credential of [context.authorization, context.authorization?.replace(/^Bearer\s+/i, '')]) {
+      if (credential) message = message.split(credential).join('[credential]');
+    }
+    message = redactReviewEvidence(redactBodyText(message));
+    (snapshot as Record<string, unknown>).message = message.slice(0, 1000);
+    messageTruncated = message.length > 1000;
+  }
+  const content = JSON.stringify(snapshot) ?? 'null';
+  return { evidence: content.slice(0, 4096), truncated: content.length > 4096 || messageTruncated };
 }
 
 export async function readReviewResponse(response: Response, maxBytes: number): Promise<Buffer> {
@@ -130,7 +144,8 @@ export async function reviewJsonRequest(
   await audit({ ...base, durationMs: Date.now() - started,
     outcome: response.ok ? 'success' : 'http_error', status: response.status,
     upstreamRequestId: response.headers.get('x-github-request-id') ?? response.headers.get('x-request-id') ?? undefined,
-    responseBytes: content.length, ...reviewEvidence(parsed) });
+    responseBytes: content.length, ...reviewEvidence(parsed, { operation, status: response.status,
+      authorization: new Headers(init.headers).get('authorization') }) });
   if (!response.ok) throw new CodeReviewUpstreamHttpError(operation, response.status);
   return parsed;
 }
