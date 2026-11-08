@@ -20,6 +20,8 @@ import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsIns
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
+import { readStatusLocation } from '@/lib/statusHome';
+import '@/pages/status/monitor-frame.css';
 
 /*
  * AppShell — single source of layout truth.
@@ -167,7 +169,9 @@ export function useCanShowProjectActions(): boolean {
 /** Never mount owner pages (and their effects) for members or unresolved authentication. */
 export function OwnerConsoleRoute(): JSX.Element {
   const { status, pending, retry } = useContext(ConsoleAuthContext);
-  if (canManageSystemSettings(status)) return <Outlet />;
+  // Keep lazy owner pages inside their own boundary. Otherwise resolving auth
+  // suspends the outer tree and leaves a hidden copy of the auth skeleton behind.
+  if (canManageSystemSettings(status)) return <Suspense fallback={<ConsoleRouteFallback />}><Outlet /></Suspense>;
   if (pending) return <ConsoleRouteFallback />;
   return (
     <AppShell topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '访问范围' }]} />} />}>
@@ -250,15 +254,17 @@ export function ConsoleLayout(): JSX.Element {
  * (artifact-is-experience: the wait state is the product's own silhouette).
  */
 function ConsoleRouteFallback(): JSX.Element {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const scene = loadingSceneForPath(pathname);
+  const monitoringHome = pathname === '/status' && readStatusLocation(new URLSearchParams(search)).view === 'home';
+  const workspace = monitoringHome ? 'bleed' : scene?.workspace;
   const canManageProjects = useCanShowProjectActions();
   const projectList = pathname === '/project-list';
   const branchList = pathname.startsWith('/branches/') || pathname === '/branch-list';
   const listPage = projectList || branchList;
   return (
     <>
-      {listPage ? <TopBar
+      {!monitoringHome && (listPage ? <TopBar
         left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
         center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
       /> : <header className="cds-topbar" aria-hidden>
@@ -266,15 +272,17 @@ function ConsoleRouteFallback(): JSX.Element {
           <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
         </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
-      </header>}
+      </header>)}
       <main className="cds-main">
         {/*
           骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className={cn('cds-workspace cds-workspace--fluid', scene?.workspace === 'fill' && 'cds-workspace--fill', scene?.workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
-          {pageSkeletonForPath(pathname, { canManageProjects })}
+        <div className={cn('cds-workspace cds-workspace--fluid', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
+          {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
+            {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome })}
+          </div> : pageSkeletonForPath(pathname, { canManageProjects })}
           <ListLoadingFeedback />
         </div>
       </main>

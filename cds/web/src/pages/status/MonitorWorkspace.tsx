@@ -5,6 +5,7 @@ import { buildWorkspaceModel, workspaceMinimapRows, type WorkspaceCategory, type
 import { formatRelative, type UptimeBucket, type UptimeHistory, type HistoryRange, type UptimeIncidentView, type UptimeSummary, type UptimeTargetSummary } from '@/lib/monitorCenter';
 import { judgeAlarm } from '@/lib/alarmVerdict';
 import './monitor-workspace.css';
+import { MonitorThemeButton } from './MonitorThemeButton';
 
 type Density = 'auto' | 'detail' | 'label' | 'summary';
 const automaticDensity = (count: number): Exclude<Density, 'auto'> => count <= 24 ? 'detail' : count <= 90 ? 'label' : 'summary';
@@ -441,7 +442,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
       <button className="navb" aria-label="需要处理" title="需要处理" onClick={() => setRailOpen(!railOpen)}><svg className="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>{model.counts.bad > 0 && <span className="badge">{model.counts.bad}</span>}</button>
       <button className="navb" aria-label="通知设置" title="通知设置" onClick={() => onNotify()}><svg className="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg></button>
       <button className="navb" aria-label="接入我的服务" title="接入我的服务" onClick={onAdd}><svg className="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22v-5M9 8V2M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" /></svg></button>
-      <div className="nav-foot"><button className={`rm-b${reduced ? ' on' : ''}`} aria-label="减少动态效果" title="减少动态效果" aria-pressed={reduced} onClick={() => setReduced(!reduced)}><svg className="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7" /></svg></button></div>
+      <div className="nav-foot"><MonitorThemeButton /><button className={`rm-b${reduced ? ' on' : ''}`} aria-label="减少动态效果" title="减少动态效果" aria-pressed={reduced} onClick={() => setReduced(!reduced)}><svg className="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h10a3 3 0 1 0-3-3M3 12h15a3 3 0 1 1-3 3M3 16h7" /></svg></button></div>
     </nav>
     <div className="main">
       <header className="t1"><h1>监控总览</h1><span className="scope">订阅 {model.services.length} 项服务 · {model.categories.length} 个分类</span><div className="tokens" role="group" aria-label="按当前状态筛选">{(Object.keys(STATES) as WorkspaceState[]).map((state) => <button key={state} className={`tok ${state}${status === state ? ' on' : ''}`} aria-pressed={status === state} onClick={() => setStatus(status === state ? 'all' : state)}><Glyph state={state} /><b>{model.counts[state]}</b>{STATES[state]}</button>)}</div><span className="sp" /><button className="fresh mono" onClick={onReload} title="刷新监控数据">刷新于 {time(summary.generatedAt)} · 只更新状态</button><button className="btn ghost" onClick={() => onNotify()}><Send className="ic s" />通知设置</button><button className="btn pri" onClick={onAdd}><Plus className="ic s" />接入我的服务</button></header>

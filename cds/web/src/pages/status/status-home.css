@@ -33,13 +33,6 @@
 .status-home-row strong { display: block; overflow-wrap: anywhere; font-size: 1.125rem; }
 .status-home-pagination { display: flex; justify-content: flex-end; gap: .75rem; margin-top: 1.5rem; }
 .status-home-detail { max-width: 90rem; margin: 0 auto; }
-.monitor-page-shell { height: 100%; overflow: hidden; }
-.monitor-page-content { flex: 1; min-height: 0; overflow: hidden; }
-/* The monitoring canvas owns its toolbar and navigation; avoid a second header above it. */
-.cds-app-shell:has(.monitor-page-shell) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-.cds-app-shell:has(.monitor-page-shell) .cds-rail { display: none; }
-.cds-app-shell:has(.monitor-page-shell) .cds-main { grid-column: 1; grid-row: 1; animation: none; }
-body:has(.monitor-drawers [role='dialog'][data-state='open']) [data-testid='preview-instance-pill'] { z-index: 88; }
 .monitor-page-shell > .status-home-nav { gap: 4px; padding: 4px 16px; border-bottom: 1px solid hsl(var(--hairline)); }
 .monitor-page-shell > .status-home-nav button { min-height: 34px; padding: 0 14px; border-radius: 7px; font-size: 12px; }
 @media (max-width: 1023px) {
