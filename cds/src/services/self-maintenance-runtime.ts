@@ -42,6 +42,7 @@ interface Owner extends SelfMaintenanceOwner {
   controller: AbortController;
   jobs: Set<MaintenanceJob>;
   invariantFailure: boolean;
+  retentionFailure?: boolean;
   lastWarning?: { state: SelfMaintenanceSnapshot['state']; at: number };
   filesDeadline?: number;
 }
@@ -85,6 +86,9 @@ export class SelfMaintenanceRuntime {
   private ticker?: ReturnType<typeof setInterval>;
   private closed = false;
   private readonly checkpoints = new WeakMap<SelfMaintenanceCheckpoint, Checkpoint>();
+  private readonly sourceRecoveryPoints = new WeakMap<object, {
+    owner: SelfMaintenanceOwner; root: MaintenanceDirectoryIdentity; sha: string; branch: string;
+  }>();
 
   constructor(private readonly shell: IShellExecutor, private readonly repoRoot: string,
     private readonly warn: (view: SelfMaintenanceSnapshot) => void = view => {
@@ -176,9 +180,10 @@ export class SelfMaintenanceRuntime {
     return this.owner;
   }
 
-  private qualify(ticket: SelfMaintenanceOwner, recovery: boolean, ownJob?: MaintenanceJob): Owner {
+  private qualify(ticket: SelfMaintenanceOwner, recovery: boolean, ownJob?: MaintenanceJob,
+    sourceRecovery = false): Owner {
     const owner = this.current(ticket);
-    if (this.closed || owner.restartScheduled || owner.invariantFailure
+    if (this.closed || owner.restartScheduled || owner.invariantFailure && !(sourceRecovery && owner.retentionFailure)
       || [...owner.jobs].some(job => job !== ownJob && (job.unknown || job.pending && (recovery || job.recovery)))) {
       throw new Error('CDS 维护写者尚未确认停止，已保留恢复点；请检查维护状态。');
     }
@@ -187,7 +192,12 @@ export class SelfMaintenanceRuntime {
   }
 
   async exec(ticket: SelfMaintenanceOwner, command: string, options: ExecOptions = {}, recovery = false): Promise<ExecResult> {
-    const owner = this.qualify(ticket, recovery);
+    return this.execute(ticket, command, options, recovery);
+  }
+
+  private async execute(ticket: SelfMaintenanceOwner, command: string, options: ExecOptions,
+    recovery: boolean, sourceRecovery = false, verifySource?: () => void): Promise<ExecResult> {
+    const owner = this.qualify(ticket, recovery, undefined, sourceRecovery);
     if (!this.shell.execOwnedOperation) throw new Error('CDS 缺少受控维护执行能力，操作尚未开始；请检查执行器配置。');
     const controller = recovery ? new AbortController() : owner.controller;
     const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
@@ -207,7 +217,10 @@ export class SelfMaintenanceRuntime {
           catch (error) { qualificationRejected = true; qualificationError = error; throw error; }
         },
         beforeStart: () => {
-          try { this.qualify(ticket, recovery, job); signal.throwIfAborted(); options.beforeStart?.(); }
+          try {
+            this.qualify(ticket, recovery, job, sourceRecovery); signal.throwIfAborted();
+            verifySource?.(); options.beforeStart?.();
+          }
           catch (error) { qualificationRejected = true; qualificationError = error; throw error; }
         },
       });
@@ -230,6 +243,46 @@ export class SelfMaintenanceRuntime {
   requiresSourceRecoveryProgram(): boolean {
     return import.meta.url.endsWith('.ts') && fileURLToPath(import.meta.url) === path.join(fs.realpathSync(this.repoRoot),
       'cds', 'src', 'services', 'self-maintenance-runtime.ts');
+  }
+
+  /** 切换前固定本票Git身份；不读取或分配产物/retention，noOp仍无副本工作。 */
+  prepareSourceRecovery(ticket: SelfMaintenanceOwner, source: { sha: string; branch: string }): object {
+    this.qualify(ticket, false);
+    if (!/^[0-9a-f]{40}$/i.test(source.sha)) throw new Error('CDS 原源码身份无效，已停止更新。');
+    const point = Object.freeze({});
+    this.sourceRecoveryPoints.set(point, { owner: ticket, ...source,
+      root: maintenanceDirectoryIdentity(fs.realpathSync(this.repoRoot)) });
+    return point;
+  }
+
+  /** 仅退回本票切换前已记录的源码和入口；未知写者仍拒绝，retention保持未确认。 */
+  async restoreSourceRecovery(ticket: SelfMaintenanceOwner, point: object, artifactsRestored = false): Promise<void> {
+    const source = this.sourceRecoveryPoints.get(point);
+    const check = () => {
+      this.current(ticket);
+      const actual = maintenanceDirectoryIdentity(fs.realpathSync(this.repoRoot));
+      if (!source || source.owner !== ticket || actual.path !== source.root.path
+        || actual.dev !== source.root.dev || actual.ino !== source.root.ino) {
+        throw new Error('CDS 原源码恢复点身份已变化，已停止恢复。');
+      }
+    };
+    check();
+    const executeRecovery = (command: string, options: ExecOptions) => {
+      check();
+      return this.current(ticket).invariantFailure
+        ? this.execute(ticket, command, options, true, true, check) : this.exec(ticket, command, options, true);
+    };
+    const options = { cwd: this.repoRoot, timeout: 30_000 };
+    const restored = await executeRecovery(source!.branch
+      ? `git checkout -f -B ${shellQuote(source!.branch)} ${source!.sha}`
+      : `git checkout -f --detach ${source!.sha}`, options);
+    if (restored.exitCode !== 0) throw new Error(artifactsRestored
+      ? 'CDS 产物已恢复，但源码恢复失败；已停止更新，请检查控制面工作树。'
+      : 'CDS 源码恢复失败；已停止更新，请检查控制面工作树。');
+    const rendered = await executeRecovery('./exec_cds.sh nginx-render', {
+      cwd: path.join(this.repoRoot, 'cds'), timeout: 15_000,
+    });
+    if (rendered.exitCode !== 0) throw new Error('CDS 原版本已恢复，但入口配置恢复失败；请检查 CDS 系统日志。');
   }
 
   /** 先建立本票唯一恢复点身份；只做小目录操作，递归I/O全部交给worker。 */
@@ -362,7 +415,7 @@ export class SelfMaintenanceRuntime {
         await this.retireCheckpoint(ticket, root, retirement);
       }
       recoverCompleteRetention(root);
-    } catch (error) { owner.invariantFailure = true; owner.controller.abort(); throw error; }
+    } catch (error) { owner.invariantFailure = true; owner.retentionFailure = true; owner.controller.abort(); throw error; }
   }
 
   private remainingFilesBudget(owner: Owner): number {

@@ -1,8 +1,6 @@
-import path from 'node:path';
 import type { spawn } from 'node:child_process';
 import type { Writable } from 'node:stream';
 import type { SelfMaintenanceRuntime, SelfMaintenanceOwner, SelfMaintenanceCheckpoint } from './self-maintenance-runtime.js';
-import { shellQuote } from './sidecar/sidecar-deployer.js';
 
 export const CDS_RESTART_PERMIT_COMMAND = 'IFS= read -r permit <&3 && [ "$permit" = restart ] && exec bash ./exec_cds.sh daemon';
 
@@ -39,7 +37,7 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
   const branchResult = await runtime.exec(owner, 'git symbolic-ref --quiet --short HEAD', options);
   if (!/^[0-9a-f]{40}$/i.test(sha) || branchResult.exitCode > 1) throw new Error('无法保存 CDS 原版本，已停止更新。');
   const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : '';
-  const cdsDir = path.join(repoRoot, 'cds');
+  const sourceRecovery = runtime.prepareSourceRecovery(owner, { sha, branch });
   let checkpoint: SelfMaintenanceCheckpoint | undefined;
   let finished = false, artifactsSaved = false, artifactsRestored = false, discarded = false, programPrimed = false;
   const discard = async () => {
@@ -103,13 +101,7 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
         const receipt = await runtime.files(owner, 'restore', checkpoint!);
         artifactsRestored = receipt.artifactsRestored;
       }
-      const restored = await runtime.exec(owner, branch
-        ? `git checkout -f -B ${shellQuote(branch)} ${sha}` : `git checkout -f --detach ${sha}`, options, true);
-      if (restored.exitCode !== 0) throw new Error(artifactsSaved
-        ? 'CDS 产物已恢复，但源码恢复失败；已停止更新，请检查控制面工作树。'
-        : 'CDS 源码恢复失败；已停止更新，请检查控制面工作树。');
-      const rendered = await runtime.exec(owner, './exec_cds.sh nginx-render', { cwd: cdsDir, timeout: 15_000 }, true);
-      if (rendered.exitCode !== 0) throw new Error('CDS 原版本已恢复，但入口配置恢复失败；请检查 CDS 系统日志。');
+      await runtime.restoreSourceRecovery(owner, sourceRecovery, artifactsRestored);
       await commit();
     },
   };
