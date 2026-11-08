@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { StateService } from './state.js';
-import type { CodeReviewTask } from '../shared/code-review.js';
+import type { CodeReviewTask, CodeReviewEngineBinding } from '../shared/code-review.js';
 import type { CodeReviewInputs } from './code-review-inputs.js';
 import type { CodeReviewMail } from './code-review-mail.js';
 import { CodeReviewEngine, CodeReviewWorkerStoppedError, type CodeReviewEngineResult } from './code-review-engine.js';
@@ -8,7 +8,7 @@ import { validateCodeReviewZip, fetchCodeReviewGithubSnapshot, parseCodeReviewGi
 import { maskSecretsInObject, maskSecrets } from './secret-masker.js';
 import { CDS_AGENT_CAPABILITY_DEFINITIONS } from '../shared/agent-mission-registry.js';
 import { runCodeReviewStaticAnalysis } from './code-review-static.js';
-import { resolveCodeReviewEngineConfig } from './code-review-settings.js';
+import { currentCodeReviewEngineBinding, resolveCodeReviewEngineConfig } from './code-review-settings.js';
 import { CodeReviewUpstreamHttpError } from './code-review-audit.js';
 
 export class CodeReviewError extends Error {
@@ -47,7 +47,7 @@ export interface CodeReviewDeps {
   ownerScope: string;
   githubToken?: (projectId: string, githubUrl: string) => Promise<string | undefined>;
   autoStart?: boolean;
-  resolveEngine?: () => Pick<CodeReviewEngine, 'run'> | undefined;
+  resolveEngine?: (origin?: CodeReviewEngineBinding) => Pick<CodeReviewEngine, 'run'> | undefined;
 }
 export interface SubmitCodeReview {
   projectId: string;
@@ -76,11 +76,24 @@ export class CodeReviewService {
   private engineProbeTimer?: ReturnType<typeof setTimeout>;
   private dispatchNotBefore = 0;
   constructor(readonly deps: CodeReviewDeps) {}
-  private engine() {
+  private engine(origin?: CodeReviewEngineBinding) {
     if (this.deps.engine) return this.deps.engine;
-    if (this.deps.resolveEngine) return this.deps.resolveEngine();
-    const config = resolveCodeReviewEngineConfig(this.deps.state);
+    if (this.deps.resolveEngine) return this.deps.resolveEngine(origin);
+    const config = resolveCodeReviewEngineConfig(this.deps.state, process.env, origin);
     return config ? new CodeReviewEngine(config) : undefined;
+  }
+  async retainEngineBindingsBeforeSettingsChange(): Promise<void> {
+    const unbound = this.list().filter(task => ['failed', 'cancelled'].includes(task.status) && task.engineTaskId && !task.engineBinding);
+    if (!unbound.length) return;
+    if (unbound.some(task => task.ownerScope !== this.deps.ownerScope)) {
+      throw new CodeReviewError(409, '其他实例的历史审查断点尚未绑定原引擎，请先在原实例核对');
+    }
+    const origin = currentCodeReviewEngineBinding(this.deps.state);
+    if (!origin || !resolveCodeReviewEngineConfig(this.deps.state, process.env, origin)) {
+      throw new CodeReviewError(409, '历史审查断点的当前引擎引用不可用，请先恢复原引擎配置再切换');
+    }
+    // Upgrade old rows before changing the selector. No retry, reset, or upstream request occurs here.
+    for (const task of unbound) { task.engineBinding = origin; await this.save(task); }
   }
   capabilities() {
     return { engineConfigured: Boolean(this.engine()), mailConfigured: this.deps.mail.configured(), storageConfigured: this.deps.inputs.configured(), conditionalRetry: true,
@@ -262,12 +275,14 @@ export class CodeReviewService {
         const cooldownMs = this.dispatchNotBefore - Date.now();
         if (cooldownMs > 0) { this.probeAfter(cooldownMs); return; }
         // A branch update can temporarily remove its runtime between tasks. Keep those tasks intact.
-        const engine = this.engine();
+        const origin = next.engineTaskId ? next.engineBinding || currentCodeReviewEngineBinding(this.deps.state)
+          : currentCodeReviewEngineBinding(this.deps.state);
+        const engine = this.engine(origin);
         if (!engine) {
           this.probeAfter(5000);
           return;
         }
-        await this.execute(next.id, engine);
+        await this.execute(next.id, engine, origin);
       }
     } finally { this.pumping = false; }
   }
@@ -275,7 +290,7 @@ export class CodeReviewService {
     this.engineProbeTimer = setTimeout(() => { this.engineProbeTimer = undefined; void this.pump(); }, delayMs);
     this.engineProbeTimer.unref();
   }
-  private async execute(id: string, engine: Pick<CodeReviewEngine, 'run'>) {
+  private async execute(id: string, engine: Pick<CodeReviewEngine, 'run'>, origin?: CodeReviewEngineBinding) {
     const controller = new AbortController(); this.active.set(id, controller);
     const hour = 60 * 60 * 1000;
     const maxDuration = boundedTimeout('CDS_CODE_REVIEW_MAX_DURATION_MS', 7 * 24 * hour, hour, 14 * 24 * hour);
@@ -320,14 +335,16 @@ export class CodeReviewService {
           const newEngineTask = p.engineTaskId && current.engineTaskId && p.engineTaskId !== current.engineTaskId;
           current.status = 'running'; current.phase = p.phase; current.progress = { totalFiles: Math.max(current.progress.totalFiles, p.totalFiles),
             scannedFiles: newEngineTask ? p.scannedFiles : Math.max(current.progress.scannedFiles, p.scannedFiles) };
-          if (p.engineTaskId) current.engineTaskId = p.engineTaskId;
+          if (p.engineTaskId) { current.engineTaskId = p.engineTaskId; current.engineBinding = origin; }
           await this.save(current);
         }, audit: async (e) => this.audit(id, e) });
       task = this.get(id); this.checkActive(task, controller.signal);
       task.engineTaskId = result.engineTaskId;
+      task.engineBinding = origin;
       if (selectedFiles > 0 && result.scannedFiles === 0) {
         task.engineCompleted = false; // A manual retry must start a new analysis, not reuse the empty result.
         task.engineTaskId = undefined;
+        task.engineBinding = undefined;
         throw new CodeReviewError(502, `审查引擎未成功分析任何文件（已分析 0/${selectedFiles} 个文件），未形成代码质量结论。请联系管理员检查模型服务与引擎日志后重试。`);
       }
       task.engineCompleted = true; task.engineRetryRequested = undefined;

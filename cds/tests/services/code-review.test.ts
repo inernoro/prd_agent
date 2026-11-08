@@ -619,6 +619,32 @@ describe('代码审查任务完整闭环', () => {
     expect((await fetch(`${base}/${data.task.id}/report`, { headers: { 'x-project': 'a' } })).status).toBe(200);
   });
 
+  it.each([10 * 1024 * 1024 + 1, 11 * 1024 * 1024 + 1])('超限报告 %i 字节在 UTF8 解码之前拒绝，外层限制独立于 ZIP', async (size) => {
+    const base = await serve(), form = new FormData();
+    form.set('projectId', 'a'); form.set('title', '合成报告大小边界');
+    form.set('file', new Blob([new Uint8Array(size).fill(120)]), 'report.md');
+    const originalToString = Buffer.prototype.toString;
+    let largeDecodes = 0;
+    const decoding = vi.spyOn(Buffer.prototype, 'toString').mockImplementation(function (this: Buffer, ...args) {
+      if (this.length > 10 * 1024 * 1024 && args[0] === 'utf8') largeDecodes++;
+      return originalToString.apply(this, args);
+    });
+    try {
+      const response = await fetch(`${base}/reports`, { method: 'POST', headers: { 'x-project': 'a' }, body: form });
+      expect(response.status).toBe(size > 11 * 1024 * 1024 ? 413 : 400);
+      expect(largeDecodes).toBe(0); expect(state.listAcceptanceReports('a')).toHaveLength(0);
+      expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+    } finally { decoding.mockRestore(); }
+  });
+  it('报告文件恰好 10MiB 仍可正常上传且不启动审查引擎', async () => {
+    const base = await serve(), form = new FormData();
+    form.set('projectId', 'a'); form.set('title', '合成报告合法上限');
+    form.set('file', new Blob([new Uint8Array(10 * 1024 * 1024).fill(120)]), 'report.md');
+    const response = await fetch(`${base}/reports`, { method: 'POST', headers: { 'x-project': 'a' }, body: form });
+    expect(response.status).toBe(201); expect(state.listAcceptanceReports('a')).toHaveLength(1);
+    expect(run).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+
   it('报告上传幂等键在内容去重及重载后仍绑定原请求，冲突返回409并隔离项目', async () => {
     let base = await serve();
     const post = (projectId: string, content: string, key?: string, viaHeader = false) => fetch(`${base}/reports`, {

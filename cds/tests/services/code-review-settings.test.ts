@@ -7,7 +7,7 @@ import type { Server } from 'node:http';
 import { StateService } from '../../src/services/state.js';
 import { CodeReviewService } from '../../src/services/code-review.js';
 import { createCodeReviewsRouter } from '../../src/routes/code-reviews.js';
-import { resolveCodeReviewEngineConfig } from '../../src/services/code-review-settings.js';
+import { currentCodeReviewEngineBinding, resolveCodeReviewEngineConfig } from '../../src/services/code-review-settings.js';
 import { buildZip } from '../../src/utils/zip.js';
 
 describe('持久化审查引擎绑定', () => {
@@ -197,6 +197,75 @@ describe('持久化审查引擎绑定', () => {
     expect(JSON.stringify(service.list())).not.toContain(password);
     state.setCustomEnv({ CDS_SERVICE_EMAIL: account.CDS_SERVICE_EMAIL }, 'engine');
     expect(service.capabilities().engineConfigured).toBe(false);
+  });
+  it.each(['failed', 'cancelled', 'legacy-unbound'] as const)('%s 原断点跨引擎切换和重载仍只查询原引擎，新任务使用新引擎', async (status) => {
+    await state.setCodeReviewSettings(binding);
+    const localFetch = fetch, requests: string[] = [];
+    let completing = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.startsWith(`${base}/`)) return localFetch(url, init);
+      requests.push(url);
+      if (url.endsWith('/auth/login')) return Response.json({ access_token: 'synthetic-login-token' });
+      if (url.endsWith('/projects/')) return Response.json({ id: 'synthetic-project' });
+      if (url.endsWith('/scan/upload-zip')) return Response.json({ task_id: 'original-checkpoint' });
+      if (new URL(url).pathname.endsWith('/issues')) return Response.json([]);
+      return Response.json({ id: 'original-checkpoint', status: completing ? 'completed' : 'failed',
+        total_files: 1, scanned_files: completing ? 1 : 0, checkpoint_version: 1, resumable: true, issues_count: 0 });
+    }));
+    const submit = () => service.submit({ projectId: 'source', sourceType: 'zip',
+      zip: buildZip([{ name: 'main.ts', data: Buffer.from('const value = 1;') }]), createdBy: 'test' });
+    const original = await submit(); await service.pump();
+    const checkpoint = service.get(original.id);
+    expect(checkpoint).toMatchObject({ status: 'failed', engineTaskId: 'original-checkpoint' });
+    if (status === 'cancelled') checkpoint.status = 'cancelled';
+    if (status === 'legacy-unbound') delete (checkpoint as unknown as Record<string, unknown>).engineBinding;
+    await state.putCodeReviewTask(checkpoint);
+    const snapshot = { inputKey: checkpoint.inputKey, sourceHash: checkpoint.sourceHash };
+    state.setCustomEnv({ ...account, CDS_SERVICE_PASSWORD: 'new-project-private-password' }, 'other');
+    const switched = await put('owner', { engineProjectId: 'other', engineBaseUrl: 'http://new-engine.internal:8000' });
+    expect(switched.status).toBe(200);
+    // No retry or upstream request may be caused by changing the system selector.
+    expect(requests.filter(url => url.endsWith('/scan/upload-zip'))).toHaveLength(1);
+    service.stop(); service = new CodeReviewService({ ...service.deps });
+    await service.retry(original.id);
+    state.setCustomEnv({}, 'engine'); requests.length = 0;
+    await service.pump(); expect(requests).toEqual([]); expect(service.get(original.id).status).toBe('queued');
+    state.setCustomEnv(account, 'engine'); completing = true;
+    await service.pump();
+    expect(service.get(original.id)).toMatchObject({ ...snapshot, status: 'completed', engineTaskId: 'original-checkpoint' });
+    expect(requests.some(url => url.includes('/tasks/original-checkpoint'))).toBe(true);
+    expect(new Set(requests.map(url => new URL(url).origin))).toEqual(new Set([binding.engineBaseUrl]));
+    expect(requests.some(url => url.endsWith('/scan/upload-zip') || url.endsWith('/resume'))).toBe(false);
+    const visible = await (await fetch(`${base}/${original.id}`, { headers: { 'x-auth': 'owner' } })).json();
+    expect(visible.task).not.toHaveProperty('engineBinding');
+    expect(JSON.stringify(service.list())).not.toContain(account.CDS_SERVICE_PASSWORD);
+    requests.length = 0;
+    const next = await submit(); await service.pump();
+    expect(service.get(next.id).status).toBe('completed');
+    expect(new Set(requests.map(url => new URL(url).origin))).toEqual(new Set(['http://new-engine.internal:8000']));
+  });
+  it('环境来源断点保留原地址，只用原环境轮换凭据且不借新项目或新地址的凭据', async () => {
+    vi.stubEnv('CDS_DEEPAUDIT_BASE_URL', 'https://legacy.example/api/v1/');
+    vi.stubEnv('CDS_DEEPAUDIT_TOKEN', 'synthetic-old-token');
+    const origin = currentCodeReviewEngineBinding(state)!;
+    expect(JSON.stringify(origin)).not.toContain('synthetic-old-token');
+    await state.setCodeReviewSettings(binding);
+    vi.stubEnv('CDS_DEEPAUDIT_TOKEN', 'synthetic-rotated-token');
+    expect(resolveCodeReviewEngineConfig(state, process.env, origin)).toMatchObject({
+      baseUrl: 'https://legacy.example/api/v1', token: 'synthetic-rotated-token' });
+    vi.stubEnv('CDS_DEEPAUDIT_BASE_URL', 'https://different.example');
+    expect(resolveCodeReviewEngineConfig(state, process.env, origin)).toBeUndefined();
+    expect(resolveCodeReviewEngineConfig(state)?.baseUrl).toBe(binding.engineBaseUrl);
+  });
+  it('切换时不改写其他实例的无绑定历史断点，保持原配置和任务', async () => {
+    await state.setCodeReviewSettings(binding);
+    const task = await service.submit({ projectId: 'source', sourceType: 'zip',
+      zip: buildZip([{ name: 'main.ts', data: Buffer.from('const value = 1;') }]), createdBy: 'test' });
+    task.status = 'failed'; task.engineTaskId = 'foreign-checkpoint'; task.ownerScope = 'other-instance';
+    await state.putCodeReviewTask(task);
+    expect((await put('owner', { ...binding, engineBaseUrl: 'http://new-engine.internal:8000' })).status).toBe(409);
+    expect(state.getCodeReviewSettings()).toEqual(binding);
+    expect(service.get(task.id)).toEqual(task);
   });
   it('保持 daemon 环境变量兼容，配置不完整不能声明已接通', async () => {
     vi.stubEnv('CDS_DEEPAUDIT_BASE_URL', 'https://legacy.example/api/v1');

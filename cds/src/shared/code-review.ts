@@ -1,6 +1,15 @@
 /** Public review task contract. Source contents and engine credentials never leave the service. */
 export const CODE_REVIEW_MCP_TOOLS = ['cds_code_review_submit', 'cds_code_review_get', 'cds_code_review_list', 'cds_code_review_report_upload'] as const;
 export type CodeReviewStatus = 'queued' | 'preparing' | 'running' | 'archiving' | 'completed' | 'failed' | 'cancelled';
+export interface CodeReviewProjectEngineReference {
+  engineBaseUrl: string;
+  engineProjectId: string;
+  engineBranchId?: string;
+  engineServiceId?: string;
+}
+/** Internal origin selector only. Accounts are always resolved from their original project/environment. */
+export type CodeReviewEngineBinding = { source: 'project'; settings: CodeReviewProjectEngineReference }
+  | { source: 'environment'; baseUrl: string };
 export interface CodeReviewTask {
   id: string;
   projectId: string;
@@ -17,6 +26,7 @@ export interface CodeReviewTask {
   phase: string;
   progress: { totalFiles: number; scannedFiles: number };
   engineTaskId?: string;
+  engineBinding?: CodeReviewEngineBinding;
   engineCompleted?: boolean;
   /** Internal persisted intent: only an explicit user retry may resume a failed upstream scan. */
   engineRetryRequested?: boolean;
@@ -37,8 +47,8 @@ export interface CodeReviewTask {
   auditHeadKey?: string;
   auditCount?: number;
 }
-export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'ownerScope' | 'idempotencyKey' | 'reportImportReceipts' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested'>;
+export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'ownerScope' | 'idempotencyKey' | 'reportImportReceipts' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested' | 'engineBinding'>;
 export function publicCodeReviewTask(task: CodeReviewTask): PublicCodeReviewTask {
-  const { inputKey: _i, ownerScope: _o, idempotencyKey: _k, reportImportReceipts: _receipts, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, ...visible } = task;
+  const { inputKey: _i, ownerScope: _o, idempotencyKey: _k, reportImportReceipts: _receipts, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, engineBinding: _binding, ...visible } = task;
   return visible;
 }

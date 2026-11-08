@@ -1,14 +1,9 @@
 import type { StateService } from './state.js';
 import { buildUnifiedBranchResources } from './resources.js';
+import type { CodeReviewEngineBinding, CodeReviewProjectEngineReference } from '../shared/code-review.js';
 
 /** Only references are persisted. Service credentials remain in the engine project's environment. */
-export interface CodeReviewSettings {
-  /** Legacy URL mode; branch/service references take precedence when present. */
-  engineBaseUrl: string;
-  engineProjectId: string;
-  engineBranchId?: string;
-  engineServiceId?: string;
-}
+export type CodeReviewSettings = CodeReviewProjectEngineReference;
 export interface CodeReviewEngineConfig {
   baseUrl: string;
   username?: string;
@@ -51,9 +46,18 @@ export function validateCodeReviewSettings(state: StateService, input: unknown):
     ...(hasRuntimeReference ? { engineBranchId: engineBranchId as string, engineServiceId: engineServiceId as string } : {}) };
 }
 
-/** Read on every run, so a saved binding or rotated account takes effect without restarting CDS. */
-export function resolveCodeReviewEngineConfig(state: StateService, env: NodeJS.ProcessEnv = process.env): CodeReviewEngineConfig | undefined {
-  const binding = state.getCodeReviewSettings();
+/** Snapshot a non-secret selector before execution; never persist service passwords or tokens on tasks. */
+export function currentCodeReviewEngineBinding(state: StateService, env: NodeJS.ProcessEnv = process.env): CodeReviewEngineBinding | undefined {
+  const settings = state.getCodeReviewSettings();
+  if (settings) return { source: 'project', settings };
+  try { return { source: 'environment', baseUrl: engineUrl(env.CDS_DEEPAUDIT_BASE_URL) }; }
+  catch { return undefined; }
+}
+
+/** Read original project runtime/account on every run, including after replacement or account rotation. */
+export function resolveCodeReviewEngineConfig(state: StateService, env: NodeJS.ProcessEnv = process.env,
+  origin?: CodeReviewEngineBinding): CodeReviewEngineConfig | undefined {
+  const binding = origin?.source === 'project' ? origin.settings : origin ? undefined : state.getCodeReviewSettings();
   if (binding) {
     try {
       const valid = validateCodeReviewSettings(state, binding);
@@ -73,7 +77,9 @@ export function resolveCodeReviewEngineConfig(state: StateService, env: NodeJS.P
   if (!env.CDS_DEEPAUDIT_BASE_URL?.trim()
     || !(env.CDS_DEEPAUDIT_TOKEN?.trim() || (env.CDS_DEEPAUDIT_USERNAME?.trim() && env.CDS_DEEPAUDIT_PASSWORD?.trim()))) return undefined;
   try {
-    return { baseUrl: engineUrl(env.CDS_DEEPAUDIT_BASE_URL), username: env.CDS_DEEPAUDIT_USERNAME,
+    const baseUrl = engineUrl(env.CDS_DEEPAUDIT_BASE_URL);
+    if (origin?.source === 'environment' && origin.baseUrl !== baseUrl) return undefined;
+    return { baseUrl, username: env.CDS_DEEPAUDIT_USERNAME,
       password: env.CDS_DEEPAUDIT_PASSWORD, token: env.CDS_DEEPAUDIT_TOKEN };
   } catch { return undefined; }
 }

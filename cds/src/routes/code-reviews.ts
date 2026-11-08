@@ -17,7 +17,7 @@ interface ReviewRequest extends Request, HumanAuthContext {
 }
 const MAX_ZIP = 100 * 1024 * 1024;
 const MAX_REPORT = 10 * 1024 * 1024;
-async function body(req: Request): Promise<{ fields: Record<string, unknown>; file?: Buffer; filename?: string }> {
+async function body(req: Request, maxFileBytes = MAX_ZIP): Promise<{ fields: Record<string, unknown>; file?: Buffer; filename?: string }> {
   if (!req.is('multipart/form-data')) return { fields: req.body || {} };
   const data = await new Response(new Uint8Array(req.body as Buffer), { headers: { 'content-type': req.get('content-type')! } }).formData();
   const fields: Record<string, unknown> = {};
@@ -26,6 +26,7 @@ async function body(req: Request): Promise<{ fields: Record<string, unknown>; fi
     if (typeof value === 'string') { if (Object.hasOwn(fields, key)) throw new CodeReviewError(400, '表单字段不能重复'); fields[key] = value; }
     else {
       if (file || key !== 'file') throw new CodeReviewError(400, '请只上传一个 file 文件');
+      if (value.size > maxFileBytes) throw new CodeReviewError(400, '上传文件超过此入口的大小上限');
       file = Buffer.from(await value.arrayBuffer()); filename = value.name;
     }
   }
@@ -40,6 +41,7 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
   router.use('/code-reviews', (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
   let importing = Promise.resolve();
   const parse = [raw({ type: 'multipart/form-data', limit: MAX_ZIP + 1024 * 1024 }), json({ limit: '12mb' })];
+  const parseReport = [raw({ type: 'multipart/form-data', limit: MAX_REPORT + 1024 * 1024 }), json({ limit: '12mb' })];
   const access = (req: ReviewRequest, projectId: string) => {
     const denied = assertProjectAccess(req, projectId);
     if (denied || !canHumanAccessProject(req, state, projectId)) throw new CodeReviewError(403, '无权访问该项目的代码审查');
@@ -72,10 +74,12 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     try { settings = validateCodeReviewSettings(state, req.body); }
     catch (error) { throw new CodeReviewError(400, (error as Error).message); }
     const previous = state.getCodeReviewSettings();
-    if ((previous?.engineBaseUrl !== settings.engineBaseUrl || previous?.engineProjectId !== settings.engineProjectId
-      || previous?.engineBranchId !== settings.engineBranchId || previous?.engineServiceId !== settings.engineServiceId)
-      && service.list().some((task) => !['completed', 'failed', 'cancelled'].includes(task.status))) {
-      throw new CodeReviewError(409, '存在未结束的审查任务，请完成或取消后再切换审查引擎');
+    if (previous?.engineBaseUrl !== settings.engineBaseUrl || previous?.engineProjectId !== settings.engineProjectId
+      || previous?.engineBranchId !== settings.engineBranchId || previous?.engineServiceId !== settings.engineServiceId) {
+      if (service.list().some((task) => !['completed', 'failed', 'cancelled'].includes(task.status))) {
+        throw new CodeReviewError(409, '存在未结束的审查任务，请完成或取消后再切换审查引擎');
+      }
+      await service.retainEngineBindingsBeforeSettingsChange();
     }
     await state.setCodeReviewSettings(settings);
     void service.pump();
@@ -105,16 +109,17 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     return res.status(202).json({ task: publicCodeReviewTask(task) });
   }));
   // Imported reports use the same project gate and storage as generated reports.
-  router.post('/code-reviews/reports', ...parse, handler(async (req, res) => {
+  router.post('/code-reviews/reports', ...parseReport, handler(async (req, res) => {
     let unlock!: () => void;
     const previous = importing;
     importing = new Promise<void>((resolve) => { unlock = resolve; });
     await previous;
     try {
-    const { fields, file, filename } = await body(req);
+    const { fields, file, filename } = await body(req, MAX_REPORT);
     const projectId = project(req, fields.projectId);
     const format = fields.format || (filename?.toLowerCase().endsWith('.md') ? 'md' : filename?.toLowerCase().endsWith('.html') ? 'html' : undefined);
     if (format !== 'md' && format !== 'html') throw new CodeReviewError(400, '仅支持 HTML 或 Markdown 报告');
+    if (file && file.length > MAX_REPORT) throw new CodeReviewError(400, '报告正文上限 10MiB');
     const content = file ? file.toString('utf8') : fields.content;
     const title = typeof fields.title === 'string' ? fields.title.trim().slice(0, 200) : '';
     if (!title || typeof content !== 'string' || !content.trim() || Buffer.byteLength(content) > MAX_REPORT) throw new CodeReviewError(400, '报告标题和正文必填，正文上限 10MiB');

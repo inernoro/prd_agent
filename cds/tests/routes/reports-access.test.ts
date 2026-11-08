@@ -225,7 +225,10 @@ describe('Acceptance report routes — project-scoped key access', () => {
     });
     expect(created.status).toBe(201);
     expect(created.body.report.reportType).not.toBe('code-review');
-    const overview = buildReportsOverview([service.getAcceptanceReport(created.body.report.id)!], []);
+    const report = service.getAcceptanceReport(created.body.report.id)!;
+    expect(report.reportType).toBe('acceptance');
+    // The aggregation window has an exclusive end; keep this classification test inside its own window.
+    const overview = buildReportsOverview([report], [], { to: new Date(Date.parse(report.createdAt) + 1) });
     expect(overview.totals.counted).toBe(1);
     expect(overview.totals.fail).toBe(1);
   });
