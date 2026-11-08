@@ -275,7 +275,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
     } else if (message.type === 'data') {
       job.dataTail = job.dataTail.then(async () => {
         if (!job.failure) await job.onData?.(message.chunk, message.channel);
-        // 32KiB低于原64KiB低水位；仅合并已消费字节，不扩大帧、窗口或缓存。
+        // 仅确认已消费的字节；32KiB低于原64KiB低水位，不增加帧、窗口或全文缓存。
+        // 小尾部可随任务终态释放，持续流累积到阈值再还信用，避免每8KiB往返三层IPC。
         job.ackBytes += message.bytes;
         if (job.ackBytes >= 32 * 1024) {
           this.send({ type: 'ack', id: job.id, bytes: job.ackBytes });

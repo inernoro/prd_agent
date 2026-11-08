@@ -20,6 +20,15 @@ const host = 'unix:///var/run/owned.sock';
 const docker = async (args: string[], timeout = 120_000) => (await execute('docker', ['--host', host, ...args],
   { encoding: 'utf8', timeout, maxBuffer: 2 * 1024 * 1024 })).stdout.trim();
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+/** 仅独占演练daemon准备镜像；调用完成前保留所有拉取责任。 */
+export async function prepareOwnedDockerImages(pull: (image: string, timeout: number) => Promise<unknown>, capability: string): Promise<void> {
+  const results = await Promise.allSettled([
+    (async () => { for (const image of ['mongo:7.0', 'registry:2', 'node:22-alpine']) await pull(image, 120_000); })(),
+    pull(capability, 600_000),
+  ]);
+  for (const result of results) if (result.status === 'rejected') throw result.reason;
+}
+
 async function until<T>(read: () => Promise<T | undefined>, timeout = 120_000): Promise<T> {
   const deadline = performance.now() + timeout;
   for (;;) { const value = await read(); if (value !== undefined) return value;
@@ -57,10 +66,47 @@ function daemonStackSummary(text: string, phase: 'creation' | 'removal') {
 }
 export function removalStackSummary(text: string) { return daemonStackSummary(text, 'removal'); }
 export function creationStackSummary(text: string) { return daemonStackSummary(text, 'creation'); }
+/** A missing private wire reply is not proof that the accepted daemon request did not execute. */
+export function resolveRecoveredProbeIdentity(request: Record<string, any>, timeline: Array<Record<string, any>>,
+  daemonEvents: Array<Record<string, any>>, recoveryEvents: Array<Record<string, any>>) {
+  assert.match(request.operationId, /^[a-f0-9]{32}$/); assert.match(request.instanceId, /^[a-f0-9]{12}$/);
+  assert.ok(typeof request.name === 'string' && request.name.length > 0);
+  assert.ok(typeof request.image === 'string' && request.image.length > 0);
+  const owned = daemonEvents.filter(event => event.type === 'container' && event.probeOperationId === request.operationId
+    && event.instanceId === request.instanceId && event.probeKind === 'runtime-validation');
+  const creates = owned.filter(event => event.action === 'create');
+  const ids = [...new Set(creates.map(event => event.id))];
+  assert.equal(ids.length, 1, 'expected one native runtime probe identity');
+  const containerId = ids[0]; assert.match(containerId, /^[a-f0-9]{64}$/);
+  assert.ok(creates.every(event => event.name === request.name && event.image === request.image));
+  const createdAt = creates[0].timeNano / 1e6;
+  assert.ok(Number.isFinite(createdAt) && createdAt >= Date.parse(request.at));
+  assert.ok(owned.some(event => event.action === 'destroy' && event.id === containerId
+    && event.name === request.name && event.image === request.image
+    && Number.isFinite(event.timeNano) && event.timeNano / 1e6 >= createdAt));
+  const replies = timeline.filter(event => event.phase === 'backend-create-replied');
+  assert.ok(replies.length <= 1, 'ambiguous backend creation reply');
+  if (replies.length) {
+    assert.equal(replies[0].status, 201); assert.equal(replies[0].containerId, containerId);
+  } else {
+    assert.ok(timeline.some(event => event.phase === 'backend-create-transport-error'), 'missing observed transport failure');
+  }
+  const recovered = recoveryEvents.filter(event => event.operationId === request.operationId
+    && event.containerName === request.name && event.details?.instanceId === request.instanceId);
+  const loaded = recovered.findIndex(event => event.action === 'agent.probe.recovery.loaded');
+  assert.ok(loaded >= 0);
+  const confirmed = recovered.findIndex((event, index) => index > loaded && event.action === 'agent.probe.cleanup.confirmed'
+    && event.details.containerId === containerId);
+  assert.ok(confirmed > loaded);
+  if (!replies.length) assert.ok(recovered.some((event, index) => index > loaded && index < confirmed
+    && event.action === 'agent.probe.creation.acknowledged' && event.details.receipt === 'owned-inspect'
+    && event.details.containerId === containerId));
+  return { containerId, source: replies.length ? 'backend-201' as const : 'native-and-owned-recovery' as const };
+}
 type PendingCreateTarget = { containerName: string; operationId: string; instanceId: string; imageReference: string; forwardedAt: string };
 export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock',
   cancelBoundary: 'client-disconnect' | 'daemon-created' = 'client-disconnect',
-  pendingWait?: (containerId: string, elapsedMs: number) => Promise<void>,
+  pendingWait?: (containerId: string, elapsedMs: number, phase?: 'removal') => Promise<void>,
   pendingCreate?: (target: PendingCreateTarget, elapsedMs: number) => Promise<void>) {
   const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
   const requestTimeline: any[] = []; let requestSequence = 0, traceEnabled = false, traceOverflow = 0;
@@ -78,12 +124,13 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
     const active = traceEnabled && Boolean(identity.kind);
     return (phase: string, fields: Record<string, unknown> = {}) => {
       if (!active) return;
-      if (requestTimeline.length >= 1024) { traceOverflow++; return; }
+      if (requestTimeline.length >= 1024) { traceOverflow++; requestTimeline.splice(256, 1); }
       requestTimeline.push({ requestId, at: new Date().toISOString(), kind: identity.kind,
         method: request.method, containerId: identity.containerId, phase, ...fields });
     };
   };
   const traffic = new Map<string, { kind: string; method: string; requests: number; replies: Record<string, number>; transportErrors: number }>();
+  let capturedContainerId: string | undefined, removalObserved = false;
   let armed = false; let caughtResolve!: () => void; let settledResolve!: () => void;
   const caught = new Promise<void>(resolve => { caughtResolve = resolve; });
   const settled = new Promise<void>(resolve => { settledResolve = resolve; });
@@ -114,7 +161,7 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   let startGate: StartReplyGate | undefined;
   const holdNextAppStart = (target: AppStartTarget) => {
     for (const value of [target.projectId, target.branchId, target.profileId]) assert.match(value, /^[a-zA-Z0-9_.-]{1,128}$/);
-    assert.match(target.imageReference, /^127\.0\.0\.1:\d{1,5}\/owned-(?:api|web)@sha256:[a-f0-9]{64}$/);
+    assert.match(target.imageReference, /^127\.0\.0\.1:\d{1,5}\/owned-(?:api|web)(?::sha-[a-f0-9]{40})?@sha256:[a-f0-9]{64}$/);
     assert.equal(startGate, undefined);
     let confirm!: (reply: AppStartReply) => void;
     const caught = new Promise<AppStartReply>(resolve => { confirm = resolve; });
@@ -286,7 +333,9 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         else {
           let text = ''; backend.on('data', chunk => { text += chunk; });
           backend.on('end', () => {
-            try { const view = JSON.parse(text); record('backend-create-replied', { status: backend.statusCode, containerId: view.Id ?? null });
+            try { const view = JSON.parse(text);
+              if (backend.statusCode === 201 && /^[a-f0-9]{64}$/.test(view.Id || '')) capturedContainerId = view.Id;
+              record('backend-create-replied', { status: backend.statusCode, containerId: view.Id ?? null });
               if (cancelBoundary === 'daemon-created' && backend.statusCode === 201 && typeof view.Id === 'string' && /^[a-f0-9]{64}$/.test(view.Id)) caughtResolve(); }
             catch { record('backend-create-invalid-reply', { status: backend.statusCode }); }
             settledResolve();
@@ -294,6 +343,20 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         }
       });
       requests.add(upstream); upstream.once('close', () => requests.delete(upstream));
+      // Observe only the first removal of the exact daemon-confirmed injected probe.
+      // Reads never delay forwarding, repeat a removal, or change its deadline.
+      const removalTarget = classify(request.url, request.method);
+      if (pendingWait && !removalObserved && capturedContainerId && removalTarget.kind === 'container-remove'
+        && removalTarget.containerId === capturedContainerId) {
+        removalObserved = true; const id = capturedContainerId;
+        const timers = [0, 3000].map(elapsedMs => setTimeout(() => {
+          if (!upstream.destroyed) void Promise.resolve().then(() => pendingWait(id, elapsedMs, 'removal'))
+            .catch(() => record('removal-diagnostic-failed', { elapsedMs }));
+        }, elapsedMs));
+        const clear = () => { for (const timer of timers) clearTimeout(timer); };
+        upstream.once('response', clear); upstream.once('close', clear); upstream.once('error', clear);
+      }
+
       if (!delayed) { response.once('close', () => upstream.destroy()); response.once('error', () => upstream.destroy()); }
       upstream.once('timeout', () => { observe('transport-timeout'); upstream.destroy(new Error('owned proxy timeout')); });
       upstream.once('error', () => { observe('transport-error'); row.transportErrors++; if (delayed) { record('backend-create-transport-error'); settledResolve(); }
@@ -543,6 +606,7 @@ async function main(): Promise<void> {
       os: view.Os, architecture: view.Architecture });
   };
   let finiteCache: { finish: () => Promise<void>; stop: () => void } | undefined;
+  let capabilityFixtureReference: string | undefined, capabilityFixtureImageId: string | undefined;
   const prepareFiniteCoreCache = async (applicationCoreImageId: string) => {
     // Only this independent fixture's single lease overlaps application stop.
     // Prune/release assertions still follow the original application assertions.
@@ -565,7 +629,7 @@ async function main(): Promise<void> {
     try {
       await cache.resume(); assert.equal(evidence.events.length, 0);
       evidence.foreignReferencesBefore = {};
-      for (const reference of ['mongo:7.0', 'registry:2', 'node:22-alpine'])
+      for (const reference of ['mongo:7.0', 'registry:2', 'node:22-alpine', capabilityImage])
         evidence.foreignReferencesBefore[reference] = await docker(['image', 'inspect', reference, '--format', '{{.Id}}']);
       const makeFixture = async (role: string) => {
         const context = path.join(root, `finite-cache-${role}`); await fs.mkdir(context);
@@ -656,7 +720,24 @@ async function main(): Promise<void> {
   };
   try {
     report.stage = 'owned-fixtures-ready';
-    for (const image of ['mongo:7.0', 'registry:2', 'node:22-alpine']) await docker(['pull', image]);
+    report.fixtureImagePulls = [];
+    report.fixturePreparation = { startedAt: new Date().toISOString() };
+    await prepareOwnedDockerImages(async (image, timeout) => {
+      const row: any = { image, timeoutMs: timeout, startedAt: new Date().toISOString() }; report.fixtureImagePulls.push(row);
+      try { await docker(['pull', image], timeout); row.verdict = 'passed'; }
+      catch (error) { row.verdict = 'failed'; throw error; }
+      finally { row.finishedAt = new Date().toISOString(); }
+    }, capabilityImage);
+    report.fixturePreparation.pullsCompletedAt = new Date().toISOString();
+    // digest-only镜像可被原Janitor当悬空回收；夹具仅保留唯一tag，不关闭原prune或改探针镜像。
+    capabilityFixtureImageId = await docker(['image', 'inspect', capabilityImage, '--format', '{{.Id}}']);
+    assert.match(capabilityFixtureImageId, /^sha256:[a-f0-9]{64}$/);
+    capabilityFixtureReference = `${source.owner}-capability-fixture:retained`;
+    await docker(['tag', capabilityImage, capabilityFixtureReference]);
+    assert.equal(await docker(['image', 'inspect', capabilityFixtureReference, '--format', '{{.Id}}']), capabilityFixtureImageId);
+    report.capabilityFixtureReference = { reference: capabilityFixtureReference, imageId: capabilityFixtureImageId,
+      exactOriginalDigest: capabilityImage, originalPruneEnabled: true, removed: false };
+    report.fixturePreparation.referenceRetainedAt = new Date().toISOString();
     const mongoPort = await availablePort(), registryPort = await availablePort(); assert.notEqual(mongoPort, registryPort);
     await run('mongo', ['--network', 'host', '--cpus', '0.5', '--memory', '768m', 'mongo:7.0', 'mongod', '--bind_ip', '127.0.0.1', '--port', String(mongoPort), '--wiredTigerCacheSizeGB', '0.25']);
     await run('registry', ['--network', 'host', '--cpus', '0.25', '--memory', '128m', '-e', `REGISTRY_HTTP_ADDR=127.0.0.1:${registryPort}`, 'registry:2']);
@@ -665,11 +746,12 @@ async function main(): Promise<void> {
     await until(async () => { const probe = new MongoClient(`mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, { serverSelectionTimeoutMS: 500 });
       try { await probe.connect(); return (await probe.db('admin').command({ hello: 1 })).isWritablePrimary ? true : undefined; }
       catch { return undefined; } finally { await probe.close(); } });
-    await docker(['pull', capabilityImage], 600_000);
     const dockerVersions = JSON.parse(await docker(['version', '--format', '{{json .}}'], 5000));
     report.ownedDockerVersions = { client: dockerVersions.Client?.Version, clientApi: dockerVersions.Client?.ApiVersion,
       server: dockerVersions.Server?.Version, serverApi: dockerVersions.Server?.ApiVersion };
     report.pendingWaitDiagnostics = [];
+    report.pendingRemovalDiagnostics = [];
+    report.pendingRemovalDiagnosticOverflow = 0;
     report.pendingWaitDiagnosticOverflow = 0;
     report.pendingCreateDiagnostics = [];
     report.pendingCreateDiagnosticOverflow = 0;
@@ -699,11 +781,15 @@ async function main(): Promise<void> {
     };
     const diagnosticTasks = new Set<Promise<void>>();
     probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'), '/var/run/owned.sock', cancelBoundary,
-      async (containerId, scheduledAfterHeaderMs) => {
-        if (report.pendingWaitDiagnostics.length >= 16) { report.pendingWaitDiagnosticOverflow++; return; }
-        const record: any = { containerId, scheduledAfterHeaderMs, at: new Date().toISOString(), readOnly: true,
+      async (containerId, scheduledAfterHeaderMs, phase) => {
+        const entries = phase === 'removal' ? report.pendingRemovalDiagnostics : report.pendingWaitDiagnostics;
+        if (entries.length >= (phase === 'removal' ? 2 : 16)) {
+          if (phase === 'removal') report.pendingRemovalDiagnosticOverflow++; else report.pendingWaitDiagnosticOverflow++;
+          return;
+        }
+        const record: any = { containerId, ...(phase === 'removal' ? { scheduledAfterForwardMs: scheduledAfterHeaderMs } : { scheduledAfterHeaderMs }), phase: phase || 'wait', at: new Date().toISOString(), readOnly: true,
           source: 'private-owned-daemon-unix-socket', status: 'pending' };
-        report.pendingWaitDiagnostics.push(record);
+        entries.push(record);
         const task = (async () => {
           const results = await Promise.allSettled([
             daemonRead(`/containers/${containerId}/json`, 256 * 1024),
@@ -813,8 +899,7 @@ async function main(): Promise<void> {
         // can be pruned during the earlier deployment exercise; establish the
         // required image again immediately before this bounded cancellation
         // fault, without replacing the app's own capability safety checks.
-        await docker(['pull', capabilityImage], 600_000);
-        const preparedImageId = (await execute('docker', ['--host', proxyHost, 'image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
+            const preparedImageId = (await execute('docker', ['--host', proxyHost, 'image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
           { encoding: 'utf8', timeout: 10_000 })).stdout.trim();
         assert.equal(preparedImageId, directImageId);
         report.probeImageReadyAtFault = { at: new Date().toISOString(), imageId: preparedImageId, originalReclaimEnabled: true };
@@ -917,10 +1002,18 @@ async function main(): Promise<void> {
           operationId: originalRequest.operationId, instanceId: originalRequest.instanceId, restartRequestedAt: new Date().toISOString() };
         report.probeEventsAtFailedShutdown = await context.readProbeEvents();
         await checkpoint('original-first-shutdown-failed-before-responsibility-recovery');
-        await context.restartForFailureRecovery();
+        await context.restartForFailureRecovery(async phase => {
+          report.failureRecovery.bootstrapMilestones ??= [];
+          report.failureRecovery.bootstrapMilestones.push({ phase, at: new Date().toISOString(), pid: context.applicationPid() });
+          await checkpoint(`original-recovery-${phase}`);
+        });
         const recoveryTree = context.applicationProcessTree(); report.failureRecovery.processTree = recoveryTree;
         try { await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
           assert.equal(response.status, 200); const item = response.json.items.find((item: any) => item.id === 'open-design');
+          const firstProviderRead = !report.failureRecovery.lastProviderRead;
+          report.failureRecovery.lastProviderRead = { at: new Date().toISOString(), status: response.status,
+            healthy: item?.healthy, resourcePolicyEnforcedPerSession: item?.resourcePolicyEnforcedPerSession };
+          if (firstProviderRead) await checkpoint('original-recovery-provider-first-read');
           return item?.healthy && item.resourcePolicyEnforcedPerSession ? true : undefined; }, 90_000); }
         catch (error) {
           // Run only after the original joint recovery failed; this driver-owned
@@ -930,21 +1023,21 @@ async function main(): Promise<void> {
           throw error;
         }
         await probeProxy!.settle();
-        const reply = probeProxy!.timeline.find(event => event.phase === 'backend-create-replied');
-        assert.equal(reply?.status, 201); assert.match(reply!.containerId, /^[a-f0-9]{64}$/);
-        const rows = await auditNamespace('after-original-failed-stop-and-application-owned-recovery');
-        assert.equal(rows.some(row => row.id === reply!.containerId || row.matchesDefaultRuntimeValidation), false);
         const allEvents = await context.readProbeEvents();
+        const daemonEvents = await eventSnapshot('application-recovered-failed-probe-before-owned-harness-cleanup');
+        const identity = resolveRecoveredProbeIdentity(originalRequest, probeProxy!.timeline, daemonEvents, allEvents);
+        report.failureRecovery.probeIdentity = identity;
+        const rows = await auditNamespace('after-original-failed-stop-and-application-owned-recovery');
+        assert.equal(rows.some(row => row.id === identity.containerId || row.matchesDefaultRuntimeValidation), false);
         const recovered = allEvents.filter(event => event.operationId === originalRequest.operationId);
         assert.ok(recovered.some(event => event.action === 'agent.probe.recovery.loaded'));
-        assert.ok(recovered.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.containerId === reply!.containerId));
+        assert.ok(recovered.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.containerId === identity.containerId));
         const loadedAt = recovered.findIndex(event => event.action === 'agent.probe.recovery.loaded');
         const removal = recovered.slice(loadedAt).find(event => event.action === 'agent.probe.cleanup.step.assigned' && event.details.cleanupStep === 'remove');
         assert.ok(removal?.details.cleanupExecutorAssignment);
         assert.ok(recoveryTree.some(row => row.pid === removal.details.cleanupExecutorAssignment.actorPid));
         assert.ok(recoveryTree.some(row => row.pid === removal.details.cleanupExecutorAssignment.factoryPid));
-        const daemonEvents = await eventSnapshot('application-recovered-failed-probe-before-owned-harness-cleanup');
-        for (const action of ['create', 'destroy']) assert.ok(daemonEvents.some(event => event.id === reply!.containerId
+        for (const action of ['create', 'destroy']) assert.ok(daemonEvents.some(event => event.id === identity.containerId
           && event.action === action && event.probeOperationId === originalRequest.operationId && event.instanceId === originalRequest.instanceId));
         assert.ok(allEvents.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.probeKind === 'storage-validation'));
         report.failureRecovery.events = recovered; report.failureRecovery.normalCapabilityEvents = allEvents.filter(event => event.action === 'agent.probe.cleanup.confirmed');
@@ -1176,12 +1269,18 @@ async function main(): Promise<void> {
             const references = image.repoDigests.filter((reference: string) => reference.startsWith(`${registry}/owned-`));
             assert.equal(references.length, 1); assert.match(references[0], /@sha256:[a-f0-9]{64}$/); return references[0];
           };
+          const runtimeImage = (image: any): string => {
+            // 保持精确wire URI断言；线上准入现在同时携带已核验提交tag与固定内容digest。
+            assert.match(image.sha, /^[a-f0-9]{40}$/);
+            const [repository, digest] = registryDigest(image).split('@');
+            return `${repository}:sha-${image.sha}@${digest}`;
+          };
           const apiImage = (sha: string) => {
             const image = report.publishedImages.find((item: any) => item.role === 'api' && item.sha === sha); assert.ok(image); return image;
           };
-          const startTarget = (sha: string) => ({ projectId, branchId, profileId: apiProfile.id, imageReference: registryDigest(apiImage(sha)) });
+          const startTarget = (sha: string) => ({ projectId, branchId, profileId: apiProfile.id, imageReference: runtimeImage(apiImage(sha)) });
           const heldStartProof = async (held: Awaited<ReturnType<NonNullable<typeof probeProxy>['holdNextAppStart']>['caught']>, sha: string) => {
-            assert.equal(held.status, 204); assert.equal(held.imageReference, registryDigest(apiImage(sha)));
+            assert.equal(held.status, 204); assert.equal(held.imageReference, runtimeImage(apiImage(sha)));
             const view = await ownedView(held.containerId); containers.add(view.Id);
             assert.equal(view.Id, held.containerId); assert.equal(view.Name.slice(1), held.containerName); assert.equal(view.State.Running, true);
             for (const [key, value] of Object.entries({ 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': projectId,
@@ -1254,12 +1353,12 @@ async function main(): Promise<void> {
           const apiLatest = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.latest);
           assert.ok(apiObsolete && webObsolete && apiLatest);
           const creations = daemonEvents.filter(event => event.action === 'create');
-          assert.equal(creations.filter(event => event.image === registryDigest(apiObsolete)).length, 0);
+          assert.equal(creations.filter(event => event.image === runtimeImage(apiObsolete)).length, 0);
           const apiActive = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.active); assert.ok(apiActive);
           // Docker retains a finite event history. The first executing target
           // must still be present, so absence of the later queued target is
           // not inferred from a window whose beginning has already rolled off.
-          for (const image of [apiActive, webObsolete, apiLatest]) assert.equal(creations.filter(event => event.image === registryDigest(image)).length, 1);
+          for (const image of [apiActive, webObsolete, apiLatest]) assert.equal(creations.filter(event => event.image === runtimeImage(image)).length, 1);
           scopeProof.mixedServices = mixed; scopeProof.replacementRuns = runs; scopeProof.creationEvents = creations;
           report.checks.push({ name: 'full-original-authenticated-application-replaces-only-obsolete-service-target-and-retains-distinct-service-and-worker', passed: true });
 
@@ -1310,7 +1409,7 @@ async function main(): Promise<void> {
           const cancelCid = scopeProof.cancelStart.containerId;
           const cancelledImage = apiImage(targets.cancelled);
           const createdTarget = cancellationEvents.filter(event => event.type === 'container' && event.action === 'create'
-            && event.id === cancelCid && event.image === registryDigest(cancelledImage));
+            && event.id === cancelCid && event.image === runtimeImage(cancelledImage));
           assert.equal(createdTarget.length, 1);
           assert.equal(cancellationEvents.filter(event => event.type === 'container' && event.action === 'start' && event.id === cancelCid).length, 1);
           const actualCancelled = await daemonRead(`/containers/${cancelCid}/json`, 256 * 1024);
@@ -1480,11 +1579,13 @@ async function main(): Promise<void> {
   } catch (error) { report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) }; throw error; }
   finally {
     finiteCache?.stop();
+    report.driverCleanup = { startedAt: new Date().toISOString() };
     const cleanupErrors: string[] = [];
     if (probeProxy) {
       try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; report.proxyTraffic = probeProxy.traffic(); }
       catch (error) { cleanupErrors.push(String(error)); }
       await probeProxy.close();
+      report.driverCleanup.proxyClosedAt = new Date().toISOString();
       report.probeProxyRequestTimeline = probeProxy.requestTimeline; report.probeProxyTraceOverflow = probeProxy.traceOverflow();
     }
     try {
@@ -1513,6 +1614,15 @@ async function main(): Promise<void> {
     }
     try { for (const id of images) { const view = JSON.parse(await docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner); await docker(['image', 'rm', '-f', id]); } report.ownedImagesRemoved = true; }
     catch (error) { cleanupErrors.push(String(error)); }
+    if (capabilityFixtureReference) {
+      try {
+        assert.equal(JSON.parse(await docker(['info', '--format', '{{json .}}'])).ID, info.ID);
+        assert.equal(await docker(['image', 'inspect', capabilityFixtureReference, '--format', '{{.Id}}']), capabilityFixtureImageId);
+        await docker(['image', 'rm', capabilityFixtureReference]);
+        assert.equal(await docker(['image', 'ls', '-q', '--filter', `reference=${capabilityFixtureReference}`]), '');
+        report.capabilityFixtureReference.removed = true;
+      } catch (error) { cleanupErrors.push(String(error)); }
+    }
     await fs.rm(root, { recursive: true, force: true }); report.isolatedFilesRemoved = true;
     // 外层最后按归属销毁整个独占daemon卷；不对任何共享Docker做prune。
     try { report.remainingNetworksBeforeOwnedDaemonRemoval = JSON.parse(await docker(['network', 'ls', '--format', '{{json .}}']).then(s => '[' + s.split('\n').filter(Boolean).join(',') + ']')); }

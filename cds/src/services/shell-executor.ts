@@ -66,14 +66,14 @@ function executeOwnedShellCommand(command: string, options: ExecOptions | undefi
       options?.onData?.(chunk, 'stderr');
     });
     child.on('error', () => { failed = true; });
-    // 后代可能仍持有输出管道；shell 退出时先清理，close 复用同一确认。
+    // 后代可能仍持有输出管道；先在shell退出时清理，close再复用同一确认，避免双重扫描互杀。
     child.once('exit', () => { void confirmChildren().catch(reject); });
     child.stdin?.on('error', () => { /* 子进程提前退出时以 close 结果为准 */ });
     child.on('close', (code) => {
       clearInterval(poll);
       kill();
       void confirmChildren().then(() => {
-        if (cancelled) reject(new Error('Observation execution cancelled'));
+        if (cancelled) reject(Object.assign(new Error('Observation execution cancelled'), { code: 'cancelled' }));
         else resolve({ stdout, stderr: failed ? 'Process error' : stderr, exitCode: failed || overflow ? 1 : code ?? 1 });
       }, reject);
     });

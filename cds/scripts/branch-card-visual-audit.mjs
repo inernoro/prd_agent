@@ -71,6 +71,7 @@ function makeBranches() {
       status: 'idle', services: { ...services(22000, 'stopped'), 'legacy-gw': { profileId: 'legacy-gw', containerName: 'fixture-legacy-gw', hostPort: 22999, status: 'error', errorMessage: '构建配置已删除' } },
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-18 * 60 * MIN),
       lastDeployAt: iso(-20 * 60 * MIN),
+      deployRuntime: { kind: 'source', drift: { hasDrift: true, expectedCount: 13, healthyCount: 0, missingProfileIds: [], unhealthyProfileIds: PROFILES } },
     }),
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
@@ -286,6 +287,19 @@ async function main() {
         console.log(`[${theme}] 第 ${i + 1} 排 ${row.list.map((c) => `${c.id}=${c.h}`).join('  ')}`);
         check(spread <= 1, `[${theme}] 第 ${i + 1} 排卡片等高（差 ${spread.toFixed(1)}px）`);
       });
+      const names = await page.$$eval('[data-branch-card-id] h3', (headings) => headings.map((heading) => {
+        const style = getComputedStyle(heading);
+        return style.whiteSpace === 'nowrap' && style.textOverflow === 'ellipsis'
+          && heading.clientHeight <= parseFloat(style.lineHeight) + 1
+          && heading.title === heading.textContent.trim();
+      }));
+      check(names.length > 0 && names.every(Boolean), `[${theme}] 分支名保持单行省略，完整名称保留在提示中`);
+      const titleSpace = await page.$$eval('[data-branch-card-id] header', (headers) => headers.map((header) => {
+        const headingRow = header.querySelector('h3').parentElement.getBoundingClientRect();
+        const menu = header.querySelector('button[aria-label="更多操作"]').getBoundingClientRect();
+        return !header.querySelector('button[aria-label="删除分支"]') && menu.left - headingRow.right <= 10;
+      }));
+      check(titleSpace.length > 0 && titleSpace.every(Boolean), `[${theme}] 标题用满更多按钮前空间，不为隐藏删除按钮预留空白`);
       // 复制集卡：与分支卡同高，成员区真的溢出并可在卡内滚动，底部按钮没被挤出卡片
       const replica = await page.evaluate(() => {
         const members = document.querySelector('[data-replica-members]');
@@ -321,6 +335,7 @@ async function main() {
       const erroredInitial = Number((headline.match(/(\d+)\s*个出错需要处理/) || [])[1] || 0);
       check(erroredInitial === 1, `[${theme}] 僵尸服务不计入「出错需要处理」（实际 ${erroredInitial}，「${headline.trim()}」）`);
       const mainRedeploy = await page.$$eval('[data-branch-card-id="b-main"] button[aria-label^="重新部署"]', (els) => els.length).catch(() => 0);
+      check(await page.locator('[data-branch-card-id="b-main"] [data-drift-chip]').count() === 0, `[${theme}] 已停止分支保留停止说明，不把漂移统计显示成服务异常`);
       check(phases['b-main'] !== 'failed' && mainRedeploy === 0, `[${theme}] 带僵尸 error 条目的分支卡不进出错态（phase=${phases['b-main']}，重新部署按钮 ${mainRedeploy} 个）`);
       const metaTimes = await page.$$eval('[data-branch-card-id="b-pack"], [data-branch-card-id="b-ident"]', (els) => els.map((el) => el.textContent || ''));
       check(metaTimes.every((t) => /最近推送/.test(t)), `[${theme}] 构建中卡片右侧有「最近推送」时间`);
@@ -351,6 +366,20 @@ async function main() {
               && inside(card.querySelector('[data-drift-chip]')),
           };
         });
+        // 按钮本身在卡内仍可能是假的安全：其不可收缩的子文字能溢出按钮，
+        // 用户实际看到「重新部署」被卡边裁掉。检查内容宽度与状态行分离。
+        const warnings = await page.$$eval('[data-branch-card-id] [data-drift-chip]', (buttons) => buttons.map((button) => {
+          const card = button.closest('[data-branch-card-id]');
+          const bounds = card.getBoundingClientRect();
+          const resourceRow = card.querySelector('[data-branch-resource-row]');
+          return {
+            id: card.getAttribute('data-branch-card-id'),
+            fits: button.scrollWidth <= button.clientWidth + 1 && [...button.children].every((child) => child.getBoundingClientRect().right <= bounds.right - 8),
+            separate: button.getBoundingClientRect().top >= resourceRow.getBoundingClientRect().bottom,
+          };
+        }));
+        check(warnings.length > 0 && warnings.every((warning) => warning.fits && warning.separate),
+          `[${theme}] 视口 ${vw}px 异常提示独占状态行，重新部署文字不溢出：${JSON.stringify(warnings)}`);
         if (vw === 1000) await shotCard(page, 'b-test', `port-row-markers-${theme}-${vw}.png`);
         check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 / CI 失败 / 基础设施异常 / 漂移四种标记都在时，它们与「+N」都完整落在卡内`);
       }

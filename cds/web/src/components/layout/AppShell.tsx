@@ -4,7 +4,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -20,6 +20,7 @@ import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsIns
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
+import { canReadApproval, type ApprovalCapabilities } from '@/hooks/approvalPolling';
 
 /*
  * AppShell — single source of layout truth.
@@ -116,6 +117,7 @@ export interface AppShellProps {
 }
 
 export type ShellAuthStatus = {
+  approvalCapabilities?: ApprovalCapabilities;
   enabled?: boolean;
   mode?: string;
   activeProvider?: string | null;
@@ -191,6 +193,7 @@ const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPag
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
 const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
+const preloadCodeReviewsPage = (): void => { void import('@/pages/CodeReviewsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
 const preloadStatusPage = (): void => { void import('@/pages/StatusPage'); };
 
@@ -216,6 +219,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/release-center') || pathname.startsWith('/release-console')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
+  if (pathname.startsWith('/code-reviews')) return 'code-reviews';
   if (pathname.startsWith('/status')) return 'status';
   if (pathname.startsWith('/overview')) return 'overview';
   return 'projects';
@@ -318,6 +322,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [authPending, setAuthPending] = useState(true);
   const [authAttempt, setAuthAttempt] = useState(0);
   const canManageSettings = canManageSystemSettings(authStatus);
+  const canPollOperatorApprovals = canReadApproval(authStatus?.approvalCapabilities, 'operator');
+  const canReadAccessRequests = canReadApproval(authStatus?.approvalCapabilities, 'accessRequests');
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const routerLocation = useLocation();
   const agentContext = resolveAgentPageContext(
@@ -483,10 +489,10 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
       {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      {canManageSettings ? <OperatorApprovalModal /> : null}
+      {canPollOperatorApprovals ? <OperatorApprovalModal /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      {canManageSettings ? <SiteNoticeInbox /> : null}
+      {canManageSettings ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>
@@ -641,6 +647,20 @@ function RailNav({
           <span className="cds-rail-short">监控</span>
         </Link>
         </> : null}
+        <Link
+          to="/code-reviews"
+          className="cds-rail-item"
+          data-active={active === 'code-reviews' ? 'true' : 'false'}
+          aria-label="代码审查报告"
+          title="代码审查报告（上传 ZIP / GitHub 仓库审查）"
+          onClick={onNavigate}
+          onMouseEnter={preloadCodeReviewsPage}
+          onFocus={preloadCodeReviewsPage}
+        >
+          <SearchCode />
+          <span className="cds-rail-full">代码审查报告</span>
+          <span className="cds-rail-short">审查</span>
+        </Link>
       </div>
       {/*
        * 2026-09-08 用户拍板（方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、紧贴账号。

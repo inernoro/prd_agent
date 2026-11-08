@@ -11,7 +11,7 @@ import { prepareServiceReplacement } from '../../src/services/service-replacemen
 import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
 import { DeploymentPhaseBudget, deploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
-import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
+import { setBuildGateHostLoadProvider, type BuildLoadPressure } from '../../src/services/build-gate.js';
 import type { BranchEntry, BuildProfile, ExecResult, CdsConfig, ServiceState, IShellExecutor } from '../../src/types.js';
 
 const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api', operationId: 'op-old', operationGeneration: 1 };
@@ -730,4 +730,180 @@ describe('原有界冷盘点与不可变身份回归', () => {
       owner: expect.objectContaining({ operationId: 'op-new' }) })]);
   });
 
+});
+
+const idlePressure = (): BuildLoadPressure => ({ load1: 0, cores: 18, ratio: 0, factor: 1.2, saturated: false });
+const withMemoryStorageImages = <T extends IShellExecutor>(shell: T) => withStorageImages(shell, { freshCreatedProjection: true });
+
+describe('部署内存预约生命周期', () => {
+  let mock: MockShellExecutor;
+  let service: ContainerService;
+  beforeEach(() => {
+    mock = new MockShellExecutor();
+    mock.addResponsePattern(/^docker image inspect .* --format '\[\{\{json .Id/,()=>({exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:''}));
+    service = new ContainerService(withMemoryStorageImages(mock), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
+    vi.stubEnv('CDS_BRANCH_NETWORK_ISOLATION', '0');
+    setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+  });
+  afterEach(() => { for (const item of deploymentPhaseBudget.memorySnapshot()) deploymentPhaseBudget.releaseMemory(item.key); vi.restoreAllMocks(); vi.unstubAllEnvs(); setBuildGateHostLoadProvider(null); });
+
+  it('恢复三份历史未知预约不虚构本进程启动体，仍保留物理责任且允许新启动', async () => {
+    const entry = branch(); entry.services = {};
+    for (let index = 0; index < 3; index++) entry.services[`old-${index}`] = {
+      ...runtime, profileId: `old-${index}`, containerName: `old-${index}` };
+    await restoreDeploymentMemoryReservations([entry], () => []);
+    const restored = deploymentPhaseBudget.memorySnapshot();
+    const abort = new AbortController(); let admitted = false;
+    const next = deploymentPhaseBudget.acquire('start', owner, { reservationKey: 'new-runtime', signal: abort.signal })
+      .then(release => { admitted = true; return release; }, () => undefined);
+    try {
+      await Promise.resolve();
+      expect(admitted).toBe(true);
+      expect(deploymentPhaseBudget.memorySnapshot().filter(item => item.key.startsWith('old-'))).toEqual(restored);
+      expect(Object.values(entry.services).every(item => item.status === 'error' && item.creationIssued)).toBe(true);
+    } finally { abort.abort(); (await next)?.(); deploymentPhaseBudget.releaseMemory('new-runtime'); }
+  });
+
+  it('按不可变ID停止成功后释放原容器名称预约，不删除容器', async () => {
+    deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 512, owner);
+    mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: runtime.containerId,
+      State: { Status: 'exited', Running: false } }]), stderr: '', exitCode: 0 }));
+    await service.stopRuntimeGroup(structuredClone(runtime), '测试停止', owner);
+    expect(mock.commands).toContain(`docker stop ${runtime.containerId}`);
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([]);
+    expect(mock.commands.some(command => /docker rm/.test(command))).toBe(false);
+  });
+
+  it('停止未确认仍保留名称预约，不将实际运行的候选记成空闲', async () => {
+    deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 512, owner);
+    mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'not confirmed', exitCode: 1 }));
+    mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: runtime.containerId,
+      State: { Status: 'running', Running: true } }]), stderr: '', exitCode: 0 }));
+    await expect(service.stopRuntimeGroup(structuredClone(runtime), '测试停止', owner)).rejects.toThrow('停止结果未确认');
+    expect(deploymentPhaseBudget.memorySnapshot().map(item => item.key)).toEqual([runtime.containerName]);
+  });
+
+  it.each([true, false])('停止旧%s身份的迟到回执不得清掉同名称新预约', async byId => {
+    const oldRuntime = { ...runtime, containerId: byId ? runtime.containerId : undefined };
+    deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 512, owner);
+    let entered!: () => void, finish!: (result: ExecResult) => void;
+    const stopping = new Promise<void>(resolve => { entered = resolve; });
+    const response = new Promise<ExecResult>(resolve => { finish = resolve; });
+    mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: runtime.containerId,
+      State: { Status: 'exited', Running: false } }]), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker inspect --format.*"running"/, () => ({ stdout: JSON.stringify({
+      id: runtime.containerId, running: false, project: 'p1', branch: 'b1', profile: 'api',
+      networks: { 'old-network': { Aliases: ['api'] } } }), stderr: '', exitCode: 0 }));
+    const delayed = new ContainerService(withMemoryStorageImages({ exec: (command, options) => {
+      if (command.startsWith('docker stop')) { entered(); return response; }
+      return mock.exec(command, options);
+    } }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
+    const stop = delayed.stopRuntimeGroup(oldRuntime, '旧操作停止', owner);
+    await stopping;
+    deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 768, { ...owner, operationId: 'op-new', operationGeneration: 2 });
+    finish({ stdout: '', stderr: '', exitCode: 0 }); await stop;
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ memoryMB: 768,
+      owner: expect.objectContaining({ operationId: 'op-new' }) })]);
+  });
+
+
+});
+
+describe('有界部署阶段等待资格', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  it('只观测仍有效的真实排队和精确代次，不续心跳、不延长20分钟截止', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-15T00:00:00.000Z'));
+    const budget = new DeploymentPhaseBudget(() => 0, {}, 1024, () => Infinity, idlePressure);
+    const abort = new AbortController(); let current = true;
+    const waiting = budget.acquire('start', owner, { reservationKey: 'waiting', signal: abort.signal,
+      check: () => { if (!current) throw new Error('superseded'); } });
+    const rejected = expect(waiting).rejects.toThrow();
+    const initial = budget.waitingOperation('op-old', 1);
+    expect(initial).toMatchObject({ phase: 'start', enqueuedAt: Date.now(), deadlineAt: Date.now() + 20 * 60_000 });
+    expect(budget.waitingOperation('op-old', 2)).toBeUndefined();
+    vi.setSystemTime(new Date(Date.now() + 16 * 60_000));
+    expect(budget.waitingOperation('op-old', 1)?.deadlineAt).toBe(initial!.deadlineAt);
+    current = false; expect(budget.waitingOperation('op-old', 1)).toBeUndefined();
+    current = true; vi.setSystemTime(new Date(initial!.deadlineAt + 1));
+    expect(budget.waitingOperation('op-old', 1)).toBeUndefined();
+    abort.abort(); await rejected;
+  });
+
+  it('已授予的执行槽不是排队资格，不能豁免无进展执行的超时', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => Infinity, idlePressure);
+    const release = await budget.acquire('start', owner, { reservationKey: 'active' });
+    expect(budget.waitingOperation('op-old', 1)).toBeUndefined();
+    release(); budget.releaseMemory('active');
+  });
+
+  it('缺少实时资格检查的旧调用不能借排队身份豁免超时', async () => {
+    const budget = new DeploymentPhaseBudget(() => 0, {}, 1024, () => Infinity, idlePressure);
+    const abort = new AbortController();
+    const waiting = budget.acquire('start', owner, { signal: abort.signal });
+    const rejected = expect(waiting).rejects.toThrow();
+    expect(budget.waitingOperation('op-old', 1)).toBeUndefined();
+    abort.abort(); await rejected;
+  });
+
+  it('实际阶段任务await结束后资格已失效时不能发布迟到结果', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => Infinity, idlePressure);
+    let entered!: () => void, finish!: () => void, current = true;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const response = new Promise<void>(resolve => { finish = resolve; });
+    const task = budget.run('ready', owner, async () => { entered(); await response; return true; },
+      { check: () => { if (!current) throw new Error('superseded'); } });
+    const rejected = expect(task).rejects.toThrow('superseded');
+    await started; current = false; finish(); await rejected;
+    expect(budget.snapshot().ready.active).toEqual([]);
+  });
+});
+
+describe('启动期CPU占位与物理责任分离', () => {
+  it('有效的三份新启动阻塞第四份，失效资格只退出CPU且不泄露检查函数', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => 256, idlePressure);
+    const valid = [true, true, true];
+    for (let index = 0; index < 3; index++) {
+      const release = await budget.acquire('start', { ...owner, operationId: `op-${index}` }, {
+        reservationKey: `warm-${index}`, check: () => { if (!valid[index]) throw new Error('资格失效'); } });
+      release();
+    }
+    const before = budget.memorySnapshot();
+    expect(before.every(item => Object.keys(item).sort().join(',') === 'key,memoryMB,owner,pids')).toBe(true);
+    expect(budget.snapshot().start.active).toEqual([]);
+    let admitted = false;
+    const abort = new AbortController();
+    const next = budget.acquire('start', { ...owner, operationId: 'next' }, { reservationKey: 'next', signal: abort.signal })
+      .then(release => { admitted = true; return release; }, () => undefined);
+    try {
+      await Promise.resolve(); expect(admitted).toBe(false);
+      expect(budget.snapshot().start.queued[0].reason).toBe('cpu-startup-capacity');
+      valid[0] = false; budget.pump(); await Promise.resolve();
+      expect(admitted).toBe(true);
+      expect(budget.memorySnapshot().filter(item => item.key.startsWith('warm-'))).toEqual(before);
+    } finally { abort.abort(); (await next)?.(); for (const item of budget.memorySnapshot()) budget.releaseMemory(item.key); }
+  });
+
+  it.each(['memory-headroom', 'pid-headroom'] as const)('失效启动资格仍保留%s的原始物理保护', async reason => {
+    let memory = reason === 'memory-headroom' ? 2000 : 10000;
+    let pids = reason === 'pid-headroom' ? 96 : 256;
+    let current = true;
+    const budget = new DeploymentPhaseBudget(() => memory, {}, 1024, () => pids, idlePressure);
+    const release = await budget.acquire('start', owner, { reservationKey: 'obsolete',
+      check: () => { if (!current) throw new Error('资格失效'); } });
+    release(); current = false;
+    const before = budget.memorySnapshot();
+    const abort = new AbortController(); let admitted = false;
+    const next = budget.acquire('start', { ...owner, operationId: 'next' }, { reservationKey: 'next', signal: abort.signal })
+      .then(released => { admitted = true; return released; }, () => undefined);
+    try {
+      await Promise.resolve(); expect(admitted).toBe(false);
+      expect(budget.snapshot().start.queued[0].reason).toBe(reason);
+      expect(budget.memorySnapshot()).toEqual(before);
+      memory = 10000; pids = 256; budget.pump(); await Promise.resolve();
+      expect(admitted).toBe(true);
+      expect(budget.memorySnapshot().find(item => item.key === 'obsolete')).toEqual(before[0]);
+    } finally { abort.abort(); (await next)?.(); for (const item of budget.memorySnapshot()) budget.releaseMemory(item.key); }
+  });
 });

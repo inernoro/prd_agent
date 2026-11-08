@@ -33,6 +33,9 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
     try { segments = req.path.replace(/\/+$/, '').split('/').slice(2).map(decodeURIComponent); }
     catch { res.status(400).json({ error: '项目地址无效，请重新从项目列表进入。' }); return; }
     const [kind, id, action] = segments;
+    // Review handlers resolve task/report ownership after their bounded upload parser.
+    // They apply canHumanAccessProject to every read, mutation and report body.
+    if (kind?.toLowerCase() === 'code-reviews') { next(); return; }
     const checkProject = (value: unknown): boolean => {
       if (typeof value !== 'string' || !value) return false;
       const project = state.getProject(value);

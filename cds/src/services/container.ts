@@ -2480,6 +2480,7 @@ export class ContainerService {
         });
         throw err;
       }
+      phaseCheck();
     } catch (error) {
       if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) === installedPhaseOwner) this.runtimePhaseOwners.delete(service.containerName);
       if (releaseStart) {
@@ -3323,6 +3324,7 @@ export class ContainerService {
   }
 
   private async removeUnbudgeted(containerName: string, context: ContainerRemoveContext): Promise<void> {
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName);
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
     if (context.beforeRemove) {
@@ -3383,7 +3385,7 @@ export class ContainerService {
     context.onProgress?.('stop-returned');
     const rmResult = await dispatch('rm');
     const completion = classifyRemoveCompletion(rmResult);
-    if (completion.severity !== 'error') deploymentPhaseBudget.releaseMemory(containerName);
+    if (completion.severity !== 'error') releaseMemory();
     this.recordContainerEvent({
       severity: completion.severity,
       source: 'cds-container-service',
