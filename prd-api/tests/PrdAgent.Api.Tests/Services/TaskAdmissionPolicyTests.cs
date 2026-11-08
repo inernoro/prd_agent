@@ -78,6 +78,7 @@ public sealed class TaskAdmissionPolicyTests
         }).ToArray();
         Assert.Equal(new[]
         {
+            "PrdAgent.Api.Controllers.Api.LabController.SimulateMessage",
             "PrdAgent.Api.Controllers.GroupsController.Create",
             reportController + ".CreateReport",
             "PrdAgent.Api.Controllers.Api.DefectAgentController.StreamScores",
