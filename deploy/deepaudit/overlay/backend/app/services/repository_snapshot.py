@@ -10,8 +10,8 @@ from app.utils.repo_utils import parse_repository_url
 
 
 async def prepare_repository(saved, project, config, options):
-    from app.services.scanner import (github_api, get_github_files, get_gitlab_files,
-                                     get_gitea_files, fetch_file_content)
+    from app.services.scanner import (github_api, gitlab_api, gitea_api, gitlab_repository_token,
+                                     get_github_files, get_gitlab_files, get_gitea_files, fetch_file_content)
     if archive_path(saved.id).exists():
         return {}
     if not project or not project.get('repository_url'):
@@ -31,9 +31,16 @@ async def prepare_repository(saved, project, config, options):
         revision = commit['sha']
         files = await get_github_files(url, revision, token, excludes, request=request)
     elif kind == 'gitlab':
-        files = await get_gitlab_files(url, branch, token, excludes, request=request)
+        info = parse_repository_url(url, 'gitlab')
+        token = gitlab_repository_token(url, token)
+        commit = await gitlab_api(f"{info['base_url']}/projects/{quote(info['project_path'], safe='')}/repository/commits/{quote(branch, safe='')}", token, request=request)
+        revision = commit['id']
+        files = await get_gitlab_files(url, revision, token, excludes, request=request)
     elif kind == 'gitea':
-        files = await get_gitea_files(url, branch, token, excludes, request=request)
+        info = parse_repository_url(url, 'gitea')
+        commit = await gitea_api(f"{info['base_url']}/repos/{info['owner']}/{info['repo']}/git/commits/{quote(branch, safe='')}", token, request=request)
+        revision = commit['sha']
+        files = await get_gitea_files(url, revision, token, excludes, request=request)
     else:
         raise ValueError('Unsupported repository type')
     selected = set((config.get('scan_config') or {}).get('file_paths') or [])

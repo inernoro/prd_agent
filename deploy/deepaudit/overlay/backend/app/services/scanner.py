@@ -14,7 +14,7 @@ from app.models.audit import AuditTask, AuditIssue
 from app.models.project import Project
 from app.services.llm.service import LLMService
 from app.services.scan_errors import record_scan_error
-from app.services.scan_snapshot import RepositoryEvidenceError
+from app.services.scan_snapshot import RepositoryEvidenceError, MAX_FILES
 from app.core.config import settings
 
 
@@ -183,14 +183,7 @@ async def get_gitea_branches(repo_url: str, token: str = None) -> List[str]:
 
 async def get_gitlab_branches(repo_url: str, token: str = None) -> List[str]:
     """获取GitLab仓库分支列表"""
-    parsed = urlparse(repo_url)
-    
-    extracted_token = token
-    if parsed.username:
-        if parsed.username == 'oauth2' and parsed.password:
-            extracted_token = parsed.password
-        elif parsed.username and not parsed.password:
-            extracted_token = parsed.username
+    extracted_token = gitlab_repository_token(repo_url, token)
     
     repo_info = parse_repository_url(repo_url, "gitlab")
     base_url = repo_info['base_url']
@@ -202,6 +195,16 @@ async def get_gitlab_branches(repo_url: str, token: str = None) -> List[str]:
     return [b["name"] for b in branches_data]
 
 
+def gitlab_repository_token(repo_url, token=None):
+    parsed = urlparse(repo_url)
+    if parsed.username:
+        if parsed.username == 'oauth2' and parsed.password:
+            return parsed.password
+        if not parsed.password:
+            return parsed.username
+    return token
+
+
 async def get_github_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None, request=None) -> List[Dict[str, str]]:
     """获取GitHub仓库文件列表"""
     # 解析仓库URL
@@ -211,6 +214,8 @@ async def get_github_files(repo_url: str, branch: str, token: str = None, exclud
     # 获取仓库文件树
     tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{quote(branch)}?recursive=1"
     tree_data = await github_api(tree_url, token, request=request)
+    if tree_data.get('truncated') is True:
+        raise ValueError('Repository tree is incomplete')
     
     files = []
     for item in tree_data.get("tree", []):
@@ -227,15 +232,7 @@ async def get_github_files(repo_url: str, branch: str, token: str = None, exclud
 
 async def get_gitlab_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None, request=None) -> List[Dict[str, str]]:
     """获取GitLab仓库文件列表"""
-    parsed = urlparse(repo_url)
-    
-    # 从URL中提取token（如果存在）
-    extracted_token = token
-    if parsed.username:
-        if parsed.username == 'oauth2' and parsed.password:
-            extracted_token = parsed.password
-        elif parsed.username and not parsed.password:
-            extracted_token = parsed.username
+    extracted_token = gitlab_repository_token(repo_url, token)
     
     # 解析项目路径
     repo_info = parse_repository_url(repo_url, "gitlab")
@@ -243,8 +240,18 @@ async def get_gitlab_files(repo_url: str, branch: str, token: str = None, exclud
     project_path = quote(repo_info['project_path'], safe='')
     
     # 获取仓库文件树
-    tree_url = f"{base_url}/projects/{project_path}/repository/tree?ref={quote(branch)}&recursive=true&per_page=100"
-    tree_data = await gitlab_api(tree_url, extracted_token, request=request)
+    tree_url = f"{base_url}/projects/{project_path}/repository/tree?ref={quote(branch, safe='')}&recursive=true&per_page=100"
+    tree_data, page = [], 1
+    while True:
+        entries = await gitlab_api(f'{tree_url}&page={page}', extracted_token, request=request)
+        if not isinstance(entries, list):
+            raise ValueError('Invalid repository tree page')
+        if len(tree_data) + len(entries) > MAX_FILES:
+            raise ValueError('Repository tree exceeds manifest limit')
+        tree_data.extend(entries)
+        if len(entries) < 100:
+            break
+        page += 1
     
     files = []
     for item in tree_data:
@@ -267,11 +274,24 @@ async def get_gitea_files(repo_url: str, branch: str, token: str = None, exclude
     
     # Gitea tree API: GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1
     # 可以直接使用分支名作为sha
-    tree_url = f"{base_url}/repos/{owner}/{repo}/git/trees/{quote(branch)}?recursive=1"
-    tree_data = await gitea_api(tree_url, token, request=request)
+    tree_url = f"{base_url}/repos/{owner}/{repo}/git/trees/{quote(branch, safe='')}?recursive=true&per_page=100"
+    entries, page = [], 1
+    while True:
+        tree_data = await gitea_api(f'{tree_url}&page={page}', token, request=request)
+        current = tree_data.get('tree')
+        if not isinstance(current, list):
+            raise ValueError('Invalid repository tree page')
+        if len(entries) + len(current) > MAX_FILES:
+            raise ValueError('Repository tree exceeds manifest limit')
+        entries.extend(current)
+        if tree_data.get('truncated') is not True:
+            break
+        if not current:
+            raise ValueError('Repository tree page made no progress')
+        page += 1
     
     files = []
-    for item in tree_data.get("tree", []):
+    for item in entries:
          # Gitea API returns 'type': 'blob' for files
         if item.get("type") == "blob" and is_text_file(item["path"]) and not should_exclude(item["path"], exclude_patterns):
             # 使用API raw endpoint: GET /repos/{owner}/{repo}/raw/{filepath}?ref={branch}

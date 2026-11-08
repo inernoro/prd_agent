@@ -197,9 +197,9 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
         modules = {name: ModuleType(name) for name in ('app', 'app.core', 'app.core.config', 'app.services', 'app.utils', 'app.utils.repo_utils')}
         modules['app.core.config'].settings = self.settings
         def parse(url, kind):
-            return dict(owner='example', repo='repo', base_url='https://git.example/api/v4', project_path='example/repo')
+            return dict(owner='example', repo='repo', base_url='https://git.example/api/v1' if kind == 'gitea' else 'https://git.example/api/v4', project_path='example/repo')
         modules['app.utils.repo_utils'].parse_repository_url = parse
-        self.requests, self.responses = [], []
+        self.requests, self.responses, self.respond = [], [], None
         owner = self
         class Client:
             def __init__(self, **kwargs): owner.assertEqual(kwargs, {'timeout': 30})
@@ -207,6 +207,7 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *args): pass
             async def get(self, url, headers):
                 owner.requests.append((url, headers))
+                if owner.respond is not None: return owner.respond(url, headers)
                 value = owner.responses.pop(0)
                 if isinstance(value, BaseException): raise value
                 return value
@@ -220,13 +221,14 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
         scanner = ModuleType('app.services.scanner')
         scanner.__dict__.update(httpx=SimpleNamespace(AsyncClient=Client), settings=self.settings,
             RepositoryEvidenceError=getattr(self.snapshot, 'RepositoryEvidenceError', RuntimeError),
+            MAX_FILES=self.snapshot.MAX_FILES,
             List=list, Dict=dict, Optional=__import__('typing').Optional, urlparse=urlparse, quote=quote,
             parse_repository_url=parse, is_text_file=lambda path: path.endswith('.py'),
             should_exclude=lambda *args: False)
         functions = [node for node in ast.parse((ROOT / 'backend/app/services/scanner.py').read_text()).body
-                     if isinstance(node, ast.AsyncFunctionDef) and node.name in
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in
                      ('repository_get', 'github_api', 'gitlab_api', 'gitea_api', 'fetch_file_content',
-                      'get_github_files', 'get_gitlab_files', 'get_gitea_files')]
+                      'get_github_files', 'get_gitlab_files', 'get_gitea_files', 'gitlab_repository_token')]
         exec(compile(ast.Module(body=functions, type_ignores=[]), 'actual-scanner', 'exec'), scanner.__dict__)
         sys.modules['app.services.scanner'] = scanner
         self.repository = load('app.services.repository_snapshot', 'backend/app/services/repository_snapshot.py')
@@ -242,11 +244,11 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
             headers={'content-type': content_type, 'x-github-request-id': 'upstream-id'},
             json=lambda: json.loads(data))
 
-    async def acquire(self, kind='github'):
+    async def acquire(self, kind='github', scan_config=None, max_analyze_files=0):
         return await self.repository.prepare_repository(self.task,
             dict(repository_url='https://github.com/example/repo', repository_type=kind),
-            {'otherConfig': {kind + 'Token': 'private-token-only'}},
-            {'max_analyze_files': 0, 'llm_concurrency': 2})
+            {'otherConfig': {kind + 'Token': 'private-token-only'}, 'scan_config': scan_config or {}},
+            {'max_analyze_files': max_analyze_files, 'llm_concurrency': 2})
 
     def records(self):
         return [json.loads(p.read_text()) for p in sorted(pathlib.Path(self.directory.name).rglob('response-*.json'))]
@@ -329,14 +331,15 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
         for kind in ('gitlab', 'gitea'):
             self.task.id = str(uuid.uuid4())
             tree = [{'type': 'blob', 'path': 'one.py'}]
-            self.responses = [self.response(200, tree if kind == 'gitlab' else {'tree': tree}),
+            self.responses = [self.response(200, {'id' if kind == 'gitlab' else 'sha': 'b' * 40}),
+                              self.response(200, tree if kind == 'gitlab' else {'tree': tree}),
                               self.response(200, 'PRIVATE_SOURCE_MARKER = 1', 'text/plain')]
             await self.acquire(kind)
             page = self.snapshot.read_repository_responses(self.task.id, 0, 100)
-            self.assertEqual(page['total'], 2)
+            self.assertEqual(page['total'], 3)
             self.assertTrue(all(r['provider'] == kind and r['task_id'] == self.task.id for r in page['events']))
             self.assertNotIn('private-token-only', json.dumps(page))
-        self.assertEqual(len(self.requests), 4)
+        self.assertEqual(len(self.requests), 6)
 
     async def test_success_status_does_not_hide_upstream_business_failure_or_revision_shape(self):
         cases = [({}, 'missing'), ({'sha': None}, 'null'), ({'sha': ''}, 'empty'),
@@ -365,6 +368,82 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(secret, encoded)
         self.assertIn('DENIED', encoded)
         self.assertLess(len(encoded.encode()), self.snapshot.MAX_RESPONSE_RECORD_BYTES)
+
+    def repository_response(self, kind, url, rows, more=False):
+        if '/commits/' in url:
+            return self.response(200, {'id' if kind == 'gitlab' else 'sha': 'b' * 40,
+                                      'message': 'PRIVATE_COMMIT_MESSAGE'})
+        if '/repository/tree?' in url or '/git/trees/' in url:
+            return self.response(200, rows if kind == 'gitlab' else {'tree': rows, 'truncated': more})
+        return self.response(200, 'version-one' if 'b' * 40 in url or 'one.py' in url else 'version-two', 'text/plain')
+
+    async def assert_pinned_native_source(self, kind):
+        import zipfile
+        rows = [{'type': 'blob', 'path': 'one.py'}, {'type': 'blob', 'path': 'two.py'}]
+        self.respond = lambda url, headers: self.repository_response(kind, url, rows)
+        metadata = await self.acquire(kind)
+        self.assertEqual(metadata['repository_revision'], 'b' * 40)
+        self.assertIn('/commits/main', self.requests[0][0])
+        self.assertTrue(all('b' * 40 in url for url, _ in self.requests[1:]))
+        with zipfile.ZipFile(self.snapshot.archive_path(self.task.id)) as archive:
+            self.assertEqual({archive.read(name) for name in archive.namelist()}, {b'version-one'})
+        self.assertNotIn('PRIVATE_COMMIT_MESSAGE', json.dumps(self.records()))
+
+    async def test_gitlab_native_scan_freezes_one_commit_before_tree_and_raw_reads(self):
+        await self.assert_pinned_native_source('gitlab')
+
+    async def test_gitea_native_scan_freezes_one_commit_before_tree_and_raw_reads(self):
+        await self.assert_pinned_native_source('gitea')
+
+    async def test_native_pagination_includes_late_files_before_full_or_explicit_selection(self):
+        import zipfile
+        from urllib.parse import parse_qs, urlsplit
+        for kind in ('gitlab', 'gitea'):
+            for mode in ('full', 'selected', 'limited'):
+                self.task.id = str(uuid.uuid4()); self.requests.clear()
+                def respond(url, headers):
+                    page = parse_qs(urlsplit(url).query).get('page', ['1'])[0]
+                    rows = ([{'type': 'tree', 'path': f'dir-{i}'} for i in range(99)] +
+                            [{'type': 'blob', 'path': 'one.py'}]) if page == '1' else [{'type': 'blob', 'path': 'last.py'}]
+                    return self.repository_response(kind, url, rows, page == '1')
+                self.respond = respond
+                await self.acquire(kind, {'file_paths': ['last.py']} if mode == 'selected' else {},
+                                   max_analyze_files=1 if mode == 'limited' else 0)
+                with zipfile.ZipFile(self.snapshot.archive_path(self.task.id)) as archive:
+                    self.assertEqual(set(archive.namelist()), {'last.py'} if mode == 'selected' else {'one.py'} if mode == 'limited' else {'one.py', 'last.py'})
+                self.assertTrue(any('page=2' in url for url, _ in self.requests))
+                records = self.snapshot.read_repository_responses(self.task.id)['events']
+                self.assertEqual(len(records), len(self.requests))
+
+    async def test_unending_tree_pages_fail_at_existing_manifest_bound_without_partial_archive(self):
+        scanner = sys.modules['app.services.scanner']
+        rows = [{'type': 'tree', 'path': f'dir-{i}'} for i in range(100)]
+        for kind in ('gitlab', 'gitea'):
+            self.task.id = str(uuid.uuid4()); self.requests.clear()
+            self.respond = lambda url, headers: self.repository_response(kind, url, rows, True)
+            with patch.object(scanner, 'MAX_FILES', 100, create=True):
+                with self.assertRaises(Exception): await self.acquire(kind)
+            self.assertFalse(self.snapshot.archive_path(self.task.id).exists())
+            self.assertLessEqual(len(self.requests), 3)
+
+    async def test_explicitly_truncated_github_tree_never_becomes_a_complete_snapshot(self):
+        self.responses = [self.response(200, {'sha': 'a' * 40}),
+            self.response(200, {'tree': [], 'truncated': True})]
+        with self.assertRaises(Exception): await self.acquire()
+        self.assertFalse(self.snapshot.archive_path(self.task.id).exists())
+        self.assertEqual(len(self.requests), 2)
+
+    async def test_gitlab_resolution_keeps_existing_url_token_for_tree_and_raw_reads(self):
+        kind = 'gitlab'
+        self.respond = lambda url, headers: self.repository_response(kind, url, [{'type': 'blob', 'path': 'one.py'}])
+        await self.repository.prepare_repository(self.task,
+            dict(repository_url='https://oauth2:embedded-private@git.example/example/repo', repository_type=kind),
+            {'otherConfig': {'gitlabToken': 'configured-private'}},
+            {'max_analyze_files': 0, 'llm_concurrency': 2})
+        self.assertEqual(len(self.requests), 3)
+        self.assertTrue(all(headers.get('PRIVATE-TOKEN') == 'embedded-private' for _, headers in self.requests))
+        encoded = json.dumps(self.records())
+        self.assertNotIn('embedded-private', encoded); self.assertNotIn('configured-private', encoded)
 
 
 if __name__ == "__main__":
