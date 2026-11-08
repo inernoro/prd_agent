@@ -26,7 +26,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { InitiationDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { InitiationDeleteAction, ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { ReleaseEditAction } from '@/components/product-agent/ReleaseEditAction';
+import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 import { VersionDebugClearButton } from '@/components/product-agent/VersionDebugClearButton';
 import { useProductListScope } from '@/lib/productListScope';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
@@ -46,11 +48,7 @@ import {
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { OVERVIEW_LIST_SEARCH_BOX } from './listFilter';
 import { filterByTracked } from './productRecordTrackStorage';
-import { InitiationMeetingRoundsEditor } from './InitiationWorkflowPanel';
-import {
-  formatInitiationReviewScore,
-  isMeetingResultPending,
-} from './initiationWorkflowUtils';
+import { formatInitiationReviewScore } from './initiationWorkflowUtils';
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
 import { useVersionPlanName } from './useVersionPlanName';
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
@@ -89,7 +87,6 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [importKind, setImportKind] = useState<MainTab | null>(null);
   const [legacyDetail, setLegacyDetail] = useState<VersionRegistration | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
-  const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('all');
   const [releaseOwnerId, setReleaseOwnerId] = useState('');
   const [query, setQuery] = useState('');
@@ -128,13 +125,13 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
         const result = await getWorkflowInitiations();
         if (!isCurrent()) return;
         if (!result.success) { setLoadError(result.error?.message ?? '内部版本读取失败，请重试。'); return; }
-        setInitiations(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+        setInitiations(result.data.items.map(({ record, legacyRegistration, exportFields }) => ({ ...record, legacyRegistration, exportFields })));
         setApplicationAliases(result.data.applicationAliases ?? {});
       } else {
         const result = await getWorkflowReleases();
         if (!isCurrent()) return;
         if (!result.success) { setLoadError(result.error?.message ?? '正式版本读取失败，请重试。'); return; }
-        setReleases(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+        setReleases(result.data.items.map(({ record, legacyRegistration, exportFields }) => ({ ...record, legacyRegistration, exportFields })));
         setApplicationAliases(result.data.applicationAliases ?? {});
         setRequirementNames(new Map(Object.entries(result.data.requirementNames)));
       }
@@ -244,8 +241,8 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     </div>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
       {!selectedProductUnavailable && (tab === 'release'
-          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onOpenLegacy={setLegacyDetail} />
-          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
+          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} currentUserId={currentUserId} onOpenLegacy={setLegacyDetail} onChanged={reload} />
+          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
     </div>
     {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
       <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
@@ -260,10 +257,6 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
       <LegacyVersionDetail record={legacyDetail} />
     </Modal>}
     {retrySeed && <InitiationApplication productId={retrySeed.productId} seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={reload} />}
-    {meetingFillItem && <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
-      <InitiationMeetingRoundsEditor initiation={meetingFillItem} editable={meetingFillItem.createdBy === currentUserId}
-        onSaved={async () => { setMeetingFillItem(null); await reload(); }} />
-    </Modal>}
   </div>;
 }
 
@@ -312,6 +305,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [demandSource, setDemandSource] = useState(seed?.demandSource ?? '');
   const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
   const [catalogProducts, setCatalogProducts] = useState<VersionApplicationProduct[]>([]);
+  const [pendingApplicationId, setPendingApplicationId] = useState<string | null>(null);
   const planNameDraft = useVersionPlanName(seed?.planName ?? '');
   const planName = planNameDraft.value;
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
@@ -468,15 +462,23 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const productOptionsRef = useRef(productOptions);
   productOptionsRef.current = productOptions;
 
+  useEffect(() => {
+    if (!pendingApplicationId || !productOptions.some((option) => option.id === pendingApplicationId)) return;
+    setLinkedProductId(pendingApplicationId);
+    setPendingApplicationId(null);
+  }, [pendingApplicationId, productOptions]);
+
   useEffect(() => () => { reviewApplicationSequence.current += 1; }, []);
 
   const cancelReviewApplicationLookup = () => {
     reviewApplicationSequence.current += 1;
     setReviewApplicationMatching(false);
+    setPendingApplicationId(null);
   };
 
   const chooseReviewSource = (id: string) => {
     const sequence = ++reviewApplicationSequence.current;
+    setPendingApplicationId(null);
     setReviewSubmissionId(id);
     setLinkedProductId('');
     setReviewApplicationMatching(false);
@@ -493,6 +495,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       }
       const applicationId = response.data.result.matchedApplicationId;
       if (applicationId && productOptionsRef.current.some((option) => option.id === applicationId)) setLinkedProductId(applicationId);
+      else if (applicationId) setPendingApplicationId(applicationId);
     }).catch(() => {
       if (sequence === reviewApplicationSequence.current) setMessage('暂时无法识别方案所属应用，请手动选择所属应用后继续。');
     }).finally(() => {
@@ -695,6 +698,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       const productMatches = availableProducts.filter((product) =>
         (canSelectApplication || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
       if (parsed.matchedApplicationId && availableProducts.some((product) => product.id === parsed.matchedApplicationId && (canSelectApplication || product.id === productId))) setLinkedProductId(parsed.matchedApplicationId);
+      else if (parsed.matchedApplicationId) setPendingApplicationId(parsed.matchedApplicationId);
       else if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
     }
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
@@ -727,7 +731,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     content={<div className="space-y-5">
       {completed ? <section className="space-y-3 rounded-md border border-token-subtle bg-token-nested p-4">
         <div className="flex items-center gap-2 text-sm font-medium text-token-primary"><CheckCircle2 size={18} />内部版本号已生成</div>
-        {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /></>}
+        {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /><DebugClaimNotificationButton kind="T" id={item.id} visible={item.claimNotification?.status === 'debug_pending'} /></>}
       </section> : <form id={formId} onSubmit={(event) => { event.preventDefault(); void confirmApplication(); }} aria-busy={busy}>
         <fieldset disabled={busy} className="min-w-0 space-y-5 border-0 p-0">
           <section hidden={editingIssued} className="space-y-3" aria-labelledby={`${formId}-source`}>
@@ -814,7 +818,7 @@ const INITIATION_SOURCE_REJECTION_TITLES: Record<string, string> = {
 function InitiationInput(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={INITIATION_CONTROL_CLASS} />; }
 function InitiationSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={INITIATION_CONTROL_CLASS}>{props.children}</select>; }
 
-function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged, pending, onOpenLegacy }: {
+function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onChanged, pending, onOpenLegacy }: {
   pending?: boolean;
   productId: string;
   productName: string;
@@ -823,7 +827,6 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   names: ReadonlyMap<string, string>;
   currentUserId?: string;
   onRetryReview: (item: ProductInitiation) => void;
-  onFillMeeting: (item: ProductInitiation) => void;
   onOpenLegacy: (record: VersionRegistration) => void;
   onChanged: () => Promise<void>;
 }) {
@@ -838,8 +841,8 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
           const isOwner = !item.legacyRegistration && item.createdBy === currentUserId;
-          const showRetryReview = isOwner && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
-          const showFillMeeting = isOwner && isMeetingResultPending(item);
+          const canEdit = isOwner && item.status !== 'voided' && (Boolean(item.tCode)
+            || ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status));
           const reviewScoreText = formatInitiationReviewScore(item);
           return (
         <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')} onClick={() => openDetail(item)}>
@@ -872,19 +875,10 @@ function InitiationTable({ productId, productName, productNames, items, names, c
         )}
       </Td>
       <Td onClick={(e) => e.stopPropagation()}>
-        {item.legacyRegistration && <button type="button" onClick={() => onOpenLegacy(item.legacyRegistration!)} className="text-token-secondary hover:underline">历史详情</button>}
-        {isOwner && item.tCode && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">修改资料</button>}
-        {isOwner && item.tCode && <InitiationDeleteAction id={item.id} code={item.tCode} canDelete={item.canDelete} onDeleted={onChanged} />}
-        {(showRetryReview || showFillMeeting) ? (
-          <div className="flex flex-col items-start gap-1">
-            {showRetryReview && (
-              <button type="button" onClick={() => onRetryReview(item)} className="text-amber-200 hover:underline">{item.status === 'review_failed' ? '修改并重新评审' : '继续申领'}</button>
-            )}
-            {showFillMeeting && (
-              <button type="button" onClick={() => onFillMeeting(item)} className="text-cyan-300 hover:underline">会议结果</button>
-            )}
-          </div>
-        ) : null}
+        <div className="inline-flex items-center gap-2 whitespace-nowrap">
+          {canEdit && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">编辑</button>}
+          <InitiationDeleteAction id={item.id} code={item.tCode ?? '未发号立项'} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} />
+        </div>
       </Td>
     </tr>
           );
@@ -894,12 +888,14 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   );
 }
 
-function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, pending, onOpenLegacy }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, currentUserId, pending, onOpenLegacy, onChanged }: {
   pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
   items: WorkflowVersionRecord<ProductRelease>[];
+  currentUserId?: string;
+  onChanged: () => void | Promise<void>;
   requirementNames: ReadonlyMap<string, string>;
   names: ReadonlyMap<string, string>;
   onOpenLegacy: (record: VersionRegistration) => void;
@@ -912,15 +908,15 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态', '操作']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
-      <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
+      <Td mono>{item.vCode ? <button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button> : '-'}</Td>
       <Td mono>{item.initiationId && item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
-        : (item.tCode ?? '临时优化需求')}</Td>
-      <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td>
+        : (item.tCode || '-')}</Td>
+      <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{item.isTemporaryOptimization ? '临时优化需求' : SCALE_LABEL[item.versionType]}</Td>
       <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.departmentName || '-'}</Td><Td>{item.ownerName || names.get(item.ownerId ?? '') || item.legacyData?.['产品负责人'] || item.ownerId || '-'}</Td>
@@ -932,7 +928,11 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && !pending && <Empty cols={18}>暂无上线记录</Empty>}
+      <Td onClick={(event) => event.stopPropagation()}><div className="inline-flex items-center gap-2 whitespace-nowrap">
+        {!item.legacyRegistration && item.createdBy === currentUserId && item.status !== 'voided' && <ReleaseEditAction release={item} userNames={names} onSaved={onChanged} />}
+        <ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} />
+      </div></Td>
+    </tr>)}{items.length === 0 && !pending && <Empty cols={19}>暂无上线记录</Empty>}
   </Table>
   </>;
 }

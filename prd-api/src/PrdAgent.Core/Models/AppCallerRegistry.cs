@@ -10,6 +10,13 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public static class AppCallerRegistry
 {
+    public static class McpSpeech
+    {
+        public const string AppName = "MCP 基础语音能力";
+        [AppCallerMetadata("MCP-文生语音", "使用已授权的语音模型与音色生成音频资产", ModelTypes = new[] { ModelTypes.Tts }, Category = "Audio")]
+        public const string Synthesize = "mcp-speech.synthesize::tts";
+    }
+
 /// <summary>
 /// Desktop 桌面客户端
 /// </summary>

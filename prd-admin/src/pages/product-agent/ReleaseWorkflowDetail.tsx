@@ -8,6 +8,8 @@ import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { loadProductVersionList } from '@/lib/productVersionList';
 import { ReleasePlanPicker } from './ReleasePlanPicker';
+import { appendReleaseTapdLinks, extractReleaseTapdLinks, invalidReleaseTapdLinks, type ReleaseTapdLink } from './releaseTapdLinks';
+import { ReleaseTapdFields } from './ReleaseTapdFields';
 import { filterReleasePlans } from './releasePlanOptions';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -52,10 +54,13 @@ import type { VersionRegistrationMessageParseResult } from '@/services/real/prod
 import { VersionCopyActions } from './VersionCopyActions';
 import { mergeMemberIds, type PastedMemberMatch } from './releaseMemberMatching';
 import { useReleasePastedMembers } from './useReleasePastedMembers';
+import { ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { ReleaseEditAction } from '@/components/product-agent/ReleaseEditAction';
+import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
-  announcement_pending: '待完成上线',
+  announcement_pending: '待填写上线公告',
   released: '已上线',
 };
 
@@ -158,6 +163,9 @@ export function ReleaseWorkflowDetail({
   const [remark, setRemark] = useState('');
   const [isGlobalOpen, setIsGlobalOpen] = useState('');
   const [openBrandScope, setOpenBrandScope] = useState('上线全域开放');
+  const [noTapdLinks, setNoTapdLinks] = useState(false);
+  const [tapdLinks, setTapdLinks] = useState<ReleaseTapdLink[]>([{ title: '', url: '' }]);
+  const tapdInvalid = !temporary && invalidReleaseTapdLinks(noTapdLinks, tapdLinks);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const historyScope = JSON.stringify([productId, initiationId, planName]);
@@ -429,6 +437,15 @@ export function ReleaseWorkflowDetail({
     if (temporary) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
+  const prepareReleaseNotice = (text: string) => {
+    const extracted = extractReleaseTapdLinks(text);
+    if (extracted.links.length) {
+      setNoTapdLinks(false);
+      setTapdLinks((current) => appendReleaseTapdLinks(current, extracted.links));
+    }
+    return { text: extracted.text, linkCount: extracted.links.length };
+  };
+
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
     const parsedInitiations = parsed.initiationCandidates ?? [];
     const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
@@ -478,6 +495,10 @@ export function ReleaseWorkflowDetail({
   };
 
   const saveNew = async () => {
+    if (tapdInvalid) {
+      setMessage('请填写有效的 TAPD 链接，或勾选「无 TAPD 链接」。');
+      return;
+    }
     if (!temporary && !planName.trim()) {
       setMessage('请填写产品方案名称');
       return;
@@ -525,6 +546,8 @@ export function ReleaseWorkflowDetail({
       historyConfirmationToken,
       initiationId: temporary ? undefined : initiationId,
       isTemporaryOptimization: temporary,
+      noTapdLinks: temporary ? undefined : noTapdLinks,
+      tapdLinks: temporary ? undefined : noTapdLinks ? [] : tapdLinks.map(({ title, url }) => ({ title: title.trim(), url: url.trim() })),
       planName: temporary ? temporaryPlanName : planName.trim() || undefined,
       ownerId,
       openBrandScope: effectiveOpenBrandScope,
@@ -555,13 +578,18 @@ export function ReleaseWorkflowDetail({
     }
     let autoCopied = false;
     try {
-      await navigator.clipboard.writeText(res.data.vCode);
-      autoCopied = true;
+      if (res.data.vCode) {
+        await navigator.clipboard.writeText(res.data.vCode);
+        autoCopied = true;
+      }
     } catch {
       // 详情页保留手动复制入口。
     }
     if (onCreated) onCreated(res.data, autoCopied);
-    else navigate(`/product-agent/p/${productId}/release/${res.data.id}`, { replace: true, state: { issuedCode: res.data.vCode, autoCopied } });
+    else navigate(`/product-agent/p/${productId}/release/${res.data.id}`, {
+      replace: true,
+      state: res.data.vCode ? { issuedCode: res.data.vCode, autoCopied } : undefined,
+    });
   };
 
   const saveManifest = async () => {
@@ -662,9 +690,11 @@ export function ReleaseWorkflowDetail({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {!isNew && release && release.createdBy === currentUser?.userId && release.status !== 'voided' && <ReleaseEditAction release={release} userNames={userDisplayNames} onSaved={setRelease} />}
+          {!isNew && release && release.createdBy === currentUser?.userId && <ReleaseDeleteAction id={release.id} code={release.vCode} status={release.status} voidReason={release.voidReason} canDelete={release.canDelete} onDeleted={() => { if (onClose) onClose(); else navigate('/product-agent?section=versions&versionTab=release'); }} />}
           {!isNew && release?.status === 'announcement_pending' && (
             <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-amber)]">
-              待完成上线
+              待填写上线公告
             </span>
           )}
           {!isNew && release && (
@@ -686,6 +716,7 @@ export function ReleaseWorkflowDetail({
           </p>
         )}
         <VersionCopyActions kind="release" id={release.id} code={release.vCode} />
+        <DebugClaimNotificationButton kind="V" id={release.id} visible={release.claimNotification?.status === 'debug_pending'} />
       </>}
 
       {(!isNew || temporary) && <div className="flex border-b border-token-subtle">
@@ -797,7 +828,8 @@ export function ReleaseWorkflowDetail({
         <div className={isNew && !temporary ? 'space-y-6' : 'space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5'}>
           {isNew ? (
             <>
-              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
+              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion}
+                prepareText={temporary ? undefined : prepareReleaseNotice} />
               {temporary ? <>
                 {ownerField}
                 <InfoBox>临时优化需求请在「需求」标签页选择要上线的需求条目。</InfoBox>
@@ -826,6 +858,8 @@ export function ReleaseWorkflowDetail({
                   {ownerField}
                   {memberField}
                 </section>
+                <ReleaseTapdFields noLinks={noTapdLinks} links={tapdLinks} onNoLinksChange={setNoTapdLinks}
+                  onLinksChange={setTapdLinks} disabled={busy} required />
                 <section aria-label="上线安排" className="space-y-4 border-t border-token-subtle pt-5">
                   <h2 className="text-sm font-semibold text-token-primary">上线安排</h2>
                   {scheduleFields}
@@ -923,7 +957,7 @@ export function ReleaseWorkflowDetail({
             {isNew ? (
               <PrimaryButton
                 onClick={() => void saveNew()}
-                disabled={busy || basicInvalid || (temporary && manifestInvalid)}
+                disabled={busy || basicInvalid || tapdInvalid || (temporary && manifestInvalid)}
               >
                 {busy ? <><Loader2 size={14} className="animate-spin" /> 处理中...</> : '确认并获取正式版本号'}
               </PrimaryButton>
@@ -1310,12 +1344,14 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
   return <Dialog
     open
     onOpenChange={(open) => { if (!open) close(); }}
-    title={issued ? '正式版本申领结果' : temporary ? '临时优化需求上线' : '申领正式版本号'}
+    title={temporary ? '临时优化需求上线' : issued ? '正式版本申领结果' : '申领正式版本号'}
     maxWidth={960}
     contentStyle={{ height: 'min(780px, calc(100dvh - 64px))', maxHeight: 'calc(100dvh - 64px)' }}
     content={<div style={{ maxHeight: 'min(700px, calc(100dvh - 144px))', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarGutter: 'stable' }}>
       {issued && <p role="status" className="mb-3 rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2 text-sm text-token-secondary">
-        {issued.release.vCode} 已生成{issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。
+        {issued.release.vCode
+          ? `${issued.release.vCode} 已生成${issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。`
+          : '临时优化需求已上线。'}
       </p>}
       <ReleaseWorkflowDetail
         key={issued?.release.id ?? 'new'}

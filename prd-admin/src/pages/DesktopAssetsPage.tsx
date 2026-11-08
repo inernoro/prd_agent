@@ -4,7 +4,6 @@ import {
   Image,
   FileText,
   Paperclip,
-  Globe,
   Search,
   LayoutGrid,
   List,
@@ -32,23 +31,22 @@ import { getMobileAssets } from '@/services';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
 import { lazy, Suspense } from 'react';
-import type { MobileAssetItem } from '@/services/contracts/mobile';
+import type { AssetCategory, MobileAssetItem } from '@/services/contracts/mobile';
+import { ASSET_CATEGORIES, ASSET_CATEGORY_REGISTRY as TYPE_CONFIG, isAudioAsset } from '@/lib/assetCategories';
+import { AudioAssetPlayer } from '@/components/assets/AudioAssetPlayer';
 
 // 「分享」tab 走独立内容组件，按用户诉求在「我的资产」下统一管理
 const MySharesEmbedded = lazy(() => import('@/pages/labs/MySharesPage'));
 
 /* ── Types ── */
-type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage' | 'shares';
+type AssetTab = 'all' | AssetCategory | 'shares';
 type SortBy = 'date' | 'size' | 'name';
 type ViewMode = 'grid' | 'list';
 
 /* ── Constants ── */
 const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
   { key: 'all', label: '全部', icon: FolderOpen },
-  { key: 'image', label: '图片', icon: Image },
-  { key: 'document', label: '文档', icon: FileText },
-  { key: 'attachment', label: '附件', icon: Paperclip },
-  { key: 'webpage', label: '网页', icon: Globe },
+  ...ASSET_CATEGORIES.map((key) => ({ key, label: TYPE_CONFIG[key].label, icon: TYPE_CONFIG[key].icon })),
   { key: 'shares', label: '分享', icon: Share2 },
 ];
 
@@ -87,20 +85,9 @@ function formatShortDate(iso: string): string {
   }
 }
 
-const TYPE_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  image: { label: '图片', bg: 'rgba(251,146,60,0.15)', text: 'var(--semantic-orange-text)' },
-  document: { label: '文档', bg: 'rgba(129,140,248,0.15)', text: 'var(--semantic-indigo-text)' },
-  attachment: { label: '附件', bg: 'var(--bg-input)', text: 'var(--text-muted)' },
-  webpage: { label: '网页', bg: 'rgba(34,197,94,0.15)', text: 'var(--semantic-success-text)' },
-};
-
 /** 判断是否为图片：type 为 image 或 MIME 以 image/ 开头 */
 function isImageAsset(asset: MobileAssetItem): boolean {
   return asset.type === 'image' || (!!asset.mime && asset.mime.startsWith('image/'));
-}
-
-function isAudioAsset(asset: MobileAssetItem): boolean {
-  return !!asset.mime && asset.mime.startsWith('audio/');
 }
 
 function isVideoAsset(asset: MobileAssetItem): boolean {
@@ -302,7 +289,9 @@ function AssetListRow({
         {asset.thumbnailUrl || (isImageAsset(asset) && asset.url) ? (
           <img src={asset.thumbnailUrl || asset.url || ''} alt="" loading="lazy" className="w-full h-full object-cover" />
         ) : (
-          <FileText size={14} style={{ color: 'var(--text-muted)' }} />
+          isAudioAsset(asset)
+            ? <Music size={14} style={{ color: 'var(--text-muted)' }} />
+            : <FileText size={14} style={{ color: 'var(--text-muted)' }} />
         )}
       </div>
 
@@ -411,7 +400,7 @@ function DetailPanel({
 
       {/* Actions */}
       <div className="px-4 py-4 flex flex-col gap-2" style={{ borderTop: '1px solid var(--border-faint)' }}>
-        {asset.url && (
+        {asset.url && !isAudioAsset(asset) && (
           <>
             <button
               type="button"
@@ -517,11 +506,7 @@ function AssetPreview({ asset }: { asset: MobileAssetItem }) {
         style={{ ...containerBase, aspectRatio: '3/1' }}
       >
         <Music size={28} style={{ color: 'var(--text-muted)' }} />
-        <audio
-          src={asset.url}
-          controls
-          style={{ width: '100%', height: '32px', opacity: 0.85 }}
-        />
+        <AudioAssetPlayer url={asset.url} title={asset.title} />
       </div>
     );
   }
@@ -746,8 +731,7 @@ export default function DesktopAssetsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = (() => {
     const t = searchParams.get('tab');
-    if (t === 'all' || t === 'image' || t === 'document' || t === 'attachment' || t === 'webpage' || t === 'shares') return t;
-    return 'all';
+    return TABS.find((tab) => tab.key === t)?.key ?? 'all';
   })();
   const [activeTab, setActiveTabRaw] = useState<AssetTab>(initialTab);
   const setActiveTab = (t: AssetTab) => {
@@ -761,8 +745,7 @@ export default function DesktopAssetsPage() {
   // 否则从其它页跳 /my-assets?tab=shares 不会切到分享 tab
   useEffect(() => {
     const t = searchParams.get('tab');
-    const valid: AssetTab[] = ['all', 'image', 'document', 'attachment', 'webpage', 'shares'];
-    const next = (valid as string[]).includes(t ?? '') ? (t as AssetTab) : 'all';
+    const next = TABS.find((tab) => tab.key === t)?.key ?? 'all';
     setActiveTabRaw((prev) => (prev === next ? prev : next));
   }, [searchParams]);
   const [loading, setLoading] = useState(true);
@@ -804,7 +787,7 @@ export default function DesktopAssetsPage() {
     setError(null);
     try {
       const res = await getMobileAssets({
-        category: (category === 'all' || !category) ? undefined : (category as 'image' | 'document' | 'attachment' | 'webpage'),
+        category: (category === 'all' || !category) ? undefined : category,
         limit: PAGE_SIZE,
         skip: 0,
       });
@@ -831,7 +814,7 @@ export default function DesktopAssetsPage() {
     setLoadingMore(true);
     try {
       const res = await getMobileAssets({
-        category: activeTab === 'all' ? undefined : (activeTab as 'image' | 'document' | 'attachment' | 'webpage'),
+        category: activeTab === 'all' ? undefined : activeTab,
         limit: PAGE_SIZE,
         skip: assets.length,
       });

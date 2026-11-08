@@ -1,5 +1,7 @@
 using System.Net;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
@@ -80,20 +82,90 @@ public class ProductClaimWebhookTests
     }
 
     [Fact]
-    public async Task MissingOldIdentityWaitsThenAutomaticallyResumesAfterVerifiedLogin()
+    public async Task MissingOldIdentitySendsUnchangedNoticeWithoutMentionAndNeverResendsAfterLogin()
     {
         await using var f = new Fixture();
         await f.EnableAsync();
         await f.AddPendingAsync();
         await f.ProcessTAsync();
-        Assert.Empty(f.Http.Bodies);
-        Assert.Equal("waiting_identity", (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).ClaimNotification!.Status);
+        var saved = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
+        Assert.Equal("sent", saved.ClaimNotification!.Status);
+        Assert.Null(saved.ClaimNotification.Error);
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        var text = payload.RootElement.GetProperty("text");
+        Assert.False(text.TryGetProperty("mentioned_list", out _));
+        Assert.False(text.TryGetProperty("mentioned_mobile_list", out _));
+        Assert.Equal(ProductVersionCopyTemplate.Build(JsonSerializer.Deserialize<ProductInitiation>(saved.ClaimNotification.Snapshot)!), text.GetProperty("content").GetString());
+        Assert.DoesNotContain("未艾特", text.GetProperty("content").GetString()!);
         await f.RememberOwnerAsync(mobileOnly: true);
         await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t", Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.NextAttemptAt, DateTime.UtcNow.AddMinutes(-1)));
         await f.ProcessTAsync();
+        Assert.Single(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task FormalClaimWithoutIdentitySendsUnchangedAndCancelledTaskNeverSends()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        var item = new ProductRelease { ProductId = "product", VCode = "V1.2.3", OwnerId = "owner", OwnerName = "负责人", PlanName = "测试方案",
+            TapdLinks = new() { new() { Url = "https://www.tapd.cn/1" } } };
+        item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(f.Db, item, "owner", true, true);
+        await f.Db.ProductReleases.InsertOneAsync(item);
+        using var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton(f.Protection).AddSingleton<IHttpClientFactory>(f.Http).BuildServiceProvider();
+        var config = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        await ProductClaimWebhookWorker.ProcessAsync(f.Db.ProductReleases, config, true, services, CancellationToken.None);
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        Assert.Equal(ProductVersionCopyTemplate.Build(item), payload.RootElement.GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal(1, payload.RootElement.GetProperty("text").EnumerateObject().Count());
+        await f.AddPendingAsync();
+        await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t", Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.Status, "cancelled"));
+        await f.ProcessTAsync();
+        Assert.Single(f.Http.Bodies);
+    }
+
+    [Theory]
+    [InlineData(true, "void", "【版本作废】", "原版本号保留")]
+    [InlineData(false, "delete", "【版本删除】", "后续按保留的记录发号")]
+    public async Task OperationNoticeUsesWebhookWithoutMentionOrDuplicate(bool formal, string action, string heading, string result)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Db.ProductAgentSettings.UpdateOneAsync(_ => true, Builders<ProductAgentSettings>.Update.Set(x => x.ClaimWebhook.DebugMode, true));
+        var when = new DateTime(2026, 11, 3, 7, 20, 0, DateTimeKind.Utc);
+        var code = formal ? "V4.26.5" : "T6.18.17";
+        for (var attempt = 0; attempt < 2; attempt++)
+            Assert.True(await ProductVersionOperationNotice.QueueAsync(f.Db, formal, action, "row", code,
+                "品牌商后台基础", "卡券功能优化", "周泽腾", "本次范围调整，原记录不再使用", when));
+        var notices = ProductVersionOperationNotice.Collection(f.Db);
+        var config = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        using var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton(f.Protection).AddSingleton<IHttpClientFactory>(f.Http).BuildServiceProvider();
+        await ProductClaimWebhookWorker.ProcessAsync(notices, config, formal, services, CancellationToken.None, operationNotice: true);
+        await ProductClaimWebhookWorker.ProcessAsync(notices, config, formal, services, CancellationToken.None, operationNotice: true);
+        Assert.Equal("sent", (await notices.Find(_ => true).SingleAsync()).ClaimNotification.Status);
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        var text = payload.RootElement.GetProperty("text");
+        Assert.Equal(1, text.EnumerateObject().Count());
+        var content = text.GetProperty("content").GetString()!;
+        Assert.StartsWith(heading, content);
+        Assert.Contains(code, content);
+        Assert.Contains("操作人：周泽腾", content);
+        Assert.Contains("2026.11.03 15:20（北京时间）", content);
+        Assert.Contains(result, content);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task VerifiedMobileStillMentionsOwnerAndUnavailableOwnerCannotSend(bool active)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync(); await f.RememberOwnerAsync(mobileOnly: true); await f.AddPendingAsync();
+        if (!active) await f.Db.Users.UpdateOneAsync(x => x.UserId == "owner", Builders<User>.Update.Set(x => x.Status, UserStatus.Disabled));
+        await f.ProcessTAsync();
+        if (!active) { Assert.Empty(f.Http.Bodies); return; }
         using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
         Assert.Equal("13800000001", Assert.Single(payload.RootElement.GetProperty("text").GetProperty("mentioned_mobile_list").EnumerateArray()).GetString());
-        Assert.Equal("sent", (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).ClaimNotification!.Status);
     }
 
     [Fact]
@@ -134,6 +206,141 @@ public class ProductClaimWebhookTests
         Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Url = TestUrl, Enabled = true }));
     }
 
+    [Theory]
+    [InlineData("T")]
+    [InlineData("V")]
+    public async Task DebugModeIssuesRecordWithoutSendingUntilManualClickAndDoesNotSendTwice(string kind)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = true });
+        if (kind == "T") await f.AddPendingAsync();
+        else
+        {
+            var v = new ProductRelease { Id = "v-debug", ProductId = "product", VCode = "V1.2.3", OwnerId = "owner", CreatedBy = "member" };
+            v.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(f.Db, v, "owner", true, true);
+            Assert.Equal("debug_pending", v.ClaimNotification!.Status);
+            await f.Db.ProductReleases.InsertOneAsync(v);
+        }
+        var id = kind == "T" ? "t" : "v-debug";
+        using var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton(f.Protection).AddSingleton<IHttpClientFactory>(f.Http).BuildServiceProvider();
+        async Task Process()
+        {
+            var config = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+            if (kind == "T") await ProductClaimWebhookWorker.ProcessAsync(f.Db.ProductInitiations, config, false, services, CancellationToken.None);
+            else await ProductClaimWebhookWorker.ProcessAsync(f.Db.ProductReleases, config, true, services, CancellationToken.None);
+        }
+        await Process(); Assert.Empty(f.Http.Bodies);
+        // 关闭调试模式不会把已等待手工推送的通知突然发出。
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = false });
+        await Process(); Assert.Empty(f.Http.Bodies);
+        Assert.IsType<OkObjectResult>(await f.Controller().DebugNotify(kind, id));
+        Assert.IsType<ConflictObjectResult>(await f.Controller().DebugNotify(kind, id));
+        await Process(); await Process();
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        Assert.DoesNotContain("未艾特", payload.RootElement.GetProperty("text").GetProperty("content").GetString()!);
+        Assert.IsType<ConflictObjectResult>(await f.Controller().DebugNotify(kind, id));
+    }
+
+    [Fact]
+    public async Task DebugModePausesExistingPendingAndRestrictsManualDispatchAndPreview()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync(); await f.AddPendingAsync();
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = true });
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true });
+        Assert.True((await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook.DebugMode);
+        await f.ProcessTAsync(); Assert.Empty(f.Http.Bodies);
+        Assert.IsType<ConflictObjectResult>(await f.Controller(admin: false).DebugNotify("T", "t"));
+        Assert.IsType<BadRequestObjectResult>(await f.Controller(preview: true).DebugNotify("T", "t"));
+        await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t", Builders<ProductInitiation>.Update.Set(x => x.CreatedBy, "member"));
+        Assert.IsType<OkObjectResult>(await f.Controller(admin: false).DebugNotify("T", "t"));
+        await f.ProcessTAsync(); Assert.Single(f.Http.Bodies);
+        Assert.IsType<ConflictObjectResult>(await f.Controller().DebugNotify("T", "t"));
+    }
+
+    [Fact]
+    public async Task DefaultBootstrapEncryptsEnablesAndPreservesOtherSettingsWithoutSending()
+    {
+        await using var f = new Fixture();
+        await f.Db.ProductAgentSettings.InsertOneAsync(new ProductAgentSettings { AdminIds = new() { "existing-admin" } });
+        await f.SeedAsync();
+        Assert.True(await f.BootstrapAsync());
+        var saved = await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync();
+        Assert.Equal("existing-admin", Assert.Single(saved.AdminIds));
+        Assert.True(saved.ClaimWebhook.Enabled);
+        Assert.True(saved.ClaimWebhook.NotifyInternal && saved.ClaimWebhook.NotifyFormal);
+        Assert.NotNull(saved.ClaimWebhook.InitializedAt);
+        Assert.Equal(TestUrl, f.Protection.CreateProtector(ProductClaimWebhookController.ProtectionPurpose).Unprotect(saved.ClaimWebhook.ProtectedUrl!));
+        Assert.DoesNotContain("unit-test-only", JsonSerializer.Serialize(saved));
+        Assert.False(File.Exists(Path.Combine(f.SeedDirectory, "private.pem")));
+        Assert.False(File.Exists(Path.Combine(f.SeedDirectory, "url.enc")));
+        Assert.Empty(f.Http.Bodies);
+        Assert.False(await f.BootstrapAsync());
+    }
+
+    [Fact]
+    public async Task AdministratorReplacementAndDisabledStateSurviveReseedingAndRestart()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync();
+        Assert.True(await f.BootstrapAsync());
+        await f.Db.Users.InsertOneAsync(new User { UserId = "admin", Role = UserRole.ADMIN });
+        var replacement = TestUrl + "-replacement";
+        Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Url = replacement, Enabled = false, NotifyInternal = false }));
+        var before = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        await f.SeedAsync();
+        Assert.False(await f.BootstrapAsync());
+        var after = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        Assert.Equal(before.ProtectedUrl, after.ProtectedUrl);
+        Assert.Equal(replacement, f.Protection.CreateProtector(ProductClaimWebhookController.ProtectionPurpose).Unprotect(after.ProtectedUrl!));
+        Assert.False(after.Enabled);
+        Assert.False(after.NotifyInternal);
+        var json = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await f.Controller().Get()).Value);
+        Assert.Contains("key=********", json);
+        Assert.DoesNotContain("replacement", json);
+        Assert.Empty(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task ExplicitEmptyDisabledConfigurationAlsoPreventsDefaultInitialization()
+    {
+        await using var f = new Fixture();
+        await f.Db.Users.InsertOneAsync(new User { UserId = "admin", Role = UserRole.ADMIN });
+        Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Enabled = false }));
+        await f.SeedAsync();
+        Assert.False(await f.BootstrapAsync());
+        var saved = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        Assert.False(saved.Enabled);
+        Assert.Null(saved.ProtectedUrl);
+    }
+
+    [Fact]
+    public async Task PreviewCannotConsumeProductionSeedOrChangeSharedConfiguration()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync();
+        Assert.False(await f.BootstrapAsync(preview: true));
+        Assert.Equal(0, await f.Db.ProductAgentSettings.CountDocumentsAsync(_ => true));
+        Assert.True(File.Exists(Path.Combine(f.SeedDirectory, "private.pem")));
+        Assert.True(File.Exists(Path.Combine(f.SeedDirectory, "url.enc")));
+        Assert.Empty(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task ConcurrentBootstrapsOnlyInitializeOnceAndInvalidSeedNeverChangesConfiguration()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync("https://example.test/not-a-wecom-webhook");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => f.BootstrapAsync());
+        Assert.Equal(0, await f.Db.ProductAgentSettings.CountDocumentsAsync(_ => true));
+        await f.SeedAsync();
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => f.BootstrapAsync()));
+        Assert.Single(results.Where(x => x));
+        Assert.Equal(1, await f.Db.ProductAgentSettings.CountDocumentsAsync(_ => true));
+        Assert.Empty(f.Http.Bodies);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly MongoClient client;
@@ -141,6 +348,16 @@ public class ProductClaimWebhookTests
         public MongoDbContext Db { get; }
         public IDataProtectionProvider Protection { get; } = new EphemeralDataProtectionProvider();
         public FakeHttp Http { get; } = new();
+        public string SeedDirectory { get; } = Path.Combine(Path.GetTempPath(), "claim-webhook-test-" + Guid.NewGuid().ToString("N"));
+        public async Task SeedAsync(string url = TestUrl)
+        {
+            Directory.CreateDirectory(SeedDirectory);
+            using var rsa = RSA.Create(2048);
+            await File.WriteAllTextAsync(Path.Combine(SeedDirectory, "private.pem"), rsa.ExportPkcs8PrivateKeyPem());
+            await File.WriteAllBytesAsync(Path.Combine(SeedDirectory, "url.enc"), rsa.Encrypt(Encoding.UTF8.GetBytes(url), RSAEncryptionPadding.OaepSHA256));
+        }
+        public Task<bool> BootstrapAsync(bool preview = false) => ProductClaimWebhookBootstrap.TryInitializeAsync(Db, Protection,
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["CDS_PROJECT_ID"] = preview ? "prd-agent" : null }).Build(), SeedDirectory);
         public Fixture()
         {
             var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27018";
@@ -176,7 +393,11 @@ public class ProductClaimWebhookTests
             var config = (await Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
             await ProductClaimWebhookWorker.ProcessAsync(Db.ProductInitiations, config, false, services, CancellationToken.None);
         }
-        public ValueTask DisposeAsync() => new(client.DropDatabaseAsync(name));
+        public async ValueTask DisposeAsync()
+        {
+            await client.DropDatabaseAsync(name);
+            if (Directory.Exists(SeedDirectory)) Directory.Delete(SeedDirectory, recursive: true);
+        }
     }
 
     private sealed class FakeHttp : HttpMessageHandler, IHttpClientFactory
