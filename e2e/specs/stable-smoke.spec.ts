@@ -4091,7 +4091,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001][REG-image-effective-size-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     // 生产生图 HTTP 契约允许最长 600 秒。测试总时限额外保留页面验证、审计查询与清理余量，
     // 避免上游仍在合法执行时先由 Playwright 误杀，再把取消/删除冲突误报成模型故障。
     test.setTimeout(720_000);
@@ -4263,9 +4263,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
       expect(generatedArtifacts.some((artifact) => artifact.mime === downloadedMime)).toBe(true);
       const downloadedDimensions = await decodeDownloadedImageDimensions(page, downloadedBytes, downloadedMime);
-      const requestedDimensions = String(completed.detail.items[0].requestedSize || '').split('x').map(Number);
-      expect(downloadedDimensions).toEqual({ width: requestedDimensions[0], height: requestedDimensions[1] });
       await testInfo.attach('single-image-download', { body: downloadedBytes, contentType: downloadedMime });
+      // 请求尺寸与服务回传的有效尺寸分别记录；下载必须匹配真实产物，不能把已公开的尺寸调整误报为损坏。
+      const item = completed.detail.items[0];
+      expect(item.requestedSize, '任务必须保留原始申请尺寸').toBe('1024x1024');
+      const effectiveDimensions = String(item.effectiveSize || item.requestedSize).split('x').map(Number);
+      expect(effectiveDimensions.every((value) => Number.isInteger(value) && value > 0)).toBe(true);
+      expect(downloadedDimensions).toEqual({ width: effectiveDimensions[0], height: effectiveDimensions[1] });
+      expect(downloadedDimensions.width / downloadedDimensions.height, '方形请求必须保留方形构图').toBeCloseTo(1, 2);
+      expect(await generatedImage.evaluate((image) => ({
+        width: (image as HTMLImageElement).naturalWidth,
+        height: (image as HTMLImageElement).naturalHeight,
+      })), '画布与下载必须使用同一真实产物').toEqual(downloadedDimensions);
       await page.waitForTimeout(500);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
