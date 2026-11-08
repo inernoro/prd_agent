@@ -524,6 +524,7 @@ export function buildGeneratedArtifactFiles(
   let buttonCount = 0;
   let cssCharsRemaining = MAX_CSS_DERIVATION_CHARS;
   let cursor = 0;
+  const emptyAttributes = new Map<string, string>();
 
   const processCss = (rawCss: string): void => {
     if (cssCharsRemaining <= 0) return;
@@ -593,7 +594,7 @@ export function buildGeneratedArtifactFiles(
       || name === 'img'
       || /^h[1-6]$/.test(name)
       || /(?:^|\s)(?:hidden|aria-hidden|style)(?:\s|=|$)/i.test(tag.attributes);
-    const attributes = needsAttributes ? parseHtmlAttributes(tag.attributes) : new Map<string, string>();
+    const attributes = needsAttributes && tag.attributes.trim() ? parseHtmlAttributes(tag.attributes) : emptyAttributes;
     if (name === 'html' && !htmlLanguage) {
       htmlLanguage = decodeHtmlText(attributes.get('lang') || '').trim().slice(0, 80);
     }
@@ -4670,6 +4671,7 @@ function hardenHtmlWithFactRetention(
     ? undefined
     : validateVerifiedPackagePaths(packagePaths);
   html = convertRelativeKnowledgeAnchors(html);
+  const emptyAttributes = new Map<string, string | undefined>();
   for (const tag of iterateHtmlTags(html)) {
     if (tag.isClosing) continue;
     const name = tag.name.toLowerCase();
@@ -4685,7 +4687,7 @@ function hardenHtmlWithFactRetention(
         'index.html contains a disallowed SVG animation primitive',
       );
     }
-    const attributes = parseHtmlAttributes(tag.attributes);
+    const attributes = tag.attributes.trim() ? parseHtmlAttributes(tag.attributes) : emptyAttributes;
     for (const attribute of ['src', 'href', 'poster', 'background']) {
       const rawValue = attributes.get(attribute);
       if (rawValue === undefined) continue;
@@ -4832,11 +4834,13 @@ function decodeHtmlText(value: string): string {
 }
 
 function readHtmlAttribute(attributes: string, name: string): string | undefined {
+  if (!attributes.trim()) return undefined;
   const value = parseHtmlAttributes(attributes).get(name.toLowerCase());
   return value === undefined ? undefined : decodeHtmlText(value ?? '');
 }
 
 function hasHtmlAttribute(attributes: string, name: string): boolean {
+  if (!attributes.trim()) return false;
   return parseHtmlAttributes(attributes).has(name.toLowerCase());
 }
 
