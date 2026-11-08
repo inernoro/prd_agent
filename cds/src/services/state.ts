@@ -5075,6 +5075,25 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.clearSelfUpdateActive();
   }
 
+  /** 仅撤回本次未交接成功；历史环已满时也恢复被临时挤出的原记录。 */
+  recordProvisionalSelfUpdateSuccess(record: import('../types.js').SelfUpdateRecord): () => void {
+    if (record.status !== 'success') throw new Error('CDS 临时成功记录状态无效。');
+    const originals = [...(this.state.selfUpdateHistory || [])];
+    this.recordSelfUpdate(record);
+    const pending = this.state.selfUpdateHistory?.at(-1);
+    let undone = false;
+    return () => {
+      const list = this.state.selfUpdateHistory || [];
+      const index = pending ? list.indexOf(pending) : -1;
+      if (undone || !pending || originals.includes(pending) || index < 0) return;
+      undone = true;
+      list.splice(index, 1);
+      this.state.selfUpdateHistory = [...originals.filter(row => !list.includes(row)), ...list]
+        .slice(-StateService.SELF_UPDATE_HISTORY_MAX);
+      this.save();
+    };
+  }
+
   getSelfUpdateHistory(
     limit = 10,
     opts: { includeSteps?: boolean } = {},
