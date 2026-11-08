@@ -31,9 +31,14 @@ public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfigu
         var identity = TaskExecutionContext.Current;
         if (identity is null || !ValidPermitId(identity.PermitId))
             throw Denied("TASK_EXECUTION_NOT_ADMITTED", "本次任务没有获得执行许可，已停止模型调用；请重新明确提交操作。");
+        var receipt = identity.VideoReceipt;
         if (identity.Lease is not { } lease || lease.PermitId != identity.PermitId
-            || !await _executions.ValidateHashAsync(lease.PermitId, lease.RunId, TaskExecutionCoordinator.OwnerHash(lease.OwnerToken),
-                lease.Fence, false, ct, identity.RunId ?? context?.RunId))
+            || !(receipt is not null
+                ? identity.RunId == lease.RunId && message.Method == HttpMethod.Post && message.RequestUri?.AbsolutePath == "/gw/v1/raw"
+                    && message.Options.TryGetValue(AuthorizedGatewayRequest.RawOperation, out var raw) && receipt.Matches(raw)
+                    && await _executions.ValidateVideoReceiptAsync(lease, receipt, false, ct)
+                : await _executions.ValidateHashAsync(lease.PermitId, lease.RunId, TaskExecutionCoordinator.OwnerHash(lease.OwnerToken),
+                    lease.Fence, false, ct, identity.RunId ?? context?.RunId)))
             throw Denied("TASK_EXECUTION_LEASE_INVALID", "任务执行租约已失效或尚未领取，已停止模型调用；请查看任务状态后重新提交。");
         var permits = data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName);
         GatewayTaskPermitRecord? permit;
@@ -67,6 +72,8 @@ public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfigu
         var runId = identity.RunId ?? context?.RunId;
         var subject = context?.UserId is { Length: > 0 } declaredSubject ? declaredSubject
             : permit.SubjectUserIds.Count == 1 ? permit.SubjectUserIds[0] : permit.ActorUserId;
+        if (receipt is not null && (subject != receipt.OwnerId || runId != lease.RunId))
+            throw Denied("TASK_VIDEO_RECEIPT_SCOPE_DENIED", "核账归属与原任务不匹配。");
         // 调度器身份只表示执行来源，业务归属必须由调度准入预先批准。
         if (!permit.SubjectUserIds.Contains(subject, StringComparer.Ordinal)
             && (permit.Origin == TaskExecutionOrigins.Scheduled || subject != permit.ActorUserId))
@@ -112,6 +119,7 @@ public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfigu
         }
 
         message.Headers.Remove("X-Gateway-Task-Permit");
+        if (receipt is not null) message.Headers.TryAddWithoutValidation(TaskExecutionHeaders.VideoReceipt, "status");
         message.Headers.TryAddWithoutValidation("X-Gateway-Task-Permit", permit.Id);
         message.Headers.Remove(TaskExecutionHeaders.LeaseToken);
         message.Headers.TryAddWithoutValidation(TaskExecutionHeaders.LeaseToken, lease.OwnerToken);

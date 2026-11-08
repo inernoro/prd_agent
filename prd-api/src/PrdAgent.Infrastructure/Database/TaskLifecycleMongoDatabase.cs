@@ -62,6 +62,8 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
         if (method.Name == "get_Database") return _database;
         if (method.Name is "BulkWrite" or "BulkWriteAsync" or "MapReduce" or "MapReduceAsync" or "AggregateToCollection" or "AggregateToCollectionAsync" or "OfType")
             throw new NotSupportedException("持久任务批量写入须逐条经过平台生命周期检查，请使用带过滤条件的更新或删除。");
+        if (TaskExecutionContext.Current?.VideoReceipt is not null && method.Name.StartsWith("Insert", StringComparison.Ordinal))
+            throw new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_WRITE_DENIED", "核账身份不能创建任务或其它记录。");
         var mutation = method.Name.StartsWith("Update", StringComparison.Ordinal)
             || method.Name.StartsWith("Replace", StringComparison.Ordinal) || method.Name.StartsWith("Delete", StringComparison.Ordinal)
             || method.Name.StartsWith("FindOneAnd", StringComparison.Ordinal);
@@ -91,7 +93,10 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
     {
         // 迟到执行者不能继续写任务状态；普通用户读取、取消和非任务 CRUD 不依赖运行租约。
         var coordinator = _coordinator();
-        if (TaskExecutionContext.Current?.Lease is { } lease && !await coordinator.ValidateAsync(lease, false, CancellationToken.None))
+        var identity = TaskExecutionContext.Current;
+        if (identity?.Lease is { } lease && !(identity.VideoReceipt is { } receipt
+            ? await coordinator.ValidateVideoReceiptAsync(lease, receipt, false, CancellationToken.None)
+            : await coordinator.ValidateAsync(lease, false, CancellationToken.None)))
             throw new TaskExecutionAdmissionException("TASK_EXECUTION_LEASE_INVALID", "本次执行已失效，未继续更新任务；请查看当前任务状态。");
         var cancel = method.Contains("Delete", StringComparison.Ordinal);
         BsonDocument? set = null;
@@ -128,6 +133,28 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
             }
         }
         var replacement = args.OfType<T>().FirstOrDefault();
+        if (identity?.VideoReceipt is { } target)
+        {
+            // 核账身份只能写回原作业的收据字段，不能借取消身份开启任务、改授权或发布产物。
+            if (typeof(T) != typeof(VideoGenRun) || identity.Lease is not { } receiptLease
+                || identity.RunId != receiptLease.RunId || method != "UpdateOneAsync" || replacement is not null
+                || update is null || update.Render(new RenderArgs<T>(_inner.DocumentSerializer, BsonSerializer.SerializerRegistry)) is not { IsBsonDocument: true } receiptUpdate
+                || receiptUpdate.AsBsonDocument.ElementCount != 1 || !receiptUpdate.AsBsonDocument.Contains("$set")
+                || set is null || set.ElementCount == 0 || set.Names.Any(n => n is not
+                    ("DirectVideoUpstreamStatus" or "DirectVideoCost" or "DirectVideoReconciledAt" or "QueueEnteredAt")))
+                throw new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_WRITE_DENIED", "核账身份不能修改任务执行状态或其它数据。");
+            var index = Array.FindIndex(args, x => x is FilterDefinition<T>);
+            if (index < 0) throw new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_WRITE_DENIED", "核账缺少原任务条件。");
+            args[index] = (FilterDefinition<T>)args[index]! & new BsonDocument
+            {
+                ["_id"] = receiptLease.RunId, ["TaskPermitId"] = receiptLease.PermitId,
+                ["OwnerAdminId"] = target.OwnerId, ["Mode"] = VideoGenMode.Direct,
+                ["DirectVideoJobId"] = target.JobId, ["DirectVideoModel"] = target.Model,
+                ["DirectVideoOfferingId"] = target.OfferingId, ["CancelRequested"] = true,
+                ["Status"] = VideoGenRunStatus.Cancelled, ["DeletionRequestedAt"] = BsonNull.Value
+            };
+            return;
+        }
         if (replacement is not null) cancel |= replacement.ToBsonDocument().Any(field => IsCancellation(field.Name, field.Value));
         var authorizationChange = typeof(T) == typeof(User) && (cancel || set?.Contains("Status") == true || replacement is not null)
             || typeof(T) == typeof(AgentApiKey) && (cancel || replacement is not null || set?.Names.Any(n => n is "RevokedAt" or "IsActive" or "Scopes" or "ScopeMode" or "ApiKeyHash" or "OwnerUserId" or "ExpiresAt") == true);
@@ -179,12 +206,12 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
         {
             if (authorizationChange)
             {
-                var target = replacement?.ToBsonDocument() ?? set ?? new BsonDocument();
+                var authorizationTarget = replacement?.ToBsonDocument() ?? set ?? new BsonDocument();
                 if (document is User user)
                 {
-                    if (!cancel && (!target.TryGetValue("Status", out var desiredStatus)
+                    if (!cancel && (!authorizationTarget.TryGetValue("Status", out var desiredStatus)
                         || replacement is not null && desiredStatus == document.ToBsonDocument().GetValue("Status", BsonNull.Value))) continue;
-                    var enabled = !cancel && (target.TryGetValue("Status", out var status)
+                    var enabled = !cancel && (authorizationTarget.TryGetValue("Status", out var status)
                         ? status.IsInt32 && status.AsInt32 == (int)UserStatus.Active || status.IsString && status.AsString.Equals("Active", StringComparison.OrdinalIgnoreCase)
                         : user.Status == UserStatus.Active);
                     await coordinator.ChangeActorAuthorizationAsync(_tenant, user.UserId, enabled, CancellationToken.None);
@@ -193,14 +220,34 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
                 {
                     var previous = document.ToBsonDocument();
                     if (!cancel && (replacement is not null || set?.Contains("IsActive") != true) && !new[] { "RevokedAt", "IsActive", "Scopes", "ScopeMode", "ApiKeyHash", "OwnerUserId", "ExpiresAt" }
-                        .Any(name => target.TryGetValue(name, out var desired) && desired != previous.GetValue(name, BsonNull.Value))) continue;
-                    var enabled = !cancel && !(target.TryGetValue("RevokedAt", out var revoked) && !revoked.IsBsonNull)
-                        && (!target.TryGetValue("IsActive", out var active) || active.IsBoolean && active.AsBoolean);
+                        .Any(name => authorizationTarget.TryGetValue(name, out var desired) && desired != previous.GetValue(name, BsonNull.Value))) continue;
+                    var enabled = !cancel && !(authorizationTarget.TryGetValue("RevokedAt", out var revoked) && !revoked.IsBsonNull)
+                        && (!authorizationTarget.TryGetValue("IsActive", out var active) || active.IsBoolean && active.AsBoolean);
                     await coordinator.ChangeCredentialAuthorizationAsync(_tenant, $"agent-apikey:{key.Id}", enabled, CancellationToken.None);
                 }
                 continue;
             }
             if (document is not ITaskAuthorizedRun task || string.IsNullOrWhiteSpace(task.TaskPermitId)) continue; // 旧记录本身没有可用的新执行授权。
+            if (document is VideoGenRun video)
+            {
+                if (method.Contains("Delete", StringComparison.Ordinal)
+                    || set?.GetValue("DeletionRequestedAt", BsonNull.Value).IsBsonNull == false
+                    || replacement is VideoGenRun { DeletionRequestedAt: not null })
+                    await coordinator.RevokeVideoReceiptAsync(task.TaskPermitId, video.Id, CancellationToken.None);
+                else if (video.Mode == VideoGenMode.Direct && !string.IsNullOrWhiteSpace(video.DirectVideoJobId)
+                    && !string.IsNullOrWhiteSpace(video.DirectVideoModel) && !string.IsNullOrWhiteSpace(video.DirectVideoOfferingId)
+                    && video.AppKey is "video-agent" or "visual-agent")
+                {
+                    var caller = video.AppKey == "visual-agent" ? AppCallerRegistry.VisualAgent.VideoGen.Generate
+                        : AppCallerRegistry.VideoAgent.VideoGen.Generate;
+                    try
+                    {
+                        await coordinator.BindVideoReceiptAsync(task.TaskPermitId, video.Id,
+                            new(video.OwnerAdminId, caller, video.DirectVideoJobId, video.DirectVideoModel, video.DirectVideoOfferingId), _tenant, CancellationToken.None);
+                    }
+                    catch (TaskExecutionAdmissionException ex) when (ex.Code == "TASK_VIDEO_RECEIPT_UNSUPPORTED") { }
+                }
+            }
             foreach (var reference in References(document))
                 await coordinator.RevokeAsync(reference.Permit, reference.Run, CancellationToken.None);
 
@@ -229,10 +276,11 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
         if (type?.IsEnum == true && Enum.TryParse(type, "Cancelled", out var value)) values.Add(Convert.ToInt32(value));
         return values;
     }
-    private static bool IsLifecycleField(string field) => field is "CancelRequested" or "CancelRequestedAt" or "Status" or "State"
+    private static bool IsLifecycleField(string field) => field is "DeletionRequestedAt" or "CancelRequested" or "CancelRequestedAt" or "Status" or "State"
         or "TaskPermitId" or "RevokedAt" or "IsActive" or "Scopes" or "ScopeMode" or "ApiKeyHash" or "OwnerUserId" or "ExpiresAt";
     private static bool IsCancellation(string field, BsonValue value)
     {
+        if (typeof(T) == typeof(VideoGenRun) && field == "DeletionRequestedAt") return !value.IsBsonNull;
         if (field == "CancelRequested") return value.IsBoolean && value.AsBoolean;
         if (field == "CancelRequestedAt") return !value.IsBsonNull;
         if (field is not ("Status" or "State")) return false;

@@ -103,13 +103,19 @@ describe('代码审查任务完整闭环', () => {
     expect(service.get(task.id).status).toBe('completed'); expect(state.listAcceptanceReports('a')).toHaveLength(1);
   });
   it('引擎零文件结果不得伪装成完成或归档质量报告', async () => {
-    run.mockImplementationOnce(async () => ({ ...result(), totalFiles: 0, scannedFiles: 0, findings: [] }));
+    run.mockImplementationOnce(async input => {
+      await input.onProgress({ phase: '分析中', totalFiles: 1, scannedFiles: 0, engineTaskId: 'upstream-1' });
+      return { ...result(), totalFiles: 0, scannedFiles: 0, findings: [] };
+    });
     const task = await submit(); await service.pump();
     expect(service.get(task.id)).toMatchObject({ status: 'failed', progress: { totalFiles: 1, scannedFiles: 0 } });
     expect(service.get(task.id).error).toContain('已分析 0/1 个文件');
     expect(service.get(task.id).error).toContain('未形成代码质量结论');
     expect(service.get(task.id).reportId).toBeUndefined(); expect(state.listAcceptanceReports('a')).toHaveLength(0);
     expect(send).not.toHaveBeenCalled();
+    expect(service.get(task.id).engineTaskId).toBeUndefined();
+    const reloaded = new StateService(path.join(dir, 'state.json')); reloaded.load();
+    expect(reloaded.getCodeReviewTask(task.id)?.engineTaskId).toBeUndefined();
     await service.retry(task.id); await service.pump();
     expect(run.mock.calls[1][0].engineTaskId).toBeUndefined();
     expect(service.get(task.id).status).toBe('completed');

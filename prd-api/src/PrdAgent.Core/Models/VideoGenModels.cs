@@ -329,6 +329,12 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// <summary>累计成本（美元）</summary>
     public double? DirectVideoCost { get; set; }
 
+    /// <summary>最近一次从供应商读取的任务状态；本地取消不代表供应商已终止。</summary>
+    public string? DirectVideoUpstreamStatus { get; set; }
+
+    /// <summary>上游已到终态并回读费用的时间；费用未返回时仍保留 null，不视为免费。</summary>
+    public DateTime? DirectVideoReconciledAt { get; set; }
+
     /// <summary>最终视频 URL（COS 公开链接）</summary>
     public string? VideoAssetUrl { get; set; }
 
@@ -364,6 +370,8 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 
     public string OwnerAdminId { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    [BsonDefaultValue(null)]
+    public DateTime? QueueEnteredAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
     public bool CancelRequested { get; set; }

@@ -18,6 +18,28 @@ if sys.platform == 'darwin':
 from weasyprint import HTML, CSS
 from weasyprint.text.fonts import FontConfiguration
 from jinja2 import Template
+from markupsafe import Markup
+
+
+class _InlinePDFResources:
+    """仅允许报告模板内嵌的资源，兼容项目声明的 WeasyPrint 接口。"""
+
+    @staticmethod
+    def _check(url):
+        if not isinstance(url, str) or not url.startswith('data:'):
+            raise ValueError('PDF 报告仅允许内嵌资源')
+
+    def __call__(self, url):
+        self._check(url)
+        # WeasyPrint 60 等既有版本接收返回字典的 callable。
+        from weasyprint import default_url_fetcher
+        return default_url_fetcher(url)
+
+    def fetch(self, url, headers=None):
+        self._check(url)
+        # WeasyPrint 70 使用返回 URLFetcherResponse 的 fetch 接口。
+        from weasyprint.urls import URLFetcher
+        return URLFetcher(allowed_protocols={'data'}, allow_redirects=False).fetch(url, headers=headers)
 
 class ReportGenerator:
     """
@@ -403,7 +425,7 @@ class ReportGenerator:
         """安全转义 HTML 特殊字符"""
         if text is None:
             return None
-        return html.escape(str(text))
+        return Markup(html.escape(str(text)))
 
     @classmethod
     def _process_issues(cls, issues: List[Dict]) -> List[Dict]:
@@ -455,11 +477,11 @@ class ReportGenerator:
         # 注入 Logo
         context['logo_b64'] = cls._get_logo_base64()
         
-        template = Template(cls._TEMPLATE)
+        template = Template(cls._TEMPLATE, autoescape=True)
         html_content = template.render(**context)
         font_config = FontConfiguration()
         pdf_file = io.BytesIO()
-        HTML(string=html_content).write_pdf(
+        HTML(string=html_content, url_fetcher=_InlinePDFResources()).write_pdf(
             pdf_file,
             font_config=font_config,
             presentational_hints=True

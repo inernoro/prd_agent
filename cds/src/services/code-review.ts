@@ -459,6 +459,7 @@ export class CodeReviewService {
         task.engineCompleted = false; // A manual retry must start a new analysis, not reuse the empty result.
         task.engineTaskId = undefined;
         task.engineBinding = undefined;
+        await this.save(task);
         throw new CodeReviewError(502, `审查引擎未成功分析任何文件（已分析 0/${selectedFiles} 个文件），未形成代码质量结论。请联系管理员检查模型服务与引擎日志后重试。`);
       }
       task.engineCompleted = true; task.engineRetryRequested = undefined;

@@ -10,7 +10,7 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Security;
 
 /// <summary>业务身份、次数、撤销和有界子执行同文档裁决，不依赖实例内锁或额外索引。</summary>
-public sealed class TaskExecutionCoordinator(LlmGatewayDataContext data) : ITaskExecutionCoordinator
+public sealed partial class TaskExecutionCoordinator(LlmGatewayDataContext data) : ITaskExecutionCoordinator
 {
     public const int ContractVersion = 2;
     public const int LeaseMilliseconds = 45_000;
@@ -223,7 +223,9 @@ public sealed class TaskExecutionCoordinator(LlmGatewayDataContext data) : ITask
                 Builders<GatewayTaskPermitRecord>.Update.CurrentDate(x => x.RevokedAt), cancellationToken: ct);
             var matches = new BsonDocument("$eq", new BsonArray { "$$e.RunId", key });
             await Permits.UpdateOneAsync(x => x.Id == permitId, MapExecutions(matches,
-                new BsonDocument { ["State"] = TaskExecutionLeaseStates.Cancelled, ["FinishedAt"] = "$$NOW" }), cancellationToken: ct);
+                new BsonDocument { ["State"] = TaskExecutionLeaseStates.Cancelled, ["FinishedAt"] = "$$NOW",
+                    ["OwnerHash"] = "", ["LeaseUntil"] = DateTime.UnixEpoch,
+                    ["Fence"] = new BsonDocument("$add", new BsonArray { "$$e.Fence", 1L }) }), cancellationToken: ct);
             return true;
         });
 

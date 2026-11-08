@@ -13,6 +13,7 @@ public static class AuthorizedGatewayRequest
     public const string HttpClientName = "MapModelGateway";
     private sealed record AuthorizationStamp(Uri? Target, HttpMethod Method, string PermitId);
     private static readonly HttpRequestOptionsKey<AuthorizationStamp?> Authorized = new("map.task-authorized");
+    internal static readonly HttpRequestOptionsKey<GatewayRawRequest> RawOperation = new("map.raw-operation");
 
     public static async Task PrepareAsync(
         HttpRequestMessage message,
@@ -28,6 +29,7 @@ public static class AuthorizedGatewayRequest
         message.Headers.Remove("X-Gateway-Source-Deployment");
         message.Headers.Remove("X-Gateway-Source-Task");
         message.Headers.Remove("X-Gateway-Trigger-Credential");
+        message.Headers.Remove(TaskExecutionHeaders.VideoReceipt);
         if (authorizer is null)
             throw new TaskExecutionAdmissionException("TASK_EXECUTION_NOT_ADMITTED",
                 "本次任务尚未获得执行许可，请从正常操作入口重新发起。", 403);
