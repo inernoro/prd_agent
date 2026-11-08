@@ -85,6 +85,12 @@ class ReleaseArtifactTests(unittest.TestCase):
             "PRD_AGENT_ARTIFACT_DIAGNOSTICS": str(self.root / "public-download-diagnostics.jsonl")})
         configuration.start()
         self.addCleanup(configuration.stop)
+        sleeping = mock.patch.object(artifacts.time, "sleep")
+        self.sleeping = sleeping.start()
+        self.addCleanup(sleeping.stop)
+        diagnostics_output = mock.patch.object(artifacts.sys, "stderr", io.StringIO())
+        self.diagnostics_output = diagnostics_output.start()
+        self.addCleanup(diagnostics_output.stop)
 
     def make_bundle(self, label="original", commit=COMMIT_A, ref=None, payload=b"original application"):
         ref = ref or "sha-" + commit
@@ -599,12 +605,17 @@ class ReleaseArtifactTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_PREFIX": prefix}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=urllib.error.HTTPError("https://public.invalid", 503, secret_reason, {}, None)) as opening:
             with self.assertRaises(artifacts.ArtifactError) as caught:
                 artifacts.fetch(REPO, REF_A, self.root / "unavailable-fetch")
-        self.assertEqual(opening.call_count, 1)
+        self.assertEqual(opening.call_count, 3)
+        self.assertEqual([call.args[0].full_url for call in opening.call_args_list], [opening.call_args.args[0].full_url] * 3)
+        self.assertEqual(self.sleeping.call_args_list, [mock.call(1), mock.call(2)])
         self.assertTrue(opening.call_args.args[0].full_url.startswith(prefix))
         self.assertNotIn(secret_reason, str(caught.exception))
         records = [json.loads(line) for line in diagnostic.read_text().splitlines()]
-        self.assertEqual(len(records), 1)
-        self.assertEqual(set(records[0]), {"operation", "endpoint", "httpStatus", "errorType", "reasonType"})
+        self.assertEqual(len(records), 3)
+        self.assertEqual(set(records[0]), {"operation", "endpoint", "httpStatus", "errorType", "reasonType",
+            "attempt", "willRetrySameUrl", "delaySeconds", "responseBytesCaptured", "responsePrefixSha256"})
+        self.assertEqual([record["attempt"] for record in records], [1, 2, 3])
+        self.assertEqual([record["willRetrySameUrl"] for record in records], [True, True, False])
         self.assertEqual(records[0]["httpStatus"], 503)
         self.assertEqual(records[0]["errorType"], "HTTPError")
         self.assertNotIn("token=", diagnostic.read_text())
@@ -693,6 +704,90 @@ class ReleaseArtifactTests(unittest.TestCase):
                 self.assertEqual(status, 1)
                 operation.assert_not_called()
                 self.assertFalse((self.root / "inputs.env").exists())
+
+    def test_transient_502_and_504_retry_exact_same_public_request_then_return_original_bytes(self):
+        url = f"https://api.github.com/repos/{REPO}/releases/assets/800"
+        diagnostic = Path(os.environ["PRD_AGENT_ARTIFACT_DIAGNOSTICS"])
+        response_body = b"private response body must not be logged\n" * 200
+        for retry_after in (None, "4"):
+            with self.subTest(retry_after=retry_after):
+                if diagnostic.exists():
+                    diagnostic.unlink()
+                self.sleeping.reset_mock()
+                self.diagnostics_output.seek(0)
+                self.diagnostics_output.truncate()
+                responses = [urllib.error.HTTPError(url, status, "https://signed.invalid/?token=not-for-log",
+                    {} if retry_after is None else {"Retry-After": retry_after}, io.BytesIO(response_body))
+                    for status in (502, 504)] + [io.BytesIO(b"original published bytes")]
+                with mock.patch.dict(os.environ, {"GH_TOKEN": "credential-never-forward"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=responses) as opening:
+                    result = artifacts.read_url(url)
+                self.assertEqual(result, b"original published bytes")
+                calls = opening.call_args_list
+                self.assertEqual(len(calls), 3)
+                self.assertTrue(all(call.args[0] is calls[0].args[0] for call in calls))
+                self.assertTrue(all(call.kwargs == {"timeout": 90} for call in calls))
+                self.assertEqual(calls[0].args[0].full_url, url)
+                self.assertEqual(calls[0].args[0].get_header("Accept"), "application/octet-stream")
+                self.assertNotIn("authorization", {name.lower() for name in calls[0].args[0].headers})
+                self.assertEqual(self.sleeping.call_args_list,
+                    [mock.call(1), mock.call(2)] if retry_after is None else [mock.call(4), mock.call(4)])
+                records = [json.loads(line) for line in diagnostic.read_text().splitlines()]
+                self.assertEqual([record["httpStatus"] for record in records], [502, 504])
+                self.assertEqual([record["attempt"] for record in records], [1, 2])
+                self.assertTrue(all(record["willRetrySameUrl"] for record in records))
+                self.assertTrue(all(record["responseBytesCaptured"] == 4096 for record in records))
+                self.assertTrue(all(record["responsePrefixSha256"] == hashlib.sha256(response_body[:4096]).hexdigest() for record in records))
+                self.assertNotIn("private response", diagnostic.read_text() + self.diagnostics_output.getvalue())
+                self.assertNotIn("token=", diagnostic.read_text() + self.diagnostics_output.getvalue())
+
+    def test_get_retry_bound_retry_after_and_integrity_errors_never_reread_or_fallback(self):
+        url = "https://api.github.com/repos/example/map/releases/assets/800"
+        cases = [(503, None, 3, [1, 2]), (504, "10", 3, [10, 10]),
+                 (503, "11", 1, []), (502, "Fri, 08 Nov 2030 00:00:00 GMT", 1, []),
+                 (504, "invalid", 1, []), (503, "", 1, []),
+                 (404, None, 1, []), (401, None, 1, []), (403, None, 1, [])]
+        for status, retry_after, expected_calls, delays in cases:
+            with self.subTest(status=status, retry_after=retry_after):
+                self.sleeping.reset_mock()
+
+                def unavailable(*args, **kwargs):
+                    raise urllib.error.HTTPError(url, status, "test source failure",
+                        {} if retry_after is None else {"Retry-After": retry_after}, io.BytesIO(b"unavailable"))
+                with mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=unavailable) as opening:
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.read_url(url)
+                self.assertEqual(opening.call_count, expected_calls)
+                self.assertEqual({call.args[0].full_url for call in opening.call_args_list}, {url})
+                self.assertEqual(self.sleeping.call_args_list, [mock.call(delay) for delay in delays])
+        for error in (TimeoutError("bounded timeout"), urllib.error.URLError("unavailable transport")):
+            with self.subTest(error=type(error).__name__):
+                self.sleeping.reset_mock()
+                with mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=error) as opening:
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.read_url(url)
+                self.assertEqual(opening.call_count, 1)
+                self.sleeping.assert_not_called()
+        self.sleeping.reset_mock()
+        with mock.patch.object(artifacts.urllib.request, "urlopen", return_value=io.BytesIO(b"oversized")) as opening:
+            with self.assertRaises(artifacts.ArtifactError):
+                artifacts.read_url(url, limit=2)
+        self.assertEqual(opening.call_count, 1)
+        self.sleeping.assert_not_called()
+        for label in ("hash-mismatch", "malformed-manifest", "bad-zip"):
+            with self.subTest(integrity_error=label):
+                directory = self.make_bundle(label)
+                if label == "hash-mismatch":
+                    self.update_manifest(directory, webSha256="0" * 64)
+                elif label == "malformed-manifest":
+                    self.manifest(directory).write_text("invalid-json")
+                else:
+                    (directory / artifacts.names(REF_A)[0]).write_bytes(b"not a ZIP")
+                    self.resign_zip(directory)
+                with mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=lambda request, **kwargs: io.BytesIO((directory / request.full_url.rsplit("/", 1)[1]).read_bytes())) as opening:
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.fetch(REPO, REF_A, self.root / (label + "-result"))
+                self.assertEqual([call.args[0].full_url for call in opening.call_args_list], artifacts.urls(REPO, REF_A))
+                self.sleeping.assert_not_called()
 
     def test_network_and_gh_errors_do_not_leak_signed_urls(self):
         signed = "https://private.invalid/asset?secret=must-not-appear"
@@ -832,7 +927,8 @@ class ReleaseArtifactTests(unittest.TestCase):
         shim = self.root / "offline-python"
         shim.mkdir(exist_ok=True)
         (shim / "sitecustomize.py").write_text(textwrap.dedent('''
-            import io, json, os, pathlib, urllib.error, urllib.request
+            import io, json, os, pathlib, time, urllib.error, urllib.request
+            time.sleep = lambda seconds: None
             assets = {}
             def offline(request, **kwargs):
                 url = request.full_url
