@@ -149,8 +149,14 @@ export async function reviewJsonRequest(
   try {
     response = await fetchImpl(url, { ...init, redirect: 'error' });
   } catch (error) {
-    await audit({ ...base, durationMs: Date.now() - started, outcome: 'network_error',
-      evidence: networkFailureEvidence(error), truncated: false });
+    const interrupted = Boolean(init.signal?.aborted);
+    try {
+      await audit({ ...base, durationMs: Date.now() - started, outcome: 'network_error',
+        evidence: networkFailureEvidence(error), truncated: false });
+    } catch (auditError) {
+      if (!interrupted) throw auditError;
+      console.error('审查取消或超时后写入审计证据失败', { operation: redactReviewEvidence(operation).slice(0, 80) });
+    }
     throw error;
   }
   let content: Buffer | undefined;

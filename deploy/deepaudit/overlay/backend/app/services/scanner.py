@@ -224,7 +224,7 @@ async def get_github_files(repo_url: str, branch: str, token: str = None, exclud
             if size <= settings.MAX_FILE_SIZE_BYTES:
                 files.append({
                     "path": item["path"],
-                    "url": f"https://raw.githubusercontent.com/{owner}/{repo}/{quote(branch)}/{item['path']}"
+                    "url": f"https://raw.githubusercontent.com/{owner}/{repo}/{quote(branch)}/{quote(item['path'], safe='/')}"
                 })
     
     return files

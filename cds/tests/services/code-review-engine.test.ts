@@ -372,6 +372,24 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(events[0].evidence).toContain('not authorized');
     expect(events[2].evidence).toContain('未收到响应');
   });
+  it.each([
+    { label: '取消', interrupted: true, reason: new DOMException('synthetic cancelled', 'AbortError') },
+    { label: '超时', interrupted: true, reason: new DOMException('synthetic timeout', 'TimeoutError') },
+    { label: '工作进程停止', interrupted: true, reason: new CodeReviewWorkerStoppedError('synthetic worker stopped') },
+    { label: '普通网络错误', interrupted: false, reason: new TypeError('synthetic network failure') },
+  ])('$label 期间审计失败保留原停止原因并明确缺证，普通写入失败继续拒绝', async ({ interrupted, reason }) => {
+    const controller = new AbortController(), storageFailure = new Error('synthetic evidence write failure');
+    const audit = vi.fn(async () => { throw storageFailure; });
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(reviewJsonRequest('status', 'https://synthetic.invalid/api', { signal: controller.signal }, audit,
+        (async () => { if (interrupted) controller.abort(reason); throw reason; }) as typeof fetch))
+        .rejects.toBe(interrupted ? reason : storageFailure);
+      expect(audit).toHaveBeenCalledTimes(1);
+      if (interrupted) expect(logged).toHaveBeenCalledWith('审查取消或超时后写入审计证据失败', { operation: 'status' });
+      else expect(logged).not.toHaveBeenCalled();
+    } finally { logged.mockRestore(); }
+  });
   it.each(['github.resolve_repository', 'github.resolve_commit'])('%s 保留有界脱敏的 JSON 失败原因，源码正文和实际请求令牌仍不进入证据', async (operation) => {
     const events: CodeReviewAuditEvent[] = [], token = 'supplied-synthetic-long-credential';
     const reason = `Resource not accessible by integration; ${token}; access_key=private-access-key; owner@example.invalid; `;

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from types import SimpleNamespace, ModuleType
 from unittest.mock import AsyncMock, Mock, patch
@@ -152,6 +153,53 @@ def endpoint_function(name, scope):
     return scope[name]
 
 
+class DeploymentCredentialDestination(unittest.TestCase):
+    @staticmethod
+    def actual_config(user_config, settings):
+        tree = ast.parse((ROOT / 'backend/app/services/llm/service.py').read_text())
+        original = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'LLMService')
+        providers = {node.attr: node.attr.lower() for node in ast.walk(original)
+                     if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'LLMProvider'}
+        names = {'__init__', 'config', '_parse_provider', '_get_provider_api_key',
+                 '_get_provider_api_key_from_user_config', '_get_provider_base_url'}
+        actual = ast.ClassDef(name='LLMService', bases=[], keywords=[], decorator_list=[],
+            body=[node for node in original.body if isinstance(node, ast.FunctionDef) and node.name in names])
+        scope = dict(Optional=__import__('typing').Optional, Dict=dict, Any=object, LLMConfig=SimpleNamespace,
+                     LLMProvider=SimpleNamespace(**providers), DEFAULT_MODELS={}, settings=settings)
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[actual], type_ignores=[])), 'actual-llm-config', 'exec'), scope)
+        return scope['LLMService'](user_config).config
+
+    def settings(self, **overrides):
+        return SimpleNamespace(**dict(dict(LLM_PROVIDER='openai', LLM_BASE_URL='https://deployment-gateway.invalid/v1',
+            LLM_API_KEY='deployment-generic-private', OPENAI_API_KEY='deployment-openai-private',
+            CLAUDE_API_KEY='deployment-claude-private', LLM_MODEL='default-model'), **overrides))
+
+    def test_user_selected_endpoint_uses_only_user_credentials(self):
+        for values, expected in [
+            ({'llmBaseUrl': 'https://user-endpoint.invalid/v1', 'llmApiKey': ''}, ''),
+            ({'llmBaseUrl': 'https://user-endpoint.invalid/v1', 'llmApiKey': 'user-generic'}, 'user-generic'),
+            ({'llmBaseUrl': 'https://user-endpoint.invalid/v1', 'openaiApiKey': 'user-provider'}, 'user-provider'),
+        ]:
+            with self.subTest(values=values):
+                result = self.actual_config({'llmConfig': values}, self.settings())
+                self.assertEqual(result.base_url, values['llmBaseUrl'])
+                self.assertEqual(result.api_key, expected)
+
+    def test_user_selected_provider_cannot_redirect_deployment_keys_and_ollama_stays_keyless(self):
+        for values, expected in [({'llmProvider': 'claude'}, ''),
+                                 ({'llmProvider': 'claude', 'claudeApiKey': 'user-claude'}, 'user-claude'),
+                                 ({'llmProvider': 'ollama', 'llmBaseUrl': 'https://user-ollama.invalid/v1'}, 'ollama')]:
+            with self.subTest(values=values):
+                self.assertEqual(self.actual_config({'llmConfig': values}, self.settings()).api_key, expected)
+
+    def test_unchanged_deployment_destination_retains_existing_generic_and_provider_fallback(self):
+        for settings, expected in [(self.settings(), 'deployment-generic-private'),
+                                   (self.settings(LLM_API_KEY=''), 'deployment-openai-private')]:
+            result = self.actual_config({}, settings)
+            self.assertEqual(result.api_key, expected)
+            self.assertEqual(result.base_url, settings.LLM_BASE_URL)
+
+
 class NativeTaskOwnership(unittest.IsolatedAsyncioTestCase):
     async def test_issue_update_checks_owner_before_reading_or_changing_issue(self):
         class Denied(Exception):
@@ -267,6 +315,22 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('PRIVATE_SOURCE_MARKER', encoded); self.assertNotIn('private-token-only', encoded)
         self.assertTrue(all((p.stat().st_mode & 0o777) == 0o600
                             for p in pathlib.Path(self.directory.name).rglob('response-*.json')))
+
+    async def test_github_literal_reserved_source_paths_keep_exact_download_and_archive_names(self):
+        files = ['src/C#/review.py', 'src/question?literal.py', 'src/percent%20literal.py', 'src/中文.py']
+        revision = 'a' * 40
+        self.responses = [self.response(200, {'sha': revision}),
+            self.response(200, {'tree': [{'type': 'blob', 'path': name, 'size': 10} for name in files]}),
+            *[self.response(200, 'PRIVATE_SOURCE_MARKER = 1', 'text/plain') for _ in files]]
+        await self.acquire()
+        from urllib.parse import quote, urlsplit
+        expected = {f'https://raw.githubusercontent.com/example/repo/{revision}/{quote(name, safe="/")}' for name in files}
+        downloads = {url for url, _ in self.requests if url.startswith('https://raw.githubusercontent.com/')}
+        self.assertEqual(downloads, expected)
+        self.assertTrue(all(not urlsplit(url).query and not urlsplit(url).fragment for url in downloads))
+        with zipfile.ZipFile(self.snapshot.archive_path(self.task.id)) as archive:
+            self.assertEqual(set(archive.namelist()), set(files))
+        self.assertEqual(len(self.records()), len(files) + 2)
 
     async def test_native_http_failure_keeps_reason_and_redacts_echoed_credentials(self):
         self.responses = [self.response(403, {'message': 'Repository access denied for Bearer private-token-only',

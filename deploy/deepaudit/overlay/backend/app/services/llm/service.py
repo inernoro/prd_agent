@@ -61,7 +61,7 @@ class LLMService:
         1. 数据库用户配置（系统配置页面保存的配置）
         2. 环境变量配置（.env 文件中的配置）
         
-        如果用户配置中某个字段为空，则自动回退到环境变量。
+        原部署目的地可回退到环境变量；用户自选地址或提供商只使用用户自己的密钥。
         """
         if self._config is None:
             user_llm_config = self._user_config.get('llmConfig', {})
@@ -70,13 +70,14 @@ class LLMService:
             provider_str = user_llm_config.get('llmProvider') or getattr(settings, 'LLM_PROVIDER', 'openai')
             provider = self._parse_provider(provider_str)
             
-            #  API Key 优先级：用户配置 > 环境变量通用配置 > 环境变量平台专属配置
-            api_key = (
-                user_llm_config.get('llmApiKey') or
-                getattr(settings, 'LLM_API_KEY', '') or
-                self._get_provider_api_key_from_user_config(provider, user_llm_config) or
-                self._get_provider_api_key(provider)
-            )
+            # 部署密钥不能随用户自选的地址或提供商发送。
+            user_api_key = (user_llm_config.get('llmApiKey') or
+                            self._get_provider_api_key_from_user_config(provider, user_llm_config))
+            deployment_provider = self._parse_provider(getattr(settings, 'LLM_PROVIDER', 'openai'))
+            if user_llm_config.get('llmBaseUrl') or provider != deployment_provider:
+                api_key = user_api_key or ('ollama' if provider == LLMProvider.OLLAMA else '')
+            else:
+                api_key = user_api_key or getattr(settings, 'LLM_API_KEY', '') or self._get_provider_api_key(provider)
             
             #  Base URL 优先级：用户配置 > 环境变量
             base_url = (
