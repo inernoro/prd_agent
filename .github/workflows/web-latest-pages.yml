@@ -31,9 +31,9 @@ permissions:
   contents: read
 
 env:
-  # Same public-download proxy as production exec_dep; no token is sent here.
-  # Storage is still the commit-addressed GitHub Release, never Pages.
-  PRD_AGENT_RELEASE_DOWNLOAD_PREFIX: https://get.miduo.org/
+  # Public asset-ID API reads the same retained bytes without browser/proxy
+  # download redirects. No token is attached to these reads.
+  PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT: github-api
 
 jobs:
   retain-existing:

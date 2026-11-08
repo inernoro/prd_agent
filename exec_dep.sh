@@ -37,7 +37,7 @@ set -eu
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
 #   - DIST_SHA256 / DIST_SHA256_URL：DIST_URL 对应的审计哈希或哈希文件；不可变发布必须提供其一
 #   - PRD_AGENT_STATIC_ONLY_COMMIT：仅切换 MAP 静态站的完整 40 位 SHA；必须与 --commit 的运行时 SHA 成对校验
-#   - PRD_AGENT_RELEASE_ASSET_BASE_URL：固定 ref 的持久 Release 目录（默认经 get.miduo.org 代理）
+#   - PRD_AGENT_RELEASE_ASSET_BASE_URL：显式兼容固定 ref 的公开下载目录；默认使用持久 Release asset-ID API
 #   - PAGES_BASE_URL：仅覆盖兼容 latest 的 GitHub Pages 根地址
 #   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收与网关返回 MAP 的权威根地址，必须显式配置
 #   - PRD_AGENT_API_SERVICE：正式 Compose 中的 API service 名，默认 api
@@ -1088,14 +1088,19 @@ case "$reuse_static_dist" in
       sha_url="${pages_base%/}/prd-admin-dist-${TAG}.zip.sha256"
       manifest_url="${pages_base%/}/release-manifest-${TAG}.json"
     else
-      retained_base="${PRD_AGENT_RELEASE_ASSET_BASE_URL:-https://get.miduo.org/https://github.com/${OWNER}/${REPO_NAME}/releases/download/web-${TAG}}"
-      asset_url="${retained_base%/}/prd-admin-dist-${TAG}.zip"
-      sha_url="${retained_base%/}/prd-admin-dist-${TAG}.zip.sha256"
-      manifest_url="${retained_base%/}/release-manifest-${TAG}.json"
+      retained_base="${PRD_AGENT_RELEASE_ASSET_BASE_URL:-}"
       release_failure_stage="static-retained-artifact"
-      python3 scripts/lib/release-artifacts.py fetch --repo "$REPO" --ref "$TAG" \
-        --base-url "$retained_base" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
+      if [ -n "$retained_base" ]; then
+        python3 scripts/lib/release-artifacts.py fetch --repo "$REPO" --ref "$TAG" \
+          --base-url "$retained_base" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
+      else
+        PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT=github-api python3 scripts/lib/release-artifacts.py fetch \
+          --repo "$REPO" --ref "$TAG" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
+      fi
       cat "$tmp_dir/retained-evidence.json"
+      asset_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][0])' "$tmp_dir/retained-evidence.json")"
+      sha_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][1])' "$tmp_dir/retained-evidence.json")"
+      manifest_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["urls"][2])' "$tmp_dir/retained-evidence.json")"
       retained_zip="$tmp_dir/retained/prd-admin-dist-${TAG}.zip"
     fi
 
@@ -1108,7 +1113,8 @@ case "$reuse_static_dist" in
 
     if [ -n "$manifest_url" ]; then
       manifest_path="$tmp_dir/release-manifest.json"
-      if curl -fL "$manifest_url" -o "$manifest_path" 2>/dev/null; then
+      if { [ -n "$retained_zip" ] && cp "$tmp_dir/retained/release-manifest-${TAG}.json" "$manifest_path"; } \
+        || curl -fL -H 'Accept: application/octet-stream' "$manifest_url" -o "$manifest_path" 2>/dev/null; then
         echo "Release manifest: $manifest_url"
         grep -E '"commit"|"ref"|"apiImage"|"llmgwImage"|"llmgwServeImage"|"llmgwWebImage"|"webDist"|"webSha256"' "$manifest_path" || true
       fi
@@ -1133,6 +1139,9 @@ case "$reuse_static_dist" in
       echo "WARN: latest compatibility release skipped sha256 verification" >&2
     else
       expected="$(printf '%s' "${DIST_SHA256:-}" | tr 'A-F' 'a-f' | xargs || true)"
+      if [ -z "$expected" ] && [ -n "$retained_zip" ]; then
+        expected="$(awk '{print $1}' "$tmp_dir/retained/prd-admin-dist-${TAG}.zip.sha256")"
+      fi
       if [ -z "$expected" ] && [ -n "$sha_url" ]; then
         if curl -fL "$sha_url" -o "$sha_path" 2>/dev/null; then
           expected="$(awk '{print $1}' "$sha_path" | head -n 1 | tr 'A-F' 'a-f')"

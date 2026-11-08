@@ -81,6 +81,7 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.addCleanup(self.network.stop)
         self.addCleanup(self.process.stop)
         configuration = mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_PREFIX": "",
+            "PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT": "browser",
             "PRD_AGENT_ARTIFACT_DIAGNOSTICS": str(self.root / "public-download-diagnostics.jsonl")})
         configuration.start()
         self.addCleanup(configuration.stop)
@@ -125,7 +126,7 @@ class ReleaseArtifactTests(unittest.TestCase):
 
     def published(self, ref=REF_A, draft=False, asset_names=None):
         return {"id": 701, "tag_name": "web-" + ref, "target_commitish": ref[4:] if ref.startswith("sha-") else COMMIT_A,
-                "draft": draft, "assets": [{"id": 800 + index, "name": name} for index, name in enumerate(
+                "draft": draft, "assets": [{"id": 800 + index, "name": name, "state": "uploaded"} for index, name in enumerate(
                     artifacts.names(ref) if asset_names is None else asset_names)]}
 
     def public_reader(self, bundles):
@@ -571,9 +572,6 @@ class ReleaseArtifactTests(unittest.TestCase):
         canonical = artifacts.urls(REPO, REF_A)
         prefix = "https://get.miduo.org/"
         expected = [prefix + url for url in canonical]
-        source = (ROOT / ".github/workflows/web-latest-pages.yml").read_text()
-        workflow_env = source.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0]
-        self.assertRegex(workflow_env, r"(?m)^  PRD_AGENT_RELEASE_DOWNLOAD_PREFIX: https://get\.miduo\.org/$")
         requests = []
 
         def download(request, **kwargs):
@@ -615,6 +613,86 @@ class ReleaseArtifactTests(unittest.TestCase):
             artifacts.pages(directory, REF_A, self.root / "empty-old-pages", REPO)
         self.assertEqual(opening.call_count, 3)
         self.assertFalse((self.root / "empty-old-pages/prd-admin-dist-latest.zip").exists())
+
+    def test_public_github_api_maps_named_asset_ids_to_original_bytes_without_auth_or_browser_fallback(self):
+        directory = self.make_bundle()
+        metadata_url = f"https://api.github.com/repos/{REPO}/releases/tags/web-{REF_A}"
+        asset_urls = [f"https://api.github.com/repos/{REPO}/releases/assets/{800 + index}" for index in range(3)]
+        metadata = self.published()
+        metadata["assets"].reverse()  # Name, rather than API list position, binds each file.
+        payloads = {metadata_url: json.dumps(metadata).encode()}
+        payloads.update({url: (directory / name).read_bytes() for url, name in zip(asset_urls, artifacts.names(REF_A))})
+        requests = []
+
+        def download(request, **kwargs):
+            requests.append(request)
+            return io.BytesIO(payloads[request.full_url])
+        source = (ROOT / ".github/workflows/web-latest-pages.yml").read_text()
+        workflow_env = source.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0]
+        self.assertRegex(workflow_env, r"(?m)^  PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT: github-api$")
+        with mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT": "github-api",
+                "GH_TOKEN": "test-token-never-forward", "GITHUB_TOKEN": "another-test-token"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=download):
+            result = artifacts.fetch(REPO, REF_A, self.root / "api-fetched", commit=COMMIT_A)
+        self.assertEqual([request.full_url for request in requests], [metadata_url, *asset_urls])
+        self.assertEqual(requests[0].get_header("Accept"), "application/vnd.github+json")
+        for request in requests:
+            self.assertNotIn("authorization", {name.lower() for name in request.headers})
+            self.assertNotIn("test-token", json.dumps(request.headers))
+        self.assertTrue(all(request.get_header("Accept") == "application/octet-stream" for request in requests[1:]))
+        self.assertEqual(result["transport"], "github-api")
+        self.assertEqual(result["urls"], asset_urls)
+        self.assertEqual(result["sourceIdentity"], {"metadataUrl": metadata_url, "releaseId": 701,
+                         "assetIds": [800, 801, 802], "commit": COMMIT_A})
+        for name in artifacts.names(REF_A):
+            self.assertEqual((self.root / "api-fetched" / name).read_bytes(), (directory / name).read_bytes())
+        # Explicitly audited URLs remain an intentional browser transport even
+        # when the default job transport is the public asset-ID API.
+        base = "https://audited.invalid/fixed"
+        with mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT": "github-api"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=lambda request, **kwargs: io.BytesIO((directory / request.full_url.rsplit("/", 1)[1]).read_bytes())) as opening:
+            result = artifacts.fetch(REPO, REF_A, self.root / "explicit-fetched", base=base, commit=COMMIT_A)
+        self.assertEqual(result["transport"], "browser")
+        self.assertEqual([call.args[0].full_url for call in opening.call_args_list], artifacts.urls(REPO, REF_A, base))
+
+    def test_public_api_rejects_draft_incomplete_wrong_identity_and_invalid_ids_before_asset_reads(self):
+        cases = {
+            "draft": lambda value: value.update(draft=True),
+            "wrong-ref": lambda value: value.update(tag_name="web-" + REF_B),
+            "wrong-commit": lambda value: value.update(target_commitish=COMMIT_B),
+            "mutable-commit": lambda value: value.update(target_commitish="main"),
+            "invalid-release-id": lambda value: value.update(id=0),
+            "boolean-release-id": lambda value: value.update(id=True),
+            "missing-asset": lambda value: value["assets"].pop(),
+            "duplicate-name": lambda value: value["assets"].append(dict(value["assets"][0])),
+            "duplicate-id": lambda value: value["assets"][1].update(id=800),
+            "string-id": lambda value: value["assets"][0].update(id="800"),
+            "boolean-id": lambda value: value["assets"][0].update(id=True),
+            "zero-id": lambda value: value["assets"][0].update(id=0),
+            "unfinished-upload": lambda value: value["assets"][0].update(state="starter"),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(case=label):
+                metadata = self.published()
+                mutate(metadata)
+                output = self.root / ("rejected-api-" + label)
+                with mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT": "github-api"}), mock.patch.object(artifacts.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(metadata).encode())) as opening:
+                    with self.assertRaises(artifacts.ArtifactError):
+                        artifacts.fetch(REPO, REF_A, output, commit=COMMIT_A)
+                self.assertEqual(opening.call_count, 1)
+                self.assertIn("api.github.com/", opening.call_args.args[0].full_url)
+                self.assertEqual(list(output.iterdir()), [])
+        with mock.patch.dict(os.environ, {"PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT": "github-api"}), mock.patch.object(artifacts.urllib.request, "urlopen", side_effect=urllib.error.URLError("metadata unavailable")) as opening:
+            with self.assertRaises(artifacts.ArtifactError):
+                artifacts.fetch(REPO, REF_A, self.root / "api-unavailable")
+        self.assertEqual(opening.call_count, 1, "API failure must not automatically switch to browser or proxy")
+
+    def test_cli_local_staging_inputs_require_fetch_and_env_file_before_any_operation(self):
+        for command, extra in (("fetch", []), ("validate", ["--env-file", str(self.root / "inputs.env")]),
+                               ("publish", ["--env-file", str(self.root / "inputs.env")])):
+            with self.subTest(command=command), mock.patch.object(artifacts, command) as operation:
+                status, _, _ = self.cli(command, "--ref", REF_A, "--directory", str(self.root), "--local-inputs", *extra)
+                self.assertEqual(status, 1)
+                operation.assert_not_called()
+                self.assertFalse((self.root / "inputs.env").exists())
 
     def test_network_and_gh_errors_do_not_leak_signed_urls(self):
         signed = "https://private.invalid/asset?secret=must-not-appear"
@@ -754,7 +832,8 @@ class ReleaseArtifactTests(unittest.TestCase):
         shim = self.root / "offline-python"
         shim.mkdir(exist_ok=True)
         (shim / "sitecustomize.py").write_text(textwrap.dedent('''
-            import io, os, pathlib, urllib.error, urllib.request
+            import io, json, os, pathlib, urllib.error, urllib.request
+            assets = {}
             def offline(request, **kwargs):
                 url = request.full_url
                 with open(os.environ["TEST_NETWORK_LOG"], "a") as log:
@@ -762,6 +841,18 @@ class ReleaseArtifactTests(unittest.TestCase):
                 path = pathlib.Path(os.environ["TEST_ARTIFACT_FIXTURE"]) / url.rsplit("/", 1)[1]
                 if os.environ.get("TEST_SOURCE_UNAVAILABLE") == "1":
                     raise urllib.error.HTTPError(url, 503, "offline test", {}, None)
+                root = pathlib.Path(os.environ["TEST_ARTIFACT_FIXTURE"])
+                if "/releases/tags/web-" in url:
+                    ref = url.split("/releases/tags/web-", 1)[1]
+                    names = [f"prd-admin-dist-{ref}.zip", f"prd-admin-dist-{ref}.zip.sha256", f"release-manifest-{ref}.json"]
+                    manifest = root / names[2]
+                    commit = json.loads(manifest.read_text())["commit"] if manifest.exists() else ref[4:]
+                    assets.update({800 + index: root / name for index, name in enumerate(names)})
+                    return io.BytesIO(json.dumps({"id": 701, "draft": False, "tag_name": "web-" + ref,
+                        "target_commitish": commit, "assets": [{"id": 800 + index, "state": "uploaded", "name": name}
+                            for index, name in enumerate(names)]}).encode())
+                if "/releases/assets/" in url:
+                    path = assets[int(url.rsplit("/", 1)[1])]
                 if not path.is_file():
                     raise urllib.error.HTTPError(url, 404, "offline test", {}, None)
                 return io.BytesIO(path.read_bytes())
@@ -811,12 +902,17 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         work.mkdir()
         curl_shim = self.root / "mock-curl.py"
         curl_shim.write_text(textwrap.dedent('''
-            import os, pathlib, shutil, sys
+            import os, pathlib, shutil, sys, urllib.parse
             args = sys.argv[1:]
-            url = next(arg for arg in args if arg.startswith("https://"))
+            url = next(arg for arg in args if arg.startswith(("https://", "file://")))
             with open(os.environ["TEST_CURL_LOG"], "a") as log:
                 log.write(url + "\\n")
-            shutil.copyfile(pathlib.Path(os.environ["TEST_ARTIFACT_FIXTURE"]) / url.rsplit("/", 1)[1], args[args.index("-o") + 1])
+            if not url.startswith("file://"):
+                raise SystemExit("Historical consumer must use this invocation's verified staging files")
+            source = pathlib.Path(urllib.parse.unquote(urllib.parse.urlsplit(url).path))
+            if not source.is_file() or source.parent.name != "bundle":
+                raise SystemExit("Missing local staging file")
+            shutil.copyfile(source, args[args.index("-o") + 1])
         '''))
         environment.update(TEST_ACTION_LOG=str(action_log), TEST_EXPORTED_INPUTS=str(exports),
             TEST_OLD_WORKDIR=str(work), TEST_CURL_SHIM=str(curl_shim), TEST_CURL_LOG=str(self.root / "curl.log"))
@@ -837,11 +933,19 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(actions.read_text().splitlines(), ["old-body-entered", "fast-sentinel", "exec-sentinel"])
         urls = exports.read_text().splitlines()
-        self.assertEqual(urls[:3], artifacts.urls(REPO, REF_A, f"https://get.miduo.org/https://github.com/{REPO}/releases/download/web-{REF_A}"))
+        for url, name in zip(urls[:3], artifacts.names(REF_A)):
+            self.assertTrue(url.startswith("file://"))
+            self.assertTrue(url.endswith("/bundle/" + name))
         self.assertEqual(urls[3], artifacts.validate(directory, REF_A)["zipSha256"])
         self.assertEqual((work / "prd-admin-dist.zip").read_bytes(), (directory / artifacts.names(REF_A)[0]).read_bytes())
         self.assertEqual((self.root / "curl.log").read_text().splitlines(), urls[:1])
-        self.assertEqual((self.root / "network.log").read_text().splitlines(), urls[:3])
+        api_urls = [f"https://api.github.com/repos/{REPO}/releases/assets/{800 + index}" for index in range(3)]
+        self.assertEqual((self.root / "network.log").read_text().splitlines(),
+            [f"https://api.github.com/repos/{REPO}/releases/tags/web-{REF_A}", *api_urls])
+        receipt = next(json.loads(line) for line in result.stdout.splitlines() if line.startswith("{"))
+        self.assertEqual(receipt["urls"], api_urls)
+        self.assertEqual(receipt["sourceIdentity"]["assetIds"], [800, 801, 802])
+        self.assertEqual(receipt["transport"], "github-api")
 
     def test_legacy_bridge_failures_stop_before_historical_body_fast_or_exec(self):
         # Each subcase needs an isolated root so logs cannot inherit a previous run.
@@ -907,6 +1011,7 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
                     environment = self.subprocess_network_fixture(directory)
                     environment.update(GITHUB_REPOSITORY=REPO, GITHUB_SHA=COMMIT_A, RELEASE_TAG=tag,
                         PUBLISH_LATEST=str(event == "push" or requested_latest).lower(),
+                        PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT="github-api",
                         PAGES_PRESERVE_BASE_URL="https://pages.invalid/map")
                     result = REAL_RUN(["sh", "-eu", "-c", run], cwd=working, env=environment, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -915,10 +1020,11 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
                     latest = json.loads((site / "release-manifest-latest.json").read_text())
                     self.assertEqual(latest["commit"], COMMIT_A)
                     urls = (self.root / "network.log").read_text().splitlines()
-                    self.assertEqual(urls[:3], artifacts.urls(REPO, REF_A))
+                    api_urls = [f"https://api.github.com/repos/{REPO}/releases/assets/{800 + index}" for index in range(3)]
+                    self.assertEqual(urls[:4], [f"https://api.github.com/repos/{REPO}/releases/tags/web-{REF_A}", *api_urls])
                     if tag:
                         self.assertEqual(artifacts.validate(site, tag, COMMIT_A)["zipSha256"], artifacts.validate(directory, REF_A)["zipSha256"])
-                        self.assertEqual(urls[-3:], artifacts.urls(REPO, tag))
+                        self.assertEqual(urls[-4:], [f"https://api.github.com/repos/{REPO}/releases/tags/web-{tag}", *api_urls])
                     self.assertEqual(any(url.startswith("https://pages.invalid/") for url in urls), not expected_latest)
                 finally:
                     self.root = original_root

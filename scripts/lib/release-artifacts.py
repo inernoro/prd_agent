@@ -49,10 +49,10 @@ def urls(repo, ref, base=None):
     return [base.rstrip("/") + "/" + name for name in names(ref)]
 
 
-def read_url(url, limit=100 * 1024 * 1024):
+def read_url(url, limit=100 * 1024 * 1024, accept="application/octet-stream"):
     if not url.startswith("https://"):
         raise ArtifactError("Artifact sources must use HTTPS")
-    request = urllib.request.Request(url, headers={"User-Agent": "MAP-Release-Artifact/1.0", "Cache-Control": "no-cache"})
+    request = urllib.request.Request(url, headers={"User-Agent": "MAP-Release-Artifact/1.0", "Cache-Control": "no-cache", "Accept": accept})
     try:
         with urllib.request.urlopen(request, timeout=90) as response:
             data = response.read(limit + 1)
@@ -108,18 +108,59 @@ def validate(directory, ref, commit=None):
             "files": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "bytes": p.stat().st_size} for p in files]}
 
 
+def api_sources(repo, ref):
+    urls(repo, ref)  # validate ref/repository before constructing API paths
+    metadata_url = f"https://api.github.com/repos/{repo}/releases/tags/web-{ref}"
+    try:
+        metadata = json.loads(read_url(metadata_url, limit=2 * 1024 * 1024, accept="application/vnd.github+json"))
+        if metadata["draft"] or metadata["tag_name"] != "web-" + ref:
+            raise ArtifactError("Requested fixed release is unpublished or has another ref")
+        if type(metadata["id"]) is not int or metadata["id"] <= 0:
+            raise ArtifactError("Release requires a valid persistent ID")
+        assets = metadata["assets"]
+        source_commit = metadata["target_commitish"]
+        if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+            raise ArtifactError("Release metadata must pin its full original commit")
+        if ref.startswith("sha-") and source_commit != ref[4:]:
+            raise ArtifactError("Release metadata target does not match the requested commit")
+        selected = []
+        for name in names(ref):
+            matches = [a for a in assets if a["name"] == name]
+            if len(matches) != 1 or type(matches[0]["id"]) is not int or matches[0]["id"] <= 0 or matches[0].get("state") != "uploaded":
+                raise ArtifactError("Release requires three unique, completely uploaded asset IDs")
+            selected.append(matches[0])
+    except (ValueError, KeyError, TypeError):
+        raise ArtifactError("Malformed fixed-release metadata") from None
+    ids = [asset["id"] for asset in selected]
+    if len(set(ids)) != 3:
+        raise ArtifactError("Release asset IDs must be distinct")
+    return [f"https://api.github.com/repos/{repo}/releases/assets/{asset_id}" for asset_id in ids], {
+        "metadataUrl": metadata_url, "releaseId": metadata["id"], "assetIds": ids, "commit": source_commit}
+
+
 def fetch(repo, ref, output, base=None, commit=None):
     # Never expose an unvalidated partial set to callers.
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     sources = urls(repo, ref, base)
+    transport = os.environ.get("PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT", "browser")
+    api_proof = None
+    if base is None and transport == "github-api":
+        sources, api_proof = api_sources(repo, ref)
+    elif base is None and transport != "browser":
+        raise ArtifactError("Unknown explicit release download transport")
     with tempfile.TemporaryDirectory(dir=output) as temporary:
         for name, url in zip(names(ref), sources):
             (Path(temporary) / name).write_bytes(read_url(url))
         result = validate(temporary, ref, commit)
+        if api_proof and api_proof["commit"] != result["commit"]:
+            raise ArtifactError("Release metadata and original manifest commit disagree")
         for name in names(ref):
             os.replace(Path(temporary) / name, output / name)
     result["urls"] = sources
+    result["transport"] = "github-api" if api_proof else "browser"
+    if api_proof:
+        result["sourceIdentity"] = api_proof
     return result
 
 
@@ -303,9 +344,8 @@ bridge_dir="$(mktemp -d)"
 trap 'rm -rf "$bridge_dir"' EXIT
 git show '{contract_commit}:scripts/lib/release-artifacts.py' > "$bridge_dir/release-artifacts.py"
 [ "$(sha256sum "$bridge_dir/release-artifacts.py" | awk '{{print $1}}')" = '{contract_sha256}' ]
-python3 "$bridge_dir/release-artifacts.py" fetch --repo {shlex.quote(repo)} --ref "sha-$CDS_COMMIT_SHA" --commit "$CDS_COMMIT_SHA" \\
-  --base-url "https://get.miduo.org/https://github.com/{repo}/releases/download/web-sha-$CDS_COMMIT_SHA" \\
-  --directory "$bridge_dir/bundle" --env-file "$bridge_dir/inputs.env" > "$bridge_dir/evidence.json"
+PRD_AGENT_RELEASE_DOWNLOAD_TRANSPORT=github-api python3 "$bridge_dir/release-artifacts.py" fetch --repo {shlex.quote(repo)} --ref "sha-$CDS_COMMIT_SHA" --commit "$CDS_COMMIT_SHA" \\
+  --directory "$bridge_dir/bundle" --env-file "$bridge_dir/inputs.env" --local-inputs > "$bridge_dir/evidence.json"
 printf 'Retained artifact bridge: contract={contract_commit} body={contract_sha256}\\n'
 cat "$bridge_dir/evidence.json"
 . "$bridge_dir/inputs.env"
@@ -383,12 +423,15 @@ def main():
     parser.add_argument("--base-url")
     parser.add_argument("--github-output")
     parser.add_argument("--env-file", help="For the audited legacy consumer bridge; written only after full validation")
+    parser.add_argument("--local-inputs", action="store_true", help="Legacy consumer reads this invocation's validated staging files")
     parser.add_argument("--resume-draft-id", type=int, help="Explicit recovery only, with the original workflow bundle hash")
     parser.add_argument("--original-sha256")
     args = parser.parse_args()
     try:
         if args.env_file and args.command != "fetch":
             raise ArtifactError("Only a validated fetch can export legacy consumer inputs")
+        if args.local_inputs and (args.command != "fetch" or not args.env_file):
+            raise ArtifactError("Local staging inputs require fetch with an export file")
         if args.resume_draft_id and args.command != "publish":
             raise ArtifactError("Draft recovery is only supported by publish")
         if args.original_sha256 and args.command not in ("publish", "import-pages"):
@@ -415,6 +458,9 @@ def main():
         if args.env_file:
             values = dict(DIST_URL=result["urls"][0], DIST_SHA256_URL=result["urls"][1],
                           DIST_MANIFEST_URL=result["urls"][2], DIST_SHA256=result["zipSha256"])
+            if args.local_inputs:
+                files = [(Path(args.directory) / name).resolve().as_uri() for name in names(args.ref)]
+                values.update(DIST_URL=files[0], DIST_SHA256_URL=files[1], DIST_MANIFEST_URL=files[2])
             Path(args.env_file).write_text("\n".join("export " + key + "=" + shlex.quote(value) for key, value in values.items()) + "\n")
         print(json.dumps(result))
     except ArtifactError as error:
