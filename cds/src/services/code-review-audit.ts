@@ -113,6 +113,31 @@ function networkFailureEvidence(error: unknown): string {
   return JSON.stringify({ reason: '未收到响应', causes }); // Never preserve raw messages, stack, hosts or credentials.
 }
 
+function protocolFailureEvidence(response: Response, content: Buffer | undefined, init: RequestInit) {
+  const contentType = response.headers.get('content-type') ?? 'missing';
+  const bodyOmittedReason = !content ? 'body_not_fully_received_within_limit' : response.ok ? 'successful_body_may_contain_private_content'
+    : !/^text\/(?:plain|html)(?:\s*;|$)/i.test(contentType) ? 'non_text_body_may_contain_private_content' : undefined;
+  let text: string | undefined;
+  if (!bodyOmittedReason) {
+    text = content!.toString('utf8');
+    const authorization = new Headers(init.headers).get('authorization');
+    const credentials = [authorization, authorization?.replace(/^Bearer\s+/i, ''),
+      ...(init.body instanceof URLSearchParams ? [...init.body.values()] : [])]
+      .filter((value): value is string => Boolean(value)).sort((a, b) => b.length - a.length);
+    for (const credential of credentials) text = text.split(credential).join('[credential]');
+    text = redactReviewEvidence(redactBodyText(text));
+  }
+  const snapshot = { reason: '响应不是允许大小内的 JSON', contentType: redactReviewEvidence(contentType).slice(0, 120),
+    bytes: content?.length, sha256: content ? createHash('sha256').update(content).digest('hex') : undefined,
+    responseText: text?.slice(0, 1000), bodyOmittedReason };
+  let evidence = JSON.stringify(snapshot);
+  while (evidence.length > 4096 && snapshot.responseText) {
+    snapshot.responseText = snapshot.responseText.slice(0, Math.floor(snapshot.responseText.length / 2));
+    evidence = JSON.stringify(snapshot);
+  }
+  return { evidence, truncated: Boolean(bodyOmittedReason) || text!.length > snapshot.responseText!.length };
+}
+
 export async function reviewJsonRequest(
   operation: string, url: string, init: RequestInit,
   audit: CodeReviewAudit, fetchImpl: typeof fetch = fetch,
@@ -135,10 +160,8 @@ export async function reviewJsonRequest(
     parsed = JSON.parse(content.toString('utf8'));
   } catch {
     await audit({ ...base, durationMs: Date.now() - started, outcome: 'parse_error', status: response.status,
-      evidence: JSON.stringify({ reason: '响应不是允许大小内的 JSON',
-        contentType: redactReviewEvidence(response.headers.get('content-type') ?? 'missing').slice(0, 120),
-        bytes: content?.length, sha256: content ? createHash('sha256').update(content).digest('hex') : undefined }),
-      truncated: true });
+      upstreamRequestId: response.headers.get('x-github-request-id') ?? response.headers.get('x-request-id') ?? undefined,
+      responseBytes: content?.length, ...protocolFailureEvidence(response, content, init) });
     throw new Error(`${operation} 返回无法解析的响应（HTTP ${response.status}）`);
   }
   await audit({ ...base, durationMs: Date.now() - started,

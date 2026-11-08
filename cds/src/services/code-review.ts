@@ -408,12 +408,13 @@ export class CodeReviewService {
           token: await this.deps.githubToken?.(task.projectId, task.githubUrl!), signal: controller.signal,
           audit: async (e) => this.audit(id, e) });
         const validated = await validateCodeReviewZip(snapshot.zip, task.excludePatterns, task.sourceType !== 'cds');
+        const sourceHash = createHash('sha256').update(snapshot.zip).digest('hex');
+        if (task.sourceType === 'cds') await this.audit(id, { operation: 'cds.branch_snapshot', outcome: 'success',
+          branchId: task.branchId, branchName: task.branchName, commitSha: snapshot.commitSha, sourceHash });
         task = this.get(id); this.checkActive(task, controller.signal);
-        task.commitSha = snapshot.commitSha; task.sourceHash = createHash('sha256').update(snapshot.zip).digest('hex');
+        task.commitSha = snapshot.commitSha; task.sourceHash = sourceHash;
         task.sourceName = snapshot.sourceName; task.progress.totalFiles = validated.totalFiles;
         task.inputSkippedFiles = validated.skippedFiles + ('skippedFiles' in snapshot && typeof snapshot.skippedFiles === 'number' ? snapshot.skippedFiles : 0);
-        if (task.sourceType === 'cds') await this.audit(id, { operation: 'cds.branch_snapshot', outcome: 'success',
-          branchId: task.branchId, branchName: task.branchName, commitSha: snapshot.commitSha, sourceHash: task.sourceHash });
         task.inputKey = await this.deps.inputs.put(id, task.projectId, validated.zip);
         await this.save(task);
       }

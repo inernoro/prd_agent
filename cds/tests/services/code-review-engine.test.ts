@@ -387,6 +387,39 @@ describe('DeepAudit five-dimension adapter', () => {
     expect(events[0].evidence.length).toBeLessThanOrEqual(4096);
     expect(events[0].evidence).not.toMatch(/supplied-synthetic-long-credential|private-access-key|owner@example|private-source-body|private-nested-source/);
   });
+
+  it.each([
+    { operation: 'github.resolve_repository', status: 403, contentType: 'text/plain', login: false },
+    { operation: 'deepaudit.task_status', status: 502, contentType: 'text/html; charset=utf-8', login: false },
+    { operation: 'deepaudit.login', status: 403, contentType: 'text/plain', login: true },
+  ])('$operation 的非JSON失败保留有界脱敏原因与请求编号', async ({ operation, status, contentType, login }) => {
+    const events: CodeReviewAuditEvent[] = [], credential = 'opaque-synthetic-protocol-credential';
+    const body = `Access denied by upstream integration; ${credential}; synthetic-login-password; service@example.invalid; access_key=private-access-key; ` + 'x'.repeat(5000);
+    const init: RequestInit = { headers: { Authorization: `Bearer ${credential}` },
+      ...(login ? { method: 'POST', body: new URLSearchParams({ username: 'service@example.invalid', password: 'synthetic-login-password' }) } : {}) };
+    await expect(reviewJsonRequest(operation, 'https://synthetic.invalid/api', init, async event => { events.push(event); },
+      (async () => new Response(body, { status, headers: { 'content-type': contentType, 'x-request-id': 'synthetic-protocol-request' } })) as typeof fetch)).rejects.toThrow(/解析/);
+    expect(events[0]).toMatchObject({ outcome: 'parse_error', status, upstreamRequestId: 'synthetic-protocol-request',
+      responseBytes: Buffer.byteLength(body), truncated: true });
+    const evidence = JSON.parse(events[0].evidence);
+    expect(evidence.responseText).toContain('Access denied by upstream integration');
+    expect(evidence.responseText.length).toBeLessThanOrEqual(1000);
+    expect(events[0].evidence.length).toBeLessThanOrEqual(4096);
+    expect(events[0].evidence).not.toMatch(/opaque-synthetic-protocol-credential|private-access-key|service@example/);
+    if (login) expect(events[0].evidence).not.toContain('synthetic-login-password');
+  });
+
+  it.each([{ status: 200, contentType: 'text/html' }, { status: 403, contentType: 'application/json' }])(
+    'HTTP$status 非文本失败摘要范围外的解析异常明确记录省略原因，保留正文隐私', async ({ status, contentType }) => {
+      const events: CodeReviewAuditEvent[] = [];
+      await expect(reviewJsonRequest('deepaudit.task_status', 'https://synthetic.invalid/api', {}, async event => { events.push(event); },
+        (async () => new Response('private-source-body malformed response', { status, headers: { 'content-type': contentType } })) as typeof fetch)).rejects.toThrow(/解析/);
+      const evidence = JSON.parse(events[0].evidence);
+      expect(evidence.bodyOmittedReason).toBeTruthy();
+      expect(evidence.responseText).toBeUndefined();
+      expect(events[0].evidence).not.toContain('private-source-body');
+      expect(events[0].truncated).toBe(true);
+    });
   it.each([{ operation: 'deepaudit.task_status', status: 403 }, { operation: 'github.resolve_repository', status: 200 }])(
     '$operation HTTP$status 不放宽成功响应或引擎源码消息的省略策略', async ({ operation, status }) => {
       const events: CodeReviewAuditEvent[] = [];

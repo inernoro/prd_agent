@@ -565,18 +565,35 @@ describe('代码审查任务完整闭环', () => {
     state.addBranch({ id: 'selected', projectId: 'a', branch: 'feature/audit', worktreePath: '/unused', services: {}, status: 'idle', createdAt: new Date().toISOString() });
     const cdsSnapshot = vi.fn(async () => ({ zip: zip(), commitSha: 'c'.repeat(40), sourceName: 'a · feature/audit', skippedFiles: 8 }));
     service = new CodeReviewService({ ...service.deps, cdsSnapshot });
-    run.mockImplementationOnce(async () => { throw new Error('模型暂时不可用'); });
+    run.mockImplementationOnce(async input => {
+      await input.audit({ operation: 'fixture.first_engine_event', url: 'https://synthetic.invalid/task', method: 'GET',
+        startedAt: new Date().toISOString(), durationMs: 0, outcome: 'http_error', status: 503,
+        evidence: 'fixture unavailable', truncated: false });
+      throw new Error('模型暂时不可用');
+    });
     const task = await service.submit({ projectId: 'a', sourceType: 'cds', branchId: 'selected', createdBy: 'test', excludePatterns: ['vendor/'] });
     expect(task).toMatchObject({ status: 'queued', branchId: 'selected', branchName: 'feature/audit' });
     await service.pump();
     expect(service.get(task.id)).toMatchObject({ status: 'failed', commitSha: 'c'.repeat(40), inputSkippedFiles: 8 });
     expect(cdsSnapshot).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'a', branchId: 'selected', branchName: 'feature/audit', excludePatterns: ['vendor/'] }));
+    const failedAudit = await service.auditPage(task.id);
+    expect(failedAudit.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'cds.branch_snapshot', branchId: 'selected', branchName: 'feature/audit',
+        commitSha: 'c'.repeat(40), sourceHash: service.get(task.id).sourceHash }),
+      expect.objectContaining({ operation: 'fixture.first_engine_event' }),
+    ]));
     const sent = await readCodeReviewSnapshot(run.mock.calls[0][0].zip);
     expect(sent.files.map(file => file.name)).toEqual(['src/index.ts']);
     await service.retry(task.id); await service.pump();
     expect(service.get(task.id)).toMatchObject({ status: 'completed', commitSha: 'c'.repeat(40), branchName: 'feature/audit' });
     expect(cdsSnapshot).toHaveBeenCalledTimes(1); expect(state.listAcceptanceReports('a')).toHaveLength(1);
     expect(state.getAcceptanceReport(service.get(task.id).reportId!)?.branch).toBe('feature/audit');
+    await state.flush();
+    const restored = new StateService(path.join(dir, 'state.json')); restored.load();
+    const reloaded = new CodeReviewService({ ...service.deps, state: restored });
+    const restoredAudit = await reloaded.auditPage(task.id);
+    expect(restoredAudit.events.filter(event => (event as { operation?: string }).operation === 'cds.branch_snapshot')).toHaveLength(1);
+    expect(restoredAudit.events).toEqual(expect.arrayContaining([expect.objectContaining({ operation: 'fixture.first_engine_event' })]));
   });
   it('分支列表和提交共享项目权限，跨项目分支与混合来源在读取仓库前被拒绝', async () => {
     for (const projectId of ['a', 'b']) state.addBranch({ id: `branch-${projectId}`, projectId, branch: `feature/${projectId}`, worktreePath: '/unused', services: {}, status: 'idle', createdAt: new Date().toISOString() });
