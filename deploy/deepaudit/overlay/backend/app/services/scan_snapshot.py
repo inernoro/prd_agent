@@ -112,7 +112,12 @@ class RepositoryResponses:
             record['failure_stage'], record['error_type'] = 'request', type(error).__name__
             record['finished_at'] = datetime.now(timezone.utc).isoformat()
             record['duration_ms'] = (datetime.now(timezone.utc) - started).total_seconds() * 1000
-            self._persist(record)
+            try:
+                self._persist(record)
+            except RepositoryEvidenceError:
+                # Missing evidence is already logged; never replace a process interrupt.
+                if isinstance(error, Exception):
+                    raise
             raise
         record.update(response_received=True, status=response.status_code,
                       content_type=_repository_safe_text(response.headers.get('content-type', ''), secrets),

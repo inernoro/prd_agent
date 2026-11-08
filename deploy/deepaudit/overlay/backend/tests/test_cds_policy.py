@@ -445,6 +445,27 @@ class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
         encoded = json.dumps(self.records())
         self.assertNotIn('embedded-private', encoded); self.assertNotIn('configured-private', encoded)
 
+    async def test_evidence_write_failure_never_replaces_original_cancellation_or_exit(self):
+        cases = [(asyncio.CancelledError(), None), (KeyboardInterrupt(), None), (SystemExit(2), None),
+                 (TimeoutError(), self.snapshot.RepositoryEvidenceError)]
+        for interrupted, expected_failure in cases:
+            self.task.id = str(uuid.uuid4()); self.requests.clear()
+            self.responses = [interrupted]
+            observed = None
+            with patch.object(self.snapshot.os, 'replace', side_effect=OSError('synthetic storage failure')):
+                with self.assertLogs('app.services.scan_snapshot', level='ERROR') as logged:
+                    try:
+                        await self.acquire()
+                    except BaseException as error:
+                        observed = error
+            if expected_failure is None:
+                self.assertIs(observed, interrupted)
+            else:
+                self.assertIsInstance(observed, expected_failure)
+            self.assertIn('evidence write failed', '\n'.join(logged.output))
+            self.assertEqual(len(self.requests), 1)
+            self.assertFalse(self.snapshot.archive_path(self.task.id).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
