@@ -3,8 +3,12 @@ using PrdAgent.Core.Attributes;
 namespace PrdAgent.Core.Models;
 
 [AppOwnership(AppNames.TranscriptAgent, AppNames.TranscriptAgentDisplay)]
-public class TranscriptRun
+public class TranscriptRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string ItemId { get; set; } = null!;

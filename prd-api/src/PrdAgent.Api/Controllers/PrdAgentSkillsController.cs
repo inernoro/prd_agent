@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
@@ -312,6 +313,7 @@ public class PrdAgentSkillsController : ControllerBase
 
         var meta = new RunMeta
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             RunId = runId,
             Kind = RunKinds.Chat,
             Status = RunStatuses.Queued,

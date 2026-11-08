@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Services.AgentTools;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
@@ -34,6 +35,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private readonly IDynamicSidecarRegistry _registry;
     private readonly IConfiguration _configuration;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ITaskScopedRuntimeGrantIssuer? _runtimeGrantIssuer;
 
     public ClaudeSidecarRouter(
         IHttpClientFactory httpFactory,
@@ -42,7 +44,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         IDynamicSidecarRegistry registry,
         IConfiguration configuration,
         IHttpContextAccessor httpContextAccessor,
-        ILogger<ClaudeSidecarRouter> logger)
+        ILogger<ClaudeSidecarRouter> logger,
+        ITaskScopedRuntimeGrantIssuer? runtimeGrantIssuer = null)
     {
         _httpFactory = httpFactory;
         _options = options;
@@ -51,6 +54,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         _configuration = configuration;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
+        _runtimeGrantIssuer = runtimeGrantIssuer;
     }
 
     public bool IsConfigured =>
@@ -68,6 +72,22 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         SidecarRunRequest request,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        // 所有现有与未来的侧车业务都先进入平台许可。issuer 只在已验证任务下冻结模型并换短 key。
+        TaskExecutionAdmissionException? rejection = null;
+        try
+        {
+            if (_runtimeGrantIssuer is null)
+                throw new TaskExecutionAdmissionException("TASK_EXECUTION_NOT_ADMITTED",
+                    "执行器尚未接入平台任务保护，本次执行已停止；请稍后重试或联系管理员。", 403);
+            request = await _runtimeGrantIssuer.PrepareAsync(request, ct);
+        }
+        catch (TaskExecutionAdmissionException ex) { rejection = ex; }
+        if (rejection is not null)
+        {
+            yield return new SidecarEvent
+            { Type = SidecarEventType.Error, ErrorCode = rejection.Code, Message = rejection.Message };
+            yield break;
+        }
         if (!IsConfigured)
         {
             yield return new SidecarEvent

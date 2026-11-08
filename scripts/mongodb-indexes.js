@@ -2066,6 +2066,26 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
     { name: "idx_llmgw_runtime_grant_tenant_run" }
   )
   // end collection: llmgw_runtime_grants
+
+  // collection: llmgw_consumption_rate_windows
+  // 共享计数依赖内建唯一_id；以下仅用于人工维护过期清理和有界历史查询，不由请求触发DDL。
+  ensureCatalogIndex("llmgw_consumption_rate_windows",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_consumption_windows", expireAfterSeconds: 0 }
+  )
+  ensureCatalogIndex("llmgw_consumption_rate_windows",
+    { "TenantId": 1, "AppCallerCode": 1, "RequestType": 1, "Scope": 1, "Origin": 1,
+      "WindowSeconds": 1, "WindowStart": -1 },
+    { name: "idx_llmgw_consumption_baseline_scope_window" }
+  )
+  // end collection: llmgw_consumption_rate_windows
+
+  // collection: llmgw_consumption_alerts
+  ensureCatalogIndex("llmgw_consumption_alerts",
+    { "TenantId": 1, "Status": 1, "CreatedAt": -1 },
+    { name: "idx_llmgw_consumption_alerts_tenant_status_created" }
+  )
+  // end collection: llmgw_consumption_alerts
 }
 
 

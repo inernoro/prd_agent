@@ -1,13 +1,155 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
 
-import { setBuildGateHostLoadProvider, type BuildLoadPressure } from '../../src/services/build-gate.js';
+import { acquireBuildSlot, buildGateStatus, __resetBuildGateForTest, setMaxConcurrentBuildsProvider,
+  setBuildGateHostLoadProvider, type BuildLoadPressure } from '../../src/services/build-gate.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry } from '../../src/types.js';
 
 describe('部署阶段容量准入', () => {
-  beforeEach(() => setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 })));
-  afterEach(() => setBuildGateHostLoadProvider(null));
+  beforeEach(() => { __resetBuildGateForTest(); setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 })); });
+  afterEach(() => { __resetBuildGateForTest(); setBuildGateHostLoadProvider(null); });
+
+  it('编译槽不足时首次启动不占半份资源，既有启动可以先推进', async () => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot({ holder: { projectId: 'existing' } });
+    const budget = new DeploymentPhaseBudget(() => 10000), ac = new AbortController();
+    const owner = { projectId: 'cold', operationId: 'op', operationGeneration: 1 };
+    const pending = budget.acquireSourceStart(owner, 'candidate', { holder: owner }, { signal: ac.signal });
+    try {
+      expect(budget.snapshot().start.active).toHaveLength(0); expect(budget.memorySnapshot()).toEqual([]);
+      expect(budget.snapshot().start.queued[0].reason).toBe('build-capacity');
+      const existing = await budget.acquire('start', { projectId: 'existing' }, { reservationKey: 'existing' });
+      existing(); budget.releaseMemory('existing');
+      expect(buildGateStatus()).toMatchObject({ active: 1, queued: 1 });
+      expect(buildGateStatus().waiters[0].projectId).toBe('cold');
+      occupied.release(); budget.pump(); const admission = await pending;
+      expect(budget.snapshot().start.active).toHaveLength(1); expect(buildGateStatus().active).toBe(1);
+      admission.take('candidate', owner, 512, () => {})();
+      expect(budget.memorySnapshot()).toHaveLength(1);
+    } finally { ac.abort(); occupied.release(); (await pending.catch(() => undefined))?.dispose(); budget.releaseMemory('candidate'); }
+    expect(buildGateStatus().active).toBe(0); expect(budget.snapshot().start.active).toHaveLength(0);
+  });
+
+  it.each(['abort', 'supersede'] as const)('联合等待%s后不残留编译、启动或物理预约', async mode => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot(), budget = new DeploymentPhaseBudget(() => 10000), ac = new AbortController();
+    let current = true;
+    const pending = budget.acquireSourceStart({ projectId: 'cold' }, 'candidate', {},
+      { signal: ac.signal, check: () => { if (!current) throw new Error('superseded'); } });
+    const rejected = expect(pending).rejects.toThrow(mode === 'abort' ? '取消' : 'superseded');
+    if (mode === 'abort') ac.abort(); else { current = false; budget.pump(); }
+    await rejected; occupied.release();
+    expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
+    expect(budget.snapshot().start).toMatchObject({ active: [], queued: [] }); expect(budget.memorySnapshot()).toEqual([]);
+  });
+
+  it.each([
+    ['同项目首次启动缺编译槽时，已持编译槽的既有更新仍可启动并归还资源', 512, 10000],
+    ['同项目首次启动内存不足时，已有编译槽且较小的更新仍能推进', 2048, 2200],
+  ] as const)('%s', async (_scenario, memoryMB, availableMemory) => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot({ holder: { projectId: 'same' } });
+    const budget = new DeploymentPhaseBudget(() => availableMemory), ac = new AbortController();
+    const cold = budget.acquireSourceStart({ projectId: 'same', branchId: 'cold' }, 'cold', {}, { signal: ac.signal, memoryMB }).catch(() => undefined);
+    let releaseExisting: (() => void) | undefined;
+    const existing = budget.acquire('start', { projectId: 'same', branchId: 'update' }, { signal: ac.signal, reservationKey: 'update' })
+      .then(release => { releaseExisting = release; }).catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(releaseExisting).toBeTypeOf('function'));
+      expect(buildGateStatus().active).toBe(1);
+      expect(budget.snapshot().start.queued.map(item => item.branchId)).toEqual(['cold']);
+      expect(budget.memorySnapshot().map(item => item.key)).toEqual(['update']);
+    } finally {
+      ac.abort(); releaseExisting?.(); budget.releaseMemory('update'); occupied.release();
+      (await cold)?.dispose(); await existing;
+    }
+    expect(budget.snapshot().start).toMatchObject({ active: [], queued: [] });
+    expect(buildGateStatus().active).toBe(0);
+  });
+
+  it('联合准入只交付同一身份和资源，消费后保留物理责任且不释放后继预约', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000), owner = { projectId: 'p', operationGeneration: 1 };
+    const admission = await budget.acquireSourceStart(owner, 'candidate', {}, { memoryMB: 600 });
+    try {
+      expect(() => admission.take('other', owner, 600, () => {})).toThrow('身份');
+      expect(() => admission.take('candidate', { ...owner, operationGeneration: 2 }, 600, () => {})).toThrow('身份');
+      expect(() => admission.take('candidate', owner, 512, () => {})).toThrow('资源');
+      expect(admission.consumed).toBe(false);
+      admission.take('candidate', owner, 600, () => {})();
+      expect(admission.consumed).toBe(true); expect(() => admission.take('candidate', owner, 600, () => {})).toThrow('身份');
+      budget.reserveKnownMemory('candidate', 700, { ...owner, operationGeneration: 2 });
+      admission.dispose(); admission.dispose();
+      expect(budget.memorySnapshot()).toEqual([{ key: 'candidate', memoryMB: 700, pids: 64, owner: { ...owner, operationGeneration: 2 } }]);
+    } finally { admission.dispose(); budget.releaseMemory('candidate'); }
+  });
+
+  it('已有更新持续排队时，另一项目更早且合格的首次源码仍按项目轮转获准', async () => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot({ holder: { projectId: 'busy' } });
+    const budget = new DeploymentPhaseBudget(() => 10000), ac = new AbortController(), order: string[] = [];
+    const cold = budget.acquireSourceStart({ projectId: 'cold' }, 'cold', { holder: { projectId: 'cold' } }, { signal: ac.signal })
+      .then(admission => { order.push('cold'); admission.dispose(); });
+    const updates = Array.from({ length: 5 }, (_, index) => acquireBuildSlot({ holder: { projectId: 'busy' }, signal: ac.signal })
+      .then(slot => { order.push(`update-${index}`); slot.release(); }));
+    const settled = Promise.all([cold, ...updates]); settled.catch(() => {});
+    try {
+      occupied.release(); await settled;
+      expect(order.indexOf('cold')).toBeLessThan(3);
+      expect(order).toHaveLength(6);
+    } finally { ac.abort(); occupied.release(); await settled.catch(() => {}); }
+    expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
+    expect(budget.memorySnapshot()).toEqual([]);
+  });
+
+  it('首次源码物理资源不合格时不挡已有编译等待者，也不持有半份容量', async () => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot({ holder: { projectId: 'busy' } });
+    const budget = new DeploymentPhaseBudget(() => 2200), ac = new AbortController(); let ran = false;
+    const cold = budget.acquireSourceStart({ projectId: 'cold' }, 'cold', { holder: { projectId: 'cold' } }, { signal: ac.signal, memoryMB: 2048 })
+      .then(admission => { ran = true; admission.dispose(); }).catch(() => {});
+    const updates = Array.from({ length: 5 }, () => acquireBuildSlot({ holder: { projectId: 'busy' }, signal: ac.signal }).then(slot => slot.release()));
+    try {
+      occupied.release(); await Promise.all(updates);
+      expect(ran).toBe(false); expect(budget.snapshot().start.active).toEqual([]);
+      expect(budget.memorySnapshot()).toEqual([]);
+    } finally { ac.abort(); occupied.release(); await cold; await Promise.allSettled(updates); }
+    expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
+  });
+
+  it.each(['abort', 'save-error'] as const)('联合排队通知%s仍结清原排队及两份未授予资源', async mode => {
+    setMaxConcurrentBuildsProvider(() => 1);
+    const occupied = await acquireBuildSlot(), budget = new DeploymentPhaseBudget(() => 10000), ac = new AbortController();
+    const ended = vi.fn();
+    try {
+      await expect(budget.acquireSourceStart({ projectId: 'p' }, 'candidate', {
+        signal: ac.signal, onQueued: () => { if (mode === 'abort') ac.abort(); else throw new Error('queue save refused'); }, onStart: ended,
+      }, { signal: ac.signal })).rejects.toThrow(mode === 'abort' ? '取消' : 'queue save refused');
+      expect(ended).not.toHaveBeenCalled();
+      expect(budget.snapshot().start).toMatchObject({ active: [], queued: [] });
+      expect(budget.memorySnapshot()).toEqual([]);
+      expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });
+    } finally { ac.abort(); occupied.release(); }
+  });
+
+  it('尚未创建的准入收尾只释放捕获预约，同名后继和原有未知责任均保持', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000), owner = { projectId: 'p', operationGeneration: 1 };
+    const admission = await budget.acquireSourceStart(owner, 'candidate', {});
+    budget.reserveKnownMemory('candidate', 700, { ...owner, operationGeneration: 2 }); admission.dispose();
+    expect(buildGateStatus().active).toBe(0); expect(budget.memorySnapshot()[0].owner.operationGeneration).toBe(2);
+    await expect(budget.acquireSourceStart(owner, 'candidate', {})).rejects.toThrow('已有物理预约');
+    expect(buildGateStatus().active).toBe(0); expect(budget.memorySnapshot()[0].memoryMB).toBe(700);
+    budget.releaseMemory('candidate');
+  });
+
+  it('共同授予后但消费前取消，仍不得启动并归还两份未创建资源', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000), ac = new AbortController(), owner = { projectId: 'p' };
+    const admission = await budget.acquireSourceStart(owner, 'candidate', {}, { signal: ac.signal }); ac.abort();
+    expect(() => admission.take('candidate', owner, 512, () => {})).toThrow('取消');
+    expect(admission.consumed).toBe(false); admission.dispose();
+    expect(budget.snapshot().start.active).toHaveLength(0); expect(budget.memorySnapshot()).toEqual([]);
+    expect(buildGateStatus().active).toBe(0);
+  });
 
   it('宿主达到既有饱和线时只保留一份启动期预留，恢复容量后半秒内推进', async () => {
     let load1 = 18;

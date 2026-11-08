@@ -8,18 +8,55 @@ using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
-public class VideoSceneConcurrencyTests
+public partial class VideoSceneConcurrencyTests
 {
+    [Fact]
+    public async Task SubmittedDirectCancellation_MustPreserveReconciliationAfterGenerationLeaseRevocation()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-submitted-reconcile", test.OwnerId, SceneItemStatus.Draft);
+        run.Mode = VideoGenMode.Direct;
+        run.Status = VideoGenRunStatus.Rendering;
+        run.DirectVideoJobId = "synthetic-submitted-job";
+        run.DirectVideoModel = "synthetic-original-model";
+        run.DirectVideoOfferingId = "synthetic-original-offering";
+        var (coordinator, lease) = await test.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        (await test.CreateService().CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        (await coordinator.ValidateAsync(lease.Proof, false, default)).ShouldBeFalse();
+        var cancelled = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        cancelled.DirectVideoReconciledAt.ShouldBeNull();
+        test.VideoClient.Setup(x => x.GetStatusForOfferingAsync(It.IsAny<string>(), run.DirectVideoJobId,
+            run.DirectVideoModel, run.DirectVideoOfferingId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoStatus { Status = "completed", Cost = 0.43 });
+        using var worker = test.CreateWorker(coordinator);
+        var process = (Task)typeof(VideoGenRunWorker).GetMethod("ProcessDirectVideoGenAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(worker, [cancelled])!;
+        await process;
+        test.VideoClient.Verify(x => x.GetStatusForOfferingAsync(It.IsAny<string>(), run.DirectVideoJobId,
+            run.DirectVideoModel, run.DirectVideoOfferingId, It.IsAny<CancellationToken>()), Times.Once);
+        test.VideoClient.Verify(x => x.SubmitAsync(It.IsAny<OpenRouterVideoSubmitRequest>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        var stored = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        stored.DirectVideoJobId.ShouldBe(run.DirectVideoJobId);
+        stored.DirectVideoUpstreamStatus.ShouldBe("completed");
+        stored.DirectVideoCost.ShouldBe(0.43);
+        stored.DirectVideoReconciledAt.ShouldNotBeNull();
+    }
+
     [Theory]
     [InlineData("completed", 0.43, null)]
     [InlineData("completed", null, "recorded-offering")]
@@ -364,6 +401,75 @@ public class VideoSceneConcurrencyTests
             Client.Verify(x => x.DownloadVideoBytesForOfferingAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
         }
         public void Dispose() { _worker.Dispose(); _services.Dispose(); }
+    }
+
+    [Theory]
+    [InlineData(VideoGenRunStatus.Rendering)]
+    [InlineData(VideoGenRunStatus.Scripting)]
+    public async Task CancelActiveRunRevokesLeaseAndLeavesTerminalDeletableTask(string status)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync("video-agent", test.OwnerId,
+            new CreateVideoProjectRequest { Title = "synthetic-cancellation" });
+        var run = NewRun("cancel-active", test.OwnerId, SceneItemStatus.Draft);
+        run.Status = status; run.ProjectId = project.Id;
+        var (coordinator, lease) = await test.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        await test.Context.VideoProjects.UpdateOneAsync(x => x.Id == project.Id,
+            Builders<VideoProject>.Update.Set(x => x.LatestRunId, run.Id).Set(x => x.Status, VideoProjectStatus.Rendering));
+
+        (await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+
+        var cancelled = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        cancelled.CancelRequested.ShouldBeTrue(); cancelled.EndedAt.ShouldNotBeNull();
+        (await coordinator.ValidateAsync(lease.Proof, false, default)).ShouldBeFalse();
+        (await test.Context.VideoProjects.Find(x => x.Id == project.Id).SingleAsync()).Status.ShouldBe(VideoProjectStatus.Draft);
+        using (TaskExecutionContext.Enter(lease.Identity))
+        {
+            foreach (var lateStatus in new[] { VideoGenRunStatus.Completed, VideoGenRunStatus.Failed })
+            {
+                var rejected = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => test.Context.VideoGenRuns.UpdateOneAsync(
+                    x => x.Id == run.Id, Builders<VideoGenRun>.Update.Set(x => x.Status, lateStatus)));
+                rejected.Code.ShouldBe("TASK_EXECUTION_LEASE_INVALID");
+            }
+        }
+        (await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        test.AssertCancellationEventOnce(run.Id);
+        var deleted = await service.DeleteRunAsync(run.Id, test.OwnerId, appKey: run.AppKey);
+        deleted.ShouldNotBeNull(); deleted.Deleted.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(VideoGenRunStatus.Completed)]
+    [InlineData(VideoGenRunStatus.Failed)]
+    [InlineData(VideoGenRunStatus.Cancelled)]
+    public async Task CancelRequestPreservesAnAlreadyTerminalOutcome(string status)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-terminal", test.OwnerId, SceneItemStatus.Draft);
+        var endedAt = DateTime.UtcNow.AddMinutes(-1);
+        run.Status = status; run.EndedAt = endedAt;
+        await test.SaveRunAsync(run);
+        (await test.CreateService().CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        var stored = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        stored.Status.ShouldBe(status);
+        Assert.NotNull(stored.EndedAt);
+        stored.EndedAt.Value.ShouldBe(endedAt, TimeSpan.FromMilliseconds(1));
+    }
+
+    [Fact]
+    public async Task UnownedCancellationCannotRevokeAnotherVideosLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-owner-boundary", test.OwnerId, SceneItemStatus.Draft);
+        run.Status = VideoGenRunStatus.Rendering;
+        var (coordinator, lease) = await test.SaveAuthorizedRunAsync(run);
+        await using var executionLease = lease;
+        (await test.CreateService().CancelRunAsync(run.Id, "other-owner", run.AppKey)).ShouldBeFalse();
+        (await test.CreateService().CancelRunAsync(run.Id, test.OwnerId, "other-app")).ShouldBeFalse();
+        (await coordinator.ValidateAsync(lease.Proof, false, default)).ShouldBeTrue();
     }
 
     [Fact]
@@ -717,11 +823,41 @@ public class VideoSceneConcurrencyTests
         }
 
         public MongoDbContext Context { get; }
+        public LlmGatewayDataContext Data => new(Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")!, _databaseName);
         public Mock<IOpenRouterVideoClient> VideoClient { get; }
         public Mock<IAssetStorage> AssetStorage => _assetStorage;
         public string OwnerId { get; }
 
         public Task SaveRunAsync(VideoGenRun run) => Context.VideoGenRuns.InsertOneAsync(run);
+
+        public async Task<(TaskExecutionCoordinator Coordinator, TaskExecutionLease Lease)> SaveAuthorizedRunAsync(VideoGenRun run)
+        {
+            var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                ?? throw new InvalidOperationException("租约取消回归必须提供独占Mongo");
+            var coordinator = new TaskExecutionCoordinator(new LlmGatewayDataContext(connection, _databaseName));
+            var key = Guid.NewGuid().ToString("N");
+            var permit = new GatewayTaskPermitRecord
+            {
+                Id = TaskExecutionCoordinator.BusinessId(GatewayTenantDefaults.InternalTenantId, OwnerId, "video-cancellation-fixture", key),
+                ExecutionContractVersion = TaskExecutionCoordinator.ContractVersion,
+                BusinessKeyHash = TaskExecutionCoordinator.Fingerprint(key), RequestFingerprint = TaskExecutionCoordinator.Fingerprint("synthetic-video"),
+                TenantId = GatewayTenantDefaults.InternalTenantId, ActorUserId = OwnerId, SubjectUserIds = [OwnerId],
+                TriggerCredentialId = "synthetic-session", Origin = TaskExecutionOrigins.Interactive,
+                SourceDeployment = "synthetic-deployment", SourceTask = "video-cancellation-fixture",
+                AllowedAppCallerCodes = [run.Mode == VideoGenMode.Direct
+                    ? AppCallerRegistry.VideoAgent.VideoGen.Generate : AppCallerRegistry.VideoAgent.Script.Chat], MaxRuns = 2, MaxCalls = 4,
+                CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1),
+            };
+            await coordinator.RegisterAsync(permit, false, default);
+            run.TaskPermitId = permit.Id; await SaveRunAsync(run);
+            var lease = await coordinator.AcquireAsync(permit.Id, run.Id, default)
+                ?? throw new InvalidOperationException("合成视频租约未领取成功");
+            return (coordinator, lease);
+        }
+
+        public void AssertCancellationEventOnce(string runId)
+            => _runStore.Verify(x => x.AppendEventAsync(RunKinds.VideoGen, runId, "run.cancelled", It.IsAny<object>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
 
         public static async Task<VideoSceneTestDatabase> CreateAsync()
         {
@@ -764,12 +900,12 @@ public class VideoSceneConcurrencyTests
             _assetStorage.Object,
             NullLogger<VideoGenService>.Instance);
 
-        public VideoGenRunWorker CreateWorker() => new(
+        public VideoGenRunWorker CreateWorker(ITaskExecutionCoordinator? coordinator = null) => new(
             Context,
             _services.GetRequiredService<IServiceScopeFactory>(),
             _runStore.Object,
             _assetStorage.Object,
-            NullLogger<VideoGenRunWorker>.Instance);
+            NullLogger<VideoGenRunWorker>.Instance, coordinator);
 
         public async ValueTask DisposeAsync()
         {

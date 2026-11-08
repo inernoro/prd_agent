@@ -73,7 +73,7 @@ grep -A9999 "^processed:" "$MANIFEST" | grep "^  - " | sed 's/  - //'
 # D1. 命名规范违规
 for f in doc/*.md; do
   key=$(basename "$f" .md)
-  echo "$key" | grep -qE "^(spec|design|plan|rule|guide|report|debt)\." || echo "NAMING_VIOLATION: $key"
+  echo "$key" | grep -qE "^(spec|design|plan|rule|guide|report|debt|adr|pdr)\." || echo "NAMING_VIOLATION: $key"
 done
 
 # D2. index.yml — 补缺方向

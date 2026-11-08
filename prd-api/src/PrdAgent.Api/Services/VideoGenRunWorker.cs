@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json.Nodes;
 using System.Diagnostics;
 using System.Net;
@@ -26,8 +27,9 @@ namespace PrdAgent.Api.Services;
 ///
 /// storyboard 模式先经 LLM 拆镜，再逐镜调用模型池，并由 ffmpeg 按项目时间线合成音视频和字幕。
 /// </summary>
-public class VideoGenRunWorker : BackgroundService
+public partial class VideoGenRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private static readonly TimeSpan SceneClaimTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan SceneRenderLease = TimeSpan.FromMinutes(2);
     private readonly MongoDbContext _db;
@@ -37,14 +39,17 @@ public class VideoGenRunWorker : BackgroundService
     private readonly ILogger<VideoGenRunWorker> _logger;
     internal TimeSpan DirectVideoPollInterval { get; set; } = TimeSpan.FromSeconds(6);
     internal TimeSpan DirectVideoPollingWindow { get; set; } = TimeSpan.FromMinutes(10);
+    private readonly Dictionary<string, DateTime> _unavailableReceipts = new(StringComparer.Ordinal);
 
     public VideoGenRunWorker(
         MongoDbContext db,
         IServiceScopeFactory scopeFactory,
         IRunEventStore runStore,
         IAssetStorage assetStorage,
-        ILogger<VideoGenRunWorker> logger)
+        ILogger<VideoGenRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
@@ -92,6 +97,9 @@ public class VideoGenRunWorker : BackgroundService
                     }
                     continue;
                 }
+
+                // 每轮最多读一份原作业收据，并继续让既有分镜/导出路径运行，不独占 worker。
+                await ResumeCancelledVideoReceiptAsync(stoppingToken);
 
                 // 路径 2: 原子领取 Editing 状态下待提交的单镜任务，再调 OpenRouter 生成
                 if (await RecoverStaleSceneClaimAsync(stoppingToken)) continue;
@@ -265,6 +273,15 @@ public class VideoGenRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
     {
+        if (_taskExecutions is not null && run.CancelRequested && !string.IsNullOrWhiteSpace(run.DirectVideoJobId))
+        {
+            await ReconcileCancelledVideoAsync(run);
+            return;
+        }
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         var hasSubmittedJob = !string.IsNullOrWhiteSpace(run.DirectVideoJobId);
         // 只有未提交的取消可以立即终结；已有作业必须继续核对上游终态和费用。
         if (run.CancelRequested && !hasSubmittedJob) { await CancelRunAsync(run); return; }
@@ -396,6 +413,13 @@ public class VideoGenRunWorker : BackgroundService
                 continue;
             }
 
+            if (_taskExecutions is not null
+                && await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None) is { } cancelled
+                && cancelled.Status == VideoGenRunStatus.Cancelled && cancelled.CancelRequested)
+            {
+                await ReconcileCancelledVideoAsync(cancelled);
+                return;
+            }
             fresh = await _db.VideoGenRuns.FindOneAndUpdateAsync(
                 DirectJobFilter(run, submitResult.JobId!),
                 Builders<VideoGenRun>.Update
@@ -624,6 +648,10 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task ProcessStoryboardScriptingAsync(VideoGenRun run)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         if (run.CancelRequested) { await CancelRunAsync(run); return; }
 
         if (string.IsNullOrWhiteSpace(run.ArticleMarkdown))
@@ -802,6 +830,7 @@ public class VideoGenRunWorker : BackgroundService
 
             result.Add(new VideoGenScene
             {
+                TaskPermitId = run.TaskPermitId,
                 Index = i,
                 Topic = topic.Trim(),
                 Prompt = prompt.Trim(),
@@ -993,6 +1022,10 @@ public class VideoGenRunWorker : BackgroundService
         bool resumeExistingJob)
     {
         var scene = run.Scenes[sceneIdx];
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}");
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}"));
 
         // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
         // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
@@ -1243,6 +1276,10 @@ public class VideoGenRunWorker : BackgroundService
         var sceneIdx = run.Scenes.FindIndex(s => s.Status == SceneItemStatus.Generating);
         if (sceneIdx < 0) return;
         var scene = run.Scenes[sceneIdx];
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}");
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}"));
 
         using var scope = _scopeFactory.CreateScope();
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();

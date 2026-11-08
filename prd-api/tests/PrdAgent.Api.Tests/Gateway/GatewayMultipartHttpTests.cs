@@ -39,6 +39,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task HttpClient_LogicalModelRawRequest_PreservesPublicIdAndCanonicalImageContract()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         GatewayRawRequest? captured = null;
         var handler = new CapturingHandler(async request =>
         {
@@ -57,7 +58,7 @@ public class GatewayMultipartHttpTests
         var client = new HttpLlmGatewayClient(
             new SingleClientFactory(new HttpClient(handler)),
             Config("http://llmgw.test"),
-            NullLogger<HttpLlmGatewayClient>.Instance);
+            NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
 
         var response = await client.SendRawWithResolutionAsync(
             new GatewayRawRequest
@@ -94,6 +95,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task HttpClient_StrictPoolRawRequest_PreservesPoolIdentityForSecondResolution()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         GatewayRawRequest? captured = null;
         var handler = new CapturingHandler(async request =>
         {
@@ -109,7 +111,7 @@ public class GatewayMultipartHttpTests
         var client = new HttpLlmGatewayClient(
             new SingleClientFactory(new HttpClient(handler)),
             Config("http://llmgw.test"),
-            NullLogger<HttpLlmGatewayClient>.Instance);
+            NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
 
         await client.SendRawWithResolutionAsync(
             new GatewayRawRequest
@@ -136,6 +138,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task HttpClient_AsyncFollowUp_PreservesRequiredOfferingId()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         GatewayRawRequest? captured = null;
         var handler = new CapturingHandler(async request =>
         {
@@ -152,7 +155,7 @@ public class GatewayMultipartHttpTests
         var client = new HttpLlmGatewayClient(
             new SingleClientFactory(new HttpClient(handler)),
             Config("http://llmgw.test"),
-            NullLogger<HttpLlmGatewayClient>.Instance);
+            NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
 
         await client.SendRawWithResolutionAsync(
             new GatewayRawRequest
@@ -179,6 +182,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task HttpClient_UploadsInlineMultipartFiles_AsRefs_WithoutSerializingBytes()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var storage = new MemoryAssetStorage();
         GatewayRawRequest? captured = null;
         var handler = new CapturingHandler(async request =>
@@ -201,7 +205,7 @@ public class GatewayMultipartHttpTests
             new SingleClientFactory(new HttpClient(handler)),
             Config("http://llmgw.test"),
             NullLogger<HttpLlmGatewayClient>.Instance,
-            assetStorage: storage);
+            assetStorage: storage, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
 
         var bytes = Encoding.UTF8.GetBytes("voice-bytes");
         var response = await client.SendRawWithResolutionAsync(
@@ -241,6 +245,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task HttpClient_WithGatewayData_WritesTenantManifestForServingRehydrate()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -266,7 +271,7 @@ public class GatewayMultipartHttpTests
             Config("http://llmgw.test"),
             NullLogger<HttpLlmGatewayClient>.Instance,
             assetStorage: storage,
-            gatewayData: scope.Context);
+            gatewayData: scope.Context, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
         var bytes = Encoding.UTF8.GetBytes("manifest-voice-bytes");
 
         var response = await client.SendRawWithResolutionAsync(
@@ -308,6 +313,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task RawEndpoint_RehydratesMultipartFileRefs_BeforeGatewaySend()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var bytes = Encoding.UTF8.GetBytes("image-bytes");
         var key = "llmgw/multipart/test/image.png";
         var storage = new MemoryAssetStorage();
@@ -318,7 +324,7 @@ public class GatewayMultipartHttpTests
         await app.StartAsync();
         try
         {
-            var client = app.GetTestClient();
+            var client = GatewayAuthorizedTaskFixture.Client(app);
             var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/raw")
             {
                 Content = new StringContent(JsonSerializer.Serialize(new GatewayRawRequest
@@ -376,6 +382,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task ScopedRawEndpoint_RejectsMultipartRefOwnedByAnotherTenantBeforeDownload()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -430,7 +437,7 @@ public class GatewayMultipartHttpTests
             }
 
             using var crossTenantRequest = CreateRequest();
-            var response = await app.GetTestClient().SendAsync(crossTenantRequest);
+            var response = await GatewayAuthorizedTaskFixture.Client(app).SendAsync(crossTenantRequest);
             var raw = JsonSerializer.Deserialize<GatewayRawResponse>(
                 await response.Content.ReadAsStringAsync(),
                 PascalJson);
@@ -452,7 +459,7 @@ public class GatewayMultipartHttpTests
                     Status = "uploaded",
                 });
             using var ownTenantRequest = CreateRequest();
-            var ownTenantResponse = await app.GetTestClient().SendAsync(ownTenantRequest);
+            var ownTenantResponse = await GatewayAuthorizedTaskFixture.Client(app).SendAsync(ownTenantRequest);
 
             ownTenantResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
             storage.DownloadCount.ShouldBe(1);
@@ -468,6 +475,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task ScopedRawEndpoint_DoesNotCleanupUnverifiedRefsWhenInlineFilesBypassRehydration()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -521,7 +529,7 @@ public class GatewayMultipartHttpTests
             };
             request.Headers.Add("X-Gateway-Key", "tenant-a-scoped-key");
 
-            var response = await app.GetTestClient().SendAsync(request);
+            var response = await GatewayAuthorizedTaskFixture.Client(app).SendAsync(request);
 
             response.StatusCode.ShouldBe(HttpStatusCode.OK);
             storage.DownloadCount.ShouldBe(0);
@@ -537,6 +545,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task ScopedRawEndpoint_IdempotencyIgnoresClientReportedTenantContext()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -602,9 +611,9 @@ public class GatewayMultipartHttpTests
             }
 
             using var firstRequest = CreateRequest("tenant-a");
-            var first = await app.GetTestClient().SendAsync(firstRequest);
+            var first = await GatewayAuthorizedTaskFixture.Client(app).SendAsync(firstRequest);
             using var retryRequest = CreateRequest("tenant-b-client-spoof");
-            var retry = await app.GetTestClient().SendAsync(retryRequest);
+            var retry = await GatewayAuthorizedTaskFixture.Client(app).SendAsync(retryRequest);
 
             first.StatusCode.ShouldBe(HttpStatusCode.OK);
             retry.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -620,6 +629,7 @@ public class GatewayMultipartHttpTests
     [Fact]
     public async Task RawEndpoint_RejectsMultipartRefHashMismatch()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         var bytes = Encoding.UTF8.GetBytes("real-bytes");
         var storage = new MemoryAssetStorage();
         await storage.UploadToKeyAsync("llmgw/multipart/test/audio.wav", bytes, "audio/wav", CancellationToken.None);
@@ -629,7 +639,7 @@ public class GatewayMultipartHttpTests
         await app.StartAsync();
         try
         {
-            var client = app.GetTestClient();
+            var client = GatewayAuthorizedTaskFixture.Client(app);
             var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/raw")
             {
                 Content = new StringContent(JsonSerializer.Serialize(new GatewayRawRequest
@@ -688,6 +698,7 @@ public class GatewayMultipartHttpTests
         }
         if (keyAuthorizer is not null) builder.Services.AddSingleton(keyAuthorizer);
 
+        GatewayAuthorizedTaskFixture.Register(builder.Services);
         var app = builder.Build();
         app.MapGatewayServingEndpoints(PascalJson, GatewayKey, "multipart-http-test");
         return app;

@@ -1,8 +1,8 @@
 # MAP 平台文档索引 · 指南
 
-> **版本**：v2.1 | **日期**：2026-07-18 | **状态**：已落地
+> **版本**：v2.3 | **日期**：2026-11-08 | **状态**：已落地
 
-**一句话**：全部长期文档的清单，按七类前缀排好，用来确认「有没有这么一篇」并拿到准确文件名。
+**一句话**：全部长期文档按职责分类，架构和产品决策单独收录，用来确认有没有目标文章并拿到准确入口。
 **谁该读**：已经知道自己要找哪一类文档、想扫一眼有哪些的人。
 **读完能做什么**：找到目标文档的准确文件名。不知道该找哪一类时，先看[百科全书导读](./guide.doc.reading-map.md)。
 
@@ -12,7 +12,7 @@
 
 ## 使用方式
 
-- 产品和研发按下列七类浏览长期文档。
+- 产品和研发按下列类型浏览长期文档；每类作用见 [README 的原则入口](../README.md#documentation)。
 - 外部同步工具读取 `doc/index.yml`。
 - 标有 `grandfather 保留` 的非周报报告只因存量契约引用暂留，解除引用后回收。
 
@@ -44,6 +44,7 @@
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
 - [给设计方的画板请求（录音交付页）](./spec.prd-admin.recording-design-demo-request.md) `spec.prd-admin.recording-design-demo-request`
 - [毒舌秘书（PA Agent）产品规格 · 规格](./spec.product-agent.pa.md) `spec.product-agent.pa`
+- [产品管理正式申领与历史追溯 · 规格](./spec.product-agent.version-claims.md) `spec.product-agent.version-claims`
 - [项目愿景与背景 · 规格](./spec.project-vision.md) `spec.project-vision`
 - [周报 Agent Phase 5 — 用户故事 · 规格](./spec.report-agent.phase5.md) `spec.report-agent.phase5`
 - [周报 Agent v2.0 产品需求 · 规格](./spec.report-agent.v2.md) `spec.report-agent.v2`
@@ -155,7 +156,7 @@
 - [公共藏书阁 · 精读稿 · 设计](./design.prd-agent.bookshelf-digest.md) `design.prd-agent.bookshelf-digest`
 - [公共藏书阁 · 结业考 · 判定口径](./design.prd-agent.bookshelf.exam.md) `design.prd-agent.bookshelf.exam`
 - [文档再加工智能体调用路由 · 设计](./design.prd-agent.reprocess-chat-routing.md) `design.prd-agent.reprocess-chat-routing`
-- [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
+- [产品管理智能体：产品结构与承重契约 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
 - [周报管理 Agent (Report Agent) · 设计](./design.report-agent.md) `design.report-agent`
 - [周报管理 Agent · 月报 · 设计](./design.report-agent.monthly.md) `design.report-agent.monthly`
@@ -227,6 +228,8 @@
 - [开放平台 Open API · 指南](./guide.open-platform.open-api.md) `guide.open-platform.open-api`
 - [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
+- [从真实变更到决策记忆：产品试点与跨项目实操 · 指南](./guide.platform.decision-practice.md) `guide.platform.decision-practice`
+- [决策治理：项目补足与跨项目推广 · 指南](./guide.platform.decision-records.md) `guide.platform.decision-records`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
@@ -262,7 +265,7 @@
 - [文档维护与收敛 · 规则](./rule.doc.maintenance.md) `rule.doc.maintenance`
 - [文档说人话标准（导读三行 + 只写人类要掌控的层次） · 规则](./rule.doc.readability.md) `rule.doc.readability`
 - [文档命名规则（doc/） · 规则](./rule.doc.naming.md) `rule.doc.naming`
-- [七类文档内容模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
+- [文档内容与决策记录模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
 - [默认可编辑原则 · 规则](./rule.frontend.default-editable.md) `rule.frontend.default-editable`
 - [前端组件复用 · 规则](./rule.frontend.frontend-component-reuse.md) `rule.frontend.frontend-component-reuse`
 - [前端浮层布局 · 规则](./rule.frontend.frontend-modal.md) `rule.frontend.frontend-modal`
@@ -286,6 +289,9 @@
 
 ### 五、计划
 
+- [平台后台任务与消费最低保护 · 阶段 0 计划](./plan.platform.background-task-safety.phase0.md) `plan.platform.background-task-safety.phase0`
+- [平台任务级准入与统一出口 · 阶段 1 计划](./plan.platform.background-task-safety.phase1.md) `plan.platform.background-task-safety.phase1`
+- [平台业务幂等、执行租约与取消撤销 · 阶段 2 计划](./plan.platform.background-task-safety.phase2.md) `plan.platform.background-task-safety.phase2`
 - [缺陷可靠性后续闭环 · 计划](./plan.defect-agent.reliability-closure.md) `plan.defect-agent.reliability-closure`
 - [缺陷提交与 AI 润色可靠性排查 · 计划](./plan.defect-agent.submit-reliability.md) `plan.defect-agent.submit-reliability`
 
@@ -339,6 +345,7 @@
 
 ### 六、技术债务台账
 
+- [平台后台任务与消费治理 · 债务台账](./debt.platform.background-task-safety.md) `debt.platform.background-task-safety`
 - [缺陷提交可靠性 · 债务台账](./debt.defect-agent.submit-reliability.md) `debt.defect-agent.submit-reliability`
 
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
@@ -440,3 +447,14 @@
 - [网关测试矩阵全量报告（grandfather 保留） · 报告](./report.gw-test-matrix.md) `report.gw-test-matrix`
 - [LLM Gateway 故障隔离与恢复 · 测试环境验收报告](./report.platform.llm-gateway.resilience-acceptance.md) `report.platform.llm-gateway.resilience-acceptance`
 - [「向我提问」形变坞 · 交接清单](./report.web-hosting.ask-dock-handoff.md) `report.web-hosting.ask-dock-handoff`
+
+### 八、架构决策
+
+- [ADR-DOC-001 文档原则与决策记录分层 · 架构决策](./adr.doc.001.document-roles.md) `adr.doc.001.document-roles`
+- [ADR-PLATFORM-001 大模型调用统一归口 · 架构决策](./adr.platform.001.llm-boundary.md) `adr.platform.001.llm-boundary`
+
+### 九、产品决策
+
+- [PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策](./pdr.platform.001.product-foundation.md) `pdr.platform.001.product-foundation`
+- [PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策](./pdr.product-agent.001.rule-evolution.md) `pdr.product-agent.001.rule-evolution`
+- [PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策](./pdr.product-agent.002.version-claim-boundary.md) `pdr.product-agent.002.version-claim-boundary`

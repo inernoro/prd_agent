@@ -1782,3 +1782,22 @@ export type ImageGenSyncHost = {
 };
 
 export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;
+
+export interface ConsumptionAlert {
+  metric?: string;
+  baselineAverage?: number | null;
+  baselineSamples?: number | null;
+  id: string;
+  appCallerCode: string;
+  requestType: string;
+  scope: string;
+  origin: string;
+  sourceDeployment?: string | null;
+  windowStart: string;
+  windowSeconds: number;
+  count: number;
+  limit: number;
+  kind: string;
+  createdAt: string;
+  updatedAt: string;
+}
