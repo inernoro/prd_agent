@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json.Nodes;
 using System.Diagnostics;
 using System.Net;
@@ -28,6 +29,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class VideoGenRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private static readonly TimeSpan SceneClaimTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan SceneRenderLease = TimeSpan.FromMinutes(2);
     private readonly MongoDbContext _db;
@@ -41,8 +43,10 @@ public class VideoGenRunWorker : BackgroundService
         IServiceScopeFactory scopeFactory,
         IRunEventStore runStore,
         IAssetStorage assetStorage,
-        ILogger<VideoGenRunWorker> logger)
+        ILogger<VideoGenRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
@@ -252,6 +256,10 @@ public class VideoGenRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         // 领取前已请求取消（claim 仅过滤 Status==Queued、不看 CancelRequested）：直接置终态，不进入提交流程（Codex review）
         if (run.CancelRequested) { await CancelRunAsync(run); return; }
 
@@ -564,6 +572,10 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task ProcessStoryboardScriptingAsync(VideoGenRun run)
     {
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         if (run.CancelRequested) { await CancelRunAsync(run); return; }
 
         if (string.IsNullOrWhiteSpace(run.ArticleMarkdown))
@@ -742,6 +754,7 @@ public class VideoGenRunWorker : BackgroundService
 
             result.Add(new VideoGenScene
             {
+                TaskPermitId = run.TaskPermitId,
                 Index = i,
                 Topic = topic.Trim(),
                 Prompt = prompt.Trim(),
@@ -933,6 +946,10 @@ public class VideoGenRunWorker : BackgroundService
         bool resumeExistingJob)
     {
         var scene = run.Scenes[sceneIdx];
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}");
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}"));
 
         // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
         // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
@@ -1183,6 +1200,10 @@ public class VideoGenRunWorker : BackgroundService
         var sceneIdx = run.Scenes.FindIndex(s => s.Status == SceneItemStatus.Generating);
         if (sceneIdx < 0) return;
         var scene = run.Scenes[sceneIdx];
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}");
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(scene.TaskPermitId, $"{run.Id}_scene_{sceneIdx}"));
 
         using var scope = _scopeFactory.CreateScope();
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();

@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -17,6 +18,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class DocumentStoreAgentWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DocumentStoreAgentWorker> _logger;
     private string? _currentRunId;
@@ -29,8 +31,10 @@ public class DocumentStoreAgentWorker : BackgroundService
 
     public DocumentStoreAgentWorker(
         IServiceScopeFactory scopeFactory,
-        ILogger<DocumentStoreAgentWorker> logger)
+        ILogger<DocumentStoreAgentWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -494,6 +498,10 @@ public class DocumentStoreAgentWorker : BackgroundService
                 ReturnDocument = ReturnDocument.After,
             });
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         _currentRunId = run.Id;
         _currentExecutionId = run.ExecutionId;
@@ -673,6 +681,40 @@ public class DocumentStoreAgentWorker : BackgroundService
                     "[doc-store-agent] Run {RunId} lost its lease before failure persistence; stale outbox and events skipped",
                     run.Id);
                 return;
+            }
+
+            if (willRetry && taskExecutionAttempt.Lease is { } retryLease)
+            {
+                // 先在当前租约保护下持久化未来重试，再原子交还未发送租约。
+                // 已发送或失效的代次不能因普通暂时错误被重置为可执行。
+                var released = false;
+                try { released = await retryLease.TryReleaseForRetryAsync(CancellationToken.None); }
+                catch (Exception retryError)
+                {
+                    _logger.LogWarning(retryError, "[doc-store-agent] Cannot verify safe retry run={RunId}", run.Id);
+                }
+                if (!released)
+                {
+                    if (!await _taskExecutions!.ValidateAsync(retryLease.Proof, false, CancellationToken.None)) return;
+                    willRetry = false;
+                    userMessage = "本次执行无法安全自动重试，原始内容已保留；请核对已有结果后重新提交。";
+                    var stopped = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                        r => r.Id == run.Id && r.TaskPermitId == run.TaskPermitId
+                            && r.Status == DocumentStoreRunStatus.Queued && r.ExecutionId == string.Empty
+                            && r.AutomaticRetryNextAt == retryAt,
+                        Builders<DocumentStoreAgentRun>.Update
+                            .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                            .Set(r => r.Phase, "执行结果待核对")
+                            .Set(r => r.ErrorMessage, userMessage)
+                            .Set(r => r.FailureCode, "TASK_EXECUTION_OUTCOME_UNKNOWN")
+                            .Set(r => r.StartedAt, run.StartedAt)
+                            .Set(r => r.EndedAt, failedAt)
+                            .Set(r => r.AutomaticRetryNextAt, null)
+                            .Set(r => r.AutomaticRetryReason, null)
+                            .Set(r => r.AutomaticRetryCount, run.AutomaticRetryCount),
+                        cancellationToken: CancellationToken.None);
+                    if (stopped.ModifiedCount == 0) return;
+                }
             }
 
             if (!willRetry && run.Kind == DocumentStoreAgentRunKind.Transcribe)

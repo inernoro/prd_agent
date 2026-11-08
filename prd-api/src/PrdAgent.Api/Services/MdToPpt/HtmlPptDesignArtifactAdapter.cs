@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Security.Cryptography;
 using System.Text;
 using MongoDB.Bson;
@@ -80,6 +81,7 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
 
     public async Task BeginAsync(MdToPptRun run, CancellationToken ct = default)
     {
+        using var taskExecutionScope = TaskExecutionContext.Enter(TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         EnsureAdapterOwnedRun(run);
         var current = await FindPublicRunAsync(run.Id);
         if (current == null)

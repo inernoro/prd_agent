@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using Microsoft.Extensions.Caching.Memory;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -121,6 +122,7 @@ public sealed class HistoricalAssetUrlResolver(
                 Path = "/" + key, AbsoluteUrl = $"https://{new Uri(candidate).Host}/[historical-attachment]",
                 Protocol = "https", TargetHost = new Uri(candidate).Host, StartedAt = startedAt
             };
+            request.Options.Set(MapModelEgressHandler.DisableRedirects, true);
             response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             // 不把重定向后的未知来源当作可信 COS 对象。
             found = response.StatusCode == HttpStatusCode.OK

@@ -40,7 +40,11 @@ public class MongoDbContext
         BsonClassMapRegistration.Register();
         
         var client = new MongoClient(connectionString);
-        _database = client.GetDatabase(databaseName);
+        var taskCoordinator = new Lazy<PrdAgent.Core.Interfaces.ITaskExecutionCoordinator>(() =>
+            new PrdAgent.Infrastructure.Security.TaskExecutionCoordinator(new LlmGatewayDataContext(
+                string.IsNullOrWhiteSpace(llmRequestLogConnectionString) ? connectionString : llmRequestLogConnectionString,
+                string.IsNullOrWhiteSpace(llmRequestLogDatabaseName) ? databaseName : llmRequestLogDatabaseName)));
+        _database = TaskLifecycleMongoDatabase.Wrap(client.GetDatabase(databaseName), () => taskCoordinator.Value, llmRequestLogTenantId);
         var logClient = string.IsNullOrWhiteSpace(llmRequestLogConnectionString)
                         || string.Equals(llmRequestLogConnectionString, connectionString, StringComparison.Ordinal)
             ? client

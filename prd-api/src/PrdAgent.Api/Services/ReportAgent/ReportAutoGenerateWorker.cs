@@ -116,6 +116,14 @@ public class ReportAutoGenerateWorker : BackgroundService
 
                     try
                     {
+                        using var admittedTask = PrdAgent.Core.Security.TaskExecutionContext.Enter(await scope.ServiceProvider
+                            .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                            .AdmitScheduledTaskAsync(nameof(ReportAutoGenerateWorker), $"{member.UserId}:{team.Id}:{weekYear}:{weekNumber}", member.UserId, CancellationToken.None));
+                        await using var execution = await PrdAgent.Core.Interfaces.TaskExecutionAttempt.AcquireAsync(
+                            scope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.ITaskExecutionCoordinator>(),
+                            PrdAgent.Core.Security.TaskExecutionContext.Current!.PermitId, $"report:{member.UserId}:{team.Id}:{weekYear}:{weekNumber}");
+                        if (execution.ShouldSkip) continue;
+                        using var executionScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(execution.Lease?.Identity);
                         await generationService.GenerateAsync(
                             member.UserId, team.Id, templateId,
                             weekYear, weekNumber, CancellationToken.None);

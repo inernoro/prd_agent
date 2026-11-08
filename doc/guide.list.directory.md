@@ -290,6 +290,9 @@
 
 ### 五、计划
 
+- [平台后台任务与消费最低保护 · 阶段 0 计划](./plan.platform.background-task-safety.phase0.md) `plan.platform.background-task-safety.phase0`
+- [平台任务级准入与统一出口 · 阶段 1 计划](./plan.platform.background-task-safety.phase1.md) `plan.platform.background-task-safety.phase1`
+- [平台业务幂等、执行租约与取消撤销 · 阶段 2 计划](./plan.platform.background-task-safety.phase2.md) `plan.platform.background-task-safety.phase2`
 - [缺陷可靠性后续闭环 · 计划](./plan.defect-agent.reliability-closure.md) `plan.defect-agent.reliability-closure`
 - [缺陷提交与 AI 润色可靠性排查 · 计划](./plan.defect-agent.submit-reliability.md) `plan.defect-agent.submit-reliability`
 
@@ -343,6 +346,7 @@
 
 ### 六、技术债务台账
 
+- [平台后台任务与消费治理 · 债务台账](./debt.platform.background-task-safety.md) `debt.platform.background-task-safety`
 - [缺陷提交可靠性 · 债务台账](./debt.defect-agent.submit-reliability.md) `debt.defect-agent.submit-reliability`
 
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`

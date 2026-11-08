@@ -462,6 +462,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
 
         return new DocumentStoreAgentRun
         {
+            TaskPermitId = session.TaskPermitId,
             Id = DeferredTranscriptionRunId(session.Id),
             Kind = DocumentStoreAgentRunKind.Transcribe,
             SourceEntryId = entryId,

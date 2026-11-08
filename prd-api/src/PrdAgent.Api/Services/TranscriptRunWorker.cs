@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using MongoDB.Driver;
@@ -19,11 +20,14 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class TranscriptRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TranscriptRunWorker> _logger;
 
-    public TranscriptRunWorker(IServiceScopeFactory scopeFactory, ILogger<TranscriptRunWorker> logger)
+    public TranscriptRunWorker(IServiceScopeFactory scopeFactory, ILogger<TranscriptRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -116,6 +120,10 @@ public class TranscriptRunWorker : BackgroundService
         var run = await db.TranscriptRuns.FindOneAndUpdateAsync(filter, update, options);
 
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         _currentRunId = run.Id;
         _logger.LogInformation("[transcript-agent] Processing run {RunId}, type={Type}", run.Id, run.Type);

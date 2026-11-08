@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Security.Cryptography;
 using System.Text;
 using MongoDB.Bson;
@@ -82,6 +83,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         };
         var run = new DesignArtifactRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = runId,
             DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
@@ -1035,6 +1037,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 RunKinds.DesignArtifact,
                 new RunMeta
                 {
+                    TaskPermitId = run.TaskPermitId,
                     RunId = run.Id,
                     Kind = RunKinds.DesignArtifact,
                     Status = run.Status,

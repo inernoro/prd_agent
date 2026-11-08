@@ -138,4 +138,8 @@ public interface IChatAgentTurnQueue
     IAsyncEnumerable<ChatAgentTurnJob> DequeueAsync(CancellationToken ct);
 }
 
-public sealed record ChatAgentTurnJob(string SessionId, string TurnId);
+public sealed record ChatAgentTurnJob(string SessionId, string TurnId)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; init; }
+}

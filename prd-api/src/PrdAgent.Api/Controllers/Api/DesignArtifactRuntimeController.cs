@@ -9,6 +9,10 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -38,6 +42,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly ILogger<DesignArtifactRuntimeController> _logger;
     private readonly MongoDbContext? _db;
+    private readonly ITaskExecutionAuthorizer? _taskAuthorizer;
 
     public DesignArtifactRuntimeController(
         IDesignArtifactWorkspaceBroker broker,
@@ -45,7 +50,8 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         IConfiguration configuration,
         ILogger<DesignArtifactRuntimeController> logger,
         PrdAgent.Core.Interfaces.IRunEventStore? events = null,
-        MongoDbContext? db = null)
+        MongoDbContext? db = null,
+        ITaskExecutionAuthorizer? taskAuthorizer = null)
     {
         _events = events;
         _broker = broker;
@@ -53,6 +59,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         _configuration = configuration;
         _logger = logger;
         _db = db;
+        _taskAuthorizer = taskAuthorizer;
     }
 
     [HttpGet("workspace/input")]
@@ -221,6 +228,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 throw new InvalidOperationException("模型请求缺少任务上下文，请重新发起任务");
 
             var run = await _broker.ReserveModelCallAsync(runId, ticket, ct);
+            using var taskScope = TaskExecutionContext.Enter(await _broker.RestoreExecutionAsync(runId, ticket, ct));
             var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
             if (responses)
                 selection.ApplyToResponsesRequest(body);
@@ -264,7 +272,19 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 1,
                 DefaultProxyTimeoutSeconds));
             using var proxyDeadline = new CancellationTokenSource(totalTimeout);
-            var client = _httpClientFactory.CreateClient("DesignArtifactRuntimeProxy");
+            var context = new GatewayRequestContext
+            {
+                UserId = run.UserId, RunId = run.Id, LogicalRequestId = run.Id,
+                RequestId = Guid.NewGuid().ToString("N"), SourceSystem = "map", IngressProtocol = "gw-native",
+            };
+            await AuthorizedGatewayRequest.PrepareAsync(upstream, _taskAuthorizer, caller, context, proxyDeadline.Token);
+            upstream.Headers.Remove("X-Gateway-User-Id");
+            upstream.Headers.TryAddWithoutValidation("X-Gateway-User-Id", context.UserId);
+            upstream.Headers.Remove("X-Gateway-Run-Id");
+            upstream.Headers.TryAddWithoutValidation("X-Gateway-Run-Id", context.RunId);
+            upstream.Headers.TryAddWithoutValidation("X-Request-Id", context.RequestId);
+            var client = _httpClientFactory.CreateClient(AuthorizedGatewayRequest.HttpClientName);
+            client.Timeout = Timeout.InfiniteTimeSpan;
             using var response = await client.SendAsync(
                 upstream,
                 HttpCompletionOption.ResponseHeadersRead,
@@ -319,6 +339,12 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             // 整条响应转发完才记：流里先出现的可能是逻辑别名，终态里的才是网关实际用的模型。
             if (servedModel.Model is { } served)
                 await RecordServedModelAsync(run, served);
+        }
+        catch (TaskExecutionAdmissionException ex)
+        {
+            if (Response.HasStarted) { HttpContext.Abort(); return; }
+            Response.StatusCode = ex.StatusCode;
+            await Response.WriteAsJsonAsync(new { error = new { code = ex.Code, message = ex.Message, runId } }, ct);
         }
         catch (OperationCanceledException)
         {

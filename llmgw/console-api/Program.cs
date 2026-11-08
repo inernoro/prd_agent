@@ -2731,6 +2731,8 @@ app.MapPost("/gw/members/{id}/invalidate-sessions", async (HttpContext http, str
 }).RequireAuthorization("OrganizationWrite");
 
 // ───────────────────────────── 日志列表（需鉴权）─────────────────────────────
+app.MapGatewayConsumptionAlerts(gatewayDatabase, jsonOptions);
+
 app.MapGet("/gw/logs", async (
     HttpContext http,
     int? page, int? pageSize, string? from, string? to, string? model, string? status,

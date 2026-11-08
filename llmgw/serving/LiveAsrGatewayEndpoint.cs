@@ -11,6 +11,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.LlmGateway.Asr;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -65,6 +66,12 @@ public static class LiveAsrGatewayEndpoint
             admission.Ingress.AppCallerCode);
         var orchestrator = http.RequestServices.GetRequiredService<LiveAsrSessionOrchestrator>();
         var logWriter = http.RequestServices.GetRequiredService<ILlmRequestLogWriter>();
+        // 普通客户端断开仍只控制接收；平台授权期限单独终止供应商与批量降级，不能无限持有付费会话。
+        var permit = http.Items[GatewayTaskAdmission.HttpContextPermitKey] as GatewayTaskPermitRecord;
+        var deadline = permit?.ExpiresAt ?? DateTime.UtcNow.Add(GatewayTaskPermitRecord.MaximumLifetime);
+        using var platformLifetime = new CancellationTokenSource();
+        var remainingLifetime = deadline - DateTime.UtcNow;
+        platformLifetime.CancelAfter(remainingLifetime > TimeSpan.Zero ? remainingLifetime : TimeSpan.Zero);
         using var socket = await http.WebSockets.AcceptWebSocketAsync();
         using var writeLock = new SemaphoreSlim(1, 1);
         var startedAt = DateTime.UtcNow;
@@ -117,7 +124,9 @@ public static class LiveAsrGatewayEndpoint
                     ?? throw new InvalidOperationException("实时 ASR 缺少已验证请求上下文"),
                 EmitAsync,
                 () => Interlocked.Exchange(ref paidUpstreamAttempted, 1),
-                http.RequestAborted);
+                http.RequestAborted,
+                platformLifetime.Token,
+                CreatePhysicalSendAdmission(http, admission), admission.Ingress.AppCallerCode);
         }
         finally
         {
@@ -159,7 +168,7 @@ public static class LiveAsrGatewayEndpoint
                         outcome.Failure
                             ?? outcome.SessionResult?.Error
                             ?? "实时转写未完成，已交由完整录音校准",
-                        StatusCodes.Status502BadGateway);
+                        outcome.StatusCode ?? StatusCodes.Status502BadGateway);
                 }
             }
             if (socket.State == WebSocketState.Open)
@@ -177,6 +186,30 @@ public static class LiveAsrGatewayEndpoint
                 }
             }
         }
+    }
+
+    internal static Func<CancellationToken, Task> CreatePhysicalSendAdmission(
+        HttpContext http, GatewaySpecializedAdmission admission)
+    {
+        // HTTP gate已预占首槽；只有实际供应商尝试才消费它，后续尝试分别核销。
+        var firstPhysicalAttempt = 1;
+        return async token =>
+        {
+            token.ThrowIfCancellationRequested();
+            // 现有通用金额合同仅支持文本token；不能给ASR伪造价格或物理预占事实。
+            if (http.Items[GatewayTaskAdmission.HttpContextPermitKey] is GatewayTaskPermitRecord { BudgetScopeId: { Length: > 0 } })
+                throw new TaskExecutionAdmissionException("GATEWAY_TASK_BUDGET_PRICING_UNSUPPORTED",
+                    "实时转写尚无音频金额合同，已停止发送；请保留录音后由管理员核对计价配置。", 409);
+            if (Interlocked.Exchange(ref firstPhysicalAttempt, 0) == 0)
+            {
+                var service = http.RequestServices.GetRequiredService<IGatewayTaskAdmission>();
+                var next = await service.ReserveContinuationAsync(http, admission.Authorization,
+                    admission.Ingress.AppCallerCode, token);
+                if (!next.Allowed) throw new TaskExecutionAdmissionException(next.ErrorCode, next.Message, next.StatusCode);
+            }
+            await http.RequestServices.GetRequiredService<IGatewayInvocationAuthority>()
+                .AssertCurrentAsync(admission.Ingress.AppCallerCode, admission.Ingress.Context, token);
+        };
     }
 
     private static LlmLogStart CreateLiveAsrLogStart(
@@ -219,7 +252,15 @@ public static class LiveAsrGatewayEndpoint
             ServiceKeyId: admission.Authorization.KeyId,
             ClientCode: admission.Authorization.ClientCode,
             Environment: admission.Authorization.Environment,
-            ServiceKeyPrefix: admission.Authorization.KeyPrefixSnapshot);
+            ServiceKeyPrefix: admission.Authorization.KeyPrefixSnapshot,
+            TaskPermitId: admission.Ingress.Context?.TaskPermitId,
+            TaskLeaseRunId: admission.Ingress.Context?.TaskLeaseRunId,
+            TaskLeaseFence: admission.Ingress.Context?.TaskLeaseFence,
+            ExecutionOrigin: admission.Ingress.Context?.ExecutionOrigin,
+            TriggerCredentialId: admission.Ingress.Context?.TriggerCredentialId,
+            SourceDeployment: admission.Ingress.Context?.SourceDeployment,
+            SourceTask: admission.Ingress.Context?.SourceTask,
+            TriggerActorUserId: admission.Ingress.Context?.TriggerActorUserId);
 
     private sealed class WebSocketLiveAsrTransport : ILiveAsrSessionTransport
     {
