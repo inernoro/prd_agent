@@ -1042,11 +1042,53 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
             expression = expression.replace("||", " or ")
             self.assertEqual(eval(expression, {"__builtins__": {}}, {}), supplied is not None)
         self.assertIn("needs: retain-existing", build)
-        build_condition = re.search(r"^    if: (.+)$", build, re.M).group(1)
-        for outcome in ("skipped", "success", "failure", "cancelled"):
-            expression = build_condition.replace("always()", "True").replace("needs.retain-existing.result", repr(outcome))
+
+    def test_complete_workflow_dag_overrides_ancestor_skip_but_blocks_failure_and_cancellation(self):
+        chain = (("build", "retain-existing"), ("retain", "build"), ("pages", "retain"))
+        conditions = {}
+        for job, parent in chain:
+            block = self.workflow_job(job)
+            self.assertRegex(block, r"(?m)^    needs: " + re.escape(parent) + r"$")
+            condition = re.search(r"^    if: (.+)$", block, re.M).group(1)
+            # Without an explicit status function GitHub implicitly adds
+            # success(), propagating the skipped migration even across a
+            # successful build. Every downstream job needs this override.
+            self.assertIn("always()", condition, job)
+            self.assertIn("!cancelled()", condition, job)
+            conditions[job] = condition
+
+        def allowed(job, results, cancelled=False):
+            expression = re.sub(r"needs\.([\w-]+)\.result", lambda item: repr(results[item.group(1)]), conditions[job])
+            expression = expression.replace("always()", "True").replace("!cancelled()", str(not cancelled))
             expression = expression.replace("&&", " and ").replace("||", " or ")
-            self.assertEqual(eval(expression, {"__builtins__": {}}, {}), outcome in ("skipped", "success"))
+            return eval(expression, {"__builtins__": {}}, {})
+
+        for job, parent in chain:
+            for result in ("success", "skipped", "failure", "cancelled"):
+                for cancelled in (False, True):
+                    with self.subTest(job=job, parent_result=result, workflow_cancelled=cancelled):
+                        acceptable = result in (("success", "skipped") if job == "build" else ("success",))
+                        self.assertEqual(allowed(job, {parent: result}, cancelled), acceptable and not cancelled)
+
+        # Walk the actual dependency chain, including how a blocked job turns
+        # into skipped for its successor, rather than checking build alone.
+        for migration in ("skipped", "success", "failure", "cancelled"):
+            results = {"retain-existing": migration}
+            decisions = []
+            for job, _ in chain:
+                decision = allowed(job, results)
+                decisions.append(decision)
+                results[job] = "success" if decision else "skipped"
+            self.assertEqual(decisions, [migration in ("skipped", "success")] * 3)
+        for stopped_job in ("build", "retain"):
+            for stopped_result in ("failure", "cancelled", "skipped"):
+                results = {"retain-existing": "skipped"}
+                passed_stop = False
+                for job, _ in chain:
+                    decision = allowed(job, results)
+                    self.assertEqual(decision, not passed_stop)
+                    results[job] = stopped_result if job == stopped_job else ("success" if decision else "skipped")
+                    passed_stop = passed_stop or job == stopped_job
 
     def test_workflow_permissions_serialization_and_ci_wiring_preserve_other_releases(self):
         source = (ROOT / ".github/workflows/web-latest-pages.yml").read_text()

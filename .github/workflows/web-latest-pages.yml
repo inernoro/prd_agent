@@ -89,7 +89,7 @@ jobs:
 
   build:
     needs: retain-existing
-    if: always() && (needs.retain-existing.result == 'success' || needs.retain-existing.result == 'skipped')
+    if: always() && !cancelled() && (needs.retain-existing.result == 'success' || needs.retain-existing.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -127,6 +127,7 @@ jobs:
 
   retain:
     needs: build
+    if: always() && !cancelled() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     # Only the storage writer has release-write access. No PAT or account grant.
     permissions:
@@ -154,6 +155,7 @@ jobs:
 
   pages:
     needs: retain
+    if: always() && !cancelled() && needs.retain.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
