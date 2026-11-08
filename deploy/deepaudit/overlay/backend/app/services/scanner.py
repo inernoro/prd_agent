@@ -14,6 +14,7 @@ from app.models.audit import AuditTask, AuditIssue
 from app.models.project import Project
 from app.services.llm.service import LLMService
 from app.services.scan_errors import record_scan_error
+from app.services.scan_snapshot import RepositoryEvidenceError
 from app.core.config import settings
 
 
@@ -86,68 +87,71 @@ class TaskControlManager:
 task_control = TaskControlManager()
 
 
-async def github_api(url: str, token: str = None) -> Any:
+async def repository_get(url, headers=None, json_response=False):
+    async with httpx.AsyncClient(timeout=30) as client:
+        return await client.get(url, headers=headers or {})
+
+
+async def github_api(url: str, token: str = None, request=None) -> Any:
     """调用GitHub API"""
     headers = {"Accept": "application/vnd.github+json"}
     t = token or settings.GITHUB_TOKEN
     if t:
         headers["Authorization"] = f"Bearer {t}"
     
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(url, headers=headers)
-        if response.status_code == 403:
-            raise Exception("GitHub API 403：请配置 GITHUB_TOKEN 或确认仓库权限/频率限制")
-        if response.status_code != 200:
-            raise Exception(f"GitHub API {response.status_code}: {url}")
-        return response.json()
+    response = await (request or repository_get)(url, headers=headers, json_response=True)
+    if response.status_code == 403:
+        raise Exception("GitHub API 403：请配置 GITHUB_TOKEN 或确认仓库权限/频率限制")
+    if response.status_code != 200:
+        raise Exception(f"GitHub API {response.status_code}: {url}")
+    return response.json()
 
 
 
-async def gitea_api(url: str, token: str = None) -> Any:
+async def gitea_api(url: str, token: str = None, request=None) -> Any:
     """调用Gitea API"""
     headers = {"Content-Type": "application/json"}
     t = token or settings.GITEA_TOKEN
     if t:
         headers["Authorization"] = f"token {t}"
     
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(url, headers=headers)
-        if response.status_code == 401:
-            raise Exception("Gitea API 401：请配置 GITEA_TOKEN 或确认仓库权限")
-        if response.status_code == 403:
-            raise Exception("Gitea API 403：请确认仓库权限/频率限制")
-        if response.status_code != 200:
-            raise Exception(f"Gitea API {response.status_code}: {url}")
-        return response.json()
+    response = await (request or repository_get)(url, headers=headers, json_response=True)
+    if response.status_code == 401:
+        raise Exception("Gitea API 401：请配置 GITEA_TOKEN 或确认仓库权限")
+    if response.status_code == 403:
+        raise Exception("Gitea API 403：请确认仓库权限/频率限制")
+    if response.status_code != 200:
+        raise Exception(f"Gitea API {response.status_code}: {url}")
+    return response.json()
 
 
-async def gitlab_api(url: str, token: str = None) -> Any:
+async def gitlab_api(url: str, token: str = None, request=None) -> Any:
     """调用GitLab API"""
     headers = {"Content-Type": "application/json"}
     t = token or settings.GITLAB_TOKEN
     if t:
         headers["PRIVATE-TOKEN"] = t
     
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(url, headers=headers)
-        if response.status_code == 401:
-            raise Exception("GitLab API 401：请配置 GITLAB_TOKEN 或确认仓库权限")
-        if response.status_code == 403:
-            raise Exception("GitLab API 403：请确认仓库权限/频率限制")
-        if response.status_code != 200:
-            raise Exception(f"GitLab API {response.status_code}: {url}")
-        return response.json()
+    response = await (request or repository_get)(url, headers=headers, json_response=True)
+    if response.status_code == 401:
+        raise Exception("GitLab API 401：请配置 GITLAB_TOKEN 或确认仓库权限")
+    if response.status_code == 403:
+        raise Exception("GitLab API 403：请确认仓库权限/频率限制")
+    if response.status_code != 200:
+        raise Exception(f"GitLab API {response.status_code}: {url}")
+    return response.json()
 
 
-async def fetch_file_content(url: str, headers: Dict[str, str] = None) -> Optional[str]:
+async def fetch_file_content(url: str, headers: Dict[str, str] = None, request=None) -> Optional[str]:
     """获取文件内容"""
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            response = await client.get(url, headers=headers or {})
-            if response.status_code == 200:
-                return response.text
-        except Exception as e:
-            print(f"获取文件内容失败: {url}, 错误: {e}")
+    try:
+        response = await (request or repository_get)(url, headers=headers or {}, json_response=False)
+        if response.status_code == 200:
+            return response.text
+    except RepositoryEvidenceError:
+        raise
+    except Exception as e:
+        print(f"获取文件内容失败: {type(e).__name__}")
     return None
 
 
@@ -198,7 +202,7 @@ async def get_gitlab_branches(repo_url: str, token: str = None) -> List[str]:
     return [b["name"] for b in branches_data]
 
 
-async def get_github_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None) -> List[Dict[str, str]]:
+async def get_github_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None, request=None) -> List[Dict[str, str]]:
     """获取GitHub仓库文件列表"""
     # 解析仓库URL
     repo_info = parse_repository_url(repo_url, "github")
@@ -206,7 +210,7 @@ async def get_github_files(repo_url: str, branch: str, token: str = None, exclud
     
     # 获取仓库文件树
     tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{quote(branch)}?recursive=1"
-    tree_data = await github_api(tree_url, token)
+    tree_data = await github_api(tree_url, token, request=request)
     
     files = []
     for item in tree_data.get("tree", []):
@@ -221,7 +225,7 @@ async def get_github_files(repo_url: str, branch: str, token: str = None, exclud
     return files
 
 
-async def get_gitlab_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None) -> List[Dict[str, str]]:
+async def get_gitlab_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None, request=None) -> List[Dict[str, str]]:
     """获取GitLab仓库文件列表"""
     parsed = urlparse(repo_url)
     
@@ -240,7 +244,7 @@ async def get_gitlab_files(repo_url: str, branch: str, token: str = None, exclud
     
     # 获取仓库文件树
     tree_url = f"{base_url}/projects/{project_path}/repository/tree?ref={quote(branch)}&recursive=true&per_page=100"
-    tree_data = await gitlab_api(tree_url, extracted_token)
+    tree_data = await gitlab_api(tree_url, extracted_token, request=request)
     
     files = []
     for item in tree_data:
@@ -255,7 +259,7 @@ async def get_gitlab_files(repo_url: str, branch: str, token: str = None, exclud
 
 
 
-async def get_gitea_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None) -> List[Dict[str, str]]:
+async def get_gitea_files(repo_url: str, branch: str, token: str = None, exclude_patterns: List[str] = None, request=None) -> List[Dict[str, str]]:
     """获取Gitea仓库文件列表"""
     repo_info = parse_repository_url(repo_url, "gitea")
     base_url = repo_info['base_url']
@@ -264,7 +268,7 @@ async def get_gitea_files(repo_url: str, branch: str, token: str = None, exclude
     # Gitea tree API: GET /repos/{owner}/{repo}/git/trees/{sha}?recursive=1
     # 可以直接使用分支名作为sha
     tree_url = f"{base_url}/repos/{owner}/{repo}/git/trees/{quote(branch)}?recursive=1"
-    tree_data = await gitea_api(tree_url, token)
+    tree_data = await gitea_api(tree_url, token, request=request)
     
     files = []
     for item in tree_data.get("tree", []):

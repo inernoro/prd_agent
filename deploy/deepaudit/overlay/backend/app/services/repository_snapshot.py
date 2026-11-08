@@ -5,7 +5,7 @@ import zipfile
 from pathlib import PurePosixPath
 from urllib.parse import quote
 from app.core.config import settings
-from app.services.scan_snapshot import archive_path, MAX_FILES, MAX_EXPANDED_BYTES
+from app.services.scan_snapshot import archive_path, MAX_FILES, MAX_EXPANDED_BYTES, RepositoryResponses
 from app.utils.repo_utils import parse_repository_url
 
 
@@ -23,16 +23,17 @@ async def prepare_repository(saved, project, config, options):
     token = other.get({'github': 'githubToken', 'gitlab': 'gitlabToken', 'gitea': 'giteaToken'}.get(kind, ''))
     token = token or getattr(settings, {'github': 'GITHUB_TOKEN', 'gitlab': 'GITLAB_TOKEN', 'gitea': 'GITEA_TOKEN'}.get(kind, ''), None)
     excludes = (config.get('scan_config') or {}).get('exclude_patterns') or []
+    request = RepositoryResponses(saved.id, saved.project_id, kind).request
     revision = branch
     if kind == 'github':
         info = parse_repository_url(url, 'github')
-        commit = await github_api(f"https://api.github.com/repos/{info['owner']}/{info['repo']}/commits/{quote(branch, safe='')}", token)
+        commit = await github_api(f"https://api.github.com/repos/{info['owner']}/{info['repo']}/commits/{quote(branch, safe='')}", token, request=request)
         revision = commit['sha']
-        files = await get_github_files(url, revision, token, excludes)
+        files = await get_github_files(url, revision, token, excludes, request=request)
     elif kind == 'gitlab':
-        files = await get_gitlab_files(url, branch, token, excludes)
+        files = await get_gitlab_files(url, branch, token, excludes, request=request)
     elif kind == 'gitea':
-        files = await get_gitea_files(url, branch, token, excludes)
+        files = await get_gitea_files(url, branch, token, excludes, request=request)
     else:
         raise ValueError('Unsupported repository type')
     selected = set((config.get('scan_config') or {}).get('file_paths') or [])
@@ -69,7 +70,7 @@ async def prepare_repository(saved, project, config, options):
             headers = {}
             if token:
                 headers = {'Authorization': f'Bearer {token}'} if kind == 'github' else {'PRIVATE-TOKEN': token} if kind == 'gitlab' else {'Authorization': f'token {token}'}
-            data = await fetch_file_content(row['url'], headers)
+            data = await fetch_file_content(row['url'], headers, request=request)
             if data is None:
                 raise ValueError('Repository file could not be read')
             await results.put((str(source), data.encode('utf-8')))

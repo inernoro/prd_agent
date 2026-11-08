@@ -2,11 +2,15 @@
 import ast
 import asyncio
 import json
+import importlib.util
 import pathlib
+import sys
+import tempfile
 import unittest
+import uuid
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from types import SimpleNamespace, ModuleType
+from unittest.mock import AsyncMock, Mock, patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -133,6 +137,234 @@ class StaticRunnerResultContract(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(record.error_code, None if expected == 'completed' else 'ANALYSIS_FAILED')
                 service.analyze_code.assert_awaited_once_with('original full file', 'python')
                 db.add.assert_not_called()
+
+
+def endpoint_function(name, scope):
+    source = ROOT / 'backend/app/api/v1/endpoints/tasks.py'
+    function = next(node for node in ast.parse(source.read_text()).body
+                    if isinstance(node, ast.AsyncFunctionDef) and node.name == name)
+    function.decorator_list = []
+    for node in ast.walk(function):
+        if isinstance(node, ast.arg): node.annotation = None
+    function.returns = None
+    scope.update(Depends=lambda _: None, get_db=None, deps=SimpleNamespace(get_current_user=None))
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
+    return scope[name]
+
+
+class NativeTaskOwnership(unittest.IsolatedAsyncioTestCase):
+    async def test_issue_update_checks_owner_before_reading_or_changing_issue(self):
+        class Denied(Exception):
+            def __init__(self, status_code, detail): self.status_code = status_code
+        class Statement:
+            def __init__(self, model): self.model = model
+            def where(self, *args): return self
+        task_type = SimpleNamespace(id=None)
+        issue_type = SimpleNamespace(id=None, task_id=None)
+        issue = SimpleNamespace(status='open', resolved_by=None, resolved_at=None)
+        task = SimpleNamespace(created_by='owner')
+        queried = []
+        async def execute(statement):
+            queried.append(statement.model)
+            value = task if statement.model is task_type else issue
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: value))
+        db = SimpleNamespace(execute=AsyncMock(side_effect=execute), commit=AsyncMock(), refresh=AsyncMock())
+        update = endpoint_function('update_issue', dict(select=Statement, AuditTask=task_type,
+            AuditIssue=issue_type, HTTPException=Denied, datetime=datetime, timezone=timezone))
+        with self.assertRaises(Denied) as denied:
+            await update('task', 'issue', SimpleNamespace(status='resolved'), db, SimpleNamespace(id='foreign'))
+        self.assertEqual(denied.exception.status_code, 403)
+        self.assertEqual(queried, [task_type])
+        self.assertEqual((issue.status, issue.resolved_by, issue.resolved_at), ('open', None, None))
+        db.commit.assert_not_awaited(); db.refresh.assert_not_awaited()
+        queried.clear()
+        result = await update('task', 'issue', SimpleNamespace(status='resolved'), db, SimpleNamespace(id='owner'))
+        self.assertIs(result, issue)
+        self.assertEqual((issue.status, issue.resolved_by), ('resolved', 'owner'))
+        self.assertIsNotNone(issue.resolved_at)
+        db.commit.assert_awaited_once(); db.refresh.assert_awaited_once_with(issue)
+
+
+class NativeRepositoryResponseEvidence(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        import asyncio, os, zipfile
+        from pathlib import PurePosixPath
+        from urllib.parse import urlparse, quote
+        self.directory = tempfile.TemporaryDirectory()
+        self.task = SimpleNamespace(id=str(uuid.uuid4()), project_id='project', branch_name='main')
+        self.settings = SimpleNamespace(ZIP_STORAGE_PATH=self.directory.name, MAX_FILE_SIZE_BYTES=100000,
+            GITHUB_TOKEN=None, GITLAB_TOKEN=None, GITEA_TOKEN=None)
+        modules = {name: ModuleType(name) for name in ('app', 'app.core', 'app.core.config', 'app.services', 'app.utils', 'app.utils.repo_utils')}
+        modules['app.core.config'].settings = self.settings
+        def parse(url, kind):
+            return dict(owner='example', repo='repo', base_url='https://git.example/api/v4', project_path='example/repo')
+        modules['app.utils.repo_utils'].parse_repository_url = parse
+        self.requests, self.responses = [], []
+        owner = self
+        class Client:
+            def __init__(self, **kwargs): owner.assertEqual(kwargs, {'timeout': 30})
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def get(self, url, headers):
+                owner.requests.append((url, headers))
+                value = owner.responses.pop(0)
+                if isinstance(value, BaseException): raise value
+                return value
+        self.patch = patch.dict(sys.modules, modules); self.patch.start()
+        def load(name, path):
+            spec = importlib.util.spec_from_file_location(name, ROOT / path)
+            module = importlib.util.module_from_spec(spec); sys.modules[name] = module
+            spec.loader.exec_module(module)
+            return module
+        self.snapshot = load('app.services.scan_snapshot', 'backend/app/services/scan_snapshot.py')
+        scanner = ModuleType('app.services.scanner')
+        scanner.__dict__.update(httpx=SimpleNamespace(AsyncClient=Client), settings=self.settings,
+            RepositoryEvidenceError=getattr(self.snapshot, 'RepositoryEvidenceError', RuntimeError),
+            List=list, Dict=dict, Optional=__import__('typing').Optional, urlparse=urlparse, quote=quote,
+            parse_repository_url=parse, is_text_file=lambda path: path.endswith('.py'),
+            should_exclude=lambda *args: False)
+        functions = [node for node in ast.parse((ROOT / 'backend/app/services/scanner.py').read_text()).body
+                     if isinstance(node, ast.AsyncFunctionDef) and node.name in
+                     ('repository_get', 'github_api', 'gitlab_api', 'gitea_api', 'fetch_file_content',
+                      'get_github_files', 'get_gitlab_files', 'get_gitea_files')]
+        exec(compile(ast.Module(body=functions, type_ignores=[]), 'actual-scanner', 'exec'), scanner.__dict__)
+        sys.modules['app.services.scanner'] = scanner
+        self.repository = load('app.services.repository_snapshot', 'backend/app/services/repository_snapshot.py')
+
+    def tearDown(self):
+        for name in ('app.services.repository_snapshot', 'app.services.scanner', 'app.services.scan_snapshot'):
+            sys.modules.pop(name, None)
+        self.patch.stop(); self.directory.cleanup()
+
+    def response(self, status, body, content_type='application/json'):
+        data = (json.dumps(body) if isinstance(body, (dict, list)) else body).encode()
+        return SimpleNamespace(status_code=status, content=data, text=data.decode(),
+            headers={'content-type': content_type, 'x-github-request-id': 'upstream-id'},
+            json=lambda: json.loads(data))
+
+    async def acquire(self, kind='github'):
+        return await self.repository.prepare_repository(self.task,
+            dict(repository_url='https://github.com/example/repo', repository_type=kind),
+            {'otherConfig': {kind + 'Token': 'private-token-only'}},
+            {'max_analyze_files': 0, 'llm_concurrency': 2})
+
+    def records(self):
+        return [json.loads(p.read_text()) for p in sorted(pathlib.Path(self.directory.name).rglob('response-*.json'))]
+
+    async def test_native_success_retains_every_attempt_without_private_source_or_token(self):
+        self.responses = [self.response(200, {'sha': 'a' * 40}),
+            self.response(200, {'tree': [{'type': 'blob', 'path': 'one.py', 'size': 10}]}),
+            self.response(200, 'PRIVATE_SOURCE_MARKER = 1', 'text/plain')]
+        await self.acquire()
+        records = self.records()
+        self.assertEqual(len(records), 3)
+        self.assertTrue(all(r['task_id'] == self.task.id and r['project_id'] == 'project' for r in records))
+        self.assertEqual({r['outcome'] for r in records}, {'success'})
+        self.assertEqual(len(self.requests), 3)
+        encoded = json.dumps(records)
+        self.assertNotIn('PRIVATE_SOURCE_MARKER', encoded); self.assertNotIn('private-token-only', encoded)
+        self.assertTrue(all((p.stat().st_mode & 0o777) == 0o600
+                            for p in pathlib.Path(self.directory.name).rglob('response-*.json')))
+
+    async def test_native_http_failure_keeps_reason_and_redacts_echoed_credentials(self):
+        self.responses = [self.response(403, {'message': 'Repository access denied for Bearer private-token-only',
+            'token': 'new-response-secret', 'nested': {'password': 'do-not-save'}})]
+        with self.assertRaises(Exception): await self.acquire()
+        records = self.records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual((records[0]['outcome'], records[0]['status']), ('http_error', 403))
+        encoded = json.dumps(records)
+        self.assertIn('Repository access denied', encoded)
+        for secret in ('private-token-only', 'new-response-secret', 'do-not-save'): self.assertNotIn(secret, encoded)
+        self.assertEqual(len(self.requests), 1)
+
+    async def test_native_parse_failure_and_timeout_are_persisted_as_distinct_attempts(self):
+        for response, outcome in [(self.response(200, '<html>upstream unavailable</html>', 'text/html'), 'parse_error'),
+                                   (TimeoutError('private-token-only'), 'no_response')]:
+            self.responses = [response]
+            with self.assertRaises(Exception): await self.acquire()
+        records = self.records()
+        self.assertEqual([r['outcome'] for r in records], ['parse_error', 'no_response'])
+        self.assertEqual([r['response_received'] for r in records], [True, False])
+        self.assertEqual(len(self.requests), 2)
+
+    async def test_existing_owner_only_task_detail_pages_persistent_evidence(self):
+        self.responses = [self.response(403, {'message': 'Repository denied'})]
+        with self.assertRaises(Exception): await self.acquire()
+        class Denied(Exception):
+            def __init__(self, status_code, detail): self.status_code = status_code
+        class Statement:
+            def __init__(self, model): pass
+            def options(self, *args): return self
+            def where(self, *args): return self
+        self.task.created_by = 'owner'
+        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(
+            scalars=lambda: SimpleNamespace(first=lambda: self.task))), commit=AsyncMock())
+        query = Mock(wraps=self.snapshot.read_repository_responses)
+        read = endpoint_function('read_task', dict(asyncio=asyncio, select=Statement,
+            selectinload=lambda _: None, AuditTask=SimpleNamespace(id=None, project=None),
+            HTTPException=Denied, read_repository_responses=query))
+        with self.assertRaises(Denied) as denied:
+            await read(self.task.id, db, SimpleNamespace(id='foreign'), 0, 1)
+        self.assertEqual(denied.exception.status_code, 403); query.assert_not_called()
+        task = await read(self.task.id, db, SimpleNamespace(id='owner'), 0, 1)
+        self.assertEqual((task.repository_responses['total'], len(task.repository_responses['events'])), (1, 1))
+        self.assertIn('Repository denied', json.dumps(task.repository_responses))
+        with self.assertRaises(Denied) as invalid:
+            await read(self.task.id, db, SimpleNamespace(id='owner'), 0, 101)
+        self.assertEqual(invalid.exception.status_code, 422)
+        db.commit.assert_not_awaited()
+
+    async def test_audit_write_failure_stops_acquisition_observably_without_retry(self):
+        self.responses = [self.response(200, {'sha': 'a' * 40})]
+        with patch.object(self.snapshot.os, 'replace', side_effect=OSError('synthetic storage failure')):
+            with self.assertLogs('app.services.scan_snapshot', level='ERROR') as logged:
+                with self.assertRaises(self.snapshot.RepositoryEvidenceError): await self.acquire()
+        self.assertIn('evidence write failed', '\n'.join(logged.output))
+        self.assertEqual(len(self.requests), 1)
+        self.assertFalse(self.snapshot.archive_path(self.task.id).exists())
+        self.assertEqual(self.records(), [])
+
+    async def test_gitlab_and_gitea_tree_and_file_requests_share_the_task_journal(self):
+        for kind in ('gitlab', 'gitea'):
+            self.task.id = str(uuid.uuid4())
+            tree = [{'type': 'blob', 'path': 'one.py'}]
+            self.responses = [self.response(200, tree if kind == 'gitlab' else {'tree': tree}),
+                              self.response(200, 'PRIVATE_SOURCE_MARKER = 1', 'text/plain')]
+            await self.acquire(kind)
+            page = self.snapshot.read_repository_responses(self.task.id, 0, 100)
+            self.assertEqual(page['total'], 2)
+            self.assertTrue(all(r['provider'] == kind and r['task_id'] == self.task.id for r in page['events']))
+            self.assertNotIn('private-token-only', json.dumps(page))
+        self.assertEqual(len(self.requests), 4)
+
+    async def test_success_status_does_not_hide_upstream_business_failure_or_revision_shape(self):
+        cases = [({}, 'missing'), ({'sha': None}, 'null'), ({'sha': ''}, 'empty'),
+                 ({'sha': '   '}, 'whitespace'), ({'sha': 42}, 'wrong_type'),
+                 ({'sha': 'not-a-revision'}, 'invalid_format'), ([], 'wrong_container_type')]
+        for payload, expected in cases:
+            self.task.id = str(uuid.uuid4())
+            self.responses = [self.response(200, payload)]
+            with self.assertRaises(Exception): await self.acquire()
+            record = self.snapshot.read_repository_responses(self.task.id)['events'][0]
+            self.assertEqual((record['outcome'], record['revision_state']), ('contract_error', expected))
+        self.task.id = str(uuid.uuid4())
+        self.responses = [self.response(200, {'success': False, 'code': 'RATE_LIMIT', 'message': 'Quota exceeded', 'sha': 'a' * 40})]
+        with self.assertRaises(Exception): await self.acquire()
+        record = self.snapshot.read_repository_responses(self.task.id)['events'][0]
+        self.assertEqual((record['outcome'], record['code'], record['reason']), ('business_error', 'RATE_LIMIT', 'Quota exceeded'))
+        self.assertEqual(len(self.requests), len(cases) + 1)
+
+    async def test_nested_reason_and_long_text_remain_bounded_and_private(self):
+        self.responses = [self.response(403, {'message': {'password': 'private-nested-reason'},
+            'error': {'code': 'DENIED', 'message': 'password="new-secret" owner@example.com +8613800138000 ' + 'x' * 20000}})]
+        with self.assertRaises(Exception): await self.acquire()
+        record = self.records()[0]
+        encoded = json.dumps(record)
+        for secret in ('private-nested-reason', 'new-secret', 'owner@example.com', '13800138000'):
+            self.assertNotIn(secret, encoded)
+        self.assertIn('DENIED', encoded)
+        self.assertLess(len(encoded.encode()), self.snapshot.MAX_RESPONSE_RECORD_BYTES)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from typing import Any, List, Optional
 import json
+import asyncio
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -14,6 +15,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.services.scanner import task_control
 from app.services.scan_errors import ERROR_MESSAGES
+from app.services.scan_snapshot import read_repository_responses
 
 router = APIRouter()
 
@@ -79,6 +81,7 @@ class AuditTaskSchema(BaseModel):
     failed_files: int = 0
     skipped_files: int = 0
     snapshot_sha256: Optional[str] = None
+    repository_responses: Optional[dict] = None
     resumable: bool = False
     total_files: int = 0
     scanned_files: int = 0
@@ -131,6 +134,8 @@ async def read_task(
     id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(deps.get_current_user),
+    source_response_offset: Optional[int] = None,
+    source_response_limit: int = 50,
 ) -> Any:
     """
     Get task status by ID.
@@ -147,6 +152,15 @@ async def read_task(
     # 检查权限：只有任务创建者可以查看
     if task.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="无权查看此任务")
+
+    if source_response_offset is not None:
+        if source_response_offset < 0 or not 1 <= source_response_limit <= 100:
+            raise HTTPException(status_code=422, detail="响应证据分页范围无效")
+        try:
+            task.repository_responses = await asyncio.to_thread(
+                read_repository_responses, id, source_response_offset, source_response_limit)
+        except (OSError, ValueError):
+            raise HTTPException(status_code=503, detail="仓库响应证据暂不可读取") from None
     
     return task
 
@@ -253,6 +267,12 @@ async def update_issue(
     """
     Update issue status (e.g., resolve, mark as false positive).
     """
+    result = await db.execute(select(AuditTask).where(AuditTask.id == task_id))
+    task = result.scalars().first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="无权修改此任务的问题")
     result = await db.execute(
         select(AuditIssue)
         .where(AuditIssue.id == issue_id, AuditIssue.task_id == task_id)
