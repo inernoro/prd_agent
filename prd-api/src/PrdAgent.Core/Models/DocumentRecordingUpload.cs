@@ -4,8 +4,12 @@ namespace PrdAgent.Core.Models;
 /// 录音分片上传会话。音频总量仍受文档上传 20 MB 上限约束，分片单独落 Mongo，
 /// 完成时按 Index 拼接后写入正式附件存储。
 /// </summary>
-public class DocumentRecordingUploadSession
+public class DocumentRecordingUploadSession : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string StoreId { get; set; } = string.Empty;

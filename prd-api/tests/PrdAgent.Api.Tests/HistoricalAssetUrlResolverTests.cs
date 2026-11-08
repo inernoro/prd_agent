@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using Moq;
@@ -10,6 +11,7 @@ using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 using Shouldly;
 using Xunit;
 using Xunit.Abstractions;
@@ -18,6 +20,37 @@ namespace PrdAgent.Api.Tests;
 
 public class HistoricalAssetUrlResolverTests(ITestOutputHelper output)
 {
+    [Fact]
+    public async Task HistoricalProbeNeverFollowsRedirectThroughFactoryEgressGuard()
+    {
+        var transport = new RedirectProbe();
+        var services = new ServiceCollection().AddSingleton(Config());
+        services.AddHttpClient(nameof(HistoricalAssetUrlResolver))
+            .ConfigurePrimaryHttpMessageHandler(() => transport);
+        services.AddMapModelEgressGuard();
+        using var provider = services.BuildServiceProvider();
+        using var resolver = new HistoricalAssetUrlResolver(Config(), provider.GetRequiredService<IHttpClientFactory>());
+        var original = $"https://expired.example/{Key}";
+
+        (await resolver.ResolveAttachmentUrlAsync(new() { Url = original, FileSize = 42 }, default)).ShouldBe(original);
+
+        transport.Urls.ShouldHaveSingleItem().ShouldBe($"https://legacy.example/{Key}");
+    }
+
+    private sealed class RedirectProbe : HttpMessageHandler
+    {
+        public List<string> Urls { get; } = [];
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            request.Method.ShouldBe(HttpMethod.Head);
+            Urls.Add(request.RequestUri!.AbsoluteUri);
+            var response = new HttpResponseMessage(HttpStatusCode.Redirect)
+            { RequestMessage = request, Content = new ByteArrayContent([]) };
+            response.Headers.Location = new Uri("https://unapproved.example/redirected-attachment");
+            return Task.FromResult(response);
+        }
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.OK, 42, "matched")]
     [InlineData(HttpStatusCode.OK, 41, "length_mismatch")]

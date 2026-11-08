@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -153,6 +154,7 @@ public class VideoGenService : IVideoGenService
 
             var run = new VideoGenRun
             {
+                TaskPermitId = TaskExecutionContext.Current?.PermitId,
                 AppKey = appKey,
                 ProjectId = project?.Id,
                 OwnerAdminId = ownerAdminId,
@@ -207,6 +209,7 @@ public class VideoGenService : IVideoGenService
 
         var directRun = new VideoGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             AppKey = appKey,
             ProjectId = project?.Id,
             OwnerAdminId = ownerAdminId,
@@ -278,6 +281,7 @@ public class VideoGenService : IVideoGenService
         var updates = new List<UpdateDefinition<VideoGenRun>>
         {
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Generating),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.TaskPermitId", TaskExecutionContext.Current?.PermitId),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
         };
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
@@ -319,6 +323,7 @@ public class VideoGenService : IVideoGenService
         var updates = new List<UpdateDefinition<VideoGenRun>>
         {
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Submitting),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.TaskPermitId", TaskExecutionContext.Current?.PermitId),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.JobId", (string?)null),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.SubmissionStartedAt", DateTime.UtcNow),
@@ -574,13 +579,30 @@ public class VideoGenService : IVideoGenService
     {
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct);
         if (run == null) return false;
+        if (run.Status is VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled)
+            return true;
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update.Set(x => x.CancelRequested, true),
+        var now = DateTime.UtcNow;
+        var fb = Builders<VideoGenRun>.Filter;
+        var active = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+            & fb.Eq(x => x.AppKey, run.AppKey) & fb.Eq(x => x.TaskPermitId, run.TaskPermitId)
+            & fb.Eq(x => x.DeletionRequestedAt, null)
+            & fb.In(x => x.Status, new[] { VideoGenRunStatus.Queued, VideoGenRunStatus.Scripting,
+                VideoGenRunStatus.Editing, VideoGenRunStatus.Rendering });
+        // 可信取消入口同时落终态；撤权后不能再依赖旧Worker写回，也不放宽其租约检查。
+        var cancelled = await _db.VideoGenRuns.UpdateOneAsync(active,
+            Builders<VideoGenRun>.Update.Set(x => x.CancelRequested, true)
+                .Set(x => x.Status, VideoGenRunStatus.Cancelled).Set(x => x.EndedAt, now),
             cancellationToken: ct);
+        if (cancelled.ModifiedCount == 0) return true;
 
+        if (!string.IsNullOrWhiteSpace(run.ProjectId))
+            await _db.VideoProjects.UpdateOneAsync(x => x.Id == run.ProjectId && x.OwnerAdminId == ownerAdminId
+                    && x.AppKey == run.AppKey && x.LatestRunId == run.Id,
+                Builders<VideoProject>.Update.Set(x => x.Status, VideoProjectStatus.Draft).Set(x => x.UpdatedAt, now),
+                cancellationToken: ct);
         await PublishEventAsync(runId, "run.cancel.requested", new { });
+        await PublishEventAsync(runId, "run.cancelled", new { });
         return true;
     }
 

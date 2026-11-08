@@ -610,7 +610,7 @@ public class McpGatewayController : ControllerBase
 
         // 自证「这一跳是网关的续跳」：下游的用量闸门与全局限流据此不再重复计一次。
         // 用进程内随机令牌而不是「对端是不是 127.0.0.1」，见 McpLoopbackSignal 的说明。
-        req.Headers.TryAddWithoutValidation(McpLoopbackSignal.HeaderName, _loopback.Token);
+        _loopback.AttachTaskContinuation(req);
 
         var auth = Request.Headers["Authorization"].ToString();
         if (!string.IsNullOrWhiteSpace(auth))

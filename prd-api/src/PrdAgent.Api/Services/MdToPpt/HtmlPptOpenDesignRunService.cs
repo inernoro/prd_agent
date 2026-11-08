@@ -103,6 +103,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         var run = new DesignArtifactRun
         {
             Id = compatibilityRun.Id,
+            TaskPermitId = compatibilityRun.TaskPermitId,
             DeploymentSlug = DeploymentScope.Current,
             UserId = compatibilityRun.UserId,
             Status = RunStatuses.Queued,
@@ -268,6 +269,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
             await _events.SetRunAsync(RunKinds.DesignArtifact, new RunMeta
             {
                 RunId = run.Id,
+                TaskPermitId = run.TaskPermitId,
                 Kind = RunKinds.DesignArtifact,
                 Status = RunStatuses.Queued,
                 CreatedByUserId = run.UserId,

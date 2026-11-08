@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Http;
@@ -185,6 +186,7 @@ public sealed class DesignArtifactRuntimeServedModelTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ValidateModelTicketAsync(RunId, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         broker.Setup(x => x.ReserveModelCallAsync(RunId, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(RunId, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(run.TaskPermitId ?? GatewayAuthorizedTaskFixture.PermitId, run.Id));
         broker.Setup(x => x.RecordServedModelAsync(RunId, It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         var events = new Mock<IRunEventStore>(MockBehavior.Loose);
@@ -199,7 +201,7 @@ public sealed class DesignArtifactRuntimeServedModelTests
             new FixedResponseFactory(upstreamBody, upstreamMediaType),
             configuration,
             NullLogger<DesignArtifactRuntimeController>.Instance,
-            events.Object)
+            events.Object, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };

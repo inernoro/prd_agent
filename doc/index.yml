@@ -288,6 +288,9 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.platform.background-task-safety.phase0: "平台后台任务与消费最低保护 · 阶段 0 计划"
+  plan.platform.background-task-safety.phase1: "平台任务级准入与统一出口 · 阶段 1 计划"
+  plan.platform.background-task-safety.phase2: "平台业务幂等、执行租约与取消撤销 · 阶段 2 计划"
   plan.defect-agent.reliability-closure: "缺陷可靠性后续闭环 · 计划"
   plan.defect-agent.submit-reliability: "缺陷提交与 AI 润色可靠性排查 · 计划"
   plan.doc.readability.rollout: "文档说人话标准推广 · 计划"
@@ -336,6 +339,7 @@ docs:
   plan.visual-agent.optimization-backlog: "视觉创作 优化清单 · 计划"
 
   # 六、技术债务台账
+  debt.platform.background-task-safety: "平台后台任务与消费治理 · 债务台账"
   debt.defect-agent.submit-reliability: "缺陷提交可靠性 · 债务台账"
   debt.acceptance-center-cds: "CDS 验收中心 · 债务台账"
   debt.acceptance.daily-anchors: "每日验收的锚点契约 · 债务台账"

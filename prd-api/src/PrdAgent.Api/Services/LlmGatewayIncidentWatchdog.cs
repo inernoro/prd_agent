@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -99,10 +100,85 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 : await CloseFailureAndNotifyRecoveryAsync(signal, ct);
         }
 
+        changed |= await NotifyConsumptionAlertsAsync(ct);
         if (changed)
         {
             _pushSignal.NotifyPending();
         }
+    }
+
+    private async Task<bool> NotifyConsumptionAlertsAsync(CancellationToken ct)
+    {
+        var alerts = _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_consumption_alerts");
+        var filter = Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", _internalTenantId),
+            Builders<BsonDocument>.Filter.Eq("Status", "open"),
+            Builders<BsonDocument>.Filter.Eq("NotifiedAt", BsonNull.Value),
+            Builders<BsonDocument>.Filter.Gte("CreatedAt", DateTime.UtcNow.AddDays(-2)));
+        var pending = await alerts.Find(filter).Sort(Builders<BsonDocument>.Sort.Ascending("CreatedAt"))
+            .Limit(100).ToListAsync(ct);
+        var changed = false;
+        foreach (var alert in pending)
+        {
+            var notification = BuildConsumptionNotification(alert);
+            if (notification is null) continue;
+            // 固定通知 _id + SetOnInsert：多实例、崩溃重试不会再次生成相同通知或复活已处理通知。
+            var update = Builders<AdminNotification>.Update
+                .SetOnInsert(x => x.Key, notification.Key)
+                .SetOnInsert(x => x.Title, notification.Title)
+                .SetOnInsert(x => x.Message, notification.Message)
+                .SetOnInsert(x => x.Level, notification.Level)
+                .SetOnInsert(x => x.Status, notification.Status)
+                .SetOnInsert(x => x.Source, notification.Source)
+                .SetOnInsert(x => x.Section, notification.Section)
+                .SetOnInsert(x => x.ActionLabel, notification.ActionLabel)
+                .SetOnInsert(x => x.ActionUrl, notification.ActionUrl)
+                .SetOnInsert(x => x.ActionKind, notification.ActionKind)
+                .SetOnInsert(x => x.CreatedAt, notification.CreatedAt)
+                .SetOnInsert(x => x.UpdatedAt, notification.UpdatedAt)
+                .SetOnInsert(x => x.ExpiresAt, notification.ExpiresAt);
+            try
+            {
+                var result = await _mapDb.AdminNotifications.UpdateOneAsync(
+                    x => x.Id == notification.Id, update, new UpdateOptions { IsUpsert = true }, ct);
+                changed |= result.UpsertedId is not null;
+            }
+            catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // 另一个权威副本已插入同一通知，继续标记已转发。
+            }
+            await alerts.UpdateOneAsync(Builders<BsonDocument>.Filter.Eq("_id", alert["_id"]),
+                Builders<BsonDocument>.Update.Set("NotifiedAt", DateTime.UtcNow), cancellationToken: ct);
+        }
+        return changed;
+    }
+
+    internal static AdminNotification? BuildConsumptionNotification(BsonDocument alert)
+    {
+        var id = alert.GetValue("_id", "").ToString();
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        var blocked = alert.GetValue("Kind", "warning").AsString == "blocked";
+        var dynamicRate = alert.GetValue("Metric", "requests").AsString == "request_rate_baseline";
+        var caller = alert.GetValue("AppCallerCode", "unknown").AsString;
+        var origin = alert.GetValue("Origin", "general").AsString == "automatic" ? "自动任务" : "一般调用";
+        var requestId = alert.GetValue("RequestId", "").AsString;
+        return new AdminNotification
+        {
+            Id = $"llmgw-consumption-{id}", Key = $"llmgw-consumption:{id}",
+            Title = dynamicRate ? "模型调用量相对历史基线异常增长" : blocked ? "模型调用频率超限，平台已拦截" : "模型调用接近频率上限",
+            Message = (dynamicRate
+                ? $"{caller} 的{origin}在 {alert.GetValue("WindowSeconds", 60)} 秒窗口内达到 {alert.GetValue("Count", 0)} 次，"
+                  + $"动态触发线 {alert.GetValue("Limit", 0)} 次；历史均值 {alert.GetValue("BaselineAverage", 0)}，"
+                  + $"样本为 {alert.GetValue("BaselineSamples", 0)} 个已结束窗口。请检查任务范围；此预警不修改现有限额。"
+                : $"{caller} 的{origin}在 {alert.GetValue("WindowSeconds", 60)} 秒窗口内达到 "
+                      + $"{alert.GetValue("Count", 0)}/{alert.GetValue("Limit", 0)} 次。"
+                      + (blocked ? "超额请求已在发送上游之前拒绝。" : "已达到预警阈值，请检查是否存在异常自动触发。")
+                      ) + $"来源部署：{alert.GetValue("SourceDeployment", "未标记")}；请求编号：{requestId}。",
+            Level = blocked ? "error" : "warning", Source = "gateway-alert",
+            Section = AdminNotificationSections.Admin,
+            ActionLabel = "查看消费预警", ActionUrl = $"/logs?requestId={Uri.EscapeDataString(requestId)}",
+            ActionKind = "llm-gateway",
+        };
     }
 
     private async Task<bool> UpsertFailureAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)

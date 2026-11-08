@@ -3,8 +3,12 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 短视频素材解析运行记录。
 /// </summary>
-public class ShortVideoMaterialRun
+public class ShortVideoMaterialRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 

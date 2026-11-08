@@ -58,6 +58,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Resolve_RespectsExpectedModel_NoSelectAGiveB()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -78,6 +79,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Resolve_DifferentExpectedModels_MapToDistinctActuals()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         // 加固「不选 A 给 B」：连发两个不同 expectedModel，回传必须一一对应，不能都塌到同一个默认池模型
         // （这正是历史「选 A 给 B」bug 的表现——第二次 resolve(null) 覆盖成第一个池的模型）。
         await using var app = await StartServingHostAsync();
@@ -98,6 +100,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Send_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -120,6 +123,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Invoke_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -134,6 +138,7 @@ public class GatewayServingEndpointContractTests
                     "application/json"),
             };
             req.Headers.Add("X-Gateway-Key", TestKey);
+            req.Headers.Add(GatewayTaskAdmission.HeaderName, GatewayAuthorizedTaskFixture.PermitId);
 
             var resp = await client.SendAsync(req);
             var body = await resp.Content.ReadAsStringAsync();
@@ -147,6 +152,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task OpenAiCompatibleChatCompletions_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -161,6 +167,7 @@ public class GatewayServingEndpointContractTests
                     "application/json"),
             };
             req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", TestKey);
+            req.Headers.Add(GatewayTaskAdmission.HeaderName, GatewayAuthorizedTaskFixture.PermitId);
             req.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.PageAgent.Generate);
 
             var resp = await client.SendAsync(req);
@@ -176,6 +183,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task ProfileTest_RoundTrips_OverRealHttp()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -203,6 +211,7 @@ public class GatewayServingEndpointContractTests
     [Fact]
     public async Task Pools_ReturnsNonEmpty()
     {
+        using var task = GatewayAuthorizedTaskFixture.EnterTask();
         await using var app = await StartServingHostAsync();
         try
         {
@@ -239,6 +248,7 @@ public class GatewayServingEndpointContractTests
         builder.Services.AddSingleton<PrdAgent.Core.LlmGateway.ILlmGateway, EchoingGateway>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, PrdAgent.Core.Services.LLMRequestContextAccessor>();
 
+        GatewayAuthorizedTaskFixture.Register(builder.Services);
         var app = builder.Build();
         app.MapGatewayServingEndpoints(PascalJson, TestKey, "endpoint-contract-test");
         await app.StartAsync();
@@ -260,7 +270,7 @@ public class GatewayServingEndpointContractTests
             ["LlmGateway:ServeBaseUrl"] = baseUrl,
             ["LlmGwServe:ApiKey"] = key,
         }).Build();
-        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+        return new HttpLlmGatewayClient(SharedHttpFactory, config, NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: GatewayAuthorizedTaskFixture.Outbound);
     }
 
     /// <summary>

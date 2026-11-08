@@ -10,8 +10,12 @@ namespace PrdAgent.Core.Models;
 [AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 [AppOwnership(AppNames.LiteraryAgent, AppNames.LiteraryAgentDisplay)]
 [AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
-public class ImageGenRun
+public class ImageGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string OwnerAdminId { get; set; } = string.Empty;

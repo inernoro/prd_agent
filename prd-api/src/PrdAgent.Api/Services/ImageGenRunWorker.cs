@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -21,6 +22,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class ImageGenRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ImageGenRunWorker> _logger;
@@ -82,8 +84,10 @@ public class ImageGenRunWorker : BackgroundService
         IRunEventStore runStore,
         ILogger<ImageGenRunWorker> logger,
         ILLMRequestContextAccessor llmRequestContext,
-        IConfiguration config)
+        IConfiguration config,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _scopeFactory = scopeFactory;
         _runStore = runStore;
@@ -263,6 +267,10 @@ public class ImageGenRunWorker : BackgroundService
         // 重新读取最新 run（避免 claim 返回的字段不完整/过旧）
         var run = await _db.ImageGenRuns.Find(x => x.Id == claimed.Id).FirstOrDefaultAsync(ct);
         if (run == null) return;
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         // 若 ConfigModelId 存在且 run 未填平台信息，则尝试补齐（用于事件输出与后续查询）
         if (!string.IsNullOrWhiteSpace(run.ConfigModelId) && (string.IsNullOrWhiteSpace(run.PlatformId) || string.IsNullOrWhiteSpace(run.ModelId)))
@@ -984,7 +992,7 @@ public class ImageGenRunWorker : BackgroundService
             ? ImageGenRunStatus.Cancelled
             : (final.Failed > 0 ? ImageGenRunStatus.Failed : ImageGenRunStatus.Completed);
 
-        await PersistTerminalStateAsync(run, final, nextStatus, ct);
+        if (!await PersistTerminalStateAsync(run, final, nextStatus, ct)) return;
 
         // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
         // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
@@ -1017,7 +1025,7 @@ public class ImageGenRunWorker : BackgroundService
                 string.IsNullOrWhiteSpace(firstErrorItem?.ErrorMessage) ? "生图失败，请重试。" : firstErrorItem.ErrorMessage)
             : new TerminalFailure(null, null);
 
-    internal async Task PersistTerminalStateAsync(
+    internal async Task<bool> PersistTerminalStateAsync(
         ImageGenRun run,
         ImageGenRun final,
         ImageGenRunStatus nextStatus,
@@ -1051,10 +1059,13 @@ public class ImageGenRunWorker : BackgroundService
                 .Unset(x => x.ErrorMessage);
         }
 
-        await _db.ImageGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var persisted = await _db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id && x.OwnerAdminId == run.OwnerAdminId && x.AppKey == run.AppKey
+                && x.WorkspaceId == run.WorkspaceId && x.TaskPermitId == run.TaskPermitId
+                && x.Status == ImageGenRunStatus.Running,
             terminalUpdate,
             cancellationToken: ct);
+        if (persisted.ModifiedCount == 0) return false;
 
         await AppendEventAsync(run, "run", new
         {
@@ -1068,6 +1079,7 @@ public class ImageGenRunWorker : BackgroundService
             errorMessage = terminalFailure.ErrorMessage,
             endedAt
         }, ct);
+        return true;
     }
 
     private static string ResolveSize(ImageGenRun run, ImageGenRunPlanItem planItem)

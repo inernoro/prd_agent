@@ -180,7 +180,7 @@ def build_report() -> dict[str, Any]:
         [
             "public sealed class GatewayIngressRequest",
             "public required string RequestId { get; init; }",
-            "public string SourceSystem { get; init; } = \"external\";",
+            "public string SourceSystem { get; set; } = \"external\";",
             "public required string IngressProtocol { get; init; }",
             "public required string AppCallerCode { get; init; }",
             "public required string RequestType { get; init; }",
