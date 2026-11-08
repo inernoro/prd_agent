@@ -15,6 +15,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tarfile
 import urllib.error
 import urllib.request
 import zipfile
@@ -119,7 +120,22 @@ def gh(*args, missing_ok=False):
         if missing_ok and b"HTTP 404" in result.stderr:
             return None
         # CLI errors can include signed redirect URLs; do not forward their text.
-        raise ArtifactError("GitHub release operation failed; no overwrite or fallback attempted")
+        status = re.search(rb"HTTP ([0-9]{3})", result.stderr)
+        try:
+            response = json.loads(result.stdout)
+        except (ValueError, UnicodeError):
+            response = {}
+        message = response.get("message") if isinstance(response, dict) else None
+        known_messages = {"Bad credentials", "Not Found", "Validation Failed", "Resource not accessible by integration", "Requires authentication"}
+        diagnostic = {"operation": args[0], "endpoint": args[1].split("?")[0] if len(args) > 1 else "",
+                      "httpStatus": int(status[1]) if status else None,
+                      "remoteMessage": message if message in known_messages else "Unclassified CLI/API error",
+                      "errorType": "unsupported_cli_flag" if b"unknown flag:" in result.stderr else "github_operation_failed",
+                      "responseBytes": len(result.stdout), "responseSha256": hashlib.sha256(result.stdout).hexdigest()}
+        path = Path(os.environ.get("PRD_AGENT_ARTIFACT_DIAGNOSTICS", str(Path(tempfile.gettempdir()) / f"map-release-artifact-diagnostics-{os.getpid()}.jsonl")))
+        with path.open("a") as log:
+            log.write(json.dumps(diagnostic) + "\n")
+        raise ArtifactError(f"GitHub release operation failed (HTTP {diagnostic['httpStatus']}); no overwrite or fallback attempted; diagnostic={path}")
     return result.stdout
 
 
@@ -175,6 +191,27 @@ def bundle(dist, output, repo, commit, ref):
         manifest[key] = f"ghcr.io/{repo}/{image}:{ref}"
     files[2].write_text(json.dumps(manifest, indent=2) + "\n")
     return validate(output, ref, commit)
+
+
+def import_pages(archive_path, output, ref, commit, original_sha256):
+    """Extract only the original three files from a verified workflow artifact."""
+    if not re.fullmatch(r"[0-9a-f]{64}", original_sha256 or ""):
+        raise ArtifactError("Import requires the previously audited original ZIP hash")
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output) as temporary:
+        with tarfile.open(archive_path) as archive:
+            for name in names(ref):
+                matches = [m for m in archive.getmembers() if m.name.removeprefix("./") == name]
+                if len(matches) != 1 or not matches[0].isfile() or not 0 < matches[0].size <= 100 * 1024 * 1024:
+                    raise ArtifactError("Original workflow artifact is incomplete or ambiguous")
+                (Path(temporary) / name).write_bytes(archive.extractfile(matches[0]).read())
+        result = validate(temporary, ref, commit)
+        if result["zipSha256"] != original_sha256:
+            raise ArtifactError("Original workflow ZIP differs from the audited deployed ZIP")
+        for name in names(ref):
+            os.replace(Path(temporary) / name, output / name)
+    return result
 
 
 def alias(directory, source_ref, ref):
@@ -326,13 +363,14 @@ def publish(repo, ref, directory, resume_id=None, original_sha256=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["bundle", "alias", "pages", "validate", "fetch", "restore", "publish"])
+    parser.add_argument("command", choices=["bundle", "import-pages", "alias", "pages", "validate", "fetch", "restore", "publish"])
     parser.add_argument("--repo", default="inernoro/prd_agent")
     parser.add_argument("--ref", required=True)
     parser.add_argument("--commit")
     parser.add_argument("--directory", required=True)
     parser.add_argument("--dist")
     parser.add_argument("--source-ref")
+    parser.add_argument("--archive")
     parser.add_argument("--base-url")
     parser.add_argument("--github-output")
     parser.add_argument("--env-file", help="For the audited legacy consumer bridge; written only after full validation")
@@ -342,10 +380,14 @@ def main():
     try:
         if args.env_file and args.command != "fetch":
             raise ArtifactError("Only a validated fetch can export legacy consumer inputs")
-        if (args.resume_draft_id or args.original_sha256) and args.command != "publish":
+        if args.resume_draft_id and args.command != "publish":
             raise ArtifactError("Draft recovery is only supported by publish")
+        if args.original_sha256 and args.command not in ("publish", "import-pages"):
+            raise ArtifactError("Original ZIP hash is only supported for publish recovery or workflow import")
         if args.command == "bundle":
             result = bundle(args.dist, args.directory, args.repo, args.commit, args.ref)
+        elif args.command == "import-pages":
+            result = import_pages(args.archive, args.directory, args.ref, args.commit, args.original_sha256)
         elif args.command == "alias":
             result = alias(args.directory, args.source_ref, args.ref)
         elif args.command == "pages":

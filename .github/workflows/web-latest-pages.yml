@@ -14,12 +14,77 @@ on:
         type: boolean
         required: false
         default: false
+      retain_from_run:
+        description: "Optional one-time original Pages workflow artifact import (run ID). No rebuild."
+        required: false
+      retain_commit:
+        description: "Full original commit; must match the successful source workflow."
+        required: false
+      retain_original_sha256:
+        description: "Previously audited deployed ZIP SHA256, required for import."
+        required: false
+      retain_draft_id:
+        description: "Optional exact unpublished draft ID to recover from the original artifact."
+        required: false
 
 permissions:
   contents: read
 
 jobs:
+  retain-existing:
+    if: inputs.retain_from_run != '' || inputs.retain_commit != '' || inputs.retain_original_sha256 != '' || inputs.retain_draft_id != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: web-bundle-${{ inputs.retain_commit }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the original successful workflow identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN: ${{ inputs.retain_from_run }}
+          ORIGINAL_COMMIT: ${{ inputs.retain_commit }}
+          ORIGINAL_SHA256: ${{ inputs.retain_original_sha256 }}
+        run: |
+          printf '%s' "$ORIGINAL_RUN" | grep -Eq '^[0-9]+$'
+          printf '%s' "$ORIGINAL_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$ORIGINAL_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN" > original-run.json
+          python3 - <<'PY'
+          import json, os
+          run = json.load(open('original-run.json'))
+          assert run['head_sha'] == os.environ['ORIGINAL_COMMIT']
+          assert run['conclusion'] == 'success' and run['status'] == 'completed'
+          assert run['repository']['full_name'] == os.environ['GITHUB_REPOSITORY']
+          assert run['path'] == '.github/workflows/web-latest-pages.yml'
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: original
+          run-id: ${{ inputs.retain_from_run }}
+          github-token: ${{ github.token }}
+      - name: Retain the original bytes without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_COMMIT: ${{ inputs.retain_commit }}
+          ORIGINAL_SHA256: ${{ inputs.retain_original_sha256 }}
+          DRAFT_ID: ${{ inputs.retain_draft_id }}
+        run: |
+          python3 scripts/lib/release-artifacts.py import-pages --archive original/artifact.tar --ref "sha-$ORIGINAL_COMMIT" --commit "$ORIGINAL_COMMIT" --original-sha256 "$ORIGINAL_SHA256" --directory inherited
+          if [ -n "$DRAFT_ID" ]; then
+            printf '%s' "$DRAFT_ID" | grep -Eq '^[0-9]+$'
+            python3 scripts/lib/release-artifacts.py publish --repo "$GITHUB_REPOSITORY" --ref "sha-$ORIGINAL_COMMIT" --directory inherited --resume-draft-id "$DRAFT_ID" --original-sha256 "$ORIGINAL_SHA256"
+          else
+            python3 scripts/lib/release-artifacts.py publish --repo "$GITHUB_REPOSITORY" --ref "sha-$ORIGINAL_COMMIT" --directory inherited
+          fi
+
   build:
+    needs: retain-existing
+    if: always() && (needs.retain-existing.result == 'success' || needs.retain-existing.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

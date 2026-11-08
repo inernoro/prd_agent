@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import textwrap
 import unittest
@@ -473,6 +474,69 @@ class ReleaseArtifactTests(unittest.TestCase):
                 self.assertEqual(status, 1)
                 operation.assert_not_called()
 
+    def pages_tar(self, directory, label="original-pages", omit=None, duplicate=None):
+        path = self.root / (label + ".tar")
+        with tarfile.open(path, "w") as archive:
+            for name in artifacts.names(REF_A):
+                if name == omit:
+                    continue
+                content = (directory / name).read_bytes()
+                info = tarfile.TarInfo("./" + name)
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+                if name == duplicate:
+                    # Both accepted spellings must count as a duplicate.
+                    info = tarfile.TarInfo(name)
+                    info.size = len(content)
+                    archive.addfile(info, io.BytesIO(content))
+            for name in ("index.html", "admin/index.html", "../unwanted.txt"):
+                content = b"not one of the retained original three files"
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+        return path
+
+    def test_import_pages_retains_only_original_three_files_byte_for_byte(self):
+        directory = self.make_bundle()
+        original = {name: (directory / name).read_bytes() for name in artifacts.names(REF_A)}
+        path = self.pages_tar(directory)
+        output = self.root / "imported"
+        digest = artifacts.validate(directory, REF_A)["zipSha256"]
+        result = artifacts.import_pages(path, output, REF_A, COMMIT_A, digest)
+        self.assertEqual(result["zipSha256"], digest)
+        self.assertEqual({item.name: item.read_bytes() for item in output.iterdir()}, original)
+        self.assertFalse((self.root / "unwanted.txt").exists())
+
+    def test_import_pages_missing_duplicate_wrong_commit_or_audited_hash_leaves_no_partial(self):
+        directory = self.make_bundle()
+        digest = artifacts.validate(directory, REF_A)["zipSha256"]
+        cases = [("missing-" + str(index), name, None, COMMIT_A, digest)
+                 for index, name in enumerate(artifacts.names(REF_A))]
+        cases += [("duplicate-" + str(index), None, name, COMMIT_A, digest)
+                  for index, name in enumerate(artifacts.names(REF_A))]
+        cases += [("wrong-commit", None, None, COMMIT_B, digest),
+                  ("wrong-original-hash", None, None, COMMIT_A, "0" * 64),
+                  ("missing-original-hash", None, None, COMMIT_A, None)]
+        for label, omitted, duplicate, commit, original_hash in cases:
+            with self.subTest(case=label):
+                path = self.pages_tar(directory, label, omitted, duplicate)
+                output = self.root / (label + "-output")
+                with self.assertRaises(artifacts.ArtifactError):
+                    artifacts.import_pages(path, output, REF_A, commit, original_hash)
+                self.assertEqual(list(output.iterdir()) if output.exists() else [], [])
+
+    def test_import_pages_failure_preserves_existing_output(self):
+        directory = self.make_bundle()
+        path = self.pages_tar(directory)
+        output = self.root / "existing-import"
+        output.mkdir()
+        old = {name: ("previous " + name).encode() for name in artifacts.names(REF_A)}
+        for name, content in old.items():
+            (output / name).write_bytes(content)
+        with self.assertRaises(artifacts.ArtifactError):
+            artifacts.import_pages(path, output, REF_A, COMMIT_A, "0" * 64)
+        self.assertEqual({item.name: item.read_bytes() for item in output.iterdir()}, old)
+
     def test_release_tag_alias_preserves_original_zip_and_requires_expected_commit(self):
         directory = self.make_bundle()
         original = artifacts.validate(directory, REF_A)
@@ -830,6 +894,105 @@ printf 'fast-sentinel\nexec-sentinel\n' >> "$TEST_ACTION_LOG"
                     self.assertEqual(commands[1], ["scripts/lib/release-artifacts.py", "fetch", "--repo", REPO, "--ref", REF_A, "--directory", "canonical"])
                     self.assertIn("canonical", commands[2])
                     self.assertEqual(commands[-1], ["scripts/lib/release-artifacts.py", "publish", "--repo", REPO, "--ref", tag, "--directory", "canonical"])
+
+    def test_migration_identity_step_rejects_wrong_source_run_before_artifact_download(self):
+        run = self.workflow_run("retain-existing", "Verify the original successful workflow identity")
+        valid = {"head_sha": COMMIT_A, "status": "completed", "conclusion": "success",
+                 "repository": {"full_name": REPO}, "path": ".github/workflows/web-latest-pages.yml"}
+        cases = [("valid", valid, "123", COMMIT_A, "0" * 64)]
+        for field, value in (("head_sha", COMMIT_B), ("status", "in_progress"), ("conclusion", "failure"),
+                             ("repository", {"full_name": "other/repository"}), ("path", ".github/workflows/ci.yml")):
+            cases.append(("wrong-" + field, dict(valid, **{field: value}), "123", COMMIT_A, "0" * 64))
+        cases += [("bad-run", valid, "123;false", COMMIT_A, "0" * 64),
+                  ("missing-commit", valid, "123", "", "0" * 64),
+                  ("bad-hash", valid, "123", COMMIT_A, "bad")]
+        for label, record, run_id, commit, digest in cases:
+            with self.subTest(case=label):
+                working = self.root / label
+                (working / "bin").mkdir(parents=True)
+                source = working / "source-run.json"
+                source.write_text(json.dumps(record))
+                log = working / "gh-calls.jsonl"
+                gh = working / "bin/gh"
+                gh.write_text("#!" + sys.executable + "\nimport json, os, pathlib, sys\nwith open(os.environ['TEST_GH_LOG'], 'a') as log:\n log.write(json.dumps(sys.argv[1:]) + '\\n')\nsys.stdout.write(pathlib.Path(os.environ['TEST_RUN_SOURCE']).read_text())\n")
+                gh.chmod(0o755)
+                environment = dict(os.environ, PATH=str(working / "bin") + os.pathsep + os.environ["PATH"],
+                    GITHUB_REPOSITORY=REPO, ORIGINAL_RUN=run_id, ORIGINAL_COMMIT=commit, ORIGINAL_SHA256=digest,
+                    TEST_GH_LOG=str(log), TEST_RUN_SOURCE=str(source))
+                result = REAL_RUN(["sh", "-eu", "-c", run], cwd=working, env=environment, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, label == "valid")
+                if label in ("bad-run", "missing-commit", "bad-hash"):
+                    self.assertFalse(log.exists(), "Malformed input must fail before even reading the source run")
+                else:
+                    self.assertEqual([json.loads(line) for line in log.read_text().splitlines()],
+                                     [["api", f"repos/{REPO}/actions/runs/{run_id}"]])
+
+    def test_migration_step_imports_original_bytes_before_mocked_publish_and_stops_on_failure(self):
+        run = self.workflow_run("retain-existing", "Retain the original bytes without rebuilding")
+        directory = self.make_bundle()
+        digest = artifacts.validate(directory, REF_A)["zipSha256"]
+        for label, draft, missing, expected_hash in (("new", "", False, digest), ("resume", "701", False, digest),
+                                                    ("missing", "701", True, digest), ("bad-hash", "701", False, "0" * 64)):
+            with self.subTest(case=label):
+                working = self.root / ("migration-" + label)
+                (working / "scripts/lib").mkdir(parents=True)
+                (working / "original").mkdir()
+                (working / "bin").mkdir()
+                shutil.copyfile(SCRIPT, working / "scripts/lib" / SCRIPT.name)
+                archive = self.pages_tar(directory, "migration-input-" + label,
+                                         omit=artifacts.names(REF_A)[2] if missing else None)
+                shutil.copyfile(archive, working / "original/artifact.tar")
+                log = working / "publish.jsonl"
+                wrapper = working / "bin/python3"
+                # Execute the real import CLI. Only publish is intercepted.
+                wrapper.write_text("#!" + sys.executable + "\nimport json, os, sys\nif sys.argv[2] == 'publish':\n with open(os.environ['TEST_PUBLISH_LOG'], 'a') as log:\n  log.write(json.dumps(sys.argv[1:]) + '\\n')\nelse:\n os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n")
+                wrapper.chmod(0o755)
+                environment = self.subprocess_network_fixture(directory)
+                environment.update(PATH=str(working / "bin") + os.pathsep + os.environ["PATH"], GITHUB_REPOSITORY=REPO,
+                    ORIGINAL_COMMIT=COMMIT_A, ORIGINAL_SHA256=expected_hash, DRAFT_ID=draft, TEST_PUBLISH_LOG=str(log))
+                result = REAL_RUN(["sh", "-eu", "-c", run], cwd=working, env=environment, capture_output=True, text=True)
+                success = label in ("new", "resume")
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                if success:
+                    for name in artifacts.names(REF_A):
+                        self.assertEqual((working / "inherited" / name).read_bytes(), (directory / name).read_bytes())
+                    command = ["scripts/lib/release-artifacts.py", "publish", "--repo", REPO, "--ref", REF_A, "--directory", "inherited"]
+                    if draft:
+                        command += ["--resume-draft-id", draft, "--original-sha256", digest]
+                    self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], [command])
+                else:
+                    self.assertFalse(log.exists(), "Bad original source must not reach publish")
+                    self.assertEqual(list((working / "inherited").iterdir()), [])
+                self.assertFalse((self.root / "network.log").exists())
+
+    def test_optional_migration_permissions_identity_order_and_default_build_skip_inheritance(self):
+        migration = self.workflow_job("retain-existing")
+        build = self.workflow_job("build")
+        self.assertRegex(migration, r"permissions:\n      contents: write\n      actions: read")
+        self.assertNotIn("pages: write", migration)
+        self.assertNotIn("secrets.", migration)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", migration)
+        self.assertIn("group: web-bundle-${{ inputs.retain_commit }}", migration)
+        self.assertIn("cancel-in-progress: false", migration)
+        self.assertLess(migration.index("Verify the original successful workflow identity"), migration.index("actions/download-artifact@v4"))
+        self.assertLess(migration.index("actions/download-artifact@v4"), migration.index("Retain the original bytes without rebuilding"))
+        self.assertIn("name: github-pages", migration)
+        self.assertIn("run-id: ${{ inputs.retain_from_run }}", migration)
+        self.assertIn("github-token: ${{ github.token }}", migration)
+        condition = re.search(r"^    if: (.+)$", migration, re.M).group(1)
+        fields = ("retain_from_run", "retain_commit", "retain_original_sha256", "retain_draft_id")
+        # Evaluate the actual simple workflow predicates with controlled values.
+        for supplied in (None, *fields):
+            inputs = {field: "provided" if field == supplied else "" for field in fields}
+            expression = re.sub(r"inputs\.([a-z_0-9]+)", lambda item: repr(inputs[item.group(1)]), condition)
+            expression = expression.replace("||", " or ")
+            self.assertEqual(eval(expression, {"__builtins__": {}}, {}), supplied is not None)
+        self.assertIn("needs: retain-existing", build)
+        build_condition = re.search(r"^    if: (.+)$", build, re.M).group(1)
+        for outcome in ("skipped", "success", "failure", "cancelled"):
+            expression = build_condition.replace("always()", "True").replace("needs.retain-existing.result", repr(outcome))
+            expression = expression.replace("&&", " and ").replace("||", " or ")
+            self.assertEqual(eval(expression, {"__builtins__": {}}, {}), outcome in ("skipped", "success"))
 
     def test_workflow_permissions_serialization_and_ci_wiring_preserve_other_releases(self):
         source = (ROOT / ".github/workflows/web-latest-pages.yml").read_text()
