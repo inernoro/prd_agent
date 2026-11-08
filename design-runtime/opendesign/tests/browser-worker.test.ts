@@ -47,6 +47,52 @@ async function requestFile(server: http.Server, requestPath: string): Promise<{ 
 }
 
 describe('quality browser public-file and egress boundary', () => {
+  it('keeps worker startup functional while denying off-origin HTTP script imports', async () => {
+    let requests = 0;
+    const receiver = http.createServer((_req, res) => {
+      requests += 1;
+      res.writeHead(200, { 'Content-Type': 'application/javascript' });
+      res.end('self.remoteScriptLoaded = true;');
+    });
+    await new Promise<void>((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    const port = (receiver.address() as AddressInfo).port;
+    const rawHtml = `<!doctype html><html><head></head><body><main><p>Public worker sample</p></main><script>
+      const worker = new Worker('/assets/worker.js');
+      worker.onmessage = () => { const h = document.createElement('h1'); h.textContent = 'Worker ready'; document.querySelector('main').append(h); };
+      worker.postMessage('SYNTHETIC_ONLY');
+    </script></body></html>`;
+    const html = createArtifactQualityGate('', [], '', false)(rawHtml, ['index.html', 'assets/worker.js']);
+    const sample = workspace(html);
+    fs.mkdirSync(path.join(sample.workspaceDir, 'assets'));
+    fs.writeFileSync(path.join(sample.workspaceDir, 'assets', 'worker.js'), `
+      try { importScripts('http://127.0.0.1:${port}/startup.js'); } catch {}
+      onmessage = () => postMessage('ready');
+    `);
+    try {
+      const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+      expect(result.measurements.map((measurement) => measurement.h1Count)).toEqual([1, 1]);
+      expect(requests).toBe(0);
+      expect(fs.readFileSync(path.join(sample.workspaceDir, 'index.html'), 'utf8')).toBe(html);
+    } finally {
+      await new Promise<void>((resolve) => receiver.close(() => resolve()));
+    }
+  }, 30_000);
+
+  it('refuses another origin in an absolute proxy request while preserving its own public files', async () => {
+    const sample = workspace('<!doctype html><html><body><main><h1>Public sample</h1></main></body></html>');
+    const server = await startBrowserQualityServer(sample.workspaceDir);
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const own = await requestFile(server, `${origin}/index.html`);
+      const other = await requestFile(server, 'http://external.invalid/index.html');
+      expect(own.status).toBe(200);
+      expect(own.body).toBe(fs.readFileSync(path.join(sample.workspaceDir, 'index.html'), 'utf8'));
+      expect(other.status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('serves only the canonical public subtree, including encoded traversal and symlink cases', async () => {
     const sample = workspace('<!doctype html><html><body><main><h1>Public sample</h1></main></body></html>');
     const assets = path.join(sample.workspaceDir, 'assets');
@@ -87,7 +133,15 @@ describe('quality browser public-file and egress boundary', () => {
 
   it('keeps a same-origin worker functional without allowing its HTTP, WS or WSS connections', async () => {
     const observed = { http: 0, ws: 0, wssTransportAttempts: 0 };
-    const receiver = http.createServer((_req, res) => { observed.http += 1; res.end('synthetic-only'); });
+    const httpRequests: string[] = [];
+    const receiver = http.createServer((req, res) => {
+      observed.http += 1;
+      if (httpRequests.length < 8) {
+        try { httpRequests.push(`${req.method} ${new URL(req.url || '/', 'http://local.test').pathname.slice(0, 120)}`); }
+        catch { httpRequests.push('[invalid request path]'); }
+      }
+      res.end('synthetic-only');
+    });
     receiver.on('upgrade', (_req, socket) => { observed.ws += 1; socket.destroy(); });
     // No certificate exception: count only a TLS transport attempt, never accept WSS or any payload.
     const tlsReceiver = net.createServer((socket) => {
@@ -126,7 +180,7 @@ describe('quality browser public-file and egress boundary', () => {
       const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
       expect(result.measurements.map((measurement) => measurement.h1Count)).toEqual([1, 1]);
       expect(result.measurements.map((measurement) => measurement.visibleHeadingCount)).toEqual([3, 3]);
-      expect(observed).toEqual({ http: 0, ws: 0, wssTransportAttempts: 0 });
+      expect(observed, JSON.stringify({ httpRequests })).toEqual({ http: 0, ws: 0, wssTransportAttempts: 0 });
       expect(fs.readFileSync(path.join(sample.workspaceDir, 'index.html'), 'utf8')).toBe(html);
     } finally {
       await Promise.all([receiver, tlsReceiver].map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));

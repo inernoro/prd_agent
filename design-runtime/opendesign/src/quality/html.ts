@@ -23,11 +23,13 @@ export function decodeHtmlText(value: string): string {
 }
 
 export function readHtmlAttribute(attributes: string, name: string): string | undefined {
+  if (!attributes.trim()) return undefined;
   const value = parseHtmlAttributes(attributes).get(name.toLowerCase());
   return value === undefined ? undefined : decodeHtmlText(value ?? '');
 }
 
 export function hasHtmlAttribute(attributes: string, name: string): boolean {
+  if (!attributes.trim()) return false;
   return parseHtmlAttributes(attributes).has(name.toLowerCase());
 }
 

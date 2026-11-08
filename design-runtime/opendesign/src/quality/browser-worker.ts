@@ -53,7 +53,12 @@ function safePublicFile(workspaceDir: string, pathname: string): string | null {
 
 export async function startBrowserQualityServer(workspaceDir: string): Promise<http.Server> {
   const server = http.createServer((req, res) => {
-    const file = safePublicFile(workspaceDir, new URL(req.url || '/', 'http://localhost').pathname);
+    let file: string | null = null;
+    try {
+      const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const requested = new URL(req.url || '/', origin);
+      if (requested.origin === origin) file = safePublicFile(workspaceDir, requested.pathname);
+    } catch { /* Invalid or foreign proxy targets never leave this server. */ }
     if (!file) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('Not found');
@@ -356,6 +361,8 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
   const browser = await chromium.launch({
     headless: true,
     executablePath: resolveBrowserExecutablePath(),
+    // The existing public server never forwards requests; proxy enforcement also covers workers.
+    proxy: { server: origin },
     args: ['--disable-dev-shm-usage', '--no-sandbox'],
   });
   try {
