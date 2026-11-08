@@ -36,6 +36,9 @@ class OverlayInstallation(unittest.TestCase):
         first = module.prepare(self.checkout)
         self.assertEqual(first, module.prepare(self.checkout))
         self.assertIn("backend/app/cds_runtime.py", first)
+        self.assertIn("backend/app/services/llm/factory.py", first)
+        source = pathlib.Path(__file__).resolve().parents[1] / "deploy/deepaudit/overlay/backend/app/services/llm/factory.py"
+        self.assertEqual((self.checkout / "backend/app/services/llm/factory.py").read_bytes(), source.read_bytes())
         subprocess.run(["sh", str(self.checkout / "cds-release.sh"), "check"], check=True,
                        capture_output=True)
 
@@ -52,6 +55,14 @@ class OverlayInstallation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "overwrite"):
             module.prepare(self.checkout)
         self.assertIn("// operator work", target.read_text())
+
+    def test_refuses_modified_reviewed_factory(self):
+        target = self.checkout / "backend/app/services/llm/factory.py"
+        content = target.read_text() + "\n# operator work\n"
+        target.write_text(content)
+        with self.assertRaisesRegex(ValueError, "overwrite"):
+            module.prepare(self.checkout)
+        self.assertEqual(target.read_text(), content)
 
     def test_refuses_symlink_escape(self):
         target = self.checkout / "backend/app/cds_runtime.py"

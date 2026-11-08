@@ -71,7 +71,8 @@ describe('生产目录回收派发与真实独立操作', () => {
     const workerModule = moduleUrl('worktree-directory-removal-process');
     const script = `import fs from 'node:fs';import {removeOwnedDirectory} from ${JSON.stringify(workerModule)};
 const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);const input=JSON.parse(Buffer.concat(chunks).toString());
-fs.writeFileSync(${JSON.stringify(ready)},JSON.stringify({pid:process.pid,ppid:process.ppid}));
+fs.writeFileSync(${JSON.stringify(ready + '.part')},JSON.stringify({pid:process.pid,ppid:process.ppid}));
+fs.renameSync(${JSON.stringify(ready + '.part')},${JSON.stringify(ready)});
 await new Promise(resolve=>{const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){clearInterval(t);resolve()}},10)});
 process.stdout.write(JSON.stringify({status:await removeOwnedDirectory(input)}));`;
     const controlled: IShellExecutor = { exec: (...args) => f.pool.exec(...args),

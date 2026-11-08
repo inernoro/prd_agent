@@ -155,6 +155,45 @@ def endpoint_function(name, scope):
 
 class DeploymentCredentialDestination(unittest.TestCase):
     @staticmethod
+    def actual_factory():
+        from dataclasses import asdict
+        import hashlib
+        tree = ast.parse((ROOT / 'backend/app/services/llm/factory.py').read_text())
+        original = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'LLMFactory')
+        actual = ast.ClassDef(name='LLMFactory', bases=[], keywords=[], decorator_list=[],
+            body=[node for node in original.body if isinstance(node, ast.FunctionDef)
+                  and node.name in ('create_adapter', '_get_cache_key')])
+        scope = dict(LLMConfig=object, BaseLLMAdapter=object, asdict=asdict, json=json, hashlib=hashlib)
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[actual], type_ignores=[])), 'actual-llm-factory', 'exec'), scope)
+        factory = scope['LLMFactory']; factory._adapters = {}
+        factory._instantiate_adapter = classmethod(lambda cls, config: SimpleNamespace(config=config))
+        return factory
+
+    @staticmethod
+    def cache_config(key='same-pre-user', base='https://first-user.invalid/v1'):
+        from dataclasses import make_dataclass
+        from enum import Enum
+        class Provider(str, Enum):
+            OPENAI = 'openai'
+        config = make_dataclass('Config', [('provider', object), ('model', str), ('api_key', str), ('base_url', str)])
+        return config(Provider.OPENAI, 'shared-model', key, base)
+
+    def test_adapter_cache_keeps_exact_destination_and_full_credential_binding(self):
+        first = self.cache_config()
+        for other in [self.cache_config(base='https://other-user.invalid/v1'),
+                      self.cache_config(key='same-pre-deployment')]:
+            with self.subTest(base=other.base_url):
+                factory = self.actual_factory(); a = factory.create_adapter(first); b = factory.create_adapter(other)
+                self.assertIsNot(a, b)
+                self.assertIs(b.config, other)
+                self.assertNotIn(other.api_key, factory._get_cache_key(other))
+
+    def test_adapter_cache_reuses_equivalent_configuration_without_extra_construction(self):
+        factory = self.actual_factory(); config = self.cache_config()
+        first = factory.create_adapter(config)
+        self.assertIs(factory.create_adapter(self.cache_config()), first)
+
+    @staticmethod
     def actual_config(user_config, settings):
         tree = ast.parse((ROOT / 'backend/app/services/llm/service.py').read_text())
         original = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'LLMService')

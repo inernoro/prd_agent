@@ -465,6 +465,7 @@ describe('代码审查任务完整闭环', () => {
       ]);
       await state.flush();
       const reloaded = new StateService(path.join(dir, 'state.json')); reloaded.load();
+      await reloaded.flush();
       const restored = new CodeReviewService({ ...service.deps, state: reloaded });
       expect((await restored.auditPage(task.id)).events).toHaveLength(2);
       expect(reloaded.getCodeReviewTask(task.id)?.auditCount).toBe(2);
