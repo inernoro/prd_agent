@@ -1,0 +1,198 @@
+import { afterEach, describe, expect, it } from 'vitest';
+import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import { McpMonitorClient, probeMcpMonitor, validateMcpArguments, publicMcpMonitor, type McpCallEvidence, type McpTool } from '../../src/services/mcp-monitor.js';
+import { sealToken, type SealedSecret } from '../../src/infra/secret-seal.js';
+import { normalizeUptimeMonitorInput, probeCustomMonitor } from '../../src/services/uptime-custom-monitor.js';
+import { StateService } from '../../src/services/state.js';
+import { UptimeMonitorService } from '../../src/services/uptime-monitor.js';
+import { createUptimeRouter } from '../../src/routes/uptime.js';
+
+const servers: http.Server[] = [];
+const directories: string[] = [];
+const originalKey = process.env.CDS_SECRET_KEY;
+afterEach(() => {
+  servers.splice(0).forEach(s => { s.closeAllConnections(); s.close(); });
+  directories.splice(0).forEach(dir => fs.rmSync(dir, { recursive: true, force: true }));
+  if (originalKey === undefined) delete process.env.CDS_SECRET_KEY; else process.env.CDS_SECRET_KEY = originalKey;
+});
+const tool: McpTool = { name: 'health', inputSchema: { type: 'object', required: ['region'], properties: { region: { type: 'string', enum: ['cn'] } }, additionalProperties: false }, readOnly: true };
+async function serve(options: { sse?: boolean; error?: boolean; invalid?: boolean; hang?: boolean; token?: string; httpError?: boolean; reflectToken?: boolean } = {}) {
+  const seen: Array<{ method: string; params?: any; authorization?: string; session?: string }> = [];
+  const server = http.createServer((req, res) => {
+    let body = ''; req.on('data', data => { body += data; });
+    req.on('end', () => {
+      const rpc = JSON.parse(body); seen.push({ ...rpc, authorization: req.headers.authorization, session: req.headers['mcp-session-id'] });
+      if (options.hang) return;
+      if (options.httpError) { res.writeHead(401, { 'content-type': 'application/json' }); res.end(JSON.stringify({ code: 'invalid_token', message: `denied ${options.token} user@example.test` })); return; }
+      if (options.token && req.headers.authorization !== `Bearer ${options.token}`) { res.writeHead(401); res.end(); return; }
+      if (rpc.method === 'notifications/initialized') { res.writeHead(202); res.end(); return; }
+      const result = rpc.method === 'initialize' ? { protocolVersion: '2025-03-26', serverInfo: { name: options.reflectToken ? `service ${options.token}` : 'fixture', version: '1' }, capabilities: { tools: {} } }
+        : rpc.method === 'tools/list' ? { tools: [{ ...tool, ...(options.reflectToken ? { description: `tool ${options.token}` } : {}), annotations: { readOnlyHint: true } }, { name: 'delete', inputSchema: { type: 'object' } }] }
+          : { isError: !!options.error, content: [{ type: 'text', text: 'private-document-do-not-log' }] };
+      const out = options.invalid ? 'not JSON' : JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result });
+      res.writeHead(200, { 'content-type': options.sse ? 'text/event-stream' : 'application/json', ...(rpc.method === 'initialize' ? { 'mcp-session-id': 'private-session-fixture' } : {}) });
+      if (options.sse) { res.write(`event: message\r\ndata: ${out}\r\n\r\n`); } else res.end(out);
+    });
+  });
+  servers.push(server); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`, seen };
+}
+function state() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-monitor-')); directories.push(dir);
+  const file = path.join(dir, 'state.json'); const store = new StateService(file, dir); store.load(); return { dir, file, store };
+}
+
+describe('真正 MCP 工具巡检', () => {
+  it('握手、session、只读工具、必填参数及真正tools/call，结果落观测审计而不泄漏内容', async () => {
+    process.env.CDS_SECRET_KEY = 'fixture-key-never-real';
+    const remote = await serve({ token: 'fixture-bearer-never-real' });
+    const sealed = sealToken('fixture-bearer-never-real') as SealedSecret;
+    const outcome = await probeMcpMonitor(remote.url, { toolName: 'health', arguments: { region: 'cn' }, bearerTokenEncrypted: sealed }, 3000);
+    expect(outcome.up).toBe(true);
+    expect(remote.seen.map(x => x.method)).toEqual(['initialize', 'notifications/initialized', 'tools/list', 'tools/call']);
+    expect(remote.seen[3].params).toEqual({ name: 'health', arguments: { region: 'cn' } });
+    expect(remote.seen[3].session).toBe('private-session-fixture');
+    expect(remote.seen.every(x => x.authorization === 'Bearer fixture-bearer-never-real')).toBe(true);
+    expect(JSON.stringify(outcome)).not.toMatch(/fixture-bearer|private-document|private-session/);
+    const { store, file, dir } = state();
+    const normalized = normalizeUptimeMonitorInput({ name: '测试MCP', kind: 'functional', url: remote.url, assertions: [{ path: 'ok', op: 'eq', value: 'true' }] });
+    expect(normalized.ok).toBe(true); if (!normalized.ok) throw new Error('normalize');
+    const monitor = { ...normalized.monitor, mcp: { toolName: 'health', arguments: { region: 'cn' }, bearerTokenEncrypted: sealed } };
+    store.upsertUptimeMonitor(monitor); store.recordMonitorObservation(monitor.id, outcome.observation);
+    for (const e of outcome.observation.upstreamCalls!) await store.recordMcpMonitorAudit(e);
+    await store.flush();
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.getUptimeMonitor(monitor.id)?.observations?.[0].upstreamCalls).toHaveLength(4);
+    expect(reloaded.listMcpMonitorAudits()).toHaveLength(4);
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('fixture-bearer-never-real');
+    expect(JSON.stringify(publicMcpMonitor(monitor))).not.toMatch(/__sealed|fixture-bearer|"tag"/);
+    const edit = normalizeUptimeMonitorInput({ name: '修改后' }, { existing: monitor });
+    expect(edit.ok && edit.monitor.mcp).toEqual(monitor.mcp);
+    const scheduled = await probeCustomMonitor(monitor, 3000);
+    expect(scheduled.up).toBe(true); expect(remote.seen.filter(x => x.method === 'tools/call')).toHaveLength(2);
+  });
+  it('持续 SSE 收到对应结果后完成，不等服务关闭流', async () => {
+    const remote = await serve({ sse: true });
+    const result = await probeMcpMonitor(remote.url, { toolName: 'health', arguments: { region: 'cn' } }, 1000);
+    expect(result.up).toBe(true);
+  });
+  it('工具业务错误不能因为HTTP200变成正常', async () => {
+    const remote = await serve({ error: true });
+    const result = await probeMcpMonitor(remote.url, { toolName: 'health', arguments: { region: 'cn' } }, 1000);
+    expect(result.up).toBe(false); expect(result.err).toContain('业务失败');
+    expect(result.observation.upstreamCalls?.at(-1)?.snapshot).toMatchObject({ result: { isError: true } });
+  });
+  it('目录声明非只读或必填缺失时绝不调用工具', async () => {
+    const remote = await serve();
+    expect((await probeMcpMonitor(remote.url, { toolName: 'delete', arguments: {} }, 1000)).up).toBe(false);
+    expect((await probeMcpMonitor(remote.url, { toolName: 'health', arguments: {} }, 1000)).err).toContain('必填');
+    expect(remote.seen.some(x => x.method === 'tools/call')).toBe(false);
+    expect(() => validateMcpArguments(tool, { region: 42 })).toThrow('类型');
+    expect(() => validateMcpArguments(tool, { region: 'us' })).toThrow('允许范围');
+  });
+  it('上游失败正文形成有界脱敏审计，保留业务码而不保留token和个人信息', async () => {
+    const remote = await serve({ httpError: true, token: 'fixture-bearer-never-real' });
+    const client = new McpMonitorClient(remote.url, 'fixture-bearer-never-real', 1000);
+    await expect(client.discover()).rejects.toThrow('未授权');
+    expect(client.evidence[0]).toMatchObject({ received: true, status: 401, verdict: 'upstream-error', snapshot: { code: 'invalid_token' } });
+    expect(JSON.stringify(client.evidence)).not.toMatch(/fixture-bearer-never-real|user@example.test/);
+    const secret = 'fixture-' + 'a'.repeat(200);
+    const reflected = await serve({ token: secret, reflectToken: true });
+    const displayClient = new McpMonitorClient(reflected.url, secret, 1000);
+    const display = await displayClient.discover();
+    expect(display.server.name).toContain('[masked]'); expect(display.tools[0].description).toContain('[masked]');
+    expect(JSON.stringify({ display, calls: displayClient.evidence })).not.toContain('a'.repeat(80));
+  });
+  it('无响应超时与响应无法解析分开记录', async () => {
+    const hanging = await serve({ hang: true }); const client = new McpMonitorClient(hanging.url, undefined, 35);
+    await expect(client.discover()).rejects.toThrow('超时');
+    expect(client.evidence[0]).toMatchObject({ received: false, verdict: 'network-error' });
+    const offline = await serve(); const stopped = servers.pop()!;
+    await new Promise<void>(resolve => stopped.close(() => resolve()));
+    const offlineClient = new McpMonitorClient(offline.url, undefined, 1000);
+    await expect(offlineClient.discover()).rejects.toThrow('无法连接服务，请检查地址及服务是否在线后重试');
+    expect(offlineClient.evidence[0]).toMatchObject({ received: false, verdict: 'network-error' });
+    expect(offlineClient.evidence[0].reason).toMatch(/ECONNREFUSED|fetch failed/);
+    const invalid = await serve({ invalid: true }); const invalidClient = new McpMonitorClient(invalid.url, undefined, 1000);
+    await expect(invalidClient.discover()).rejects.toThrow('有效 JSON');
+    expect(invalidClient.evidence[0]).toMatchObject({ received: true, status: 200, verdict: 'invalid-response' });
+  });
+});
+
+describe('真实接入路由与持久化', () => {
+  it('discover→import→读回→scheduled probe；重复导入拒绝，审计有界保留', async () => {
+    process.env.CDS_SECRET_KEY = 'fixture-key-never-real';
+    const remote = await serve({ token: 'fixture-bearer-never-real' });
+    const { store, file, dir } = state(); const app = express(); app.use(express.json());
+    const monitor = new UptimeMonitorService({ state: { getAllBranches: () => [], getUptimeMonitors: () => store.listUptimeMonitors(), recordMonitorObservation: (id, observation) => store.recordMonitorObservation(id, observation) },
+      config: { enabled: true, intervalMs: 60000, timeoutMs: 3000, failureThreshold: 3, recoveryThreshold: 1, maxSamples: 100, excludePatterns: [], scope: 'all', storePath: '' } });
+    app.use('/api', createUptimeRouter({ monitor, store,
+      getNotifications: () => store.getMonitorNotifications(), setNotifications: s => store.setMonitorNotifications(s), listNotificationChannelIds: () => ['phone', 'legacy-map'],
+      alarmChannel: () => ({ status: 'untested', channel: 'MAP 站内通知', delivered: 0, failed: 0 }),
+      readAlarmNotify: () => ({ configured: true, username: 'fixture-user', endpoint: 'https://private-map.example.test', keyId: 'private-key-id', privateKeyFingerprint: 'private-fingerprint' }),
+      recordMcpAudit: e => store.recordMcpMonitorAudit(e), listMcpAudits: () => store.listMcpMonitorAudits() }));
+    const server = app.listen(0, '127.0.0.1'); servers.push(server); await new Promise<void>(resolve => server.once('listening', resolve));
+    const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+    const post = (route: string, body: unknown) => fetch(root + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const notificationView = await (await fetch(root + '/uptime/notifications')).json();
+    expect(notificationView.legacyChannel).toMatchObject({ id: 'legacy-map', status: 'untested', map: { username: 'fixture-user' } });
+    expect(JSON.stringify(notificationView)).not.toMatch(/private-key-id|private-fingerprint|private-map/);
+    const body = { url: remote.url, token: 'fixture-bearer-never-real' };
+    const discovered = await (await post('/uptime/mcp/discover', body)).json();
+    expect(discovered.tools).toHaveLength(2); expect(discovered.tools[1].readOnly).toBe(false);
+    const imported = await post('/uptime/mcp/import', { ...body, tools: [{ name: 'health', arguments: { region: 'cn' } }], channelIds: ['phone'] });
+    expect(imported.status).toBe(201); const out = await imported.json();
+    expect(out.monitors[0].mcp.tokenSet).toBe(true); expect(JSON.stringify(out)).not.toContain('__sealed');
+    const summary = await (await fetch(root + '/uptime/summary')).json();
+    expect(summary.targets[0]).toMatchObject({ id: out.targetIds[0], status: 'unknown', lastSample: null });
+    const probe = await post('/uptime/targets/' + encodeURIComponent(out.targetIds[0]) + '/probe', {});
+    expect(probe.status).toBe(200); expect((await probe.json()).sample.up).toBe(true);
+    await store.flush();
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.getMonitorNotifications().overrides?.[out.targetIds[0]]).toEqual(['phone']);
+    expect(reloaded.getUptimeMonitor(out.monitors[0].id)?.observations?.[0].upstreamCalls).toHaveLength(4);
+    expect((await probeCustomMonitor(reloaded.getUptimeMonitor(out.monitors[0].id)!, 3000)).up).toBe(true);
+    const audit = await (await fetch(root + '/uptime/mcp/audit')).json(); expect(audit.calls).toHaveLength(6);
+    expect(JSON.stringify(audit)).not.toContain('fixture-bearer-never-real');
+    const duplicate = await post('/uptime/mcp/import', { ...body, tools: [{ name: 'health', arguments: { region: 'cn' } }] });
+    expect(duplicate.status).toBe(400); expect(store.listUptimeMonitors()).toHaveLength(1);
+    const listed = await (await fetch(root + '/uptime/monitors')).json(); expect(JSON.stringify(listed)).not.toContain('__sealed');
+    const put = (body: unknown) => fetch(root + '/uptime/notifications', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await put({ defaultChannelIds: ['phone', 'legacy-map'], targetId: out.targetIds[0], channelIds: [], acknowledged: true, muteUntil: Date.now() + 60000 })).status).toBe(200);
+    const settings = (await (await fetch(root + '/uptime/notifications')).json()).settings;
+    expect(settings.overrides[out.targetIds[0]]).toEqual([]); expect(settings.acknowledgedAt[out.targetIds[0]]).toBeGreaterThan(0);
+    const reopened = new StateService(file, dir); reopened.load(); expect(reopened.getMonitorNotifications()).toEqual(settings);
+    expect((await put({ targetId: out.targetIds[0], channelIds: null, acknowledged: false, muteUntil: null })).status).toBe(200);
+    const cleared = (await (await fetch(root + '/uptime/notifications')).json()).settings;
+    expect(cleared.overrides[out.targetIds[0]]).toBeUndefined(); expect(cleared.mutedUntil[out.targetIds[0]]).toBeUndefined();
+    expect((await put({ defaultChannelIds: ['deleted-channel'] })).status).toBe(400);
+    expect((await put({ targetId: 'monitor@missing', acknowledged: true })).status).toBe(400);
+    await monitor.stop();
+  });
+});
+
+
+describe('新写接口的鉴权边界', () => {
+  it('项目级和带作用域Key不能读取通知或调用MCP，未加密的实例拒绝token持久化', async () => {
+    delete process.env.CDS_SECRET_KEY;
+    const { store } = state(); const app = express(); app.use(express.json());
+    app.use((req, _res, next) => {
+      if (req.headers['x-test-scope']) (req as any).cdsProjectKey = { projectId: 'fixture' };
+      next();
+    });
+    app.use('/api', createUptimeRouter({ monitor: {} as never, store, recordMcpAudit: e => store.recordMcpMonitorAudit(e) }));
+    const server = app.listen(0, '127.0.0.1'); servers.push(server); await new Promise<void>(resolve => server.once('listening', resolve));
+    const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+    for (const route of ['/uptime/mcp/audit', '/uptime/notifications']) expect((await fetch(root + route, { headers: { 'x-test-scope': '1' } })).status).toBe(403);
+    for (const route of ['/uptime/mcp/discover', '/uptime/mcp/import']) expect((await fetch(root + route, { method: 'POST', headers: { 'content-type': 'application/json', 'x-test-scope': '1' }, body: '{}' })).status).toBe(403);
+    const invalidToken = await fetch(root + '/uptime/mcp/discover', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: 'https://mcp.example.test', token: 'a"b' }) });
+    expect(invalidToken.status).toBe(400); expect((await invalidToken.json()).error).toContain('令牌格式');
+    const result = await fetch(root + '/uptime/mcp/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: 'https://mcp.example.test', token: 'fixture-token-never-real', tools: [{ name: 'health' }] }) });
+    expect(result.status).toBe(400); expect((await result.json()).error).toContain('凭据加密'); expect(store.listUptimeMonitors()).toHaveLength(0);
+  });
+});

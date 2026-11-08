@@ -168,7 +168,7 @@ import { backfillReportReadScope } from './services/connection/pairing-service.j
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
-import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
+import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected } from './services/alarm-route.js';
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
@@ -6231,7 +6231,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
-      if (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map')) void sendLegacyAlarm({
+      if (notificationChannelSelected(stateService.getMonitorNotifications(), data.targetId, 'legacy-map') && (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map'))) void sendLegacyAlarm({
         type,
         urgency: data.urgency,
         businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
@@ -6277,7 +6277,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         consecutiveFailures: data.consecutiveFailures,
       };
       const boardUrl = alarmBoardUrl(data.targetId);
-      for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
+      for (const channel of routeAlarm(stateService.listAlarmChannels(), event, stateService.getMonitorNotifications())) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
         if (alarmRelay.owns(channel.id)) {
           alarmRelay.enqueue(channel.id, { ...event, recoveryConfirmed: data.recoveryChannelIds?.includes(channel.id) }, boardUrl);
@@ -6474,6 +6474,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   }));
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
+    getNotifications: () => stateService.getMonitorNotifications(),
+    setNotifications: (settings) => stateService.setMonitorNotifications(settings),
+    listNotificationChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    recordMcpAudit: (evidence) => stateService.recordMcpMonitorAudit(evidence),
+    listMcpAudits: () => stateService.listMcpMonitorAudits(),
     listProjectPreviewHosts,
     listMonitorEndpoints: (projectId: string) => stateService.listMonitorEndpoints(projectId),
     addMonitorEndpoint: (projectId: string, url: string) => stateService.addMonitorEndpoint(projectId, url),

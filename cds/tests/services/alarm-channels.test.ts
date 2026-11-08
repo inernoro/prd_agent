@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyAlert, routeAlarm, renderAlarmMessage, channelConfigured, normalizeEventKind,
-  type AlarmChannelConfig, type AlarmEvent,
+  type AlarmChannelConfig, type AlarmEvent, notificationChannelSelected,
 } from '../../src/services/alarm-route.js';
 import { buildBarkUrl, renderTemplate } from '../../src/services/alarm-dispatch.js';
 import { parseChannel, publicChannel } from '../../src/routes/alarm-channels.js';
@@ -244,7 +244,7 @@ describe('通知通道接上线了', () => {
 
   it('告警事件真的被分类并派发到用户配的通道', () => {
     expect(index).toMatch(/classifyAlert\(type, data\.source\)/);
-    expect(index).toMatch(/routeAlarm\(stateService\.listAlarmChannels\(\), event\)/);
+    expect(index).toMatch(/routeAlarm\(stateService\.listAlarmChannels\(\), event, stateService\.getMonitorNotifications\(\)\)/);
     expect(index).toMatch(/sendAlarm\(channel, event/);
   });
 
@@ -265,5 +265,30 @@ describe('通知通道接上线了', () => {
   it('告警事件带上了 source —— 分类靠状态不靠切 id 前缀', () => {
     const monitor = readFileSync(fileURLToPath(new URL('../../src/services/uptime-monitor.ts', import.meta.url)), 'utf8');
     expect(monitor).toMatch(/source: target\.source,/);
+  });
+});
+
+
+describe('通知默认选择、逐服务覆盖与真实发送筛选', () => {
+  const a = channel({ id: 'default' }), b = channel({ id: 'service' });
+  const event = { ...EVENT, targetId: 'monitor@service' };
+  it('存量无设置保持事件和项目订阅口径，逐项覆盖优先于默认', () => {
+    expect(routeAlarm([a, b], event).map(c => c.id)).toEqual(['default', 'service']);
+    const settings = { defaultChannelIds: ['default'], overrides: { 'monitor@service': ['service'] } };
+    expect(routeAlarm([a, b], event, settings).map(c => c.id)).toEqual(['service']);
+    expect(routeAlarm([a, b], { ...event, targetId: 'monitor@other' }, settings).map(c => c.id)).toEqual(['default']);
+  });
+  it('明确空逐项选择为不通知，删除覆盖后恢复默认；项目与事件范围仍生效', () => {
+    expect(routeAlarm([a, b], event, { defaultChannelIds: ['default'], overrides: { 'monitor@service': [] } })).toEqual([]);
+    expect(routeAlarm([a, b], event, { defaultChannelIds: ['default'], overrides: {} }).map(c => c.id)).toEqual(['default']);
+    expect(routeAlarm([channel({ id: 'service', projects: ['other'] })], event, { overrides: { 'monitor@service': ['service'] } })).toEqual([]);
+    expect(routeAlarm([b], { ...event, kind: 'business-recovered' }, { overrides: { 'monitor@service': ['service'] } })).toEqual([]);
+  });
+  it('定时静默同时约束普通通道与legacy-MAP，确认不会掩盖故障', () => {
+    const settings = { defaultChannelIds: ['default', 'legacy-map'], mutedUntil: { 'monitor@service': Date.now() + 60000 } };
+    expect(routeAlarm([a, b], event, settings)).toEqual([]);
+    expect(notificationChannelSelected(settings, event.targetId, 'legacy-map')).toBe(false);
+    expect(routeAlarm([a], event, { acknowledgedAt: { 'monitor@service': Date.now() } })).toHaveLength(1);
+    expect(notificationChannelSelected({ mutedUntil: { 'monitor@service': 1 } }, event.targetId, 'legacy-map')).toBe(true);
   });
 });

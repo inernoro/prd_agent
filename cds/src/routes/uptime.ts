@@ -19,6 +19,7 @@ import { identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-
  *   POST   /api/uptime/targets/:id/probe        对任一目标立刻探一次并记入台账
  */
 
+import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type { AlarmChannelSnapshot, AlarmChannelStatusView } from '../services/alarm-channel.js';
 
@@ -43,6 +44,9 @@ import {
 import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.js';
 import { isSelfCheckEndpoint } from '../services/self-monitoring-bootstrap.js';
 import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
+import { McpMonitorClient, publicMcpMonitor, validateMcpArguments, validateMcpUrl, type McpCallEvidence } from '../services/mcp-monitor.js';
+import { isSealedSecret, isSealingEnabled, sealToken } from '../infra/secret-seal.js';
+import type { MonitorNotificationSettings } from '../services/alarm-route.js';
 
 /**
  * 取本次请求的项目作用域：项目级 cdsp_ / 单项目 cdsg_ key 会被 server.ts 的
@@ -166,6 +170,7 @@ export interface UptimeMonitorStore {
   getUptimeMonitor(id: string): UptimeCustomMonitor | undefined;
   upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor;
   removeUptimeMonitor(id: string): boolean;
+  flush?: () => Promise<void>;
   /** 校验归属项目存在；不接则不校验 */
   getProject?(projectId: string): unknown;
 }
@@ -173,6 +178,11 @@ export interface UptimeMonitorStore {
 export function createUptimeRouter(deps: {
   monitor: UptimeMonitorService;
   store?: UptimeMonitorStore;
+  getNotifications?: () => MonitorNotificationSettings;
+  setNotifications?: (settings: MonitorNotificationSettings) => void;
+  listNotificationChannelIds?: () => string[];
+  recordMcpAudit?: (evidence: McpCallEvidence) => void | Promise<void>;
+  listMcpAudits?: () => McpCallEvidence[];
   /**
    * 某项目名下所有分支的预览主机名。项目级 Key 自助登记时，地址只能落在这份台账里——
    * 它同时是「不许扫内网」的闸和「这条监控绑哪条分支」的来源。
@@ -387,7 +397,150 @@ export function createUptimeRouter(deps: {
   router.get('/uptime/monitors', (req, res) => {
     if (!store || storeUnavailable(res)) return;
     const scope = projectScopeOf(req);
-    res.json({ monitors: scope ? store.listUptimeMonitors(scope) : store.listUptimeMonitors() });
+    res.json({ monitors: (scope ? store.listUptimeMonitors(scope) : store.listUptimeMonitors()).map(publicMcpMonitor) });
+  });
+
+  const readChannelIds = (raw: unknown): string[] => {
+    if (!Array.isArray(raw) || raw.length > 100 || raw.some(id => typeof id !== 'string')) throw new Error('请选择有效的通知通道');
+    const ids = [...new Set(raw as string[])];
+    const available = new Set(deps.listNotificationChannelIds?.() ?? []);
+    if (ids.some(id => !available.has(id))) throw new Error('所选通知通道已不存在，请刷新后重试');
+    return ids;
+  };
+
+  const notificationView = () => {
+    const legacy = deps.alarmChannel?.();
+    const legacyConfig = legacy && legacy.status !== 'unconfigured' ? deps.readAlarmNotify?.() : undefined;
+    return {
+      settings: deps.getNotifications?.() ?? {},
+      ...(legacy && legacy.status !== 'unconfigured' ? { legacyChannel: {
+        id: 'legacy-map', name: legacy.channel, kind: 'map', enabled: true, status: legacy.status,
+        events: ['business-down', 'business-recovered', 'infra-down', 'infra-recovered'], projects: [],
+        ...(typeof legacyConfig?.username === 'string' ? { map: { username: legacyConfig.username } } : {}),
+      } } : {}),
+    };
+  };
+
+  router.get('/uptime/notifications', (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    res.json(notificationView());
+  });
+  router.put('/uptime/notifications', async (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    if (!deps.setNotifications || !deps.getNotifications) { res.status(503).json({ error: '此实例尚未接入通知规则存储' }); return; }
+    try {
+      const body = req.body ?? {};
+      const settings = structuredClone(deps.getNotifications());
+      if (body.defaultChannelIds !== undefined) settings.defaultChannelIds = readChannelIds(body.defaultChannelIds);
+      if (body.targetId !== undefined) {
+        if (typeof body.targetId !== 'string' || body.targetId.length > 256) throw new Error('监控目标无效');
+        const targetId = body.targetId as string;
+        if (!deps.monitor.getSummary().targets.some(t => t.id === targetId)) throw new Error('监控目标已不存在，请刷新后重试');
+        if (body.channelIds !== undefined) {
+          settings.overrides ??= {};
+          if (body.channelIds === null) delete settings.overrides[targetId];
+          else settings.overrides[targetId] = readChannelIds(body.channelIds);
+        }
+        if (body.muteUntil !== undefined) {
+          settings.mutedUntil ??= {};
+          if (body.muteUntil === null) delete settings.mutedUntil[targetId];
+          else {
+            if (typeof body.muteUntil !== 'number' || !Number.isFinite(body.muteUntil) || body.muteUntil < Date.now() || body.muteUntil > Date.now() + 7 * 86400000) throw new Error('静默时间须在未来七天内');
+            settings.mutedUntil[targetId] = body.muteUntil;
+          }
+        }
+        if (body.acknowledged !== undefined) {
+          if (typeof body.acknowledged !== 'boolean') throw new Error('确认状态格式不正确');
+          settings.acknowledgedAt ??= {};
+          if (body.acknowledged) settings.acknowledgedAt[targetId] = Date.now();
+          else delete settings.acknowledgedAt[targetId];
+        }
+      } else if (body.channelIds !== undefined || body.muteUntil !== undefined || body.acknowledged !== undefined) throw new Error('请先选择监控目标');
+      deps.setNotifications(settings);
+      await store?.flush?.();
+      res.json(notificationView());
+    } catch (err) { res.status(400).json({ error: (err as Error).message }); }
+  });
+
+  router.get('/uptime/mcp/audit', (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    res.json({ calls: deps.listMcpAudits?.() ?? [] });
+  });
+
+  const mcpClient = (body: Record<string, unknown>): McpMonitorClient => {
+    if (!deps.recordMcpAudit) throw new Error('MCP 调用审计尚未配置，暂时无法接入');
+    const url = validateMcpUrl(body.url);
+    const token = typeof body.token === 'string' ? body.token.trim() : undefined;
+    if (token && (token.length > 4096 || !/^[A-Za-z0-9._~+\/-]+=*$/.test(token))) throw new Error('访问令牌格式不正确');
+    return new McpMonitorClient(url, token, 15000, deps.recordMcpAudit);
+  };
+
+  router.post('/uptime/mcp/discover', async (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    try {
+      const client = mcpClient(req.body ?? {});
+      const discovered = await client.discover();
+      res.json({ ...discovered, requestId: client.requestId });
+    } catch (err) { res.status(400).json({ error: (err as Error).message }); }
+  });
+
+  router.post('/uptime/mcp/import', async (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    if (!store || storeUnavailable(res)) return;
+    try {
+      const body = req.body ?? {};
+      if (!Array.isArray(body.tools) || !body.tools.length || body.tools.length > 50) throw new Error('请选择 1 至 50 个只读工具');
+      const channelIds = body.channelIds === undefined ? [] : readChannelIds(body.channelIds);
+      if (body.channelIds !== undefined && (!deps.setNotifications || !deps.getNotifications)) throw new Error('此实例尚未接入通知规则存储');
+      const projectId = typeof body.projectId === 'string' && body.projectId ? body.projectId : null;
+      if (projectId && store.getProject && !store.getProject(projectId)) throw new Error('归属项目不存在，请重新选择');
+      const token = typeof body.token === 'string' ? body.token.trim() : '';
+      if (token && !isSealingEnabled()) throw new Error('此实例尚未开启凭据加密，请联系管理员配置后再接入需鉴权的服务');
+      const client = mcpClient(body);
+      const { tools, server } = await client.discover();
+      const url = validateMcpUrl(body.url);
+      const sealed = token ? sealToken(token) : undefined;
+      if (sealed && !isSealedSecret(sealed)) throw new Error('访问令牌未能加密，请重试');
+      const seen = new Set<string>();
+      const monitors: UptimeCustomMonitor[] = body.tools.map((selection: Record<string, unknown>) => {
+        const tool = tools.find(t => t.name === selection.name);
+        if (!tool) throw new Error('所选 MCP 工具已不存在，请重新发现');
+        if (seen.has(tool.name)) throw new Error('同一个工具不能重复订阅');
+        seen.add(tool.name);
+        const args = selection.arguments === undefined ? {} : selection.arguments as Record<string, unknown>;
+        validateMcpArguments(tool, args);
+        // Stable identity makes double submissions explicit instead of creating duplicate probes.
+        const id = `mcp_${crypto.createHash('sha256').update(JSON.stringify([projectId, url, tool.name, args])).digest('hex').slice(0, 32)}`;
+        if (store.getUptimeMonitor(id)) throw new Error(`工具 ${tool.name} 已订阅，请在监控列表中管理`);
+        const normalized = normalizeUptimeMonitorInput({ id, name: typeof selection.nameLabel === 'string' && selection.nameLabel.trim() ? selection.nameLabel : `${server.name} · ${tool.title || tool.name}`,
+          kind: 'functional', url, requestMethod: 'POST', requestBody: JSON.stringify({ jsonrpc: '2.0', id: 'monitor', method: 'tools/call', params: { name: tool.name } }),
+          assertions: [{ path: 'result.isError', op: 'ne', value: 'true' }], projectId, tags: ['MCP'], environment: 'production', intervalSeconds: 300 });
+        if (!normalized.ok) throw new Error(normalized.error);
+        const monitor = normalized.monitor;
+        monitor.mcp = { toolName: tool.name, arguments: args, ...(sealed && isSealedSecret(sealed) ? { bearerTokenEncrypted: sealed } : {}) };
+        stampAudit(monitor, req, { admin: true });
+        stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
+        return monitor;
+      });
+      const saved: UptimeCustomMonitor[] = [];
+      const previousSettings = deps.getNotifications?.();
+      try {
+        for (const monitor of monitors) saved.push(store.upsertUptimeMonitor(monitor));
+        if (body.channelIds !== undefined && deps.setNotifications) {
+          const settings = structuredClone(previousSettings ?? {}); settings.overrides ??= {};
+          for (const monitor of saved) settings.overrides[customProbeTargetId(monitor)] = channelIds;
+          deps.setNotifications(settings);
+        }
+        await store.flush?.();
+      } catch (err) {
+        for (const monitor of saved) store.removeUptimeMonitor(monitor.id);
+        if (previousSettings && deps.setNotifications) deps.setNotifications(previousSettings);
+        await store.flush?.();
+        throw err;
+      }
+      for (const monitor of saved) deps.monitor.refreshTarget?.(customProbeTargetId(monitor));
+      res.status(201).json({ monitors: saved.map(publicMcpMonitor), targetIds: saved.map(customProbeTargetId), requestId: client.requestId });
+    } catch (err) { res.status(400).json({ error: (err as Error).message }); }
   });
 
   /**
@@ -551,7 +704,7 @@ export function createUptimeRouter(deps: {
     stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
     try {
       const saved = store.upsertUptimeMonitor(monitor);
-      res.status(201).json({ monitor: saved, description: describeMonitorProbe(saved) });
+      res.status(201).json({ monitor: publicMcpMonitor(saved), description: describeMonitorProbe(saved) });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
     }
@@ -598,7 +751,7 @@ export function createUptimeRouter(deps: {
       const saved = store.upsertUptimeMonitor(monitor);
       // 台账立刻跟上新定义（尤其是归属项目），不等下一轮探测。
       deps.monitor.refreshTarget(customProbeTargetId(saved));
-      res.json({ monitor: saved, description: describeMonitorProbe(saved) });
+      res.json({ monitor: publicMcpMonitor(saved), description: describeMonitorProbe(saved) });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
     }

@@ -1705,10 +1705,12 @@ export class UptimeMonitorService {
    * 新项目看不见，等于隔离穿透（Codex PR #1514 第三轮 P2）。没有台账 = 还没探过，无事可同步。
    */
   refreshTarget(targetId: string): boolean {
-    const record = this.records.get(targetId);
-    if (!record) return false;
     const live = this.selectTargets().find((t) => t.id === targetId);
     if (!live) return false;
+    // Newly subscribed services appear immediately as unknown; a real sample is
+    // still required before they can become healthy.
+    const record = this.records.get(targetId) || emptyRecord(live, this.now());
+    this.records.set(targetId, record);
     this.syncRecordIdentity(record, live);
     // 定义里把它停了：台账立刻转 paused、开着的故障就地收尾，不等下一轮
     // （直接调 API 停用、或界面的跟进探测失败时，摘要不能还挂着「故障」）。

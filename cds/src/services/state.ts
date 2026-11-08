@@ -3188,6 +3188,25 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.save();
   }
 
+  getMonitorNotifications(): import('./alarm-route.js').MonitorNotificationSettings {
+    return structuredClone(this.state.monitorNotifications ?? {});
+  }
+
+  setMonitorNotifications(settings: import('./alarm-route.js').MonitorNotificationSettings): void {
+    this.state.monitorNotifications = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+  }
+
+  async recordMcpMonitorAudit(evidence: import('./mcp-monitor.js').McpCallEvidence): Promise<void> {
+    this.state.mcpMonitorAudits = [evidence, ...(this.state.mcpMonitorAudits ?? [])].slice(0, 200);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listMcpMonitorAudits(): import('./mcp-monitor.js').McpCallEvidence[] {
+    return structuredClone(this.state.mcpMonitorAudits ?? []);
+  }
+
   getUptimeMonitor(id: string): UptimeCustomMonitor | undefined {
     return this.state.uptimeMonitors?.[id];
   }
