@@ -710,6 +710,10 @@ release_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 release_evidence_id="$(date -u '+%Y%m%dT%H%M%SZ')_${TAG}_$$"
 release_evidence_dir="${PRD_AGENT_RELEASE_EVIDENCE_DIR:-${HOME:-.}/prd-agent-release-evidence}"
 release_evidence_file="$release_evidence_dir/${release_evidence_id}.json"
+# Keep full safe response metadata beside the existing release evidence, outside
+# temporary staging; CDS console summaries may truncate individual log lines.
+export PRD_AGENT_ARTIFACT_AUDIT_PATH="$release_evidence_dir/${release_evidence_id}.artifact-audit.jsonl"
+export PRD_AGENT_ARTIFACT_AUDIT_REQUEST_ID="$release_evidence_id"
 public_smoke_json="$tmp_dir/public-surface.json"
 rollback_smoke_json="$tmp_dir/public-surface-rollback.json"
 asset_storage_readiness_json="$tmp_dir/asset-storage-readiness.json"
@@ -1091,6 +1095,7 @@ case "$reuse_static_dist" in
     else
       retained_base="${PRD_AGENT_RELEASE_ASSET_BASE_URL:-}"
       release_failure_stage="static-retained-artifact"
+      mkdir -p "$release_evidence_dir"
       if [ -n "$retained_base" ]; then
         python3 scripts/lib/release-artifacts.py fetch --repo "$REPO" --ref "$TAG" \
           --base-url "$retained_base" --directory "$tmp_dir/retained" > "$tmp_dir/retained-evidence.json"
