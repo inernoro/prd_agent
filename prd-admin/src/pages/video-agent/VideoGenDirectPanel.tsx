@@ -45,6 +45,10 @@ const RESOLUTION_OPTIONS: Resolution[] = ['480p', '720p', '1080p'];
 
 const AUTO_MODEL = ''; // 空字符串 = 交由后端模型池自动选择
 
+// 本地取消终止生成，不代表供应商收据已就绪；详情刷新只读，不会提交或查询供应商。
+const shouldRefreshRun = (run: VideoGenRun) => !['Completed', 'Failed', 'Cancelled'].includes(run.status)
+  || (run.status === 'Cancelled' && !!run.directVideoJobId && !run.directVideoReconciledAt);
+
 export interface VideoGenDirectPanelProps {
   /** 外部已创建的 runId（纯输出模式），不传则启用完整输入模式 */
   externalRunId?: string;
@@ -119,7 +123,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       const res = await getVideoGenRunReal(runId);
       if (res.success && res.data) {
         setCurrentRun(res.data);
-        if (['Completed', 'Failed', 'Cancelled'].includes(res.data.status)) {
+        if (!shouldRefreshRun(res.data)) {
           if (pollRef.current) {
             clearInterval(pollRef.current);
             pollRef.current = null;
@@ -146,7 +150,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
       const res = await getVideoGenRunReal(externalRunId);
       if (!cancelled && res.success && res.data) {
         setCurrentRun(res.data);
-        if (!['Completed', 'Failed', 'Cancelled'].includes(res.data.status)) {
+        if (shouldRefreshRun(res.data)) {
           startPolling(externalRunId);
         }
       }
@@ -213,7 +217,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
     if (currentRun.cancelRequested && isActive) return currentRun.directVideoJobId ? '已停止后续生成，当前视频正在收尾，可能仍产生费用' : '已请求取消，正在确认处理结果';
     if (currentRun.status === 'Cancelled') return !currentRun.directVideoJobId
       ? '已取消，尚未提交生成'
-      : currentRun.directVideoReconciledAt ? '已取消，供应商任务已结束' : '已取消；历史任务缺少费用核对记录';
+      : currentRun.directVideoReconciledAt ? '已取消，供应商任务已结束' : '已取消；供应商状态与费用尚未核定';
     if (currentRun.status === 'Queued') return '排队中…';
     if (currentRun.currentPhase === 'videogen-submitting') return '正在提交到模型网关…';
     if (currentRun.currentPhase === 'videogen-polling') return 'AI 正在生成视频…';
