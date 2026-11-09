@@ -163,10 +163,10 @@ tsc --noEmit + 单元测试，把「端到端是否真的解决」丢给用户�
 
 两条铁律缺一不可（完整语义见 `doc/rule.doc.naming.md`）：
 
-1. **类型前缀**：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.` `adr.` `pdr.`。根目录 `pri.<类型>.md` 解释每类文章的作用；ADR/PDR 保存重要选择的理由与历史，现行规格与设计通过链接引用。
+1. **类型前缀**：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.` `adr.` `pdr.`。类型原则同样放在 `doc/`，以 `guide.doc.pri.<类型>.md` 解释各类文章的作用并纳入统一索引；ADR/PDR 保存重要选择的理由与历史，现行规格与设计通过链接引用。
 2. **appname 优先 + 点分层级**：topic 第一段是应用名，子模块用 `.` 续接，禁止用 `-` 把 appname 和子模块黏死
 
-跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。
+跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。内容层级不授权根目录例外；规则或守卫变更须对照原约束与明确授权，不得扩白名单或豁免索引迁就错误产物。
 
 正确 `spec.cds.settings.md`、`design.cds.agent.runtime.md`；错误 `spec.cds-settings.md`（黏连）、`design.defect-automation-autonomy.md`（appname 不在首段）、`output-xxx.md`（无前缀）。
 
@@ -220,7 +220,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `frontend-modal.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 模态框 3 硬约束：inline style 高度 + createPortal + min-h:0 |
 | `full-height-layout.md` | `prd-admin/src/pages/**/*.tsx`, `prd-desktop/src/pages/**/*.tsx` | 宽屏页面必须撑满视口：根 `h-full min-h-0 flex flex-col`，禁止 `calc(100vh - Npx)` 魔数，滚动发生在最近内容层 |
 | `server-authority.md` | `prd-api/src/**/*.cs` | CancellationToken.None + Run/Worker + SSE 心跳 |
-| `doc-types.md` | `doc/**/*.md` | 文档前缀与职责（含 adr/pdr；原则入口见根目录 pri 文档） |
+| `doc-types.md` | `doc/**/*.md` | 文档前缀与职责（含 adr/pdr；类型原则同样纳入 doc/ 指南与索引） |
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
 | `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
 | `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
