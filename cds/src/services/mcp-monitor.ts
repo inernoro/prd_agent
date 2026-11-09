@@ -51,7 +51,11 @@ function redactAuditText(value: unknown, secret: string): unknown {
   if (typeof value === 'string') return value.split(secret).join('***');
   if (Array.isArray(value)) return value.map(item => redactAuditText(item, secret));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactAuditText(item, secret)]));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+      // Digests and their scope are generated from received bytes, not upstream
+      // text. A short token coinciding with a hex digit must not corrupt them.
+      key === 'bodySha256' || key === 'hashScope' ? item : redactAuditText(item, secret),
+    ]));
   }
   return value;
 }
@@ -86,17 +90,37 @@ function snapshotRpc(value: unknown, secret?: string): Record<string, unknown> {
   };
 }
 
-async function readResponse(res: Response, id: string | undefined, onBytes?: (bytes: number) => void): Promise<{ doc?: Record<string, unknown>; bytes: number }> {
+interface ResponseBodyEvidence {
+  bodySha256: string;
+  hashedBytes: number;
+  bodyComplete: boolean;
+  hashScope: 'entire-response' | 'received-prefix';
+}
+
+async function readResponse(
+  res: Response,
+  id: string | undefined,
+  onBytes?: (bytes: number) => void,
+  onFailure?: (evidence: ResponseBodyEvidence) => void,
+): Promise<{ doc?: Record<string, unknown>; bytes: number }> {
   if (id === undefined) { await res.body?.cancel(); return { bytes: 0 }; }
-  if (!res.body) throw new Error('MCP 服务未返回内容');
+  if (!res.body) {
+    onFailure?.({ bodySha256: crypto.createHash('sha256').digest('hex'), hashedBytes: 0, bodyComplete: true, hashScope: 'entire-response' });
+    throw new Error('MCP 服务未返回内容');
+  }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   const sse = (res.headers.get('content-type') ?? '').includes('text/event-stream');
   let raw = '', bytes = 0;
+  let bodyComplete = false;
+  const digest = crypto.createHash('sha256');
   try {
     for (;;) {
       const next = await reader.read();
-      if (next.done) break;
+      if (next.done) { bodyComplete = true; break; }
+      // Hash bytes before decoding/CRLF normalization, including the received
+      // chunk that crosses the limit. No untrusted response text is persisted.
+      digest.update(next.value);
       bytes += next.value.byteLength; onBytes?.(bytes);
       if (bytes > BODY_LIMIT) throw new Error('MCP 返回超过 1 MB，请缩小服务工具目录');
       raw = (raw + decoder.decode(next.value, { stream: true })).replace(/\r\n/g, '\n');
@@ -117,6 +141,10 @@ async function readResponse(res: Response, id: string | undefined, onBytes?: (by
     try { doc = JSON.parse(raw) as Record<string, unknown>; } catch { throw new Error('MCP 响应不是有效 JSON'); }
     if (doc?.id !== id) throw new Error('MCP 响应标识与请求不一致');
     return { doc, bytes };
+  } catch (error) {
+    onFailure?.({ bodySha256: digest.digest('hex'), hashedBytes: bytes, bodyComplete,
+      hashScope: bodyComplete ? 'entire-response' : 'received-prefix' });
+    throw error;
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
@@ -172,7 +200,10 @@ export class McpMonitorClient {
       }
       if (operation === 'initialize') this.session = res.headers.get('mcp-session-id') ?? undefined;
       evidence.verdict = 'invalid-response';
-      const { doc, bytes } = await readResponse(res, id, bytes => { evidence.responseBytes = bytes; });
+      const { doc, bytes } = await readResponse(res, id, bytes => { evidence.responseBytes = bytes; }, bodyEvidence => {
+        evidence.responseBytes = bodyEvidence.hashedBytes;
+        evidence.snapshot = { ...bodyEvidence, bodyOmitted: '响应解析失败或中断，仅保留已接收字节的摘要，正文未保留' };
+      });
       evidence.responseBytes = bytes; evidence.snapshot = snapshotRpc(doc, this.token);
       if (doc?.error) { evidence.verdict = 'upstream-error'; throw new Error('MCP 服务拒绝了请求，请查看调用审计'); }
       if (!notification && (!doc?.result || typeof doc.result !== 'object')) throw new Error('MCP 服务返回结果格式不正确');

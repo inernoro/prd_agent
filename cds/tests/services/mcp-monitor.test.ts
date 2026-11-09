@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,12 +22,18 @@ afterEach(() => {
   if (originalKey === undefined) delete process.env.CDS_SECRET_KEY; else process.env.CDS_SECRET_KEY = originalKey;
 });
 const tool: McpTool = { name: 'health', inputSchema: { type: 'object', required: ['region'], properties: { region: { type: 'string', enum: ['cn'] } }, additionalProperties: false }, readOnly: true };
-async function serve(options: { sse?: boolean; error?: boolean; invalid?: boolean; hang?: boolean; token?: string; httpError?: boolean; reflectToken?: boolean } = {}) {
+async function serve(options: { sse?: boolean; error?: boolean; invalid?: boolean; hang?: boolean; token?: string; httpError?: boolean; reflectToken?: boolean; rawResponse?: { body: string; contentType: string; partial?: boolean } } = {}) {
   const seen: Array<{ method: string; params?: any; authorization?: string; session?: string }> = [];
   const server = http.createServer((req, res) => {
     let body = ''; req.on('data', data => { body += data; });
     req.on('end', () => {
       const rpc = JSON.parse(body); seen.push({ ...rpc, authorization: req.headers.authorization, session: req.headers['mcp-session-id'] });
+      if (options.rawResponse) {
+        res.writeHead(200, { 'content-type': options.rawResponse.contentType });
+        if (options.rawResponse.partial) res.write(options.rawResponse.body);
+        else res.end(options.rawResponse.body);
+        return;
+      }
       if (options.hang) return;
       if (options.httpError) { res.writeHead(401, { 'content-type': 'application/json' }); res.end(JSON.stringify({ code: 'invalid_token', message: `denied ${options.token} user@example.test` })); return; }
       if (options.token && req.headers.authorization !== `Bearer ${options.token}`) { res.writeHead(401); res.end(); return; }
@@ -48,6 +55,62 @@ function state() {
 }
 
 describe('真正 MCP 工具巡检', () => {
+  it.each([
+    { kind: 'malformed JSON', contentType: 'application/json', bodies: ['{"gate":"first","token":"e"', '{"gate":"other","token":"e"'] },
+    { kind: 'HTML login page', contentType: 'text/html', bodies: ['<!doctype html><title>login-aaaa e</title>', '<!doctype html><title>login-bbbb e</title>'] },
+  ])('HTTP200 $kind 的同长度不同响应保留完整SHA256，不保存原文', async ({ contentType, bodies }) => {
+    const { store, file, dir } = state();
+    expect(Buffer.byteLength(bodies[0])).toBe(Buffer.byteLength(bodies[1]));
+    const digests: unknown[] = [];
+    for (const body of bodies) {
+      const remote = await serve({ rawResponse: { body, contentType } });
+      // A generated hexadecimal digest must survive a one-character token.
+      const client = new McpMonitorClient(remote.url, 'e', 1000, evidence => store.recordMcpMonitorAudit(evidence));
+      await expect(client.discover()).rejects.toThrow('有效 JSON');
+      const evidence = client.evidence[0];
+      const expectedHash = crypto.createHash('sha256').update(body).digest('hex');
+      expect(evidence).toMatchObject({ received: true, status: 200, contentType: contentType.split('e').join('***'), responseBytes: Buffer.byteLength(body), verdict: 'invalid-response',
+        snapshot: { bodySha256: expectedHash, hashedBytes: Buffer.byteLength(body), bodyComplete: true, hashScope: 'entire-response' } });
+      expect(evidence.snapshot?.bodySha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(evidence)).not.toContain(body);
+      digests.push(evidence.snapshot?.bodySha256);
+    }
+    expect(digests[0]).not.toBe(digests[1]);
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.listMcpMonitorAudits().map(e => e.snapshot?.bodySha256)).toEqual([...digests].reverse());
+  });
+
+  it('超限或中断只记录实际收到的前缀摘要及字节数，不宣称完整响应', async () => {
+    const oversizedBody = 'x'.repeat(1024 * 1024 + 4096);
+    const oversized = await serve({ rawResponse: { body: oversizedBody, contentType: 'application/json' } });
+    const oversizedClient = new McpMonitorClient(oversized.url, undefined, 1000);
+    await expect(oversizedClient.discover()).rejects.toThrow('超过 1 MB');
+    const oversizedEvidence = oversizedClient.evidence[0];
+    expect(oversizedEvidence.responseBytes).toBeGreaterThan(1024 * 1024);
+    expect(oversizedEvidence).toMatchObject({ truncated: true, snapshot: {
+      bodySha256: crypto.createHash('sha256').update(oversizedBody.slice(0, oversizedEvidence.responseBytes)).digest('hex'),
+      hashedBytes: oversizedEvidence.responseBytes, bodyComplete: false, hashScope: 'received-prefix',
+    } });
+    const privateBody = '{"private":"fixture-bearer-never-real","step":';
+    const partial = await serve({ rawResponse: { body: privateBody, contentType: 'application/json', partial: true } });
+    const partialClient = new McpMonitorClient(partial.url, 'fixture-bearer-never-real', 150);
+    await expect(partialClient.discover()).rejects.toThrow('连接服务超时');
+    expect(partialClient.evidence[0]).toMatchObject({ received: true, status: 200, responseBytes: Buffer.byteLength(privateBody), snapshot: {
+      bodySha256: crypto.createHash('sha256').update(privateBody).digest('hex'),
+      hashedBytes: Buffer.byteLength(privateBody), bodyComplete: false, hashScope: 'received-prefix',
+    } });
+    expect(JSON.stringify(partialClient.evidence)).not.toContain('fixture-bearer-never-real');
+  });
+  it('SSE解析异常的摘要覆盖原始CRLF字节，不用归一化后的文本冒充原始响应', async () => {
+    const body = 'event: message\r\ndata: malformed-json\r\n\r\n';
+    const remote = await serve({ rawResponse: { body, contentType: 'text/event-stream' } });
+    const client = new McpMonitorClient(remote.url, undefined, 1000);
+    await expect(client.discover()).rejects.toThrow('MCP 流包含无效 JSON');
+    expect(client.evidence[0]).toMatchObject({ responseBytes: Buffer.byteLength(body), snapshot: {
+      bodySha256: crypto.createHash('sha256').update(body).digest('hex'), hashedBytes: Buffer.byteLength(body), bodyComplete: false, hashScope: 'received-prefix',
+    } });
+  });
+
   it.each(['true', 'null', '1', '-', '.', 'masked', 'e'])('合法短令牌 %s 不得破坏成功结果、失败原因或审计数据类型', async (token) => {
     const remote = await serve({ token, reflectToken: true });
     const recorded: McpCallEvidence[] = [];
