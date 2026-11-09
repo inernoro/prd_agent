@@ -471,4 +471,4 @@
 - [PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策](./pdr.product-agent.001.rule-evolution.md) `pdr.product-agent.001.rule-evolution`
 - [PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策](./pdr.product-agent.002.version-claim-boundary.md) `pdr.product-agent.002.version-claim-boundary`
 
-- [代码审查使用自己的模型 Key](guide.cds.code-review-user-key.md)：个人凭据、任务保护额度、网关同账本用量及四家供应商验证范围。
+- [代码审查使用自己的模型 Key](./guide.cds.code-review-user-key.md) `guide.cds.code-review-user-key`
