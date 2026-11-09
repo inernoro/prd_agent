@@ -958,7 +958,22 @@ export interface PreviewMirrorTag {
   routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] };
 }
 
+export interface CiImageDiagnosis {
+  code: 'not_triggered' | 'workflow_missing' | 'queued' | 'building' | 'startup_failed' | 'cancelled' | 'build_failed' | 'build_timed_out' | 'result_unsynced' | 'unknown';
+  title: string;
+  message: string;
+  targetSha: string;
+  checkedAt: string;
+  actionUrl: string;
+  actionLabel: string;
+}
+
 export interface BranchEntry {
+  /** 逻辑归档仍保留服务、工作区与数据；到期前可恢复。 */
+  archive?: { archivedAt: string; retireAt: string; reason: string; actor: string } | null;
+  /** 整组未就绪的连续观察起点，完全就绪后清空。 */
+  incompleteSince?: string | null;
+  restoredFromArchiveAt?: string;
   /** 父实例镜像来的只读分支（预览实例专用），生产实例永远没有这个字段 */
   mirror?: PreviewMirrorTag;
   id: string;
@@ -1186,6 +1201,8 @@ export interface BranchEntry {
    * 非极速版分支不设此字段,行为不变（push 即本机编译）。
    */
   ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  /** 对账原因绑定到目标 SHA；新 push/完成回执时清空，避免旧原因覆盖新状态。 */
+  ciDiagnosis?: CiImageDiagnosis | null;
   /** 极速版正在等待 CI 构建的目标 commit SHA（用于 workflow_run 的 head_sha 匹配）。 */
   ciTargetSha?: string;
   /** 最近一次匹配到的 CI workflow_run 结论（success / failure / cancelled / timed_out …）。 */
@@ -1677,6 +1694,7 @@ export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json'
  * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
  */
 export interface MonitorObservation {
+  upstreamCalls?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /** ISO 时间 */
   at: string;
   ok: boolean;
@@ -1705,6 +1723,8 @@ export interface MonitorObservation {
 }
 
 export interface UptimeCustomMonitor {
+  /** Only the MCP import route writes this sealed server-side configuration. */
+  mcp?: import('./services/mcp-monitor.js').McpMonitorConfig;
   id: string;
   /** 展示名；留空时由服务端按地址派生（主机名 / host:port） */
   name: string;
@@ -2261,6 +2281,8 @@ export interface CdsState {
   releasePlans?: Record<string, ReleasePlan>;
   /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
   uptimeMonitors?: Record<string, UptimeCustomMonitor>;
+  monitorNotifications?: import('./services/alarm-route.js').MonitorNotificationSettings;
+  mcpMonitorAudits?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /**
    * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
    * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
@@ -3448,6 +3470,8 @@ export interface ProjectActivityLog {
     | 'ai-release'     // AI agent 释放
     | 'branch-deleted' // DELETE /branches/:id
     | 'branch-created' // POST /branches
+    | 'branch-archived'
+    | 'branch-restored'
     | 'resource-created'
     | 'resource-deleted'
     | 'resource-restart'

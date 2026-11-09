@@ -1,3 +1,6 @@
+import type { BranchLifecycleService } from './services/branch-lifecycle.js';
+import { createBranchLifecycleRouter } from './routes/branch-lifecycle.js';
+import { lifecycleStopGate } from './services/branch-lifecycle.js';
 import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
@@ -255,7 +258,7 @@ function shouldAuditApiMutation(req: express.Request): boolean {
 function normalizeHttpLogPath(pathValue: string): string {
   const rawPath = (pathValue || '').split('?')[0] || '/';
   const segments = rawPath.split('/');
-  const staticBranchRoutes = new Set(['stream', 'state-audit', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
+  const staticBranchRoutes = new Set(['stream', 'state-audit', 'lifecycle-cleanup', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
   const staticExecutorRoutes = new Set(['register', 'capacity', 'dispatch']);
   return segments
     .map((segment, index) => {
@@ -539,6 +542,7 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  branchLifecycleService?: BranchLifecycleService;
   stateService: StateService;
   worktreeService: WorktreeService;
   containerService: ContainerService;
@@ -1333,6 +1337,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/prebuilt-image\/claim$/, '认领预构建镜像'],
     [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/projects\/[^/]+\/branches\/lifecycle-cleanup$/, '归档清理分支'],
+    [/^POST \/projects\/[^/]+\/branches\/[^/]+\/restore-archive$/, '恢复归档分支'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
     [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
     [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
@@ -2081,6 +2087,8 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   // 无效的专用签名先拒绝，不能回落到 legacy 内部标记或用户会话。
   app.use(pendingReplayGate.gate);
+  const lifecycleGate = lifecycleStopGate(deps.stateService);
+  app.use(lifecycleGate.gate);
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -2786,7 +2794,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
-      isPendingReplay: pendingReplayGate.isTrusted,
+      isPendingReplay: req => pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req),
       isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
@@ -2838,7 +2846,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
-      if (pendingReplayGate.isTrusted(req)) return next();
+      if (pendingReplayGate.isTrusted(req) || lifecycleGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
@@ -5106,6 +5114,7 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  if (deps.branchLifecycleService) app.use('/api', createBranchLifecycleRouter(deps.stateService, deps.branchLifecycleService));
   app.use('/api', createBranchRouter({
     selfMaintenanceRuntime: selfMaintenance,
     stateService: deps.stateService,

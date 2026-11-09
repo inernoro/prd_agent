@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> **版本**：v2.3 | **日期**：2026-11-08 | **状态**：已落地
+> **版本**：v2.4 | **日期**：2026-11-09 | **状态**：已落地
 
 **一句话**：全部长期文档按职责分类，架构和产品决策单独收录，用来确认有没有目标文章并拿到准确入口。
 **谁该读**：已经知道自己要找哪一类文档、想扫一眼有哪些的人。
@@ -222,6 +222,15 @@
 - [CDS Web 迁移运行手册 · 指南](./guide.cds.web-migration-runbook.md) `guide.cds.web-migration-runbook`
 - [缺陷管理 Agent 使用 · 指南](./guide.defect-agent.md) `guide.defect-agent`
 - [基础设施 Sandbox Agent · 指南](./guide.infra-sandbox-agent.md) `guide.infra-sandbox-agent`
+- [ADR 文档原则：为未来的人留下架构选择的理由 · 指南](./guide.doc.pri.adr.md) `guide.doc.pri.adr`
+- [债务文档原则：让已知欠账有边界、有偿还条件 · 指南](./guide.doc.pri.debt.md) `guide.doc.pri.debt`
+- [设计文档原则：解释当前方案如何成立 · 指南](./guide.doc.pri.design.md) `guide.doc.pri.design`
+- [指南文档原则：帮助读者完成一件具体的事 · 指南](./guide.doc.pri.guide.md) `guide.doc.pri.guide`
+- [PDR 文档原则：产品的根、承重结构与决策记忆 · 指南](./guide.doc.pri.pdr.md) `guide.doc.pri.pdr`
+- [计划文档原则：把已知目标变成可推进的行动 · 指南](./guide.doc.pri.plan.md) `guide.doc.pri.plan`
+- [报告文档原则：说明某一时间范围实际发生了什么 · 指南](./guide.doc.pri.report.md) `guide.doc.pri.report`
+- [规则文档原则：说明当前共同遵守的约束 · 指南](./guide.doc.pri.rule.md) `guide.doc.pri.rule`
+- [规格文档原则：说明当前产品必须做到什么 · 指南](./guide.doc.pri.spec.md) `guide.doc.pri.spec`
 - [百科全书导读 —— 人类怎么读这套文档 · 指南](./guide.doc.reading-map.md) `guide.doc.reading-map`
 - [MAP 平台文档索引 · 指南](./guide.list.directory.md) `guide.list.directory`
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
@@ -453,6 +462,7 @@
 ### 八、架构决策
 
 - [ADR-DOC-001 文档原则与决策记录分层 · 架构决策](./adr.doc.001.document-roles.md) `adr.doc.001.document-roles`
+- [ADR-DOC-002 原则指南遵守统一文档位置与授权边界 · 架构决策](./adr.doc.002.principle-location.md) `adr.doc.002.principle-location`
 - [ADR-PLATFORM-001 大模型调用统一归口 · 架构决策](./adr.platform.001.llm-boundary.md) `adr.platform.001.llm-boundary`
 
 ### 九、产品决策

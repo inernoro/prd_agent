@@ -19,6 +19,7 @@ import {
   type UptimeStatus,
 } from '@/lib/monitorCenter';
 import { describeStatusLoadError } from '@/lib/statusView';
+import { MonitorThemeButton } from './MonitorThemeButton';
 
 export const STATUS_META: Record<UptimeStatus, { label: string; icon: typeof CheckCircle2; pill: string; dot: string }> = {
   up: { label: '正常', icon: CheckCircle2, pill: 'border-ok/40 bg-ok-soft text-ok', dot: 'bg-ok' },
@@ -267,9 +268,10 @@ export function SegmentedControl<T extends string>({
 }
 
 /** 加载骨架：横幅 + 左列表 + 右详情三块的形状，不是静止 spinner。 */
-export function MonitorCenterSkeleton(): JSX.Element {
+export function MonitorCenterSkeleton({ overview = false }: { overview?: boolean } = {}): JSX.Element {
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3" role="status" aria-label="正在读取监控数据">
+    <div className="relative flex h-full min-h-0 flex-col gap-3" role="status" aria-label="正在读取监控数据">
+      {overview && <MonitorThemeButton className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background text-foreground" />}
       <div className="cds-loading-skeleton-line h-20 w-full rounded-lg" />
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[21.25rem_minmax(0,1fr)]">
         <div className="flex flex-col gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
