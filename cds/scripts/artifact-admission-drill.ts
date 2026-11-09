@@ -294,7 +294,7 @@ async function main(): Promise<void> {
     assert.equal(masterEntry.services.web.deployedImage, repositoryDigest); assert.ok(masterEntry.currentVersionId);
     const masterVersion = masterVersions.get(masterEntry.currentVersionId!)!;
     assert.equal(masterVersion.profiles[0].artifactImage, repositoryDigest); assert.equal(masterVersion.profiles[0].artifactKind, 'prebuilt-image');
-    assert.equal(masterVersions.materializeProfiles(masterVersion, [localPeerProfile])[0].localArtifact, false);
+    assert.equal(masterVersions.materializeProfiles(masterVersion, [localPeerProfile], masterEntry)[0].localArtifact, false);
     report.masterRepositoryDigest = { dispatchedImage: dispatched[0].profiles[0].dockerImage, versionId: masterVersion.id,
       originalMasterRoute: true, originalExecutorHttp: true, versionRepositoryReferencePreserved: true };
     report.actualMasterRemoteRepositoryDigestVerified = true;
@@ -317,7 +317,7 @@ async function main(): Promise<void> {
     const portableVersion = localPeerVersions.create({ projectId: 'owned', branchId: peerBranchId, commitSha: head,
       configHash: localPeerVersions.computeConfigHash([localPeerProfile], {}), profiles: [localPeerProfile], branch: localPeerEntry, createdByRunId: 'owned-executor-portable-reference' });
     assert.equal(portableVersion.profiles[0].artifactKind, 'prebuilt-image'); assert.equal(portableVersion.profiles[0].artifactImage, repositoryDigest);
-    assert.equal(localPeerVersions.materializeProfiles(portableVersion, [localPeerProfile])[0].dockerImage, repositoryDigest);
+    assert.equal(localPeerVersions.materializeProfiles(portableVersion, [localPeerProfile], localPeerEntry)[0].dockerImage, repositoryDigest);
     report.executorRepositoryDigest = { repositoryDigest, localContentId: localPeerRuntime.Image, portableVersionId: portableVersion.id,
       runtimeReferencePreserved: true, versionReferencePreserved: true, masterFixedUriPreflightPulls: fixedPulls.length, executorLocalRecheckWithoutAdditionalPull: true, noSourcePreparation: true };
     report.actualExecutorRepositoryDigestReuseVerified = true;
@@ -354,7 +354,7 @@ async function main(): Promise<void> {
     assert.equal(docker(['exec', secondaryDaemon, 'wget', '-qO-', '-T', '5', `http://${registry}/v2/`]), '{}');
     report.secondDaemonEndpoint.secondaryEndpointHttpReady = true;
 
-    const recoveredProfile = masterVersions.materializeProfiles(masterVersion, [localPeerProfile])[0];
+    const recoveredProfile = masterVersions.materializeProfiles(masterVersion, [localPeerProfile], masterEntry)[0];
     assert.equal(recoveredProfile.localArtifact, false);
     assert.equal(recoveredProfile.dockerImage, repositoryDigest);
     secondary(['pull', recoveredProfile.dockerImage!]);
@@ -455,7 +455,7 @@ async function main(): Promise<void> {
     assert.equal(docker(['inspect', '--format', '{{.Id}}', managedRuntime.containerName]), protectedManagedId); assert.deepEqual(await managedBody(), beforeFailedBuild);
     report.checks.push({ name: 'compiled-missing-prebuilt-does-not-start-hidden-source-or-remove-old-http', passed: true });
 
-    report.stage = 'local-version-content-restore'; const restoredProfile = versions.materializeProfiles(versionOne, [changedProfile])[0];
+    report.stage = 'local-version-content-restore'; const restoredProfile = versions.materializeProfiles(versionOne, [changedProfile], managedEntry)[0];
     assert.equal(restoredProfile.localArtifact, true); assert.equal(restoredProfile.dockerImage, imageOne);
     const beforeRestore = peerCommands.length; await peerContainer.runService(managedEntry, restoredProfile, managedRuntime, undefined, undefined, { artifactCommitSha: sourceOne });
     assert.equal(managedRuntime.deployedImage, imageOne); assert.equal(ownImage(artifactTag).Id, imageThree);
