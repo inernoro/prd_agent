@@ -1,3 +1,4 @@
+import type { ReviewUserKeyInput } from '../../../src/shared/code-review-user-key';
 import { ApiError, apiRequest, apiUrl } from './api';
 import type { CodeReviewResultPage } from '../../../src/shared/code-review-result';
 import type { ReviewListSource, ReviewListStatus } from '../../../src/shared/code-review-list';
@@ -35,10 +36,12 @@ export interface CodeReviewTask {
     email?: string;
     error?: string;
   };
+  modelCredential?: { source: 'user'; provider: string; model: string; fingerprint: string; tokenLimit: number };
   findingsSummary?: Record<string, number>;
 }
 
 export interface CodeReviewSubmission {
+  userKey?: ReviewUserKeyInput;
   projectId: string;
   sourceType: 'zip' | 'github' | 'cds';
   branchId?: string;
@@ -137,6 +140,7 @@ export async function submitCodeReview(input: CodeReviewSubmission, signal?: Abo
         ...(input.sourceType === 'cds' ? { branchId: input.branchId } : { githubUrl: input.githubUrl, ref: input.ref || undefined }),
         excludePatterns: input.excludePatterns,
         email: input.email || undefined,
+        userKey: input.userKey,
       },
       signal,
     });
@@ -146,6 +150,7 @@ export async function submitCodeReview(input: CodeReviewSubmission, signal?: Abo
   const form = new FormData();
   form.set('projectId', input.projectId);
   form.set('sourceType', 'zip');
+  if (input.userKey) form.set('userKey', JSON.stringify(input.userKey));
   form.set('file', input.file);
   form.set('excludePatterns', JSON.stringify(input.excludePatterns || []));
   if (input.email) form.set('email', input.email);

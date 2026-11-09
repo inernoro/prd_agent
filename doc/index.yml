@@ -187,6 +187,7 @@ docs:
   guide.arena: "AI 竞技场使用 · 指南"
   guide.cds.agent.admin: "CDS Agent 管理员 · 指南"
   guide.cds.agent-onboarding-harness: "CDS Agent 上手助手 · 指南"
+  guide.cds.code-review-user-key: "代码审查使用自己的模型 Key · 指南"
   guide.cds.agent.code-review-quickstart: "CDS Agent 代码审查上手指南 · 指南"
   guide.cds.agent.next-agent-testing: "CDS Agent 下一代测试与涌现建议 · 指南"
   guide.cds.agent.runbook: "CDS Agent 运行手册 · 指南"
