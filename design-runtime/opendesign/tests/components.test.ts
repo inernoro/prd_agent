@@ -517,11 +517,62 @@ describe('wiring guards', () => {
       webPrototypeSourceDir: '/app/plugins/_official/examples/web-prototype',
       presentationSkillSourceDir: '/app/plugins/_official/examples/guizang-ppt',
       odPort: 7456,
+      odStartTimeoutSeconds: 180,
       egressPort: 8787,
       engineUid: 1001,
       engineGid: 1001,
     });
     expect(config.odCommand.slice(1)).toEqual(['apps/daemon/dist/cli.js', '--no-open']);
+  });
+});
+
+describe('configured OpenDesign cold-start health deadline', () => {
+  it('loads an explicit deadline and rejects invalid environment values', () => {
+    expect(loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: '90' }).odStartTimeoutSeconds).toBe(90);
+    for (const value of ['-1', '1.5', 'invalid']) {
+      expect(() => loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: value }))
+        .toThrow('DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS');
+    }
+  });
+
+  it('uses the configured deadline in the actual lifecycle before a slow child becomes healthy', async () => {
+    const root = tempDir('design-runtime-cold-deadline-');
+    const script = [
+      "const http = require('node:http');",
+      'const started = Date.now();',
+      "const server = http.createServer((req, res) => {",
+      '  const healthy = Date.now() - started >= 12000;',
+      "  res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });",
+      '  res.end(JSON.stringify({ ok: healthy }));',
+      '});',
+      "server.listen(Number(process.env.OD_PORT), '127.0.0.1');",
+      "process.on('SIGTERM', () => server.close(() => process.exit(0)));",
+    ].join('\n');
+    const config: ServiceConfig = {
+      ...loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: '10' }),
+      apiKey: 'cold-start-test-only',
+      workspaceDir: path.join(root, 'workspace'),
+      odDataDir: path.join(root, 'od'),
+      templatesDir: path.join(root, 'templates'),
+      outputDir: path.join(root, 'output'),
+      webPrototypeSourceDir: path.join(FIXTURES, 'web-prototype'),
+      presentationSkillSourceDir: path.join(FIXTURES, 'presentation-skill'),
+      designSystemsDir: path.join(FIXTURES, 'design-systems'),
+      odPort: await freePort(),
+      odCommand: [process.execPath, '-e', script],
+      odCwd: root,
+      engineHome: root,
+      engineUid: undefined,
+      engineGid: undefined,
+      egressPort: 0,
+    };
+    const runtime = await createDesignRuntime(config, {
+      pollIntervalMs: 20,
+      log: () => undefined,
+      selfCheck: { codexVersion: 'codex-cli 0.143.0', codexMatches: true, codexObservation: '', missingSkillFiles: [], designSystems: [] },
+    });
+    cleanups.push(() => runtime.shutdown());
+    await expect(runtime.lifecycle.reset()).rejects.toMatchObject({ code: 'open_design_not_ready' });
   });
 });
 
