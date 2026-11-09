@@ -24936,6 +24936,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const startedAt = Date.now();
     let branch = '';
     let fullSha = '';
+    let rollbackRestartSuccess: (() => void) | undefined;
     const commitSelfRestartState = (terminal = false): void => {
       const history = stateService.getSelfUpdateHistory(20);
       selfStatusCache.commitSelfUpdateState(
@@ -24984,7 +24985,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-restart',
         onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
         onSafeToRestart: () => {
-          stateService.recordSelfUpdate({
+          rollbackRestartSuccess = stateService.recordProvisionalSelfUpdateSuccess({
             ts: new Date().toISOString(),
             branch,
             fromSha: fullSha.slice(0, 8),
@@ -25013,6 +25014,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       res.end();
     } catch (err) {
+      rollbackRestartSuccess?.();
       if (err instanceof SelfUpdateRestartBlockedError) {
         stateService.recordSelfUpdate({ ts: new Date().toISOString(), branch,
           fromSha: fullSha.slice(0, 8), toSha: fullSha.slice(0, 8), trigger: 'manual',
@@ -25173,18 +25175,22 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
         .stdout.trim();
     } catch { /* tolerated — 极少数情况下 fromSha=''仍可继续 */ }
+    let rollbackRestartSuccess: (() => void) | undefined;
     const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
       if (record.status === 'success' && ['noOp', 'web-only', 'doc-only'].includes(record.updateMode || '')) keepUpdate = true;
-      stateService.recordSelfUpdate({
+      const stored = {
         ...record,
         timings: timingRecorder.snapshot(),
-      });
+      };
+      if (record.status === 'success' && !keepUpdate) rollbackRestartSuccess = stateService.recordProvisionalSelfUpdateSuccess(stored);
+      else stateService.recordSelfUpdate(stored);
       commitSelfUpdateState(true);
     };
     const recordFailure = (
       errMsg: string,
       failure?: import('../types.js').SelfUpdateRecord['failure'],
     ): void => {
+      rollbackRestartSuccess?.(); rollbackRestartSuccess = undefined;
       recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
@@ -26099,18 +26105,22 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       fromSha = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot }))
         .stdout.trim();
     } catch { /* tolerated */ }
+    let rollbackRestartSuccess: (() => void) | undefined;
     const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
       if (record.status === 'success' && ['noOp', 'web-only', 'doc-only'].includes(record.updateMode || '')) keepUpdate = true;
-      stateService.recordSelfUpdate({
+      const stored = {
         ...record,
         timings: timingRecorder.snapshot(),
-      });
+      };
+      if (record.status === 'success' && !keepUpdate) rollbackRestartSuccess = stateService.recordProvisionalSelfUpdateSuccess(stored);
+      else stateService.recordSelfUpdate(stored);
       commitSelfUpdateState(true);
     };
     const recordFailure = (
       errMsg: string,
       failure?: import('../types.js').SelfUpdateRecord['failure'],
     ): void => {
+      rollbackRestartSuccess?.(); rollbackRestartSuccess = undefined;
       recordSelfUpdate({
         ts: new Date().toISOString(),
         branch: branch || '',
