@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -26,6 +27,8 @@ public static class CapsuleExecutor
     private const int CdsAgentEventPageSize = 500;
     private const int CdsAgentMaxEventPages = 20;
     private const int SafeOutboundMaxRedirects = 5;
+    internal const long DefaultMaxVideoDownloadBytes = 200L * 1024 * 1024;
+    private const int DownloadedVideoContainerProbeBytes = 1024 * 1024;
 
     public record CapsuleResult(List<ExecutionArtifact> Artifacts, string Logs);
 
@@ -5773,6 +5776,12 @@ public static class CapsuleExecutor
 
         var timeoutSeconds = int.TryParse(GetConfigString(node, "timeoutSeconds"), out var ts) ? ts : 120;
 
+        var maxBytes = long.TryParse(GetConfigString(node, "maxFileSizeBytes"), out var configuredMaxBytes)
+            && configuredMaxBytes > 0
+            ? Math.Min(configuredMaxBytes, DefaultMaxVideoDownloadBytes)
+            : DefaultMaxVideoDownloadBytes;
+        using var downloadDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        var downloadToken = downloadDeadline.Token;
         sb.AppendLine($"[VideoDownloader] 下载: {videoUrl}");
 
         var factory = sp.GetRequiredService<IHttpClientFactory>();
@@ -5783,6 +5792,7 @@ public static class CapsuleExecutor
         // 下载视频
         byte[] videoBytes;
         string? contentType;
+        var responseEvidence = "未收到响应";
         try
         {
             using var response = await GetSafeOutboundAsync(
@@ -5790,30 +5800,20 @@ public static class CapsuleExecutor
                 urlValidator,
                 videoUrl,
                 "视频下载地址",
-                System.Net.Http.HttpCompletionOption.ResponseContentRead,
-                CancellationToken.None);
-            response.EnsureSuccessStatusCode();
-            videoBytes = await response.Content.ReadAsByteArrayAsync(CancellationToken.None);
+                System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
+                downloadToken);
             var rawType = response.Content.Headers.ContentType?.MediaType;
-            // MIME 归一:
-            // - video/* → 原样保留
-            // - 缺失 / application/octet-stream(很多短视频 CDN 回这种通用类型)→ 归一成 video/mp4,
-            //   否则 AssetStorage 落成 .bin COS URL,前端 PosterFeedCardView 仅凭后缀判定会把可播放
-            //   视频当图片显示成破损媒体(Codex P2)。
-            // - 显式的非视频类型(text/html 分享/登录/防盗链页、image/* 等)→ 直接拒绝,不能改写成
-            //   mp4 把非视频字节存成 .mp4,否则 source 阶段"假成功"、卡片播放与后续 ASR 都会以误导
-            //   性的症状失败(Codex P2 二轮)。
-            if (string.IsNullOrWhiteSpace(rawType) || rawType.EndsWith("/octet-stream", StringComparison.OrdinalIgnoreCase))
-                contentType = "video/mp4";
-            else if (rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
-                contentType = rawType;
-            else
-                throw new InvalidOperationException($"视频下载地址返回了非视频内容（{rawType}），可能是分享页/登录页/防盗链拦截，已中止保存");
+            responseEvidence = $"status={(int)response.StatusCode}, type={rawType ?? "missing"}, declaredBytes={response.Content.Headers.ContentLength?.ToString() ?? "unknown"}, maxBytes={maxBytes}";
+            response.EnsureSuccessStatusCode();
+            videoBytes = await ReadContentWithLimitAsync(response.Content, maxBytes, downloadToken);
+            responseEvidence += $", readBytes={videoBytes.Length}, sha256={Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(videoBytes)).ToLowerInvariant()}";
+            contentType = ResolveDownloadedVideoContentType(videoBytes, rawType);
+            sb.AppendLine($"[VideoDownloader] 响应核对: {responseEvidence}, decision=accepted");
             sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"视频下载失败: {ex.Message}");
+            throw new InvalidOperationException($"视频下载失败: {ex.Message}；响应核对: {responseEvidence}, decision=rejected", ex);
         }
 
         // 上传到 COS
@@ -5835,6 +5835,169 @@ public static class CapsuleExecutor
         var artifact = MakeTextArtifact(node, "vd-out", "下载结果", output, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
     }
+
+    internal static async Task<byte[]> ReadContentWithLimitAsync(
+        HttpContent content,
+        long maxBytes,
+        CancellationToken cancellationToken)
+    {
+        if (maxBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        var contentLength = content.Headers.ContentLength;
+        if (contentLength.HasValue && contentLength.Value > maxBytes)
+            throw new InvalidOperationException($"视频文件超过大小限制（最大 {maxBytes / 1024 / 1024}MB）");
+
+        await using var source = await content.ReadAsStreamAsync(cancellationToken);
+        using var target = contentLength is > 0 and <= int.MaxValue
+            ? new MemoryStream((int)Math.Min(contentLength.Value, maxBytes))
+            : new MemoryStream();
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0) break;
+            total += read;
+            if (total > maxBytes)
+                throw new InvalidOperationException($"视频文件超过大小限制（最大 {maxBytes / 1024 / 1024}MB）");
+            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+        return target.ToArray();
+    }
+
+    internal static string ResolveDownloadedVideoContentType(byte[] videoBytes, string? rawType)
+    {
+        var detectedType = DetectDownloadedVideoContentType(videoBytes);
+        if (!string.IsNullOrWhiteSpace(rawType)
+            && rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+        {
+            var normalizedVideoType = rawType.Trim().ToLowerInvariant();
+            var declaredType = normalizedVideoType switch
+            {
+                "video/mp4" or "video/x-m4v" => "video/mp4",
+                "video/quicktime" => "video/quicktime",
+                "video/webm" => "video/webm",
+                "video/x-matroska" => "video/x-matroska",
+                "video/x-msvideo" => "video/x-msvideo",
+                _ => throw new InvalidOperationException(
+                    $"当前下载与转写流水线不支持视频格式（{rawType}），请先转换为 MP4、MOV、WebM、MKV 或 AVI"),
+            };
+            if (detectedType == null)
+                throw new InvalidOperationException(
+                    $"视频下载地址声明为 {rawType}，但文件签名不是受支持的视频容器，已中止保存");
+            if (!string.Equals(declaredType, detectedType, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"视频下载地址声明为 {rawType}，但文件签名实际为 {detectedType}，已中止保存");
+            return detectedType;
+        }
+        if (!string.IsNullOrWhiteSpace(rawType)
+            && !rawType.EndsWith("/octet-stream", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"视频下载地址返回了非视频内容（{rawType}），可能是分享页、登录页或防盗链拦截，已中止保存");
+
+        if (detectedType != null) return detectedType;
+        throw new InvalidOperationException("视频下载地址返回了无法识别的二进制格式，已中止保存；请提供可验证的视频文件直链");
+    }
+
+    private static string? DetectDownloadedVideoContentType(byte[] videoBytes)
+    {
+        // CDN 常把视频声明成 octet-stream；即使声明成 video/*，也必须以容器
+        // 签名为准，防止 HTML、登录页或其他容器被伪装成 MP4 入库。
+        var isoBmffType = DetectIsoBmffVideoContentType(videoBytes);
+        if (isoBmffType != null) return isoBmffType;
+        if (videoBytes.Length >= 12
+            && videoBytes[0] == (byte)'R'
+            && videoBytes[1] == (byte)'I'
+            && videoBytes[2] == (byte)'F'
+            && videoBytes[3] == (byte)'F'
+            && videoBytes[8] == (byte)'A'
+            && videoBytes[9] == (byte)'V'
+            && videoBytes[10] == (byte)'I'
+            && videoBytes[11] == (byte)' ')
+            return "video/x-msvideo";
+        if (videoBytes.Length >= 4
+            && videoBytes[0] == 0x1A
+            && videoBytes[1] == 0x45
+            && videoBytes[2] == 0xDF
+            && videoBytes[3] == 0xA3)
+        {
+            var headerLength = Math.Min(videoBytes.Length, 4096);
+            var header = Encoding.ASCII.GetString(videoBytes, 0, headerLength);
+            return header.Contains("webm", StringComparison.OrdinalIgnoreCase)
+                ? "video/webm"
+                : "video/x-matroska";
+        }
+        if (videoBytes.Length >= 4
+            && videoBytes[0] == (byte)'O'
+            && videoBytes[1] == (byte)'g'
+            && videoBytes[2] == (byte)'g'
+            && videoBytes[3] == (byte)'S')
+            throw new InvalidOperationException("当前下载与转写流水线不支持 OGV 容器，请先转换为 MP4、MOV、WebM、MKV 或 AVI");
+        return null;
+    }
+
+    private static string? DetectIsoBmffVideoContentType(byte[] bytes)
+    {
+        // ISO-BMFF 允许在 ftyp 前放 free / skip / wide 等顶层 box。只在文件头前 1 MiB
+        // 沿 box 边界查找，既兼容合法容器，也不会在任意二进制正文里搜索伪造的 ftyp。
+        var probeLimit = Math.Min(bytes.Length, DownloadedVideoContainerProbeBytes);
+        var offset = 0;
+        while (offset + 8 <= probeLimit)
+        {
+            var size32 = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(offset, 4));
+            var boxType = Encoding.ASCII.GetString(bytes, offset + 4, 4);
+            var headerSize = 8;
+            long boxSize = size32;
+            if (size32 == 1)
+            {
+                if (offset + 16 > probeLimit) return null;
+                var size64 = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(offset + 8, 8));
+                if (size64 > int.MaxValue) return null;
+                boxSize = (long)size64;
+                headerSize = 16;
+            }
+            else if (size32 == 0)
+            {
+                boxSize = bytes.Length - offset;
+            }
+
+            if (boxSize < headerSize || boxSize > bytes.Length - offset) return null;
+            var boxEnd = offset + boxSize;
+            if (boxType == "ftyp")
+            {
+                if (boxSize < headerSize + 8 || boxEnd > probeLimit) return null;
+                var payloadOffset = offset + headerSize;
+                var brands = new List<string>
+                {
+                    Encoding.ASCII.GetString(bytes, payloadOffset, 4),
+                };
+                // payload 的后 4 字节起依次是 compatible brands；中间 4 字节为 minor version。
+                for (var brandOffset = payloadOffset + 8; brandOffset + 4 <= boxEnd; brandOffset += 4)
+                    brands.Add(Encoding.ASCII.GetString(bytes, brandOffset, 4));
+
+                // AVIF / HEIF 与 M4A 也有 ftyp，且常带通用 isom compatible brand；必须先拒绝
+                // 明确的图片或音频品牌，不能仅凭“存在 ftyp”就送进视频播放与转写流水线。
+                if (brands.Any(IsKnownNonVideoIsoBmffBrand)) return null;
+                if (brands.Contains("qt  ", StringComparer.Ordinal)) return "video/quicktime";
+                return brands.Any(IsSupportedMp4VideoBrand) ? "video/mp4" : null;
+            }
+
+            if (size32 == 0 || boxEnd > probeLimit) return null;
+            offset = checked((int)boxEnd);
+        }
+        return null;
+    }
+
+    private static bool IsKnownNonVideoIsoBmffBrand(string brand) => brand is
+        "avif" or "avis" or
+        "heic" or "heix" or "hevc" or "hevx" or "heim" or "heis" or
+        "mif1" or "msf1" or "miaf" or
+        "M4A " or "M4B " or "M4P " or "m4a " or "mp4a" or "cmfa";
+
+    private static bool IsSupportedMp4VideoBrand(string brand) => brand is
+        "isom" or "iso2" or "iso3" or "iso4" or "iso5" or "iso6" or
+        "mp41" or "mp42" or "avc1" or "M4V " or "M4VH" or "M4VP" or
+        "3gp4" or "3gp5" or "3gp6" or "3gp7" or "3gp8" or "3gp9" or
+        "3g2a" or "3g2b" or "3g2c" or "cmfv" or "MSNV";
 
     /// <summary>
     /// 视频内容转文本：从视频元数据提取或使用 LLM 分析视频内容。
