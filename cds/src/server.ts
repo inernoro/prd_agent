@@ -1,3 +1,4 @@
+import { CodeReviewUserKeys } from './services/code-review-user-keys.js';
 import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
@@ -1207,6 +1208,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
@@ -4935,6 +4937,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
   const reviews = new CodeReviewService({
     state: deps.stateService, inputs: createCodeReviewInputs(),
+    userKeys: new CodeReviewUserKeys(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
     mail: createCodeReviewMail(() => ({ ...process.env, ...deps.stateService.getCustomEnv('_global') })),
     publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL || deps.config.publicBaseUrl || 'http://localhost:9900',
     ownerScope: process.env.CDS_CODE_REVIEW_OWNER || (process.env.CDS_PROJECT_ID

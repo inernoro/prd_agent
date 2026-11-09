@@ -38,7 +38,7 @@ export function CodeReviewsPage(): JSX.Element {
   const [search, setSearch] = useState(query), [refresh, setRefresh] = useState(0);
   const requestScope = useMemo(() => JSON.stringify({ projectId, source, status, query, page, history }), [projectId, source, status, query, page, history]);
   const cutoff = useRef<{ scope: string; snapshotAt?: string }>({ scope: requestScope, snapshotAt: locationState?.reviewRestore?.snapshotAt });
-  const alive = useRef(true), restored = useRef('');
+  const alive = useRef(true), restored = useRef(''), dataProject = useRef(projectId);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController(); setSetupError('');
@@ -63,7 +63,9 @@ export function CodeReviewsPage(): JSX.Element {
     setLoading(true); setListError('');
     if (selectedId) setSelected(current => current?.id === selectedId ? current : null);
     else if (cutoff.current.scope !== requestScope) {
-      cutoff.current = { scope: requestScope, snapshotAt: locationState?.reviewRestore?.snapshotAt }; setData(null);
+      cutoff.current = { scope: requestScope, snapshotAt: locationState?.reviewRestore?.snapshotAt };
+      // Retain rows during same-project Ajax filtering; a project switch must clear the previous scope.
+      if (dataProject.current !== projectId) setData(null);
     }
     const load = async (): Promise<void> => {
       try {
@@ -72,7 +74,7 @@ export function CodeReviewsPage(): JSX.Element {
           if (!controller.signal.aborted) setSelected(task);
         } else {
           const result = await listCodeReviewPage({ projectId, source, status, query, page, history, snapshotAt: cutoff.current.snapshotAt }, controller.signal);
-          if (!controller.signal.aborted) { cutoff.current = { scope: requestScope, snapshotAt: result.snapshotAt }; setData(result); }
+          if (!controller.signal.aborted) { cutoff.current = { scope: requestScope, snapshotAt: result.snapshotAt }; dataProject.current = projectId; setData(result); }
         }
         if (!controller.signal.aborted) setListError('');
       } catch { if (!controller.signal.aborted) setListError(selectedId ? '任务暂时无法读取，或当前账号没有访问权限。' : '任务列表暂时无法刷新，已保留上次结果。'); }
@@ -121,7 +123,7 @@ export function CodeReviewsPage(): JSX.Element {
   };
   const projectName = (id: string): string => { const project = projects.find(p => p.id === id); return project?.aliasName || project?.name || id; };
   const requestRefresh = (): void => { setRefresh(n => n + 1); };
-  const topbar = <TopBar left={<>{selectedId || view ? <button type="button" className="cr-topbar-back" aria-label="返回审查列表" onClick={back}><ChevronLeft /></button> : null}<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '代码审查', href: selectedId || view ? '/code-reviews' : undefined }, ...(selectedId ? [{ label: selected?.title || '阅读报告' }] : view ? [{ label: view === 'mcp' ? 'MCP 接入' : view === 'import' ? '导入报告' : '发起审查' }] : [])]} /></>} right={<ReviewButton tone="ghost" disabled={loading} onClick={requestRefresh}><RefreshCw />刷新</ReviewButton>} />;
+  const topbar = <TopBar left={<>{selectedId || view ? <button type="button" className="cr-topbar-back" aria-label="返回审查列表" onClick={back}><ChevronLeft /></button> : null}<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '代码审查', href: selectedId || view ? '/code-reviews' : undefined }, ...(selectedId ? [{ label: selected?.title || '阅读报告' }] : view ? [{ label: view === 'mcp' ? 'MCP 接入' : view === 'import' ? '导入报告' : '发起审查' }] : [])]} /></>} right={<ReviewButton tone="ghost" disabled={loading} onClick={requestRefresh}><RefreshCw className={loading ? 'animate-spin' : undefined} />刷新</ReviewButton>} />;
   const rowHref = (task: CodeReviewTask): string => { const next = new URLSearchParams(params); next.set('task', task.id); return `/code-reviews?${next}`; };
   if (!view && !selectedId && !data && loading) return <AppShell active="code-reviews" wide topbar={topbar}><Workspace fluid className="cr-ui"><CodeReviewsSkeleton /></Workspace></AppShell>;
   return <AppShell active="code-reviews" wide topbar={topbar}><Workspace fluid className="cr-ui"><div className="cr-stack cr-fade">
@@ -146,7 +148,8 @@ export function CodeReviewsPage(): JSX.Element {
         {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
         {data?.newCount ? <div className="cr-notice cr-row-inline" role="status">有 {data.newCount} 条新记录<ReviewButton tone="ghost" onClick={() => { cutoff.current = { scope: requestScope }; updateList({ page: '1' }); requestRefresh(); }}>显示</ReviewButton></div> : null}
         {history ? <p className="cr-form-note">历史执行保留各自的源码范围，不能将不同批次相加视为整仓完成。</p> : null}
-        {!data && loading ? <CodeReviewsSkeleton /> : <div className="cr-surface">
+        {data && loading ? <span className="sr-only" role="status">正在更新审查列表</span> : null}
+        {!data && loading ? <CodeReviewsSkeleton /> : <div className="cr-surface" aria-busy={loading}>
           {data?.tasks.length ? <ReviewTaskList items={data.tasks} selectedId="" projectName={projectName} onSelect={task => select(task)} hrefFor={rowHref} /> : <ReviewEmpty title={query || status !== 'all' ? '没有匹配的记录' : source === 'report' ? '还没有导入文档' : '还没有代码审查记录'} action={<ReviewButton onClick={() => { if (query || status !== 'all') updateList({ q: undefined, status: undefined }); else navigateView(source === 'report' ? 'import' : 'source'); }}>{query || status !== 'all' ? '清空筛选' : source === 'report' ? '导入报告' : '发起审查'}</ReviewButton>}>{query || status !== 'all' ? '调整筛选条件后重试。' : '上传源码，或直接选择平台已连接的项目和分支。'}</ReviewEmpty>}
           {data ? <ReviewPagination {...data.page} onOffset={offset => updateList({ page: String(offset / 10 + 1) })} /> : null}
         </div>}

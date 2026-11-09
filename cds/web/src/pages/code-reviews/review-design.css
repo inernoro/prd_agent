@@ -1210,19 +1210,9 @@
   gap: 0.588235rem;
   margin-top: 0.882353rem;
 }
-.cr-fade {
-  animation: cr-fade 140ms ease-out both;
-}
+.cr-fade,
 .cr-panel-fade {
-  animation: cr-fade 120ms ease-out both;
-}
-@keyframes cr-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  animation: none;
 }
 @keyframes cr-pulse {
   50% {

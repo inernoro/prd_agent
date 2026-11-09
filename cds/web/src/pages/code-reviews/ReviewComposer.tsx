@@ -1,3 +1,4 @@
+import { ReviewUserKeyOptions, type UserKeyOptions } from './ReviewUserKeyOptions';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { ChevronRight, FileArchive, FileText, Upload, X } from 'lucide-react';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
@@ -7,7 +8,7 @@ import { ReportDocument } from './ReportDocument';
 import { ReviewBack, ReviewButton } from './ReviewUi';
 
 export interface ReviewProjectOption { id: string; name: string; aliasName?: string; githubRepoFullName?: string; branchCount?: number }
-export interface ReviewCapabilities { engineConfigured: boolean; mailConfigured: boolean; storageConfigured?: boolean; tools?: string[] }
+export interface ReviewCapabilities { engineConfigured: boolean; userKeyConfigured?: boolean; mailConfigured: boolean; storageConfigured?: boolean; tools?: string[] }
 
 export function ReviewComposer({ mode, projects, projectId: initialProject, capabilities, onBack, onSaved }: {
   mode: 'source' | 'import'; projects: ReviewProjectOption[]; projectId: string; capabilities: ReviewCapabilities | null;
@@ -21,6 +22,7 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
   const [projectSearch, setProjectSearch] = useState('');
   const [file, setFile] = useState<File | null>(null), [github, setGithub] = useState(''), [ref, setRef] = useState('');
   const [exclude, setExclude] = useState(''), [sendEmail, setSendEmail] = useState(false), [email, setEmail] = useState('');
+  const [userKey, setUserKey] = useState<UserKeyOptions | null>(null);
   const [title, setTitle] = useState(''), [preview, setPreview] = useState(''), [previewError, setPreviewError] = useState('');
   const [error, setError] = useState(''), [confirm, setConfirm] = useState(false), [busy, setBusy] = useState(false);
   const fileId = useId(), projectRadio = useId(), input = useRef<HTMLInputElement>(null), alive = useRef(true);
@@ -55,13 +57,14 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault(); if (busy) return; setError('');
     if (!canSubmit) { setError('请选择项目并提供源码、分支或报告文件。'); return; }
+    if (mode === 'source' && userKey && (!userKey.apiKey.trim() || !userKey.model.trim() || !Number.isSafeInteger(userKey.tokenLimit) || userKey.tokenLimit! < 4096)) { setError('请填写有效的用户 Key、模型和 Token 额度。'); return; }
     if (mode === 'source' && !confirm) { setConfirm(true); mainScrollTop(); return; }
     setBusy(true);
     try {
       const task = mode === 'import' ? await uploadCodeReviewReport(projectId, title.trim(), file!) : await submitCodeReview({ projectId, sourceType: origin === 'cds' ? 'cds' : source,
         ...(origin === 'cds' ? { branchId } : source === 'zip' ? { file: file! } : { githubUrl: github.trim(), ref: ref.trim() }),
-        excludePatterns: exclude.split('\n').map(pattern => pattern.trim()).filter(Boolean), email: withEmail ? email.trim() : undefined });
-      if (alive.current) onSaved(task);
+        userKey: userKey || undefined, excludePatterns: exclude.split('\n').map(pattern => pattern.trim()).filter(Boolean), email: withEmail ? email.trim() : undefined });
+      if (alive.current) { setUserKey(null); onSaved(task); }
     } catch (failure) { if (alive.current) setError(failure instanceof Error ? failure.message : mode === 'import' ? '文档未能保存，请重试。' : '任务未能提交，请检查源码权限和审查服务。'); }
     finally { if (alive.current) setBusy(false); }
   };
@@ -79,7 +82,7 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
         {error ? <ErrorNotice message={error} /> : null}
         {confirm ? <>
           <dl className="cr-surface cr-confirm-list"><div><dt>项目</dt><dd>{selectedProject?.aliasName || selectedProject?.name || projectId}</dd></div><div><dt>来源</dt><dd>{origin === 'cds' ? `平台项目 · ${branches.find(branch => branch.id === branchId)?.branch}` : source === 'zip' ? file?.name : github}</dd></div><div><dt>版本固定</dt><dd>{origin === 'cds' ? '开始准备时同步并固定所选分支的提交，以报告中的 SHA 为准；不包含未提交修改。' : source === 'github' ? `${ref || '仓库默认分支'}；准备时记录实际提交 SHA。` : '提交后按 ZIP 哈希固定快照。'}</dd></div><div><dt>分析范围</dt><dd>按本次支持的源码规则分析，依赖和构建产物排除；实际范围、跳过与未执行项以结果为准。</dd></div>{exclude ? <div><dt>额外排除</dt><dd className="whitespace-pre-wrap">{exclude}</dd></div> : null}<div><dt>报告接收</dt><dd>报告中心{withEmail ? ` + ${email}` : ''}</dd></div></dl>
-          <p className="cr-notice cr-notice-warning">当前无法提供可靠费用预估。确认开始后将按实际模型用量计费。</p>
+          <p className="cr-notice cr-notice-warning">{userKey ? `本次使用自己的 ${userKey.provider} Key，模型 ${userKey.model}，保护额度 ${userKey.tokenLimit?.toLocaleString()} Token。失败时停止，不使用平台额度。费用以供应商账单为准。` : '当前无法提供可靠费用预估。确认开始后将按实际模型用量计费。'}</p>
           {!serviceConfigured ? <p role="status" className="cr-form-note">审查服务尚未就绪，请管理员恢复后再提交；已有报告仍可阅读和导入。</p> : null}
           <div className="cr-form-footer"><ReviewButton tone="primary" type="submit" disabled={!serviceConfigured || busy}>{busy ? '正在提交' : '确认并开始审查'}</ReviewButton><ReviewButton tone="ghost" type="button" onClick={() => setConfirm(false)}>返回修改</ReviewButton></div>
         </> : mode === 'import' ? <>
@@ -98,7 +101,7 @@ export function ReviewComposer({ mode, projects, projectId: initialProject, capa
               {source === 'zip' ? fileChooser : <><label className="cr-label"><span>GitHub 仓库地址</span><input className="cr-input cr-full" type="url" required value={github} onChange={e => setGithub(e.target.value)} placeholder="https://github.com/owner/repository" /></label><label className="cr-label"><span>分支、标签或提交（可选）</span><input className="cr-input cr-full" value={ref} onChange={e => setRef(e.target.value)} placeholder="留空使用仓库默认分支" maxLength={250} /></label><p className="cr-form-note">私有仓库需要已有授权；未授权时可改用 ZIP。版本会在准备源码时固定并记录。</p></>}
             </>}
           </div>
-          <details className="cr-more"><summary>更多选项<span>排除目录 · 邮件通知</span></summary><div><label className="cr-label"><span>排除目录或模式（每行一项）</span><textarea className="cr-input cr-full" rows={3} value={exclude} onChange={e => setExclude(e.target.value)} placeholder={'vendor/\nthirdparty/'} /></label><label className="cr-check-row"><input type="checkbox" checked={Boolean(withEmail)} disabled={!capabilities?.mailConfigured} onChange={e => setSendEmail(e.target.checked)} />同时发送至邮箱</label>{!capabilities?.mailConfigured ? <p className="cr-form-note">邮件服务不可用，仅归档报告中心。报告仍可正常阅读。</p> : null}{withEmail ? <label className="cr-label"><span>收件邮箱</span><input type="email" className="cr-input cr-full" value={email} onChange={e => setEmail(e.target.value)} required /></label> : null}</div></details>
+          <details className="cr-more"><summary>更多选项<span>模型 Key · 排除目录 · 邮件通知</span></summary><div><ReviewUserKeyOptions value={userKey} onChange={setUserKey} configured={Boolean(capabilities?.userKeyConfigured)} /><label className="cr-label"><span>排除目录或模式（每行一项）</span><textarea className="cr-input cr-full" rows={3} value={exclude} onChange={e => setExclude(e.target.value)} placeholder={'vendor/\nthirdparty/'} /></label><label className="cr-check-row"><input type="checkbox" checked={Boolean(withEmail)} disabled={!capabilities?.mailConfigured} onChange={e => setSendEmail(e.target.checked)} />同时发送至邮箱</label>{!capabilities?.mailConfigured ? <p className="cr-form-note">邮件服务不可用，仅归档报告中心。报告仍可正常阅读。</p> : null}{withEmail ? <label className="cr-label"><span>收件邮箱</span><input type="email" className="cr-input cr-full" value={email} onChange={e => setEmail(e.target.value)} required /></label> : null}</div></details>
           <div className="cr-form-footer"><ReviewButton tone="primary" type="submit" disabled={!canSubmit || busy}>下一步：确认</ReviewButton><ReviewButton tone="ghost" type="button" onClick={onBack}>取消</ReviewButton>{!canSubmit ? <span className="cr-form-note">{!projectId ? '请选择项目' : origin === 'cds' ? '请选择分支' : source === 'zip' ? '请选择 ZIP 文件' : '请填写仓库地址'}</span> : null}</div>
         </>}
         {busy ? <ContentLoading label={mode === 'import' ? '正在保存原始文档' : '正在上传并创建任务'} variant="inline" /> : null}

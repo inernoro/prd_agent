@@ -1,3 +1,4 @@
+import type { ReviewUserKeyBinding } from './code-review-user-key.js';
 /** Public review task contract. Source contents and engine credentials never leave the service. */
 export const CODE_REVIEW_MCP_TOOLS = ['cds_code_review_submit', 'cds_code_review_get', 'cds_code_review_list', 'cds_code_review_report_upload'] as const;
 export type CodeReviewStatus = 'queued' | 'preparing' | 'running' | 'archiving' | 'completed' | 'failed' | 'cancelled';
@@ -29,6 +30,8 @@ export interface CodeReviewTask {
   progress: { totalFiles: number; scannedFiles: number };
   engineTaskId?: string;
   engineBinding?: CodeReviewEngineBinding;
+  userKeyBinding?: ReviewUserKeyBinding;
+  modelCredential?: { source: 'user'; provider: string; model: string; fingerprint: string; tokenLimit: number };
   engineCompleted?: boolean;
   /** Internal persisted intent: only an explicit user retry may resume a failed upstream scan. */
   engineRetryRequested?: boolean;
@@ -50,8 +53,8 @@ export interface CodeReviewTask {
   auditHeadKey?: string;
   auditCount?: number;
 }
-export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'resultKey' | 'ownerScope' | 'idempotencyKey' | 'reportImportReceipts' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested' | 'engineBinding'>;
+export type PublicCodeReviewTask = Omit<CodeReviewTask, 'inputKey' | 'resultKey' | 'ownerScope' | 'idempotencyKey' | 'reportImportReceipts' | 'audit' | 'auditHeadKey' | 'auditCount' | 'engineRetryRequested' | 'engineBinding' | 'userKeyBinding'>;
 export function publicCodeReviewTask(task: CodeReviewTask): PublicCodeReviewTask {
-  const { inputKey: _i, resultKey: _result, ownerScope: _o, idempotencyKey: _k, reportImportReceipts: _receipts, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, engineBinding: _binding, ...visible } = task;
+  const { inputKey: _i, resultKey: _result, ownerScope: _o, idempotencyKey: _k, reportImportReceipts: _receipts, audit: _a, auditHeadKey: _h, auditCount: _c, engineRetryRequested: _r, engineBinding: _binding, userKeyBinding: _userKey, ...visible } = task;
   return visible;
 }
