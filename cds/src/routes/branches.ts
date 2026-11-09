@@ -12466,6 +12466,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
 
+    if (entry.archive && triggerFromRequest(req) === 'webhook') {
+      res.status(409).json({ error: 'archived_branch_auto_delete_refused', message: '分支已归档，自动删除由归档保留策略统一处理。' }); return;
+    }
     try { stateService.assertBranchStorageRemovalAllowed(id); }
     catch (error) { res.status(409).json({error:'storage_retained_branch_delete_refused',message:(error as Error).message}); return; }
 

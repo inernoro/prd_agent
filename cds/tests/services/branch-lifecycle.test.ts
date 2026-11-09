@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
 import { BranchLifecycleService, branchCompletelyStarted } from '../../src/services/branch-lifecycle.js';
+import { isAutoWakeEligible } from '../../src/services/branch-wake-eligibility.js';
 import type { BranchEntry } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
@@ -35,6 +36,18 @@ function fixture() {
 function partial(): Partial<BranchEntry> { return { services: { api: { profileId: 'api', containerName: 'owned-api', status: 'running', hostPort: 12000 } } }; }
 
 describe('分支生命周期与归档', () => {
+  it('被动预览访问在归档前可唤醒、归档中拒绝，恢复后才重新允许', async () => {
+    const f = fixture();
+    const branch = f.add('cooled', { ...partial(), status: 'idle', lastStopSource: 'cds' });
+    branch.services.api.status = 'stopped';
+    expect(isAutoWakeEligible(branch)).toBe(true);
+    await f.service.archive(branch.id, 'manual archive', 'user');
+    expect(branch.archive).toBeTruthy();
+    expect(isAutoWakeEligible(branch)).toBe(false);
+    await f.service.restore(branch.id, 'user');
+    expect(isAutoWakeEligible(branch)).toBe(true);
+  });
+
   it('30分钟前保留部分运行，边界到达后停止全部本分支容器并记录策略原因', async () => {
     const f = fixture(); const branch = f.add('partial', partial());
     await f.service.sweep(); expect(f.stop).not.toHaveBeenCalled();
@@ -88,6 +101,15 @@ describe('分支生命周期与归档', () => {
     const f = fixture(); f.add('old'); await f.service.archive('old', 'manual', 'user');
     f.advance(30 * DAY - 1); await f.service.sweep(); expect(f.remove).not.toHaveBeenCalled();
     f.advance(1); await f.service.sweep(); expect(f.remove).toHaveBeenCalledTimes(1); expect(f.remove).toHaveBeenCalledWith('old');
+  });
+
+  it.each([undefined, 'embedded', 'master-node'])('本机归属%s到期后可回收，远端归属保留并记录延后', async executorId => {
+    const f = fixture(); f.add('local', { executorId }); f.add('remote', { executorId: 'remote-node' });
+    await f.service.archive('local', 'manual'); await f.service.archive('remote', 'manual');
+    f.advance(30 * DAY); await f.service.sweep();
+    expect(f.remove).toHaveBeenCalledTimes(1); expect(f.remove).toHaveBeenCalledWith('local');
+    expect(f.state.getBranch('remote')?.archive).toBeTruthy();
+    expect(f.audit.record).toHaveBeenCalledWith(expect.objectContaining({ branchId: 'remote', action: 'branch.lifecycle.deferred', message: expect.stringContaining('远端') }));
   });
 
   it('没有访问记录且闲置24小时才自动归档；记录过预览的分支不套用此规则', async () => {

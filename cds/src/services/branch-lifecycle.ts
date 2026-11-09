@@ -8,6 +8,7 @@ import { forgetConfirmedStoppedContainers } from './resource-usage-sampler.js';
 import { randomUUID } from 'node:crypto';
 import type { Request, RequestHandler } from 'express';
 import { isLoopbackAddress } from './self-check-auth.js';
+import { isRemoteExecutorOwned } from './executor-ownership.js';
 
 const STOP_SCHEME = 'CDS-Lifecycle-Stop ';
 type StopScope = { branchId: string; projectId: string; createdAt: string; sha?: string; pushedAt?: string; startedAt?: string; readyAt?: string; reason: string; route: string; port: number; issuedAt: number };
@@ -210,6 +211,7 @@ export class BranchLifecycleService {
           if (branch.archive) {
             if (this.options.active(branch.id) || this.options.observed() === null || hasBranchRuntime(branch, this.options.observed())) continue;
             if (this.now() >= Date.parse(branch.archive.retireAt)) {
+              if (isRemoteExecutorOwned(branch.executorId)) throw new Error('远端分支归档仍保留，需要在所属执行器确认回收，未删除本地记录');
               this.pending.add(branch.id);
               try { await this.options.remove(branch.id); } finally { this.pending.delete(branch.id); }
             }
