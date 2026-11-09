@@ -5783,7 +5783,10 @@ public static class CapsuleExecutor
             : DefaultMaxVideoDownloadBytes;
         using var downloadDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         var downloadToken = downloadDeadline.Token;
-        sb.AppendLine($"[VideoDownloader] 下载: {videoUrl}");
+        var target = Uri.TryCreate(videoUrl, UriKind.Absolute, out var downloadUri)
+            ? $"host={downloadUri.IdnHost}, pathSha256={Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(downloadUri.AbsolutePath))).ToLowerInvariant()}"
+            : "invalid-target";
+        sb.AppendLine($"[VideoDownloader] 下载目标: {target}");
 
         var factory = sp.GetRequiredService<IHttpClientFactory>();
         var urlValidator = sp.GetRequiredService<ISafeOutboundUrlValidator>();
@@ -5793,7 +5796,7 @@ public static class CapsuleExecutor
         // 下载视频
         byte[] videoBytes;
         string? contentType;
-        var responseEvidence = "未收到响应";
+        var responseEvidence = target + ", 未收到响应";
         try
         {
             using var response = await GetSafeOutboundAsync(
@@ -5804,7 +5807,7 @@ public static class CapsuleExecutor
                 System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
                 downloadToken);
             var rawType = response.Content.Headers.ContentType?.MediaType;
-            responseEvidence = $"status={(int)response.StatusCode}, type={rawType ?? "missing"}, declaredBytes={response.Content.Headers.ContentLength?.ToString() ?? "unknown"}, maxBytes={maxBytes}";
+            responseEvidence = $"{target}, status={(int)response.StatusCode}, type={rawType ?? "missing"}, declaredBytes={response.Content.Headers.ContentLength?.ToString() ?? "unknown"}, maxBytes={maxBytes}";
             if (!response.IsSuccessStatusCode)
                 responseEvidence += ", bodyEvidence=" + await DescribeRejectedVideoResponseAsync(
                     response.Content, rawType, maxBytes, downloadToken);
@@ -5817,7 +5820,7 @@ public static class CapsuleExecutor
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"视频下载失败: {ex.Message}；响应核对: {responseEvidence}, decision=rejected", ex);
+            throw new InvalidOperationException($"视频下载失败: {RedactDownloadResponseText(ex.Message)}；响应核对: {responseEvidence}, decision=rejected", ex);
         }
 
         // 上传到 COS

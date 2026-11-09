@@ -195,6 +195,8 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         result.Artifacts.Single().InlineContent!.ShouldContain("video/webm");
         result.Logs.ShouldContain("sha256=");
         result.Logs.ShouldContain("decision=accepted");
+        result.Logs.ShouldContain("host=download.example.invalid");
+        result.Logs.ShouldNotContain("synthetic-query-marker");
         storage.VerifyAll();
         storage.VerifyNoOtherCalls();
     }
@@ -253,7 +255,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
             NodeType = CapsuleTypes.VideoDownloader,
             Config = new Dictionary<string, object?>
             {
-                ["videoUrl"] = "https://download.example.invalid/video",
+                ["videoUrl"] = "https://download.example.invalid/video?token=synthetic-query-marker",
                 ["maxFileSizeBytes"] = maxBytes.ToString(),
                 ["timeoutSeconds"] = timeoutSeconds.ToString(),
             },
