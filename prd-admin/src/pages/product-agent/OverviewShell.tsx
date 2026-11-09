@@ -41,6 +41,7 @@ import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
 import { VersionWorkflowTab } from './VersionWorkflowTab';
+import { VersionAppearance } from './VersionAppearance';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
@@ -212,7 +213,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
         </SectionShell>
       )}
       {active === 'versions' && (
-        <SectionShell title="版本">
+        <SectionShell title="版本" actions={<VersionAppearance />}>
           <VersionWorkflowTab isAdmin={isAdmin} />
         </SectionShell>
       )}

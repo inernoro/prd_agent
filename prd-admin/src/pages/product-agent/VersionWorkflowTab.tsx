@@ -850,10 +850,10 @@ function InitiationTable({ productId, productName, productNames, items, names, c
           <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
-        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-semantic-cyan hover:underline">{item.tCode}</button>
         : '-'}</Td>
       <Td>{SCALE_LABEL[item.versionType]}</Td>
-      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-left text-semantic-cyan hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
@@ -861,14 +861,14 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatDate(item.plannedProjectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td><Td>{formatBool(item.isAiPoc)}</Td>
-      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-cyan-300">查看方案</a> : '-'}</Td>
+      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-semantic-cyan">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
       <Td>
         {reviewScoreText === '-' ? (
           <span className="text-token-muted">-</span>
         ) : (
           <span className={
-            item.reviewPassed === true ? 'text-emerald-300'
+            item.reviewPassed === true ? 'text-semantic-success'
               : item.reviewPassed === false ? 'text-rose-300'
                 : 'text-token-secondary'
           }>{reviewScoreText}</span>
@@ -912,21 +912,21 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
-      <Td mono>{item.vCode ? <button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button> : '-'}</Td>
+      <Td mono>{item.vCode ? <button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-semantic-cyan hover:underline">{item.vCode}</button> : '-'}</Td>
       <Td mono>{item.initiationId && item.tCode
-        ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-semantic-cyan hover:underline">{item.tCode}</button>
         : (item.tCode || '-')}</Td>
       <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{item.isTemporaryOptimization ? '临时优化需求' : SCALE_LABEL[item.versionType]}</Td>
-      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-left text-semantic-cyan hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.departmentName || '-'}</Td><Td>{item.ownerName || names.get(item.ownerId ?? '') || item.legacyData?.['产品负责人'] || item.ownerId || '-'}</Td>
       <Td>{(item.projectMemberNames?.length ? item.projectMemberNames : item.teamMemberIds.map((id) => names.get(id) ?? id)).join('、')}</Td>
-      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-cyan-300">查看方案</a> : '-'}</Td>
+      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-semantic-cyan">查看方案</a> : '-'}</Td>
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
       <Td>{formatVersionTrainingMinutes(item.plannedTrainingMinutes)}</Td>
       <Td>{formatBool(item.isGlobalOpen)}</Td>
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
-      <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
+      <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-semantic-cyan" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
       <Td onClick={(event) => event.stopPropagation()}><div className="inline-flex items-center gap-2 whitespace-nowrap">
         {!item.legacyRegistration && item.createdBy === currentUserId && item.status !== 'voided' && <ReleaseEditAction release={item} userNames={names} onSaved={onChanged} />}
@@ -958,7 +958,7 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   trackedOnly?: boolean;
   onTrackedOnlyChange?: (value: boolean) => void;
 }) {
-  const filterClassName = 'h-8 rounded-lg border border-token-subtle bg-[#111318] px-3 text-xs text-token-secondary outline-none focus:border-cyan-400/50';
+  const filterClassName = 'h-8 rounded-lg border border-token-subtle bg-token-nested px-3 text-xs text-token-secondary outline-none focus:border-[color:var(--border-focus)]';
   return <div className="flex flex-wrap items-center gap-2">
     <div className={OVERVIEW_LIST_SEARCH_BOX}>
       <Search size={14} className="shrink-0 text-token-muted" />
@@ -1002,9 +1002,9 @@ function Modal({ title, onClose, width, children, compact = false }: { title: st
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [onClose]);
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[color:var(--dialog-overlay)] p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className={`flex w-full ${width} flex-col rounded-2xl border border-token-subtle bg-[#15171c]`}
+        className={`flex w-full ${width} flex-col surface-popover rounded-2xl`}
         style={{ height: compact ? 'auto' : 'min(90vh, 760px)', maxHeight: '90vh' }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -1025,7 +1025,7 @@ function Modal({ title, onClose, width, children, compact = false }: { title: st
 function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) { return <label className={full ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>; }
 function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
 function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary">{props.children}</button>; }
-function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted'}`}>{children}</button>; }
+function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-semantic-cyan' : 'border-transparent text-token-muted'}`}>{children}</button>; }
 function Table({ headers, children, selection }: {
   headers: string[];
   children: ReactNode;
@@ -1057,7 +1057,7 @@ function Table({ headers, children, selection }: {
   );
 }
 function Td({ children, mono, onClick, className }: { children: React.ReactNode; mono?: boolean; onClick?: React.MouseEventHandler<HTMLTableCellElement>; className?: string }) {
-  return <td className={`max-w-64 px-3 py-3 text-token-secondary ${mono ? 'font-mono text-cyan-200' : ''} ${className ?? ''}`} onClick={onClick}>{children}</td>;
+  return <td className={`max-w-64 px-3 py-3 ${mono ? 'font-mono text-semantic-cyan' : 'text-token-secondary'} ${className ?? ''}`} onClick={onClick}>{children}</td>;
 }
 function Empty({ cols, children }: { cols: number; children: React.ReactNode }) { return <tr><td colSpan={cols} className="px-3 py-12 text-center text-token-muted">{children}</td></tr>; }
-function Status({ value }: { value: string }) { const good = value === 'approved' || value === 'released'; return <span className={`rounded-full border px-2 py-0.5 ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>{STATUS_LABEL[value] ?? value}</span>; }
+function Status({ value }: { value: string }) { const good = value === 'approved' || value === 'released'; return <span className={`rounded-full border px-2 py-0.5 ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-semantic-success' : 'border-amber-400/20 bg-amber-400/10 text-semantic-warning'}`}>{STATUS_LABEL[value] ?? value}</span>; }
