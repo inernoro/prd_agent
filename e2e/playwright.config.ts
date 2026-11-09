@@ -15,6 +15,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:5500';
 const START_LOCAL_SERVER = process.env.E2E_LOCAL_SERVER === '1';
+const STABLE_SMOKE_RUN = process.env.STABLE_SMOKE_RUN === '1';
 
 export default defineConfig({
   testDir: './specs',
@@ -29,16 +30,16 @@ export default defineConfig({
   // rest of the suite, creating a dangerous false-green.
   forbidOnly: !!process.env.CI,
   // Retry once on CI; locally fail fast so the developer sees flake.
-  retries: process.env.CI || process.env.STABLE_SMOKE_RUN ? 1 : 0,
+  retries: process.env.CI || STABLE_SMOKE_RUN ? 1 : 0,
   // Workers: default to 1 locally (debuggable) and use reported
   // capacity in CI. Keep deterministic ordering for CI log grok.
-  workers: process.env.STABLE_SMOKE_RUN ? 1 : process.env.CI ? 2 : 1,
+  workers: STABLE_SMOKE_RUN ? 1 : process.env.CI ? 2 : 1,
   // Generate HTML report AND JSON so CI can upload both; dot reporter
   // keeps stdout readable for human tails.
   reporter: stableSmokeReporterConfig({
     jsonOutput: process.env.STABLE_SMOKE_JSON_OUTPUT || '',
     htmlOutput: process.env.STABLE_SMOKE_HTML_OUTPUT,
-    stableRun: Boolean(process.env.STABLE_SMOKE_RUN),
+    stableRun: STABLE_SMOKE_RUN,
   }) ?? (process.env.CI
     ? [['dot'], ['html', { open: 'never' }], ['json', { outputFile: 'results.json' }]]
     : [['list'], ['html', { open: 'on-failure' }]]),
@@ -48,7 +49,7 @@ export default defineConfig({
     // cost for post-mortem. Trace only on retry so first-try flake is
     // invisible but deterministic failure has a deep dive.
     screenshot: 'only-on-failure',
-    trace: stableSmokeTraceMode(Boolean(process.env.STABLE_SMOKE_RUN)),
+    trace: stableSmokeTraceMode(STABLE_SMOKE_RUN),
     video: 'retain-on-failure',
     // Network fixture tests use page.route() to replace API responses.
     // Service workers can satisfy fetches before Playwright sees them,
@@ -70,7 +71,7 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        launchOptions: process.env.STABLE_SMOKE_RUN
+        launchOptions: STABLE_SMOKE_RUN
           ? {
               args: [
                 '--use-fake-device-for-media-stream',
