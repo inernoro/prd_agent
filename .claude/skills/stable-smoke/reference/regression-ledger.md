@@ -12,6 +12,7 @@
 
 | caseId | 模块 | 首次发现 | 问题与根因 | 最小夹具 | CDS 环境证据 | 正式环境变体 | 必跑集合 | 重复逃逸 | 状态 |
 |---|---|---|---|---|---|---|---|---:|---|
+| REG-video-deployment-queue-001 | 视频创作与部署隔离 | 2026-11-09 | 共库预览分支旧Worker抢走新分支视频任务，被任务保护拒绝而提前失败 | 两个部署和旧队列共库；仅各自Worker领取，新状态对旧Worker不可见，对外仍Queued | 隔离Mongo真实Worker领取回归与CDS成片待复验 | 正式新队列和旧队列接管回归；真实成片待发布后复验 | TaskAdmissionIntegrationTests.VideoQueue_TwoDeploymentsAndLegacyWorkerCannotStealEachOthersNewRuns、VIDEO-004 | 0 | candidate |
 | REG-asr-runtime-route-001 | 识别与网关路由 | 2026-11-09 | 主备检查读取迁移前模型池，当前逻辑模型线路更新后旧计数仍为一 | 当前默认 ASR 逻辑模型、两条启用且可用的不同上游线路、真实转写与保存 | CDS上游额度阻塞真实产物，保留未通过 | 正式控制台补现有流式备路，真实上传转写已通过；当前路由断言待复验 | GW-001、REC-003 | 0 | candidate |
 | REG-video-poll-budget-001 | 视频创作与任务保护 | 2026-11-09 | Agent 直出视频误用通用16次限额，提交加15次查询后无法继续取成片 | 经过真实准入和发送授权，完成1次提交、100次查询、1次下载的有限核销；达到128次仍拒绝 | 本地隔离Mongo回归通过；CDS现有OpenAI余额和OpenRouter总额均耗尽，真实成片待恢复 | 正式环境保留原始未出片证据，修复提交待CDS和正式真实成片复验，不提前标通过 | TaskAdmissionIntegrationTests.DirectVideo_AgentPermitCoversLongPollingAndDownload_ButStillStopsAtItsFiniteLimit、VIDEO-004 | 0 | candidate |
 | REG-image-effective-size-001 | 图片下载 | 2026-11-09 | 下载测试把申请尺寸当成最终尺寸，忽略服务公开的有效尺寸，误报已成功产物 | 请求1024方图、服务返回1254方图；分别验证申请值、有效值、下载解码和画布解码 | CDS 上游429阻塞真实产物，不标通过；类型检查通过 | ce6108f12 正式实例：初试复现误报；测试修正后真实生成、路由日志、刷新、下载、尺寸和清理全部通过 | CORE-004、GW-005、VIS-002、VIS-010 | 0 | candidate |

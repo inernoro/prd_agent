@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Middleware;
@@ -16,6 +17,7 @@ using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -299,6 +301,44 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
             admission.AdmitAuthenticatedPaidBranchAsync(unknown, default));
         Assert.Equal(1, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+    }
+
+    [DesignScopeMongoFact]
+    public async Task VideoQueue_TwoDeploymentsAndLegacyWorkerCannotStealEachOthersNewRuns()
+    {
+        var rows = new[]
+        {
+            new VideoGenRun { Id = "legacy", Status = VideoGenRunStatus.Queued, CreatedAt = DateTime.UtcNow.AddHours(-3) },
+            new VideoGenRun { Id = "branch-b", Status = VideoGenRunStatus.ScopedQueued, DeploymentSlug = "branch-b", CreatedAt = DateTime.UtcNow.AddHours(-2) },
+            new VideoGenRun { Id = "branch-a", Status = VideoGenRunStatus.ScopedQueued, DeploymentSlug = "branch-a", CreatedAt = DateTime.UtcNow.AddHours(-1) },
+            new VideoGenRun { Id = "production", Status = VideoGenRunStatus.ScopedQueued },
+        };
+        await _business.VideoGenRuns.InsertManyAsync(rows);
+        Assert.Equal(["legacy"], await _business.VideoGenRuns.Find(x => x.Status == VideoGenRunStatus.Queued)
+            .Project(x => x.Id).ToListAsync());
+        async Task<VideoGenRun?> Claim(string? deployment)
+        {
+            using var services = new ServiceCollection().BuildServiceProvider();
+            using var worker = new PrdAgent.Api.Services.VideoGenRunWorker(_business,
+                services.GetRequiredService<IServiceScopeFactory>(), Mock.Of<IRunEventStore>(), Mock.Of<IAssetStorage>(),
+                NullLogger<PrdAgent.Api.Services.VideoGenRunWorker>.Instance);
+            typeof(PrdAgent.Api.Services.VideoGenRunWorker).GetProperty("QueueDeploymentScope", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(worker, deployment);
+            return await (Task<VideoGenRun?>)typeof(PrdAgent.Api.Services.VideoGenRunWorker)
+                .GetMethod("ClaimQueuedRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(worker, [CancellationToken.None])!;
+        }
+        Assert.Equal("branch-a", (await Claim("branch-a"))!.Id);
+        Assert.Null(await Claim("branch-a"));
+        Assert.Equal("branch-b", (await Claim("branch-b"))!.Id);
+        Assert.Equal("legacy", (await Claim(null))!.Id);
+        Assert.Equal("production", (await Claim(null))!.Id);
+        Assert.Null(await Claim(null));
+        // 旧 Worker 的 Queued 查询不会看见新任务；JSON 仍输出既有 Queued 状态。
+        var waiting = new VideoGenRun { Status = VideoGenRunStatus.ScopedQueued, DeploymentSlug = "branch-a" };
+        var json = JsonSerializer.SerializeToElement(waiting, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(VideoGenRunStatus.Queued, json.GetProperty("status").GetString());
+        Assert.False(json.TryGetProperty("deploymentSlug", out _));
+        Assert.Equal(VideoGenRunStatus.ScopedQueued, waiting.ToBsonDocument()["Status"].AsString);
     }
 
     [DesignScopeMongoTheory]
