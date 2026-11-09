@@ -7,6 +7,17 @@ namespace PrdAgent.Tests;
 public class WebPageAskEvidenceTests
 {
     [Fact]
+    public void Prompt_PreservesLiteralIdentifiers_WhenTheyResemblePlaceholders()
+    {
+        const string marker = "stsmk-owned-share-正文标记";
+        var snapshot = new SiteContentSnapshot { Text = marker };
+        var prompt = WebPageAskPrompt.Build(new HostedSite { Title = "验收页面" }, snapshot);
+        Assert.Contains(marker, prompt);
+        Assert.Contains("逐字保留完整值，包括字母、数字和前后缀", prompt);
+        Assert.Contains("不能因其看起来像测试值或占位文字而忽略已有内容", prompt);
+    }
+
+    [Fact]
     public void 脚注使用原文并按首次引用排序重复引用共用编号()
     {
         var evidence = new WebPageAskEvidence("# 套餐\n团队版99元/月\n\n# 退款\n已开票订单不支持退款。");
