@@ -31,7 +31,7 @@ function fixture() {
   const remove = vi.fn(async (id: string) => { state.removeBranch(id); });
   const service = new BranchLifecycleService({ state, clock: () => now, observed: () => known ? observed : null,
     active: id => active.has(id), expectedProfiles: () => ['api', 'web'], stop, remove, audit, flush: () => state.flush() });
-  return { root, state, service, add, stop, remove, active, audit, advance: (ms: number) => { now += ms; }, unknown: () => { known = false; } };
+  return { root, state, service, add, stop, remove, active, audit, observed, advance: (ms: number) => { now += ms; }, unknown: () => { known = false; } };
 }
 function partial(): Partial<BranchEntry> { return { services: { api: { profileId: 'api', containerName: 'owned-api', status: 'running', hostPort: 12000 } } }; }
 
@@ -64,6 +64,28 @@ describe('分支生命周期与归档', () => {
     const f = fixture(); f.add('healthy', { ...partial(), status: 'running', ciImageStatus: 'failed',
       services: { ...partial().services, web: { profileId: 'web', containerName: 'owned-web', status: 'running', hostPort: 12001 } } });
     await f.service.sweep(); f.advance(DAY); await f.service.sweep(); expect(f.stop).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('替换失败保留旧发布实例，仅在完整运行可观察时保护健康预览：%s', async healthy => {
+    const f = fixture();
+    const branch = f.add('replacement', { status: 'running', services: {
+      api: { profileId: 'api', containerName: 'old-api', hostPort: 1, status: 'running' },
+      web: { profileId: 'web', containerName: 'old-web', hostPort: 2, status: 'running' },
+    } });
+    for (const service of Object.values(branch.services)) {
+      service.servingRuntime = { containerName: service.containerName, hostPort: service.hostPort };
+      service.containerName = `failed-${service.profileId}`;
+      service.status = 'error';
+    }
+    branch.status = 'error';
+    if (!healthy) f.observed.delete('old-web');
+    await f.service.sweep();
+    f.advance(31 * 60_000); await f.service.sweep();
+    expect(f.stop).toHaveBeenCalledTimes(healthy ? 0 : 1);
+    if (healthy) {
+      expect(f.service.preview('default', 'incomplete').candidates).toHaveLength(0);
+      expect(branch.lastStopReason).toBeUndefined();
+    }
   });
 
   it('用户重新部署使用本轮30分钟窗口，不继承前一轮未完成计时', async () => {

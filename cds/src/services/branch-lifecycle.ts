@@ -2,7 +2,7 @@ import type { BranchEntry } from '../types.js';
 import type { StateService } from './state.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import { resolveBranchProtection } from './branch-protection.js';
-import { serviceRuntimeRefs } from './service-runtime.js';
+import { serviceRuntimeRefs, servingRuntime } from './service-runtime.js';
 import { branchEvents } from './branch-events.js';
 import { forgetConfirmedStoppedContainers } from './resource-usage-sampler.js';
 import { randomUUID } from 'node:crypto';
@@ -89,10 +89,16 @@ export function hasBranchRuntime(branch: BranchEntry, observed?: ReadonlySet<str
       ['running', 'starting', 'provisioning', 'stopping'].includes(member.status) || !!member.containerName && !!observed?.has(member.containerName)));
 }
 
-export function branchCompletelyStarted(branch: BranchEntry, expected: string[] = Object.keys(branch.services || {})): boolean {
-  return expected.length > 0 && expected.every(id => branch.services?.[id]?.status === 'running')
-    && Object.values(branch.replicaSets || {}).every(set => !set.enabled || set.members.every(member => member.status === 'running'))
+export function branchCompletelyStarted(branch: BranchEntry, expected: string[] = Object.keys(branch.services || {}), observed?: ReadonlySet<string> | null): boolean {
+  const attemptReady = expected.every(id => branch.services?.[id]?.status === 'running')
     && !['building', 'starting', 'restarting', 'stopping', 'error'].includes(branch.status);
+  // 替换失败不等于发布实例失败；沿用代理选择的身份，并确认它实际仍在运行。
+  const publishedReady = observed != null && expected.every(id => {
+    const runtime = servingRuntime(branch.services?.[id]);
+    return runtime !== null && observed.has(runtime.containerName);
+  });
+  return expected.length > 0 && (attemptReady || publishedReady)
+    && Object.values(branch.replicaSets || {}).every(set => !set.enabled || set.members.every(member => member.status === 'running'));
 }
 
 export class BranchLifecycleService {
@@ -116,7 +122,7 @@ export class BranchLifecycleService {
   }
   private complete(branch: BranchEntry): boolean {
     const expected = this.options.expectedProfiles?.(branch);
-    return branchCompletelyStarted(branch, expected?.length ? expected : undefined);
+    return branchCompletelyStarted(branch, expected?.length ? expected : undefined, this.options.observed());
   }
   preview(projectId: string, mode: BranchCleanupMode) {
     const candidates: Array<{ id: string; branch: string; running: boolean }> = [];

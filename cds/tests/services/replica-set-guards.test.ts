@@ -12,8 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import express from 'express';
 import { StateService } from '../../src/services/state.js';
 import { ReplicaSetService } from '../../src/services/replica-set.js';
+import { createReplicaSetsRouter } from '../../src/routes/replica-sets.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
@@ -80,6 +84,24 @@ afterEach(async () => {
 });
 
 describe('归档中的副本启动边界', () => {
+  it('实际HTTP隔离与回切端点沿用JSON409拒绝，包含可读恢复提示', async () => {
+    const branch = state.getBranch('proj-main')!;
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: '保留', actor: 'user' };
+    const app = express(); app.use(express.json());
+    app.use('/api', createReplicaSetsRouter({ stateService: state, replicaSetService: mkSvc(),
+      deploymentVersionService: {} as never, assertProjectAccess: () => null,
+      dispatchVersion: async () => ({ accepted: false }) as never, getDeploymentRunStatus: () => undefined }));
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+    try {
+      for (const action of ['isolate', 'revert-db']) {
+        const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/branches/${branch.id}/replica-sets/api/${action}`, { method: 'POST' });
+        expect(response.status).toBe(409);
+        expect(response.headers.get('content-type')).toContain('application/json');
+        expect(await response.json()).toEqual({ error: expect.stringContaining('分支已归档') });
+      }
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+
   const reusable = () => ({ id: 'dv1', branchId: 'proj-main', commitSha: 'a'.repeat(40),
     profiles: [{ profileId: 'api', artifactImage: 'img', reusable: true, containerPort: 8080 }] });
 
@@ -120,12 +142,15 @@ describe('归档中的副本启动边界', () => {
     branch.archive = { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: '保留', actor: 'user' };
     const service = mkSvc();
     const before = JSON.stringify(branch);
-    expect(() => {
-      if (kind === 'member') service.addMember(branch.id, 'api', { dbMode: 'shared' });
-      if (kind === 'plan') service.startPlan(branch.id, { onFailure: 'stop', steps: [{ kind: 'add-replica', profileId: 'api' }] });
-      if (kind === 'isolate') service.isolateProfile(branch.id, 'api');
-      if (kind === 'revert') service.revertProfile(branch.id, 'api');
-    }).toThrow('分支已归档');
+    if (kind === 'isolate' || kind === 'revert') {
+      const result = kind === 'isolate' ? service.isolateProfile(branch.id, 'api') : service.revertProfile(branch.id, 'api');
+      expect(result).toEqual({ accepted: false, reason: expect.stringContaining('分支已归档') });
+    } else {
+      expect(() => {
+        if (kind === 'member') service.addMember(branch.id, 'api', { dbMode: 'shared' });
+        if (kind === 'plan') service.startPlan(branch.id, { onFailure: 'stop', steps: [{ kind: 'add-replica', profileId: 'api' }] });
+      }).toThrow('分支已归档');
+    }
     expect(JSON.stringify(branch)).toBe(before);
   });
 
