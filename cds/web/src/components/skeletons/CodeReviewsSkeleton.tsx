@@ -1,3 +1,5 @@
+import '../../pages/code-reviews/review-design.css';
+
 /** Code and data waits share the filter/list silhouette, without a submission form. */
 export function CodeReviewsSkeleton(): JSX.Element {
   return <div role="status" aria-label="正在读取代码审查" aria-busy="true" className="w-full space-y-5" data-code-reviews-skeleton>
