@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
-import { URL } from 'node:url';
 import { act } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
@@ -16,7 +15,7 @@ it('默认浅色，保存切换结果，并在离开版本页时恢复原外观'
   const host = document.createElement('div');
   document.body.appendChild(host);
   const stylesheet = document.createElement('style');
-  stylesheet.textContent = readFileSync(new URL('./product-appearance.css', import.meta.url), 'utf8');
+  stylesheet.textContent = readFileSync('src/pages/product-agent/product-appearance.css', 'utf8');
   document.head.appendChild(stylesheet);
   const rules = Array.from(stylesheet.sheet!.cssRules) as CSSStyleRule[];
   const canvasRule = rules.find((rule) => rule.selectorText.trim().endsWith(' .agent-fullscreen-canvas'))!;
