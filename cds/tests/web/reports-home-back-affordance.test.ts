@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 const SRC = fs.readFileSync(path.resolve(__dirname, '../../web/src/pages/ReportsPage.tsx'), 'utf8');
 
@@ -24,12 +25,49 @@ describe('验收报告主页 · 桌面端返回入口', () => {
     expect(tag.includes('onClick={onBack}')).toBe(true);
   });
 
-  it('阅读器的 onBack 复位 selected，让页面回到结论首页', () => {
-    expect(SRC).toContain('onBack={() => setSelected(null)}');
+  it('阅读器返回先提交无报告地址，保留范围且不抢先改变页面', () => {
+    const wiring = /<ReportViewer\b[^>]*onBack=\{(\w+)\}/.exec(SRC);
+    expect(wiring, '阅读器必须接入返回处理').toBeTruthy();
+    const handler = new RegExp(`const ${wiring![1]} = useCallback\\(\\(\\) => \\{([\\s\\S]*?)\\n  \\}, \\[` ).exec(SRC);
+    expect(handler, '找不到实际返回处理').toBeTruthy();
+    let selected: string | null = 'old-report';
+    let params = new URLSearchParams('project=prd-agent&folder=owned-folder&report=old-report');
+    let replacesHistory = false;
+    const back = runInNewContext(`(() => { ${handler![1]} })`, {
+      URLSearchParams,
+      setSelected: (value: null) => { selected = value; },
+      setSearchParams: (update: (current: URLSearchParams) => URLSearchParams, options: { replace?: boolean }) => {
+        params = update(params);
+        replacesHistory = options.replace === true;
+      },
+    });
+    back();
+    expect(selected).toBe('old-report');
+    expect(params.has('report')).toBe(false);
+    expect(params.get('project')).toBe('prd-agent');
+    expect(params.get('folder')).toBe('owned-folder');
+    expect(replacesHistory).toBe(true);
   });
 
   it('未选中报告时渲染结论首页，选中后才回到列表 + 阅读器', () => {
     expect(SRC).toContain("state.status === 'ok' && !selected");
     expect(SRC).toContain("state.status === 'ok' && selected");
+  });
+
+  it('延后的地址提交前保留原页面，不抢先选择后又被旧地址清空', () => {
+    const source = /const handleSelectReport = useCallback\([\s\S]*?=> \{([\s\S]*?)\n  \}, \[/.exec(SRC);
+    expect(source).toBeTruthy();
+    let selected: unknown = 'original';
+    let scheduled = new URLSearchParams('report=original');
+    const select = runInNewContext(`((report) => { ${source![1]} })`, {
+      URLSearchParams, setSelected: (value: unknown) => { selected = value; },
+      setNavDrawerOpen: () => {},
+      setSearchParams: (update: (current: URLSearchParams) => URLSearchParams) => {
+        scheduled = update(new URLSearchParams('project=prd-agent&report=original'));
+      },
+    });
+    select({ id: 'target' });
+    expect(selected).toBe('original');
+    expect(scheduled.get('report')).toBe('target');
   });
 });

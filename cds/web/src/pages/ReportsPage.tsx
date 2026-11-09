@@ -54,6 +54,7 @@ import {
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { useTheme } from '@/lib/theme';
 import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
+import { listedReportTarget, reportNavigationMessage, withReportNavigation } from '@/lib/reportNavigation';
 import { ReportsOverviewPanel } from '@/pages/reports/ReportsOverview';
 import { PipelinePanel } from '@/pages/reports/PipelinePanel';
 
@@ -149,7 +150,7 @@ function formatTime(iso: string): string {
 }
 
 export function ReportsPage(): JSX.Element {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // 项目作用域：从 URL ?project= 取（项目卡右上角入口带）。空 = 全局（CDS 自身）报告。
   const projectId = searchParams.get('project') || '';
   // 直达深链：?report=<id> 自动打开该报告；?folder=<id> 自动激活该文件夹。
@@ -296,15 +297,17 @@ export function ReportsPage(): JSX.Element {
   // 直达深链：报告加载完成后，按 ?folder= / ?report= 自动激活文件夹并打开对应报告。
   // 用 identity-guard 的函数式 setState 避免重复触发（命中即稳定，不抖动）。
   useEffect(() => {
-    if (state.status !== 'ok') return;
     if (folderParam && folders.some((f) => f.id === folderParam)) {
       setActiveFolder((prev) => (prev === folderParam ? prev : folderParam));
     }
-    if (reportParam) {
-      const r = state.reports.find((x) => x.id === reportParam);
-      if (r) setSelected((prev) => (prev?.id === r.id ? prev : r));
-    }
-  }, [state, folders, folderParam, reportParam]);
+  }, [folders, folderParam]);
+
+  useEffect(() => {
+    if (state.status !== 'ok') return;
+    const target = state.reports.find((report) => report.id === reportParam) ?? null;
+    // Back/Forward may restore a homepage URL: never retain a stale report.
+    setSelected((prev) => (prev?.id === target?.id ? prev : target));
+  }, [state, reportParam]);
 
   // 项目列表用于关联下拉 + 当前项目名展示（best-effort，失败不阻断）。
   useEffect(() => {
@@ -422,16 +425,45 @@ export function ReportsPage(): JSX.Element {
     return activeProjectFilter;
   }, [projectId, activeProjectFilter]);
 
+  const handleCloseReport = useCallback(() => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('report');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   const handleProjectFilterChange = useCallback((next: ProjectFilter) => {
     setActiveProjectFilter(next);
     setActiveFolder((current) => (isReportSystemView(current) ? current : 'all'));
-    setSelected(null);
-  }, []);
+    handleCloseReport();
+  }, [handleCloseReport]);
 
   const handleSelectReport = useCallback((report: AcceptanceReport) => {
-    setSelected(report);
     setNavDrawerOpen(false);
-  }, []);
+    // Record a list selection before a report link pushes the next entry, so
+    // browser Back can restore the report the reader actually left.
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('report', report.id);
+      // Selection records history without replacing All/Recent/Failed filters.
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const handleLinkedReport = useCallback((id: string): boolean => {
+    const target = listedReportTarget(selected?.projectId, id, allReports);
+    if (!target) return false;
+    setNavDrawerOpen(false);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      // Keep the existing scope: canonicalizing a slug/global view would refetch
+      // the list and clear the report that has just been selected.
+      next.set('report', target.id);
+      return next;
+    });
+    return true;
+  }, [allReports, selected?.projectId, setSearchParams]);
 
   // 从列表发起的弹窗动作先关移动端抽屉：抽屉 z-[90] 高于 Dialog(z-50)，不关的话
   // 删除确认/重命名/新建文件夹弹窗会被抽屉整体盖住（Codex review P2）。z-index 刻度
@@ -457,8 +489,8 @@ export function ReportsPage(): JSX.Element {
     setCreateOpen(false);
     setToast(`已创建报告「${report.title}」`);
     setState((cur) => (cur.status === 'ok' ? { status: 'ok', reports: [report, ...cur.reports] } : cur));
-    setSelected(report);
-  }, []);
+    handleSelectReport(report);
+  }, [handleSelectReport]);
 
   const handleDelete = useCallback(async (report: AcceptanceReport) => {
     try {
@@ -707,7 +739,7 @@ export function ReportsPage(): JSX.Element {
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
-                    <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
+                    <ReportViewer report={selected} onBack={handleCloseReport} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} onReportLink={handleLinkedReport} />
                   </>
                 )}
               </div>
@@ -2274,17 +2306,20 @@ function RenameFolderDialog({
  * of becoming a blank iframe. Raw downloads retain server CSP.
  */
 function ReportViewer({
-  report, onBack, onOpenNav, onSync,
+  report, onBack, onOpenNav, onSync, onReportLink,
 }: {
   report: AcceptanceReport | null;
   onBack?: () => void;
   onOpenNav?: () => void;
   onSync: (report: AcceptanceReport) => void;
+  onReportLink: (reportId: string) => boolean;
 }): JSX.Element {
   const [mdHtml, setMdHtml] = useState<string | null>(null);
   const [mdError, setMdError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const reqRef = useRef(0);
   // iframe 是 no-same-origin sandbox，感知不到应用的 data-theme——
   // 旧写法 color-scheme: light dark 只跟 OS 配色，用户在 CDS 里切主题时
@@ -2295,13 +2330,14 @@ function ReportViewer({
   useEffect(() => {
     setMdHtml(null);
     setMdError(null);
+    setNavigationError(null);
     const token = ++reqRef.current;
     if (!report) return;
     fetchReportRaw(report.id)
       .then((raw) => {
         if (reqRef.current !== token) return;
         if (report.format === 'html') {
-          setMdHtml(raw);
+          setMdHtml(withReportNavigation(raw, window.location.origin, report.projectId, report.projectSlug));
           return;
         }
         const parsed = marked.parse(raw, { async: false }) as string;
@@ -2316,13 +2352,22 @@ function ReportViewer({
           img { max-width: 100%; height: auto; }
           a { color: ${linkColor}; }
         </style></head><body>${parsed}</body></html>`;
-        setMdHtml(doc);
+        setMdHtml(withReportNavigation(doc, window.location.origin, report.projectId, report.projectSlug));
       })
       .catch((err) => {
         if (reqRef.current !== token) return;
         setMdError(err instanceof ApiError ? err.message : String(err));
       });
   }, [report, theme, loadAttempt]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const id = reportNavigationMessage(event, iframeRef.current?.contentWindow);
+      if (id && !onReportLink(id)) setNavigationError('无法打开该报告，请从当前项目报告列表核对访问权限。');
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [onReportLink]);
 
   useEffect(() => {
     if (!expanded) return undefined;
@@ -2389,6 +2434,7 @@ function ReportViewer({
         </div>
       </div>
       <div className="min-h-0 flex-1 bg-white">
+        {navigationError ? <p role="alert" className="px-4 py-2 text-sm text-destructive">{navigationError}</p> : null}
         {mdError ? (
           <div className="space-y-3 p-4">
             <ErrorBlock message={mdError} />
@@ -2397,7 +2443,7 @@ function ReportViewer({
         ) : mdHtml === null ? (
           <div className="p-4"><LoadingBlock label="正在加载报告正文" /></div>
         ) : (
-          <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
+          <iframe ref={iframeRef} key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
         )}
       </div>
     </div>
