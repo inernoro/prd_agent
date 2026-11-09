@@ -131,7 +131,7 @@ export function OverviewDataTable<T extends { id: string }>({
           ))}
         </colgroup>
         <thead>
-          <tr className={`bg-token-nested text-white/45 text-[11px] ${LIST_HEADER_HOVER_GROUP}`}>
+          <tr className={`bg-token-nested text-white/45 pa-light-text-secondary text-[11px] ${LIST_HEADER_HOVER_GROUP}`}>
             {selection ? (
               <ListSelectionHeaderCell
                 allSelected={selection.allSelected}
@@ -183,7 +183,7 @@ export function OverviewDataTable<T extends { id: string }>({
                 />
               ) : null}
               {columns.map((column) => (
-                <td key={column.key} className={`px-3 py-2 text-white/80 max-w-0 ${column.className ?? ''}`}>
+                <td key={column.key} className={`px-3 py-2 text-white/80 pa-light-text-secondary max-w-0 ${column.className ?? ''}`}>
                   <div className="min-w-0 overflow-hidden">{column.render(row)}</div>
                 </td>
               ))}

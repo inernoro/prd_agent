@@ -56,12 +56,11 @@ html[data-product-agent-appearance][data-theme="light"] :where(
   background-color: var(--panel-solid);
 }
 
-html[data-product-agent-appearance][data-theme="light"] :where([class^="text-white/"], [class*=" text-white/"]) {
+html[data-product-agent-appearance][data-theme="light"] .pa-light-text-secondary {
   color: var(--text-secondary);
 }
 
-html[data-product-agent-appearance][data-theme="light"] :where(input, select, textarea).text-white,
-html[data-product-agent-appearance][data-theme="light"] .product-graph .text-white {
+html[data-product-agent-appearance][data-theme="light"] .pa-light-text-primary {
   color: var(--text-primary);
 }
 

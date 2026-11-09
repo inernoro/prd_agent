@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { URL } from 'node:url';
 import { act } from 'react';
 import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 import { AgentFullscreenLayout } from '@/components/agent-shell/AgentFullscreenLayout';
 import { ProductAgentAppearance, VersionAppearance } from './VersionAppearance';
-import appearanceCss from './product-appearance.css?raw';
 import versionWorkflow from './VersionWorkflowTab.tsx?raw';
 
 it('默认浅色，保存切换结果，并在离开版本页时恢复原外观', async () => {
@@ -15,12 +16,13 @@ it('默认浅色，保存切换结果，并在离开版本页时恢复原外观'
   const host = document.createElement('div');
   document.body.appendChild(host);
   const stylesheet = document.createElement('style');
-  stylesheet.textContent = appearanceCss;
+  stylesheet.textContent = readFileSync(new URL('./product-appearance.css', import.meta.url), 'utf8');
   document.head.appendChild(stylesheet);
   const rules = Array.from(stylesheet.sheet!.cssRules) as CSSStyleRule[];
-  const canvasRule = rules.find((rule) => rule.selectorText.endsWith(' .agent-fullscreen-canvas'))!;
-  const sidebarRule = rules.find((rule) => rule.selectorText.endsWith(' .agent-fullscreen-sidebar'))!;
+  const canvasRule = rules.find((rule) => rule.selectorText.trim().endsWith(' .agent-fullscreen-canvas'))!;
+  const sidebarRule = rules.find((rule) => rule.selectorText.trim().endsWith(' .agent-fullscreen-sidebar'))!;
   const panelRule = rules.find((rule) => rule.selectorText.includes('[class~='))!;
+  const panelSelector = panelRule.selectorText.replace(/\\23 /g, '#');
   const filterBackground = versionWorkflow.match(/bg-\[#[0-9a-f]{6}\]/)?.[0];
   expect(filterBackground).toBeDefined();
   const component = createRoot(host);
@@ -44,14 +46,14 @@ it('默认浅色，保存切换结果，并在离开版本页时恢复原外观'
     expect(canvasRule.style.getPropertyValue('background-color')).toBe('var(--bg-base)');
     expect(canvasRule.style.getPropertyValue('color')).toBe('var(--text-primary)');
     expect(sidebar.matches(sidebarRule.selectorText)).toBe(true);
-    expect(filter.matches(panelRule.selectorText)).toBe(true);
+    expect(filter.matches(panelSelector)).toBe(true);
 
     await act(async () => toggle.click());
     expect(toggle.getAttribute('aria-checked')).toBe('false');
     expect(root.hasAttribute('data-theme')).toBe(false);
     expect(canvas.matches(canvasRule.selectorText)).toBe(false);
     expect(sidebar.matches(sidebarRule.selectorText)).toBe(false);
-    expect(filter.matches(panelRule.selectorText)).toBe(false);
+    expect(filter.matches(panelSelector)).toBe(false);
     expect(JSON.parse(localStorage.getItem('map-product-version-appearance') ?? '{}').state.mode).toBe('dark');
 
     await act(async () => toggle.click());

@@ -629,14 +629,14 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
   if (error) return <div className="text-sm text-red-300/80 text-center py-10">{error}</div>;
   if ((raw?.nodes.length ?? 0) <= 1) {
     return (
-      <div className="text-center text-white/40 text-sm py-16 px-6">
+      <div className="text-center text-white/40 pa-light-text-secondary text-sm py-16 px-6">
         图谱还很空。先在 版本/需求/功能/客户 tab 创建对象并互相关联，关系会自动显示在这里。
       </div>
     );
   }
 
   return (
-    <div className="product-graph h-full min-h-0 flex flex-col px-4 pt-3">
+    <div className="h-full min-h-0 flex flex-col px-4 pt-3">
       <style>{GRAPH_FX_CSS}</style>
       {/* 控制栏 */}
       <div className="shrink-0 flex flex-wrap items-center gap-2 px-1 pb-3">
@@ -663,7 +663,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <select
             value={stateFilter}
             onChange={(e) => setStateFilter(e.target.value)}
-            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 outline-none"
+            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 pa-light-text-secondary outline-none"
           >
             <option value="">全部状态</option>
             {stateOptions.map((s) => (
@@ -678,7 +678,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <select
             value={productFilter}
             onChange={(e) => setProductFilter(e.target.value)}
-            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 outline-none max-w-[160px]"
+            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 pa-light-text-secondary outline-none max-w-[160px]"
           >
             <option value="">全部产品</option>
             {productOptions.map((p) => (
@@ -693,7 +693,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <select
             value={versionFilter}
             onChange={(e) => setVersionFilter(e.target.value)}
-            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 outline-none"
+            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 pa-light-text-secondary outline-none"
           >
             <option value="">全部版本</option>
             {versionOptions.map((v) => (
@@ -705,12 +705,12 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
         )}
         {/* 搜索 */}
         <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-token-nested border border-token-subtle">
-          <Search size={12} className="text-white/40" />
+          <Search size={12} className="text-white/40 pa-light-text-secondary" />
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder="搜索定位节点"
-            className="bg-transparent text-[11px] text-white outline-none w-28"
+            className="bg-transparent text-[11px] text-white pa-light-text-primary outline-none w-28"
           />
         </div>
         {/* 模式切换 */}
@@ -720,7 +720,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
             setTraceAnchor(null);
           }}
           className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border ${
-            mode === 'trace' ? 'border-amber-400/60 text-amber-300 bg-amber-400/10' : 'border-token-subtle text-white/50 hover-bg-soft'
+            mode === 'trace' ? 'border-amber-400/60 text-amber-300 bg-amber-400/10' : 'border-token-subtle text-white/50 pa-light-text-secondary hover-bg-soft'
           }`}
           title="追溯模式下，点击节点沿关系路径高亮"
         >
@@ -728,13 +728,13 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
         </button>
         {/* 视图切换：卡片 / 圆点 */}
         <div className="flex rounded-md border border-token-subtle overflow-hidden">
-          <button onClick={() => setView('card')} className={`px-2 py-1 text-[11px] ${view === 'card' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`}>卡片</button>
-          <button onClick={() => setView('dot')} className={`px-2 py-1 text-[11px] ${view === 'dot' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`}>圆点</button>
+          <button onClick={() => setView('card')} className={`px-2 py-1 text-[11px] ${view === 'card' ? 'bg-token-nested text-white pa-light-text-primary' : 'text-white/45 pa-light-text-secondary hover-bg-soft'}`}>卡片</button>
+          <button onClick={() => setView('dot')} className={`px-2 py-1 text-[11px] ${view === 'dot' ? 'bg-token-nested text-white pa-light-text-primary' : 'text-white/45 pa-light-text-secondary hover-bg-soft'}`}>圆点</button>
         </div>
         {/* 布局切换：整理（按类型分列）/ 离散（力导向有机散布） */}
         <div className="flex rounded-md border border-token-subtle overflow-hidden">
-          <button onClick={() => setLayout('tidy')} className={`px-2 py-1 text-[11px] ${layout === 'tidy' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`} title="按类型分列排好">整理</button>
-          <button onClick={() => setLayout('scatter')} className={`px-2 py-1 text-[11px] ${layout === 'scatter' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`} title="力导向有机散布（参考 Obsidian）">离散</button>
+          <button onClick={() => setLayout('tidy')} className={`px-2 py-1 text-[11px] ${layout === 'tidy' ? 'bg-token-nested text-white pa-light-text-primary' : 'text-white/45 pa-light-text-secondary hover-bg-soft'}`} title="按类型分列排好">整理</button>
+          <button onClick={() => setLayout('scatter')} className={`px-2 py-1 text-[11px] ${layout === 'scatter' ? 'bg-token-nested text-white pa-light-text-primary' : 'text-white/45 pa-light-text-secondary hover-bg-soft'}`} title="力导向有机散布（参考 Obsidian）">离散</button>
         </div>
         {/* 追溯中提示 */}
         {traceAnchor && (
@@ -791,7 +791,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           />
           <Controls showInteractive={false} />
         </ReactFlow>
-        <div className="product-graph-hint absolute bottom-3 left-3 text-[10px] text-white/35 bg-black/40 border border-token-subtle rounded-md px-2 py-1">
+        <div className="product-graph-hint absolute bottom-3 left-3 text-[10px] text-white/35 pa-light-text-secondary bg-black/40 border border-token-subtle rounded-md px-2 py-1">
           {mode === 'trace' ? '点击节点：高亮其关系路径' : '点击节点：查看详情'}
         </div>
 
@@ -943,7 +943,7 @@ function NodeDrawer({
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: meta?.color ?? '#888' }} />
           {meta?.label ?? '节点'}详情
         </span>
-        <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+        <button onClick={onClose} className="text-white/40 pa-light-text-secondary hover:text-white"><X size={16} /></button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3" style={{ overscrollBehavior: 'contain' }}>
         {/* 操作 */}
@@ -971,12 +971,12 @@ function NodeDrawer({
           <div className="rounded-lg border border-violet-500/25 bg-violet-500/[0.06] p-3">
             <div className="text-[11px] text-violet-200/80 mb-1.5 flex items-center gap-1">
               <Sparkles size={11} /> 关系链分析
-              {analysis.phase === 'connecting' && <span className="text-white/40">· 连接中…</span>}
-              {analysis.phase === 'streaming' && <span className="text-white/40">· 分析中…</span>}
+              {analysis.phase === 'connecting' && <span className="text-white/40 pa-light-text-secondary">· 连接中…</span>}
+              {analysis.phase === 'streaming' && <span className="text-white/40 pa-light-text-secondary">· 分析中…</span>}
               {analysis.typing && !analysis.isStreaming && (
                 <button
                   onClick={copyAnalysis}
-                  className="ml-auto flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-token-nested border border-token-subtle text-white/50 hover:text-white/90"
+                  className="ml-auto flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-token-nested border border-token-subtle text-white/50 pa-light-text-secondary hover:text-white/90"
                   title="复制分析内容"
                 >
                   {analysisCopied ? <Check size={11} /> : <Copy size={11} />} {analysisCopied ? '已复制' : '复制'}
@@ -986,23 +986,23 @@ function NodeDrawer({
             {analysis.phase === 'error' ? (
               <div className="text-amber-300/80 text-sm">{analysis.phaseMessage || '分析失败，请重试'}</div>
             ) : analysis.typing ? (
-              <div className="text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap">
+              <div className="text-[13px] text-white/85 pa-light-text-secondary leading-relaxed whitespace-pre-wrap">
                 <StreamingText text={stripMarkdown(analysis.typing)} streaming={analysis.isStreaming} />
               </div>
             ) : (
-              <div className="text-white/40 text-sm flex items-center gap-1.5"><MapSpinner size={12} /> 正在汇总关系链…</div>
+              <div className="text-white/40 pa-light-text-secondary text-sm flex items-center gap-1.5"><MapSpinner size={12} /> 正在汇总关系链…</div>
             )}
           </div>
         )}
         {/* 详情直接展示 */}
-        <div className="text-base text-white font-medium">{node.label}</div>
+        <div className="text-base text-white pa-light-text-primary font-medium">{node.label}</div>
         {busy ? (
           <MapSectionLoader text="正在加载…" />
         ) : (
           <>
             <div className="flex flex-col gap-2 text-xs rounded-lg border border-token-subtle bg-white/[0.02] p-3">
               {rows.length === 0 ? (
-                <div className="text-white/35 text-center py-2">无更多字段</div>
+                <div className="text-white/35 pa-light-text-secondary text-center py-2">无更多字段</div>
               ) : (
                 rows.map((row, i) => <DrawerRow key={i} label={row.label} value={row.value} />)
               )}
@@ -1010,7 +1010,7 @@ function NodeDrawer({
             {/* 摘要：需求/功能/缺陷首次展开自动 AI 摘要；其它类型显示干净纯文本节选 */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] text-white/40 flex items-center gap-1">
+                <span className="text-[11px] text-white/40 pa-light-text-secondary flex items-center gap-1">
                   {canOpen ? <><Sparkles size={11} className="text-cyan-300/80" /> AI 摘要</> : '描述节选'}
                 </span>
                 {canOpen && desc && (
@@ -1023,26 +1023,26 @@ function NodeDrawer({
                   </button>
                 )}
               </div>
-              <div className="text-sm text-white/80 whitespace-pre-wrap rounded-lg border border-token-subtle bg-white/[0.02] p-3 min-h-[60px]">
+              <div className="text-sm text-white/80 pa-light-text-secondary whitespace-pre-wrap rounded-lg border border-token-subtle bg-white/[0.02] p-3 min-h-[60px]">
                 {canOpen ? (
                   summaryBusy ? (
-                    <span className="text-white/40 flex items-center gap-1.5"><MapSpinner size={12} /> AI 摘要中…</span>
+                    <span className="text-white/40 pa-light-text-secondary flex items-center gap-1.5"><MapSpinner size={12} /> AI 摘要中…</span>
                   ) : summary ? (
                     <>
                       {summary}
-                      {summaryBy && <div className="mt-2 text-[10px] text-white/30">由 {summaryBy} 生成 · 重新摘要可更新</div>}
+                      {summaryBy && <div className="mt-2 text-[10px] text-white/30 pa-light-text-secondary">由 {summaryBy} 生成 · 重新摘要可更新</div>}
                     </>
                   ) : summaryMsg ? (
                     <span className="text-amber-300/80">{summaryMsg}</span>
                   ) : !desc ? (
-                    <span className="text-white/30">（未填写描述）</span>
+                    <span className="text-white/30 pa-light-text-secondary">（未填写描述）</span>
                   ) : (
-                    <span className="text-white/40">准备摘要…</span>
+                    <span className="text-white/40 pa-light-text-secondary">准备摘要…</span>
                   )
                 ) : desc ? (
-                  <span className="text-white/70">{htmlToText(desc).slice(0, 240)}{htmlToText(desc).length > 240 ? '…' : ''}</span>
+                  <span className="text-white/70 pa-light-text-secondary">{htmlToText(desc).slice(0, 240)}{htmlToText(desc).length > 240 ? '…' : ''}</span>
                 ) : (
-                  <span className="text-white/30">（未填写）</span>
+                  <span className="text-white/30 pa-light-text-secondary">（未填写）</span>
                 )}
               </div>
             </div>
@@ -1056,8 +1056,8 @@ function NodeDrawer({
 function DrawerRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-3">
-      <span className="text-white/40 w-20 shrink-0">{label}</span>
-      <span className="text-white/80">{value}</span>
+      <span className="text-white/40 pa-light-text-secondary w-20 shrink-0">{label}</span>
+      <span className="text-white/80 pa-light-text-secondary">{value}</span>
     </div>
   );
 }

@@ -392,7 +392,7 @@ export function RequirementCreateForm({
                     value={formData[originDetail.formKey] ?? ''}
                     onChange={(e) => setFormData((d) => ({ ...d, [originDetail.formKey]: e.target.value }))}
                     placeholder={`请输入${originDetail.label}`}
-                    className={`w-full h-9 rounded-[8px] border bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring placeholder-token-muted ${
+                    className={`w-full h-9 rounded-[8px] border bg-[var(--bg-input)] px-2.5 text-[13px] text-white pa-light-text-primary outline-none focus:border-cyan-500/40 no-focus-ring placeholder-token-muted ${
                       validationError?.includes(originDetail.label) ? 'border-amber-400/50' : 'border-token-subtle'
                     }`}
                   />
