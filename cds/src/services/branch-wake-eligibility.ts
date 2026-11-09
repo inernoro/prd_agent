@@ -92,6 +92,8 @@ export function isAutoWakeEligible(
     projectPaused?: boolean;
   },
 ): boolean {
+  // 归档保留容器元数据，但恢复前不得因被动预览访问重新占用资源。
+  if (branch.archive) return false;
   // 项目暂停是人明确表达的「让它停着」，优先级高于任何停机来源分档。
   if (opts?.projectPaused === true) return false;
 
