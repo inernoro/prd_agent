@@ -160,7 +160,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const [title, setTitle] = useState('');
   const [sourceMarkdown, setSourceMarkdown] = useState('');
   const [styleDescription, setStyleDescription] = useState('智能匹配');
-  const [model, setModel] = useState(() => models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '');
+  const [model, setModel] = useState(() => resolveAvailableVideoModel(project?.defaultVideoModel ?? '', models));
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [resolution, setResolution] = useState('1080p');
   const [duration, setDuration] = useState(5);

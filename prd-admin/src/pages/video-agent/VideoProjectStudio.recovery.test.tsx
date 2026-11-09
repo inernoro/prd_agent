@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react';
+import { act, StrictMode, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Simulate } from 'react-dom/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -24,7 +24,7 @@ const project: VideoProject = {
   defaultResolution: '1080p', defaultDuration: 10, generateAudio: true,
   assets: [], timelineTracks: [], createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z',
 };
-async function setup(catalog = models) {
+async function setup(catalog = models, strict = false) {
   const onSave = vi.fn(async () => null);
   const props = { projects: [project], project, runs: [], models: catalog, busy: false,
     onSelectProject: vi.fn(), onNewProject: vi.fn(), onSave, onAnalyze: vi.fn(async () => {}),
@@ -35,10 +35,16 @@ async function setup(catalog = models) {
     getByLabelText: (label: string) => { const node = host.querySelector(`[aria-label="${label}"]`); if (!node) throw new Error('缺少输入 '+label); return node; },
     getByTitle: (title: string) => { const node = host.querySelector<HTMLButtonElement>(`button[title="${title}"]`); if (!node) throw new Error('缺少操作 '+title); return node; },
   };
-  await view.rerender(<VideoProjectStudio {...props} />);
+  await view.rerender(strict ? <StrictMode><VideoProjectStudio {...props} /></StrictMode> : <VideoProjectStudio {...props} />);
   return { props, view, onSave, story: () => view.getByLabelText('文学稿内容') as HTMLTextAreaElement };
 }
 describe('视频工作台恢复与本地编辑', () => {
+  it('应用实际StrictMode入口恢复项目模型，不被首次旧状态覆写', async () => {
+    const { view, onSave } = await setup(models, true);
+    await act(async () => view.getByTitle('保存草稿').click());
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ defaultVideoModel: 'portrait',
+      defaultAspectRatio: '9:16', defaultResolution: '1080p', defaultDuration: 10, generateAudio: true }));
+  });
   it('模型目录刷新不能覆盖正在编辑的文稿', async () => {
     const { props, view, story } = await setup();
     await change(story(), '我正在修改的文稿');
