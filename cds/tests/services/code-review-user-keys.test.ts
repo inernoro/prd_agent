@@ -49,7 +49,8 @@ describe('用户 Key 独立任务通道', () => {
     const state = new StateService(path.join(dir, 'state.json')); state.load();
     state.addProject({ id: 'a', name: 'a', slug: 'a', kind: 'manual', dockerNetwork: 'a', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     const blobs = new Map<string, Buffer>(); const run = vi.fn();
-    const client = new CodeReviewUserKeys(() => config, (async url => String(url).endsWith('/bind') ? Response.json(binding) : Response.json({ error: 'revoked' }, { status: 401 })) as typeof fetch);
+    let denyBinding = false;
+    const client = new CodeReviewUserKeys(() => config, (async url => String(url).endsWith('/bind') && !denyBinding ? Response.json(binding) : Response.json({ error: 'revoked' }, { status: 401 })) as typeof fetch);
     const deps = { state, engine: { run }, userKeys: client, autoStart: false, ownerScope: 'test', publicBaseUrl: 'https://cds.test', mail: { configured: () => false, send: vi.fn() },
       inputs: { configured: () => true, put: async (id: string, _project: string, bytes: Buffer) => { blobs.set(id, bytes); return id; }, get: async (id: string) => blobs.get(id)! } };
     const service = new CodeReviewService(deps);
@@ -59,5 +60,12 @@ describe('用户 Key 独立任务通道', () => {
     expect(publicTask.modelCredential?.source).toBe('user'); expect(JSON.stringify(state.getCodeReviewTask(task.id))).not.toContain(input.apiKey);
     const cold = new StateService(path.join(dir, 'state.json')); cold.load(); expect(cold.getCodeReviewTask(task.id)?.userKeyBinding?.id).toBe('binding');
     await service.pump(); expect(service.get(task.id).status).toBe('failed'); expect(run).not.toHaveBeenCalled();
+    denyBinding = true;
+    await expect(service.submit({ projectId: 'a', sourceType: 'zip', zip: buildZip([{ name: 'a.ts', data: 'const a=1;' }]), createdBy: 'human', credentialOwner: identity.owner, userKey: input, idempotencyKey: 'binding-failure' })).rejects.toThrow('证据已保存');
+    const failed = service.list('a').find(item => item.phase === '用户 Key 绑定失败')!;
+    expect(failed.status).toBe('failed'); expect(failed.inputKey).toBeTruthy(); expect(failed.auditCount).toBeGreaterThan(0);
+    expect(JSON.stringify(failed)).not.toContain(input.apiKey);
+    await expect(service.retry(failed.id)).rejects.toThrow('重新提交');
+    await service.pump(); expect(run).not.toHaveBeenCalled();
   });
 });

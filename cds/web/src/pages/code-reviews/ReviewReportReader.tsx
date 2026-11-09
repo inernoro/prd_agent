@@ -118,7 +118,6 @@ export function ReviewReportReader({ task, projectName, onBack, onAction, pendin
       if (target !== null) { event.preventDefault(); update({ tab: tabs[target][0] }); document.getElementById(`review-tab-${tabs[target][0]}`)?.focus(); }
     }}>{label}{extra ? <small>{extra}</small> : null}</button>)}</div>
     <div className="cr-panel-fade" role="tabpanel" id={`review-panel-${tab}`} aria-labelledby={`review-tab-${tab}`}>
-      {tab === 'findings' && loading && read ? <span role="status" className="sr-only">正在更新问题列表</span> : null}
       {tab === 'details' ? <div className="cr-stack"><ReviewDetail task={current} now={Date.now()} pending={pending} onAction={onAction} />{result ? <section className="cr-surface cr-progress-summary"><h2>覆盖与检查说明</h2>{result.notes.length ? result.notes.map((note, index) => <p key={index} className="cr-break cr-form-note">{note}</p>) : <p className="cr-form-note">原始结果未提供额外检查说明。</p>}</section> : null}</div> : null}
       {tab === 'original' || tab === 'findings' && imported ? documentView : null}
       {tab === 'findings' && !imported ? <div className="cr-stack">

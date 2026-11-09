@@ -208,6 +208,7 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
   }));
   router.get('/code-reviews/:id/usage', handler(async (req, res) => {
     const task = taskFor(req);
+    if (!task.userKeyBinding && task.modelCredential?.source === 'user') throw new CodeReviewError(409, '用户 Key 绑定未完成，暂无用量');
     if (!task.userKeyBinding) return res.json({ credentialSource: 'platform' });
     if (task.userKeyBinding.owner !== credentialOwner(req) && !isHumanSystemOwner(req)) throw new CodeReviewError(403, '只能查看自己的 Key 用量');
     if (!service.deps.userKeys?.configured()) throw new CodeReviewError(503, '用户 Key 用量通道未配置');

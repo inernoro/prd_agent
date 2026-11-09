@@ -250,20 +250,28 @@ export class CodeReviewService {
       githubUrl: input.githubUrl, ref: input.ref, excludePatterns: input.excludePatterns || [], status: 'queued', phase: '等待审查',
       progress: { totalFiles: 0, scannedFiles: 0 }, delivery: { status: input.email ? 'pending' : 'not_requested', email: input.email },
       createdBy: input.createdBy, createdAt: now, updatedAt: now, ownerScope: this.deps.ownerScope, idempotencyKey };
-    const bindingEvidence: Array<Record<string, unknown>> = [];
-    if (input.userKey) {
-      if (!this.deps.userKeys?.configured() || !input.credentialOwner) throw new CodeReviewError(503, '用户 Key 通道或身份未配置');
-      try { task.userKeyBinding = await this.deps.userKeys.bind(input.userKey, { owner: input.credentialOwner, projectId: task.projectId, taskId: task.id }, async e => { bindingEvidence.push({ ...e }); }); }
-      catch { throw new CodeReviewError(502, '用户 Key 绑定失败，请检查供应商、模型和额度；未使用平台凭据'); }
-      const binding = task.userKeyBinding;
-      task.modelCredential = { source: 'user', provider: binding.provider, model: binding.model, fingerprint: binding.fingerprint, tokenLimit: binding.tokenLimit };
-    }
     if (input.zip) {
       const validated = await validateCodeReviewZip(input.zip, task.excludePatterns).catch((error: Error) => { throw new CodeReviewError(400, error.message); });
       task.sourceHash = createHash('sha256').update(input.zip).digest('hex');
       task.progress.totalFiles = validated.totalFiles;
       task.inputSkippedFiles = validated.skippedFiles;
       task.inputKey = await this.deps.inputs.put(task.id, task.projectId, validated.zip);
+    }
+    const bindingEvidence: Array<Record<string, unknown>> = [];
+    if (input.userKey) {
+      if (!this.deps.userKeys?.configured() || !input.credentialOwner) throw new CodeReviewError(503, '用户 Key 通道或身份未配置');
+      try { task.userKeyBinding = await this.deps.userKeys.bind(input.userKey, { owner: input.credentialOwner, projectId: task.projectId, taskId: task.id }, async e => { bindingEvidence.push({ ...e }); }); }
+      catch {
+        task.status = 'failed'; task.phase = '用户 Key 绑定失败';
+        task.error = '凭据绑定未完成，请重新提交并填写用户 Key；未使用平台凭据';
+        task.modelCredential = { source: 'user', provider: input.userKey.provider, model: input.userKey.model,
+          fingerprint: '未绑定', tokenLimit: input.userKey.tokenLimit ?? 200000 };
+        await this.save(task);
+        for (const event of bindingEvidence) await this.audit(task.id, event);
+        throw new CodeReviewError(502, `用户 Key 绑定失败，证据已保存在审查任务 ${task.id}；未使用平台凭据`);
+      }
+      const binding = task.userKeyBinding;
+      task.modelCredential = { source: 'user', provider: binding.provider, model: binding.model, fingerprint: binding.fingerprint, tokenLimit: binding.tokenLimit };
     }
     await this.save(task);
     for (const event of bindingEvidence) await this.audit(task.id, event);
@@ -305,6 +313,7 @@ export class CodeReviewService {
   }
   async retry(id: string, expectedUpdatedAt?: string) {
     const task = this.get(id); this.assertOwned(task);
+    if (task.modelCredential?.source === 'user' && !task.userKeyBinding) throw new CodeReviewError(409, '用户 Key 绑定未完成，请重新提交并填写 Key');
     if (expectedUpdatedAt !== undefined && (task.status !== 'failed' || task.updatedAt !== expectedUpdatedAt)) {
       throw new CodeReviewError(409, '任务状态已变化，未执行条件重试，请刷新后查看');
     }
@@ -456,6 +465,7 @@ export class CodeReviewService {
       const zip = await this.deps.inputs.get(task.inputKey!);
       const selectedFiles = task.progress.totalFiles;
       let lastCounts = [-1, -1, -1, -1, -1], lastEngineTaskId: string | undefined;
+      if (task.modelCredential?.source === 'user' && !task.userKeyBinding) throw new CodeReviewError(503, '用户 Key 绑定缺失；未使用平台凭据');
       const userKeyConfig = task.userKeyBinding ? await this.deps.userKeys?.engineConfig(task.userKeyBinding, task.projectId, async e => this.audit(id, e)) : undefined;
       if (task.userKeyBinding && !userKeyConfig) throw new CodeReviewError(503, '用户 Key 绑定不可用；未使用平台凭据');
       const result = await engine.run({ userKeyConfig, taskId: id, zip, signal: controller.signal, excludePatterns: task.excludePatterns,
