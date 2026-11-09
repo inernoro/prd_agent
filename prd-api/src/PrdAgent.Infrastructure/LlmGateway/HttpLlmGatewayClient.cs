@@ -799,8 +799,14 @@ public sealed class HttpLlmGatewayClient
             message.Content = JsonBody(request);
             using var response = await http.SendAsync(message, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
-            return TryDeserializeRawResponse(body)
+            var result = TryDeserializeRawResponse(body)
                 ?? GatewayRawResponse.Fail("GATEWAY_HTTP_ERROR", "模型网关暂时无法返回结果，请稍后重试。", (int)response.StatusCode);
+            await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+                _failoverNotifier, result.ErrorCode, result.ErrorMessage,
+                result.Resolution?.ActualPlatformName ?? result.Resolution?.ActualPlatformId,
+                result.Resolution?.ActualModel ?? request.RequiredLogicalModelPublicId,
+                _logger, result.Resolution?.BillingAlerts);
+            return result;
         }
         catch (TaskExecutionAdmissionException ex)
         {

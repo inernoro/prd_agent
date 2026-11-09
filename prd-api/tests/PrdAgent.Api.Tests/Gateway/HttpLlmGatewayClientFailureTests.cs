@@ -242,7 +242,7 @@ public class HttpLlmGatewayClientFailureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task BillingCause_CrossesSendRawProfileAndBothStreams(bool fallbackSucceeded)
+    public async Task BillingCause_CrossesSendRawProfileImageAndBothStreams(bool fallbackSucceeded)
     {
         const string code = GatewayBillingFailure.AccountOverdue;
         var resolution = new GatewayModelResolution { Success = true, ActualModel = "backup", ActualPlatformName = "backup-platform",
@@ -259,8 +259,15 @@ public class HttpLlmGatewayClientFailureTests
         var send = await client.SendAsync(Request());
         var raw = await client.SendRawWithResolutionAsync(RawRequest(), resolution);
         var profile = await client.TestUpstreamProfileAsync(ProfileRequest());
+        var image = await client.GenerateImageAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "demo.app::generation", ModelType = "generation",
+            RequiredLogicalModelPublicId = "image-fixture",
+            CanonicalImageRequest = new GatewayCanonicalImageRequest { Prompt = "fixed fixture" },
+        }, CancellationToken.None);
+        Assert.Equal(fallbackSucceeded, image.Success);
         Assert.Equal(fallbackSucceeded, send.Success); Assert.Equal(fallbackSucceeded, raw.Success); Assert.Equal(fallbackSucceeded, profile.Success);
-        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(3));
+        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(4));
 
         var chunk = new GatewayStreamChunk { Type = fallbackSucceeded ? GatewayChunkType.Start : GatewayChunkType.Error,
             Resolution = resolution, ErrorCode = fallbackSucceeded ? null : code };
@@ -272,7 +279,7 @@ public class HttpLlmGatewayClientFailureTests
         client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK,
             "data: " + System.Text.Json.JsonSerializer.Serialize(legacyChunk) + "\n\n"), failoverNotifier: notifier.Object);
         await CollectAsync(client.CreateClient("demo.app::chat", "chat").StreamGenerateAsync("sys", [new() { Role = "user", Content = "hi" }]));
-        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(5));
+        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(6));
     }
 
     private static HttpLlmGatewayClient BuildClient(
