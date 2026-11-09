@@ -11,6 +11,7 @@ import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 import { isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
 import { validateCodeReviewSettings } from '../services/code-review-settings.js';
 import { REVIEW_SEVERITIES } from '../shared/code-review-result.js';
+import { pageCodeReviewTasks, REVIEW_LIST_SOURCES, REVIEW_LIST_STATUSES, type ReviewListSource, type ReviewListStatus } from '../shared/code-review-list.js';
 
 interface ReviewRequest extends Request, HumanAuthContext {
   cdsProjectKey?: { projectId: string; keyId: string };
@@ -96,6 +97,22 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     if (req.query.projectId !== undefined) project(req, req.query.projectId);
     const tasks = service.list(typeof req.query.projectId === 'string' ? req.query.projectId : req.cdsProjectKey?.projectId)
       .filter((task) => !assertProjectAccess(req, task.projectId) && canHumanAccessProject(req, state, task.projectId));
+    if (req.query.limit !== undefined) {
+      const limit = Number(req.query.limit), offset = Number(req.query.offset || 0);
+      const source = req.query.source || 'source', status = req.query.status || 'all', query = req.query.q || '';
+      const snapshotAt = req.query.snapshotAt;
+      if (typeof req.query.limit !== 'string' || req.query.offset !== undefined && typeof req.query.offset !== 'string'
+        || req.query.history !== undefined && typeof req.query.history !== 'string'
+        || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0
+        || !REVIEW_LIST_SOURCES.includes(source as ReviewListSource) || !REVIEW_LIST_STATUSES.includes(status as ReviewListStatus)
+        || typeof query !== 'string' || query.length > 300 || req.query.history !== undefined && !['0', '1'].includes(String(req.query.history))
+        || snapshotAt !== undefined && (typeof snapshotAt !== 'string' || !/^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(snapshotAt) || !Number.isFinite(Date.parse(snapshotAt)))) {
+        throw new CodeReviewError(400, '任务筛选或分页参数无效');
+      }
+      const result = pageCodeReviewTasks(tasks, { source: source as ReviewListSource, status: status as ReviewListStatus, query,
+        history: req.query.history === '1', offset, limit, snapshotAt: snapshotAt as string | undefined });
+      return res.json({ ...result, tasks: result.tasks.map(publicCodeReviewTask) });
+    }
     return res.json({ tasks: tasks.map(publicCodeReviewTask) });
   }));
   router.post('/code-reviews', ...parse, handler(async (req, res) => {

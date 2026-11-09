@@ -23,6 +23,7 @@ public class ExchangeTransformerRegistry
 
         Register(new DoubaoAsrTransformer());
         Register(new DoubaoStreamAsrTransformer());
+        Register(new DoubaoTtsTransformer());
         Register(new VolcengineVideoTransformer());
         Register(new GeminiNativeTransformer());
     }

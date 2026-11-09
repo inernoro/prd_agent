@@ -726,7 +726,10 @@ public class OpenRouterVideoClientGatewayTests
             {
                 ["LlmGateway:ServeBaseUrl"] = address, ["LlmGwServe:ApiKey"] = key,
             }).Build();
-            var gateway = new HttpLlmGatewayClient(factory, config, NullLogger<HttpLlmGatewayClient>.Instance);
+            // 这里只验证真实回环 HTTP 的状态查询契约；正常准入门仍启用，
+            // 使用既有运输测试许可，避免在发出 raw 请求前被缺失许可拦截。
+            var gateway = new HttpLlmGatewayClient(factory, config, NullLogger<HttpLlmGatewayClient>.Instance,
+                taskAuthorizer: TransportTestTaskAuthorizer.Instance);
             var downloads = new Mock<IHttpClientFactory>(MockBehavior.Strict);
             var validator = new Mock<ISafeOutboundUrlValidator>(MockBehavior.Strict);
             var client = new OpenRouterVideoClient(gateway, downloads.Object, validator.Object, NullLogger<OpenRouterVideoClient>.Instance);

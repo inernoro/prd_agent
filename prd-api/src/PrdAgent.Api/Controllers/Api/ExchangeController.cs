@@ -396,6 +396,12 @@ public class ExchangeController : ControllerBase
         if (transformer == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, $"转换器 '{exchange.TransformerType}' 未注册"));
 
+        // 此旧测试管线直接发送 HTTP 且按单个 JSON 读响应。媒体分片必须走统一网关，
+        // 才能校验终结状态、限制响应大小并留下关联任务的审计，不能在这里旁路付费调用。
+        if (transformer is IRawExchangeResponseTransformer && !request.DryRun)
+            return BadRequest(ApiResponse<object>.Fail("TTS_TEST_REQUIRES_GATEWAY",
+                "请在智能体接入台的语音能力配置中登记此模型与音色，并发起语音生成验证；这里仅支持请求转换预览。"));
+
         // 1. 解析标准请求体
         JsonObject standardBody;
         try
@@ -666,6 +672,25 @@ public static class ExchangeTemplates
 {
     public static readonly List<ExchangeTemplate> All = new()
     {
+        new ExchangeTemplate
+        {
+            Id = "doubao-tts-http-v3",
+            Name = "豆包语音合成 (HTTP V3)",
+            Description = "单向分片合成，支持音色、语速与已配置音色的情感参数。导入后请填写本账号的 resourceId，并在语音能力配置中登记真实音色。",
+            ApiKeyPlaceholder = "X-Api-Key",
+            ApiKeyHint = "使用豆包语音控制台的 API Key；旧版双凭据请选择豆包 TTS 认证并填写 AppID|AccessToken。",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "豆包 TTS (HTTP V3)",
+                ModelAlias = "doubao-tts",
+                TargetUrl = "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
+                TargetAuthScheme = "XApiKey",
+                TransformerType = "doubao-tts",
+                TransformerConfig = new Dictionary<string, object> { ["resourceId"] = "" },
+                Enabled = false,
+                Description = "先填写账号实际开通的 resourceId，核对音色与版本后启用；资源同时决定计费方式。",
+            },
+        },
         new ExchangeTemplate
         {
             Id = "doubao-asr-xapikey",

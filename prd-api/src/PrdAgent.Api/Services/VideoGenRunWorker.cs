@@ -37,6 +37,7 @@ public partial class VideoGenRunWorker : BackgroundService
     private readonly IRunEventStore _runStore;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenRunWorker> _logger;
+    internal string? QueueDeploymentScope { get; set; } = DeploymentScope.Current;
     internal TimeSpan DirectVideoPollInterval { get; set; } = TimeSpan.FromSeconds(6);
     internal TimeSpan DirectVideoPollingWindow { get; set; } = TimeSpan.FromMinutes(10);
     private readonly Dictionary<string, DateTime> _unavailableReceipts = new(StringComparer.Ordinal);
@@ -237,8 +238,13 @@ public partial class VideoGenRunWorker : BackgroundService
     private async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
     {
         var fb = Builders<VideoGenRun>.Filter;
-        // 先 peek 看下 Mode（避免错误置 status）
-        var pending = await _db.VideoGenRuns.Find(fb.Eq(x => x.Status, VideoGenRunStatus.Queued))
+        // 正式环境把新旧队列一起排序，保留取消核账回队后的公平顺序；预览只认本部署新队列。
+        var statuses = QueueDeploymentScope is null
+            ? new[] { VideoGenRunStatus.ScopedQueued, VideoGenRunStatus.Queued }
+            : new[] { VideoGenRunStatus.ScopedQueued };
+        var queue = fb.In(x => x.Status, statuses) & fb.Eq(x => x.DeploymentSlug, QueueDeploymentScope);
+        // 先 peek 看下 Mode（避免错误置 status），原子领取仍重复完整归属条件。
+        var pending = await _db.VideoGenRuns.Find(queue)
             .SortBy(x => x.QueueEnteredAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id)
             .FirstOrDefaultAsync(ct);
         if (pending == null) return null;
@@ -257,7 +263,7 @@ public partial class VideoGenRunWorker : BackgroundService
             .Set(x => x.PhaseProgress, 1);
 
         var run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
-            fb.Eq(x => x.Id, pending.Id) & fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
+            fb.Eq(x => x.Id, pending.Id) & queue,
             update,
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
@@ -589,7 +595,7 @@ public partial class VideoGenRunWorker : BackgroundService
         var filter = submittedJobId == null ? Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
             : DirectJobFilter(run, submittedJobId) & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, true);
         var update = Builders<VideoGenRun>.Update
-            .Set(x => x.Status, upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.Queued)
+            .Set(x => x.Status, upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.ScopedQueued)
             .Set(x => x.CurrentPhase, upstreamTerminal ? "cancelled" : "videogen-reconciling")
             .Set(x => x.EndedAt, upstreamTerminal ? DateTime.UtcNow : (DateTime?)null);
         var cancelled = await _db.VideoGenRuns.UpdateOneAsync(

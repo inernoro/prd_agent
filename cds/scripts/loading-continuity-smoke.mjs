@@ -93,7 +93,7 @@ try {
       if (!before) {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
-        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
+        if (['settings', 'project-settings', 'release-console', 'projects', 'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail', 'code-reviews'].includes(scene.kind)) assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
       }
       if (!before) {
         await page.emulateMedia({reducedMotion:'reduce'});

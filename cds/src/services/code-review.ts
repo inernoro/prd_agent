@@ -148,6 +148,15 @@ export class CodeReviewService {
             const key = await this.deps.inputs.put(`${id}-existing-result-v1`, task.projectId, Buffer.from(JSON.stringify(saved)));
             const current = this.get(id);
             if (current.engineTaskId === engineTaskId && terminal.has(current.status) && !current.resultKey && !controller.signal.aborted && !this.stopped) {
+              // Cancellation can arrive before the last in-flight files finish. Read-only
+              // recovery must report the native checkpoint counts, while preserving status.
+              if (Number.isSafeInteger(upstream.totalFiles) && upstream.totalFiles >= 0
+                && Number.isSafeInteger(upstream.scannedFiles) && upstream.scannedFiles >= 0
+                && upstream.scannedFiles <= upstream.totalFiles
+                && (current.progress.totalFiles === 0 || upstream.totalFiles === current.progress.totalFiles)
+                && upstream.scannedFiles >= current.progress.scannedFiles) {
+                current.progress = { totalFiles: upstream.totalFiles, scannedFiles: upstream.scannedFiles };
+              }
               current.resultKey = key;
               current.findingsSummary = {};
               for (const finding of saved.findings) current.findingsSummary[finding.severity] = (current.findingsSummary[finding.severity] || 0) + 1;

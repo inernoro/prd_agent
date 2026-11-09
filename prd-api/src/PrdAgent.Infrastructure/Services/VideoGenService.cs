@@ -158,7 +158,8 @@ public class VideoGenService : IVideoGenService
                 AppKey = appKey,
                 ProjectId = project?.Id,
                 OwnerAdminId = ownerAdminId,
-                Status = VideoGenRunStatus.Queued,
+                Status = VideoGenRunStatus.ScopedQueued,
+                DeploymentSlug = DeploymentScope.Current,
                 Mode = VideoGenMode.Storyboard,
                 ArticleMarkdown = article,
                 StyleDescription = string.IsNullOrWhiteSpace(request?.StyleDescription)
@@ -213,7 +214,8 @@ public class VideoGenService : IVideoGenService
             AppKey = appKey,
             ProjectId = project?.Id,
             OwnerAdminId = ownerAdminId,
-            Status = VideoGenRunStatus.Queued,
+            Status = VideoGenRunStatus.ScopedQueued,
+            DeploymentSlug = DeploymentScope.Current,
             Mode = VideoGenMode.Direct,
             DirectPrompt = prompt,
             ArticleTitle = !string.IsNullOrWhiteSpace(request?.ArticleTitle)
@@ -587,7 +589,7 @@ public class VideoGenService : IVideoGenService
         var active = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
             & fb.Eq(x => x.AppKey, run.AppKey) & fb.Eq(x => x.TaskPermitId, run.TaskPermitId)
             & fb.Eq(x => x.DeletionRequestedAt, null)
-            & fb.In(x => x.Status, new[] { VideoGenRunStatus.Queued, VideoGenRunStatus.Scripting,
+            & fb.In(x => x.Status, new[] { VideoGenRunStatus.Queued, VideoGenRunStatus.ScopedQueued, VideoGenRunStatus.Scripting,
                 VideoGenRunStatus.Editing, VideoGenRunStatus.Rendering });
         // 可信取消入口同时落终态；撤权后不能再依赖旧Worker写回，也不放宽其租约检查。
         var cancelled = await _db.VideoGenRuns.UpdateOneAsync(active,

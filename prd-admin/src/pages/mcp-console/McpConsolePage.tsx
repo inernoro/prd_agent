@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowRight, BookOpen, ChevronRight, Copy, Plug, Plus, RefreshCw, Search, ShieldCheck, Settings2, Activity, SlidersHorizontal, Image, PenLine, Clock3, History } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Headphones, AlertTriangle, ArrowRight, BookOpen, ChevronRight, Copy, Plug, Plus, RefreshCw, Search, ShieldCheck, Settings2, Activity, SlidersHorizontal, Image, PenLine, Clock3, History } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { PrdLoader } from '@/components/ui/PrdLoader';
@@ -21,10 +22,11 @@ import { McpSummaryRail } from './McpSummaryRail';
 import { secureSameSiteEndpoint } from './endpointUrl';
 import { McpCallTrendChart } from './McpCallTrendChart';
 import './mcp-console.css';
+import { SpeechPanel } from './SpeechPanel';
 import { accessLabel } from './editAuthorization';
 
-type Tab = 'clients' | 'calls' | 'settings';
-const TABS: Array<{ key: Tab; label: string; icon: typeof Plug }> = [{ key: 'clients', label: '客户端', icon: Plug }, { key: 'calls', label: '调用记录', icon: Activity }, { key: 'settings', label: '接入配置', icon: Settings2 }];
+type Tab = 'clients' | 'calls' | 'settings' | 'speech';
+const TABS: Array<{ key: Tab; label: string; icon: typeof Plug }> = [{ key: 'clients', label: '客户端', icon: Plug }, { key: 'calls', label: '调用记录', icon: Activity }, { key: 'speech', label: '语音创作', icon: Headphones }, { key: 'settings', label: '接入配置', icon: Settings2 }];
 
 /** Reuses the authenticated app shell, backend capability catalog and key lifecycle. */
 export default function McpConsolePage() {
@@ -34,7 +36,14 @@ export default function McpConsolePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>('clients');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tab: Tab = requestedTab === 'speech' || requestedTab === 'calls' || requestedTab === 'settings' ? requestedTab : 'clients';
+  const setTab = (value: Tab) => setSearchParams(current => {
+    const next = new URLSearchParams(current);
+    if (value === 'clients') next.delete('tab'); else next.set('tab', value);
+    return next;
+  }, { replace: true });
   const [quotaTarget, setQuotaTarget] = useState<McpClientDto | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<McpClientDto | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -92,14 +101,14 @@ export default function McpConsolePage() {
         <Button size="sm" variant="primary" onClick={() => setConnectOpen(true)}><Plus size={14} aria-hidden />接入客户端</Button>
       </div>
     </header>
-    <section className="mcp-summary" aria-label="今日概览">
+    {tab !== 'speech' && <section className="mcp-summary" aria-label="今日概览">
       <strong>已接入 {clients.length} 个客户端，今天调用 {today.calls} 次。</strong>
       <span>生图 {today.images} 张 · 写入 {today.writes} 次 · 今日统计与额度按 UTC 自然日计算</span>
       <McpCallTrendChart trend={overview.callTrend} />
-    </section>
+    </section>}
     {loadError && <div className="mcp-alert" role="alert"><AlertTriangle size={16} aria-hidden /><span>刷新失败：{loadError} 当前保留上次加载的数据。</span><button onClick={() => void refresh()} disabled={refreshing}>重试</button></div>}
     {(today.failed > 0 || today.denied > 0) && <div className="mcp-alert"><AlertTriangle size={17} aria-hidden /><span>{today.failed > 0 && <>今日有 <b>{today.failed} 次</b>调用失败</>}{today.failed > 0 && today.denied > 0 && '；'}{today.denied > 0 && <>{today.denied} 次被权限或额度限制拦截</>}</span>{today.failed > 0 && <button onClick={() => viewCalls('error')}>查看失败记录<ArrowRight size={14} aria-hidden /></button>}{today.denied > 0 && <button onClick={() => viewCalls('denied')}>查看被拦截记录<ChevronRight size={14} aria-hidden /></button>}</div>}
-    {tab === 'calls' ? <div className="mcp-tab-content lg:min-h-0 lg:flex-1"><McpCallsPanel key={callsView} clients={clients} refreshToken={refreshToken} initialStatus={callsStatus} initialKeyId={callsKeyId} onAuthorized={() => void refresh()} /></div> : tab === 'settings' ? <div className="mcp-settings lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+    {tab === 'speech' ? <SpeechPanel refreshToken={refreshToken} /> : tab === 'calls' ? <div className="mcp-tab-content lg:min-h-0 lg:flex-1"><McpCallsPanel key={callsView} clients={clients} refreshToken={refreshToken} initialStatus={callsStatus} initialKeyId={callsKeyId} onAuthorized={() => void refresh()} /></div> : tab === 'settings' ? <div className="mcp-settings lg:min-h-0 lg:flex-1 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       <section className="mcp-settings-section"><h2 className="shrink-0">连接地址</h2><p>所有客户端使用同一个 MCP 地址，每个客户端使用独立的接入凭证。</p><code>{overview.endpointUrl}</code><div className="mcp-inline-actions"><button className="mcp-button" onClick={async () => { if (await copyToClipboard(overview.endpointUrl)) toast.success('连接地址已复制'); else toast.error('复制失败，请手动复制连接地址'); }}><Copy size={14} aria-hidden />复制地址</button><button className="mcp-button mcp-primary" onClick={() => setConnectOpen(true)}><Plus size={14} aria-hidden />接入客户端</button></div><p>配置中的凭证仅在创建时显示一次。已有客户端无需重新配置。</p></section>
       <section className="mcp-settings-section"><h2 className="shrink-0">平台能力</h2><p>能力和可授权范围由你的系统权限决定。未拥有的权限无法授予客户端。</p><div className="mcp-capability-catalog">{capabilities.map(cap => { const Icon = capabilityVisual(cap.key).icon; return <details key={cap.key}><summary><Icon size={17} aria-hidden /><strong>{cap.title}</strong><span>{cap.availableToMe ? `${grantableToolCount(cap)} 个可授权工具` : '当前账号无权授权'}</span><ChevronRight size={14} aria-hidden /></summary><p>{cap.summary}</p>{cap.tools.map(tool => <div className="mcp-tool" key={tool.name}><code>{tool.name}</code><span>{tool.description}</span></div>)}</details>; })}</div></section>
       <MapAgentSkillPanel state={skillState} endpointUrl={overview.endpointUrl} />

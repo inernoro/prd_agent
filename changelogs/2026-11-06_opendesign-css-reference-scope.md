@@ -3,3 +3,4 @@
 | fix | design-runtime | 受信完整包通过标准 HTML 解析结果提取 CSS，保留共享 tokenizer 与原声明式路径的既有行为 |
 | fix | design-runtime | Chromium 固定版本更新为当前构建源可用的 156.0.8078.79-r0，保留实际版本与降权双视口烟测 |
 | ci | cds | 为跨模块质量函数测试补齐三处工作流的设计运行时冻结依赖安装，保留原测试与服务逻辑 |
+| ci | cds | 补齐实际消费 OpenDesign 源码的测试工作流冻结依赖，保留原测试与服务逻辑 |

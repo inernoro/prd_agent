@@ -116,14 +116,16 @@ public partial class VideoSceneConcurrencyTests
         var historical = new BsonDocument(test.Run.ToBsonDocument().Where(field => field.Name != nameof(VideoGenRun.QueueEnteredAt)));
         BsonSerializer.Deserialize<VideoGenRun>(historical).QueueEnteredAt.ShouldBeNull();
         await test.ProcessAsync(TimeSpan.Zero);
-        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.ScopedQueued);
+        test.Run.PublicStatus.ShouldBe(VideoGenRunStatus.Queued);
         test.Run.CurrentPhase.ShouldBe("videogen-reconciling");
         test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
         test.Run.EndedAt.ShouldBeNull();
         test.Field("DirectVideoReconciledAt").ShouldBeNull();
         await test.ClaimAsync();
         test.OtherQueuedRun!.Status.ShouldBe(VideoGenRunStatus.Rendering);
-        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.ScopedQueued);
+        test.Run.PublicStatus.ShouldBe(VideoGenRunStatus.Queued);
         test.OtherQueuedRun = new VideoGenRun();
         await test.ClaimAsync();
         test.Run.Status.ShouldBe(VideoGenRunStatus.Rendering);
@@ -157,7 +159,7 @@ public partial class VideoSceneConcurrencyTests
         test.Status = () => new OpenRouterVideoStatus { Status = "failed", Cost = 0.43 };
         await test.ProcessAsync(upstreamTerminal ? null : TimeSpan.Zero);
         test.FailureWriteCancellationObserved.ShouldBeTrue();
-        test.Run.Status.ShouldBe(upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.Queued);
+        test.Run.Status.ShouldBe(upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.ScopedQueued);
         (test.Run.EndedAt != null).ShouldBe(upstreamTerminal);
         (test.Field("DirectVideoReconciledAt") != null).ShouldBe(upstreamTerminal);
         test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
@@ -175,7 +177,8 @@ public partial class VideoSceneConcurrencyTests
         await test.ProcessBackgroundFailureAsync();
         test.MetadataFailureObserved.ShouldBeTrue();
         test.FailureWriteCancellationObserved.ShouldBeTrue();
-        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.ScopedQueued);
+        test.Run.PublicStatus.ShouldBe(VideoGenRunStatus.Queued);
         test.Run.CurrentPhase.ShouldBe("videogen-reconciling");
         test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
         test.Run.EndedAt.ShouldBeNull();
@@ -200,7 +203,8 @@ public partial class VideoSceneConcurrencyTests
             "export-task", "legacy-export", "regenerate",
         });
         test.QueuedReads.ShouldBe(1);
-        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.ScopedQueued);
+        test.Run.PublicStatus.ShouldBe(VideoGenRunStatus.Queued);
         test.Run.CurrentPhase.ShouldBe("videogen-reconciling");
         test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
         test.Run.EndedAt.ShouldBeNull();
@@ -331,7 +335,11 @@ public partial class VideoSceneConcurrencyTests
         {
             token.ThrowIfCancellationRequested();
             var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
-            if (query.GetValue(nameof(VideoGenRun.Status), BsonNull.Value) == VideoGenRunStatus.Queued && ++QueuedReads == 2)
+            var queueStatus = query.GetValue(nameof(VideoGenRun.Status), BsonNull.Value);
+            var readsQueue = queueStatus == VideoGenRunStatus.Queued
+                || queueStatus is BsonDocument choices && choices.GetValue("$in", new BsonArray()) is BsonArray values
+                    && values.Contains(VideoGenRunStatus.Queued);
+            if (readsQueue && ++QueuedReads == 2)
             {
                 // Bound the old scheduler deterministically; never wait another real polling window.
                 _backgroundStop!.Cancel();
@@ -358,7 +366,9 @@ public partial class VideoSceneConcurrencyTests
             var actual = (row ?? Run).ToBsonDocument();
             var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
             return query.All(field => field.Value is BsonDocument operation
-                ? operation.ElementCount == 1 && operation.Contains("$ne") && !actual.GetValue(field.Name, BsonNull.Value).Equals(operation["$ne"])
+                ? operation.ElementCount == 1 && (operation.Contains("$ne")
+                    && !actual.GetValue(field.Name, BsonNull.Value).Equals(operation["$ne"])
+                    || operation.TryGetValue("$in", out var choices) && choices.AsBsonArray.Contains(actual.GetValue(field.Name, BsonNull.Value)))
                 : actual.GetValue(field.Name, BsonNull.Value).Equals(field.Value));
         }
         private VideoGenRun Apply(UpdateDefinition<VideoGenRun> update, ref VideoGenRun row)

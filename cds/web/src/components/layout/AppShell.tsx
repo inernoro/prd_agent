@@ -283,7 +283,7 @@ function ConsoleRouteFallback(): JSX.Element {
           chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
           此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
         */}
-        <div className={cn('cds-workspace cds-workspace--fluid', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
+        <div className={cn('cds-workspace cds-workspace--fluid', scene?.kind === 'code-reviews' && 'cr-ui', workspace === 'fill' && 'cds-workspace--fill', workspace === 'bleed' && 'cds-workspace--fill cds-workspace--bleed')} role="status" aria-label="页面加载中">
           {monitoringHome ? <div className="monitor-page-shell flex min-h-0 flex-1 flex-col">
             {pageSkeletonForPath(pathname, { canManageProjects, monitoringHome })}
           </div> : pageSkeletonForPath(pathname, { canManageProjects })}
