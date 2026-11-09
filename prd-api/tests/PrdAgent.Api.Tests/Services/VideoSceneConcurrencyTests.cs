@@ -214,6 +214,33 @@ public partial class VideoSceneConcurrencyTests
         test.AssertNoSubmitOrDownload();
     }
 
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("none", false)]
+    [InlineData("none", true)]
+    [InlineData("run", false)]
+    [InlineData("run", true)]
+    [InlineData("project", false)]
+    [InlineData("project", true)]
+    [InlineData("export", false)]
+    [InlineData("export", true)]
+    public async Task DirectAssetCompensationMock_LostWritebackDeletesOnlyUnreferencedAsset(string reference, bool failCommit)
+    {
+        using var test = new DirectCancellationFixture("recorded-offering");
+        test.PrepareAssetCompletion(reference);
+        test.ThrowOnAssetCommit = failCommit;
+        await test.ProcessAsync();
+        test.CommitFailureObserved.ShouldBe(failCommit);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        test.Run.VideoAssetUrl.ShouldBeNull();
+        test.AssetStorage.Verify(x => x.DeleteByShaAsync(test.AssetSha, CancellationToken.None,
+            AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo), reference == "none" ? Times.Once() : Times.Never());
+        if (reference == "none") test.AssetLeaseHeldAtDeletion.ShouldBeTrue();
+        test.Client.Verify(x => x.SubmitAsync(It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        test.Client.Verify(x => x.DownloadVideoBytesForOfferingAsync(It.IsAny<string>(), "synthetic-upstream-job", 0,
+            "recorded-model", "recorded-offering", CancellationToken.None), Times.Once);
+    }
+
     // This fixture never constructs MongoClient or an application host. All persistence and upstream calls are strict mocks.
     private sealed class DirectCancellationFixture : IDisposable
     {
@@ -225,6 +252,31 @@ public partial class VideoSceneConcurrencyTests
         };
         public VideoGenRun OtherQueuedRun = null!;
         public Mock<IOpenRouterVideoClient> Client { get; } = new(MockBehavior.Strict);
+        public Mock<IAssetStorage> AssetStorage { get; } = new(MockBehavior.Strict);
+        public string AssetSha { get; } = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(new byte[] { 1, 2, 3 })).ToLowerInvariant();
+        private const string AssetUrl = "https://synthetic.invalid/generated-video.mp4";
+        private string AssetReference { get; set; } = "none";
+        private bool AssetLeaseHeld { get; set; }
+        public bool AssetLeaseHeldAtDeletion { get; private set; }
+        public bool ThrowOnAssetCommit { get; set; }
+        public bool CommitFailureObserved { get; private set; }
+
+        public void PrepareAssetCompletion(string reference)
+        {
+            AssetReference = reference;
+            Run.CancelRequested = false;
+            Status = () => new OpenRouterVideoStatus { Status = "completed", VideoUrl = "https://synthetic.invalid/never-requested", Cost = null };
+            Client.Setup(x => x.DownloadVideoBytesForOfferingAsync(It.IsAny<string>(), "synthetic-upstream-job", 0,
+                "recorded-model", "recorded-offering", CancellationToken.None))
+                .ReturnsAsync(new OpenRouterVideoDownload { Success = true, Bytes = [1, 2, 3], ContentType = "video/mp4" });
+            AssetStorage.Setup(x => x.SaveAsync(It.IsAny<byte[]>(), "video/mp4", CancellationToken.None,
+                AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo, null, null))
+                .Callback(() => Run.CancelRequested = true)
+                .ReturnsAsync(new StoredAsset(AssetSha, AssetUrl, 3, "video/mp4"));
+            AssetStorage.Setup(x => x.DeleteByShaAsync(AssetSha, CancellationToken.None,
+                AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo))
+                .Callback(() => AssetLeaseHeldAtDeletion = AssetLeaseHeld).Returns(Task.CompletedTask);
+        }
         public bool CancelAtDownloadingPhase { get; set; }
         public bool CancelAtFailureWrite { get; set; }
         public bool FailureWriteCancellationObserved { get; private set; }
@@ -264,6 +316,11 @@ public partial class VideoSceneConcurrencyTests
                     var sets = update.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry))["$set"].AsBsonDocument;
                     var statusName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.Status)).ElementName;
                     var jobName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.DirectVideoJobId)).ElementName;
+                    if (ThrowOnAssetCommit && sets.Contains(nameof(VideoGenRun.VideoAssetSha256)))
+                    {
+                        CommitFailureObserved = true;
+                        throw new IOException("synthetic-commit-uncertain");
+                    }
                     if (FailResumedMetadataWrite && !MetadataFailureObserved && sets.Contains(jobName))
                     {
                         MetadataFailureObserved = true;
@@ -299,6 +356,13 @@ public partial class VideoSceneConcurrencyTests
                     Matches(filter).ShouldBeTrue();
                     return Task.FromResult(Apply(update, ref Run));
                 });
+            collection.Setup(x => x.CountDocumentsAsync(It.IsAny<FilterDefinition<VideoGenRun>>(), It.IsAny<CountOptions>(), CancellationToken.None))
+                .Returns((FilterDefinition<VideoGenRun> filter, CountOptions _, CancellationToken _) =>
+                {
+                    var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry)).ToString();
+                    query.ShouldContain(AssetSha); query.ShouldContain(AssetUrl);
+                    return Task.FromResult(AssetReference == "run" ? 1L : 0L);
+                });
             var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
             database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs", null)).Returns(collection.Object);
             var exports = new Mock<IMongoCollection<VideoExportTask>>(MockBehavior.Strict);
@@ -311,6 +375,24 @@ public partial class VideoSceneConcurrencyTests
                     return Task.FromResult<VideoExportTask>(null!);
                 });
             database.Setup(x => x.GetCollection<VideoExportTask>("video_export_tasks", null)).Returns(exports.Object);
+            exports.Setup(x => x.CountDocumentsAsync(It.IsAny<FilterDefinition<VideoExportTask>>(), It.IsAny<CountOptions>(), CancellationToken.None))
+                .ReturnsAsync(() => AssetReference == "export" ? 1L : 0L);
+            var projects = new Mock<IMongoCollection<VideoProject>>(MockBehavior.Strict);
+            projects.Setup(x => x.CountDocumentsAsync(It.IsAny<FilterDefinition<VideoProject>>(), It.IsAny<CountOptions>(), CancellationToken.None))
+                .ReturnsAsync(() => AssetReference == "project" ? 1L : 0L);
+            database.Setup(x => x.GetCollection<VideoProject>("video_projects", null)).Returns(projects.Object);
+            var leases = new Mock<IMongoCollection<BsonDocument>>(MockBehavior.Strict);
+            leases.Setup(x => x.FindOneAndUpdateAsync(It.IsAny<FilterDefinition<BsonDocument>>(), It.IsAny<UpdateDefinition<BsonDocument>>(),
+                It.IsAny<FindOneAndUpdateOptions<BsonDocument, BsonDocument>>(), CancellationToken.None))
+                .Returns((FilterDefinition<BsonDocument> _, UpdateDefinition<BsonDocument> update, FindOneAndUpdateOptions<BsonDocument, BsonDocument> _, CancellationToken _) =>
+                {
+                    AssetLeaseHeld = true;
+                    var patch = update.Render(new RenderArgs<BsonDocument>(BsonSerializer.LookupSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
+                    return Task.FromResult(new BsonDocument("owner", patch["$set"]["owner"]));
+                });
+            leases.Setup(x => x.DeleteOneAsync(It.IsAny<FilterDefinition<BsonDocument>>(), CancellationToken.None))
+                .Callback(() => AssetLeaseHeld = false).ReturnsAsync(new DeleteResult.Acknowledged(1));
+            database.Setup(x => x.GetCollection<BsonDocument>("video_asset_mutation_leases", null)).Returns(leases.Object);
             var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
             typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, database.Object);
             Client.Setup<Task<OpenRouterVideoStatus>>(offering == null
@@ -328,7 +410,7 @@ public partial class VideoSceneConcurrencyTests
                         Run.CancelRequested = true;
                 }).ReturnsAsync(1);
             _worker = new VideoGenRunWorker(context, _services.GetRequiredService<IServiceScopeFactory>(), events.Object,
-                new Mock<IAssetStorage>(MockBehavior.Strict).Object, NullLogger<VideoGenRunWorker>.Instance);
+                AssetStorage.Object, NullLogger<VideoGenRunWorker>.Instance);
         }
 
         private void ObserveSchedulingRead(FilterDefinition<VideoGenRun> filter, CancellationToken token)
