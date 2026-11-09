@@ -40,6 +40,7 @@ export const REPLICA_MEMBER_LIMIT = 3;
  * 的同名常量做提交前预检，两边由 replica-plan-limit-contract 测试防漂移。
  */
 export const REPLICA_PLAN_MAX_STEPS = 60;
+const ARCHIVED_REPLICA_START_REASON = '分支已归档，请先恢复后再启动副本或数据库切换';
 
 /** 成员短 id：`rs` + 6 位 hex。同时用作粘性 cookie 值与直达子域后缀。 */
 export function newReplicaMemberId(rand: () => number = Math.random): string {
@@ -528,7 +529,8 @@ export class ReplicaSetService {
    * 异步执行，进度经 rs.isolated 与成员 status 轮询可见。
    */
   isolateProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
-    const branch = this.requireStartableBranch(branchId);
+    const branch = this.requireBranch(branchId);
+    if (branch.archive) return { accepted: false, reason: ARCHIVED_REPLICA_START_REASON };
     // 2026-07-25 用户拍板：隔离不再强制「先有副本」——零副本也可隔离（先建好隔离库并
     // 钉住隔离态，之后加的副本自动连隔离库）。enable 幂等，无 rs 条目时就地建。
     const rs = this.enable(branchId, profileId);
@@ -726,7 +728,8 @@ export class ReplicaSetService {
 
   /** 回切主库：副本重物化回共享库；隔离库不删，作为快照留在台账。 */
   revertProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
-    const branch = this.requireStartableBranch(branchId);
+    const branch = this.requireBranch(branchId);
+    if (branch.archive) return { accepted: false, reason: ARCHIVED_REPLICA_START_REASON };
     const rs = branch.replicaSets?.[profileId];
     if (!rs?.isolated) return { accepted: false, reason: '当前不在隔离状态' };
     const baseProfile = this.requireProfile(branch, profileId);
@@ -1943,7 +1946,7 @@ export class ReplicaSetService {
 
   private requireStartableBranch(branchId: string): BranchEntry {
     const branch = this.requireBranch(branchId);
-    if (branch.archive) throw new ReplicaSetError(409, '分支已归档，请先恢复后再启动副本或数据库切换');
+    if (branch.archive) throw new ReplicaSetError(409, ARCHIVED_REPLICA_START_REASON);
     return branch;
   }
 
