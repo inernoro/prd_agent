@@ -41,7 +41,8 @@ export function AvatarEditDialog(props: {
   const [generating, setGenerating] = useState(false);
   const [generationStage, setGenerationStage] = useState('');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [uploading, setUploading] = useState(false);
+  const [uploadPhase, setUploadPhase] = useState<'uploading' | 'applying' | null>(null);
+  const uploading = uploadPhase !== null;
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const generationIdRef = useRef(0);
@@ -138,7 +139,7 @@ export function AvatarEditDialog(props: {
       setError('缺少 userId，无法上传头像');
       return;
     }
-    setUploading(true);
+    setUploadPhase('uploading');
     setError(null);
     try {
       const response = props.onUpload
@@ -163,7 +164,7 @@ export function AvatarEditDialog(props: {
         recoveryMessage: '请检查图片和网络后重新上传。',
       }));
     } finally {
-      setUploading(false);
+      setUploadPhase(null);
     }
   };
 
@@ -212,7 +213,7 @@ export function AvatarEditDialog(props: {
 
   const onApplyGeneratedAvatar = async () => {
     if (!generatedAssetSha256) return;
-    setUploading(true);
+    setUploadPhase('applying');
     setError(null);
     try {
       const response = await applyGeneratedMyAvatar(generatedAssetSha256);
@@ -235,12 +236,19 @@ export function AvatarEditDialog(props: {
         recoveryMessage: '请稍后重试。',
       }));
     } finally {
-      setUploading(false);
+      setUploadPhase(null);
     }
   };
 
   const progress = Math.min(92, 14 + elapsedSeconds * 2.6);
   const stageUrl = generatedUrl || previewUrl;
+  const avatarPhase = generating
+    ? 'generating'
+    : uploading
+      ? uploadPhase
+      : generatedUrl
+        ? 'preview'
+        : 'editing';
 
   return (
     <Dialog
@@ -256,7 +264,11 @@ export function AvatarEditDialog(props: {
       contentClassName="max-[640px]:!h-[100dvh] max-[640px]:!max-h-[100dvh] max-[640px]:w-full max-[640px]:rounded-none max-[640px]:border-0"
       contentStyle={{ height: 'min(820px, calc(100vh - 32px))' }}
       content={
-        <div className="flex h-full min-h-0 flex-col">
+        <div
+          className="flex h-full min-h-0 flex-col"
+          data-testid="avatar-editor"
+          data-avatar-phase={avatarPhase}
+        >
           <input
             ref={fileInputRef}
             type="file"
@@ -310,6 +322,19 @@ export function AvatarEditDialog(props: {
                         />
                       </div>
                     </>
+                  )}
+
+                  {uploading && !generating && (
+                    <div
+                      className="absolute bottom-4 left-4 right-4 flex min-h-11 items-center justify-center gap-2 rounded-full px-4 text-center text-[13px] font-semibold"
+                      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+                      role="status"
+                      aria-live="polite"
+                      data-testid="avatar-upload-status"
+                    >
+                      <MapSpinner size={16} />
+                      {uploadPhase === 'applying' ? '正在替换头像，请稍候' : '正在上传头像，请稍候'}
+                    </div>
                   )}
                 </div>
 
@@ -387,7 +412,7 @@ export function AvatarEditDialog(props: {
                     variant="primary"
                     className="min-h-11 shrink-0 rounded-[14px] px-4 max-[420px]:px-3"
                     onClick={() => void onGeneratePreview()}
-                    disabled={generating || uploading || !prompt.trim()}
+                    disabled={generating || uploading}
                   >
                     {generating ? <MapSpinner size={16} /> : <Wand2 size={16} />}
                     <span className="max-[420px]:sr-only">{generatedUrl ? '重新生成' : '生成预览'}</span>
