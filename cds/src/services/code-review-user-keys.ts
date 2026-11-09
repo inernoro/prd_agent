@@ -22,7 +22,7 @@ export class CodeReviewUserKeys {
       || typeof input.model !== 'string' || !input.model.trim() || input.model.length > 200
       || typeof input.apiKey !== 'string' || input.apiKey.length < 8 || input.apiKey.length > 4096 || /\s/.test(input.apiKey)
       || input.tokenLimit !== undefined && (!Number.isSafeInteger(input.tokenLimit) || input.tokenLimit < 4096 || input.tokenLimit > 10000000)) throw new Error('供应商、模型、Key 或 Token 额度无效');
-    const value = await this.request('user_key.bind', '/bind', { method: 'POST', body: JSON.stringify({ ...identity, ...input, model: input.model.trim(), tokenLimit: input.tokenLimit ?? 200000 }) }, audit) as {
+    const value = await this.request('user_key.bind', '/bind', { method: 'POST', body: JSON.stringify({ ...identity, provider: input.provider, apiKey: input.apiKey, model: input.model.trim(), tokenLimit: input.tokenLimit ?? 200000 }) }, audit) as {
       bindingId: string; keyId: string; provider: string; model: string; fingerprint: string; tokenLimit: number };
     if (!value?.bindingId || !value.keyId || !value.model || !value.provider || !Number.isSafeInteger(value.tokenLimit)) throw new Error('用户 Key 绑定响应无效');
     return { id: value.bindingId, owner: identity.owner, keyId: value.keyId, provider: value.provider, model: value.model, fingerprint: value.fingerprint, tokenLimit: value.tokenLimit };

@@ -23,7 +23,7 @@ describe('用户 Key 独立任务通道', () => {
       expect(init?.redirect).toBe('error'); return Response.json({ ...binding, provider });
     });
     const client = new CodeReviewUserKeys(() => config, fetchImpl as typeof fetch);
-    const result = await client.bind({ ...input, provider }, identity, async e => { events.push(e); });
+    const result = await client.bind({ ...input, provider, ...{ owner: 'forged', projectId: 'foreign', taskId: 'foreign' } }, identity, async e => { events.push(e); });
     expect(result).toEqual({ id: 'binding', owner: identity.owner, ...Object.fromEntries(Object.entries({ ...binding, provider }).filter(([key]) => key !== 'bindingId')) });
     expect(JSON.stringify(result)).not.toContain(input.apiKey); expect(events).toHaveLength(1);
   });
