@@ -301,7 +301,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("new RegistryAssetStorage(inner, db, providerName, regLogger, \"llmgw_asset_registry\")", program);
         Assert.Contains("GetCollection<PrdAgent.Core.Models.LLMPlatform>(\"llmgw_platforms\")", program);
         Assert.DoesNotContain("AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>()", program);
-        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>()", program);
+        Assert.Contains("AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, CodeReviewUserKeyResolver>()", program);
     }
 
     [Fact]
