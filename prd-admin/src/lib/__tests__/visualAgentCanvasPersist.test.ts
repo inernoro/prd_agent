@@ -21,6 +21,24 @@ import {
 
 describe('VisualAgent Canvas 持久化测试', () => {
   
+  it('欠费失败占位往返保存后仍有明确原因，不能退化为图片加载失败', () => {
+    const errorMessage = '上游 AI 服务账户欠费，本次操作未完成。请联系管理员补缴费用或切换可用线路，处理后再重试。';
+    const item = { key: 'billing-failed', createdAt: 1, prompt: 'owned fixture', src: '', status: 'error' as const,
+      kind: 'image' as const, runId: 'billing-run', errorMessage };
+    const saved = canvasToPersistedV1([item]);
+    const restored = persistedV1ToCanvas(JSON.parse(JSON.stringify(saved.state)), []);
+    expect(restored.canvas[0]).toMatchObject({ key: item.key, status: 'error', errorMessage });
+  });
+
+  it('失败占位落盘和恢复均不透传旧的上游原始诊断', () => {
+    const item = { key: 'billing-private', createdAt: 1, prompt: '', src: '', status: 'error' as const,
+      kind: 'image' as const, errorMessage: 'provider HTTP 403 SECRET https://secret.invalid/keys/value' };
+    const saved = canvasToPersistedV1([item]);
+    expect(JSON.stringify(saved.state)).not.toMatch(/SECRET|secret.invalid/);
+    const restored = persistedV1ToCanvas(JSON.parse(JSON.stringify(saved.state)), []);
+    expect(restored.canvas[0]).toHaveProperty('errorMessage', expect.stringContaining('管理员'));
+  });
+
   describe('isRemoteImageSrc', () => {
     it('应识别远程 URL', () => {
       expect(isRemoteImageSrc('https://example.com/image.png')).toBe(true);
