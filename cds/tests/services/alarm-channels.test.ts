@@ -6,11 +6,17 @@
  * 以及「留空 = 保持原值」——少了最后一条，每改一次名字都要把私钥重敲一遍，
  * 那种设计的结局是没人敢改。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
+import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { customProbeTargetId } from '../../src/services/uptime-custom-monitor.js';
+import type { UptimeCustomMonitor } from '../../src/types.js';
 
 import {
   classifyAlert, routeAlarm, renderAlarmMessage, channelConfigured, normalizeEventKind,
-  type AlarmChannelConfig, type AlarmEvent,
+  type AlarmChannelConfig, type AlarmEvent, notificationChannelSelected,
 } from '../../src/services/alarm-route.js';
 import { buildBarkUrl, renderTemplate } from '../../src/services/alarm-dispatch.js';
 import { parseChannel, publicChannel } from '../../src/routes/alarm-channels.js';
@@ -236,7 +242,7 @@ describe('配齐了没有', () => {
  * 整个多通道体系可以一行不错地存在，却一条通知都发不出去——只要 onAlert 没接上它。
  * 而那种失败是完全静默的：面板照绿、通道列表照样列着，只是永远没有人收到。
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 describe('通知通道接上线了', () => {
@@ -244,7 +250,7 @@ describe('通知通道接上线了', () => {
 
   it('告警事件真的被分类并派发到用户配的通道', () => {
     expect(index).toMatch(/classifyAlert\(type, data\.source\)/);
-    expect(index).toMatch(/routeAlarm\(stateService\.listAlarmChannels\(\), event\)/);
+    expect(index).toMatch(/routeAlarm\(stateService\.listAlarmChannels\(\), event, stateService\.getMonitorNotifications\(\)\)/);
     expect(index).toMatch(/sendAlarm\(channel, event/);
   });
 
@@ -266,4 +272,155 @@ describe('通知通道接上线了', () => {
     const monitor = readFileSync(fileURLToPath(new URL('../../src/services/uptime-monitor.ts', import.meta.url)), 'utf8');
     expect(monitor).toMatch(/source: target\.source,/);
   });
+});
+
+
+describe('通知默认选择、逐服务覆盖与真实发送筛选', () => {
+  const a = channel({ id: 'default' }), b = channel({ id: 'service' });
+  const event = { ...EVENT, targetId: 'monitor@service' };
+  it('存量无设置保持事件和项目订阅口径，逐项覆盖优先于默认', () => {
+    expect(routeAlarm([a, b], event).map(c => c.id)).toEqual(['default', 'service']);
+    const settings = { defaultChannelIds: ['default'], overrides: { 'monitor@service': ['service'] } };
+    expect(routeAlarm([a, b], event, settings).map(c => c.id)).toEqual(['service']);
+    expect(routeAlarm([a, b], { ...event, targetId: 'monitor@other' }, settings).map(c => c.id)).toEqual(['default']);
+  });
+  it('明确空逐项选择为不通知，删除覆盖后恢复默认；项目与事件范围仍生效', () => {
+    expect(routeAlarm([a, b], event, { defaultChannelIds: ['default'], overrides: { 'monitor@service': [] } })).toEqual([]);
+    expect(routeAlarm([a, b], event, { defaultChannelIds: ['default'], overrides: {} }).map(c => c.id)).toEqual(['default']);
+    expect(routeAlarm([channel({ id: 'service', projects: ['other'] })], event, { overrides: { 'monitor@service': ['service'] } })).toEqual([]);
+    expect(routeAlarm([b], { ...event, kind: 'business-recovered' }, { overrides: { 'monitor@service': ['service'] } })).toEqual([]);
+  });
+  it('定时静默同时约束普通通道与legacy-MAP，确认不会掩盖故障', () => {
+    const settings = { defaultChannelIds: ['default', 'legacy-map'], mutedUntil: { 'monitor@service': Date.now() + 60000 } };
+    expect(routeAlarm([a, b], event, settings)).toEqual([]);
+    expect(notificationChannelSelected(settings, event.targetId, 'legacy-map')).toBe(false);
+    expect(routeAlarm([a], event, { acknowledgedAt: { 'monitor@service': Date.now() } })).toHaveLength(1);
+    expect(notificationChannelSelected({ mutedUntil: { 'monitor@service': 1 } }, event.targetId, 'legacy-map')).toBe(true);
+  });
+});
+
+describe('监控删除后的通知生命周期', () => {
+  async function withState(run: (service: StateService, stateFile: string) => Promise<void>) {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'cds-monitor-notification-delete-'));
+    const stateFile = path.join(dir, 'state.json');
+    const service = new StateService(stateFile, dir);
+    service.load();
+    try { await run(service, stateFile); }
+    finally {
+      vi.restoreAllMocks();
+      await flushAllJsonStateStores();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it.each([
+    { label: '默认未设置', defaults: undefined },
+    { label: '默认明确为空', defaults: [] as string[] },
+    { label: '默认只有被删除通道', defaults: ['gone'] },
+    { label: '默认含其他及旧MAP', defaults: ['gone', 'keep', 'legacy-map'] },
+  ])('删除真实通知通道清理引用并保留空覆盖，冷读和同ID重建不恢复旧选择：$label', async ({ defaults }) => withState(async (service, stateFile) => {
+    service.upsertAlarmChannel(channel({ id: 'gone' }));
+    service.upsertAlarmChannel(channel({ id: 'keep' }));
+    const before = { ...(defaults === undefined ? {} : { defaultChannelIds: defaults }),
+      overrides: { 'monitor@only-gone': ['gone'], 'monitor@mixed': ['gone', 'keep', 'legacy-map'], 'monitor@empty': [], 'monitor@keep': ['keep'] },
+      mutedUntil: { 'monitor@only-gone': Date.now() + 60000, 'monitor@keep': 123 },
+      acknowledgedAt: { 'monitor@only-gone': NOW, 'monitor@keep': NOW - 1 },
+    };
+    service.setMonitorNotifications(before);
+    expect(service.removeAlarmChannel('gone')).toBe(true);
+    const expected = { ...(defaults === undefined ? {} : { defaultChannelIds: defaults.filter(id => id !== 'gone') }),
+      overrides: { 'monitor@only-gone': [], 'monitor@mixed': ['keep', 'legacy-map'], 'monitor@empty': [], 'monitor@keep': ['keep'] },
+      mutedUntil: before.mutedUntil, acknowledgedAt: before.acknowledgedAt,
+    };
+    expect(service.getMonitorNotifications()).toEqual(expected);
+    await service.flush();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile)); reloaded.load();
+    expect(reloaded.getMonitorNotifications()).toEqual(expected);
+    expect(Object.hasOwn(reloaded.getMonitorNotifications(), 'defaultChannelIds')).toBe(defaults !== undefined);
+    reloaded.upsertAlarmChannel(channel({ id: 'gone', name: '重新创建' }));
+    await reloaded.flush();
+    const restarted = new StateService(stateFile, path.dirname(stateFile)); restarted.load();
+    expect(restarted.getMonitorNotifications()).toEqual(expected);
+    // An empty service override must remain explicit; removing its key would
+    // silently route through the default or all channels after recreation.
+    const settings = restarted.getMonitorNotifications();
+    expect(Object.hasOwn(settings.overrides!, 'monitor@only-gone')).toBe(true);
+    expect(routeAlarm(restarted.listAlarmChannels(), { ...EVENT, targetId: 'monitor@only-gone' }, { ...settings, mutedUntil: {} })).toEqual([]);
+  }));
+
+  it('删除不存在的通知通道不改变已有通知设置或触发保存', async () => withState(async (service, stateFile) => {
+    service.upsertAlarmChannel(channel({ id: 'keep' }));
+    const settings = { defaultChannelIds: ['missing', 'legacy-map'], overrides: { 'monitor@one': ['missing'] }, mutedUntil: { 'monitor@one': 123 }, acknowledgedAt: { 'monitor@one': NOW } };
+    service.setMonitorNotifications(settings); await service.flush();
+    const save = vi.spyOn(service, 'save');
+    expect(service.removeAlarmChannel('missing')).toBe(false);
+    expect(save).not.toHaveBeenCalled(); expect(service.getMonitorNotifications()).toEqual(settings);
+    save.mockRestore();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile)); reloaded.load();
+    expect(reloaded.getMonitorNotifications()).toEqual(settings);
+  }));
+
+  function seed(service: StateService) {
+    const now = new Date(NOW).toISOString();
+    const project = { id: 'remove-project', slug: 'remove-project', name: '项目', kind: 'git' as const, repoPath: '/tmp/notification-project', createdAt: now, updatedAt: now };
+    service.addProject(project);
+    service.addBranch({ id: 'remove-branch', branch: 'feat/remove', projectId: project.id, worktreePath: '/tmp/notification-branch', services: {}, status: 'idle', createdAt: now });
+    const monitor: UptimeCustomMonitor = { id: 'mcp_same-tool', name: '重新接入的服务', kind: 'functional', url: 'https://monitor.test/mcp', mcp: { toolName: 'health', arguments: {} }, enabled: true, projectId: project.id, boundBranchId: 'remove-branch', createdAt: now, updatedAt: now };
+    service.upsertUptimeMonitor(monitor);
+    const targetId = customProbeTargetId(monitor);
+    service.setMonitorNotifications({ defaultChannelIds: ['default'], overrides: { [targetId]: [], 'monitor@keep': ['other'] }, mutedUntil: { [targetId]: Date.now() + 60_000, 'monitor@keep': 123 }, acknowledgedAt: { [targetId]: NOW, 'monitor@keep': NOW - 1 } });
+    return { monitor, project, targetId };
+  }
+
+  it.each(['direct', 'branch', 'project'] as const)('%s删除清理该目标通知，重建同一ID恢复默认且重启后仍生效', async (mode) => withState(async (service, stateFile) => {
+    const { monitor, project, targetId } = seed(service);
+    if (mode === 'direct') expect(service.removeUptimeMonitor(monitor.id)).toBe(true);
+    else if (mode === 'branch') service.removeBranch('remove-branch');
+    else {
+      service.removeProject(project.id);
+      await service.waitForProjectRemoval(project.id);
+      service.addProject(project);
+    }
+    expect(service.getMonitorNotifications()).toEqual({ defaultChannelIds: ['default'], overrides: { 'monitor@keep': ['other'] }, mutedUntil: { 'monitor@keep': 123 }, acknowledgedAt: { 'monitor@keep': NOW - 1 } });
+    service.upsertUptimeMonitor({ ...monitor, boundBranchId: undefined });
+    await service.flush();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile));
+    reloaded.load();
+    const settings = reloaded.getMonitorNotifications();
+    expect(settings).toEqual({ defaultChannelIds: ['default'], overrides: { 'monitor@keep': ['other'] }, mutedUntil: { 'monitor@keep': 123 }, acknowledgedAt: { 'monitor@keep': NOW - 1 } });
+    expect(routeAlarm([channel({ id: 'default' })], { ...EVENT, targetId }, settings).map(c => c.id)).toEqual(['default']);
+    expect(reloaded.getUptimeMonitor(monitor.id)).toBeDefined();
+  }));
+
+  it('旧版本遗留的无主策略在重新接入时清除，现有监控的普通编辑保留策略', async () => withState(async (service, stateFile) => {
+    const { monitor } = seed(service);
+    const settings = service.getMonitorNotifications();
+    service.upsertUptimeMonitor({ ...monitor, name: '只改名称' });
+    expect(service.getMonitorNotifications()).toEqual(settings);
+    service.removeUptimeMonitor(monitor.id);
+    service.setMonitorNotifications(settings);
+    await service.flush();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile));
+    reloaded.load();
+    reloaded.upsertUptimeMonitor(monitor);
+    expect(reloaded.getMonitorNotifications()).toEqual({ defaultChannelIds: ['default'], overrides: { 'monitor@keep': ['other'] }, mutedUntil: { 'monitor@keep': 123 }, acknowledgedAt: { 'monitor@keep': NOW - 1 } });
+  }));
+
+  it('项目删除持久化失败恢复本项目通知，并保留等待期间的全局及其他目标修改', async () => withState(async (service) => {
+    const { project, targetId } = seed(service);
+    const previous = service.getMonitorNotifications();
+    await service.flush();
+    vi.spyOn(service, 'flush').mockRejectedValueOnce(new Error('test-write-rejected'));
+    service.removeProject(project.id);
+    const during = service.getMonitorNotifications();
+    service.setMonitorNotifications({ ...during, defaultChannelIds: ['updated'], mutedUntil: { ...during.mutedUntil, 'monitor@keep': 456 } });
+    await expect(service.waitForProjectRemoval(project.id)).rejects.toThrow('test-write-rejected');
+    const settings = service.getMonitorNotifications();
+    expect(service.getProject(project.id)).toBeDefined();
+    expect(settings.defaultChannelIds).toEqual(['updated']);
+    expect(settings.overrides?.[targetId]).toEqual([]);
+    expect(settings.mutedUntil?.[targetId]).toBe(previous.mutedUntil?.[targetId]);
+    expect(settings.acknowledgedAt?.[targetId]).toBe(NOW);
+    expect(settings.mutedUntil?.['monitor@keep']).toBe(456);
+  }));
 });
