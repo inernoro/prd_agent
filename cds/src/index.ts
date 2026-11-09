@@ -3973,7 +3973,7 @@ janitorService.setOrphanInfraScan(async () => {
 const removeExpiredLifecycleBranch = async (id: string): Promise<void> => {
   const branch = stateService.getBranch(id);
   if (!branch?.archive || Date.now() < Date.parse(branch.archive.retireAt)) return;
-  if (branch.executorId) throw new Error('远端分支归档仍保留，需要在所属执行器确认回收，未删除本地记录');
+  if (isRemoteExecutorOwned(branch.executorId)) throw new Error('远端分支归档仍保留，需要在所属执行器确认回收，未删除本地记录');
   stateService.assertBranchStorageRemovalAllowed(id);
   const lease = beginBackgroundBranchOperation({ branchId: id, kind: 'janitor-remove', trigger: 'janitor',
     actor: 'janitor', source: 'branch-lifecycle.retire', reason: '归档保留30天到期回收' });

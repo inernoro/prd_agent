@@ -325,6 +325,16 @@ describe('极速版 — dispatcher', () => {
     expect(branch.archive).toBeTruthy(); expect(branch.ciTargetSha).toBe(FULL_SHA);
   });
 
+  it.each(['2099-01-01T00:00:00Z', '2000-01-01T00:00:00Z'])('GitHub删除归档分支时保留数据，由生命周期决定到期回收：%s', async retireAt => {
+    const pushed = await pushOnce(), branch = stateService.getBranch(pushed.branchId!)!;
+    stateService.updateProject('p1', { githubEventPolicy: { delete: true } });
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt, reason: 'manual', actor: 'user' };
+    const deleted = await dispatcher.handle('delete', { ref: 'feature', ref_type: 'branch', repository: { full_name: 'octocat/repo' } });
+    expect(deleted.action).toBe('ignored-event'); expect(deleted.branchDeleteRequest).toBeUndefined();
+    expect(deleted.stopRequest).toBeUndefined(); expect(deleted.tombstoneRequest).toBeUndefined();
+    expect(stateService.getBranch(branch.id)?.archive?.retireAt).toBe(retireAt);
+  });
+
   it.each([false, true])('失效项目默认模式在新 webhook 分支创建前拒绝，dryRun=%s', async dryRun => {
     stateService.updateProject('p1', { defaultDeployModes: { api: 'removed-express' } });
     const create = vi.spyOn(MockWorktree.prototype, 'create');

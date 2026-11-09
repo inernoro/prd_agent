@@ -430,6 +430,10 @@ describe('Branch Routes', () => {
     const cleanup = await request(server, 'POST', '/api/branches/cleanup-stopped?project=default', {});
     expect(cleanup.body).toMatchObject({ removedCount: 0, skippedProtectedCount: 1 });
     expect(stateService.getBranch(branch.id)?.archive).toBeTruthy(); expect(fs.existsSync(tmpDir)).toBe(true);
+    // webhook已排队、随后用户归档的竞态，也必须在最终删除入口保留数据。
+    const automaticDelete = await request(server, 'DELETE', `/api/branches/${branch.id}`, undefined, { 'x-cds-trigger': 'webhook' });
+    expect(automaticDelete.status).toBe(409); expect(automaticDelete.body).toMatchObject({ error: 'archived_branch_auto_delete_refused' });
+    expect(stateService.getBranch(branch.id)?.archive).toBeTruthy(); expect(fs.existsSync(tmpDir)).toBe(true);
   });
 
   it('手动新建在首个 mkdir 等待前冻结默认，期间修改项目不会留下半分支', async () => {

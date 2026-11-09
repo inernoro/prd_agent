@@ -927,6 +927,10 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    if (entry.archive) {
+      return { action: 'ignored-event', branchId,
+        message: `GitHub分支已删除，CDS归档仍保留至 ${entry.archive.retireAt}；到期回收由分支生命周期处理。` };
+    }
     // 主干兜底（2026-07-27 P0：CDS 把 main 回收删掉）：GitHub 上删除主干是极端事件，
     // 更常见的是 webhook 误判（ref 实为 tag、分支名匹配错、仓库刚改过默认分支）。
     // 任何情况下都不允许由一条 webhook 自动删掉主干预览 —— 拒绝停容器 + 拒绝删 entry，
