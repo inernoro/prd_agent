@@ -24,7 +24,13 @@ describe('ProxyService', () => {
     return { headers, url } as unknown as http.IncomingMessage;
   }
 
-  it.each(['empty', 'script', 'style', 'document', 'iframe'])('真实 HTTP 主代理按导航目的 %s 决定是否注入挂件', async (destination) => {
+  it.each([
+    ['empty', '/', false], ['script', '/', false], ['style', '/', false],
+    ['document', '/', true], ['iframe', '/', true],
+    ['iframe', '/api/hosted-site-preview-files/owned/index.html', false],
+    ['document', '/api/offline-export.html', false],
+    ['', '/api/hosted-site-preview-files/owned/index.html', false],
+  ] as const)('真实 HTTP 主代理按导航目的 %s 和路径 %s 决定是否注入挂件', async (destination, requestPath, inject) => {
     const original = '<html><body><h1>Owned HTML</h1></body></html>';
     const upstream = http.createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -38,10 +44,10 @@ describe('ProxyService', () => {
     try {
       await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
       const address = server.address() as { port: number };
-      const response = await fetch(`http://127.0.0.1:${address.port}/`, { headers: { 'sec-fetch-dest': destination } });
+      const response = await fetch(`http://127.0.0.1:${address.port}${requestPath}`, { headers: { 'sec-fetch-dest': destination } });
       expect(response.status).toBe(200);
       const body = await response.text();
-      if (destination === 'document' || destination === 'iframe') expect(body).toContain('data-cds-widget');
+      if (inject) expect(body).toContain('data-cds-widget');
       else expect(body).toBe(original);
     } finally {
       server.closeAllConnections(); upstream.closeAllConnections();

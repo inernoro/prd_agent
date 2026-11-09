@@ -396,6 +396,26 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(response.body).toContain('data-cds-widget');
   });
 
+  it.each(['iframe', 'document', ''])('API HTML 文件在 %s 导航中保持原始正文，不注入挂件', async (destination) => {
+    const original = '<html><body>Owned API HTML</body></html>';
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(original);
+    });
+    upstreams.push(u);
+    const f = await startForwarder(() => ({
+      _id: 'owned', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    }));
+    forwarders.push(f);
+    const response = await clientReq(f.port, {
+      path: '/api/hosted-site-preview-files/owned/index.html',
+      headers: { 'sec-fetch-dest': destination },
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).toBe(original);
+  });
+
   it('[C-3.3] gzip 压缩 HTML 200 → 解压 + 注入 + 重新写 content-length', async () => {
     const original = '<html><body><h1>Gzipped App</h1></body></html>';
     const gzBody = zlib.gzipSync(Buffer.from(original, 'utf-8'));

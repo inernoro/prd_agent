@@ -1,9 +1,11 @@
 import type { IncomingMessage } from 'node:http';
 
-/** HTML fetch 的正文可能进入 srcDoc 或作为离线文件，不能混入预览站点脚本。 */
-export function isPreviewWidgetNavigation(req: Pick<IncomingMessage, 'method' | 'headers'>): boolean {
+/** API HTML 是应用产物，fetch 正文也可能进入 srcDoc 或离线文件，均保持原字节。 */
+export function isPreviewWidgetNavigation(req: Pick<IncomingMessage, 'method' | 'headers' | 'url'>): boolean {
   const method = (req.method || 'GET').toUpperCase();
   if (method !== 'GET' && method !== 'HEAD') return false;
+  // 工作台把 API 预览文件直接放进 iframe；仅判断 Fetch Metadata 不足以区分它和应用入口。
+  if (/^\/api(?:\/|[?#]|$)/i.test(req.url || '')) return false;
   const destination = String(req.headers['sec-fetch-dest'] || '').trim().toLowerCase();
   // 不带 Fetch Metadata 的旧浏览器和命令行保持既有行为。
   return !destination || destination === 'document' || destination === 'iframe';
