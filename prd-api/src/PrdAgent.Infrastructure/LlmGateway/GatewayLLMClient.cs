@@ -161,6 +161,7 @@ public class GatewayLLMClient : ILLMClient
                     ErrorCode = chunk.ErrorCode,
                     Model = chunk.Resolution?.ActualModel,
                     Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                    BillingAlerts = chunk.Resolution?.BillingAlerts ?? [],
                 };
                 yield break;
             }
@@ -186,6 +187,7 @@ public class GatewayLLMClient : ILLMClient
                     Type = "start",
                     Model = chunk.Resolution?.ActualModel,
                     Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                    BillingAlerts = chunk.Resolution?.BillingAlerts ?? [],
                 };
             }
             else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))

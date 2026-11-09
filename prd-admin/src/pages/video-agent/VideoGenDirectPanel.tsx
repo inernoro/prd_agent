@@ -272,7 +272,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               <AlertCircle size={32} className={isCancelled ? 'text-token-muted' : 'text-rose-400'} />
               <div className="text-base font-medium">{isCancelled ? '已取消' : '生成失败'}</div>
               <div className="text-xs text-token-secondary whitespace-pre-wrap">
-                {isCancelled ? progressText : formatVideoGenerationError(currentRun?.errorMessage)}
+                {isCancelled ? progressText : formatVideoGenerationError(currentRun?.errorMessage, currentRun?.errorCode)}
               </div>
             </div>
           ) : (

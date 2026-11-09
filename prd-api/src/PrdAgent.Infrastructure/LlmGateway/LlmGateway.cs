@@ -441,7 +441,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         // APIyi 也会用 403 表示额度不足；须先识别额度，再判断凭据/路由永久隔离。
         // 额度补足后允许半开恢复；普通 429 限流仍由下方 4xx 分支忽略。
-        if (IsQuotaExceeded(statusCode, responseBody))
+        if (IsBillingFailure(statusCode, responseBody))
             return _modelResolver.RecordFailureAsync(resolution, ct);
 
         if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
@@ -496,6 +496,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private async Task<GatewayResponse> SendCoreAsync(GatewayRequest request,
         Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayResponse?>>? admit, CancellationToken ct)
     {
+        var billingAlerts = new List<GatewayBillingAlert>();
         _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
         {
@@ -628,7 +629,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (logId == null)
                 {
-                    var gatewayResolution = activeResolution.ToGatewayResolution();
+                    var gatewayResolution = activeResolution.ToGatewayResolution(billingAlerts);
                     logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
                 }
 
@@ -700,6 +701,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var attemptError = response.IsSuccessStatusCode
                     ? null
                     : TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
+                CaptureBillingAlert(billingAlerts, activeResolution, (int)response.StatusCode, responseBody);
                 CompleteLastSendAttempt(providerAttempts, (int)response.StatusCode, attemptDurationMs, attemptError);
 
                 if (response.IsSuccessStatusCode)
@@ -756,20 +758,24 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 5. 写入日志（完成）
             await FinishLogAsync(logId, response, responseBody, tokenUsage, durationMs, toolCalls, finishReason, activeResolution, gatewayTransport, ct, providerAttempts);
 
+            if (GatewayBillingFailure.Classify((int)response.StatusCode, responseBody) == null)
+                await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(_failoverNotifier, null, null, null, null, _logger, billingAlerts);
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorMsg = TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
-                if (IsQuotaExceeded((int)response.StatusCode, errorMsg))
+                if (IsBillingFailure((int)response.StatusCode, responseBody))
                 {
-                    var (qCode, qMsg) = await HandleQuotaExceededAsync(
+                    var (qCode, qMsg) = await HandleBillingFailureAsync(
                         activeResolution.ActualPlatformName ?? activeResolution.ActualPlatformId,
                         activeResolution.ActualModel,
-                        errorMsg);
+                        (int)response.StatusCode,
+                        responseBody, billingAlerts);
                     return GatewayResponse.Fail(
                         qCode,
                         qMsg,
                         (int)response.StatusCode,
-                        activeResolution.ToGatewayResolution());
+                        activeResolution.ToGatewayResolution(billingAlerts));
                 }
                 return GatewayResponse.Fail("LLM_ERROR", errorMsg, (int)response.StatusCode);
             }
@@ -785,7 +791,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 RawResponseBody = responseBody,
                 ToolCalls = toolCalls,
                 Extensions = extensions,
-                Resolution = activeResolution.ToGatewayResolution(),
+                Resolution = activeResolution.ToGatewayResolution(billingAlerts),
                 TokenUsage = tokenUsage,
                 DurationMs = durationMs,
                 LogId = logId
@@ -828,6 +834,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>>? admit,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        var billingAlerts = new List<GatewayBillingAlert>();
         _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
         {
@@ -886,7 +893,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
                 resolution = retryResolutions[attemptIndex];
-                gatewayResolution = resolution.ToGatewayResolution();
+                gatewayResolution = resolution.ToGatewayResolution(billingAlerts);
                 adapter = GetAdapterForResolution(resolution);
                 if (adapter == null)
                 {
@@ -1062,8 +1069,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 var errorBody = await rawResponse.Content.ReadAsStringAsync(ct);
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)rawResponse.StatusCode}";
-                terminalError = errorMsg;
-                terminalErrorCode = "LLM_ERROR";
+                CaptureBillingAlert(billingAlerts, resolution, (int)rawResponse.StatusCode, errorBody);
+                terminalError = GatewayBillingFailure.Classify((int)rawResponse.StatusCode, errorBody)?.UserMessage ?? errorMsg;
+                terminalErrorCode = GatewayBillingFailure.Classify((int)rawResponse.StatusCode, errorBody)?.Code ?? "LLM_ERROR";
                 terminalStatusCode = (int)rawResponse.StatusCode;
                 CompleteLastSendAttempt(providerAttempts, (int)rawResponse.StatusCode, attemptDurationMs, errorMsg);
                 if (HasTrackedHealthRoute(resolution))
@@ -1090,32 +1098,33 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 if (logId != null)
                     _logWriter?.MarkError(logId, terminalError ?? "流式请求失败", terminalStatusCode);
-                if (terminalStatusCode.HasValue && IsQuotaExceeded(terminalStatusCode.Value, terminalError))
+                if (terminalStatusCode.HasValue && GatewayBillingFailure.Classify(terminalStatusCode, terminalError, terminalErrorCode) is { } terminalBilling)
                 {
-                    var (_, qMsg) = await HandleQuotaExceededAsync(
-                        resolution.ActualPlatformName ?? resolution.ActualPlatformId,
-                        resolution.ActualModel,
-                        terminalError ?? "");
+                    await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(_failoverNotifier, terminalBilling.Code,
+                        terminalBilling.UserMessage, resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                        resolution.ActualModel, _logger, billingAlerts);
+                    var qMsg = terminalBilling.UserMessage;
                     yield return GatewayStreamChunk.Fail(
                         qMsg,
-                        GatewayQuotaAlertPolicy.QuotaErrorCode,
-                        resolution.ToGatewayResolution());
+                        terminalBilling.Code,
+                        resolution.ToGatewayResolution(billingAlerts));
                     yield break;
                 }
+                await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(_failoverNotifier, null, null, null, null, _logger, billingAlerts);
                 yield return authorizationRejectedBeforeSend
                     ? new GatewayStreamRejectedBeforeSend
                     {
                         Type = GatewayChunkType.Error, Error = terminalError ?? "流式请求失败", ErrorCode = terminalErrorCode,
-                        Resolution = resolution.ToGatewayResolution(),
+                        Resolution = resolution.ToGatewayResolution(billingAlerts),
                     }
                     : GatewayStreamChunk.Fail(terminalError ?? "流式请求失败", terminalErrorCode ?? "LLM_ERROR",
-                        resolution.ToGatewayResolution());
+                        resolution.ToGatewayResolution(billingAlerts));
                 yield break;
             }
 
             using var response = rawResponse;
             var finalResolution = resolution;
-            var finalGatewayResolution = gatewayResolution ?? finalResolution?.ToGatewayResolution();
+            var finalGatewayResolution = gatewayResolution ?? finalResolution?.ToGatewayResolution(billingAlerts);
             if (finalResolution == null || finalGatewayResolution == null)
             {
                 if (logId != null)
@@ -1125,6 +1134,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             // 发送开始块（包含调度信息）
+            await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(_failoverNotifier, null, null, null, null, _logger, billingAlerts);
             yield return GatewayStreamChunk.Start(finalGatewayResolution);
 
             // 6. 读取流式响应
@@ -2542,6 +2552,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         CancellationToken ct,
         bool rebuildCanonicalImageRequest = false)
     {
+        var billingAlerts = new List<GatewayBillingAlert>();
         // 同一上游沿用调用方通过 ImageGenRequestBuilder 算好的 wire 请求，再叠加显式 image_size 能力；
         // 这样 inherit 不会丢失旧适配器的字段重命名/response_format 约束，端点与尺寸重试也会重新
         // 应用显式能力。只有切换 Provider candidate 或调用方未提供 wire 请求时才完整重建。
@@ -2558,7 +2569,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     && (!HasBuiltImageWireRequest(request) || rebuildCanonicalImageRequest))
                 {
                     var validation = ImageGen.GatewayImageModelCatalog.ValidateRequest(
-                        request.CanonicalImageRequest, resolution.ToGatewayResolution());
+                        request.CanonicalImageRequest, resolution.ToGatewayResolution(billingAlerts));
                     if (validation is not null)
                         return GatewayRawResponse.Fail("IMAGE_REQUEST_INVALID", validation, 400);
                 }
@@ -2571,7 +2582,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 请求没有 wire body 时才在此补建。跨 Offering 切换则只在协议变化时重建。
             request = PrepareCanonicalImageRequestForResolution(request, null, resolution);
 
-            var gatewayResolution = resolution.ToGatewayResolution();
+            var gatewayResolution = resolution.ToGatewayResolution(billingAlerts);
             var concurrency = await AcquireProviderConcurrencyAsync(request.Context?.TenantId, resolution, request.TimeoutSeconds, ct);
             if (!concurrency.Allowed)
             {
@@ -2839,6 +2850,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 responseBody = System.Text.Encoding.UTF8.GetString(rawBytes);
             }
+            CaptureBillingAlert(billingAlerts, resolution, (int)response.StatusCode, responseBody);
             CompleteLastSendAttempt(
                 rawProviderAttempts,
                 (int)response.StatusCode,
@@ -2875,7 +2887,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 request = PrepareCanonicalImageRequestForResolution(request, resolution, nextResolution);
                 var buildError = TryBuildRawHttpRequest(request, nextResolution, out var nextBuild);
                 resolution = nextResolution;
-                gatewayResolution = resolution.ToGatewayResolution();
+                gatewayResolution = resolution.ToGatewayResolution(billingAlerts);
 
                 if (buildError != null || nextBuild == null)
                 {
@@ -2988,6 +3000,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     responseBody = System.Text.Encoding.UTF8.GetString(rawBytes);
                 }
 
+                CaptureBillingAlert(billingAlerts, resolution, (int)response.StatusCode, responseBody);
                 CompleteLastSendAttempt(
                     rawProviderAttempts,
                     (int)response.StatusCode,
@@ -3013,7 +3026,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     await FinishRawLogAsync(
                         logId, (int)response.StatusCode, responseBody, dur, resolution, request, gatewayTransport, ct,
                         rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(response, "application/json"));
-                    return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
+                    var billing = GatewayBillingFailure.Classify((int)response.StatusCode, responseBody)
+                        ?? GatewayBillingFailure.Classify(null, submitError);
+                    CaptureBillingAlert(billingAlerts, resolution, (int)response.StatusCode, responseBody);
+                    if (billing != null)
+                        await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(_failoverNotifier, billing.Code, billing.UserMessage,
+                            resolution.ActualPlatformName ?? resolution.ActualPlatformId, resolution.ActualModel, _logger);
+                    return new GatewayRawResponse
+                    {
+                        Success = false, StatusCode = (int)response.StatusCode,
+                        ErrorCode = billing?.Code ?? "EXCHANGE_ASYNC_SUBMIT_FAILED", ErrorMessage = billing?.UserMessage ?? submitError,
+                        Resolution = gatewayResolution, LogId = logId, Content = responseBody, DurationMs = dur,
+                    };
                 }
 
                 // IAsyncExchangeTransformer 的 submit 成功只代表任务已受理，不代表业务结果已生成。
@@ -3130,7 +3154,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                             await FinishRawLogAsync(
                                 logId, (int)queryResp.StatusCode, responseBody, dur, resolution, request, gatewayTransport, ct,
                                 rawProviderAttempts, LlmCostEvidence.BuildSafeResponseHeaders(queryResp, "application/json"));
-                            return GatewayRawResponse.Fail("EXCHANGE_ASYNC_QUERY_FAILED", queryError, (int)queryResp.StatusCode);
+                            var billing = GatewayBillingFailure.Classify((int)queryResp.StatusCode, responseBody)
+                                ?? GatewayBillingFailure.Classify(null, queryError);
+                            CaptureBillingAlert(billingAlerts, resolution, (int)queryResp.StatusCode, responseBody);
+                            if (billing != null)
+                                await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(_failoverNotifier, billing.Code, billing.UserMessage,
+                                    resolution.ActualPlatformName ?? resolution.ActualPlatformId, resolution.ActualModel, _logger);
+                            return new GatewayRawResponse
+                            {
+                                Success = false, StatusCode = (int)queryResp.StatusCode,
+                                ErrorCode = billing?.Code ?? "EXCHANGE_ASYNC_QUERY_FAILED", ErrorMessage = billing?.UserMessage ?? queryError,
+                                Resolution = gatewayResolution, LogId = logId, Content = responseBody, DurationMs = dur,
+                            };
                         }
 
                         AddProviderAttempt(
@@ -3305,14 +3340,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 responseHeaders[header.Key] = string.Join(", ", header.Value);
             }
 
+            if (GatewayBillingFailure.Classify((int)response.StatusCode, responseBody) == null)
+                await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(_failoverNotifier, null, null, null, null, _logger, billingAlerts);
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorMsg = TryExtractErrorMessage(responseBody!) ?? $"HTTP {(int)response.StatusCode}";
-                var (rawCode, rawMsg) = IsQuotaExceeded((int)response.StatusCode, errorMsg)
-                    ? await HandleQuotaExceededAsync(
+                var (rawCode, rawMsg) = IsBillingFailure((int)response.StatusCode, responseBody)
+                    ? await HandleBillingFailureAsync(
                         resolution.ActualPlatformName ?? resolution.ActualPlatformId,
                         resolution.ActualModel,
-                        errorMsg)
+                        (int)response.StatusCode,
+                        responseBody!, billingAlerts)
                     : ("LLM_ERROR", errorMsg);
                 return new GatewayRawResponse
                 {
@@ -3882,32 +3921,15 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// 判断上游错误是否为「额度用尽 / key 限额」类（OpenRouter "Key limit exceeded"、402 Payment Required、
     /// "insufficient credits/quota exceeded/billing" 等）。命中后走专门错误码 + 主动站内告警，便于及时提醒。
     /// </summary>
-    private static bool IsQuotaExceeded(int statusCode, string? rawMessage)
+    private static void CaptureBillingAlert(List<GatewayBillingAlert> alerts, ModelResolutionResult resolution, int statusCode, string? body)
     {
-        var m = (rawMessage ?? string.Empty).ToLowerInvariant();
-
-        // 限流（节流）排除：只把「文本明确指向速率/每分钟请求数」的失败排除掉，不能用「429 一律 false」短路——
-        // 部分供应商（如 OpenAI insufficient_quota）也用 429 返回额度耗尽，需让后面的 quota/credit/balance 文本判定
-        // 继续生效，否则这些额度失败会走泛化 LLM_ERROR、漏掉额度告警（Codex review）。
-        // "Rate limit exceeded" 含 "limit exceeded" 子串，由下面的 rate-limit 文本判定先行排除，不会误判为额度。
-        if (m.Contains("rate limit") || m.Contains("rate-limit")
-            || m.Contains("requests per") || m.Contains("per minute")
-            || m.Contains("too many requests"))
-            return false;
-
-        if (statusCode == 402) return true; // Payment Required = 额度/账单
-        if (m.Length == 0) return false;
-
-        // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
-        return m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
-            || m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
-            || m.Contains("credit limit")
-            || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
-            || (m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient")))
-            || (m.Contains("insufficient") && (m.Contains("credit") || m.Contains("balance")))
-            || m.Contains("exceeded your current")
-            || (m.Contains("billing") && m.Contains("limit"));
+        if (GatewayBillingFailure.Classify(statusCode, body) is not { } billing) return;
+        var alert = new GatewayBillingAlert(billing.Code, resolution.ActualPlatformName ?? resolution.ActualPlatformId, resolution.ActualModel);
+        if (!alerts.Contains(alert)) alerts.Add(alert);
     }
+
+    private static bool IsBillingFailure(int statusCode, string? rawMessage)
+        => GatewayBillingFailure.Classify(statusCode, rawMessage) != null;
 
     /// <summary>
     /// 命中额度用尽时：发专门错误码 + 触发主动站内告警（去重，复用 IPoolFailoverNotifier）。
@@ -3915,25 +3937,20 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// request/stream scope 释放后 upsert 会被取消或 off-thread 失败，恰在 402/额度用尽时丢告警（Codex review）。
     /// 用 CancellationToken.None 确保 scope 存活期内写完，告警失败不阻断主流程。
     /// </summary>
-    private async Task<(string Code, string Message)> HandleQuotaExceededAsync(
+    private async Task<(string Code, string Message)> HandleBillingFailureAsync(
         string? platformName,
         string? modelName,
-        string rawMessage)
+        int statusCode,
+        string rawMessage,
+        IReadOnlyList<GatewayBillingAlert>? billingAlerts = null)
     {
-        var raw = rawMessage.Length > 220 ? rawMessage.Substring(0, 220) + "…" : rawMessage;
-        const string friendly = "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。";
-        try
-        {
-            if (_failoverNotifier != null)
-                await _failoverNotifier.NotifyQuotaExceededAsync(platformName, modelName, CancellationToken.None);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "[LlmGateway] 额度告警写入失败（不阻断主流程）"); }
-        _logger.LogWarning(
-            "[LlmGateway] 检测到额度用尽/限额: platform={Platform} model={Model} msg={Msg}",
-            platformName,
-            modelName,
-            raw);
-        return ("LLM_QUOTA_EXCEEDED", friendly);
+        var failure = GatewayBillingFailure.Classify(statusCode, rawMessage)
+            ?? throw new InvalidOperationException("账单失败必须先有明确的上游判据");
+        await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
+            _failoverNotifier, failure.Code, failure.UserMessage, platformName, modelName, _logger, billingAlerts);
+        _logger.LogWarning("[LlmGateway] 上游 AI 服务{Reason}: platform={Platform} model={Model}",
+            failure.Reason, platformName, modelName);
+        return (failure.Code, failure.UserMessage);
     }
 
     /// <summary>

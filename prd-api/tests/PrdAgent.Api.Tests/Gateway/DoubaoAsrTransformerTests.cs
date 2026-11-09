@@ -12,6 +12,24 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public class DoubaoAsrTransformerTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AsyncSubmitOrQueryOverdue_PreservesBillingCauseAndResolution(int failOnRequest)
+    {
+        var http = new DoubaoAsyncHttpClientFactory(failOnRequest: failOnRequest);
+        var gateway = new LlmGateway(new NoopModelResolver(), http, NullLogger<LlmGateway>.Instance);
+        var result = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelType = ModelTypes.Asr,
+            RequestBody = new JsonObject { ["audio_data"] = "UklGRg==" },
+        }, DoubaoResolution());
+        Assert.False(result.Success); Assert.Equal(GatewayBillingFailure.AccountOverdue, result.ErrorCode);
+        Assert.Contains("账户欠费", result.ErrorMessage); Assert.Contains("补缴费用", result.ErrorMessage);
+        Assert.Equal("Doubao ASR", result.Resolution?.ActualPlatformName);
+        Assert.Equal(failOnRequest, http.RequestUris.Count);
+    }
+
     [Fact]
     public async Task SendRawWithResolutionAsync_SubmitSuccessMustQueryBeforeTransformingResponse()
     {
@@ -154,10 +172,11 @@ public class DoubaoAsrTransformerTests
             ExchangeTransformerType = "doubao-asr",
         };
 
-    private sealed class DoubaoAsyncHttpClientFactory(int pendingQueryCount = 0) : IHttpClientFactory
+    private sealed class DoubaoAsyncHttpClientFactory(int pendingQueryCount = 0, int? failOnRequest = null) : IHttpClientFactory
     {
         private int _requestCount;
         private int PendingQueryCount { get; } = pendingQueryCount;
+        private int? FailOnRequest { get; } = failOnRequest;
         public List<string> RequestUris { get; } = [];
 
         public HttpClient CreateClient(string name)
@@ -172,6 +191,16 @@ public class DoubaoAsrTransformerTests
             {
                 owner.RequestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
                 var requestNumber = Interlocked.Increment(ref owner._requestCount);
+                if (requestNumber == owner.FailOnRequest)
+                {
+                    var denied = new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+                    {
+                        Content = new StringContent("{\"error\":{\"code\":\"AccountOverdueError\",\"message\":\"rejected\"}}"),
+                    };
+                    denied.Headers.TryAddWithoutValidation("X-Api-Status-Code", "45000000");
+                    denied.Headers.TryAddWithoutValidation("X-Api-Message", "账户欠费");
+                    return Task.FromResult(denied);
+                }
                 var isSubmit = requestNumber == 1;
                 var isPendingQuery = requestNumber > 1
                     && requestNumber <= owner.PendingQueryCount + 1;

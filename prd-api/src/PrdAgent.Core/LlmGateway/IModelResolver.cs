@@ -355,10 +355,11 @@ public class ModelResolutionResult
     /// <summary>
     /// 转换为 GatewayModelResolution（用于响应）
     /// </summary>
-    public GatewayModelResolution ToGatewayResolution()
+    public GatewayModelResolution ToGatewayResolution(IReadOnlyList<GatewayBillingAlert>? billingAlerts = null)
     {
         return new GatewayModelResolution
         {
+            BillingAlerts = billingAlerts ?? [],
             LogicalModelId = LogicalModelId,
             LogicalModelPublicId = LogicalModelPublicId,
             OfferingId = OfferingId,

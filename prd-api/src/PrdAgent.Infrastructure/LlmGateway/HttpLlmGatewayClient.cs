@@ -148,7 +148,8 @@ public sealed class HttpLlmGatewayClient
                     structured.ErrorMessage,
                     structured.Resolution?.ActualPlatformName ?? structured.Resolution?.ActualPlatformId,
                     structured.Resolution?.ActualModel,
-                    _logger);
+                    _logger,
+                    structured.Resolution?.BillingAlerts);
                 return structured;
             }
             if (!resp.IsSuccessStatusCode)
@@ -248,7 +249,7 @@ public sealed class HttpLlmGatewayClient
                 }
                 if (chunk != null)
                 {
-                    if (chunk.Type == GatewayChunkType.Error)
+                    if (chunk.Type == GatewayChunkType.Error || chunk.Resolution?.BillingAlerts?.Count > 0)
                     {
                         await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
                             _failoverNotifier,
@@ -256,7 +257,8 @@ public sealed class HttpLlmGatewayClient
                             chunk.Error,
                             chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
                             chunk.Resolution?.ActualModel ?? request.PinnedModelId ?? request.ExpectedModel,
-                            _logger);
+                            _logger,
+                            chunk.Resolution?.BillingAlerts);
                     }
                     yield return chunk;
                 }
@@ -403,7 +405,8 @@ public sealed class HttpLlmGatewayClient
                     ?? resolution.ActualPlatformName
                     ?? resolution.ActualPlatformId,
                     structured.Resolution?.ActualModel ?? resolution.ActualModel,
-                    _logger);
+                    _logger,
+                    structured.Resolution?.BillingAlerts);
                 return structured;
             }
             if (!resp.IsSuccessStatusCode)
@@ -446,7 +449,8 @@ public sealed class HttpLlmGatewayClient
                     structured.ErrorMessage,
                     structured.Resolution?.ActualPlatformName ?? structured.Resolution?.ActualPlatformId,
                     structured.Resolution?.ActualModel ?? request.Model,
-                    _logger);
+                    _logger,
+                    structured.Resolution?.BillingAlerts);
                 return structured;
             }
             if (!resp.IsSuccessStatusCode)

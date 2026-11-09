@@ -515,7 +515,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
             <small>本次创作没有进入分镜阶段</small>
             <h2>没有生成可编辑镜头</h2>
             <p>{run.errorMessage
-              ? formatVideoGenerationError(run.errorMessage)
+              ? formatVideoGenerationError(run.errorMessage, run.errorCode)
               : '系统没有从原稿中得到有效分镜。原稿仍已保存在项目中，可以返回后调整内容再试。'}</p>
           </div>
           <div className="video-storyboard-empty__actions">

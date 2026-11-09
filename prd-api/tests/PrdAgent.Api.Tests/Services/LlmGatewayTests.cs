@@ -1789,8 +1789,10 @@ public class LlmGatewayTests
         Assert.Equal(0, logWriter.DoneCount);
     }
 
-    [Fact]
-    public async Task SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate()
+    [Theory]
+    [InlineData(503, "provider a unavailable", false)]
+    [InlineData(403, "The request failed because your account has an overdue balance.", true)]
+    public async Task SendRawWithResolutionAsync_WhenAutoProviderReturnsRetryableStatus_ShouldUseNextCandidate(int firstStatus, string firstMessage, bool billingAlert)
     {
         var resolution = new GatewayModelResolution
         {
@@ -1820,7 +1822,7 @@ public class LlmGatewayTests
             ]
         };
         var http = new SequenceHttpClientFactory(
-            (503, "{\"error\":{\"message\":\"provider a unavailable\"}}"),
+            (firstStatus, new JsonObject { ["error"] = new JsonObject { ["message"] = firstMessage } }.ToJsonString()),
             (200, "{\"data\":[{\"url\":\"https://cdn.example.com/image-from-b.png\"}]}"));
         var logWriter = new CapturingLogWriter();
         var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), logWriter);
@@ -1837,6 +1839,8 @@ public class LlmGatewayTests
         }, resolution);
 
         Assert.True(response.Success);
+        Assert.Equal(billingAlert ? 1 : 0, response.Resolution!.BillingAlerts.Count);
+        if (billingAlert) Assert.Equal(new GatewayBillingAlert(GatewayBillingFailure.AccountOverdue, "Provider A", "image-model-a"), Assert.Single(response.Resolution.BillingAlerts));
         Assert.Equal("image-model-b", response.Resolution?.ActualModel);
         Assert.Contains("image-from-b", response.Content);
         Assert.Equal(2, http.RequestBodies.Count);
@@ -1848,7 +1852,7 @@ public class LlmGatewayTests
         var attempts = logWriter.Done.ProviderAttempts!;
         Assert.Equal(2, attempts.Count(a => a.Stage == "send"));
         Assert.Equal("failed", attempts[0].Status);
-        Assert.Equal(503, attempts[0].StatusCode);
+        Assert.Equal(firstStatus, attempts[0].StatusCode);
         Assert.True(attempts[0].ReachedProvider);
         Assert.Equal("succeeded", attempts[1].Status);
         Assert.Equal(200, attempts[1].StatusCode);
@@ -3432,9 +3436,14 @@ public class LlmGatewayTests
     }
 
     [Theory]
-    [InlineData(429, "{\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You exceeded your current quota\"}}")]
-    [InlineData(403, "{\"error\":{\"message\":\"user quota is not enough\"}}")]
-    public async Task SendRawWithResolutionAsync_WhenQuotaIsExhausted_ShouldRecordHealthFailure(int statusCode, string errorBody)
+    [InlineData(429, "{\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You exceeded your current quota\"}}", "LLM_QUOTA_EXCEEDED")]
+    [InlineData(403, "{\"error\":{\"message\":\"user quota is not enough\"}}", "LLM_QUOTA_EXCEEDED")]
+    [InlineData(403, "{\"error\":{\"code\":\"AccountOverdue\",\"message\":\"The request was rejected\"}}", "LLM_ACCOUNT_OVERDUE")]
+    [InlineData(403, "{\"error\":{\"message\":\"The request failed because your account has an overdue balance.\"}}", "LLM_ACCOUNT_OVERDUE")]
+    [InlineData(403, "{\"error\":{\"code\":\"insufficient_balance\",\"message\":\"The request was rejected\"}}", "LLM_INSUFFICIENT_BALANCE")]
+    [InlineData(429, "{\"error\":{\"type\":\"insufficient_quota\",\"message\":\"The request was rejected\"}}", "LLM_QUOTA_EXCEEDED")]
+    [InlineData(402, "{\"error\":{\"message\":\"Payment required\"}}", "LLM_PAYMENT_REQUIRED")]
+    public async Task SendRawWithResolutionAsync_WhenBillingIsBlocked_ShouldRecordHealthFailure(int statusCode, string errorBody, string expectedCode)
     {
         var resolution = new GatewayModelResolution
         {
@@ -3469,7 +3478,7 @@ public class LlmGatewayTests
         }, resolution);
 
         Assert.False(response.Success);
-        Assert.Equal("LLM_QUOTA_EXCEEDED", response.ErrorCode);
+        Assert.Equal(expectedCode, response.ErrorCode);
         Assert.Empty(resolver.UnavailableOfferingIds);
         Assert.Equal(["offering-quota-exhausted"], resolver.FailedOfferingIds);
     }

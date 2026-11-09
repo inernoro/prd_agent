@@ -239,6 +239,42 @@ public class HttpLlmGatewayClientFailureTests
             Times.Once);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BillingCause_CrossesSendRawProfileAndBothStreams(bool fallbackSucceeded)
+    {
+        const string code = GatewayBillingFailure.AccountOverdue;
+        var resolution = new GatewayModelResolution { Success = true, ActualModel = "backup", ActualPlatformName = "backup-platform",
+            BillingAlerts = [new(code, "overdue-platform", "primary")] };
+        var envelope = System.Text.Json.JsonSerializer.Serialize(new GatewayResponse
+        {
+            Success = fallbackSucceeded, StatusCode = fallbackSucceeded ? 200 : 403,
+            ErrorCode = fallbackSucceeded ? null : code,
+            ErrorMessage = fallbackSucceeded ? null : GatewayBillingFailure.FromCode(code)!.UserMessage,
+            Resolution = resolution, Content = "completed",
+        });
+        var notifier = new Mock<IPoolFailoverNotifier>();
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK, envelope), failoverNotifier: notifier.Object);
+        var send = await client.SendAsync(Request());
+        var raw = await client.SendRawWithResolutionAsync(RawRequest(), resolution);
+        var profile = await client.TestUpstreamProfileAsync(ProfileRequest());
+        Assert.Equal(fallbackSucceeded, send.Success); Assert.Equal(fallbackSucceeded, raw.Success); Assert.Equal(fallbackSucceeded, profile.Success);
+        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(3));
+
+        var chunk = new GatewayStreamChunk { Type = fallbackSucceeded ? GatewayChunkType.Start : GatewayChunkType.Error,
+            Resolution = resolution, ErrorCode = fallbackSucceeded ? null : code };
+        var streamBody = "data: " + System.Text.Json.JsonSerializer.Serialize(chunk) + "\n\n";
+        client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK, streamBody), failoverNotifier: notifier.Object);
+        var chunks = await CollectAsync(client.StreamAsync(Request()));
+        Assert.Equal(chunk.Type, Assert.Single(chunks).Type);
+        var legacyChunk = new LLMStreamChunk { Type = fallbackSucceeded ? "start" : "error", BillingAlerts = resolution.BillingAlerts };
+        client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.OK,
+            "data: " + System.Text.Json.JsonSerializer.Serialize(legacyChunk) + "\n\n"), failoverNotifier: notifier.Object);
+        await CollectAsync(client.CreateClient("demo.app::chat", "chat").StreamGenerateAsync("sys", [new() { Role = "user", Content = "hi" }]));
+        notifier.Verify(x => x.NotifyBillingFailureAsync("overdue-platform", "primary", code, CancellationToken.None), Times.Exactly(5));
+    }
+
     private static HttpLlmGatewayClient BuildClient(
         IHttpClientFactory factory,
         string baseUrl = "http://llmgw-serve.test",

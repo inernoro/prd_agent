@@ -432,7 +432,7 @@ describe('generateMyAvatarPreview', () => {
 
   it.each([
     ['IMAGE_GEN_REQUEST_REJECTED', '图片生成请求未被接受，请调整描述或素材后重试。'],
-    ['LLM_QUOTA_EXCEEDED', '当前可用额度不足，请联系管理员补充额度或切换可用配置后重试。'],
+    ['LLM_QUOTA_EXCEEDED', '上游 AI 服务可用额度已用尽或达到用量上限，本次操作未完成。管理员需要检查服务额度或切换可用配置，处理后再重试。'],
     ['IMAGE_GEN_TIMEOUT', '图片生成等待超时，请稍后查看结果或重新生成。'],
   ])('保留头像生成失败分类并给出对应恢复动作：%s', async (errorCode, expectedMessage) => {
     mockedApiRequest

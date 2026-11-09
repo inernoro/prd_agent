@@ -18,15 +18,9 @@ internal static class ImageGenerationUserError
         if (response.ErrorCode == ImageInputNormalizer.ErrorCode)
             return new Result(ImageInputNormalizer.ErrorCode, ImageInputNormalizer.ErrorMessage);
 
-        if (string.Equals(
-                response.ErrorCode,
-                GatewayQuotaAlertPolicy.QuotaErrorCode,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return new Result(
-                GatewayQuotaAlertPolicy.QuotaErrorCode,
-                GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
-        }
+        if (GatewayBillingFailure.Classify(response.StatusCode, response.Content ?? response.ErrorMessage,
+                response.ErrorCode) is { } billing)
+            return new Result(billing.Code, billing.UserMessage);
 
         if (string.Equals(
                 response.ErrorCode,
@@ -84,6 +78,8 @@ internal static class ImageGenerationUserError
     internal static Result Classify(int? statusCode, string? diagnostic)
     {
         var text = diagnostic ?? string.Empty;
+        if (GatewayBillingFailure.Classify(statusCode, text) is { } billing)
+            return new Result(billing.Code, billing.UserMessage);
 
         if (statusCode == 429 || ContainsAny(text, "rate limit", "too many requests", "quota exceeded", "insufficient quota"))
         {

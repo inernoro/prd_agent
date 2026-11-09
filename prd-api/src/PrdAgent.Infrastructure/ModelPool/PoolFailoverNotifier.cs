@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Infrastructure.ModelPool;
@@ -140,14 +141,21 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         string? modelName,
         CancellationToken ct = default)
     {
+        return NotifyBillingFailureAsync(platformName, modelName, GatewayBillingFailure.QuotaExceeded, ct);
+    }
+
+    public Task NotifyBillingFailureAsync(string? platformName, string? modelName, string errorCode, CancellationToken ct = default)
+    {
+        var failure = GatewayBillingFailure.FromCode(errorCode)
+            ?? throw new ArgumentException("未识别的账单失败类型", nameof(errorCode));
         var environment = ResolveQuotaEnvironment(Environment.GetEnvironmentVariable);
         var platform = NormalizeQuotaDetail(platformName);
         var model = NormalizeQuotaDetail(modelName);
 
         return UpsertNotificationAsync(
-            key: BuildQuotaNotificationKey(environment.Identity, platform, model),
-            title: "AI 服务额度不足",
-            message: BuildQuotaNotificationMessage(environment.Label, platform, model),
+            key: BuildQuotaNotificationKey(environment.Identity, platform, model, failure.Code),
+            title: $"上游 AI 服务{failure.Reason}",
+            message: BuildQuotaNotificationMessage(environment.Label, platform, model, failure.Code),
             level: "error",
             source: "llm-gateway-quota",
             targetUserId: null,
@@ -157,19 +165,22 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
     internal static string BuildQuotaNotificationMessage(
         string environmentLabel,
         string platformName,
-        string modelName)
-        => $"上游 AI 服务因额度不足拒绝了本次调用，本次 AI 创作未完成。\n" +
-           $"环境：{environmentLabel}\n" +
-           $"模型：{modelName}\n" +
-           $"平台：{platformName}\n" +
-           "请稍后重试；管理员需要检查服务额度或切换可用配置。诊断信息已保留。";
+        string modelName,
+        string errorCode = GatewayBillingFailure.QuotaExceeded)
+        => $"某条上游 AI 线路{GatewayBillingFailure.FromCode(errorCode)!.Reason}，该线路调用被拒绝。\n" +
+           "若备用线路已完成任务，可正常使用结果；本通知提醒管理员处理受限线路。\n" +
+           $"{GatewayBillingFailure.FromCode(errorCode)!.RecoveryAction}处理后再使用该线路。\n" +
+           $"环境：{environmentLabel}\n模型：{modelName}\n平台：{platformName}\n" +
+           "诊断信息已保留，可在模型网关调用日志核对本次失败。";
 
     internal static string BuildQuotaNotificationKey(
         string environmentIdentity,
         string platformName,
-        string modelName)
+        string modelName,
+        string errorCode = GatewayBillingFailure.QuotaExceeded)
     {
         var identity = $"{environmentIdentity}\n{platformName}\n{modelName}";
+        if (errorCode != GatewayBillingFailure.QuotaExceeded) identity += $"\n{errorCode}";
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))
             .ToLowerInvariant()[..16];
         return $"llm-quota-exceeded:v2:{hash}";
