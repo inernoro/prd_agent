@@ -60,7 +60,11 @@ document.addEventListener('click', function (event) {
   var anchor = source instanceof Element ? source.closest('a[href^="#"]') : null;
   if (!anchor) return;
   var href = anchor.getAttribute('href') || '';
-  if (href.length <= 1) return;
+  if (href === '#') {
+    event.preventDefault();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
   var targetId;
   try { targetId = decodeURIComponent(href.slice(1)); } catch (_) { return; }
   var target = document.getElementById(targetId);

@@ -1,7 +1,27 @@
 import { describe, expect, it } from 'vitest';
+import { runInNewContext } from 'node:vm';
 import { buildMarkdownReportDocument } from '../../web/src/lib/report-document.js';
 
 describe('Markdown 报告同页锚点', () => {
+  it('返回顶部的空片段只滚动当前文档，不触发 srcDoc 默认导航', () => {
+    const html = buildMarkdownReportDocument('[返回顶部](#)\n\n## 正文', 'light');
+    let listener: (event: unknown) => void = () => { throw new Error('未注册点击监听'); };
+    let prevented = false;
+    let top: unknown;
+    class Anchor {
+      closest() { return this; }
+      getAttribute() { return '#'; }
+    }
+    runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)![1], {
+      Element: Anchor,
+      document: { addEventListener: (_: string, callback: typeof listener) => { listener = callback; } },
+      window: { scrollTo: (options: unknown) => { top = options; } },
+    });
+    listener({ target: new Anchor(), preventDefault: () => { prevented = true; } });
+    expect(prevented).toBe(true);
+    expect(top).toEqual({ top: 0, behavior: 'smooth' });
+  });
+
   it('在 srcDoc 内接管有效锚点并保留外部链接默认行为', () => {
     const document = buildMarkdownReportDocument(
       '[查看](#目标)\n\n## 目标\n\n[外部](https://example.com)',
