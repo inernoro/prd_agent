@@ -142,7 +142,7 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
             var isScene = marker > 0 && int.TryParse(executionId[(marker + 7)..], out sceneIndex) && sceneIndex >= 0
                 && executionId == executionId[..marker] + "_scene_" + sceneIndex;
             var prefix = isScene ? $"Scenes.{sceneIndex}." : "DirectVideo";
-            var allowed = isScene ? new[] { prefix + "UpstreamStatus", prefix + "Cost", prefix + "ReconciledAt", prefix + "ReceiptQueuedAt" }
+            var allowed = isScene ? new[] { prefix + "UpstreamStatus", prefix + "Cost", prefix + "ReconciledAt", prefix + "ReceiptQueuedAt", "QueueEnteredAt" }
                 : new[] { "DirectVideoUpstreamStatus", "DirectVideoCost", "DirectVideoReconciledAt", "QueueEnteredAt" };
             if (typeof(T) != typeof(VideoGenRun) || identity.Lease is not { } receiptLease
                 || identity.RunId != receiptLease.RunId || method != "UpdateOneAsync" || replacement is not null

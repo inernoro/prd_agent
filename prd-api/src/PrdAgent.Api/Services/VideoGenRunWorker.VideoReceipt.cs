@@ -24,7 +24,8 @@ public partial class VideoGenRunWorker
             sf.Ne(x => x.TaskPermitId, null) & sf.Ne(x => x.JobId, null) & sf.Ne(x => x.Model, null)
             & sf.Ne(x => x.OfferingId, null) & sf.Eq(x => x.ReconciledAt, null)
             & (sf.Eq(x => x.ReceiptQueuedAt, null) | sf.Lte(x => x.ReceiptQueuedAt, now)));
-        var query = (direct | storyboard) & f.Eq(x => x.Status, VideoGenRunStatus.Cancelled)
+        var query = (direct | storyboard) & (f.Eq(x => x.QueueEnteredAt, null) | f.Lte(x => x.QueueEnteredAt, now))
+            & f.Eq(x => x.Status, VideoGenRunStatus.Cancelled)
             & f.Eq(x => x.CancelRequested, true) & f.Eq(x => x.DeletionRequestedAt, null);
         if (_unavailableReceipts.Count > 0) query &= f.Nin(x => x.Id, _unavailableReceipts.Keys);
         var run = await _db.VideoGenRuns.Find(query).SortBy(x => x.QueueEnteredAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id).FirstOrDefaultAsync(ct);
@@ -87,12 +88,15 @@ public partial class VideoGenRunWorker
         catch (Exception error)
         {
             _logger.LogWarning(error, "原分镜作业核账暂不可用: runId={RunId}, scene={Scene}", run.Id, scene.Index);
-            await _db.VideoGenRuns.UpdateOneAsync(filter, Builders<VideoGenRun>.Update.Set(prefix + "ReceiptQueuedAt", DateTime.UtcNow.AddSeconds(6)), cancellationToken: CancellationToken.None);
+            await _db.VideoGenRuns.UpdateOneAsync(filter, Builders<VideoGenRun>.Update.Set(prefix + "ReceiptQueuedAt", DateTime.UtcNow.AddSeconds(6))
+                .Set(x => x.QueueEnteredAt, DateTime.UtcNow.AddSeconds(6)), cancellationToken: CancellationToken.None);
             return;
         }
         var terminal = status.Status is "completed" or "failed" or "cancelled" or "expired";
         var update = Builders<VideoGenRun>.Update.Set(prefix + "UpstreamStatus", status.Status)
-            .Set(prefix + "Cost", status.Cost).Set(prefix + "ReceiptQueuedAt", DateTime.UtcNow.AddSeconds(6));
+            .Set(prefix + "ReceiptQueuedAt", DateTime.UtcNow.AddSeconds(6))
+            .Set(x => x.QueueEnteredAt, DateTime.UtcNow.AddSeconds(6));
+        if (status.Cost.HasValue) update = update.Set(prefix + "Cost", status.Cost);
         if (terminal) update = update.Set(prefix + "ReconciledAt", DateTime.UtcNow);
         var written = await _db.VideoGenRuns.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (terminal && written.ModifiedCount == 1)

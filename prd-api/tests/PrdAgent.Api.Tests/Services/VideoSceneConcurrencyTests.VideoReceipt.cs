@@ -217,7 +217,9 @@ public partial class VideoSceneConcurrencyTests
             CancelRequested = true, EndedAt = DateTime.UnixEpoch,
             Scenes = [new VideoGenScene { Index = 0, TaskPermitId = "synthetic-scene-permit", JobId = "recorded-scene-job",
                 Model = "recorded-model", OfferingId = "recorded-offering", Status = SceneItemStatus.Polling }] };
-        var scene = run.Scenes[0]; var executionId = run.Id + "_scene_0";
+        var scene = run.Scenes[0];
+        if (status == "completed" && cost is null) { scene.Status = SceneItemStatus.Done; scene.Cost = 0.34; }
+        var executionId = run.Id + "_scene_0";
         var target = new VideoReceiptTarget(run.OwnerAdminId, AppCallerRegistry.VideoAgent.VideoGen.Generate,
             scene.JobId!, scene.Model!, scene.OfferingId!);
         var coordinator = new Mock<ITaskExecutionCoordinator>(MockBehavior.Strict);
@@ -263,9 +265,12 @@ public partial class VideoSceneConcurrencyTests
             .Invoke(worker, [run, scene])!;
         Assert.NotNull(written); var fields = written!["$set"].AsBsonDocument;
         Assert.Equal(status, fields["Scenes.0.UpstreamStatus"].AsString);
-        Assert.Equal(cost, fields["Scenes.0.Cost"].IsBsonNull ? (double?)null : fields["Scenes.0.Cost"].ToDouble());
+        if (cost.HasValue) Assert.Equal(cost.Value, fields["Scenes.0.Cost"].ToDouble());
+        else Assert.False(fields.Contains("Scenes.0.Cost"), "省略费用的收据不能清除已记录费用");
+        if (status == "completed" && cost is null) Assert.Equal(0.34, scene.Cost);
+        Assert.True(fields["QueueEnteredAt"].ToUniversalTime() > DateTime.UtcNow, "分镜核账必须更新同父任务的排队时间，让出其它原作业");
         Assert.Equal(status != "in_progress", fields.Contains("Scenes.0.ReconciledAt"));
-        Assert.All(fields.Names, name => Assert.StartsWith("Scenes.0.", name));
+        Assert.All(fields.Names, name => Assert.True(name.StartsWith("Scenes.0.") || name == "QueueEnteredAt"));
         Assert.NotNull(guardedFilter);
         var guarded = guardedFilter!.ToString();
         Assert.Contains("synthetic-parent", guarded); Assert.Contains("Scenes.0.TaskPermitId", guarded);
@@ -304,6 +309,20 @@ public partial class VideoSceneConcurrencyTests
         BsonValue value = field == "Scenes.1.Cost" ? new BsonDouble(1.0)
             : field == "QueueEnteredAt" ? new BsonDateTime(DateTime.UtcNow) : new BsonString("forbidden");
         UpdateDefinition<VideoGenRun> update = new BsonDocument("$set", new BsonDocument(field, value));
+        if (field == "QueueEnteredAt")
+        {
+            rows.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<VideoGenRun>>(), It.IsAny<UpdateDefinition<VideoGenRun>>(),
+                It.IsAny<UpdateOptions>(), CancellationToken.None))
+                .Returns((FilterDefinition<VideoGenRun> filter, UpdateDefinition<VideoGenRun> _, UpdateOptions _, CancellationToken _) =>
+                {
+                    var rendered = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry)).ToString();
+                    Assert.Contains("$and", rendered); Assert.Contains("other-parent", rendered); Assert.Contains("synthetic-parent", rendered);
+                    return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(0, 0, null));
+                });
+            var rejected = await guarded.UpdateOneAsync(x => x.Id == "other-parent", update, cancellationToken: CancellationToken.None);
+            Assert.Equal(0, rejected.MatchedCount);
+            return;
+        }
         var denied = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => guarded.UpdateOneAsync(x => x.Id == "synthetic-parent",
             update, cancellationToken: CancellationToken.None));
         Assert.Equal("TASK_VIDEO_RECEIPT_WRITE_DENIED", denied.Code);
