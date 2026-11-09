@@ -215,7 +215,7 @@ public partial class VideoSceneConcurrencyTests
     }
 
     [Theory]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     [InlineData("none", false)]
     [InlineData("none", true)]
     [InlineData("run", false)]
@@ -234,8 +234,8 @@ public partial class VideoSceneConcurrencyTests
         test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
         test.Run.VideoAssetUrl.ShouldBeNull();
         test.AssetStorage.Verify(x => x.DeleteByShaAsync(test.AssetSha, CancellationToken.None,
-            AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo), reference == "none" ? Times.Once() : Times.Never());
-        if (reference == "none") test.AssetLeaseHeldAtDeletion.ShouldBeTrue();
+            AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo), reference == "none" && !failCommit ? Times.Once() : Times.Never());
+        if (reference == "none" && !failCommit) test.AssetLeaseHeldAtDeletion.ShouldBeTrue();
         test.Client.Verify(x => x.SubmitAsync(It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         test.Client.Verify(x => x.DownloadVideoBytesForOfferingAsync(It.IsAny<string>(), "synthetic-upstream-job", 0,
             "recorded-model", "recorded-offering", CancellationToken.None), Times.Once);

@@ -579,13 +579,8 @@ public partial class VideoGenRunWorker : BackgroundService
     // Caller still holds the generated SHA mutation lease; no task authority is cleared or weakened.
     internal async Task<bool> TryCommitStoredVideoAsync(StoredAsset stored, Func<Task<bool>> commit)
     {
-        bool committed;
-        try { committed = await commit(); }
-        catch
-        {
-            await DeleteStoredVideoIfUnreferencedAsync(stored.Sha256, stored.Url);
-            throw;
-        }
+        // 抛错可能仍有数据库操作在途；保留对象，不用独立读取猜测写回已经失败。
+        var committed = await commit();
         if (!committed) await DeleteStoredVideoIfUnreferencedAsync(stored.Sha256, stored.Url);
         return committed;
     }
