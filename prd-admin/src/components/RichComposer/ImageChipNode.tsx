@@ -228,11 +228,11 @@ function ImageChipComponent({
   return (
     <>
       {/* 缩略图 */}
-      <img
+      {src ? <img
         src={src}
         alt=""
         className="border border-token-subtle" style={{ width: 14, height: 14, borderRadius: 3, objectFit: 'cover', flexShrink: 0, opacity: imgOpacity }}
-      />
+      /> : null}
       {/* 标签 */}
       <span
         style={{

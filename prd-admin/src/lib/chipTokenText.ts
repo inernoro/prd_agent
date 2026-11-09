@@ -4,7 +4,7 @@
  * 复制/剪切时把输入框里的图片 chip 序列化为可携带的纯文本 token：
  *   [@image:#1:img-3-ab12:https://example.com/a.png] 拿着 [@image:#2:...] ...
  * 粘贴时按 token 还原为 chip（仅当 canvasKey 命中当前画布可选图片集时——
- * 不在集内的 token 保持纯文本，绝不构造幻觉引用）。
+ * 不在集内的 token 显示失效卡片，发送时阻止生成，绝不构造幻觉引用）。
  *
  * 纯函数模块，供 vitest 单测覆盖；Lexical 侧接线见 RichComposer/index.tsx。
  */
@@ -19,11 +19,45 @@ export interface ChipTokenSegChip {
   refId: number;
   canvasKey: string;
   src: string;
-  /** 原始 token 文本（canvasKey 未命中时按原样保留） */
+  /** 原始 token 文本，供身份校验与错误处理使用 */
   raw: string;
 }
 
 export type ChipTokenSeg = ChipTokenSegText | ChipTokenSegChip;
+
+export interface ComposerImageOption {
+  key: string;
+  refId: number;
+  src: string;
+  label: string;
+}
+
+/** 复制格式和旧文字引用共用一个恢复入口；身份失效时保留可删除的提示卡片。 */
+export function parseComposerImageReferences(text: string, options: ComposerImageOption[]) {
+  const result: Array<ChipTokenSegText | { type: 'image'; option: ComposerImageOption; valid: boolean }> = [];
+  const appendReference = (refId: number, canvasKey?: string) => {
+    const option = canvasKey ? options.find((item) => item.key === canvasKey) : options.find((item) => item.refId === refId);
+    result.push({ type: 'image', valid: Boolean(option), option: option ?? {
+      key: canvasKey || `missing-ref-${refId}`, refId, src: '', label: '参考图已移除',
+    } });
+  };
+  for (const segment of parseChipTokenText(text)) {
+    if (segment.type === 'chip') {
+      appendReference(segment.refId, segment.canvasKey);
+      continue;
+    }
+    const re = new RegExp(INLINE_IMG_MARK_RE.source, INLINE_IMG_MARK_RE.flags);
+    let last = 0;
+    for (const match of segment.text.matchAll(re)) {
+      const index = match.index!;
+      if (index > last) result.push({ type: 'text', text: segment.text.slice(last, index) });
+      appendReference(Number(match[1]));
+      last = index + match[0].length;
+    }
+    if (last < segment.text.length) result.push({ type: 'text', text: segment.text.slice(last) });
+  }
+  return result;
+}
 
 /** 生成单个 chip token。canvasKey 由 uid 生成（不含 ":" / "]"），src 不含 "]"。 */
 export function chipToken(refId: number, canvasKey: string, src: string): string {
@@ -77,4 +111,19 @@ export function inlineMarksToTokens(
     const meta = chipMeta.get(refId);
     return meta ? chipToken(refId, meta.canvasKey, meta.src) : m;
   });
+}
+
+/** 消息快照保留图片身份与持久化地址，避免 Base64 图片撑破消息长度限制。 */
+export function serializeImageReferenceMessage(
+  text: string,
+  refs: Array<{ refId: number; canvasKey: string; src: string }>,
+) {
+  const meta = new Map(refs.map((ref) => [ref.refId, {
+    canvasKey: ref.canvasKey,
+    src: /^data:/i.test(ref.src) ? '' : ref.src,
+  }]));
+  const inlineIds = new Set([...text.matchAll(new RegExp(INLINE_IMG_MARK_RE.source, INLINE_IMG_MARK_RE.flags))].map(match => Number(match[1])));
+  const selectedRefs = refs.filter(ref => !inlineIds.has(ref.refId))
+    .map(ref => chipToken(ref.refId, ref.canvasKey, meta.get(ref.refId)!.src));
+  return [...selectedRefs, inlineMarksToTokens(text, meta)].filter(Boolean).join(' ');
 }
