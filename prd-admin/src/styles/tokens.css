@@ -1562,3 +1562,43 @@ html[data-perf-mode="performance"] .app-aurora {
   --gen-wait-progress-over: #b45309;
   --gen-wait-head: #D97757;
 }
+
+/* 语音创作台：Figma 2:184 / 2:417 的双主题表面，限定于 speech-* 消费方。 */
+:root {
+  --speech-track: #454550;
+  --speech-header: #1e1e24;
+  --speech-panel: #19191f;
+  --speech-card: #202027;
+  --speech-input: #1e1e24;
+  --speech-border: #303039;
+  --speech-control-border: #393943;
+  --speech-text: #f7f7fb;
+  --speech-secondary: #c2c2cd;
+  --speech-muted: #a1a1af;
+  --speech-warm: #3d2b28;
+  --speech-warm-text: #edb29e;
+  --speech-accent: #d97757;
+  --speech-primary: #b0523a;
+  --speech-on-primary: #ffffff;
+  --speech-success: #9ed1b0;
+  --speech-success-bg: #294136;
+}
+:root[data-theme="light"] {
+  --speech-track: #cfc7bc;
+  --speech-header: #e9e4db;
+  --speech-panel: #f3efe8;
+  --speech-card: #f8f5ef;
+  --speech-input: #fbf8f3;
+  --speech-border: #d3ccc1;
+  --speech-control-border: #cfc7bc;
+  --speech-text: #0f172a;
+  --speech-secondary: #424a57;
+  --speech-muted: #65707c;
+  --speech-warm: #eadfd6;
+  --speech-warm-text: #8e4630;
+  --speech-accent: #b0523a;
+  --speech-primary: #b0523a;
+  --speech-on-primary: #ffffff;
+  --speech-success: #365c43;
+  --speech-success-bg: #dbe6d7;
+}

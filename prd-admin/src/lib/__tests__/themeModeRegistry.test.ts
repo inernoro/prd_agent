@@ -131,12 +131,13 @@ describe('AppShell 之外的独立全屏页必须走共享 hook 落主题', () =
     ['录音结果页', 'pages/document-store/RecordingResultPage.tsx'],
     ['录音处理页', 'pages/document-store/RecordingProcessingPage.tsx'],
     ['视觉创作全屏页', 'pages/visual-agent/VisualAgentFullscreenPage.tsx'],
+    ['产品管理版本页', 'pages/product-agent/VersionAppearance.tsx'],
   ])('%s 用 useApplyDocumentTheme', (_name, relative) => {
     expect(read(relative)).toContain('useApplyDocumentTheme(');
   });
 
   it('hook 与壳层都把解析后的明暗放进了 effect deps', () => {
-    expect(read('hooks/useApplyDocumentTheme.ts')).toContain('[mode, resolved, pathname]');
+    expect(read('hooks/useApplyDocumentTheme.ts')).toContain('[mode, resolved, pathname, modeOverride]');
     expect(read('layouts/AppShell.tsx')).toContain('[mobileThemeMode, resolvedThemeMode, location.pathname]');
   });
 });

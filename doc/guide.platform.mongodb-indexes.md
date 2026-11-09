@@ -48,6 +48,11 @@ DBA 必须按脚本说明设置 `PRD_GATEWAY_DB=1` 后执行清单。API 和 LLM
 
 ## 2. 执行
 
+多上游语音新增 `speech_runs` 的队列、租约、额度补偿和个人历史索引，以及 `speech_presets`
+的个人环境索引，索引名分别以 `idx_speech_runs_`、`idx_speech_presets_` 开头。
+配置与额度账本通过固定主键访问，幂等任务也复用唯一主键，不需要额外唯一索引。
+这些索引只通过 DBA 清单维护，语音 Worker 不会在启动时建索引。
+
 确认目标连接串和数据库名称后，由 DBA 在维护窗口执行：
 
 ```bash

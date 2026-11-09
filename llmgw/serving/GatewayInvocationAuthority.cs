@@ -61,6 +61,14 @@ public sealed class GatewayInvocationAuthority(IHttpContextAccessor accessor, IC
                 || verifiedAuthorization.RuntimeGrant is { RunId.Length: > 0 } grant && verifiedContext.RunId != grant.RunId)
                 Deny();
         }
+        else if (verifiedHttp.Items[CodeReviewUserKeys.AuthorityItem] is CodeReviewUserKeyTask binding)
+        {
+            if (appCallerCode != CodeReviewUserKeys.Caller || verifiedContext.UserId != binding.Owner
+                || verifiedContext.RunId != binding.Id || verifiedContext.GroupId != binding.ProjectId
+                || verifiedContext.ServiceKeyId != "user-key:" + binding.KeyId || verifiedContext.ClientCode != "cds-user-key"
+                || verifiedHttp.Items[CodeReviewUserKeys.ResolutionItem] is not ModelResolutionResult { Success: true } resolved
+                || resolved.ActualPlatformId != verifiedContext.ServiceKeyId || resolved.ActualModel != binding.Model) Deny();
+        }
         else if (verifiedContext.TaskPermitId is not null || verifiedContext.ExecutionOrigin != TaskExecutionOrigins.Agent
             || verifiedContext.UserId is not null || verifiedContext.TriggerActorUserId is not null
             || verifiedContext.TriggerCredentialId != verifiedAuthorization.KeyId
@@ -73,6 +81,12 @@ public sealed class GatewayInvocationAuthority(IHttpContextAccessor accessor, IC
         AssertAuthorized(appCallerCode, context);
         var http = accessor.HttpContext!;
         var authorization = (GatewayKeyAuthorization)http.Items["llmgw.key.authorization"]!;
+        if (http.Items[CodeReviewUserKeys.AuthorityItem] is CodeReviewUserKeyTask)
+        {
+            if (http.Items[CodeReviewUserKeys.PhysicalAdmissionItem] is not true) Deny();
+            http.Items[CodeReviewUserKeys.PhysicalAdmissionItem] = false;
+            return;
+        }
         if (!GatewayTaskAdmission.RequiresInternalPermit(authorization, configuration)) return;
         var lease = (GatewayTaskLeaseFact)http.Items[GatewayTaskAdmission.HttpContextLeaseKey]!;
         var coordinator = executions ?? http.RequestServices.GetService<ITaskExecutionCoordinator>()

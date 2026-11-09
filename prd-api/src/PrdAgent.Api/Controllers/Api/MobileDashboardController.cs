@@ -300,7 +300,7 @@ public class MobileDashboardController : ControllerBase
     /// </summary>
     [HttpGet("assets")]
     public async Task<IActionResult> GetAssets(
-        [FromQuery] string? category = null,   // image | document | attachment | null(all)
+        [FromQuery] string? category = null,   // image | audio | document | attachment | webpage | null(all)
         [FromQuery] int limit = 30,
         [FromQuery] int skip = 0,
         CancellationToken ct = default)
@@ -330,6 +330,7 @@ public class MobileDashboardController : ControllerBase
         var categoryCounts = new Dictionary<string, int>
         {
             ["image"] = allAssets.Count(a => a.Type == "image"),
+            ["audio"] = allAssets.Count(a => a.Type == "audio"),
             ["document"] = allAssets.Count(a => a.Type == "document"),
             ["attachment"] = allAssets.Count(a => a.Type == "attachment"),
             ["webpage"] = allAssets.Count(a => a.Type == "webpage"),

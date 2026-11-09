@@ -102,6 +102,7 @@ public sealed class BackgroundTaskAdmissionRegistry
             typeof(PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker),
             typeof(PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService));
         Add(BackgroundTaskKind.UserRunConsumer,
+            typeof(Speech.SpeechRunWorker),
             typeof(DataSync.DataSyncRunWorker), typeof(Toolbox.ToolboxRunWorker),
             typeof(ImageGenRunWorker), typeof(ProfileAvatarGenerationCleanupService),
             typeof(DocumentAssetCleanupService), typeof(ChatRunWorker),
@@ -113,6 +114,7 @@ public sealed class BackgroundTaskAdmissionRegistry
             typeof(DocumentRecordingArchiveWorker), typeof(ShortVideoMaterialWorker),
             typeof(InfraAgentRuntimeWorker), typeof(InfraAgentSessionCleanupWorker), typeof(ChatAgentTurnWorker));
         Add(BackgroundTaskKind.SharedAutomatic,
+            typeof(ProductAgent.ProductScheduledNotificationWorker),
             typeof(ProductAgent.ProductInitiationAutoIssueWorker),
             typeof(ProductAgent.ProductClaimWebhookWorker), typeof(ProductAgent.ProductAnnouncementSyncWorker),
             typeof(PeerSync.PeerSyncScheduleWorker), typeof(CdsReportImportWorker),

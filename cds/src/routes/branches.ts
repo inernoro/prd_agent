@@ -13383,7 +13383,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     let profiles = selectedDeploymentVersion
-      ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
+      ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles, inputBranch())
       : currentProfiles;
     if (selectedDeploymentVersion) {
       // 准入和执行必须核验同一份历史产物；当前分支模式不得替换版本的固定镜像。
@@ -13614,7 +13614,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         if (reusableForGate) {
           try {
-            gateProfiles = deploymentVersionService.materializeProfiles(reusableForGate, currentProfiles);
+            gateProfiles = deploymentVersionService.materializeProfiles(reusableForGate, currentProfiles, inputBranch());
             gateVersion = reusableForGate;
           } catch {
             /* 物化失败（版本所需配置已不在）：下方复用同样会失败，按当前清单判 */
@@ -13760,7 +13760,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: entry.githubCommitSha,
     });
     const materializeAdmittedReusableVersion = (version: DeploymentVersion): BuildProfile[] | undefined => {
-      const materialized = deploymentVersionService!.materializeProfiles(version, currentProfiles);
+      const materialized = deploymentVersionService!.materializeProfiles(version, currentProfiles, inputBranch());
       try {
         // 同B的fallback可正常前移；旧快照只有仍匹配本轮已核验内容才可自动替代。
         for (const profile of materialized) admittedArtifactProfile(profile, deploymentInput.artifactAdmission);
