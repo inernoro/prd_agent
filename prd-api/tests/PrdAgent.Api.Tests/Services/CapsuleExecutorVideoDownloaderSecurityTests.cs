@@ -282,6 +282,49 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         storage.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("unknown")]
+    [InlineData("unsupported")]
+    [InlineData("mismatch")]
+    public async Task ExecuteVideoDownloaderAsync_ShouldRetainSpecificFormatRejectionInAdminAudit(string kind)
+    {
+        var bytes = kind == "unsupported" ? Encoding.ASCII.GetBytes("OggS-not-supported")
+            : kind == "mismatch" ? new byte[] { 0x1a, 0x45, 0xdf, 0xa3 }.Concat(Encoding.ASCII.GetBytes("webm-body")).ToArray()
+            : Encoding.ASCII.GetBytes("not-a-video-container");
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue(kind == "mismatch" ? "video/mp4" : "application/octet-stream");
+        using var services = BuildDownloadServices(content, out var storage);
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 8192));
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        var reason = kind == "unsupported" ? "不支持 OGV" : kind == "mismatch" ? "video/webm" : "无法识别的二进制格式";
+        audit.ResponseBody.ShouldNotBeNull();
+        audit.ResponseBody!.ShouldContain(reason);
+        audit.ResponseBody.ShouldContain("container_validation");
+        ex.Message.ShouldNotContain(reason);
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ExecuteVideoDownloaderAsync_ShouldRetainWrappedConnectBlockWithoutLeakingItsTarget()
+    {
+        using var content = new ByteArrayContent([]);
+        var blocked = new HttpRequestException("发送请求失败", new InvalidOperationException(
+            "内网或保留地址：https://download.example.invalid/video?token=synthetic-private-connect-marker"));
+        using var services = BuildDownloadServices(content, out var storage, sendFailure: blocked);
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 8192));
+        ex.Message.ShouldContain("内网或保留地址");
+        ex.Message.ShouldNotContain("synthetic-private-connect-marker");
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        audit.ResponseBody.ShouldNotBeNull();
+        audit.ResponseBody!.ShouldContain("内网或保留地址");
+        audit.ResponseBody.ShouldContain("request");
+        audit.ResponseBody.ShouldNotContain("synthetic-private-connect-marker");
+        audit.ResponseBody.ShouldNotContain("https://download.example.invalid");
+        storage.VerifyNoOtherCalls();
+    }
+
     private static Task<CapsuleExecutor.CapsuleResult> Download(ServiceProvider services, long maxBytes, int timeoutSeconds = 120)
         => CapsuleExecutor.ExecuteVideoDownloaderAsync(services, new WorkflowNode
         {
@@ -297,7 +340,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         }, new Dictionary<string, string>(), new List<ExecutionArtifact>(),
             new WorkflowDesignInvocation("synthetic-user", "synthetic-operation", "local-download-integration", "synthetic-execution", "synthetic-user"));
 
-    private static ServiceProvider BuildDownloadServices(HttpContent content, out Mock<IAssetStorage> storage, HttpStatusCode status = HttpStatusCode.OK)
+    private static ServiceProvider BuildDownloadServices(HttpContent content, out Mock<IAssetStorage> storage, HttpStatusCode status = HttpStatusCode.OK, Exception? sendFailure = null)
     {
         var services = new ServiceCollection();
         RegisterAudit(services);
@@ -307,7 +350,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         validator.Setup(x => x.EnsureSafeHttpUrlAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string url, string purpose, CancellationToken ct) => new Uri(url));
         services.AddSingleton(validator.Object);
-        services.AddHttpClient("SafeOutbound").ConfigurePrimaryHttpMessageHandler(() => new SyntheticHandler(content, status));
+        services.AddHttpClient("SafeOutbound").ConfigurePrimaryHttpMessageHandler(() => new SyntheticHandler(content, status, sendFailure));
         return services.BuildServiceProvider();
     }
 
@@ -322,10 +365,11 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         services.AddSingleton(auditRecords);
     }
 
-    private sealed class SyntheticHandler(HttpContent content, HttpStatusCode status) : HttpMessageHandler
+    private sealed class SyntheticHandler(HttpContent content, HttpStatusCode status, Exception? sendFailure) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(new HttpResponseMessage(status) { Content = content });
+            => sendFailure == null ? Task.FromResult(new HttpResponseMessage(status) { Content = content })
+                : Task.FromException<HttpResponseMessage>(sendFailure);
     }
 
     private sealed class StallingStream : MemoryStream

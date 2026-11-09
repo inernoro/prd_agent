@@ -5806,6 +5806,7 @@ public static class CapsuleExecutor
         int? responseStatus = null;
         string? responseType = null;
         long? declaredBytes = null;
+        var stage = "request";
         var responseEvidence = target + ", 未收到响应";
         try
         {
@@ -5824,20 +5825,33 @@ public static class CapsuleExecutor
             if (!response.IsSuccessStatusCode)
                 responseEvidence += ", bodyEvidence=" + await DescribeRejectedVideoResponseAsync(
                     response.Content, rawType, maxBytes, downloadToken);
+            stage = "http_status";
             response.EnsureSuccessStatusCode();
+            stage = "body_read";
             videoBytes = await ReadContentWithLimitAsync(response.Content, maxBytes, downloadToken);
             responseEvidence += $", readBytes={videoBytes.Length}, sha256={Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(videoBytes)).ToLowerInvariant()}";
+            stage = "container_validation";
             contentType = ResolveDownloadedVideoContentType(videoBytes, rawType);
             sb.AppendLine($"[VideoDownloader] 响应核对: {responseEvidence}, decision=accepted");
             sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
         }
         catch (Exception ex)
         {
-            responseEvidence += $", errorType={ex.GetType().Name}, decision=rejected";
-            failure = ex is OperationCanceledException ? "视频下载等待超时，请检查视频来源后重试。"
-                : ex.Message.Contains("超过大小限制", StringComparison.Ordinal) ? "视频文件超过大小限制，请选择较小的视频后重试。"
-                : ex.Message.Contains("文件签名", StringComparison.Ordinal) ? "视频文件签名不是受支持的视频容器，请检查视频来源后重试。"
-                : ex.Message.Contains("内网或保留地址", StringComparison.Ordinal) ? "视频来源指向内网或保留地址，请选择公开的视频来源。"
+            var errors = new List<Exception>();
+            for (Exception? item = ex; item != null && errors.Count < 4; item = item.InnerException) errors.Add(item);
+            var reasons = errors.Select(item =>
+            {
+                var prefix = item.Message[..Math.Min(item.Message.Length, 512)];
+                try { return RedactDownloadResponseText(prefix); }
+                catch (RegexMatchTimeoutException) { return "[REDACTED: summary timeout]"; }
+            }).ToArray();
+            responseEvidence += $", stage={stage}, errors=" + JsonSerializer.Serialize(
+                errors.Select((item, index) => new { type = item.GetType().Name, reason = reasons[index] }), JsonCompact)
+                + ", decision=rejected";
+            failure = errors.Any(item => item is OperationCanceledException) ? "视频下载等待超时，请检查视频来源后重试。"
+                : reasons.Any(reason => reason.Contains("超过大小限制", StringComparison.Ordinal)) ? "视频文件超过大小限制，请选择较小的视频后重试。"
+                : reasons.Any(reason => reason.Contains("文件签名", StringComparison.Ordinal)) ? "视频文件签名不是受支持的视频容器，请检查视频来源后重试。"
+                : reasons.Any(reason => reason.Contains("内网或保留地址", StringComparison.Ordinal)) ? "视频来源指向内网或保留地址，请选择公开的视频来源。"
                 : "视频下载未完成，请检查视频来源后重试。";
         }
         finally
@@ -5851,7 +5865,7 @@ public static class CapsuleExecutor
                 TargetHost = downloadUri?.IdnHost, Direction = "outbound", ClientType = "server",
                 UserId = invocation?.UserId ?? "system", AppId = "workflow-agent", AppName = "工作流",
                 StatusCode = responseStatus ?? 0, ResponseContentType = responseType,
-                Status = failure == null ? "completed" : "failed", ErrorCode = failure == null ? null : "VIDEO_DOWNLOAD_REJECTED",
+                Status = failure == null ? "completed" : "failed", ErrorCode = failure == null ? null : "VIDEO_DOWNLOAD_" + stage.ToUpperInvariant() + "_REJECTED",
                 ApiSummary = $"视频下载/{node.NodeId}/{(failure == null ? "accepted" : "rejected")}",
                 ResponseBody = $"nodeId={node.NodeId}, timeoutSeconds={timeoutSeconds}, {responseEvidence}",
                 ResponseBodyBytes = declaredBytes is >= 0 and <= int.MaxValue ? (int)declaredBytes : null,
