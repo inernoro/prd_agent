@@ -73,9 +73,10 @@ export function ImageQuickEditInput({
       <input
         ref={inputRef}
         type="text"
+        aria-label="快捷编辑描述"
         className="flex-1 min-w-0 h-full bg-transparent text-[13px] placeholder:text-token-muted"
         style={{ color: 'var(--text-primary)', outline: 'none', border: 'none', boxShadow: 'none' }}
-        placeholder="Describe your edit here"
+        placeholder="描述要如何调整这张图"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
