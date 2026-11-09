@@ -5933,9 +5933,10 @@ public static class CapsuleExecutor
 
         string? snapshot = null;
         var snapshotState = "binary-omitted";
-        if (contentType != null && (contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
-            || contentType.Contains("json", StringComparison.OrdinalIgnoreCase)
-            || contentType.Contains("xml", StringComparison.OrdinalIgnoreCase)))
+        if (contentType?.Contains("xml", StringComparison.OrdinalIgnoreCase) == true)
+            snapshotState = "xml-unsafe-snapshot-omitted";
+        else if (contentType != null && (contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+            || contentType.Contains("json", StringComparison.OrdinalIgnoreCase)))
         {
             var text = Encoding.UTF8.GetString(prefix, 0, read);
             try

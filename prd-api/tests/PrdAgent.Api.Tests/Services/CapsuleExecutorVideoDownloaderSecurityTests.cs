@@ -150,7 +150,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Theory]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     [InlineData(true)]
     [InlineData(false)]
     public async Task ExecuteVideoDownloaderAsync_ShouldRejectOversizeBeforeStorage(bool declaredLength)
@@ -170,7 +170,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Fact]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     public async Task ExecuteVideoDownloaderAsync_ShouldRejectFalseVideoBeforeStorage()
     {
         using var content = new ByteArrayContent(Encoding.UTF8.GetBytes("<html>sign in required</html>"));
@@ -182,7 +182,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Fact]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     public async Task ExecuteVideoDownloaderAsync_ShouldStoreDetectedWebmAndReturnMatchingMetadata()
     {
         var bytes = new byte[] { 0x1A, 0x45, 0xDF, 0xA3 }
@@ -205,7 +205,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Fact]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     public async Task ExecuteVideoDownloaderAsync_ShouldKeepDeadlineWhileReadingBody()
     {
         using var content = new StreamContent(new StallingStream());
@@ -217,7 +217,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Theory]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     [InlineData("application/json", "{\"error\":{\"code\":\"LINK_EXPIRED\",\"message\":\"link-expired\",\"accessToken\":\"private-token-marker\"}}")]
     [InlineData("text/html", "<html>link-expired Authorization: Bearer private-token-marker</html>")]
     [InlineData("application/json", "\"link-expired Authorization: Bearer private-token-marker\"")]
@@ -247,7 +247,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Fact]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     public async Task ExecuteVideoDownloaderAsync_ShouldBoundUnknownLengthErrorEvidence()
     {
         var source = new NonSeekableStream(Encoding.UTF8.GetBytes("link-expired token=private-token-marker" + new string('x', 12000)));
@@ -267,7 +267,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Fact]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     public async Task ExecuteVideoDownloaderAsync_ShouldRejectStorageWhenAuditCannotBeSaved()
     {
         using var content = new ByteArrayContent(Mp4Bytes());
@@ -283,7 +283,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Theory]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     [InlineData("unknown")]
     [InlineData("unsupported")]
     [InlineData("mismatch")]
@@ -306,7 +306,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     }
 
     [Fact]
-    [Trait("Category", "Integration")]
+    [Trait("Category", "Unit")]
     public async Task ExecuteVideoDownloaderAsync_ShouldRetainWrappedConnectBlockWithoutLeakingItsTarget()
     {
         using var content = new ByteArrayContent([]);
@@ -322,6 +322,25 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         audit.ResponseBody.ShouldContain("request");
         audit.ResponseBody.ShouldNotContain("synthetic-private-connect-marker");
         audit.ResponseBody.ShouldNotContain("https://download.example.invalid");
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteVideoDownloaderAsync_ShouldOmitUnsafeXmlSnapshotButKeepBoundedHash()
+    {
+        var bytes = Encoding.UTF8.GetBytes("<Error><Token>synthetic-private-xml-marker</Token></Error>");
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
+        using var services = BuildDownloadServices(content, out var storage, HttpStatusCode.Forbidden);
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 8192));
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        audit.ResponseBody.ShouldNotBeNull();
+        audit.ResponseBody!.ShouldNotContain("synthetic-private-xml-marker");
+        audit.ResponseBody.ShouldContain("xml-unsafe-snapshot-omitted");
+        audit.ResponseBody.ShouldContain(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant());
+        audit.StatusCode.ShouldBe(403);
+        ex.Message.ShouldNotContain("synthetic-private-xml-marker");
         storage.VerifyNoOtherCalls();
     }
 
