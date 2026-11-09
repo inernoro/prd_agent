@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Jint;
 using Jint.Runtime;
 using Microsoft.Extensions.Configuration;
@@ -5804,6 +5805,9 @@ public static class CapsuleExecutor
                 downloadToken);
             var rawType = response.Content.Headers.ContentType?.MediaType;
             responseEvidence = $"status={(int)response.StatusCode}, type={rawType ?? "missing"}, declaredBytes={response.Content.Headers.ContentLength?.ToString() ?? "unknown"}, maxBytes={maxBytes}";
+            if (!response.IsSuccessStatusCode)
+                responseEvidence += ", bodyEvidence=" + await DescribeRejectedVideoResponseAsync(
+                    response.Content, rawType, maxBytes, downloadToken);
             response.EnsureSuccessStatusCode();
             videoBytes = await ReadContentWithLimitAsync(response.Content, maxBytes, downloadToken);
             responseEvidence += $", readBytes={videoBytes.Length}, sha256={Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(videoBytes)).ToLowerInvariant()}";
@@ -5834,6 +5838,117 @@ public static class CapsuleExecutor
 
         var artifact = MakeTextArtifact(node, "vd-out", "下载结果", output, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    private static async Task<string> DescribeRejectedVideoResponseAsync(
+        HttpContent content, string? contentType, long maxBytes, CancellationToken ct)
+    {
+        // 错误正文也要先留证；只读有限前缀，沿用整个下载的原期限，不另启请求。
+        var prefix = new byte[(int)Math.Min(maxBytes, 4096)];
+        var read = 0;
+        var complete = content.Headers.ContentLength == 0;
+        string? readFailure = null;
+        try
+        {
+            await using var stream = await content.ReadAsStreamAsync(ct);
+            while (read < prefix.Length)
+            {
+                var count = await stream.ReadAsync(prefix.AsMemory(read), ct);
+                if (count == 0) { complete = true; break; }
+                read += count;
+            }
+            complete |= content.Headers.ContentLength == read;
+        }
+        catch (Exception ex)
+        {
+            // 超时/中断仍保留已收到的有限前缀，不能丢掉当时的返回事实。
+            readFailure = ex.GetType().Name;
+        }
+
+        string? snapshot = null;
+        var snapshotState = "binary-omitted";
+        if (contentType != null && (contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+            || contentType.Contains("json", StringComparison.OrdinalIgnoreCase)
+            || contentType.Contains("xml", StringComparison.OrdinalIgnoreCase)))
+        {
+            var text = Encoding.UTF8.GetString(prefix, 0, read);
+            try
+            {
+                JsonNode? node = null;
+                if (complete && contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
+                {
+                    try { node = JsonNode.Parse(text); }
+                    catch (JsonException) { snapshotState = "invalid-json-redacted-text"; }
+                }
+                if (node != null)
+                {
+                    if (node is JsonValue root && root.TryGetValue<string>(out var rootText))
+                        node = JsonValue.Create(RedactDownloadResponseText(rootText))!;
+                    else
+                        RedactDownloadResponseNode(node);
+                    snapshot = node.ToJsonString();
+                    snapshotState = "redacted-json";
+                }
+                else
+                {
+                    snapshot = RedactDownloadResponseText(text);
+                    if (snapshotState != "invalid-json-redacted-text") snapshotState = "redacted-text-prefix";
+                }
+                if (snapshot.Length > 4096) snapshot = snapshot[..4096] + "[TRUNCATED]";
+            }
+            catch (Exception ex)
+            {
+                snapshot = null;
+                snapshotState = "redaction-failed-omitted:" + ex.GetType().Name;
+            }
+        }
+        return JsonSerializer.Serialize(new
+        {
+            observedBytes = read,
+            declaredBytes = content.Headers.ContentLength,
+            prefixSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(prefix.AsSpan(0, read))).ToLowerInvariant(),
+            bodyComplete = complete,
+            prefixLimitBytes = prefix.Length,
+            readFailure,
+            snapshotState,
+            snapshot,
+        });
+    }
+
+    private static void RedactDownloadResponseNode(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var property in obj.ToArray())
+            {
+                var key = property.Key.ToLowerInvariant();
+                if (new[] { "token", "secret", "password", "authorization", "cookie", "credential", "apikey", "api_key", "api-key", "email", "phone", "prompt", "document", "content" }.Any(key.Contains))
+                    obj[property.Key] = "[REDACTED]";
+                else if (property.Value is JsonValue value && value.TryGetValue<string>(out var text))
+                    obj[property.Key] = RedactDownloadResponseText(text);
+                else if (property.Value != null) RedactDownloadResponseNode(property.Value);
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            for (var i = 0; i < array.Count; i++)
+            {
+                if (array[i] is JsonValue value && value.TryGetValue<string>(out var text))
+                    array[i] = RedactDownloadResponseText(text);
+                else if (array[i] is { } child) RedactDownloadResponseNode(child);
+            }
+        }
+    }
+
+    private static string RedactDownloadResponseText(string text)
+    {
+        static string Replace(string value, string pattern, string replacement)
+            => Regex.Replace(value, pattern, replacement, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        text = Replace(text, @"https?://[^\s""'<>]+", "[REDACTED_URL]");
+        text = Replace(text, @"\b(Bearer|Basic)\s+[^\s""'<>]+", "$1 [REDACTED]");
+        text = Replace(text, @"\b(?:access[_-]?token|refresh[_-]?token|api[_-]?key|token|secret|password|authorization|cookie|credential)[""']?\s*[:=]\s*(?:""[^""]*(?:""|$)|'[^']*(?:'|$)|[^,;\r\n<>}]+)", "[REDACTED_CREDENTIAL]");
+        text = Replace(text, @"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", "[REDACTED_EMAIL]");
+        return Replace(text, @"(?<!\d)\+?\d[\d -]{6,}\d(?!\d)", "[REDACTED_NUMBER]");
     }
 
     internal static async Task<byte[]> ReadContentWithLimitAsync(
