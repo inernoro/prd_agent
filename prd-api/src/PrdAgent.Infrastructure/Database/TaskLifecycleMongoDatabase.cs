@@ -135,24 +135,34 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
         var replacement = args.OfType<T>().FirstOrDefault();
         if (identity?.VideoReceipt is { } target)
         {
-            // 核账身份只能写回原作业的收据字段，不能借取消身份开启任务、改授权或发布产物。
+            // 核账身份只能写回原作业的收据字段，不恢复生成权限。分镜使用已经绑定的执行对象身份。
+            var executionId = identity.Lease?.RunId ?? "";
+            var sceneIndex = -1;
+            var marker = executionId.LastIndexOf("_scene_", StringComparison.Ordinal);
+            var isScene = marker > 0 && int.TryParse(executionId[(marker + 7)..], out sceneIndex) && sceneIndex >= 0
+                && executionId == executionId[..marker] + "_scene_" + sceneIndex;
+            var prefix = isScene ? $"Scenes.{sceneIndex}." : "DirectVideo";
+            var allowed = isScene ? new[] { prefix + "UpstreamStatus", prefix + "Cost", prefix + "ReconciledAt", prefix + "ReceiptQueuedAt" }
+                : new[] { "DirectVideoUpstreamStatus", "DirectVideoCost", "DirectVideoReconciledAt", "QueueEnteredAt" };
             if (typeof(T) != typeof(VideoGenRun) || identity.Lease is not { } receiptLease
                 || identity.RunId != receiptLease.RunId || method != "UpdateOneAsync" || replacement is not null
                 || update is null || update.Render(new RenderArgs<T>(_inner.DocumentSerializer, BsonSerializer.SerializerRegistry)) is not { IsBsonDocument: true } receiptUpdate
                 || receiptUpdate.AsBsonDocument.ElementCount != 1 || !receiptUpdate.AsBsonDocument.Contains("$set")
-                || set is null || set.ElementCount == 0 || set.Names.Any(n => n is not
-                    ("DirectVideoUpstreamStatus" or "DirectVideoCost" or "DirectVideoReconciledAt" or "QueueEnteredAt")))
+                || set is null || set.ElementCount == 0 || set.Names.Any(n => !allowed.Contains(n, StringComparer.Ordinal)))
                 throw new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_WRITE_DENIED", "核账身份不能修改任务执行状态或其它数据。");
             var index = Array.FindIndex(args, x => x is FilterDefinition<T>);
             if (index < 0) throw new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_WRITE_DENIED", "核账缺少原任务条件。");
-            args[index] = (FilterDefinition<T>)args[index]! & new BsonDocument
+            var targetFilter = new BsonDocument
             {
-                ["_id"] = receiptLease.RunId, ["TaskPermitId"] = receiptLease.PermitId,
-                ["OwnerAdminId"] = target.OwnerId, ["Mode"] = VideoGenMode.Direct,
-                ["DirectVideoJobId"] = target.JobId, ["DirectVideoModel"] = target.Model,
-                ["DirectVideoOfferingId"] = target.OfferingId, ["CancelRequested"] = true,
-                ["Status"] = VideoGenRunStatus.Cancelled, ["DeletionRequestedAt"] = BsonNull.Value
+                ["_id"] = isScene ? executionId[..marker] : receiptLease.RunId,
+                ["OwnerAdminId"] = target.OwnerId, ["Mode"] = isScene ? VideoGenMode.Storyboard : VideoGenMode.Direct,
+                [prefix + "JobId"] = target.JobId,
+                [prefix + "Model"] = target.Model, [prefix + "OfferingId"] = target.OfferingId,
+                ["CancelRequested"] = true, ["Status"] = VideoGenRunStatus.Cancelled, ["DeletionRequestedAt"] = BsonNull.Value
             };
+            targetFilter[isScene ? prefix + "TaskPermitId" : "TaskPermitId"] = receiptLease.PermitId;
+            if (isScene) targetFilter[prefix + "Index"] = sceneIndex;
+            args[index] = (FilterDefinition<T>)args[index]! & targetFilter;
             return;
         }
         if (replacement is not null) cancel |= replacement.ToBsonDocument().Any(field => IsCancellation(field.Name, field.Value));
@@ -230,22 +240,39 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
             if (document is not ITaskAuthorizedRun task || string.IsNullOrWhiteSpace(task.TaskPermitId)) continue; // 旧记录本身没有可用的新执行授权。
             if (document is VideoGenRun video)
             {
-                if (method.Contains("Delete", StringComparison.Ordinal)
+                var deleting = method.Contains("Delete", StringComparison.Ordinal)
                     || set?.GetValue("DeletionRequestedAt", BsonNull.Value).IsBsonNull == false
-                    || replacement is VideoGenRun { DeletionRequestedAt: not null })
-                    await coordinator.RevokeVideoReceiptAsync(task.TaskPermitId, video.Id, CancellationToken.None);
-                else if (video.Mode == VideoGenMode.Direct && !string.IsNullOrWhiteSpace(video.DirectVideoJobId)
-                    && !string.IsNullOrWhiteSpace(video.DirectVideoModel) && !string.IsNullOrWhiteSpace(video.DirectVideoOfferingId)
-                    && video.AppKey is "video-agent" or "visual-agent")
+                    || replacement is VideoGenRun { DeletionRequestedAt: not null };
+                if (deleting)
+                {
+                    foreach (var reference in References(video))
+                        await coordinator.RevokeVideoReceiptAsync(reference.Permit, reference.Run, CancellationToken.None);
+                }
+                else if (video.AppKey is "video-agent" or "visual-agent")
                 {
                     var caller = video.AppKey == "visual-agent" ? AppCallerRegistry.VisualAgent.VideoGen.Generate
                         : AppCallerRegistry.VideoAgent.VideoGen.Generate;
-                    try
+                    var targets = new List<(string? Permit, string Run, string? Job, string? Model, string? Offering)>();
+                    if (video.Mode == VideoGenMode.Direct)
+                        targets.Add((video.TaskPermitId, video.Id, video.DirectVideoJobId, video.DirectVideoModel, video.DirectVideoOfferingId));
+                    else if (video.Mode == VideoGenMode.Storyboard)
+                        for (var i = 0; i < video.Scenes.Count; i++)
+                        {
+                            var scene = video.Scenes[i];
+                            if (scene.Index == i && scene.ReconciledAt is null)
+                                targets.Add((scene.TaskPermitId, $"{video.Id}_scene_{i}", scene.JobId, scene.Model, scene.OfferingId));
+                        }
+                    foreach (var receiptTarget in targets)
                     {
-                        await coordinator.BindVideoReceiptAsync(task.TaskPermitId, video.Id,
-                            new(video.OwnerAdminId, caller, video.DirectVideoJobId, video.DirectVideoModel, video.DirectVideoOfferingId), _tenant, CancellationToken.None);
+                        if (string.IsNullOrWhiteSpace(receiptTarget.Permit) || string.IsNullOrWhiteSpace(receiptTarget.Job)
+                            || string.IsNullOrWhiteSpace(receiptTarget.Model) || string.IsNullOrWhiteSpace(receiptTarget.Offering)) continue;
+                        try
+                        {
+                            await coordinator.BindVideoReceiptAsync(receiptTarget.Permit, receiptTarget.Run,
+                                new(video.OwnerAdminId, caller, receiptTarget.Job, receiptTarget.Model, receiptTarget.Offering), _tenant, CancellationToken.None);
+                        }
+                        catch (TaskExecutionAdmissionException ex) when (ex.Code == "TASK_VIDEO_RECEIPT_UNSUPPORTED") { }
                     }
-                    catch (TaskExecutionAdmissionException ex) when (ex.Code == "TASK_VIDEO_RECEIPT_UNSUPPORTED") { }
                 }
             }
             foreach (var reference in References(document))
