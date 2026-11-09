@@ -166,9 +166,7 @@ tsc --noEmit + 单元测试，把「端到端是否真的解决」丢给用户�
 1. **类型前缀**：`spec.` `design.` `plan.` `rule.` `guide.` `report.` `debt.` `adr.` `pdr.`。类型原则同样放在 `doc/`，以 `guide.doc.pri.<类型>.md` 解释各类文章的作用并纳入统一索引；ADR/PDR 保存重要选择的理由与历史，现行规格与设计通过链接引用。
 2. **appname 优先 + 点分层级**：topic 第一段是应用名，子模块用 `.` 续接，禁止用 `-` 把 appname 和子模块黏死
 
-跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。
-
-文档类型或内容层级的要求不自动授权根目录存放例外。不得通过增加根目录白名单、豁免索引或放宽检查来迁就错误产物；修改规则与守卫时，必须对照原规则和用户明确授权核实范围。
+跨切面用保留域名段 `platform.` / `frontend.` / `skill.` / `doc.`。目录保持扁平，禁子目录。内容层级不授权根目录例外；规则或守卫变更须对照原约束与明确授权，不得扩白名单或豁免索引迁就错误产物。
 
 正确 `spec.cds.settings.md`、`design.cds.agent.runtime.md`；错误 `spec.cds-settings.md`（黏连）、`design.defect-automation-autonomy.md`（appname 不在首段）、`output-xxx.md`（无前缀）。
 
