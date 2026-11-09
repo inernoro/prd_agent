@@ -1,4 +1,12 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using PrdAgent.Core.Services;
+using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Services;
@@ -134,4 +142,67 @@ public partial class VideoSceneConcurrencyTests
         Assert.False(await coordinator.ValidateAsync(next.Proof, true, default));
         Assert.Null((await test.Context.VideoGenRuns.Find(x => x.Id == other.Id).SingleAsync()).DirectVideoCost);
     }
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(0.34)]
+    [InlineData(null)]
+    public async Task DirectRecordedCostMock_OmittedReceiptCostDoesNotEraseRecordedCharge(double? recordedCost)
+    {
+        BsonClassMapRegistration.Register();
+        var run = new VideoGenRun { Id = "synthetic-direct", OwnerAdminId = "synthetic-owner", AppKey = "video-agent",
+            Mode = VideoGenMode.Direct, TaskPermitId = "synthetic-permit", Status = VideoGenRunStatus.Cancelled,
+            CancelRequested = true, EndedAt = DateTime.UnixEpoch, DirectVideoJobId = "recorded-job",
+            DirectVideoModel = "recorded-model", DirectVideoOfferingId = "recorded-offering", DirectVideoCost = recordedCost };
+        var target = new VideoReceiptTarget(run.OwnerAdminId, AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            run.DirectVideoJobId, run.DirectVideoModel, run.DirectVideoOfferingId);
+        var proof = new TaskExecutionLeaseProof(run.TaskPermitId, run.Id, "synthetic-token", 7);
+        var coordinator = new Mock<ITaskExecutionCoordinator>(MockBehavior.Strict);
+        coordinator.Setup(x => x.AcquireVideoReceiptAsync(run.TaskPermitId, run.Id, CancellationToken.None))
+            .ReturnsAsync(() => new TaskExecutionLease(coordinator.Object, proof, borrowed: true, videoReceipt: target));
+        coordinator.Setup(x => x.ValidateVideoReceiptAsync(proof, target, false, CancellationToken.None)).ReturnsAsync(true);
+        coordinator.Setup(x => x.ReleaseVideoReceiptAsync(proof, target, CancellationToken.None)).ReturnsAsync(true);
+        coordinator.Setup(x => x.RevokeVideoReceiptAsync(run.TaskPermitId, run.Id, CancellationToken.None)).Returns(Task.CompletedTask);
+        var rows = new Mock<IMongoCollection<VideoGenRun>>(MockBehavior.Strict);
+        rows.SetupGet(x => x.DocumentSerializer).Returns(BsonSerializer.LookupSerializer<VideoGenRun>());
+        rows.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoGenRun>>(), It.IsAny<FindOptions<VideoGenRun, VideoGenRun>>(), CancellationToken.None))
+            .Returns(() =>
+            {
+                var cursor = new Mock<IAsyncCursor<VideoGenRun>>(MockBehavior.Strict);
+                cursor.SetupGet(x => x.Current).Returns(new[] { run });
+                cursor.SetupSequence(x => x.MoveNextAsync(CancellationToken.None)).ReturnsAsync(true).ReturnsAsync(false);
+                cursor.Setup(x => x.Dispose()); return Task.FromResult(cursor.Object);
+            });
+        BsonDocument? written = null;
+        rows.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<VideoGenRun>>(), It.IsAny<UpdateDefinition<VideoGenRun>>(),
+                It.IsAny<UpdateOptions>(), CancellationToken.None))
+            .Returns((FilterDefinition<VideoGenRun> _, UpdateDefinition<VideoGenRun> patch, UpdateOptions _, CancellationToken _) =>
+            {
+                written = patch.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry)).AsBsonDocument;
+                if (written["$set"].AsBsonDocument.TryGetValue("DirectVideoCost", out var value))
+                    run.DirectVideoCost = value.IsBsonNull ? null : value.ToDouble();
+                return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(1, 1, null));
+            });
+        var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs", null)).Returns(rows.Object);
+        var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
+        typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(context, TaskLifecycleMongoDatabase.Wrap(database.Object, () => coordinator.Object));
+        var client = new Mock<IOpenRouterVideoClient>(MockBehavior.Strict);
+        client.Setup(x => x.GetStatusForOfferingAsync(target.AppCallerCode, target.JobId, target.Model, target.OfferingId, CancellationToken.None))
+            .ReturnsAsync(new OpenRouterVideoStatus { Status = "completed", Cost = null, VideoUrl = "https://synthetic.invalid/never-download" });
+        using var services = new ServiceCollection().AddSingleton(client.Object)
+            .AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>().BuildServiceProvider();
+        var assets = new Mock<IAssetStorage>(MockBehavior.Strict); var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+        using var worker = new VideoGenRunWorker(context, services.GetRequiredService<IServiceScopeFactory>(), events.Object,
+            assets.Object, NullLogger<VideoGenRunWorker>.Instance, coordinator.Object);
+        await (Task)typeof(VideoGenRunWorker).GetMethod("ProcessDirectVideoGenAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(worker, [run])!;
+        Assert.Equal(recordedCost, run.DirectVideoCost);
+        Assert.NotNull(written); Assert.True(written!["$set"].AsBsonDocument.Contains("DirectVideoReconciledAt"));
+        Assert.Equal(VideoGenRunStatus.Cancelled, run.Status); Assert.Equal(DateTime.UnixEpoch, run.EndedAt);
+        client.Verify(x => x.GetStatusForOfferingAsync(target.AppCallerCode, target.JobId, target.Model, target.OfferingId, CancellationToken.None), Times.Once);
+        client.VerifyNoOtherCalls(); assets.VerifyNoOtherCalls(); events.VerifyNoOtherCalls();
+        coordinator.Verify(x => x.RegisterAsync(It.IsAny<GatewayTaskPermitRecord>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
 }

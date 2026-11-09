@@ -64,7 +64,8 @@ public partial class VideoGenRunWorker
         }
         var terminal = status.Status is "completed" or "failed" or "cancelled" or "expired";
         var update = Builders<VideoGenRun>.Update.Set(x => x.DirectVideoUpstreamStatus, status.Status)
-            .Set(x => x.DirectVideoCost, status.Cost).Set(x => x.QueueEnteredAt, DateTime.UtcNow.AddSeconds(6));
+            .Set(x => x.QueueEnteredAt, DateTime.UtcNow.AddSeconds(6));
+        if (status.Cost.HasValue) update = update.Set(x => x.DirectVideoCost, status.Cost);
         if (terminal) update = update.Set(x => x.DirectVideoReconciledAt, DateTime.UtcNow);
         var written = await _db.VideoGenRuns.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
         if (terminal && written.ModifiedCount == 1)
