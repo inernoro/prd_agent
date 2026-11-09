@@ -24,6 +24,7 @@ import { TapdPropertyPanel, TapdPropertyRow } from './TapdPropertyPanel';
 import { featurePathLabel } from './featureTreeUtils';
 import { InitiationWorkflowDetail } from './InitiationWorkflowDetail';
 import { ReleaseWorkflowDetail } from './ReleaseWorkflowDetail';
+import { VersionAppearance } from './VersionAppearance';
 import { REQUIREMENT_TYPE_FORM_KEY } from './requirementTypeCatalog';
 import {
   REQUIREMENT_PRODUCT_DEFECT_FORM_KEY,
@@ -162,6 +163,7 @@ export function ProductObjectDetailPage() {
             <ArrowLeft size={16} />
           </button>
           <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-[color:var(--accent-fg-success)]">正式版本</span>
+          <div className="ml-auto"><VersionAppearance /></div>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <div className="w-full px-5 xl:px-8 py-5">
@@ -180,6 +182,7 @@ export function ProductObjectDetailPage() {
             <ArrowLeft size={16} />
           </button>
           <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-[color:var(--accent-fg-amber)]">内部版本</span>
+          <div className="ml-auto"><VersionAppearance /></div>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <div className="w-full px-5 xl:px-8 py-5">
