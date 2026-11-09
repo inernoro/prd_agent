@@ -1,0 +1,182 @@
+{
+  "source": "https://www.figma.com/design/wW9cn5adbZqXbNWDj4Dl5V",
+  "sourceKind": "Figma native get_design_context and get_variable_defs",
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "font": "沿用MAP现有字体栈（用户要求）",
+  "typography": {
+    "title": [
+      28,
+      40,
+      500
+    ],
+    "heading": [
+      16,
+      24,
+      700
+    ],
+    "body": [
+      14,
+      22,
+      400
+    ],
+    "label": [
+      13,
+      20,
+      500
+    ],
+    "caption": [
+      11,
+      18,
+      400
+    ]
+  },
+  "layout": {
+    "toolbarHeight": 64,
+    "workspaceNavigationWidth": 204,
+    "inspectorWidth": 359,
+    "contentPadding": 34,
+    "inspectorPadding": 24
+  },
+  "icons": "复用已安装lucide-react 0.468.0，与Figma组件描述同源同版本；不重绘SVG",
+  "dynamicControls": "播放进度与语速滑杆使用真实交互控件，不嵌入静态SVG截图",
+  "boards": [
+    {
+      "nodeId": "2:184",
+      "name": "深色创作台",
+      "sourceSha256": "dd5bff1adec554177ce8f0ea7dc5768cf32bf7ddfd3f3cbd0da2ea9dccea065e",
+      "colorVariables": {
+        "bg-input": "#1e1e24",
+        "border-control": "#393943",
+        "space\\\\/8": "8px",
+        "text-primary": "#f7f7fb",
+        "bg-card": "#202027",
+        "space\\\\/20": "20px",
+        "space\\\\/12": "12px",
+        "space\\/12": "12px",
+        "successbg": "#294136",
+        "space\\/16": "16px",
+        "space\\/4": "4px",
+        "text-muted": "#a1a1af",
+        "space\\/20": "20px",
+        "warm": "#3d2b28",
+        "space\\/8": "8px",
+        "accent-primary-solid": "#b0523a",
+        "accent-on-solid": "white",
+        "bg-base": "#141418",
+        "bg-rail": "#1e1e24",
+        "accent-primary": "#d97757",
+        "warmtext": "#edb29e",
+        "text-secondary": "#c2c2cd",
+        "successtext": "#9ed1b0",
+        "bg-toolbar": "#19191f",
+        "border-subtle": "#303039",
+        "space\\/24": "24px"
+      },
+      "fontSizes": [
+        11,
+        13,
+        14,
+        16,
+        20,
+        28
+      ],
+      "radii": [
+        "var(--space\\/12,12px)",
+        "var(--space\\/16,16px)",
+        "var(--space\\/20,20px)",
+        "var(--space\\/8,8px)",
+        "var(--space\\\\/12,12px)",
+        "var(--space\\\\/8,8px)"
+      ]
+    },
+    {
+      "nodeId": "2:417",
+      "name": "浅色创作台",
+      "sourceSha256": "0ef72d664942841be3686bf2c8d3ff6eb5ef9248f119e9a0024fcf6a220fa1e0",
+      "colorVariables": {
+        "bg-base": "#eeeae3",
+        "bg-rail": "#e9e4db",
+        "space\\/16": "16px",
+        "space\\/12": "12px",
+        "warm": "#eadfd6",
+        "space\\/8": "8px",
+        "accent-primary": "#b0523a",
+        "text-muted": "#65707c",
+        "text-primary": "#0f172a",
+        "warmtext": "#8e4630",
+        "border-control": "#cfc7bc",
+        "space\\/20": "20px",
+        "text-secondary": "#424a57",
+        "successbg": "#dbe6d7",
+        "successtext": "#365c43",
+        "bg-input": "#fbf8f3",
+        "bg-toolbar": "#f3efe8",
+        "border-subtle": "#d3ccc1",
+        "bg-card": "#f8f5ef",
+        "space\\/24": "24px",
+        "accent-primary-solid": "#b0523a",
+        "accent-on-solid": "white",
+        "space\\/4": "4px"
+      },
+      "fontSizes": [
+        11,
+        13,
+        14,
+        16,
+        20,
+        28
+      ],
+      "radii": [
+        "var(--space\\/12,12px)",
+        "var(--space\\/16,16px)",
+        "var(--space\\/20,20px)",
+        "var(--space\\/8,8px)"
+      ]
+    },
+    {
+      "nodeId": "2:650",
+      "name": "历史与详情",
+      "sourceSha256": "ee419582cbfca26fe29b46ab7b9665d0cf5faedf7ff3fa135fabbe9dcd72c6f1",
+      "colorVariables": {
+        "bg-input": "#1e1e24",
+        "border-control": "#393943",
+        "space\\\\/8": "8px",
+        "text-primary": "#f7f7fb",
+        "bg-base": "#141418",
+        "bg-rail": "#1e1e24",
+        "space\\/16": "16px",
+        "space\\/12": "12px",
+        "warm": "#3d2b28",
+        "space\\/8": "8px",
+        "accent-primary": "#d97757",
+        "text-muted": "#a1a1af",
+        "warmtext": "#edb29e",
+        "space\\/20": "20px",
+        "text-secondary": "#c2c2cd",
+        "successbg": "#294136",
+        "successtext": "#9ed1b0",
+        "bg-toolbar": "#19191f",
+        "border-subtle": "#303039",
+        "bg-card": "#202027",
+        "space\\/24": "24px"
+      },
+      "fontSizes": [
+        11,
+        13,
+        14,
+        16,
+        28
+      ],
+      "radii": [
+        "var(--space\\/12,12px)",
+        "var(--space\\/16,16px)",
+        "var(--space\\/20,20px)",
+        "var(--space\\/8,8px)",
+        "var(--space\\\\/8,8px)"
+      ]
+    }
+  ]
+}

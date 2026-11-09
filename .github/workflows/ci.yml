@@ -780,7 +780,8 @@ jobs:
     name: CDS Build & Test
     needs: changes
     if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # Playwright 1.59 的系统依赖尚不支持 ubuntu-latest 正在迁移的 Ubuntu 26。
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: cds

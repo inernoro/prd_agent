@@ -43,6 +43,8 @@ public sealed class McpToolDef
     public required string RequiredScope { get; init; }
 
     public required string Method { get; init; }
+    /// <summary>能力参数必须严格匹配，避免客户端拼错特性后被静默忽略。</summary>
+    public bool RejectUnknownArguments { get; init; }
 
     /// <summary>绝对路径模板，可含 {paramName} 占位，如 /api/document-store/stores/{storeId}/entries</summary>
     public required string PathTemplate { get; init; }
@@ -166,6 +168,71 @@ public static class McpBuiltinTools
 
     public static readonly IReadOnlyList<McpToolDef> All = new List<McpToolDef>
     {
+        new()
+        {
+            Name = "map_speech_capabilities", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/capabilities", RejectUnknownArguments = true,
+            Description = "查询当前环境已配置的文生语音能力、音色、试听、默认项、格式与上游专属参数。先查再选择，不猜音色。OpenAI声音指令和豆包情绪参数不能互换。配置为空或不可用时按原因提示用户。",
+        },
+        new()
+        {
+            Name = "map_speech_generate", RequiredScope = McpCapabilityCatalog.ScopeSpeechGenerate, Method = "POST",
+            PathTemplate = "/api/open/speech/runs", RejectUnknownArguments = true,
+            Description = "将文字逐字合成为语音，不改写原文。先查询能力取得实际音色与支持参数。使用声音预设或指定能力；未指定时使用显式默认项。异步返回runId，使用map_speech_get_run查询。成品保存到MAP我的资产的音频分类。重试保持clientRequestId与参数不变；unknown状态禁止自动重复生成。",
+            Params = new List<McpToolParam>()
+            {
+                new() { Name = "text", In = "body", Required = true, Description = "需要朗读的原文，最大长度取能力目录maxTextChars。" },
+                new() { Name = "title", In = "body", Description = "资产标题，最长150字。" },
+                new() { Name = "profileId", In = "body", Description = "能力目录中的id，不是供应商模型名。" },
+                new() { Name = "profileRevision", In = "body", Type = "integer", Description = "能力目录中的revision，防止配置变化后误用。" },
+                new() { Name = "presetId", In = "body", Description = "本人在当前环境保存的声音预设id。" },
+                new() { Name = "voiceId", In = "body", Description = "该能力voices中的id，音色只在对应能力内有效。" },
+                new() { Name = "format", In = "body", Description = "该能力formats中支持的输出格式。" },
+                new() { Name = "speed", In = "body", Type = "number", Description = "语速倍率，范围取该能力minSpeed/maxSpeed，默认1。" },
+                new() { Name = "instructions", In = "body", Description = "仅supportsInstructions为true时提供的声音风格指令，不修改朗读稿。" },
+                new() { Name = "emotion", In = "body", Description = "仅supportsEmotion为true时从emotions列表选择。" },
+                new() { Name = "clientRequestId", In = "body", Description = "本次逻辑请求的唯一标识；响应丢失重试时必须复用，避免重复生成和费用。" },
+            },
+        },
+        new()
+        {
+            Name = "map_speech_get_run", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/runs/{runId}", RejectUnknownArguments = true,
+            Description = "查询本人语音生成任务的阶段与结果。completed后返回资产标识、MAP历史入口、受授权保护的audioUrl，下载需继续携带当前Bearer凭据。unknown表示上游结果待核查，禁止自动重发生成。客户端断线不取消后台任务。",
+            Params = new List<McpToolParam>() { new() { Name = "runId", In = "path", Required = true, Description = "生成工具返回的runId。" } },
+        },
+        new()
+        {
+            Name = "map_speech_list_runs", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/runs", RejectUnknownArguments = true,
+            Description = "找回本人在当前环境的语音生成历史，包括成功、失败和待核查任务。受权限保护的音频需携带凭据下载。",
+            Params = new List<McpToolParam>() { new() { Name = "limit", In = "query", Type = "integer", Description = "返回条数1–100，默认30。" } },
+        },
+        new()
+        {
+            Name = "map_speech_list_presets", RequiredScope = McpCapabilityCatalog.ScopeSpeechRead, Method = "GET",
+            PathTemplate = "/api/open/speech/presets", RejectUnknownArguments = true,
+            Description = "查询本人在当前环境保存的声音预设。预设绑定具体能力、音色与配置版本，能力变更后需重新检查并保存。",
+        },
+        new()
+        {
+            Name = "map_speech_save_preset", RequiredScope = McpCapabilityCatalog.ScopeSpeechGenerate, Method = "POST",
+            PathTemplate = "/api/open/speech/presets", RejectUnknownArguments = true,
+            Description = "保存本人声音预设，供不同MCP客户端复用。新建不传id，修改必须带id和当前revision。不会修改平台配置。",
+            Params = new List<McpToolParam>()
+            {
+                new() { Name = "id", In = "body", Description = "修改时提供本人预设id。" },
+                new() { Name = "revision", In = "body", Type = "integer", Description = "修改时提供预设当前版本。" },
+                new() { Name = "name", In = "body", Required = true, Description = "预设名称，最长100字。" },
+                new() { Name = "profileId", In = "body", Required = true, Description = "当前环境能力id。" },
+                new() { Name = "profileRevision", In = "body", Type = "integer", Description = "能力配置版本。" },
+                new() { Name = "voiceId", In = "body", Description = "对应能力中的音色id。" },
+                new() { Name = "format", In = "body", Description = "支持的音频格式。" },
+                new() { Name = "speed", In = "body", Type = "number", Description = "受能力范围约束的语速倍率。" },
+                new() { Name = "instructions", In = "body", Description = "该能力支持时使用声音指令。" },
+                new() { Name = "emotion", In = "body", Description = "该能力支持时使用目录中的情绪。" },
+            },
+        },
         // ── 海鲜市场（技能市场）──
         new McpToolDef
         {

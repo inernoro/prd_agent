@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
@@ -361,8 +363,8 @@ public partial class ProductAgentController : ControllerBase
             var result = await ProductVersionDebugClear.ClearAsync(_db, request.Kind, request.Token, GetUserId());
             if (result == null)
                 return Conflict(ApiResponse<object>.Fail("VERSION_CLEAR_STALE", "版本记录已变化，未执行本次清理。请关闭弹窗后重新预览并确认。"));
-            _logger.LogWarning("版本调试清理：用户 {UserId} 类型 {Kind} 清理 {Count} 跳过 {Skipped} 备份 {BackupId}",
-                GetUserId(), result.Kind, result.ClearedCount, result.SkippedCount, result.BackupId);
+            _logger.LogWarning("版本调试清理：用户 {UserId} 类型 {Kind} 清理 {Count} 跳过 {Skipped} 剩余 {Remaining} 备份 {BackupId} 旧登记备份 {LegacyBackupId}",
+                GetUserId(), result.Kind, result.ClearedCount, result.SkippedCount, result.RemainingCount, result.BackupId, result.LegacyBackupId);
             return Ok(ApiResponse<object>.Ok(result));
         }
         catch (Exception ex)
@@ -1034,6 +1036,15 @@ public partial class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         if (item.CreatedBy != userId && !await CanManageAsync(userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可修改该立项记录"));
+        var originalApplicationId = string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId;
+        var requestedApplicationId = request.LinkedProductId?.Trim() ?? originalApplicationId;
+        await using var versionLease = await ProductVersionApplicationLease.AcquireAsync(_db, new[] { originalApplicationId, requestedApplicationId });
+        item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录已删除"));
+        var currentApplicationId = string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId;
+        if (currentApplicationId != originalApplicationId && currentApplicationId != requestedApplicationId)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "所属应用已变化，请刷新后核对"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能修改或重新申领。"));
         var issued = !string.IsNullOrWhiteSpace(item.TCode);
         if (!issued && item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许修改基础信息"));
@@ -1090,11 +1101,12 @@ public partial class ProductAgentController : ControllerBase
                 return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "该记录正在删除、申领正式版本或按另一类别重发，请刷新后核对。"));
             if (await ProductInitiationDeletion.LatestIdAsync(_db) != id)
                 return Conflict(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "已有更新的申领记录，本次未修改历史编号，请刷新。"));
-            revisedCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "T", versionType,
-                "initiation:" + id + ":revision:" + item.TCode + ":" + versionType, item.LinkedProductId ?? item.ProductId);
+            revisedCode = await ProductVersionClaimGuard.NextWorkflowCodeAsync(_db, "T", versionType,
+                "initiation:" + id + ":revision:" + item.TCode + ":" + versionType, currentApplicationId, versionLease);
             revisedAt = DateTime.UtcNow;
         }
 
+        await versionLease.EnsureHeldAsync();
         var saved = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status == item.Status
                 && x.TCode == item.TCode && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductInitiation>.Update
@@ -1137,7 +1149,7 @@ public partial class ProductAgentController : ControllerBase
     }
 
     [HttpDelete("initiations/{id}")]
-    public async Task<IActionResult> DeleteInitiation(string id)
+    public async Task<IActionResult> DeleteInitiation(string id, [FromBody] ProductVersionVoidRequest? request = null)
     {
         var userId = GetUserId();
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
@@ -1145,11 +1157,20 @@ public partial class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         if (item.CreatedBy != userId)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
+        var reason = ProductVersionClaimGuard.NormalizeRemovalReason(request?.Reason);
+        if (reason == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写删除理由，去除首尾空白后至少6个字符。"));
+        var queuedApplicationId = string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId;
+        await using var versionLease = await ProductVersionApplicationLease.AcquireAsync(_db, new[] { queuedApplicationId });
+        item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录已删除"));
+        if ((string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId) != queuedApplicationId)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "所属应用已变化，请刷新后核对"));
         if (string.IsNullOrWhiteSpace(item.TCode) || !Version.TryParse(item.TCode.TrimStart('T', 't'), out _))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新内部版本记录。"));
 
-        if (await ProductInitiationDeletion.LatestIdAsync(_db) != id)
-            return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "只允许删除全局最后一条申领成功的内部版本记录，当前记录不是最新一条，请保留并修改资料。"));
+        if (await ProductInitiationDeletion.LatestIdAsync(_db, queuedApplicationId) != id)
+            return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "只允许删除该应用最新的内部版本记录。"));
 
         var applicationId = item.LinkedProductId ?? item.ProductId;
         var product = await _db.Products.Find(x => x.Id == applicationId).FirstOrDefaultAsync();
@@ -1159,18 +1180,22 @@ public partial class ProductAgentController : ControllerBase
         if (await ProductInitiationDeletion.HasDownstreamAsync(_db, item, applicationName))
             return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该立项已有正式版本或其他下游关联，不能删除。请保留记录并修改资料。"));
 
-        // 与正式申领使用相同永久键：并发请求只能有一方成功，不在删除后重新开放手工 T 申领。
+        // 与正式申领使用相同来源键，防止删除与已有T申领并发成功；确认删除后释放给后续的新T记录。
         var key = ProductVersionClaimPolicy.ReleaseKey(applicationName, item.TCode);
         var target = "deleted-initiation:" + id;
         if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database, key, target))
             return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该 T 号已申领或正在申领正式版本，不能删除。请查看关联记录。"));
-        await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "initiation:" + id);
+        await versionLease.EnsureHeldAsync();
+        if (!await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "initiation:" + id, reason, userId))
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "删除理由未能保存，本次未删除，请刷新后重试。"));
         var deleted = await _db.ProductInitiations.DeleteOneAsync(x => x.Id == id && !x.IsDeleted
             && x.TCode == item.TCode && x.UpdatedAt == item.UpdatedAt, CancellationToken.None);
         if (deleted.DeletedCount == 0)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后重新核对，未重复删除。"));
+        var notificationQueued = await QueueVersionOperationNoticeAsync(false, "delete", id,
+            item.TCode, applicationName, applicationId, item.PlanName, userId, reason);
         await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "initiation:" + id);
-        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, notificationQueued }));
     }
 
     [HttpPost("initiations/{id}/review")]
@@ -1183,6 +1208,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能继续修改或申领。"));
         if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可更新该立项记录"));
         var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.SubmissionId).FirstOrDefaultAsync();
@@ -1286,6 +1312,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能继续修改或申领。"));
         if (item.ReviewMeetingRequired != true)
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "该立项未选择召开评审会"));
         if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
@@ -1310,7 +1337,7 @@ public partial class ProductAgentController : ControllerBase
         var allPassed = rounds.Count >= maxRound && rounds.All(r => r.Passed == true);
         var projectAt = allPassed ? rounds.Where(r => r.HeldAt.HasValue).Max(r => r.HeldAt) : item.ProjectAt;
 
-        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+        var saved = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductInitiation>.Update
                 .Set(x => x.MeetingDraftRounds, rounds)
                 .Set(x => x.FirstDraftMeetingAt, firstAt)
@@ -1318,6 +1345,7 @@ public partial class ProductAgentController : ControllerBase
                 .Set(x => x.ThirdDraftMeetingAt, thirdAt)
                 .Set(x => x.ProjectAt, projectAt)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (saved.MatchedCount != 1) return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后核对。"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -1340,6 +1368,7 @@ public partial class ProductAgentController : ControllerBase
                 Builders<ProductRelease>.Filter.Eq(x => x.CreatedBy, userId));
         var items = await _db.ProductReleases.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
+        await ProductReleaseDeletion.AnnotateAsync(_db, items, userId);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -1370,7 +1399,49 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        await ProductReleaseDeletion.AnnotateAsync(_db, new[] { item }, GetUserId());
         return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    [HttpDelete("releases/{id}")]
+    public async Task<IActionResult> DeleteRelease(string id, [FromBody] ProductVersionVoidRequest? request = null)
+    {
+        var userId = GetUserId();
+        var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (item.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
+        var reason = ProductVersionClaimGuard.NormalizeRemovalReason(request?.Reason);
+        if (reason == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写删除理由，去除首尾空白后至少6个字符。"));
+        var queuedApplicationId = item.ProductId;
+        if (!string.IsNullOrWhiteSpace(item.InitiationId))
+            queuedApplicationId = await _db.ProductInitiations.Find(x => x.Id == item.InitiationId)
+                .Project(x => x.LinkedProductId == null || x.LinkedProductId == "" ? x.ProductId : x.LinkedProductId).FirstOrDefaultAsync() ?? item.ProductId;
+        await using var versionLease = await ProductVersionApplicationLease.AcquireAsync(_db, new[] { queuedApplicationId });
+        item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录已删除"));
+        if (string.IsNullOrWhiteSpace(item.VCode) || !Version.TryParse(item.VCode.TrimStart('V', 'v'), out _))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新正式版本记录。"));
+        if (await ProductReleaseDeletion.LatestIdAsync(_db, queuedApplicationId) != id)
+            return BadRequest(ApiResponse<object>.Fail("RELEASE_NOT_LATEST", "只允许删除该应用最新的正式版本记录。"));
+        if (await ProductReleaseDeletion.HasDownstreamAsync(_db, id))
+            return BadRequest(ApiResponse<object>.Fail("RELEASE_HAS_DOWNSTREAM", "该正式版本已有后续版本或功能等关联，不能删除。"));
+        if (item.ClaimNotification?.Status == "sending")
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "通知正在发送，请稍后刷新再删除。"));
+        await versionLease.EnsureHeldAsync();
+        if (!await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "release:" + id, reason, userId))
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "删除理由未能保存，本次未删除，请刷新后重试。"));
+        var deleted = await _db.ProductReleases.DeleteOneAsync(x => x.Id == id && !x.IsDeleted
+            && x.VCode == item.VCode && x.UpdatedAt == item.UpdatedAt
+            && (x.ClaimNotification == null || x.ClaimNotification.Status != "sending"), CancellationToken.None);
+        if (deleted.DeletedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后重新核对，未重复删除。"));
+        var notificationQueued = await QueueVersionOperationNoticeAsync(true, "delete", id,
+            item.VCode, item.AppName, queuedApplicationId, item.PlanName, userId, reason);
+        await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "release:" + id);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, notificationQueued }));
     }
 
     [HttpPut("releases/{id}/feature-manifest")]
@@ -1379,6 +1450,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能继续修改或申领。"));
         if (HasPermission(AdminPermissionCatalog.ProductAgentVersionApply)
             && !HasPermission(AdminPermissionCatalog.ProductAgentUse)
             && item.CreatedBy != GetUserId() && item.OwnerId != GetUserId())
@@ -1391,11 +1463,12 @@ public partial class ProductAgentController : ControllerBase
         var manifestError = await ValidateReleaseFeatureManifestAsync(item.ProductId, manifest);
         if (manifestError != null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, manifestError));
-        await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+        var saved = await _db.ProductReleases.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductRelease>.Update
                 .Set(x => x.FeatureManifest, manifest)
                 .Set(x => x.PreviousReleaseId, request.PreviousReleaseId ?? item.PreviousReleaseId)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (saved.MatchedCount != 1) return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后核对。"));
         var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -1425,6 +1498,17 @@ public partial class ProductAgentController : ControllerBase
         var product = await FindAccessibleProductAsync(productId, userId);
         if (product == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var queuedApplicationId = productId;
+        if (!request.IsTemporaryOptimization && !string.IsNullOrWhiteSpace(request.InitiationId))
+            queuedApplicationId = await _db.ProductInitiations.Find(x => x.Id == request.InitiationId && x.ProductId == productId && !x.IsDeleted)
+                .Project(x => x.LinkedProductId == null || x.LinkedProductId == "" ? x.ProductId : x.LinkedProductId).FirstOrDefaultAsync() ?? productId;
+        var temporaryTitle = request.IsTemporaryOptimization ? request.PlanName?.Trim() : null;
+        if (request.IsTemporaryOptimization && string.IsNullOrWhiteSpace(temporaryTitle))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写产品立项方案名称"));
+        await using var versionLease = await ProductVersionApplicationLease.AcquireAsync(_db,
+            new[] { temporaryTitle == null ? queuedApplicationId : TemporaryOptimizationLeaseKey(temporaryTitle) });
+        if (temporaryTitle != null && await TemporaryOptimizationExistsAsync(temporaryTitle))
+            return Conflict(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "相同产品立项方案名称的临时优化需求已存在"));
         var (productSystemName, productAppName) = await ResolveInitiationSystemAppNamesAsync(product);
         var claimApplicationName = productAppName ?? product.Name;
         ProductInitiation? initiation = null;
@@ -1438,6 +1522,8 @@ public partial class ProductAgentController : ControllerBase
             initiation = await _db.ProductInitiations.Find(x => x.Id == request.InitiationId && x.ProductId == productId && x.Status == "approved" && !x.IsDeleted).FirstOrDefaultAsync();
             if (initiation == null)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已通过并取得 T 号的立项"));
+            if ((string.IsNullOrWhiteSpace(initiation.LinkedProductId) ? initiation.ProductId : initiation.LinkedProductId) != queuedApplicationId)
+                return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "方案所属应用已变化，请刷新后重新选择"));
             var usedTCode = initiation.TCode;
             claimApplicationName = initiation.AppName ?? claimApplicationName;
             if (string.IsNullOrWhiteSpace(usedTCode) || !IsWorkflowVersionCode(usedTCode, "T"))
@@ -1469,6 +1555,14 @@ public partial class ProductAgentController : ControllerBase
         if (!ownerExists)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选产品负责人不存在"));
 
+        var tapdLinks = new List<ProductReleaseTapdLink>();
+        if (!request.IsTemporaryOptimization)
+        {
+            var tapdError = NormalizeReleaseTapdLinks(request.NoTapdLinks, request.TapdLinks, out tapdLinks);
+            if (tapdError != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, tapdError));
+        }
+
         var versionType = request.IsTemporaryOptimization ? "minor" : initiation?.VersionType ?? NormalizeVersionType(request.VersionType);
         var previousRelease = await FindLatestReleaseWithManifestAsync(productId);
         var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
@@ -1489,7 +1583,9 @@ public partial class ProductAgentController : ControllerBase
             InitiationId = initiation?.Id,
             TCode = initiation?.TCode,
             IsTemporaryOptimization = request.IsTemporaryOptimization,
-            PlanName = request.IsTemporaryOptimization ? request.PlanName?.Trim() ?? "临时优化需求" : initiation!.PlanName,
+            NoTapdLinks = request.IsTemporaryOptimization ? null : request.NoTapdLinks,
+            TapdLinks = tapdLinks,
+            PlanName = temporaryTitle ?? initiation!.PlanName,
             VersionType = versionType,
             SystemName = initiation?.SystemName ?? productSystemName,
             AppName = initiation?.AppName ?? productAppName,
@@ -1518,11 +1614,21 @@ public partial class ProductAgentController : ControllerBase
         if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveSourceAsync(_db,
                 ProductVersionClaimPolicy.ReleaseKey(claimApplicationName, item.TCode!), "release:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
-        item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id,
-            string.IsNullOrWhiteSpace(initiation?.LinkedProductId) ? productId : initiation.LinkedProductId);
+        // 占用来源后复核原T，避免删除完成后迟到的旧请求继续申领；后续同号新T仍以新记录ID为准。
+        if (!request.IsTemporaryOptimization && !await _db.ProductInitiations.Find(x => x.Id == initiation!.Id
+                && !x.IsDeleted && x.Status == "approved" && x.TCode == item.TCode).AnyAsync())
+        {
+            await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "release:" + item.Id);
+            await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "release:" + item.Id);
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "所选T记录已删除或变化，请刷新后选择当前有效方案再申领"));
+        }
+        if (!request.IsTemporaryOptimization)
+            item.VCode = await ProductVersionClaimGuard.NextWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id, queuedApplicationId, versionLease);
         item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(_db, item, item.OwnerId, true, CanNotifyClaims());
+        await versionLease.EnsureHeldAsync();
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
-        await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId, $"版本申领完成（{item.VCode}），自动流转到已上线");
+        await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId,
+            item.IsTemporaryOptimization ? "临时优化需求已上线" : $"版本申领完成（{item.VCode}），自动流转到已上线");
         return Ok(ApiResponse<object>.Ok(item));
     }
 
@@ -1532,14 +1638,16 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废版本不能继续上线。"));
         if (item.OwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可完成该上线记录"));
-        await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+        var saved = await _db.ProductReleases.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductRelease>.Update
                 .Set(x => x.AnnouncementUrl, string.IsNullOrWhiteSpace(request.AnnouncementUrl) ? item.AnnouncementUrl : request.AnnouncementUrl.Trim())
                 .Set(x => x.Status, "released")
                 .Set(x => x.ReleasedAt, item.ReleasedAt ?? DateTime.UtcNow)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (saved.MatchedCount != 1) return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后核对。"));
         var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, GetUserId(), $"上线完成（{updated?.VCode}），自动流转到已上线");
         return Ok(ApiResponse<object>.Ok(updated));
@@ -1613,6 +1721,9 @@ public partial class ProductAgentController : ControllerBase
             : scope == "all" && legacyCanViewAll ? Builders<VersionRegistrationSnapshot>.Filter.Empty
                 : Builders<VersionRegistrationSnapshot>.Filter.Eq(x => x.CreatedBy, userId);
         var productItems = await _db.ProductVersionWorkflowSnapshots.Find(productFilter).SortByDescending(x => x.CreatedAt).ToListAsync();
+        // 全局清理备份含其他用户的旧登记，须具备原有的全局登记读取权限。
+        if (!legacyCanViewAll)
+            legacyFilter &= Builders<VersionRegistrationSnapshot>.Filter.Ne(x => x.SourceType, VersionRegistrationSnapshotSourceType.DebugClear);
         var legacyItems = await _db.VersionRegistrationSnapshots.Find(legacyFilter).SortByDescending(x => x.CreatedAt).ToListAsync();
         var items = productItems.Select(x => new
         {
@@ -1644,7 +1755,8 @@ public partial class ProductAgentController : ControllerBase
         if ((!HasPermission(AdminPermissionCatalog.ReviewAgentUse)
                 && !HasPermission(AdminPermissionCatalog.ProductAgentVersionApply)
                 && !HasPermission(AdminPermissionCatalog.ProductAgentUse))
-            || (!HasPermission(AdminPermissionCatalog.ReviewAgentManage) && legacySnapshot.CreatedBy != userId))
+            || (!HasPermission(AdminPermissionCatalog.ReviewAgentManage)
+                && (legacySnapshot.CreatedBy != userId || legacySnapshot.SourceType == VersionRegistrationSnapshotSourceType.DebugClear)))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权查看这份存档"));
         return Ok(ApiResponse<object>.Ok(new { snapshot = legacySnapshot, registry = true }));
     }
@@ -1666,6 +1778,28 @@ public partial class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { snapshotId = snapshot.Id, recordCount = snapshot.Initiations.Count + snapshot.Releases.Count }));
     }
 
+    private static string TemporaryOptimizationLeaseKey(string title) => "temporary-optimization:" + title;
+
+    private Task<bool> TemporaryOptimizationExistsAsync(string title, string? exceptId = null) =>
+        _db.ProductReleases.Find(x => !x.IsDeleted && x.IsTemporaryOptimization && x.PlanName == title && x.Id != exceptId).AnyAsync();
+
+    private static string HistoryVersionStatus(string? status, string fallback) => status?.Trim() switch
+    {
+        "voided" or "已作废" => "voided",
+        "legacy_readonly" or "历史登记" => "legacy_readonly",
+        "announcement_pending" or "待填写上线公告" when fallback == "released" => "announcement_pending",
+        _ => fallback,
+    };
+
+    private async Task<List<string>> ResolveHistoryRequirementIdsAsync(string productId, List<string>? requested)
+    {
+        var ids = NormalizeVersionMemberNames(requested);
+        if (ids.Count == 0) return ids;
+        var existing = await _db.Requirements.Find(x => x.ProductId == productId && !x.IsDeleted && ids.Contains(x.Id))
+            .Project(x => x.Id).ToListAsync();
+        return ids.Where(existing.Contains).ToList();
+    }
+
     private async Task<IActionResult> ImportVersionWorkflowCoreAsync(ImportVersionWorkflowRequest request, string? fixedProductId = null)
     {
         if (request.Kind is not ("initiation" or "release") || request.Rows == null || request.Rows.Count == 0)
@@ -1678,12 +1812,11 @@ public partial class ProductAgentController : ControllerBase
                 Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
                 Builders<Product>.Filter.In(p => p.Id, scope));
         var products = await _db.Products.Find(productFilter).Limit(5000).ToListAsync();
-        var productIds = products.Select(p => p.Id).ToHashSet();
+        var productNames = products.ToDictionary(p => p.Id, p => p.Name);
 
         var errors = new List<object>();
         var created = 0;
         var skipped = 0;
-        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var importedInitiations = new List<ProductInitiation>();
         var importedReleases = new List<ProductRelease>();
         var snapshotErrors = new List<VersionRegistrationImportError>();
@@ -1700,7 +1833,7 @@ public partial class ProductAgentController : ControllerBase
             }
             var label = ProductImportProductRouting.ResolveProductLabelFromVersionRow(row.AppName, row.SystemName, row.LegacyData);
             var (targetProductId, _, matched) = ProductImportProductRouting.ResolveUniqueVersionProductIdByLabel(products, label);
-            if (string.IsNullOrWhiteSpace(targetProductId) || !productIds.Contains(targetProductId) || !matched
+            if (string.IsNullOrWhiteSpace(targetProductId) || !productNames.TryGetValue(targetProductId, out var productName) || !matched
                 || (fixedProductId != null && targetProductId != fixedProductId))
             {
                 var msg = string.IsNullOrWhiteSpace(label)
@@ -1715,6 +1848,11 @@ public partial class ProductAgentController : ControllerBase
 
             try
             {
+                var legacyAppNames = new[] { label, productName, row.AppName }
+                    .Where(name => !string.IsNullOrWhiteSpace(name)).Distinct().ToArray();
+                Task<bool> LegacyCodeExists(string kind, string code) =>
+                    _db.VersionRegistrations.Find(x => x.Kind == kind && x.Code == code
+                        && legacyAppNames.Contains(x.ApplicationName)).AnyAsync();
                 if (request.Kind == "release" && row.PlannedTrainingMinutes < 0)
                 {
                     errors.Add(new { row = index + 2, message = "预计培训时长必须是非负整数分钟" });
@@ -1723,38 +1861,92 @@ public partial class ProductAgentController : ControllerBase
                 }
                 if (request.Kind == "release")
                 {
-                    if (string.IsNullOrWhiteSpace(row.Code))
+                    var temporary = row.VersionType?.Trim() == "临时优化需求";
+                    var code = temporary ? string.Empty : row.Code?.Trim().ToUpperInvariant() ?? string.Empty;
+                    var planName = row.PlanName.Trim();
+                    if (!temporary && code.Length == 0)
                     {
                         errors.Add(new { row = index + 2, message = "上线历史数据必须有 V 号" });
                         snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "上线历史数据必须有 V 号" });
                         continue;
                     }
-                    var code = row.Code.Trim().ToUpperInvariant();
-                    if (!IsWorkflowVersionCode(code, "V"))
+                    if (!temporary && !IsWorkflowVersionCode(code, "V"))
                     {
                         errors.Add(new { row = index + 2, message = "正式版本号格式应为 V主版本.中版本.小版本" });
                         snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "正式版本号格式应为 V主版本.中版本.小版本" });
                         continue;
                     }
-                    if (!seenCodes.Add($"{targetProductId}:{code}")
-                        || await _db.ProductReleases.Find(x => x.ProductId == targetProductId && x.VCode == code && !x.IsDeleted).AnyAsync()
-                        || (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Code == code && x.ApplicationName == row.AppName).AnyAsync()))
+                    await using var importLease = await ProductVersionApplicationLease.AcquireAsync(_db,
+                        new[] { temporary ? TemporaryOptimizationLeaseKey(planName) : targetProductId });
+                    var duplicate = temporary
+                        ? await TemporaryOptimizationExistsAsync(planName)
+                        : await _db.ProductReleases.Find(x => x.ProductId == targetProductId && x.VCode == code && !x.IsDeleted).AnyAsync()
+                            || (string.IsNullOrWhiteSpace(row.ReleaseOrigin) && await LegacyCodeExists(VersionRegistrationKind.Formal, code));
+                    if (duplicate)
                     {
                         skipped++;
-                        errors.Add(new { row = index + 2, message = $"正式版本号 {code} 已存在，未重复导入" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = $"正式版本号 {code} 已存在，未重复导入" });
+                        var message = temporary ? "相同产品立项方案名称的临时优化需求已存在，未重复导入"
+                            : $"正式版本号 {code} 已存在，未重复导入";
+                        errors.Add(new { row = index + 2, message });
+                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = message });
                         continue;
                     }
-                    var sourceTCode = row.TCode?.Trim().ToUpperInvariant();
-                    if (!string.IsNullOrWhiteSpace(sourceTCode)
-                        && (await _db.ProductReleases.Find(x => x.ProductId == targetProductId && x.TCode == sourceTCode && !x.IsDeleted).AnyAsync()
-                            || (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal && x.TCode == sourceTCode && x.ApplicationName == row.AppName).AnyAsync())))
+                    var sourceTCode = temporary ? null : row.TCode?.Trim().ToUpperInvariant();
+                    ReleaseTableOrigin? origin = null;
+                    if (!string.IsNullOrWhiteSpace(row.ReleaseOrigin))
                     {
-                        skipped++;
-                        errors.Add(new { row = index + 2, message = $"内部版本号 {sourceTCode} 已有关联的上线记录，未重复导入" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = $"内部版本号 {sourceTCode} 已有关联的上线记录，未重复导入" });
+                        try
+                        {
+                            origin = JsonSerializer.Deserialize<ReleaseTableOrigin>(ReleaseTableProtector(targetProductId,
+                                ReleaseTableKey(temporary, code, planName)).Unprotect(row.ReleaseOrigin.Trim()));
+                        }
+                        catch (Exception ex) when (ex is CryptographicException or JsonException)
+                        {
+                            errors.Add(new { row = index + 2, message = "记录关联与本环境、应用或版本不匹配，已跳过" });
+                            snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "记录关联与本环境、应用或版本不匹配，已跳过" });
+                            continue;
+                        }
+                    }
+                    var sameSource = origin != null && string.Equals(origin.TCode, sourceTCode, StringComparison.OrdinalIgnoreCase);
+                    var initiationId = sameSource ? origin?.InitiationId : null;
+                    if (initiationId == null && !string.IsNullOrWhiteSpace(sourceTCode))
+                    {
+                        var matches = await _db.ProductInitiations.Find(x => !x.IsDeleted && x.TCode == sourceTCode
+                                && (x.LinkedProductId == targetProductId
+                                    || ((x.LinkedProductId == null || x.LinkedProductId == "") && x.ProductId == targetProductId)))
+                            .Project(x => x.Id).Limit(2).ToListAsync();
+                        if (matches.Count == 1)
+                        {
+                            var matchId = matches[0];
+                            if (!await _db.ProductReleases.Find(x => x.ProductId == targetProductId
+                                    && !x.IsDeleted && (x.InitiationId == matchId || x.TCode == sourceTCode)).AnyAsync())
+                                initiationId = matchId;
+                        }
+                    }
+                    var manifest = NormalizeReleaseFeatureManifest(row.FeatureManifest ?? new());
+                    if (manifest.Count > 0 && await ValidateReleaseFeatureManifestAsync(targetProductId, manifest) is { } manifestError)
+                    {
+                        errors.Add(new { row = index + 2, message = manifestError });
+                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = manifestError });
                         continue;
                     }
+                    var tapdLinks = new List<ProductReleaseTapdLink>();
+                    if (row.TapdLinks is { Count: > 0 })
+                    {
+                        var tapdError = NormalizeReleaseTapdLinks(row.NoTapdLinks == true, row.TapdLinks, out tapdLinks);
+                        if (tapdError != null)
+                        {
+                            errors.Add(new { row = index + 2, message = tapdError });
+                            snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = tapdError });
+                            continue;
+                        }
+                    }
+                    var status = HistoryVersionStatus(row.Status, "released");
+                    var memberNames = NormalizeVersionMemberNames(row.ProjectMemberNames);
+                    var memberIds = NormalizeVersionMemberNames(row.TeamMemberIds);
+                    var resolveUser = await ResolveVersionPersonKeysAsync(memberIds.Concat(memberNames)
+                        .Append(row.OwnerId ?? "").Append(row.OwnerName ?? ""));
+                    var ownerId = resolveUser(row.OwnerId) ?? resolveUser(row.OwnerName);
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
                     if (!string.IsNullOrWhiteSpace(row.OwnerId) && !legacyData.ContainsKey("产品负责人"))
                         legacyData["产品负责人"] = row.OwnerId.Trim();
@@ -1764,22 +1956,42 @@ public partial class ProductAgentController : ControllerBase
                         legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
                     var release = new ProductRelease
                     {
-                        ProductId = targetProductId, TCode = sourceTCode, VCode = code, PlanName = row.PlanName.Trim(),
+                        ProductId = targetProductId, TCode = sourceTCode, VCode = code, PlanName = planName,
+                        InitiationId = initiationId, PreviousReleaseId = origin?.PreviousReleaseId, FeatureManifest = manifest,
+                        IsManualTCode = sameSource && origin!.IsManualTCode,
+                        IsTemporaryOptimization = temporary,
                         VersionType = NormalizeVersionType(row.VersionType), AnnouncementUrl = row.AnnouncementUrl,
                         SystemName = row.SystemName, AppName = row.AppName,
                         ProjectType = row.ProjectType == "custom" ? "custom" : "standard",
-                        DepartmentName = row.DepartmentName, OwnerId = null,
+                        DepartmentName = row.DepartmentName, OwnerId = ownerId,
                         DemandSource = row.DemandSource, RequirementDescription = row.RequirementDescription,
-                        OwnerName = row.OwnerName, ProjectMemberNames = NormalizeVersionMemberNames(row.ProjectMemberNames),
+                        OwnerName = row.OwnerName, ProjectMemberNames = memberNames,
                         ContractParty = row.ContractParty, Remark = row.Remark, IsGlobalOpen = row.IsGlobalOpen,
-                        OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope) ? "上线全域开放" : row.OpenBrandScope,
-                        PlanUrl = row.PlanUrl, TeamMemberIds = row.TeamMemberIds ?? new(),
-                        Status = "released",
-                        PlannedReleaseAt = row.Date, PlannedTrainingMinutes = row.PlannedTrainingMinutes,
-                        ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
+                        OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope)
+                            ? row.IsGlobalOpen == false ? "非全域开放" : "上线全域开放"
+                            : row.OpenBrandScope,
+                        PlanUrl = row.PlanUrl, TeamMemberIds = NormalizeVersionMemberNames(memberIds.Concat(memberNames)
+                            .Select(name => resolveUser(name) ?? "")),
+                        RequirementIds = await ResolveHistoryRequirementIdsAsync(targetProductId, row.RequirementIds),
+                        Status = status, NoTapdLinks = row.NoTapdLinks, TapdLinks = tapdLinks,
+                        VoidReason = status == "voided" ? row.VoidReason : null,
+                        VoidedAt = status == "voided" ? row.VoidedAt : null,
+                        StatusBeforeVoid = status == "voided" ? origin?.StatusBeforeVoid : null,
+                        VoidedBy = status == "voided" ? origin?.VoidedBy : null,
+                        PlannedReleaseAt = row.PlannedReleaseAt ?? row.Date, PlannedTrainingMinutes = row.PlannedTrainingMinutes,
+                        ReleasedAt = row.ReleasedAt ?? row.Date, CreatedBy = userId, SourceType = "import",
                         LegacyData = legacyData,
                     };
-                    await _db.ProductReleases.InsertOneAsync(release);
+                    if (origin != null)
+                    {
+                        release.Id = origin.Id;
+                        release.CreatedBy = origin.CreatedBy;
+                        release.CreatedAt = origin.CreatedAt;
+                        release.UpdatedAt = origin.UpdatedAt;
+                        release.SourceType = origin.SourceType;
+                    }
+                    await importLease.EnsureHeldAsync();
+                    await _db.ProductReleases.InsertOneAsync(release, cancellationToken: CancellationToken.None);
                     importedReleases.Add(release);
                 }
                 else
@@ -1791,10 +2003,12 @@ public partial class ProductAgentController : ControllerBase
                         snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "内部版本号格式应为 T主版本.中版本.小版本" });
                         continue;
                     }
+                    await using var importLease = await ProductVersionApplicationLease.AcquireAsync(_db, new[] { targetProductId });
                     if (!string.IsNullOrWhiteSpace(code)
-                        && (!seenCodes.Add($"{targetProductId}:{code}")
-                            || await _db.ProductInitiations.Find(x => x.ProductId == targetProductId && x.TCode == code && !x.IsDeleted).AnyAsync()
-                            || (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Code == code && x.ApplicationName == row.AppName).AnyAsync())))
+                        && (await _db.ProductInitiations.Find(x => !x.IsDeleted && x.TCode == code
+                                && (x.LinkedProductId == targetProductId
+                                    || ((x.LinkedProductId == null || x.LinkedProductId == "") && x.ProductId == targetProductId))).AnyAsync()
+                            || await LegacyCodeExists(VersionRegistrationKind.Internal, code)))
                     {
                         skipped++;
                         errors.Add(new { row = index + 2, message = $"内部版本号 {code} 已存在，未重复导入" });
@@ -1805,8 +2019,7 @@ public partial class ProductAgentController : ControllerBase
                         ? ProductVersionImportFingerprint.Compute(targetProductId, row)
                         : null;
                     if (importFingerprint != null
-                        && (!seenCodes.Add($"fingerprint:{importFingerprint}")
-                            || await _db.ProductInitiations.Find(x => x.ImportFingerprint == importFingerprint && !x.IsDeleted).AnyAsync()))
+                        && await _db.ProductInitiations.Find(x => x.ImportFingerprint == importFingerprint && !x.IsDeleted).AnyAsync())
                     {
                         skipped++;
                         errors.Add(new { row = index + 2, message = "相同的无编号内部版本记录已导入，未重复写入" });
@@ -1820,13 +2033,17 @@ public partial class ProductAgentController : ControllerBase
                         legacyData["备注"] = row.Remark.Trim();
                     if (row.TeamMemberIds is { Count: > 0 } teamNames && !legacyData.ContainsKey("项目组成员"))
                         legacyData["项目组成员"] = string.Join("、", teamNames.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()));
+                    var status = HistoryVersionStatus(row.Status, string.IsNullOrWhiteSpace(code) ? "draft" : "approved");
+                    var ownerId = row.OwnerId?.Trim();
+                    if (!string.IsNullOrWhiteSpace(ownerId) && !await _db.Users.Find(x => x.UserId == ownerId).AnyAsync())
+                        ownerId = null;
                     var initiation = new ProductInitiation
                     {
                         ProductId = targetProductId, TCode = code, PlanName = row.PlanName.Trim(),
                         VersionType = NormalizeVersionType(row.VersionType), PlanUrl = row.PlanUrl,
                         SystemName = row.SystemName, AppName = row.AppName,
                         ProjectType = row.ProjectType == "custom" ? "custom" : "standard", CustomerSource = row.CustomerSource,
-                        DemandSource = row.DemandSource, OwnerName = row.OwnerName,
+                        DemandSource = row.DemandSource, OwnerName = row.OwnerName, OwnerId = ownerId,
                         ProjectMemberNames = NormalizeVersionMemberNames(row.ProjectMemberNames),
                         RequirementDescription = row.RequirementDescription, DepartmentName = row.DepartmentName,
                         PrimaryOwnerId = null, FirstDraftMeetingAt = row.FirstDraftMeetingAt,
@@ -1835,10 +2052,13 @@ public partial class ProductAgentController : ControllerBase
                         NeedUiDesign = row.NeedUiDesign, IsAiPoc = row.IsAiPoc,
                         DevelopmentStatus = string.IsNullOrWhiteSpace(row.DevelopmentStatus) ? "待开发" : row.DevelopmentStatus,
                         Remark = row.Remark,
-                        Status = string.IsNullOrWhiteSpace(row.Code) ? "draft" : "approved", CreatedBy = userId,
+                        RequirementIds = await ResolveHistoryRequirementIdsAsync(targetProductId, row.RequirementIds),
+                        Status = status, VoidReason = status == "voided" ? row.VoidReason : null,
+                        VoidedAt = status == "voided" ? row.VoidedAt : null, CreatedBy = userId,
                         SourceType = "import", ImportFingerprint = importFingerprint, LegacyData = legacyData,
                     };
-                    await _db.ProductInitiations.InsertOneAsync(initiation);
+                    await importLease.EnsureHeldAsync();
+                    await _db.ProductInitiations.InsertOneAsync(initiation, cancellationToken: CancellationToken.None);
                     importedInitiations.Add(initiation);
                 }
                 created++;
@@ -7143,9 +7363,17 @@ public partial class ProductAgentController : ControllerBase
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
         if (workflow)
-            return Ok(ApiResponse<object>.Ok(await ProductVersionListReader.ReadReleasesAsync(
-                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
+        {
+            var result = await ProductVersionListReader.ReadReleasesAsync(
+                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage));
+            Func<ProductRelease, string>? protectOrigin = await IsProductApplicationAdminAsync(GetUserId())
+                && HttpContext.RequestServices?.GetService<IDataProtectionProvider>() != null ? ProtectReleaseTableOrigin : null;
+            return Ok(ApiResponse<object>.Ok(await WithVersionExportFieldsAsync(result, row => new(
+                row.ProductId, row.AppName, row.SystemName, row.OwnerId, row.OwnerName ?? row.LegacyData.GetValueOrDefault("产品负责人"),
+                row.TeamMemberIds, row.ProjectMemberNames), protectOrigin)));
+        }
         var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
+        await ProductReleaseDeletion.AnnotateAsync(_db, items, GetUserId());
         var names = await ProductNamesAsync(items.Select(r => r.ProductId));
         var reqIds = items.SelectMany(r => r.RequirementIds).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
         var reqTitles = new Dictionary<string, string>();
@@ -7215,6 +7443,7 @@ public partial class ProductAgentController : ControllerBase
                     r.AnnouncementUrl,
                     r.Status,
                     r.IsTemporaryOptimization,
+                    r.CanDelete,
                     r.UpdatedAt,
                 };
             })
@@ -7228,8 +7457,13 @@ public partial class ProductAgentController : ControllerBase
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
         if (workflow)
-            return Ok(ApiResponse<object>.Ok(await ProductVersionListReader.ReadInitiationsAsync(
-                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
+        {
+            var result = await ProductVersionListReader.ReadInitiationsAsync(
+                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage));
+            return Ok(ApiResponse<object>.Ok(await WithVersionExportFieldsAsync(result, row => new(
+                row.LinkedProductId ?? row.ProductId, row.AppName, row.SystemName, row.OwnerId,
+                row.OwnerName ?? row.LegacyData.GetValueOrDefault("产品负责人"), [], []))));
+        }
         var items = await FindInScopeAsync<ProductInitiation>(scope, i => i.ProductId, i => i.IsDeleted);
         var names = await ProductNamesAsync(items.Select(i => i.ProductId));
         var userNames = await UserNamesAsync(items.SelectMany(i => new[] { i.OwnerId, i.PrimaryOwnerId, i.CreatedBy }));
@@ -8164,6 +8398,8 @@ public class UpdateInitiationMeetingRequest
 
 public class CreateReleaseRequest
 {
+    public bool NoTapdLinks { get; set; }
+    public List<ProductReleaseTapdLink?>? TapdLinks { get; set; }
     public string? HistoryConfirmationToken { get; set; }
     public string? InitiationId { get; set; }
     public string? ManualTCode { get; set; }
@@ -8215,6 +8451,8 @@ public class CreateProductVersionSnapshotRequest
 
 public class ImportVersionWorkflowRow
 {
+    public string? ReleaseOrigin { get; set; }
+    public List<ReleaseFeatureItem>? FeatureManifest { get; set; }
     public string? Code { get; set; }
     public string? TCode { get; set; }
     public string? PlanName { get; set; }
@@ -8246,6 +8484,14 @@ public class ImportVersionWorkflowRow
     public int? PlannedTrainingMinutes { get; set; }
     public string? AnnouncementUrl { get; set; }
     public DateTime? Date { get; set; }
+    public DateTime? PlannedReleaseAt { get; set; }
+    public DateTime? ReleasedAt { get; set; }
+    public bool? NoTapdLinks { get; set; }
+    public List<ProductReleaseTapdLink?>? TapdLinks { get; set; }
+    public List<string>? RequirementIds { get; set; }
+    public string? Status { get; set; }
+    public string? VoidReason { get; set; }
+    public DateTime? VoidedAt { get; set; }
     public Dictionary<string, string>? LegacyData { get; set; }
 }
 
@@ -8513,6 +8759,11 @@ public class ImportSimpleItemRow
 public class ProductApplicationAdminRequest
 {
     public string UserId { get; set; } = string.Empty;
+}
+
+public class ProductVersionVoidRequest
+{
+    public string? Reason { get; set; }
 }
 
 public class ProductVersionDebugClearRequest
