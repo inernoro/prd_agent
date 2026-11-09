@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using Moq;
+using MongoDB.Driver;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Microsoft.Extensions.DependencyInjection;
 using PrdAgent.Api.Services;
@@ -161,8 +162,10 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         using var services = BuildDownloadServices(content, out var storage);
         var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 16));
         ex.Message.ShouldContain("超过大小限制");
-        ex.Message.ShouldContain("status=200");
-        ex.Message.ShouldContain("decision=rejected");
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        audit.StatusCode.ShouldBe(200);
+        audit.ResponseBody.ShouldNotBeNull();
+        audit.ResponseBody!.ShouldContain("decision=rejected");
         storage.VerifyNoOtherCalls();
     }
 
@@ -209,7 +212,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
         using var services = BuildDownloadServices(content, out var storage);
         var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 1024, 1));
-        ex.Message.ShouldContain("decision=rejected");
+        services.GetRequiredService<List<ApiRequestLog>>().Single().ResponseBody!.ShouldContain("decision=rejected");
         storage.VerifyNoOtherCalls();
     }
 
@@ -224,10 +227,22 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         content.Headers.ContentType = new MediaTypeHeaderValue(mime);
         using var services = BuildDownloadServices(content, out var storage, HttpStatusCode.Forbidden);
         var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 8192));
-        ex.Message.ShouldContain("link-expired");
-        ex.Message.ShouldContain("status=403");
+        ex.Message.ShouldNotContain("link-expired");
+        ex.Message.ShouldNotContain("status=403");
         ex.Message.ShouldNotContain("private-token-marker");
-        ex.Message.ShouldContain("prefixSha256");
+        ex.Message.ShouldNotContain("prefixSha256");
+        ex.Message.ShouldContain("请检查视频来源");
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        audit.StatusCode.ShouldBe(403);
+        audit.RequestId.ShouldBe("synthetic-operation");
+        audit.SessionId.ShouldBe("synthetic-execution");
+        audit.UserId.ShouldBe("synthetic-user");
+        ex.Message.ShouldContain(audit.Id);
+        audit.ResponseBody.ShouldNotBeNull();
+        audit.ResponseBody!.ShouldContain("link-expired");
+        audit.ResponseBody.ShouldContain("prefixSha256");
+        audit.ResponseBody.ShouldNotContain("private-token-marker");
+        audit.ResponseBody.ShouldNotContain("synthetic-query-marker");
         storage.VerifyNoOtherCalls();
     }
 
@@ -240,10 +255,30 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
         using var services = BuildDownloadServices(content, out var storage, HttpStatusCode.Forbidden);
         var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 8192));
-        ex.Message.ShouldContain("link-expired");
-        ex.Message.ShouldContain("\"bodyComplete\":false");
+        ex.Message.ShouldNotContain("link-expired");
         ex.Message.ShouldNotContain("private-token-marker");
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        audit.ResponseBody.ShouldNotBeNull();
+        audit.ResponseBody!.ShouldContain("link-expired");
+        audit.ResponseBody.ShouldContain("\"bodyComplete\":false");
+        audit.ResponseBody.ShouldNotContain("private-token-marker");
         source.BytesRead.ShouldBe(4096);
+        storage.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ExecuteVideoDownloaderAsync_ShouldRejectStorageWhenAuditCannotBeSaved()
+    {
+        using var content = new ByteArrayContent(Mp4Bytes());
+        content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+        using var services = BuildDownloadServices(content, out var storage);
+        Mock.Get(services.GetRequiredService<IMongoCollection<ApiRequestLog>>())
+            .Setup(x => x.InsertOneAsync(It.IsAny<ApiRequestLog>(), It.IsAny<InsertOneOptions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("synthetic-private-database-detail"));
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 8192));
+        ex.Message.ShouldContain("视频下载记录未能保存");
+        ex.Message.ShouldNotContain("synthetic-private-database-detail");
         storage.VerifyNoOtherCalls();
     }
 
@@ -259,11 +294,13 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
                 ["maxFileSizeBytes"] = maxBytes.ToString(),
                 ["timeoutSeconds"] = timeoutSeconds.ToString(),
             },
-        }, new Dictionary<string, string>(), new List<ExecutionArtifact>());
+        }, new Dictionary<string, string>(), new List<ExecutionArtifact>(),
+            new WorkflowDesignInvocation("synthetic-user", "synthetic-operation", "local-download-integration", "synthetic-execution", "synthetic-user"));
 
     private static ServiceProvider BuildDownloadServices(HttpContent content, out Mock<IAssetStorage> storage, HttpStatusCode status = HttpStatusCode.OK)
     {
         var services = new ServiceCollection();
+        RegisterAudit(services);
         storage = new Mock<IAssetStorage>(MockBehavior.Strict);
         services.AddSingleton(storage.Object);
         var validator = new Mock<ISafeOutboundUrlValidator>(MockBehavior.Strict);
@@ -272,6 +309,17 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         services.AddSingleton(validator.Object);
         services.AddHttpClient("SafeOutbound").ConfigurePrimaryHttpMessageHandler(() => new SyntheticHandler(content, status));
         return services.BuildServiceProvider();
+    }
+
+    private static void RegisterAudit(ServiceCollection services)
+    {
+        var auditRecords = new List<ApiRequestLog>();
+        var audit = new Mock<IMongoCollection<ApiRequestLog>>(MockBehavior.Strict);
+        audit.Setup(x => x.InsertOneAsync(It.IsAny<ApiRequestLog>(), It.IsAny<InsertOneOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<ApiRequestLog, InsertOneOptions, CancellationToken>((record, _, _) => auditRecords.Add(record))
+            .Returns(Task.CompletedTask);
+        services.AddSingleton(audit.Object);
+        services.AddSingleton(auditRecords);
     }
 
     private sealed class SyntheticHandler(HttpContent content, HttpStatusCode status) : HttpMessageHandler
@@ -328,6 +376,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     private static ServiceProvider BuildServices()
     {
         var services = new ServiceCollection();
+        RegisterAudit(services);
         services.AddSingleton<ISafeOutboundUrlValidator, SafeOutboundUrlValidator>();
         services.AddSingleton<ISafeOutboundHttpHandlerFactory, SafeOutboundHttpHandlerFactory>();
         services.AddHttpClient("SafeOutbound")

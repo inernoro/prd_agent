@@ -132,7 +132,7 @@ public static class CapsuleExecutor
 
             // ── 短视频工作流类 ──
             CapsuleTypes.DouyinParser => await ExecuteDouyinParserAsync(sp, node, variables, inputArtifacts),
-            CapsuleTypes.VideoDownloader => await ExecuteVideoDownloaderAsync(sp, node, variables, inputArtifacts),
+            CapsuleTypes.VideoDownloader => await ExecuteVideoDownloaderAsync(sp, node, variables, inputArtifacts, designInvocation),
             CapsuleTypes.VideoToText => await ExecuteVideoToTextAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TextToCopywriting => await ExecuteTextToCopywritingAsync(sp, node, variables, inputArtifacts, emitEvent),
             CapsuleTypes.TiktokCreatorFetch => await ExecuteTiktokCreatorFetchAsync(sp, node, variables, inputArtifacts),
@@ -5748,7 +5748,8 @@ public static class CapsuleExecutor
         IServiceProvider sp,
         WorkflowNode node,
         Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts)
+        List<ExecutionArtifact> inputArtifacts,
+        WorkflowDesignInvocation? invocation = null)
     {
         var sb = new StringBuilder();
 
@@ -5794,8 +5795,17 @@ public static class CapsuleExecutor
         client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
         // 下载视频
-        byte[] videoBytes;
-        string? contentType;
+        var auditLogs = sp.GetService<IMongoCollection<ApiRequestLog>>()
+            ?? sp.GetRequiredService<MongoDbContext>().ApiRequestLogs;
+        var auditId = Guid.NewGuid().ToString("N");
+        var started = DateTime.UtcNow;
+        var timer = Stopwatch.StartNew();
+        byte[] videoBytes = Array.Empty<byte>();
+        string? contentType = null;
+        string? failure = null;
+        int? responseStatus = null;
+        string? responseType = null;
+        long? declaredBytes = null;
         var responseEvidence = target + ", 未收到响应";
         try
         {
@@ -5807,6 +5817,9 @@ public static class CapsuleExecutor
                 System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
                 downloadToken);
             var rawType = response.Content.Headers.ContentType?.MediaType;
+            responseStatus = (int)response.StatusCode;
+            responseType = rawType;
+            declaredBytes = response.Content.Headers.ContentLength;
             responseEvidence = $"{target}, status={(int)response.StatusCode}, type={rawType ?? "missing"}, declaredBytes={response.Content.Headers.ContentLength?.ToString() ?? "unknown"}, maxBytes={maxBytes}";
             if (!response.IsSuccessStatusCode)
                 responseEvidence += ", bodyEvidence=" + await DescribeRejectedVideoResponseAsync(
@@ -5820,8 +5833,44 @@ public static class CapsuleExecutor
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"视频下载失败: {RedactDownloadResponseText(ex.Message)}；响应核对: {responseEvidence}, decision=rejected", ex);
+            responseEvidence += $", errorType={ex.GetType().Name}, decision=rejected";
+            failure = ex is OperationCanceledException ? "视频下载等待超时，请检查视频来源后重试。"
+                : ex.Message.Contains("超过大小限制", StringComparison.Ordinal) ? "视频文件超过大小限制，请选择较小的视频后重试。"
+                : ex.Message.Contains("文件签名", StringComparison.Ordinal) ? "视频文件签名不是受支持的视频容器，请检查视频来源后重试。"
+                : ex.Message.Contains("内网或保留地址", StringComparison.Ordinal) ? "视频来源指向内网或保留地址，请选择公开的视频来源。"
+                : "视频下载未完成，请检查视频来源后重试。";
         }
+        finally
+        {
+            timer.Stop();
+            var audit = new ApiRequestLog
+            {
+                Id = auditId, RequestId = invocation?.OperationId ?? auditId,
+                SessionId = invocation?.ExecutionId, StartedAt = started, EndedAt = DateTime.UtcNow,
+                DurationMs = timer.ElapsedMilliseconds, Method = "GET", Path = "video-download",
+                TargetHost = downloadUri?.IdnHost, Direction = "outbound", ClientType = "server",
+                UserId = invocation?.UserId ?? "system", AppId = "workflow-agent", AppName = "工作流",
+                StatusCode = responseStatus ?? 0, ResponseContentType = responseType,
+                Status = failure == null ? "completed" : "failed", ErrorCode = failure == null ? null : "VIDEO_DOWNLOAD_REJECTED",
+                ApiSummary = $"视频下载/{node.NodeId}/{(failure == null ? "accepted" : "rejected")}",
+                ResponseBody = $"nodeId={node.NodeId}, timeoutSeconds={timeoutSeconds}, {responseEvidence}",
+                ResponseBodyBytes = declaredBytes is >= 0 and <= int.MaxValue ? (int)declaredBytes : null,
+                ResponseBodyTruncated = failure != null,
+            };
+            try
+            {
+                using var auditDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await auditLogs.InsertOneAsync(audit, cancellationToken: auditDeadline.Token);
+            }
+            catch
+            {
+                // 先保存审计再写入素材；审计失败显式拒绝，不把上游原文放入用户异常。
+                throw new InvalidOperationException($"视频下载记录未能保存，素材未写入，请稍后重试。记录编号：{auditId}");
+            }
+        }
+
+        if (failure != null)
+            throw new InvalidOperationException($"{failure}记录编号：{auditId}");
 
         // 上传到 COS
         var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
