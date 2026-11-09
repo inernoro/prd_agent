@@ -1381,6 +1381,26 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Theory]
+    [InlineData("LLM_ACCOUNT_OVERDUE", "账户欠费", "补缴费用")]
+    [InlineData("LLM_INSUFFICIENT_BALANCE", "账户余额不足", "补充余额")]
+    [InlineData("LLM_QUOTA_EXCEEDED", "可用额度已用尽或达到用量上限", "检查服务额度")]
+    [InlineData("LLM_PAYMENT_REQUIRED", "账单或费用额度限制", "核对账单")]
+    public void NotificationsController_BillingSummary_PreservesConfirmedCauseWithoutRawDiagnostics(string code, string reason, string action)
+    {
+        var failure = PrdAgent.Core.LlmGateway.GatewayBillingFailure.FromCode(code)!;
+        var presentation = NotificationsController.ToUserReadablePresentation(new AdminNotification
+        {
+            Title = $"上游 AI 服务{failure.Reason}", Message = QuotaRawMessage,
+            Source = "llm-gateway-quota", Section = AdminNotificationSections.Admin,
+        });
+        Assert.Contains(reason, presentation.Title);
+        Assert.Contains(action, presentation.Message);
+        Assert.Contains("备用线路", presentation.Message);
+        Assert.DoesNotContain("OpenRouter", presentation.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fix/quota-alert", presentation.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData("llm-quota-exceeded")]
     [InlineData("llm-quota-exceeded:v2:0123456789abcdef")]
     public async Task NotificationsController_QuotaList_ShouldShowSummaryWithoutChangingStoredDiagnostics(string key)
