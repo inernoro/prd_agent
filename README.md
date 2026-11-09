@@ -249,19 +249,19 @@ The root keeps project entrypoints and top-level documentation. Supporting mater
 | `changelogs/` | One changelog fragment per change set |
 | `deploy/` | Deployment support files |
 
-`pri` abbreviates Principles. Root-level `pri.<type>.md` files explain each document type; individual documents live in `doc/`. Current specifications and designs evolve, while accepted or rejected decisions preserve their rationale and use successor records for substantive changes.
+`pri` abbreviates Principles. The nine type-principle guides live in `doc/` as `guide.doc.pri.<type>.md`, follow the existing guide/doc/topic naming convention, and are included in the same document index and checks. Current specifications and designs evolve, while accepted or rejected decisions preserve their rationale and use successor records for substantive changes.
 
 | Prefix | Purpose | Principles |
 | --- | --- | --- |
-| `spec.*` | Current product behavior and acceptance criteria | [pri.spec.md](pri.spec.md) |
-| `design.*` | Current structure, responsibilities, and data flow | [pri.design.md](pri.design.md) |
-| `plan.*` | Delivery sequence, ownership, and completion criteria | [pri.plan.md](pri.plan.md) |
-| `rule.*` | Current business and engineering constraints | [pri.rule.md](pri.rule.md) |
-| `guide.*` | Task-oriented operating instructions | [pri.guide.md](pri.guide.md) |
-| `report.*` | Time-bounded evidence; new repository reports are weekly reports | [pri.report.md](pri.report.md) |
-| `debt.*` | Known gaps, impact, and closure conditions | [pri.debt.md](pri.debt.md) |
-| `adr.*` | Important architecture and engineering decisions | [pri.adr.md](pri.adr.md) |
-| `pdr.*` | Important product choices and business commitments | [pri.pdr.md](pri.pdr.md) |
+| `spec.*` | Current product behavior and acceptance criteria | [guide.doc.pri.spec.md](doc/guide.doc.pri.spec.md) |
+| `design.*` | Current structure, responsibilities, and data flow | [guide.doc.pri.design.md](doc/guide.doc.pri.design.md) |
+| `plan.*` | Delivery sequence, ownership, and completion criteria | [guide.doc.pri.plan.md](doc/guide.doc.pri.plan.md) |
+| `rule.*` | Current business and engineering constraints | [guide.doc.pri.rule.md](doc/guide.doc.pri.rule.md) |
+| `guide.*` | Task-oriented operating instructions | [guide.doc.pri.guide.md](doc/guide.doc.pri.guide.md) |
+| `report.*` | Time-bounded evidence; new repository reports are weekly reports | [guide.doc.pri.report.md](doc/guide.doc.pri.report.md) |
+| `debt.*` | Known gaps, impact, and closure conditions | [guide.doc.pri.debt.md](doc/guide.doc.pri.debt.md) |
+| `adr.*` | Important architecture and engineering decisions | [guide.doc.pri.adr.md](doc/guide.doc.pri.adr.md) |
+| `pdr.*` | Important product choices and business commitments | [guide.doc.pri.pdr.md](doc/guide.doc.pri.pdr.md) |
 
 See the [decision governance guide](doc/guide.platform.decision-records.md) for project gaps and product methods, and [decision practice](doc/guide.platform.decision-practice.md) for two real change replays, an independent-reader exercise, and a portable starting method. Full naming, directory, change-record, and quality requirements are in [AGENTS.md](AGENTS.md).
 

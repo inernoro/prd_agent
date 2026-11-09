@@ -12,7 +12,7 @@
 
 `doc/` 下所有 Markdown 必须先选择一种职责，再按对应模板组织。文件名、状态枚举和索引要求见 [rule.doc.naming.md](./rule.doc.naming.md)；存量维护和回收规则见 [rule.doc.maintenance.md](./rule.doc.maintenance.md)。
 
-各前缀的作用先查 [README 原则入口](../README.md#documentation)。ADR 使用[架构决策模板](../pri.adr.md#7-实践扩展通用模板)，PDR 使用[产品决策最少内容](../pri.pdr.md#6-一份产品决策最少留下什么)；二者都要求背景、选择、理由、代价、状态、所有者、证据与替代历史，PDR 还要说明用户任务、承重契约和新旧规则适用范围。下列通用格式中的状态按具体文档类型填写。
+各前缀的作用先查 [README 原则入口](../README.md#documentation)。ADR 使用[架构决策模板](./guide.doc.pri.adr.md#7-实践扩展通用模板)，PDR 使用[产品决策最少内容](./guide.doc.pri.pdr.md#6-一份产品决策最少留下什么)；二者都要求背景、选择、理由、代价、状态、所有者、证据与替代历史，PDR 还要说明用户任务、承重契约和新旧规则适用范围。下列通用格式中的状态按具体文档类型填写。
 
 ## 通用要求
 

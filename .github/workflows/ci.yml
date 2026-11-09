@@ -254,7 +254,9 @@ jobs:
         run: python3 scripts/tests/mongo-ci-contract.test.py
 
       - name: Root layout contract
-        run: python3 scripts/tests/test_root_layout_contract.py
+        run: |
+          python3 scripts/tests/test_root_layout_contract.py
+          python3 scripts/tests/test_root_document_locations.py
 
       # 监控自发现的跨语言契约。挂在这个 job 是因为它无 needs、无 if，每次 CI 都跑——
       # 挂到带 path filter 的 job 上，只改自检端点的 PR 就会绕过守卫
