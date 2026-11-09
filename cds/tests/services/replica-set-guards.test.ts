@@ -8,7 +8,7 @@
  * P2 —— 项目级计划必须是整组动作：只覆盖部分服务的 add-replica 计划跑完会得到
  * 残缺组，画布显示「整组 x1」，实际另一半服务流量仍全打主实例，实验结论失真。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,7 +29,7 @@ const mkMember = (id: string, containerName: string) => ({
   containerName, dbMode: 'shared' as const, createdAt: new Date().toISOString(),
 });
 
-const mkSvc = (): ReplicaSetService => new ReplicaSetService({
+const mkSvc = (overrides: Partial<ConstructorParameters<typeof ReplicaSetService>[0]> = {}): ReplicaSetService => new ReplicaSetService({
   state,
   container: { remove: async () => undefined } as never,
   versions: { get: () => undefined, assertReusable: () => undefined } as never,
@@ -45,6 +45,7 @@ const mkSvc = (): ReplicaSetService => new ReplicaSetService({
     },
   } as never,
   portStart: 10000,
+  ...overrides,
 });
 
 beforeEach(() => {
@@ -76,6 +77,68 @@ beforeEach(() => {
 afterEach(async () => {
   await flushAllJsonStateStores();
   if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+});
+
+describe('归档中的副本启动边界', () => {
+  const reusable = () => ({ id: 'dv1', branchId: 'proj-main', commitSha: 'a'.repeat(40),
+    profiles: [{ profileId: 'api', artifactImage: 'img', reusable: true, containerPort: 8080 }] });
+
+  it('显式恢复后可重新物化副本，不永久禁止原启动能力', async () => {
+    const branch = state.getBranch('proj-main')!;
+    branch.currentVersionId = 'dv1';
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: '保留', actor: 'user' };
+    const runService = vi.fn(async () => undefined);
+    const service = mkSvc({ container: { runService, waitForReadiness: async () => true } as never,
+      versions: { get: reusable, assertReusable: () => undefined } as never });
+    expect(() => service.addMember(branch.id, 'api', { dbMode: 'shared' })).toThrow('分支已归档');
+    expect(runService).not.toHaveBeenCalled();
+    branch.archive = null;
+    const member = service.addMember(branch.id, 'api', { dbMode: 'shared' });
+    await vi.waitFor(() => expect(member.status).toBe('running'));
+    expect(runService).toHaveBeenCalledTimes(1);
+  });
+
+  it('端口观察等待期间归档，最终启动前复检，不留下隐藏容器', async () => {
+    const branch = state.getBranch('proj-main')!;
+    branch.currentVersionId = 'dv1';
+    let releasePorts!: (result: { stdout: string; stderr: string; exitCode: number }) => void;
+    const ports = new Promise<{ stdout: string; stderr: string; exitCode: number }>(resolve => { releasePorts = resolve; });
+    const runService = vi.fn(async () => undefined);
+    const service = mkSvc({ container: { runService, waitForReadiness: async () => true } as never,
+      versions: { get: reusable, assertReusable: () => undefined } as never,
+      shell: { exec: async () => ports } as never });
+    const member = service.addMember(branch.id, 'api', { dbMode: 'shared' });
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: '保留', actor: 'user' };
+    releasePorts({ stdout: '', stderr: '', exitCode: 0 });
+    await vi.waitFor(() => expect(member.status).toBe('error'));
+    expect(runService).not.toHaveBeenCalled();
+    expect(member.statusMessage).toContain('分支已归档');
+  });
+
+  it.each(['member', 'plan', 'isolate', 'revert'] as const)('%s 不得给归档分支启动容器或数据库克隆', kind => {
+    const branch = state.getBranch('proj-main')!;
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: '保留', actor: 'user' };
+    const service = mkSvc();
+    const before = JSON.stringify(branch);
+    expect(() => {
+      if (kind === 'member') service.addMember(branch.id, 'api', { dbMode: 'shared' });
+      if (kind === 'plan') service.startPlan(branch.id, { onFailure: 'stop', steps: [{ kind: 'add-replica', profileId: 'api' }] });
+      if (kind === 'isolate') service.isolateProfile(branch.id, 'api');
+      if (kind === 'revert') service.revertProfile(branch.id, 'api');
+    }).toThrow('分支已归档');
+    expect(JSON.stringify(branch)).toBe(before);
+  });
+
+  it('归档仍允许移除已有副本，清理计划不被启动保护拦截', async () => {
+    const branch = state.getBranch('proj-main')!;
+    branch.archive = { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: '保留', actor: 'user' };
+    const service = mkSvc();
+    const plan = service.startPlan(branch.id, { onFailure: 'stop', steps: [{ kind: 'remove-member', profileId: 'api', params: { memberId: 'rs-1' } }] });
+    for (let i = 0; i < 100 && plan.status === 'running'; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    expect(plan.status).toBe('done');
+    expect(branch.replicaSets?.api.members).toHaveLength(0);
+    expect(branch.archive).toBeTruthy();
+  });
 });
 
 describe('成员容器移除必须复核（P1）', () => {

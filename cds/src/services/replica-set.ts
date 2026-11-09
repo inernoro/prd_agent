@@ -224,7 +224,7 @@ export class ReplicaSetService {
    * 启动进展通过 member.status 轮询可见（禁止空白等待由 UI 轮询承担）。
    */
   addMember(branchId: string, profileId: string, input: AddMemberInput): ReplicaMember {
-    const branch = this.requireBranch(branchId);
+    const branch = this.requireStartableBranch(branchId);
     const profile = this.requireProfile(branch, profileId);
     if (this.opts.isRemoteBranch?.(branch)) {
       throw new ReplicaSetError(409, '该分支部署在远端执行器上，复制集暂只支持本机（embedded）分支');
@@ -528,7 +528,7 @@ export class ReplicaSetService {
    * 异步执行，进度经 rs.isolated 与成员 status 轮询可见。
    */
   isolateProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
-    const branch = this.requireBranch(branchId);
+    const branch = this.requireStartableBranch(branchId);
     // 2026-07-25 用户拍板：隔离不再强制「先有副本」——零副本也可隔离（先建好隔离库并
     // 钉住隔离态，之后加的副本自动连隔离库）。enable 幂等，无 rs 条目时就地建。
     const rs = this.enable(branchId, profileId);
@@ -726,7 +726,7 @@ export class ReplicaSetService {
 
   /** 回切主库：副本重物化回共享库；隔离库不删，作为快照留在台账。 */
   revertProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
-    const branch = this.requireBranch(branchId);
+    const branch = this.requireStartableBranch(branchId);
     const rs = branch.replicaSets?.[profileId];
     if (!rs?.isolated) return { accepted: false, reason: '当前不在隔离状态' };
     const baseProfile = this.requireProfile(branch, profileId);
@@ -849,7 +849,7 @@ export class ReplicaSetService {
     baseProfile: BuildProfile,
     dbOverride?: { envOverride: Record<string, string>; dbName: string },
   ): Promise<void> {
-    const branch = this.requireBranch(branchId);
+    const branch = this.requireStartableBranch(branchId);
     const snapshot = version.profiles.find((p) => p.profileId === profileId)!;
     const memberProfileId = `${profileId}--${memberId}`;
     const memberProfile: BuildProfile = {
@@ -992,6 +992,7 @@ export class ReplicaSetService {
       return;
     }
     try {
+      this.requireStartableBranch(branchId);
       await this.opts.container.runService(
         branch,
         memberProfile,
@@ -1408,6 +1409,9 @@ export class ReplicaSetService {
     mode?: 'container' | 'project';
   }): ReplicaPlan {
     const branch = this.requireBranch(branchId);
+    if (input.steps.some(step => ['add-replica', 'isolate-db', 'revert-db'].includes(step.kind))) {
+      this.requireStartableBranch(branchId);
+    }
     if ((branch.replicaPlans || []).some((p) => p.status === 'running')) {
       throw new ReplicaSetError(409, '已有执行中的变更计划，请等它结束或取消后再保存新计划');
     }
@@ -1934,6 +1938,12 @@ export class ReplicaSetService {
   private requireBranch(branchId: string): BranchEntry {
     const branch = this.opts.state.getBranch(branchId);
     if (!branch) throw new ReplicaSetError(404, `分支不存在: ${branchId}`);
+    return branch;
+  }
+
+  private requireStartableBranch(branchId: string): BranchEntry {
+    const branch = this.requireBranch(branchId);
+    if (branch.archive) throw new ReplicaSetError(409, '分支已归档，请先恢复后再启动副本或数据库切换');
     return branch;
   }
 
