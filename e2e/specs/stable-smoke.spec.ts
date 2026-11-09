@@ -1205,10 +1205,14 @@ async function expectNoBrokenImages(page: Page, label: string, failedImages: str
  * 先把它关掉；新版小部件会自己收成圆钮，移动端入口用例单独验它。
  */
 async function dismissCdsPreviewWidget(page: Page) {
+  const widget = page.locator('#cds-widget');
   const dismiss = page.locator('#cds-widget button[data-action="dismiss"]');
   if (await dismiss.count()) {
-    await dismiss.first().click({ force: true }).catch(() => undefined);
-    await expect(page.locator('#cds-widget')).toHaveCount(0);
+    if (!await dismiss.first().isVisible()) {
+      await widget.locator('button[data-action="toggle"]').click();
+    }
+    await dismiss.first().click();
+    await expect(widget).toHaveCount(0);
   }
 }
 
@@ -2535,10 +2539,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-009] 移动端可输入标题、创建作品并进入编辑页', { tag: '@cleanup' }, async ({ page, request }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+  test('[LIT-009] 移动端可输入标题、创建作品并进入编辑页', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await context.newPage();
     const token = await loginAndReadToken(page, request, '/literary-agent');
-    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-移动文学`;
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID').slice(-30)}-移动文学`;
     let workspaceId = '';
     try {
       await page.locator('[data-tour-id="literary-create"]').click();
@@ -2549,7 +2554,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.waitForURL(/\/literary-agent\/[^/?#]+/, { timeout: 20_000 });
       workspaceId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1) || '';
       expect(workspaceId).toBeTruthy();
-      await expect(page.locator('body')).toContainText(title);
+      const persisted = await readEnvelope<{ workspace: { title: string } }>(await page.request.get(
+        `/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) },
+      ));
+      expect(persisted.workspace.title).toBe(title);
+      await expect(page.getByRole('button', { name: '文章预览', exact: true })).toBeVisible();
+      expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, '移动端文学创作页面不得横向裁切').toBeLessThanOrEqual(1);
       expect(await page.locator('button:visible, textarea:visible, [contenteditable="true"]:visible').count()).toBeGreaterThan(0);
@@ -2560,13 +2570,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         });
         expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
       }
+      await context.close();
     }
   });
 
   test('[PARSE-003][REG-short-video-input-001] 非法短视频链接在入口被拒绝并说明恢复动作', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/document-store');
     const response = await page.request.post('/api/short-video-materials/runs', {
-      headers: authHeaders(token),
+      headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-invalid-video` },
       data: { videoUrl: '这不是链接', title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-invalid-video` },
     });
     const body = await response.json() as ApiEnvelope<never>;
@@ -2908,7 +2919,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       sessionId = (await readEnvelope<{ sessionId: string }>(await page.request.post(
         `/api/document-store/stores/${storeId}/recording-uploads`,
         {
-          headers: authHeaders(token),
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${storeId}-start-recording` },
           data: { fileName: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-恢复录音.m4a`, mimeType: 'audio/mp4' },
         },
       ))).sessionId;
@@ -3012,7 +3023,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         entry: { id: string };
         reused: boolean;
       }>(await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
-        headers: authHeaders(token),
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${sessionId}-complete-recording` },
       }));
       expect(repeated.entry.id).toBe(entryId);
       expect(repeated.reused).toBe(true);
@@ -3050,7 +3061,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       storeId = (await readEnvelope<{ id: string }>(createStore)).id;
       const started = await page.request.post(`/api/document-store/stores/${storeId}/recording-uploads`, {
-        headers: authHeaders(token),
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${storeId}-start-recording` },
         data: { fileName: `${requiredEnv('STABLE_SMOKE_RUN_ID')}.m4a`, mimeType: 'audio/mp4' },
       });
       sessionId = (await readEnvelope<{ sessionId: string }>(started)).sessionId;
@@ -3079,11 +3090,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect((await readEnvelope<{ duplicate: boolean }>(duplicate)).duplicate).toBe(true);
 
       const firstComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
-        headers: authHeaders(token),
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${sessionId}-complete-recording` },
       });
       const first = await readEnvelope<{ entry: { id: string }; sessionId: string }>(firstComplete);
+      const replayedComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${sessionId}-complete-recording` },
+      });
+      expect(await readEnvelope(replayedComplete)).toEqual(first);
       const secondComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
-        headers: authHeaders(token),
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${sessionId}-complete-recording-requery` },
       });
       const second = await readEnvelope<{ entry: { id: string }; reused: boolean }>(secondComplete);
       expect(second.entry.id).toBe(first.entry.id);
