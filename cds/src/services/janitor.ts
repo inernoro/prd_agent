@@ -605,6 +605,8 @@ export function defaultDiskUsage(targetPath: string): { totalBytes: number; free
 function branchExpiryAnchorMs(branch: BranchEntry): number {
   const candidates = [
     branch.lastAccessedAt,
+    branch.lastPushAt,
+    branch.restoredFromArchiveAt,
     branch.lastStoppedAt,
     branch.lastReadyAt,
     branch.lastDeployAt,
@@ -1096,6 +1098,8 @@ export class JanitorService {
     const protectedLogKeys = new Set<string>();
 
     for (const branch of branches) {
+      // 归档保留与到期清理由统一生命周期服务负责，旧TTL不能提前删除。
+      if (branch.archive) continue;
       // 保护判定走 branch-protection.ts 的 SSOT（与 scheduler 同一份）。
       // 2026-07-27 P0：此前 janitor 自己写了一份，只比对 defaultBranchId===branch.id，
       // 漏了「主干分支按 git 分支名判定」那一条 —— 项目 defaultBranch 未配置/不匹配时，
@@ -1143,6 +1147,10 @@ export class JanitorService {
       try {
         if (this.removeFn) {
           await this.removeFn(branch.id);
+        }
+        if (this.stateService.getBranch(branch.id)?.archive) {
+          console.log(`[janitor] archived stale branch "${branch.id}" (retained for 30 days)`);
+          continue;
         }
         report.removedBranches.push(branch.id);
         console.log(`[janitor] removed stale branch "${branch.id}" (idle ${Math.round(idleMs / (24*60*60*1000))}d)`);
@@ -1255,6 +1263,7 @@ export class JanitorService {
     const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
 
     for (const branch of this.stateService.getAllBranches()) {
+      if (branch.archive) continue;
       const anchorMs = branchExpiryAnchorMs(branch);
       if (anchorMs <= 0) continue;
       const idleMs = now - anchorMs;

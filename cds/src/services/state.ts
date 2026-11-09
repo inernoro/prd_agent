@@ -2974,6 +2974,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       ciWorkflowRunUrl?: string;
       ciWaitingSince?: string;
       ciImageError?: string;
+      ciDiagnosis?: BranchEntry['ciDiagnosis'];
     },
   ): void {
     const branch = this.state.branches[id];
@@ -2992,6 +2993,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
     if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
     if ('ciImageStatus' in updates) branch.ciImageStatus = updates.ciImageStatus;
+    if ('ciDiagnosis' in updates) branch.ciDiagnosis = updates.ciDiagnosis;
+    else if ('ciImageStatus' in updates || 'ciTargetSha' in updates) branch.ciDiagnosis = null;
     if ('ciTargetSha' in updates) branch.ciTargetSha = updates.ciTargetSha;
     if ('ciWorkflowConclusion' in updates) branch.ciWorkflowConclusion = updates.ciWorkflowConclusion;
     if ('ciWorkflowRunUrl' in updates) branch.ciWorkflowRunUrl = updates.ciWorkflowRunUrl;
