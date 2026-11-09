@@ -280,7 +280,7 @@ export function createStableSmokeVisualEvidence(options = {}) {
           // 成功切换之后，避免中断时丢失最后一份可审计记录。
           recordToReplace = existingRecord;
         } else {
-          validateRecord(existingRecord, plan, slot, runtime, recordedActual);
+          validateRecord(existingRecord, plan, slot, runtime, actual);
           await access(existingRecord.path).catch((error) => {
             throw new Error(`视觉位 ${slotId} 已有 manifest 记录，但证据文件不可读：${error.message}`);
           });

@@ -71,3 +71,11 @@ test('自动检查失败不能按通过写入账本', async t => {
   await assert.rejects(f.capture(f.page, null, f.input(1)), /自动检查未通过/);
   await assert.rejects(readFile(f.manifest), { code: 'ENOENT' });
 });
+
+test('同run同commit的旧记录来自其它部署域名时不能自我校验后复用', async t => {
+  const f = await fixture(t); await f.capture(f.page, null, f.input(1));
+  const rows = JSON.parse(await readFile(f.manifest)); rows[0].pageOrigin = 'https://previous.invalid';
+  await writeFile(f.manifest, JSON.stringify(rows)); const before = await readFile(f.manifest);
+  await assert.rejects(f.capture(f.page, null, f.input(1)), /pageOrigin/);
+  assert.equal(f.shots(), 1); assert.deepEqual(await readFile(f.manifest), before);
+});
