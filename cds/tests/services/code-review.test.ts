@@ -5,6 +5,7 @@ import os from 'node:os';
 import express from 'express';
 import type { Server } from 'node:http';
 import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { CodeReviewService } from '../../src/services/code-review.js';
 import { createCodeReviewsRouter } from '../../src/routes/code-reviews.js';
 import { buildZip } from '../../src/utils/zip.js';
@@ -51,7 +52,9 @@ describe('代码审查任务完整闭环', () => {
   afterEach(async () => {
     service.stop();
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
-    server = undefined; await state.flush(); delete process.env.CDS_CACHE_BASE;
+    server = undefined; await state.flush();
+    // Cold-read StateService instances also enqueue normalization writes. Drain every live store before deleting their shared fixture directory.
+    await flushAllJsonStateStores(); delete process.env.CDS_CACHE_BASE;
     await fs.rm(dir, { recursive: true, force: true });
   });
   it('归档前持久化任务和固定源码，报告可在新 StateService 中读取且正文已转义', async () => {
