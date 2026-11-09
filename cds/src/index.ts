@@ -6546,6 +6546,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     const r = express.Router();
     registerAlarmRelayRoutes(r, alarmRelay, {
       channels: () => stateService.listAlarmChannels(),
+      getNotifications: () => stateService.getMonitorNotifications(),
       acknowledged: async (item, result) => {
         if (result.merged) activeServerEventLogStore?.record({
           category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',

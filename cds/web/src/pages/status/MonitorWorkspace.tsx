@@ -204,8 +204,8 @@ function ServiceDetail({ service: s, category, summary, incidents, now, onNotify
   };
   const { known: knownNotifications, channelIds, channels, legacy, verdict } = effectiveNotifications(notifications, summary, s.target);
   const serviceNotificationText = !knownNotifications ? '通知规则尚未读取成功，当前无法确认此服务会通知谁。'
-    : muted ? `此服务已静默至 ${time(muteUntil)}，期间不发送通知；观测继续更新。`
-    : channelIds?.length === 0 ? '此服务未选择通知通道，异常与恢复均不发送通知。'
+    : muted ? `此服务已静默至 ${time(muteUntil)}，期间不新增通知；已交给通知渠道或独立接收端的消息不保证撤回，观测继续更新。`
+    : channelIds?.length === 0 ? '此服务未选择通知通道，不新增异常或恢复通知；已交给通知渠道或独立接收端的消息不保证撤回。'
     : channels.length === 0 && (!legacy || legacy.status === 'unconfigured') ? '当前没有可用于此服务的通知通道，请检查通道的项目与事件订阅。'
     : verdict.text.replace(/（缺 [^）]*）/g, '');
   const events = incidents.filter((e) => e.targetId === s.id).flatMap((e) => [{ at: e.startedAt, state: 'bad', text: e.cause || '检测到异常' }, ...(e.endedAt ? [{ at: e.endedAt, state: 'ok', text: '检查恢复通过' }] : [])]).sort((a, b) => b.at - a.at).slice(0, 12);

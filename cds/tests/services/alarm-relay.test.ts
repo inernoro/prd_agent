@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AlarmRelay } from '../../src/services/alarm-relay.js';
-import type { AlarmChannelConfig, AlarmEvent } from '../../src/services/alarm-route.js';
+import type { AlarmChannelConfig, AlarmEvent, MonitorNotificationSettings } from '../../src/services/alarm-route.js';
 
 it('只有持有私钥的接收端可获得投递配置；确认就绪后主站让出所有权，重启保留待投递事件', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alarm-relay-'));
@@ -60,7 +60,7 @@ it('系统接口拒绝项目凭据和错误回执，不提供明文通道秘密'
   } finally { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); fs.rmSync(dir, {recursive: true, force:true}); }
 });
 
-async function retiredChannelFixture() {
+async function retiredChannelFixture(withNotifications = false) {
   const { default: express } = await import('express');
   const { registerAlarmRelayRoutes } = await import('../../src/services/alarm-relay.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alarm-relay-retire-'));
@@ -69,7 +69,9 @@ async function retiredChannelFixture() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const channels = ['phone', 'other'].map(id => ({ id, name: id, enabled: true, kind: 'bark', bark: { key: 'fixture-only' } }) as AlarmChannelConfig);
   const acknowledged = vi.fn(async () => undefined);
-  const deps = { channels: () => channels, acknowledged };
+  const notifications = { current: {} as MonitorNotificationSettings };
+  const deps = { channels: () => channels, acknowledged,
+    ...(withNotifications ? { getNotifications: () => notifications.current } : {}) };
   const decrypt = (sealed: ReturnType<AlarmRelay['envelope']>) => {
     const key = crypto.privateDecrypt({ key: privateKey, oaepHash: 'sha256' }, Buffer.from(sealed.key, 'base64'));
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(sealed.iv, 'base64'));
@@ -86,7 +88,7 @@ async function retiredChannelFixture() {
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(r => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as {port: number}).port}/cds-system/alarm-relay`;
-  return { relay, file, channels, acknowledged, decrypt, proof, event, phoneId,
+  return { relay, file, channels, acknowledged, decrypt, proof, event, phoneId, notifications,
     request: (suffix: string, method: string, body: unknown) => fetch(base + suffix, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
     close: async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); fs.rmSync(dir, {recursive: true, force: true}); },
   };
@@ -123,5 +125,74 @@ it('接收端离线也能交回已停用通道；取消记录失败时保留队�
     expect((await f.request('', 'PUT', { enabled: false })).status).toBe(200);
     expect(new AlarmRelay(f.file).status()).toMatchObject({ enabled: false, pending: 0 });
     expect(f.acknowledged).toHaveBeenLastCalledWith(expect.objectContaining({ id: f.phoneId }), expect.objectContaining({ ok: false }));
+  } finally { await f.close(); }
+});
+
+
+it.each(['静默', '逐项目标覆盖', '默认通道移除'])('%s后不再导出主站仍排队的事件，取消不计送达且同通道其他目标保留', async mode => {
+  const f = await retiredChannelFixture(true);
+  try {
+    const keepTarget = 'keep-metric';
+    const keepId = f.relay.enqueue('phone', { ...f.event, targetId: keepTarget });
+    if (mode === '静默') f.notifications.current = { mutedUntil: { metric: Date.now() + 60000 } };
+    else if (mode === '逐项目标覆盖') f.notifications.current = { overrides: { metric: ['other'] } };
+    else f.notifications.current = { defaultChannelIds: ['other'], overrides: { [keepTarget]: ['phone'] } };
+    const response = await f.request('/poll', 'POST', { proof: f.proof });
+    expect(response.status).toBe(200);
+    const payload = f.decrypt(await response.json());
+    expect(payload.items.map((item: { id: string }) => item.id)).toEqual([keepId]);
+    expect(f.acknowledged).toHaveBeenCalledWith(expect.objectContaining({ id: f.phoneId }), { ok: false, reason: expect.stringContaining('取消') });
+    expect(f.acknowledged.mock.calls.every(call => (call as unknown as [unknown, { ok: boolean }])[1].ok === false)).toBe(true);
+    const reloaded = new AlarmRelay(f.file);
+    expect(reloaded.getItem(f.phoneId)).toBeUndefined(); expect(reloaded.getItem(keepId)).toBeDefined();
+  } finally { await f.close(); }
+});
+
+it.each([false, true])('未提供通知getter或默认未设置时保持已有排队行为（getter=%s）', async withGetter => {
+  const f = await retiredChannelFixture(withGetter);
+  try {
+    const response = await f.request('/poll', 'POST', { proof: f.proof });
+    expect(response.status).toBe(200);
+    expect(f.decrypt(await response.json()).items.map((item: { id: string }) => item.id)).toEqual([f.phoneId]);
+    expect(f.acknowledged).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+it.each(['停用', '删除'])('演练只豁免新增目标策略，不豁免通道%s', async mode => {
+  const f = await retiredChannelFixture(true);
+  try {
+    const drillId = f.relay.enqueue('phone', { ...f.event, drill: true, detectedAt: '2026-10-19T00:01:00Z' });
+    f.notifications.current = { defaultChannelIds: [], overrides: { metric: [] }, mutedUntil: { metric: Date.now() + 60000 } };
+    const response = await f.request('/poll', 'POST', { proof: f.proof });
+    expect(response.status).toBe(200);
+    const payload = f.decrypt(await response.json());
+    expect(payload.items.map((item: { id: string }) => item.id)).toEqual([drillId]);
+    expect(payload.items[0].event.drill).toBe(true);
+    expect(f.acknowledged).not.toHaveBeenCalledWith(expect.objectContaining({ id: drillId }), expect.anything());
+    if (mode === '停用') f.channels[0].enabled = false;
+    else f.channels.splice(0, 1);
+    const disabled = await f.request('/poll', 'POST', { proof: f.proof });
+    expect(disabled.status).toBe(200); expect(f.decrypt(await disabled.json()).items).toEqual([]);
+    expect(f.acknowledged).toHaveBeenCalledWith(expect.objectContaining({ id: drillId }), { ok: false, reason: '通知通道已停用或删除，本次投递已取消' });
+    expect(new AlarmRelay(f.file).status().pending).toBe(0);
+  } finally { await f.close(); }
+});
+
+it('目标策略取消记账失败时不丢队列或导出该项，重试成功后才移除', async () => {
+  const f = await retiredChannelFixture(true);
+  try {
+    const keepId = f.relay.enqueue('phone', { ...f.event, targetId: 'keep-metric' });
+    f.notifications.current = { mutedUntil: { metric: Date.now() + 60000 } };
+    f.acknowledged.mockRejectedValueOnce(new Error('fixture history unavailable'));
+    expect((await f.request('/poll', 'POST', { proof: f.proof })).status).toBe(400);
+    expect(new AlarmRelay(f.file).status().pending).toBe(2);
+    // The same export guard also protects a direct envelope read while the
+    // failed cancellation remains queued; no receiver/protocol change is needed.
+    expect(f.decrypt(f.relay.envelope(f.channels, f.notifications.current)).items.map((item: { id: string }) => item.id)).toEqual([keepId]);
+    const retry = await f.request('/poll', 'POST', { proof: f.proof });
+    expect(retry.status).toBe(200);
+    expect(f.decrypt(await retry.json()).items.map((item: { id: string }) => item.id)).toEqual([keepId]);
+    expect(new AlarmRelay(f.file).status().pending).toBe(1);
+    expect(f.acknowledged).toHaveBeenLastCalledWith(expect.objectContaining({ id: f.phoneId }), { ok: false, reason: expect.stringContaining('取消') });
   } finally { await f.close(); }
 });

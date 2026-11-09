@@ -7,7 +7,7 @@ import path from 'node:path';
 import type { Router } from 'express';
 import { assertUnscopedAdmin } from './unscoped-admin-guard.js';
 import { independentIncidentUrl } from './alarm-dispatch.js';
-import { renderAlarmMessage, type AlarmChannelConfig, type AlarmEvent } from './alarm-route.js';
+import { notificationChannelSelected, renderAlarmMessage, type AlarmChannelConfig, type AlarmEvent, type MonitorNotificationSettings } from './alarm-route.js';
 
 interface Item { id: string; channelId: string; event: AlarmEvent; boardUrl?: string; at: number }
 interface RelayState { enabled: boolean; publicKey: string; channelIds: string[]; challenge: string; readyAt: number; queue: Item[] }
@@ -50,19 +50,29 @@ export class AlarmRelay {
     this.state.readyAt = Date.now(); this.save();
   }
   getItem(id: string) { return this.state.queue.find(i => i.id === id); }
-  unavailableItems(channels: AlarmChannelConfig[]) {
-    const available = new Set(channels.filter(c => c.enabled && c.kind === 'bark').map(c => c.id));
-    return this.state.queue.filter(item => !available.has(item.channelId));
+  unavailableReason(item: Item, channels: AlarmChannelConfig[], notifications?: MonitorNotificationSettings): string | undefined {
+    if (!channels.some(c => c.id === item.channelId && c.enabled && c.kind === 'bark')) {
+      return '通知通道已停用或删除，本次投递已取消';
+    }
+    // Drills retain their existing explicit-send behavior. This exemption never
+    // bypasses channel removal/disablement above, nor changes projects/events.
+    if (item.event.drill !== true && !notificationChannelSelected(notifications, item.event.targetId, item.channelId)) {
+      return '通知已静默或当前接收范围已变更，本次投递已取消';
+    }
+    return undefined;
+  }
+  unavailableItems(channels: AlarmChannelConfig[], notifications?: MonitorNotificationSettings) {
+    return this.state.queue.filter(item => this.unavailableReason(item, channels, notifications) !== undefined);
   }
   acknowledge(id: string): Item | undefined {
     const item = this.state.queue.find(i => i.id === id);
     this.state.queue = this.state.queue.filter(i => i.id !== id); this.save(); return item;
   }
-  envelope(channels: AlarmChannelConfig[]) {
+  envelope(channels: AlarmChannelConfig[], notifications?: MonitorNotificationSettings) {
     if (!this.state.publicKey) throw new Error('尚未登记接收端');
     const selected = channels.filter(c => c.enabled && c.kind === 'bark' && this.state.channelIds.includes(c.id));
     const payload = { enabled: this.state.enabled, challenge: this.state.challenge, channels: selected,
-      items: this.state.enabled ? this.state.queue.slice(0, 100).map(i => {
+      items: this.state.enabled ? this.state.queue.filter(i => this.unavailableReason(i, selected, notifications) === undefined).slice(0, 100).map(i => {
         const channel = selected.find(c => c.id === i.channelId);
         const url = channel ? independentIncidentUrl(channel, i.event, i.boardUrl) || i.boardUrl : i.boardUrl;
         return { ...i, message: renderAlarmMessage(i.event, { boardUrl: url }) };
@@ -77,13 +87,18 @@ export class AlarmRelay {
 
 export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps: {
   channels: () => AlarmChannelConfig[];
+  getNotifications?: () => MonitorNotificationSettings;
   acknowledged: (item: Item, result: { ok: boolean; reason?: string; merged?: boolean }) => Promise<void>;
 }) {
   const retireUnavailable = async () => {
-    for (const item of relay.unavailableItems(deps.channels())) {
+    const channels = deps.channels();
+    const notifications = deps.getNotifications?.();
+    for (const item of relay.unavailableItems(channels, notifications)) {
+      const reason = relay.unavailableReason(item, channels, notifications);
+      if (!reason) continue;
       // 先处理取消记录，再移出主站队列；不再交给接收端，也不能把取消当成送达。
       try {
-        await deps.acknowledged(item, { ok: false, reason: '通知通道已停用或删除，本次投递已取消' });
+        await deps.acknowledged(item, { ok: false, reason });
       } catch { throw new Error('未能保存取消记录，请稍后重试'); }
       relay.acknowledge(item.id);
     }
@@ -118,7 +133,7 @@ export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps
         }
       }
       await retireUnavailable();
-      res.json(relay.envelope(deps.channels()));
+      res.json(relay.envelope(deps.channels(), deps.getNotifications?.()));
     } catch { res.status(400).json({ message: '外部通知同步失败，请检查接收端配置与回执' }); }
   });
 }

@@ -345,7 +345,7 @@ function NotificationDrawer({ targets, targetId, onClose, onSaved, onBusy, onMan
           <ChannelFields data={channels.data} selected={selected} onToggle={toggle} onManage={onManage}
             projectId={scope === 'service' ? target?.projectId || null : undefined} />
           <DeliveryRule channels={applicableChannels} selected={selected} />
-          <div className="sentence">{names.length ? `异常时通知到 ${names.join('、')}。` : '当前没有选择通知通道，本范围内的监控将不发送通知。'}{scope === 'service' ? '仅应用于此服务。' : '应用于没有单项覆盖的服务。'}</div>
+          <div className="sentence">{names.length ? `异常时通知到 ${names.join('、')}。` : '当前没有选择通知通道，本范围内不新增通知。'}{scope === 'service' ? '仅应用于此服务。' : '应用于没有单项覆盖的服务。'}已交给通知渠道或独立接收端的消息不保证撤回。</div>
         </>}
         {scope === 'default' && <>
           <div className="fld"><div className="sec-h"><span className="lbl2">分类默认</span><span className="hint">各分类沿用全局默认</span></div>
