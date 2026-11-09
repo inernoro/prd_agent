@@ -191,7 +191,8 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
                 It.IsAny<CancellationToken>(), "workflow-agent", "doc", null, null))
             .ReturnsAsync(new StoredAsset("synthetic-sha", "https://assets.example.invalid/video.webm", bytes.Length, "video/webm"));
         var result = await Download(services, 1024);
-        result.Artifacts.Single().InlineContent.ShouldContain("video/webm");
+        result.Artifacts.Single().InlineContent.ShouldNotBeNull();
+        result.Artifacts.Single().InlineContent!.ShouldContain("video/webm");
         result.Logs.ShouldContain("sha256=");
         result.Logs.ShouldContain("decision=accepted");
         storage.VerifyAll();
