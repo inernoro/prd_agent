@@ -48,6 +48,48 @@ function state() {
 }
 
 describe('真正 MCP 工具巡检', () => {
+  it.each(['true', 'null', '1', '-', '.', 'masked', 'e'])('合法短令牌 %s 不得破坏成功结果、失败原因或审计数据类型', async (token) => {
+    const remote = await serve({ token, reflectToken: true });
+    const recorded: McpCallEvidence[] = [];
+    const client = new McpMonitorClient(remote.url, token, 1000, evidence => { recorded.push(evidence); });
+    const discovered = await client.discover();
+    expect(discovered.tools[0].readOnly).toBe(true);
+    const result = await client.call(discovered.tools[0], { region: 'cn' });
+    expect(result.isError).toBe(false);
+    expect(recorded).toHaveLength(4);
+    expect(client.evidence).toEqual(recorded);
+    const assertStringsMasked = (value: unknown): void => {
+      if (typeof value === 'string') expect(value).not.toContain(token);
+      else if (Array.isArray(value)) value.forEach(assertStringsMasked);
+      else if (value && typeof value === 'object') Object.values(value).forEach(assertStringsMasked);
+    };
+    for (const evidence of recorded) {
+      expect(evidence.received).toBe(true);
+      expect(typeof evidence.status).toBe('number');
+      expect(typeof evidence.elapsedMs).toBe('number');
+      expect(typeof evidence.responseBytes).toBe('number');
+      expect(evidence.requestId).toBe(client.requestId);
+      expect(Number.isFinite(Date.parse(evidence.startedAt))).toBe(true);
+      expect(evidence.verdict).toBe('ok');
+      assertStringsMasked(evidence.snapshot);
+      assertStringsMasked(evidence.reason);
+    }
+    expect(recorded[3].snapshot).toMatchObject({ result: { isError: false } });
+    expect(Array.isArray((recorded[3].snapshot?.result as Record<string, unknown>).contentTypes)).toBe(true);
+    expect(discovered.server.name).not.toContain(token);
+    expect(discovered.tools[0].description).not.toContain(token);
+    const unavailable = await serve({ token, httpError: true });
+    const failureRecorded: McpCallEvidence[] = [];
+    const failureClient = new McpMonitorClient(unavailable.url, token, 1000, evidence => { failureRecorded.push(evidence); });
+    await expect(failureClient.discover()).rejects.toThrow('MCP 服务未授权，请检查访问令牌');
+    expect(failureRecorded).toHaveLength(1);
+    expect(failureRecorded[0]).toMatchObject({ received: true, status: 401 });
+    expect(failureRecorded[0].requestId).toBe(failureClient.requestId);
+    expect(failureRecorded[0].verdict).toBe('upstream-error');
+    assertStringsMasked(failureRecorded[0].snapshot);
+    assertStringsMasked(failureRecorded[0].reason);
+  });
+
   it('握手、session、只读工具、必填参数及真正tools/call，结果落观测审计而不泄漏内容', async () => {
     process.env.CDS_SECRET_KEY = 'fixture-key-never-real';
     const remote = await serve({ token: 'fixture-bearer-never-real' });
@@ -105,7 +147,7 @@ describe('真正 MCP 工具巡检', () => {
     const reflected = await serve({ token: secret, reflectToken: true });
     const displayClient = new McpMonitorClient(reflected.url, secret, 1000);
     const display = await displayClient.discover();
-    expect(display.server.name).toContain('[masked]'); expect(display.tools[0].description).toContain('[masked]');
+    expect(display.server.name).toContain('***'); expect(display.tools[0].description).toContain('***');
     expect(JSON.stringify({ display, calls: displayClient.evidence })).not.toContain('a'.repeat(80));
   });
   it('无响应超时与响应无法解析分开记录', async () => {

@@ -6,7 +6,13 @@
  * 以及「留空 = 保持原值」——少了最后一条，每改一次名字都要把私钥重敲一遍，
  * 那种设计的结局是没人敢改。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
+import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { customProbeTargetId } from '../../src/services/uptime-custom-monitor.js';
+import type { UptimeCustomMonitor } from '../../src/types.js';
 
 import {
   classifyAlert, routeAlarm, renderAlarmMessage, channelConfigured, normalizeEventKind,
@@ -236,7 +242,7 @@ describe('配齐了没有', () => {
  * 整个多通道体系可以一行不错地存在，却一条通知都发不出去——只要 onAlert 没接上它。
  * 而那种失败是完全静默的：面板照绿、通道列表照样列着，只是永远没有人收到。
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 describe('通知通道接上线了', () => {
@@ -291,4 +297,83 @@ describe('通知默认选择、逐服务覆盖与真实发送筛选', () => {
     expect(routeAlarm([a], event, { acknowledgedAt: { 'monitor@service': Date.now() } })).toHaveLength(1);
     expect(notificationChannelSelected({ mutedUntil: { 'monitor@service': 1 } }, event.targetId, 'legacy-map')).toBe(true);
   });
+});
+
+describe('监控删除后的通知生命周期', () => {
+  async function withState(run: (service: StateService, stateFile: string) => Promise<void>) {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'cds-monitor-notification-delete-'));
+    const stateFile = path.join(dir, 'state.json');
+    const service = new StateService(stateFile, dir);
+    service.load();
+    try { await run(service, stateFile); }
+    finally {
+      vi.restoreAllMocks();
+      await flushAllJsonStateStores();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  function seed(service: StateService) {
+    const now = new Date(NOW).toISOString();
+    const project = { id: 'remove-project', slug: 'remove-project', name: '项目', kind: 'git' as const, repoPath: '/tmp/notification-project', createdAt: now, updatedAt: now };
+    service.addProject(project);
+    service.addBranch({ id: 'remove-branch', branch: 'feat/remove', projectId: project.id, worktreePath: '/tmp/notification-branch', services: {}, status: 'idle', createdAt: now });
+    const monitor: UptimeCustomMonitor = { id: 'mcp_same-tool', name: '重新接入的服务', kind: 'mcp', url: 'https://monitor.test/mcp', mcp: { toolName: 'health', arguments: {} }, enabled: true, projectId: project.id, boundBranchId: 'remove-branch', createdAt: now, updatedAt: now };
+    service.upsertUptimeMonitor(monitor);
+    const targetId = customProbeTargetId(monitor);
+    service.setMonitorNotifications({ defaultChannelIds: ['default'], overrides: { [targetId]: [], 'monitor@keep': ['other'] }, mutedUntil: { [targetId]: Date.now() + 60_000, 'monitor@keep': 123 }, acknowledgedAt: { [targetId]: NOW, 'monitor@keep': NOW - 1 } });
+    return { monitor, project, targetId };
+  }
+
+  it.each(['direct', 'branch', 'project'] as const)('%s删除清理该目标通知，重建同一ID恢复默认且重启后仍生效', async (mode) => withState(async (service, stateFile) => {
+    const { monitor, project, targetId } = seed(service);
+    if (mode === 'direct') expect(service.removeUptimeMonitor(monitor.id)).toBe(true);
+    else if (mode === 'branch') service.removeBranch('remove-branch');
+    else {
+      service.removeProject(project.id);
+      await service.waitForProjectRemoval(project.id);
+      service.addProject(project);
+    }
+    expect(service.getMonitorNotifications()).toEqual({ defaultChannelIds: ['default'], overrides: { 'monitor@keep': ['other'] }, mutedUntil: { 'monitor@keep': 123 }, acknowledgedAt: { 'monitor@keep': NOW - 1 } });
+    service.upsertUptimeMonitor({ ...monitor, boundBranchId: undefined });
+    await service.flush();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile));
+    reloaded.load();
+    const settings = reloaded.getMonitorNotifications();
+    expect(settings).toEqual({ defaultChannelIds: ['default'], overrides: { 'monitor@keep': ['other'] }, mutedUntil: { 'monitor@keep': 123 }, acknowledgedAt: { 'monitor@keep': NOW - 1 } });
+    expect(routeAlarm([channel({ id: 'default' })], { ...EVENT, targetId }, settings).map(c => c.id)).toEqual(['default']);
+    expect(reloaded.getUptimeMonitor(monitor.id)).toBeDefined();
+  }));
+
+  it('旧版本遗留的无主策略在重新接入时清除，现有监控的普通编辑保留策略', async () => withState(async (service, stateFile) => {
+    const { monitor } = seed(service);
+    const settings = service.getMonitorNotifications();
+    service.upsertUptimeMonitor({ ...monitor, name: '只改名称' });
+    expect(service.getMonitorNotifications()).toEqual(settings);
+    service.removeUptimeMonitor(monitor.id);
+    service.setMonitorNotifications(settings);
+    await service.flush();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile));
+    reloaded.load();
+    reloaded.upsertUptimeMonitor(monitor);
+    expect(reloaded.getMonitorNotifications()).toEqual({ defaultChannelIds: ['default'], overrides: { 'monitor@keep': ['other'] }, mutedUntil: { 'monitor@keep': 123 }, acknowledgedAt: { 'monitor@keep': NOW - 1 } });
+  }));
+
+  it('项目删除持久化失败恢复本项目通知，并保留等待期间的全局及其他目标修改', async () => withState(async (service) => {
+    const { project, targetId } = seed(service);
+    const previous = service.getMonitorNotifications();
+    await service.flush();
+    vi.spyOn(service, 'flush').mockRejectedValueOnce(new Error('test-write-rejected'));
+    service.removeProject(project.id);
+    const during = service.getMonitorNotifications();
+    service.setMonitorNotifications({ ...during, defaultChannelIds: ['updated'], mutedUntil: { ...during.mutedUntil, 'monitor@keep': 456 } });
+    await expect(service.waitForProjectRemoval(project.id)).rejects.toThrow('test-write-rejected');
+    const settings = service.getMonitorNotifications();
+    expect(service.getProject(project.id)).toBeDefined();
+    expect(settings.defaultChannelIds).toEqual(['updated']);
+    expect(settings.overrides?.[targetId]).toEqual([]);
+    expect(settings.mutedUntil?.[targetId]).toBe(previous.mutedUntil?.[targetId]);
+    expect(settings.acknowledgedAt?.[targetId]).toBe(NOW);
+    expect(settings.mutedUntil?.['monitor@keep']).toBe(456);
+  }));
 });

@@ -34,7 +34,27 @@ export interface McpCallEvidence {
 const BODY_LIMIT = 1024 * 1024;
 const TOOL_LIMIT = 500;
 const PROTOCOL = '2025-03-26';
-const safeLabel = (value: unknown, limit = 160, secret?: string): string => typeof value === 'string' ? maskSecrets(secret ? value.split(secret).join('[masked]') : value).replace(/[\x00-\x1f\x7f]/g, '').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]').replace(/\b1[3-9]\d{9}\b/g, '[phone]').slice(0, limit) : '';
+function safeLabel(value: unknown, limit = 160, secret?: string): string {
+  if (typeof value !== 'string') return '';
+  // Asterisks cannot occur in a valid Bearer token, so the marker cannot
+  // reintroduce a short token such as "masked" into the sanitized text.
+  const redact = (text: string) => secret ? text.split(secret).join('***') : text;
+  return redact(maskSecrets(redact(value))
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+    .replace(/\b1[3-9]\d{9}\b/g, '[phone]'))
+    .slice(0, limit);
+}
+
+/** Evidence keys are our fixed schema, never upstream-controlled property names. */
+function redactAuditText(value: unknown, secret: string): unknown {
+  if (typeof value === 'string') return value.split(secret).join('***');
+  if (Array.isArray(value)) return value.map(item => redactAuditText(item, secret));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactAuditText(item, secret)]));
+  }
+  return value;
+}
 
 export function validateMcpUrl(raw: unknown): string {
   if (typeof raw !== 'string' || raw.length > 2048) throw new Error('请填写完整的 MCP 服务地址');
@@ -172,8 +192,10 @@ export class McpMonitorClient {
     } finally {
       clearTimeout(timer); evidence.elapsedMs = Date.now() - started;
       if (this.token) {
-        const clean = JSON.parse(JSON.stringify(evidence).split(this.token).join('[masked]')) as McpCallEvidence;
-        Object.assign(evidence, clean);
+        // Preserve system-generated correlation and protocol fields: a token
+        // coinciding with a UUID digit or "initialize" is not a secret echo.
+        const { requestId: _requestId, operation: _operation, startedAt: _startedAt, verdict: _verdict, ...dynamic } = evidence;
+        Object.assign(evidence, redactAuditText(dynamic, this.token));
       }
       this.evidence.push(evidence);
       // The API persists each attempt before any normalized result is returned.
