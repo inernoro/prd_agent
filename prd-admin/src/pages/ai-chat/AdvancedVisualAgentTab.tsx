@@ -2118,6 +2118,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type GenJob = {
     id: string;
     displayText: string;
+    /** 含稳定图片身份的消息快照，仅用于用户消息存储，不进入模型或重试提示词。 */
+    messageText: string;
     requestText: string;
     /** 所有引用的图片（按顺序），第一个为主图 */
     imageRefs: CanvasImageItem[];
@@ -4586,7 +4588,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     requestText: string,
     imageRefs: CanvasImageItem[],
     seedSelectedKey?: string,
-    sizeOverride?: string | null
+    sizeOverride?: string | null,
+    messageText?: string
   ) => {
     if (!canEditCanvas()) return;
     const display = String(displayText ?? '').trim();
@@ -4650,6 +4653,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 展示/存储的用户消息绝不回退到 reqText 原文（含【引用图片】文字块 + 文件名，模型层专用）。
     // display 为空时用"@imgN 引用标记 + 清洗后的正文"兜底：引用由渲染层还原为视觉 chip。
     const displayForMsg =
+      String(messageText ?? '').trim() ||
       display ||
       [
         imageRefs
@@ -5751,7 +5755,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       void (async () => {
         try {
-          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride);
+          await runFromText(job.displayText, job.requestText, job.imageRefs, job.seedSelectedKey, job.sizeOverride, job.messageText);
         } finally {
           runningCountRef.current = Math.max(0, runningCountRef.current - 1);
           setRunningCount(runningCountRef.current);
@@ -5842,7 +5846,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      displayText: serializeImageReferenceMessage(resolveResult.cleanText, resolveResult.refs),
+      displayText: resolveResult.cleanText,
+      messageText: serializeImageReferenceMessage(resolveResult.cleanText, resolveResult.refs),
       requestText,
       imageRefs,
       seedSelectedKey,
