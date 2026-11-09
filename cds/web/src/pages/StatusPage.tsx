@@ -22,9 +22,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BusinessHome, MonitorCatalog } from './status/BusinessHome';
+import { MonitorCatalog } from './status/BusinessHome';
+import { MonitorWorkspace } from './status/MonitorWorkspace';
+import { MonitorDrawers } from './status/MonitorDrawers';
 import { readStatusLocation, type StatusHomeView } from '@/lib/statusHome';
 import './status/status-home.css';
+import './status/monitor-fonts.css';
 import { Plus, RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -60,7 +63,7 @@ import { TargetDetail, type TargetActions } from './status/TargetDetail';
 import { TargetList } from './status/TargetList';
 import { MonitorCenterErrorCard, MonitorCenterSkeleton, SegmentedControl } from './status/primitives';
 
-const SEGMENTS = 90;
+const SEGMENTS = 48;
 const POLL_INTERVAL_MS = 30_000;
 const NOTICE_TTL_MS = 6_000;
 
@@ -119,6 +122,7 @@ export function StatusPage(): JSX.Element {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [branchModalProject, setBranchModalProject] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false);
+  const [workspacePanel, setWorkspacePanel] = useState<{ panel: 'connect' | 'notify'; targetId?: string } | null>(null);
   const boardView = location.view;
   const setBoardView = (view: BoardView): void => { setSearchParams(view === 'home' ? {} : { view }); };
   useEffect(() => {
@@ -328,7 +332,7 @@ export function StatusPage(): JSX.Element {
   return (
     <AppShell
       active="status"
-      topbar={(
+      topbar={boardView === 'home' ? undefined : (
         <TopBar
           left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '监控中心' }]} />}
           right={(
@@ -347,8 +351,8 @@ export function StatusPage(): JSX.Element {
         />
       )}
     >
-      <Workspace fluid className="cds-workspace--fill">
-        <div className="status-home flex flex-col gap-3 lg:h-full lg:min-h-0">
+      <Workspace fluid className={cn('cds-workspace--fill', boardView === 'home' && 'cds-workspace--bleed')}>
+        <div className={cn('flex min-h-0 flex-1 flex-col', boardView === 'home' ? 'monitor-page-shell' : 'status-home gap-3 lg:h-full lg:min-h-0')}>
           {/* 有数据时本次轮询失败只做顶部提示，保留旧数据；无数据时交给错误卡片 */}
           {phase === 'ready' && error ? (
             <div className="shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -368,20 +372,20 @@ export function StatusPage(): JSX.Element {
           ) : null}
 
           {phase === 'loading' ? (
-            <MonitorCenterSkeleton />
+            boardView === 'home' ? <MonitorCenterSkeleton overview /> : <MonitorCenterSkeleton />
           ) : phase === 'error' || !summary || !headline ? (
             <MonitorCenterErrorCard message={error || '未知错误'} onRetry={() => void load()} retrying={refreshing} pollSeconds={POLL_INTERVAL_MS / 1000} />
           ) : (
             <>
-              <nav className="status-home-nav" aria-label="监控视图">
+              {boardView !== 'home' && <nav className="status-home-nav" aria-label="监控视图">
                 {([{ value: 'home', label: '业务总览' }, { value: 'catalog', label: '监控列表' }, { value: 'history', label: '处理记录' }] as const).map((tab) => (
                   <button key={tab.value} aria-current={boardView === tab.value ? 'page' : undefined} onClick={() => setBoardView(tab.value)}>{tab.label}</button>
                 ))}
                 <button aria-current={boardView === 'owner' || boardView === 'all' ? 'page' : undefined} onClick={() => setBoardView('owner')}>监控管理</button>
-              </nav>
+              </nav>}
               {proberLiveness(summary)?.stalled || !summary.enabled ? <div role="alert" className="rounded-lg border border-warn/40 bg-warn-soft p-4 text-warn">{summary.enabled ? '检查器未按时更新' : '检查器已关闭'}，下方为最近记录，不能据此确认当前业务正常。请在监控管理中排查检查器。</div> : null}
-              <div key={`${boardView}:${location.targetId ?? ''}`} className="status-home-content">
-              {boardView === 'home' ? <BusinessHome targets={targets} now={now} summary={summary} onOpen={openTarget} onProject={(id) => { setCatalogProject(id); setBoardView('catalog'); }} onManage={() => setBoardView('owner')} onCoverage={() => setCoverageOpen(true)} /> :
+              <div key={`${boardView}:${location.targetId ?? ''}`} className={boardView === 'home' ? 'monitor-page-content' : 'status-home-content'}>
+              {boardView === 'home' ? <MonitorWorkspace targets={targets} now={now} summary={summary} incidents={incidents} onAdd={() => setWorkspacePanel({ panel: 'connect' })} onNotify={(targetId) => setWorkspacePanel({ panel: 'notify', targetId })} onManage={(targetId) => targetId ? openTarget(targetId) : setBoardView('owner')} onProbe={async (targetId) => { await probeTarget(targetId); await load(); }} onReload={() => void load()} /> :
                 boardView === 'catalog' ? <MonitorCatalog targets={targets} now={now} projectId={catalogProject} onProject={setCatalogProject} onOpen={openTarget} /> :
                 boardView === 'history' ? <div><h1>处理记录</h1><p className="status-home-muted mb-4">最近 100 条故障发生与恢复记录。立即检查会追加采样，只有达到恢复判据才会结束故障。</p><IncidentTimeline scrollMode="page" incidents={incidents} filter={incidentFilter} onFilter={setIncidentFilter} onOpenTarget={openTarget} /></div> :
                 boardView === 'detail' ? <div className="status-home-detail">{selected ? <TargetDetail scrollMode="page" key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}
@@ -489,6 +493,7 @@ export function StatusPage(): JSX.Element {
         onSelectBranch={openBranch}
       />
       <CoverageDialog open={coverageOpen} onOpenChange={setCoverageOpen} coverage={summary?.coverage} prober={summary?.prober} />
+      <MonitorDrawers panel={workspacePanel?.panel ?? null} targetId={workspacePanel?.targetId} targets={targets} onClose={() => setWorkspacePanel(null)} onSaved={load} onManageNotifications={() => { window.location.assign('/cds-settings#alarm-notify'); }} />
       <MonitorEditorDialog
         open={editor.open}
         monitor={editor.monitor}

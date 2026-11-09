@@ -97,6 +97,21 @@ export interface AlarmLastDelivery {
   status?: number;
 }
 
+/** Persisted selection; an absent default preserves existing subscriptions. */
+export interface MonitorNotificationSettings {
+  defaultChannelIds?: string[];
+  overrides?: Record<string, string[]>;
+  mutedUntil?: Record<string, number>;
+  acknowledgedAt?: Record<string, number>;
+}
+
+export function notificationChannelSelected(settings: MonitorNotificationSettings | undefined, targetId: string | undefined, channelId: string, now = Date.now()): boolean {
+  if (targetId && (settings?.mutedUntil?.[targetId] ?? 0) > now) return false;
+  const selected = targetId && Object.prototype.hasOwnProperty.call(settings?.overrides ?? {}, targetId)
+    ? settings?.overrides?.[targetId] : settings?.defaultChannelIds;
+  return selected === undefined || selected.includes(channelId);
+}
+
 export interface AlarmChannelConfig {
   /** 独立事件入口，保留目标深链。 */
   incidentPageUrl?: string;
@@ -182,9 +197,10 @@ export function classifyAlert(type: UptimeAlertEventType, source: ProbeSource): 
 export function routeAlarm(
   channels: ReadonlyArray<AlarmChannelConfig>,
   event: AlarmEvent,
+  settings?: MonitorNotificationSettings,
 ): AlarmChannelConfig[] {
   return channels.filter((c) => {
-    if (!c.enabled) return false;
+    if (!c.enabled || !notificationChannelSelected(settings, event.targetId, c.id)) return false;
     // 存量订阅里可能还写着旧名字，这里归一化后再比，不要求写方先迁移。
     if (!c.events.some((e) => normalizeEventKind(e) === event.kind)) return false;
     if (c.projects.length > 0 && !c.projects.includes(event.projectId)) return false;

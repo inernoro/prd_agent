@@ -1,0 +1,7 @@
+/* Eagerly loaded: lazy-route and data loading use exactly the same canvas frame. */
+.monitor-page-shell { height: 100%; overflow: hidden; }
+.monitor-page-content { flex: 1; min-height: 0; overflow: hidden; }
+.cds-app-shell:has(.monitor-page-shell) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.cds-app-shell:has(.monitor-page-shell) .cds-rail { display: none; }
+.cds-app-shell:has(.monitor-page-shell) .cds-main { grid-column: 1; grid-row: 1; animation: none; }
+body:has(.monitor-drawers [role='dialog'][data-state='open']) [data-testid='preview-instance-pill'] { z-index: 88; }

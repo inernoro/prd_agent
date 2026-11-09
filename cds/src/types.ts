@@ -1677,6 +1677,7 @@ export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json'
  * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
  */
 export interface MonitorObservation {
+  upstreamCalls?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /** ISO 时间 */
   at: string;
   ok: boolean;
@@ -1705,6 +1706,8 @@ export interface MonitorObservation {
 }
 
 export interface UptimeCustomMonitor {
+  /** Only the MCP import route writes this sealed server-side configuration. */
+  mcp?: import('./services/mcp-monitor.js').McpMonitorConfig;
   id: string;
   /** 展示名；留空时由服务端按地址派生（主机名 / host:port） */
   name: string;
@@ -2261,6 +2264,8 @@ export interface CdsState {
   releasePlans?: Record<string, ReleasePlan>;
   /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
   uptimeMonitors?: Record<string, UptimeCustomMonitor>;
+  monitorNotifications?: import('./services/alarm-route.js').MonitorNotificationSettings;
+  mcpMonitorAudits?: import('./services/mcp-monitor.js').McpCallEvidence[];
   /**
    * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
    * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
