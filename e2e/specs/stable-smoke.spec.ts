@@ -3119,7 +3119,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-001][REC-002] 现场录音自动开始且暂停继续保留前后音频', { tag: '@cleanup' }, async ({ page, request, context }) => {
+  test('[REC-001][REC-002][REG-recording-offline-001] 现场录音断网时暂停继续并在恢复后保留前后音频', { tag: '@cleanup' }, async ({ page, request, context }) => {
     test.setTimeout(120_000);
     await context.grantPermissions(['microphone']);
     await page.setViewportSize({ width: 390, height: 844 });
@@ -3248,6 +3248,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(timer).toHaveText(/^\d{2}:\d{2}$/);
       await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe('00:00');
 
+      await context.setOffline(true);
+      await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
       await page.getByRole('button', { name: '暂停录音' }).click();
       await expect(recordingState).toHaveAttribute('data-state', 'paused');
       const pausedAt = await timer.textContent();
@@ -3257,6 +3259,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.getByRole('button', { name: '继续录音' }).click();
       await expect(recordingState).toHaveAttribute('data-state', 'recording');
       await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe(pausedAt);
+
+      await context.setOffline(false);
+      await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(true);
 
       const completionPromise = page.waitForResponse((response) => (
         /\/api\/document-store\/recording-uploads\/[^/]+\/complete$/.test(new URL(response.url()).pathname)
@@ -3284,6 +3289,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const persisted = await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) });
       expect(persisted.ok(), '暂停前后音频上传后必须形成可回读条目').toBe(true);
     } finally {
+      await context.setOffline(false);
       if (sessionId) {
         await page.request.delete(`/api/document-store/recording-uploads/${sessionId}`, {
           headers: authHeaders(token),
