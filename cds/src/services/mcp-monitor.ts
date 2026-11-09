@@ -223,9 +223,10 @@ export class McpMonitorClient {
     } finally {
       clearTimeout(timer); evidence.elapsedMs = Date.now() - started;
       if (this.token) {
-        // Preserve system-generated correlation and protocol fields: a token
-        // coinciding with a UUID digit or "initialize" is not a secret echo.
-        const { requestId: _requestId, operation: _operation, startedAt: _startedAt, verdict: _verdict, ...dynamic } = evidence;
+        // The validated endpoint has no URL credentials, query or fragment.
+        // Preserve it alongside generated correlation/protocol fields: a short
+        // token coinciding with an address digit or scheme is not a secret echo.
+        const { requestId: _requestId, operation: _operation, startedAt: _startedAt, verdict: _verdict, endpoint: _endpoint, ...dynamic } = evidence;
         Object.assign(evidence, redactAuditText(dynamic, this.token));
       }
       this.evidence.push(evidence);

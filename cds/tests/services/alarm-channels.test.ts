@@ -318,7 +318,7 @@ describe('监控删除后的通知生命周期', () => {
     const project = { id: 'remove-project', slug: 'remove-project', name: '项目', kind: 'git' as const, repoPath: '/tmp/notification-project', createdAt: now, updatedAt: now };
     service.addProject(project);
     service.addBranch({ id: 'remove-branch', branch: 'feat/remove', projectId: project.id, worktreePath: '/tmp/notification-branch', services: {}, status: 'idle', createdAt: now });
-    const monitor: UptimeCustomMonitor = { id: 'mcp_same-tool', name: '重新接入的服务', kind: 'mcp', url: 'https://monitor.test/mcp', mcp: { toolName: 'health', arguments: {} }, enabled: true, projectId: project.id, boundBranchId: 'remove-branch', createdAt: now, updatedAt: now };
+    const monitor: UptimeCustomMonitor = { id: 'mcp_same-tool', name: '重新接入的服务', kind: 'functional', url: 'https://monitor.test/mcp', mcp: { toolName: 'health', arguments: {} }, enabled: true, projectId: project.id, boundBranchId: 'remove-branch', createdAt: now, updatedAt: now };
     service.upsertUptimeMonitor(monitor);
     const targetId = customProbeTargetId(monitor);
     service.setMonitorNotifications({ defaultChannelIds: ['default'], overrides: { [targetId]: [], 'monitor@keep': ['other'] }, mutedUntil: { [targetId]: Date.now() + 60_000, 'monitor@keep': 123 }, acknowledgedAt: { [targetId]: NOW, 'monitor@keep': NOW - 1 } });

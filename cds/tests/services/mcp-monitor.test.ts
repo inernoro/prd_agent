@@ -55,6 +55,28 @@ function state() {
 }
 
 describe('真正 MCP 工具巡检', () => {
+  it.each(['1', 'http'])('合法短令牌 %s 不应改写真实配置端点，响应回显仍须脱敏', async (token) => {
+    const { store, file, dir } = state();
+    const remote = await serve({ token, reflectToken: true });
+    const client = new McpMonitorClient(remote.url, token, 1000, evidence => store.recordMcpMonitorAudit(evidence));
+    const discovered = await client.discover();
+    expect(discovered.server.name).not.toContain(token);
+    expect(discovered.tools[0].description).not.toContain(token);
+    expect(client.evidence).toHaveLength(3);
+    for (const evidence of client.evidence) expect(evidence.endpoint).toBe(remote.url);
+    const unavailable = await serve({ token, httpError: true });
+    const failureClient = new McpMonitorClient(unavailable.url, token, 1000, evidence => store.recordMcpMonitorAudit(evidence));
+    await expect(failureClient.discover()).rejects.toThrow('未授权');
+    expect(failureClient.evidence[0].endpoint).toBe(unavailable.url);
+    expect(failureClient.evidence[0].snapshot?.message).not.toContain(token);
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.listMcpMonitorAudits().map(e => e.endpoint)).toEqual([unavailable.url, remote.url, remote.url, remote.url]);
+    // Preserving an endpoint never bypasses URL credential/query/fragment guards.
+    for (const url of [remote.url.replace('http://', 'http://user:private@'), remote.url + '?token=private', remote.url + '#private']) {
+      expect(() => new McpMonitorClient(url, token)).toThrow('凭据请填写在访问令牌中');
+    }
+  });
+
   it.each([
     { kind: 'malformed JSON', contentType: 'application/json', bodies: ['{"gate":"first","token":"e"', '{"gate":"other","token":"e"'] },
     { kind: 'HTML login page', contentType: 'text/html', bodies: ['<!doctype html><title>login-aaaa e</title>', '<!doctype html><title>login-bbbb e</title>'] },
@@ -230,6 +252,47 @@ describe('真正 MCP 工具巡检', () => {
 });
 
 describe('真实接入路由与持久化', () => {
+  it('稳定ID重新接入并显式指定通道时不恢复旧静默或确认，其他目标和默认规则保持', async () => {
+    const remote = await serve();
+    const { store, file, dir } = state();
+    const args = { region: 'cn' };
+    const id = `mcp_${crypto.createHash('sha256').update(JSON.stringify([null, remote.url, 'health', args])).digest('hex').slice(0, 32)}`;
+    const targetId = `monitor@${id}`;
+    const otherTargetId = 'monitor@keep-other';
+    const other = normalizeUptimeMonitorInput({ id: 'keep-other', kind: 'http', url: 'https://keep.example.test/health' });
+    if (!other.ok) throw new Error(other.error);
+    store.upsertUptimeMonitor(other.monitor);
+    const future = Date.now() + 60000;
+    const acknowledged = Date.now() - 1000;
+    store.setMonitorNotifications({ defaultChannelIds: ['default-channel'],
+      overrides: { [targetId]: ['obsolete-channel'], [otherTargetId]: ['other-channel'] },
+      mutedUntil: { [targetId]: future, [otherTargetId]: future },
+      acknowledgedAt: { [targetId]: acknowledged, [otherTargetId]: acknowledged },
+    });
+    await store.flush();
+    expect(store.getUptimeMonitor(id)).toBeUndefined();
+    const app = express(); app.use(express.json());
+    const monitor = new UptimeMonitorService({ state: { getAllBranches: () => [], getUptimeMonitors: () => store.listUptimeMonitors() },
+      config: { enabled: true, intervalMs: 60000, timeoutMs: 3000, failureThreshold: 3, recoveryThreshold: 1, maxSamples: 100, excludePatterns: [], scope: 'all', storePath: '' } });
+    app.use('/api', createUptimeRouter({ monitor, store,
+      getNotifications: () => store.getMonitorNotifications(), setNotifications: settings => store.setMonitorNotifications(settings),
+      listNotificationChannelIds: () => ['phone'], recordMcpAudit: evidence => store.recordMcpMonitorAudit(evidence) }));
+    const server = app.listen(0, '127.0.0.1'); servers.push(server); await new Promise<void>(resolve => server.once('listening', resolve));
+    const apiRoot = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+    const response = await fetch(apiRoot + '/uptime/mcp/import', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: remote.url, tools: [{ name: 'health', arguments: args }], channelIds: ['phone'] }) });
+    expect(response.status).toBe(201);
+    expect((await response.json()).targetIds).toEqual([targetId]);
+    const expected = { defaultChannelIds: ['default-channel'], overrides: { [targetId]: ['phone'], [otherTargetId]: ['other-channel'] },
+      mutedUntil: { [otherTargetId]: future }, acknowledgedAt: { [otherTargetId]: acknowledged } };
+    expect(store.getMonitorNotifications()).toEqual(expected);
+    await store.flush();
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.getMonitorNotifications()).toEqual(expected);
+    expect(reloaded.getUptimeMonitor(id)?.mcp?.toolName).toBe('health');
+    await monitor.stop();
+  });
+
   it('discover→import→读回→scheduled probe；重复导入拒绝，审计有界保留', async () => {
     process.env.CDS_SECRET_KEY = 'fixture-key-never-real';
     const remote = await serve({ token: 'fixture-bearer-never-real' });

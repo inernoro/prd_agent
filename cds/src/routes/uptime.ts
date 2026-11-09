@@ -527,7 +527,9 @@ export function createUptimeRouter(deps: {
       try {
         for (const monitor of monitors) saved.push(store.upsertUptimeMonitor(monitor));
         if (body.channelIds !== undefined && deps.setNotifications) {
-          const settings = structuredClone(previousSettings ?? {}); settings.overrides ??= {};
+          // New monitors clear obsolete per-target settings during upsert.
+          // Apply the chosen channels to that current state, not the rollback snapshot.
+          const settings = structuredClone(deps.getNotifications?.() ?? {}); settings.overrides ??= {};
           for (const monitor of saved) settings.overrides[customProbeTargetId(monitor)] = channelIds;
           deps.setNotifications(settings);
         }
