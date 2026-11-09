@@ -18,6 +18,7 @@ const key = 'cdsp_test_not_a_real_credential';
 const task = { id: 'task-1', projectId: 'project-one', status: 'running', reportId: 'report-1' };
 const completeCatalog = TOOLS.map((tool) => tool.name);
 let catalog = completeCatalog;
+let userKeyBindingVersion = 1;
 
 before(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-review-mcp-'));
@@ -35,7 +36,7 @@ before(async () => {
     res.setHeader('content-type', 'application/json');
     if (req.headers['x-ai-access-key'] !== key) { res.writeHead(401); res.end('{}'); return; }
     if (req.url === '/api/code-reviews/capabilities') {
-      res.end(JSON.stringify({ engineConfigured: true, mailConfigured: false, storageConfigured: true, tools: catalog, userKeyConfigured: true, userKeyBindingVersion: 1 }));
+      res.end(JSON.stringify({ engineConfigured: true, mailConfigured: false, storageConfigured: true, tools: catalog, userKeyConfigured: true, userKeyBindingVersion }));
       return;
     }
     if (req.url.includes('redirect')) { res.writeHead(302, { location: host + '/credential-sink' }); res.end('{}'); return; }
@@ -293,4 +294,18 @@ test('real stdio BYOK submission reads only a named local variable and keeps the
       assert.equal(requests.filter(r => r.method === 'POST').length, count);
     });
   } finally { if (previous === undefined) delete process.env.MCP_BYOK_TEST_KEY; else process.env.MCP_BYOK_TEST_KEY = previous; }
+});
+
+
+test('a legacy backend cannot silently ignore BYOK and consume platform quota', async () => {
+  userKeyBindingVersion = undefined;
+  try {
+    await withClient(async client => {
+      const before = requests.filter(r => r.method === 'POST').length;
+      const result = await client.callTool({ name: 'cds_code_review_submit', arguments: { githubUrl: 'https://github.com/owner/repo', userKey: { provider: 'openai', model: 'chosen', apiKeyEnv: 'UNCONFIGURED_KEY_FOR_LEGACY_TEST' } } });
+      assert.equal(result.isError, true);
+      assert.ok(result.content[0].text.includes('不支持用户 Key 隔离'));
+      assert.equal(requests.filter(r => r.method === 'POST').length, before);
+    });
+  } finally { userKeyBindingVersion = 1; }
 });
