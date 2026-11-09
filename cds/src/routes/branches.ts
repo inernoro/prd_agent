@@ -2316,6 +2316,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
+  router.use((req, res, next) => {
+    if (req.method === 'POST') {
+      const match = /^\/branches\/([^/]+)\/(?:deploy(?:\/[^/]+)?|restart|force-rebuild\/[^/]+|prebuilt-image\/claim)\/?$/.exec(req.path);
+      const branch = match ? stateService.getBranch(match[1]) : undefined;
+      if (branch?.archive) {
+        const mismatch = assertProjectAccess(req as any, branch.projectId || 'default');
+        if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+        res.status(409).json({ error: 'branch_archived', message: '分支已归档，请先从归档列表恢复后再启动或部署。' }); return;
+      }
+    }
+    next();
+  });
   const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(shell, config.repoRoot);
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
@@ -2962,7 +2974,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (trigger === 'auto-lifecycle') {
       return {
-        reason: 'CDS 生命周期策略触发停止',
+        reason: req.body?.lifecycleReason === 'startup-timeout'
+          ? '整组未完全启动超过30分钟，自动停止本分支容器，保留数据'
+          : req.body?.lifecycleReason === 'archive' ? '分支归档前停止容器，保留数据30天' : 'CDS 生命周期策略触发停止',
         source: 'cds',
         archiveSource: 'auto-lifecycle-stop',
         archiveMessage: 'captured after auto lifecycle stop preserved containers',
@@ -5630,7 +5644,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 3b: optional ?project=<id> filter（缺省=全部，与历史一致）。
     const projectFilter = resolveProjectIdParam(req.query.project);
     let result: BranchesListResult;
-    if (live || BRANCHES_CACHE_TTL_MS === 0) {
+    if (live || req.query.fresh === '1' || BRANCHES_CACHE_TTL_MS === 0) {
       result = await computeBranchesListPayload({ projectFilter, live, requestId });
     } else {
       const key = projectFilter || 'all';
@@ -5870,7 +5884,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectFilter = sweep.projectFilter ?? null;
     }
     const branches = Object.values(stateService.getState().branches).filter(
-      (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
+      (b) => !b.archive && (!projectFilter || (b.projectId || 'default') === projectFilter),
     );
     const runningNames = (await containerService.getRunningServiceNames?.()) ?? await containerService.getRunningContainerNames();
     const removed: Array<{ branchId: string; branch: string; profileId: string; containerName: string }> = [];
@@ -6017,7 +6031,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 否则「按文档 pin 住」的非主干分支挡得住降温与 janitor，却会被
     // /cleanup、/cleanup-orphans、cleanup-stopped 删掉（Codex PR #1273 P1）。
     const protection = resolveBranchProtection(entry, stateService, deps.config?.scheduler?.pinnedBranches ?? []);
-    let reason = protection.reason;
+    let reason = entry.archive ? 'archived-retention' as const : protection.reason;
     // 额外一道兜底：旧的全局 state.defaultBranch。SSOT 的 default-branch 判定走
     // getDefaultBranchFor(projectId)，若项目上显式写了 defaultBranch: null，就不会
     // 再回落到这个全局值。这里保留 /cleanup 的历史行为，方向只会更保守（少删）。

@@ -237,7 +237,10 @@ describe('CDS Agent 接入口令', () => {
     //    + user-project-access（人类账号项目授权，仅系统所有者，2026-10-03）
     //    + cds-system-diagnostics（主线程诊断与按需 CPU 采样，只读观测，2026-10-08）
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(62);
+    // 新增分支归档清理：有项目边界、需要明确确认，不直接暴露为MCP自动操作。
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(63);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'branch-lifecycle'))
+      .toMatchObject({ access: 'project', risk: 'destructive', agentUse: 'guided', mcpExposure: 'approval-required' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'code-reviews'))
       .toMatchObject({ access: 'project', agentUse: 'direct', risk: 'write', cliFamily: 'code-review' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'project-inspections'))

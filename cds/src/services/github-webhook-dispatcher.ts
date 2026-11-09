@@ -1147,7 +1147,7 @@ export class GitHubWebhookDispatcher {
     // ciTargetSha 可能还在,此时不该再认 CI 完成事件去自动重部署一个已退出极速版的分支。
     const wfProfiles = this.deps.stateService.getBuildProfilesForProject(project.id);
     const matchable = (b: BranchEntry): boolean =>
-      (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
+      !b.archive && (b.ciImageStatus === 'waiting' || b.ciImageStatus === 'failed')
       && b.ciTargetSha === headSha
       && (!run.head_branch || b.branch === run.head_branch)
       && branchUsesPrebuiltMode(wfProfiles, b);
@@ -1584,6 +1584,8 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
     const branchId = entry?.id ?? canonicalId;
     let created = false;
+    if (entry?.archive) return { action: 'ignored-event', branchId,
+      message: '分支已归档，忽略自动部署；请先从归档列表恢复，再推送或部署。' };
 
     // 项目构建配置（极速版判定 + created 分支默认对齐共用）。早算一次,供下面
     // docs-only / dry-run / express 分流复用,避免散落多处重复读取。

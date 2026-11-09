@@ -1,3 +1,6 @@
+import { ArchivedBranchCard, BranchLifecycleControls, type BranchArchiveView } from '@/components/branch/BranchLifecycleControls';
+import { CiImageNotice } from '@/components/branch/CiImageNotice';
+import { ciImageNotice, type CiDiagnosisView } from '@/lib/ci-image-notice';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { projectUnavailable } from '../lib/project-availability.js';
 import { BranchListOverview } from '@/components/branch/BranchListOverview';
@@ -207,6 +210,7 @@ interface BranchSummary {
   /** 仅前端：这条事件来自「部署跑完但分支状态没落盘」，收尾不播「部署成功」 */
   stateFlushFailed?: boolean;
   services: Record<string, ServiceState>;
+  replicaSets?: Record<string, { enabled?: boolean; members?: RsCardMember[] }>;
   /** 本分支额外服务（branch-local profile）；后端列表接口随分支下发，env 已脱敏，这里只用 id */
   extraProfiles?: Array<{ id: string }>;
   resources?: BranchResource[];
@@ -262,6 +266,8 @@ interface BranchSummary {
   ciWorkflowRunUrl?: string;
   ciWaitingSince?: string;
   ciImageError?: string;
+  ciDiagnosis?: CiDiagnosisView | null;
+  archive?: BranchArchiveView | null;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -1431,16 +1437,17 @@ function runningServiceCount(branch: BranchSummary): number {
 
 /**
  * 「未运行」分组的判据（2026-09-29）：停下的、从没部署过的分支收到网格下方一个可折叠分组里，
- * 让正在跑、正在构建、出了错的卡片占据第一屏。等 CI 镜像、CI 失败、在排队、有操作在跑的
- * 都不算——它们要么马上会动，要么需要人处理。
+ * 真有服务或部署操作在跑的留在活跃区；CI等待/失败但没有任何活跃服务的归入未运行。
  */
 function isDormantBranch(branch: BranchSummary, action?: BranchAction): boolean {
-  if (action?.status === 'running') return false;
+  if (branch.archive || action?.status === 'running') return false;
   if (branch.status !== 'idle' || branch.buildQueue) return false;
   // 从停止状态单独部署一个服务时，分支聚合状态到结束前一直是 idle，只有那个服务在 building / starting；
   // 这时它在部署，不许收进「未运行」分组被折叠藏起来（Codex P2，PR #1646）。
   if (deployingServiceIds(branch.services).length > 0) return false;
-  if (branch.deployRuntime?.prebuilt !== false && (branch.ciImageStatus === 'waiting' || branch.ciImageStatus === 'failed')) return false;
+  if (Object.values(branch.services || {}).some(service => service.status === 'running' || service.status === 'stopping')) return false;
+  if (Object.values(branch.replicaSets || {}).some(set => set.members?.some(member =>
+    ['running', 'starting', 'provisioning', 'stopping'].includes(member.status || '')))) return false;
   return true;
 }
 
@@ -1467,6 +1474,7 @@ function summarizeBranchStates(
   let running = 0;
   let slot: { active: number; max: number } | null = null;
   for (const branch of list) {
+    if (isDormantBranch(branch, actions[branch.id])) continue;
     const phase = branchCardPhase({
       status: branch.status,
       services: branch.services,
@@ -1704,7 +1712,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
-  const [cleanupStoppedRunning, setCleanupStoppedRunning] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
@@ -2085,13 +2093,13 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     }
   }, [confirmEmptyBranchList, projectId]);
 
-  const refresh = useCallback(async (showLoading = false, forceLive = false) => {
+  const refresh = useCallback(async (showLoading = false, forceLive = false, fresh = false) => {
     if (!projectId) return;
     if (showLoading) {
       setState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
     }
     try {
-      const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
+      const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}&fresh=${fresh ? '1' : '0'}`;
       const infraUrl = `/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
       const profilesUrl = `/api/build-profiles?project=${encodeURIComponent(projectId)}`;
       const [projectResult, branchesResult, previewModeResult, configResult, infraResult, profilesResult] = await Promise.allSettled([
@@ -2592,7 +2600,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     return () => source.close();
   }, [canManageConsole]);
 
-  const branches = state.status === 'ok' ? state.branches : [];
+  const allBranches = state.status === 'ok' ? state.branches : [];
+  const archivedCount = allBranches.filter(branch => branch.archive).length;
+  const branches = useMemo(() => allBranches.filter(branch => showArchived ? Boolean(branch.archive) : !branch.archive), [allBranches, showArchived]);
   const remoteBranches = state.status === 'ok' ? state.remoteBranches : [];
   const trackedByName = useMemo(() => new Map(branches.map((branch) => [branch.branch, branch])), [branches]);
   const selectedBranches = useMemo(
@@ -2608,6 +2618,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const failedDeployTargets = useMemo<FailedDeployTarget[]>(() => {
     const targets: FailedDeployTarget[] = [];
     for (const branch of branches) {
+      if (branch.archive) continue;
       if (!branchHasDeployFailure(branch, projectProfileIds)) continue;
       const failedServices = failedLiveServices(branch, projectProfileIds);
       if (failedServices.length > 0) {
@@ -2637,29 +2648,6 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       && service.status !== 'restarting'
     )).length
   ), 0), [branches]);
-  // 已停止分支数量（一键清理停止分支按钮的可用性与计数）。
-  // 注意：后端 BranchSummary.status 实际不会是 'stopped'——分支停掉后回落
-  // 'idle'，停止信号在服务级（svc.status === 'stopped'）。与后端
-  // isStoppedBranch 同口径：非进行中态 + 至少一个服务 stopped + 无任何活跃服务。
-  // 纯空白未部署的 idle 分支（services 为空）不计入，避免误删。
-  const stoppedBranchCount = useMemo(
-    () => branches.filter((branch) => {
-      if (branch.status === 'building' || branch.status === 'starting'
-        || branch.status === 'restarting' || branch.status === 'stopping') return false;
-      const services = Object.values(branch.services || {});
-      if (services.length === 0) return false;
-      const anyActive = services.some((svc) => (
-        svc.status === 'running' || svc.status === 'building'
-        || svc.status === 'starting' || svc.status === 'restarting'
-      ));
-      if (anyActive) return false;
-      return services.some((svc) => svc.status === 'stopped');
-    }).length,
-    [branches],
-  );
-  // Branches displayed in the grid: favorites first, then by recent activity.
-  // We no longer expose status filters or compact toggles in the list itself
-  // (the search dropdown and per-card status pill cover those needs).
   const sortedBranches = useMemo(() => {
     const score = (branch: BranchSummary) => Math.max(
       Date.parse(branch.lastPushAt || '') || 0,
@@ -2908,8 +2896,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
       }
     }
     const sharedInfra = Array.from(infraById.values());
-    return { total: branches.length, parts, queued, slot, sharedInfra };
-  }, [branches, actions, branchResourcesById, projectProfileIds]);
+    return { total: branches.length, parts: showArchived ? [] : parts, queued, slot: showArchived ? null : slot, sharedInfra: showArchived ? [] : sharedInfra };
+  }, [branches, actions, branchResourcesById, projectProfileIds, showArchived]);
   // 当前过滤的标签已被全部分支删除时,自动清除过滤
   useEffect(() => {
     if (activeTagFilter && !allTags.includes(activeTagFilter)) {
@@ -3553,29 +3541,6 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
     }
   }, [cleanupDamagedRunning, damagedContainerCount, projectId, refresh]);
 
-  // 一键清理所有已停止的分支（容器 + worktree + entry）。
-  const cleanupStoppedBranches = useCallback(async (): Promise<void> => {
-    if (cleanupStoppedRunning) return;
-    setCleanupStoppedRunning(true);
-    try {
-      const result = await apiRequest<{ removedCount?: number; skippedBusyCount?: number }>(
-        `/api/branches/cleanup-stopped?project=${encodeURIComponent(projectId)}`,
-        { method: 'POST' },
-      );
-      const removed = result.removedCount || 0;
-      const skipped = result.skippedBusyCount || 0;
-      setToast(removed > 0
-        ? `已清理 ${removed} 个已停止分支${skipped > 0 ? `，跳过 ${skipped} 个忙碌分支` : ''}`
-        : '当前没有可清理的已停止分支');
-      await refresh(false);
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setToast(`清理失败: ${message}`);
-    } finally {
-      setCleanupStoppedRunning(false);
-    }
-  }, [cleanupStoppedRunning, projectId, refresh]);
-
   const runBulkAction = useCallback(async (
     label: string,
     branchList: BranchSummary[],
@@ -3869,6 +3834,9 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
    */
   /* 一张分支卡（含紧随其后的复制集派生卡）。「活跃」与「未运行」两个网格共用。 */
   const renderBranchTile = (branch: BranchSummary): JSX.Element => {
+    if (branch.archive) return <ArchivedBranchCard key={branch.id} projectId={projectId} branch={{ ...branch, archive: branch.archive }}
+      onRefresh={async () => { await refresh(false, false, true); }} onToast={setToast} />;
+
     // 项目级复制集显形（2026-07-25 用户拍板）：派生卡紧随主卡右侧（网格自然换行），
     // 名为 <branch>-replicaset-N；非独立 git 分支，仅是同分支的复制集实例组视图。
     const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<RsCardMember> }> }).replicaSets ?? {};
@@ -4164,16 +4132,10 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                 {redeployFailedRunning ? <Loader2 className="animate-spin" /> : <RotateCw />}
                 一键重部署{failedDeployTargets.length > 0 ? ` ${failedDeployTargets.length}` : ''}
               </Button>
-              <Button
-                variant={damagedContainerCount > 0 ? 'outline' : 'ghost'}
-                size="sm"
-                onClick={() => void cleanupDamagedContainers()}
-                disabled={cleanupDamagedRunning || damagedContainerCount === 0}
-                title={damagedContainerCount > 0 ? `删除 ${damagedContainerCount} 个未运行的损坏容器；不会删除分支或工作区` : '当前没有未运行的损坏容器'}
-              >
-                {cleanupDamagedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                清理损坏{damagedContainerCount > 0 ? ` ${damagedContainerCount}` : ''}
-              </Button>
+              <BranchLifecycleControls projectId={projectId} showArchived={showArchived} archivedCount={archivedCount}
+                onToggleArchive={() => { setShowArchived(value => !value); setSelectedBranchIds([]); setActiveTagFilter(null); }}
+                damagedCount={damagedContainerCount} damagedBusy={cleanupDamagedRunning} onDamaged={() => void cleanupDamagedContainers()}
+                onRefresh={async () => { setSelectedBranchIds([]); await refresh(false, false, true); }} onToast={setToast} />
               <Button
                 variant="ghost"
                 size="sm"
@@ -4254,7 +4216,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                  重复的共享基础设施、全项目共用的构建槽收到这里说一次。 */
               <BranchListOverview summary={
                 <h2 className="min-w-0 text-[1.625rem] font-bold leading-tight tracking-tight text-foreground">
-                  <span>{branchOverview.total} 个分支</span>
+                  <span>{showArchived ? `${branchOverview.total} 个归档分支 · 保留30天，可恢复` : `${branchOverview.total} 个分支`}</span>
                   {branchOverview.parts.length > 0 ? '：' : ''}
                   {branchOverview.parts.map((part, index) => (
                     <span key={part.text}>
@@ -4656,24 +4618,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
                           </Button>
                         )}
                       />
-                      <ConfirmAction
-                        title="清理所有已停止的分支?"
-                        description={`把当前项目 ${projectId} 下所有处于「已停止」状态的分支整条清掉（容器 + worktree + 分支条目），git 历史不动。正在运行/构建中的分支不受影响。${stoppedBranchCount > 0 ? `共 ${stoppedBranchCount} 个已停止分支。` : '当前没有已停止分支。'}`}
-                        confirmLabel="开始清理"
-                        onConfirm={() => cleanupStoppedBranches()}
-                        trigger={(
-                          <Button
-                            type="button"
-                            variant={stoppedBranchCount > 0 ? 'outline' : 'ghost'}
-                            size="sm"
-                            disabled={cleanupStoppedRunning || stoppedBranchCount === 0}
-                            title={stoppedBranchCount > 0 ? `清理 ${stoppedBranchCount} 个已停止分支（容器 + worktree + 条目）` : '当前没有已停止分支'}
-                          >
-                            {cleanupStoppedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                            清理停止分支{stoppedBranchCount > 0 ? ` ${stoppedBranchCount}` : ''}
-                          </Button>
-                        )}
-                      />
+                      <span className="text-xs text-muted-foreground">可从顶部“清理分支”归档，数据保留30天。</span>
                     </div>
                     <div>
                       <div className="mb-3 flex items-center justify-between gap-3">
@@ -6574,10 +6519,7 @@ const BranchCard = memo(function BranchCard({
     && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
   // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。
   const shouldShowStopReason = !isRunning && !isInterim && !isCiWaiting && !isCiFailed && !isNeverDeployed;
-  const ciWaitSinceText = branch.ciWaitingSince
-    ? formatRelativeTime(branch.ciWaitingSince)
-    : (branch.lastPushAt ? formatRelativeTime(branch.lastPushAt) : '');
-  const ciImageErrorText = branch.ciImageError || 'CI 预构建镜像未就绪';
+  const ciNotice = ciImageNotice(branch);
   const stopReasonText = branch.lastStopReason || '无停止记录';
   /* 卡面上的停止原因先说外因、再说要不要紧（external-cause-first）：来源标签已经写了
      「GitHub」，原因里再重复「GitHub webhook」只剩内部术语；容器还在就直接告诉用户能秒级恢复。 */
@@ -7047,36 +6989,8 @@ const BranchCard = memo(function BranchCard({
             让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。
             2026-06-24：在「停止」面板之前先拦截「等 CI 镜像 / CI 未就绪 / 待部署」三种
             其实没停止的 idle 态，别再把它们误标成「容器停止 · 无记录 · 时间未知」。 */}
-        {isCiWaiting ? (
-          <div
-            className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
-            title={`等待 GitHub Actions 预构建镜像${branch.ciTargetSha ? ` (${branch.ciTargetSha.slice(0, 7)})` : ''}${ciWaitSinceText ? `\n自 ${ciWaitSinceText}` : ''}`}
-          >
-            <Rocket className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="shrink-0 font-medium text-foreground/80">尚未启动</span>
-            <span className="min-w-0 flex-1 truncate text-muted-foreground/85">镜像就绪后自动部署</span>
-          </div>
-        ) : isCiFailed ? (
-          <div
-            className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${issueClass}`}
-            title={ciImageErrorText}
-          >
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="shrink-0 font-medium">CI 镜像未就绪</span>
-            <span className="min-w-0 flex-1 truncate">{ciImageErrorText}</span>
-            {branch.ciWorkflowRunUrl ? (
-              <a
-                href={branch.ciWorkflowRunUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="shrink-0 inline-flex items-center gap-1 underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                查看构建
-                <ExternalLink className="h-3 w-3" aria-hidden />
-              </a>
-            ) : null}
-          </div>
+        {isCiWaiting || isCiFailed ? (
+          <CiImageNotice branch={branch} className={`h-7 min-w-0 flex-1 rounded-md border px-2.5 text-xs [&>div]:h-full ${isCiFailed ? issueClass : 'border-[hsl(var(--hairline))] text-muted-foreground'}`} />
         ) : isNeverDeployed ? (
           <div
             className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2.5 text-xs text-muted-foreground"
@@ -7128,16 +7042,16 @@ const BranchCard = memo(function BranchCard({
         {ciFailedChip ? (
           <span
             className="inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
-            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，请查看 CI 日志，修复并重试 CI，通过后再部署。`}
+            title={`${ciNotice.title}：${ciNotice.message} 旧版本仍在服务，点击查看详情。`}
           >
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onDetail(); }}
               className="inline-flex min-w-0 items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
-              aria-label="新版本 CI 失败，查看失败原因；旧版本仍在服务"
+              aria-label={`${ciNotice.title}，查看原因；旧版本仍在服务`}
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
-              <span className="min-w-0 truncate">CI 失败</span>
+              <span className="min-w-0 truncate">{ciNotice.title}</span>
             </button>
             {branch.ciWorkflowRunUrl ? (
               <a

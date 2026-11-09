@@ -1,3 +1,5 @@
+import type { BranchLifecycleService } from './services/branch-lifecycle.js';
+import { createBranchLifecycleRouter } from './routes/branch-lifecycle.js';
 import { createInstanceCatalogRouter } from './routes/instance-catalog.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
@@ -255,7 +257,7 @@ function shouldAuditApiMutation(req: express.Request): boolean {
 function normalizeHttpLogPath(pathValue: string): string {
   const rawPath = (pathValue || '').split('?')[0] || '/';
   const segments = rawPath.split('/');
-  const staticBranchRoutes = new Set(['stream', 'state-audit', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
+  const staticBranchRoutes = new Set(['stream', 'state-audit', 'lifecycle-cleanup', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
   const staticExecutorRoutes = new Set(['register', 'capacity', 'dispatch']);
   return segments
     .map((segment, index) => {
@@ -539,6 +541,7 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  branchLifecycleService?: BranchLifecycleService;
   stateService: StateService;
   worktreeService: WorktreeService;
   containerService: ContainerService;
@@ -1333,6 +1336,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/prebuilt-image\/claim$/, '认领预构建镜像'],
     [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/projects\/[^/]+\/branches\/lifecycle-cleanup$/, '归档清理分支'],
+    [/^POST \/projects\/[^/]+\/branches\/[^/]+\/restore-archive$/, '恢复归档分支'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
     [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
     [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
@@ -5106,6 +5111,7 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  if (deps.branchLifecycleService) app.use('/api', createBranchLifecycleRouter(deps.stateService, deps.branchLifecycleService));
   app.use('/api', createBranchRouter({
     selfMaintenanceRuntime: selfMaintenance,
     stateService: deps.stateService,

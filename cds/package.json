@@ -14,6 +14,7 @@
     "drill:r2-mongo": "tsx src/cli/r2-recovery-drill.ts",
     "audit:ui": "node ../scripts/audit-cds-ui-regressions.mjs",
     "smoke:mobile-layout": "node scripts/mobile-layout-smoke.mjs",
+    "smoke:branch-lifecycle": "node scripts/branch-lifecycle-smoke.mjs",
     "smoke:mobile-layout:offline": "node scripts/mobile-layout-smoke.mjs --offline",
     "smoke:agent-starter-mobile": "node scripts/agent-starter-mobile-probe.mjs",
     "smoke:agent-setup-scope": "node scripts/agent-setup-scope-probe.mjs",

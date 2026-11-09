@@ -1,3 +1,5 @@
+import { CiImageNotice } from '@/components/branch/CiImageNotice';
+import type { CiDiagnosisView } from '@/lib/ci-image-notice';
 import { TCP_DISABLED_DESCRIPTION } from '@/lib/resourceTcpStatus';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReactNode } from 'react';
@@ -95,6 +97,10 @@ interface BranchDetailData {
   runningCommitSha?: string | null;
   targetCommitSha?: string | null;
   ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  ciDiagnosis?: CiDiagnosisView | null;
+  ciTargetSha?: string;
+  ciWorkflowConclusion?: string;
+  ciImageError?: string;
   ciWorkflowRunUrl?: string;
   commitSha?: string;
   subject?: string;
@@ -117,6 +123,7 @@ interface BranchDetailData {
   currentVersionId?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
+    prebuilt?: boolean;
     label: string;
     title: string;
     pendingPublish?: boolean;
@@ -2807,12 +2814,8 @@ export function BranchDetailDrawer({
 
                 {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
-                {branch.ciImageStatus === 'failed' ? (
-                  <div role="status" className="mx-4 my-2 rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">
-                    <p>待发布版本 {branch.targetCommitSha?.slice(0, 7) || '未确认'} 未通过 CI，未替换当前运行版本。</p>
-                    <p className="mt-1 text-muted-foreground">查看 CI 日志，修复后重试；检查通过后再部署。</p>
-                    {branch.ciWorkflowRunUrl ? <a className="mt-2 inline-block underline" href={branch.ciWorkflowRunUrl} target="_blank" rel="noreferrer">查看 CI 日志</a> : null}
-                  </div>
+                {branch.deployRuntime?.prebuilt !== false && (branch.ciImageStatus === 'failed' || branch.ciImageStatus === 'waiting') ? (
+                  <CiImageNotice branch={branch} expanded className="mx-4 my-2 rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm" />
                 ) : null}
                 {activeTab === 'overview' ? (
                   <OverviewPanel
