@@ -183,6 +183,8 @@
 
 ### 三、指南
 
+- [代码审查使用自己的模型 Key · 指南](./guide.cds.code-review-user-key.md) `guide.cds.code-review-user-key`
+
 - [MAP 每日自动化验收 SOP · 指南](./guide.acceptance.daily-sop.md) `guide.acceptance.daily-sop`
 - [MAP 验收报告与证据交互 · 指南](./guide.acceptance.report-evidence.md) `guide.acceptance.report-evidence`
 - [AI 百宝箱 (AI Toolbox) · 指南](./guide.ai-toolbox.ops.md) `guide.ai-toolbox.ops`
