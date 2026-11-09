@@ -16,6 +16,7 @@ import { QuickActionsCard } from './QuickActionsCard';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
+import { VersionAppearance } from './VersionAppearance';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
 import { ProductBlueprintTab } from './ProductBlueprintTab';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
@@ -135,10 +136,11 @@ export function SingleProductView() {
       title={product.name}
       subtitle={`${product.productNo} · ${categoryLabel(categories, product.grade)}`}
       topSlot={
-        <div className="mb-2">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <button onClick={() => navigate('/product-agent')} className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary">
             <ArrowLeft size={13} /> 产品列表
           </button>
+          <VersionAppearance />
         </div>
       }
       items={NAV.filter((item) => hasProductMenu(permissions, productRouteMenu('/product-agent/p/' + productId, '?tab=' + item.key) ?? 'unknown', isRoot))}

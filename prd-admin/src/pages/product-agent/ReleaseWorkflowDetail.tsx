@@ -72,9 +72,9 @@ export const FEATURE_CHANGE_LABEL: Record<FeatureChangeType, string> = {
 };
 
 const CHANGE_BADGE_CLASS: Record<FeatureChangeType, string> = {
-  added: 'border-emerald-400/30 bg-emerald-400/10 text-semantic-success',
-  modified: 'border-amber-400/30 bg-amber-400/10 text-semantic-warning',
-  deprecated: 'border-red-400/30 bg-red-400/10 text-semantic-danger',
+  added: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
+  modified: 'border-amber-400/30 bg-amber-400/10 text-amber-200',
+  deprecated: 'border-red-400/30 bg-red-400/10 text-red-200',
   unchanged: 'border-token-subtle bg-token-nested text-token-muted',
 };
 
@@ -766,7 +766,7 @@ export function ReleaseWorkflowDetail({
                   <button
                     type="button"
                     onClick={() => navigate(`/product-agent/p/${productId}/initiation/${linkedInitiation.id}`)}
-                    className="ml-1 font-mono text-semantic-cyan hover:underline"
+                    className="ml-1 font-mono text-cyan-300 hover:underline"
                   >
                     {linkedInitiation.tCode}
                   </button>
@@ -883,7 +883,7 @@ export function ReleaseWorkflowDetail({
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-xs text-token-secondary">追加需求</span>
                     <button type="button" onClick={() => setShowRequirementPicker((v) => !v)} aria-label="搜索并新增需求"
-                      className="flex h-7 w-7 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary hover:border-cyan-400/40 hover-text-semantic-cyan">
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
                       <Plus size={14} />
                     </button>
                   </div>
@@ -891,7 +891,7 @@ export function ReleaseWorkflowDetail({
                     ? <div className="mb-2 flex flex-wrap gap-2">{selectedAdditionalRequirements.map((r) =>
                         <span key={r.id} className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-blue)]">
                           {r.requirementNo} {r.title}
-                          <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-token-secondary hover-text-semantic-cyan"><X size={12} /></button>
+                          <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-cyan-100/55 hover:text-cyan-100"><X size={12} /></button>
                         </span>)}
                     </div>
                     : <div className="rounded-lg border border-dashed border-token-subtle px-3 py-3 text-xs text-token-muted-faint">点击右侧 + 搜索并选择需要追加的需求</div>}
@@ -1014,14 +1014,14 @@ function FeatureManifestPanel({
     <div className="flex flex-col gap-4">
       {previousVCode && (
         <InfoBox>
-          已继承上一正式版本 <b className="font-mono text-semantic-cyan">{previousVCode}</b> 的功能清单。请标注本版相对上一版的变更（新增 / 优化 / 废弃）。
+          已继承上一正式版本 <b className="font-mono text-cyan-200">{previousVCode}</b> 的功能清单。请标注本版相对上一版的变更（新增 / 优化 / 废弃）。
         </InfoBox>
       )}
       {!readOnly && (
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-token-secondary">纳入功能</span>
           <button type="button" onClick={() => setShowPicker((v) => !v)}
-            className="flex h-8 items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-2.5 text-xs text-token-secondary hover:border-cyan-400/40 hover-text-semantic-cyan">
+            className="flex h-8 items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-2.5 text-xs text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
             <Plus size={14} /> 添加功能
           </button>
         </div>
@@ -1039,7 +1039,7 @@ function FeatureManifestPanel({
               : available.map((f) => (
                   <button key={f.id} type="button" onClick={() => onAdd(f.id)}
                     className="flex w-full items-start gap-2 rounded px-2 py-2 text-left text-xs hover-bg-soft">
-                    <span className="font-mono text-semantic-cyan">{f.featureNo}</span>
+                    <span className="font-mono text-cyan-200/80">{f.featureNo}</span>
                     <span className="text-token-secondary">{f.title}</span>
                   </button>
                 ))}
@@ -1121,7 +1121,7 @@ function ManifestRow({
         <ChangeBadge changeType={item.changeType} />
         <div className="min-w-0 flex-1">
           {onOpen ? (
-            <button type="button" onClick={onOpen} className="text-left text-sm text-semantic-cyan truncate hover:underline">{title}</button>
+            <button type="button" onClick={onOpen} className="text-left text-sm text-cyan-200/90 truncate hover:underline">{title}</button>
           ) : (
             <div className="text-sm text-token-primary truncate">{title}</div>
           )}
@@ -1135,7 +1135,7 @@ function ManifestRow({
                 {FEATURE_CHANGE_LABEL[type]}
               </button>
             ))}
-            <button type="button" onClick={() => onRemove(item.featureId)} className="ml-1 text-token-muted-faint hover-text-error" aria-label="移除">
+            <button type="button" onClick={() => onRemove(item.featureId)} className="ml-1 text-token-muted-faint hover:text-red-300" aria-label="移除">
               <X size={14} />
             </button>
           </div>
@@ -1161,7 +1161,7 @@ function ChangeBadge({ changeType }: { changeType: FeatureChangeType }) {
 
 function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-semantic-cyan' : 'border-transparent text-token-muted hover-text-primary'}`}>
+    <button onClick={onClick} className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover-text-primary'}`}>
       {children}
     </button>
   );
@@ -1215,7 +1215,7 @@ function RequirementChecks({ requirements, selected, onChange }: {
           <label key={r.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-xs hover-bg-soft">
             <input type="checkbox" className="mt-0.5 accent-cyan-400" checked={selected.includes(r.id)} onChange={() => toggle(r.id)} />
             <span className="min-w-0">
-              <span className="block font-mono text-semantic-cyan">{r.requirementNo}</span>
+              <span className="block font-mono text-cyan-200/80">{r.requirementNo}</span>
               <span className="mt-0.5 block break-words text-token-secondary">{r.title}</span>
             </span>
           </label>
@@ -1235,7 +1235,7 @@ function RequirementSummary({ title, requirements, emptyText }: {
         ? <div className="text-xs text-token-muted-faint">{emptyText}</div>
         : <div className="space-y-1.5">{requirements.map((r) => (
             <div key={r.id} className="rounded-md bg-token-nested px-2.5 py-2 text-xs text-token-secondary">
-              <span className="mr-2 font-mono text-semantic-cyan">{r.requirementNo}</span>{r.title}
+              <span className="mr-2 font-mono text-cyan-200">{r.requirementNo}</span>{r.title}
             </div>))}</div>}
     </div>
   );

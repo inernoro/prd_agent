@@ -39,7 +39,7 @@ export function ProductVersionDetailRoute() {
   if (kind !== 'release' && kind !== 'initiation') {
     return <div className="flex h-screen flex-col items-center justify-center gap-3 bg-token-card text-sm text-token-muted">
       <span>该页面需要产品管理权限</span>
-      <button type="button" onClick={() => navigate('/product-agent?section=versions')} className="text-semantic-cyan hover:underline">返回版本列表</button>
+      <button type="button" onClick={() => navigate('/product-agent?section=versions')} className="text-cyan-300 hover:underline">返回版本列表</button>
     </div>;
   }
   return <div className="flex h-screen min-h-0 flex-col bg-token-card">

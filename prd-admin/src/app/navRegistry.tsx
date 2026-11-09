@@ -15,6 +15,7 @@
 import { lazy, type ReactElement } from 'react';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 import { ProductPermissionGate, ProductReviewPermissionGate } from '@/pages/product-agent/ProductPermissionGate';
+import { ProductAgentAppearance } from '@/pages/product-agent/VersionAppearance';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
@@ -152,8 +153,12 @@ function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElem
   );
 }
 
+function productGuarded(perm: string | string[], el: ReactElement): ReactElement {
+  return fullscreenGuarded(perm, <ProductAgentAppearance>{el}</ProductAgentAppearance>);
+}
+
 function productReviewGuarded(section: 'review' | 'requirements', el: ReactElement): ReactElement {
-  return fullscreenGuarded('product-agent.use',
+  return productGuarded('product-agent.use',
     <ProductReviewPermissionGate permission="review-agent.use">
       <OverviewShell sectionOverride={section}>{el}</OverviewShell>
     </ProductReviewPermissionGate>);
@@ -662,27 +667,27 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     path: '/product-agent/p/:productId/knowledge/:entryId',
     placement: 'fullscreen',
     permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
+    element: productGuarded('product-agent.use', <KnowledgeDetailPage />),
   },
   {
     // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
     path: '/product-agent/p/:productId/:kind/:id',
     placement: 'fullscreen',
     permission: ['product-agent.use', 'product-agent.version-apply'],
-    element: fullscreenGuarded(['product-agent.use', 'product-agent.version-apply'], <ProductVersionDetailRoute />),
+    element: productGuarded(['product-agent.use', 'product-agent.version-apply'], <ProductVersionDetailRoute />),
   },
   {
     // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
     path: '/product-agent/p/:productId',
     placement: 'fullscreen',
     permission: ['product-agent.use', 'product-agent.version-apply'],
-    element: fullscreenGuarded(['product-agent.use', 'product-agent.version-apply'], <ProductVersionProductRoute />),
+    element: productGuarded(['product-agent.use', 'product-agent.version-apply'], <ProductVersionProductRoute />),
   },
   {
     path: '/product-agent',
     placement: 'fullscreen',
     permission: ['product-agent.use', 'product-agent.version-apply'],
-    element: fullscreenGuarded(['product-agent.use', 'product-agent.version-apply'], <OverviewShell />),
+    element: productGuarded(['product-agent.use', 'product-agent.version-apply'], <OverviewShell />),
     nav: {
       label: '产品管理',
       shortLabel: '产品',

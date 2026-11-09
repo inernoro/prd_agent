@@ -161,12 +161,12 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
       title={canUseProduct ? '产品管理' : '版本号申领'}
       subtitle={canUseProduct ? '全局总览' : '内部版本与正式版本'}
       topSlot={
-        <button
-          onClick={() => navigate('/')}
-          className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary mb-2"
-        >
-          <ArrowLeft size={13} /> 返回首页
-        </button>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary">
+            <ArrowLeft size={13} /> 返回首页
+          </button>
+          {active !== 'versions' && <VersionAppearance />}
+        </div>
       }
       items={navItems.filter((item) => hasProductMenu(permissions, item.key, isRoot))}
       active={active}

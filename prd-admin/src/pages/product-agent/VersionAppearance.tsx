@@ -1,9 +1,11 @@
+import { useEffect, type ReactNode } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { Button } from '@/components/design/Button';
 import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import type { ResolvedThemeMode } from '@/stores/mobileThemeStore';
+import './product-appearance.css';
 
 type VersionAppearanceState = {
   mode: ResolvedThemeMode;
@@ -20,12 +22,22 @@ const useVersionAppearance = create<VersionAppearanceState>()(
   ),
 );
 
+export function ProductAgentAppearance({ children }: { children: ReactNode }) {
+  const mode = useVersionAppearance((state) => state.mode);
+  useApplyDocumentTheme(window.location.pathname, mode);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute('data-product-agent-appearance', '');
+    return () => root.removeAttribute('data-product-agent-appearance');
+  }, []);
+
+  return children;
+}
+
 export function VersionAppearance() {
   const mode = useVersionAppearance((state) => state.mode);
   const setMode = useVersionAppearance((state) => state.setMode);
-
-  // 版本弹窗和下拉菜单会挂到 body，因此统一使用页面级主题。
-  useApplyDocumentTheme(window.location.pathname, mode);
 
   const isLight = mode === 'light';
   const Icon = isLight ? Sun : Moon;

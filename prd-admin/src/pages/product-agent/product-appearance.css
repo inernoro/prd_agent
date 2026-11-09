@@ -1,0 +1,70 @@
+html[data-product-agent-appearance][data-theme="light"] {
+  /* The product routes still use the original Tailwind shades in dark mode. */
+  --color-cyan-100: var(--semantic-cyan-text);
+  --color-cyan-200: var(--semantic-cyan-text);
+  --color-cyan-300: var(--semantic-cyan-text);
+  --color-sky-200: var(--semantic-info-text);
+  --color-sky-300: var(--semantic-info-text);
+  --color-blue-200: var(--semantic-info-text);
+  --color-blue-300: var(--semantic-info-text);
+  --color-emerald-200: var(--semantic-success-text);
+  --color-emerald-300: var(--semantic-success-text);
+  --color-amber-100: var(--semantic-warning-text);
+  --color-amber-200: var(--semantic-warning-text);
+  --color-amber-300: var(--semantic-warning-text);
+  --color-red-100: var(--semantic-danger-text);
+  --color-red-200: var(--semantic-danger-text);
+  --color-red-300: var(--semantic-danger-text);
+  --color-rose-200: var(--semantic-danger-text);
+  --color-rose-300: var(--semantic-danger-text);
+  --color-violet-200: var(--semantic-purple-text);
+  --color-violet-300: var(--semantic-purple-text);
+  --color-purple-300: var(--semantic-purple-text);
+  --color-slate-300: var(--text-secondary);
+
+  --product-graph-node-bg: var(--panel-solid);
+  --product-graph-node-fg: var(--text-primary);
+  --product-graph-dot: var(--border-subtle);
+  --product-graph-minimap: var(--panel-solid);
+  --product-graph-mask: var(--nested-block-bg);
+}
+
+html[data-product-agent-appearance][data-theme="light"] .agent-fullscreen-canvas {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+html[data-product-agent-appearance][data-theme="light"] .agent-fullscreen-sidebar {
+  background-color: var(--panel-solid);
+}
+/* Match the existing background utilities, including in dialogs mounted on body.
+   The CSS escape represents the hash character in each utility name. */
+html[data-product-agent-appearance][data-theme="light"] :where(
+  [class~="bg-[\23 0f1014]"],
+  [class~="bg-[\23 111318]"],
+  [class~="bg-[\23 111319]"],
+  [class~="bg-[\23 121317]"],
+  [class~="bg-[\23 13151a]"],
+  [class~="bg-[\23 14161b]"],
+  [class~="bg-[\23 15171c]"],
+  [class~="bg-[\23 16171c]"],
+  [class~="bg-[\23 16181d]"],
+  [class~="bg-[\23 181a22]"],
+  [class~="bg-[\23 1a1c22]"],
+  [class~="bg-[\23 1b1d22]"]
+):not(.agent-fullscreen-canvas, .agent-fullscreen-sidebar) {
+  background-color: var(--panel-solid);
+}
+
+html[data-product-agent-appearance][data-theme="light"] :where([class^="text-white/"], [class*=" text-white/"]) {
+  color: var(--text-secondary);
+}
+
+html[data-product-agent-appearance][data-theme="light"] :where(input, select, textarea).text-white,
+html[data-product-agent-appearance][data-theme="light"] .product-graph .text-white {
+  color: var(--text-primary);
+}
+
+html[data-product-agent-appearance][data-theme="light"] .product-graph-hint {
+  background-color: var(--panel-solid);
+}

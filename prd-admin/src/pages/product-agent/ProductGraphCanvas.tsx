@@ -636,7 +636,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col px-4 pt-3">
+    <div className="product-graph h-full min-h-0 flex flex-col px-4 pt-3">
       <style>{GRAPH_FX_CSS}</style>
       {/* 控制栏 */}
       <div className="shrink-0 flex flex-wrap items-center gap-2 px-1 pb-3">
@@ -781,17 +781,17 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           panActivationKeyCode="Space"
           selectionOnDrag={false}
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.04)" />
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--product-graph-dot, rgba(255,255,255,0.04))" />
           <MiniMap
-            style={{ background: 'rgba(0,0,0,0.4)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)' }}
-            maskColor="rgba(0,0,0,0.6)"
+            style={{ background: 'var(--product-graph-minimap, rgba(0,0,0,0.4))', borderRadius: 12, border: '1px solid var(--product-graph-dot, rgba(255,255,255,0.08))' }}
+            maskColor="var(--product-graph-mask, rgba(0,0,0,0.6))"
             nodeColor={(n) => TYPE_META[idType(n.id)]?.color ?? '#888'}
             pannable
             zoomable={false}
           />
           <Controls showInteractive={false} />
         </ReactFlow>
-        <div className="absolute bottom-3 left-3 text-[10px] text-white/35 bg-black/40 border border-token-subtle rounded-md px-2 py-1">
+        <div className="product-graph-hint absolute bottom-3 left-3 text-[10px] text-white/35 bg-black/40 border border-token-subtle rounded-md px-2 py-1">
           {mode === 'trace' ? '点击节点：高亮其关系路径' : '点击节点：查看详情'}
         </div>
 
@@ -1109,11 +1109,11 @@ const GRAPH_FX_CSS = `
 
 function baseStyle(color: string): CSSProperties {
   return {
-    background: 'rgba(255,255,255,0.03)',
+    background: 'var(--product-graph-node-bg, rgba(255,255,255,0.03))',
     border: `1px solid ${color}`,
     borderLeft: `4px solid ${color}`,
     borderRadius: 10,
-    color: '#e8e8ec',
+    color: 'var(--product-graph-node-fg, #e8e8ec)',
     fontSize: 11,
     width: 196,
     whiteSpace: 'pre-line',

@@ -1301,7 +1301,7 @@
 
 /* 固定暗色可视化表面：容器声明一次，嵌套卡片沿上下文继承。
    仅用于热力图、趋势图等需要稳定暗色画布的创作型区域。 */
-.surface-tone-dark {
+:where(html:not([data-product-agent-appearance][data-theme="light"])) .surface-tone-dark {
   /* 与 :root 同批新增：岛内也要有值，否则浅色页里的暗岛会退回浅色档的描边 */
   --border-strong: rgba(255, 255, 255, 0.24);
   /* 下面这一组是「经由 CSS 类被消费」的那种漏网之鱼（Codex PR #1476 P1）。

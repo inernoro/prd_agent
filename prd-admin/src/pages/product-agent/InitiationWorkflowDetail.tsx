@@ -285,7 +285,7 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
     <button
       type="button"
       onClick={onClick}
-      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-semantic-cyan' : 'border-transparent text-token-muted hover:text-token-secondary'}`}
+      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover:text-token-secondary'}`}
     >
       {children}
     </button>
