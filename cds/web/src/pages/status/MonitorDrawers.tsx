@@ -50,12 +50,25 @@ function destination(channel: Channel): string {
   try { return new URL(channel.webhook?.url || '').hostname; } catch { return '尚未填写接收地址'; }
 }
 
+/** Remove deleted IDs without changing empty selections or still-registered preferences. */
+function existingChannelIds(ids: readonly string[], channels: readonly Channel[]): string[] {
+  const registered = new Set(channels.map((channel) => channel.id));
+  return ids.filter((id) => registered.has(id));
+}
+
 function channelState(channels: { channels: Channel[]; status: ChannelStatus[] }, notifications: NotificationsPayload): ChannelsState {
   const legacy = notifications.legacyChannel;
+  const registry = legacy && !channels.channels.some((channel) => channel.id === legacy.id) ? [...channels.channels, legacy] : channels.channels;
+  const settings = notifications.settings;
   return {
-    channels: legacy && !channels.channels.some((channel) => channel.id === legacy.id) ? [...channels.channels, legacy] : channels.channels,
+    channels: registry,
     status: legacy ? [...channels.status, { id: legacy.id, status: legacy.status }] : channels.status,
-    settings: notifications.settings,
+    settings: {
+      ...settings,
+      ...(settings.defaultChannelIds === undefined ? {} : { defaultChannelIds: existingChannelIds(settings.defaultChannelIds, registry) }),
+      ...(settings.overrides === undefined ? {} : { overrides: Object.fromEntries(Object.entries(settings.overrides)
+        .map(([targetId, ids]) => [targetId, existingChannelIds(ids, registry)])) }),
+    },
   };
 }
 
@@ -178,7 +191,7 @@ function ConnectDrawer({ targets, onClose, onSaved, onBusy, onManage }: DrawerBo
   try { if (recentUrl) recentHost = new URL(recentUrl).hostname; } catch { /* An invalid address is never offered as a recent connection. */ }
   const defaultIds = channels.data?.settings.defaultChannelIds
     ?? channels.data?.channels.filter((channel) => channel.enabled).map((channel) => channel.id) ?? [];
-  const effectiveIds = customNotify ? channelIds : defaultIds;
+  const effectiveIds = existingChannelIds(customNotify ? channelIds : defaultIds, channels.data?.channels ?? []);
   const toggleChannel = (channelId: string): void => {
     setChannelIds(effectiveIds.includes(channelId) ? effectiveIds.filter((entry) => entry !== channelId) : [...effectiveIds, channelId]);
     setCustomNotify(true);
@@ -210,7 +223,7 @@ function ConnectDrawer({ targets, onClose, onSaved, onBusy, onManage }: DrawerBo
         });
         await apiRequest('/api/uptime/mcp/import', {
           method: 'POST', body: { url: url.trim(), ...(auth && token ? { token } : {}), projectId: projectId || null, tools,
-            ...(customNotify ? { channelIds } : {}) },
+            ...(customNotify ? { channelIds: existingChannelIds(channelIds, channels.data?.channels ?? []) } : {}) },
         });
         setToken(''); await onSaved(); onClose();
       }
@@ -321,8 +334,9 @@ function NotificationDrawer({ targets, targetId, onClose, onSaved, onBusy, onMan
   const save = async (reset = false): Promise<void> => {
     setBusy(true); onBusy(true); setError(null);
     try {
+      const registeredIds = existingChannelIds(selected, channels.data?.channels ?? []);
       await apiRequest('/api/uptime/notifications', { method: 'PUT', body: scope === 'default'
-        ? { defaultChannelIds: selected } : { targetId: serviceId, channelIds: reset ? null : selected } });
+        ? { defaultChannelIds: registeredIds } : { targetId: serviceId, channelIds: reset ? null : registeredIds } });
       await onSaved(); onClose();
     } catch (e) { setError(message(e)); }
     finally { setBusy(false); onBusy(false); }

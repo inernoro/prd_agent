@@ -313,6 +313,53 @@ describe('监控删除后的通知生命周期', () => {
     }
   }
 
+  it.each([
+    { label: '默认未设置', defaults: undefined },
+    { label: '默认明确为空', defaults: [] as string[] },
+    { label: '默认只有被删除通道', defaults: ['gone'] },
+    { label: '默认含其他及旧MAP', defaults: ['gone', 'keep', 'legacy-map'] },
+  ])('删除真实通知通道清理引用并保留空覆盖，冷读和同ID重建不恢复旧选择：$label', async ({ defaults }) => withState(async (service, stateFile) => {
+    service.upsertAlarmChannel(channel({ id: 'gone' }));
+    service.upsertAlarmChannel(channel({ id: 'keep' }));
+    const before = { ...(defaults === undefined ? {} : { defaultChannelIds: defaults }),
+      overrides: { 'monitor@only-gone': ['gone'], 'monitor@mixed': ['gone', 'keep', 'legacy-map'], 'monitor@empty': [], 'monitor@keep': ['keep'] },
+      mutedUntil: { 'monitor@only-gone': Date.now() + 60000, 'monitor@keep': 123 },
+      acknowledgedAt: { 'monitor@only-gone': NOW, 'monitor@keep': NOW - 1 },
+    };
+    service.setMonitorNotifications(before);
+    expect(service.removeAlarmChannel('gone')).toBe(true);
+    const expected = { ...(defaults === undefined ? {} : { defaultChannelIds: defaults.filter(id => id !== 'gone') }),
+      overrides: { 'monitor@only-gone': [], 'monitor@mixed': ['keep', 'legacy-map'], 'monitor@empty': [], 'monitor@keep': ['keep'] },
+      mutedUntil: before.mutedUntil, acknowledgedAt: before.acknowledgedAt,
+    };
+    expect(service.getMonitorNotifications()).toEqual(expected);
+    await service.flush();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile)); reloaded.load();
+    expect(reloaded.getMonitorNotifications()).toEqual(expected);
+    expect(Object.hasOwn(reloaded.getMonitorNotifications(), 'defaultChannelIds')).toBe(defaults !== undefined);
+    reloaded.upsertAlarmChannel(channel({ id: 'gone', name: '重新创建' }));
+    await reloaded.flush();
+    const restarted = new StateService(stateFile, path.dirname(stateFile)); restarted.load();
+    expect(restarted.getMonitorNotifications()).toEqual(expected);
+    // An empty service override must remain explicit; removing its key would
+    // silently route through the default or all channels after recreation.
+    const settings = restarted.getMonitorNotifications();
+    expect(Object.hasOwn(settings.overrides!, 'monitor@only-gone')).toBe(true);
+    expect(routeAlarm(restarted.listAlarmChannels(), { ...EVENT, targetId: 'monitor@only-gone' }, { ...settings, mutedUntil: {} })).toEqual([]);
+  }));
+
+  it('删除不存在的通知通道不改变已有通知设置或触发保存', async () => withState(async (service, stateFile) => {
+    service.upsertAlarmChannel(channel({ id: 'keep' }));
+    const settings = { defaultChannelIds: ['missing', 'legacy-map'], overrides: { 'monitor@one': ['missing'] }, mutedUntil: { 'monitor@one': 123 }, acknowledgedAt: { 'monitor@one': NOW } };
+    service.setMonitorNotifications(settings); await service.flush();
+    const save = vi.spyOn(service, 'save');
+    expect(service.removeAlarmChannel('missing')).toBe(false);
+    expect(save).not.toHaveBeenCalled(); expect(service.getMonitorNotifications()).toEqual(settings);
+    save.mockRestore();
+    const reloaded = new StateService(stateFile, path.dirname(stateFile)); reloaded.load();
+    expect(reloaded.getMonitorNotifications()).toEqual(settings);
+  }));
+
   function seed(service: StateService) {
     const now = new Date(NOW).toISOString();
     const project = { id: 'remove-project', slug: 'remove-project', name: '项目', kind: 'git' as const, repoPath: '/tmp/notification-project', createdAt: now, updatedAt: now };

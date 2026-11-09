@@ -5382,6 +5382,15 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const next = list.filter((c) => c.id !== id);
     if (next.length === list.length) return false;
     this.state.alarmChannels = next;
+    const settings = this.state.monitorNotifications;
+    if (settings?.defaultChannelIds) settings.defaultChannelIds = settings.defaultChannelIds.filter(channelId => channelId !== id);
+    if (settings?.overrides) {
+      for (const [targetId, channelIds] of Object.entries(settings.overrides)) {
+        // Keep empty overrides explicit: removing their keys would subscribe
+        // these services to the default channels instead of leaving them off.
+        settings.overrides[targetId] = channelIds.filter(channelId => channelId !== id);
+      }
+    }
     this.save();
     return true;
   }
