@@ -1131,6 +1131,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
   // 仅“尺寸语义不适用”的模型隐藏选择器；提示词传输型自适应模型仍允许用户选尺寸。
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
+  const [currentModelInpainting, setCurrentModelInpainting] = useState<boolean | null>(null);
 
   useEffect(() => {
     // 生成和尺寸查询均使用业务模型标识；adapter-info 转发网关发布的能力，
@@ -1138,6 +1139,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     let cancelled = false;
     setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
     setCurrentModelSizesNotApplicable(false);
+    setCurrentModelInpainting(null);
+    setInpaintTarget(null);
     const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
@@ -1148,6 +1151,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     getVisualAgentAdapterInfo(modelCode)
       .then((res) => {
         if (cancelled) return;
+        setCurrentModelInpainting(res.success && res.data?.matched ? res.data.supportsInpainting === true : null);
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
           setSizesByResolution({
@@ -8047,6 +8051,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 onInpaint={() => {
                                   if (it.status !== 'done' || !it.src) {
                                     toast.error('请先选中一张已完成的图片');
+                                    return;
+                                  }
+                                  if (currentModelInpainting !== true) {
+                                    toast.warning(currentModelInpainting === false
+                                      ? '当前模型不支持局部重绘，请在“模型偏好”选择支持蒙版的模型。'
+                                      : '正在确认模型的局部重绘能力，请稍后重试。');
                                     return;
                                   }
                                   setInpaintTarget(it);
