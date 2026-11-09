@@ -1,3 +1,14 @@
+import type { IncomingMessage } from 'node:http';
+
+/** HTML fetch 的正文可能进入 srcDoc 或作为离线文件，不能混入预览站点脚本。 */
+export function isPreviewWidgetNavigation(req: Pick<IncomingMessage, 'method' | 'headers'>): boolean {
+  const method = (req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  const destination = String(req.headers['sec-fetch-dest'] || '').trim().toLowerCase();
+  // 不带 Fetch Metadata 的旧浏览器和命令行保持既有行为。
+  return !destination || destination === 'document' || destination === 'iframe';
+}
+
 /**
  * CDS Auto-Update Widget — injected into proxied HTML responses.
  *

@@ -364,6 +364,38 @@ describe('ProxyHandler — HTTP 透传', () => {
     expect(Number(r.headers['content-length'])).toBeGreaterThan(50);
   });
 
+  it.each(['empty', 'script', 'style'])('HTML 子资源 %s 原样透传，避免 srcDoc 混入预览脚本', async (destination) => {
+    const original = '<html><body><h1>Owned preview content</h1></body></html>';
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(original);
+    });
+    upstreams.push(u);
+    const f = await startForwarder(() => ({
+      _id: 'owned', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    }));
+    forwarders.push(f);
+    const response = await clientReq(f.port, { headers: { 'sec-fetch-dest': destination } });
+    expect(response.status).toBe(200);
+    expect(response.body).toBe(original);
+  });
+
+  it.each(['document', 'iframe'])('HTML 导航 %s 仍注入分支预览脚本', async (destination) => {
+    const u = await startUpstream((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<html><body>Owned document</body></html>');
+    });
+    upstreams.push(u);
+    const f = await startForwarder(() => ({
+      _id: 'owned', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    }));
+    forwarders.push(f);
+    const response = await clientReq(f.port, { headers: { 'sec-fetch-dest': destination } });
+    expect(response.body).toContain('data-cds-widget');
+  });
+
   it('[C-3.3] gzip 压缩 HTML 200 → 解压 + 注入 + 重新写 content-length', async () => {
     const original = '<html><body><h1>Gzipped App</h1></body></html>';
     const gzBody = zlib.gzipSync(Buffer.from(original, 'utf-8'));
