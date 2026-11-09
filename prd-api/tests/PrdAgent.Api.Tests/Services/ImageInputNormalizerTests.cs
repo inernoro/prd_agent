@@ -39,6 +39,67 @@ internal static class ImageInputTestData
 
 public class ImageInputNormalizerTests
 {
+    [Fact]
+    public void OpenAiMask_ConvertsBusinessWhiteToTransparent_AndPreservesNativeAlpha()
+    {
+        using var source = new Image<Rgba32>(3, 1);
+        source[0, 0] = new Rgba32(0, 0, 0, 255);
+        source[1, 0] = new Rgba32(255, 255, 255, 255);
+        source[2, 0] = new Rgba32(128, 128, 128, 255);
+        using var bytes = new MemoryStream();
+        source.SaveAsPng(bytes);
+        var result = ImageInputNormalizer.ToOpenAiMask(ImageInputNormalizer.Read(bytes.ToArray()));
+        using var wire = Image.Load<Rgba32>(result.Bytes);
+        Assert.Equal(3, wire.Width);
+        Assert.Equal(1, wire.Height);
+        Assert.Equal(255, wire[0, 0].A);
+        Assert.Equal(0, wire[1, 0].A);
+        Assert.Equal(127, wire[2, 0].A);
+        Assert.Equal("image/png", result.MimeType);
+        Assert.Same(result, ImageInputNormalizer.ToOpenAiMask(result));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gateway_SendsTransparentEditRegion_ForOpaqueBusinessMask(bool canonical)
+    {
+        var reference = ImageInputTestData.Create();
+        using var maskImage = new Image<Rgba32>(16, 16, new Rgba32(0, 0, 0, 255));
+        maskImage[1, 0] = new Rgba32(255, 255, 255, 255);
+        using var maskStream = new MemoryStream();
+        maskImage.SaveAsPng(maskStream);
+        var mask = maskStream.ToArray();
+        var http = new InspectingHttpFactory();
+        var gateway = new LlmGateway(new Mock<IModelResolver>().Object, http, NullLogger<LlmGateway>.Instance);
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::generation",
+            ModelType = "generation",
+            EndpointPath = "images/edits",
+            IsMultipart = !canonical,
+            MultipartFields = canonical ? null : new() { ["prompt"] = "只修改蒙版区域" },
+            MultipartFiles = canonical ? null : new()
+            {
+                ["image"] = ("input.png", reference, "image/png"),
+                ["mask"] = ("mask.png", mask, "image/png"),
+            },
+            CanonicalImageRequest = canonical ? new()
+            {
+                Prompt = "只修改蒙版区域",
+                Images = [$"data:image/png;base64,{Convert.ToBase64String(reference)}"],
+                MaskBase64 = $"data:image/png;base64,{Convert.ToBase64String(mask)}",
+            } : null,
+        }, Resolution());
+        Assert.True(response.Success, response.ErrorMessage);
+        var sent = http.Parts.Single(p => p.Name == "mask.png");
+        using var decoded = Image.Load<Rgba32>(sent.Bytes);
+        Assert.Equal(255, decoded[0, 0].A);
+        Assert.Equal(0, decoded[1, 0].A);
+        Assert.Equal(16, decoded.Width);
+        Assert.Equal(16, decoded.Height);
+    }
+
     [Theory]
     [InlineData("image/jpeg", "jpg")]
     [InlineData("image/png", "png")]
