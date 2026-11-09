@@ -23,7 +23,7 @@ description: 文档索引同步技能。扫描 doc/ 目录，自动对齐 index.
 2. **guide.list.directory.md 是渲染视图**：从 index.yml 生成，两者必须一致
 3. **新增文件自动补标题**：读取文件第一行 `# 标题`，写入 index.yml
 4. **不自动删除**：文件不存在但 index.yml 有记录时，标记为 `注意：文件缺失` 提醒用户，不自动删除条目
-5. **前缀校验**：以目标仓库命名规则登记的前缀为准；本仓库含 spec/design/plan/rule/guide/report/debt/adr/pdr。根目录 pri 原则不进入 doc/ 业务文档索引。
+5. **前缀校验**：以目标仓库命名规则登记的前缀为准；本仓库含 spec/design/plan/rule/guide/report/debt/adr/pdr。类型原则使用 doc/ 下的 guide.doc.pri.<类型>.md，与其他指南统一登记索引，不作豁免。
 
 ## 执行流程
 

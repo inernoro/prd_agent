@@ -4,6 +4,59 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 import { resolveBranchProtection } from './branch-protection.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
 import { branchEvents } from './branch-events.js';
+import { forgetConfirmedStoppedContainers } from './resource-usage-sampler.js';
+import { randomUUID } from 'node:crypto';
+import type { Request, RequestHandler } from 'express';
+import { isLoopbackAddress } from './self-check-auth.js';
+
+const STOP_SCHEME = 'CDS-Lifecycle-Stop ';
+type StopScope = { branchId: string; projectId: string; createdAt: string; sha?: string; pushedAt?: string; startedAt?: string; readyAt?: string; reason: string; route: string; port: number; issuedAt: number };
+// 同进程一次性能力，不使用人类凭据、不落盘，不能授权通用内部请求。
+const lifecycleStops = new Map<string, StopScope>();
+
+export function lifecycleStopGate(state: StateService): { gate: RequestHandler; isTrusted: (req: Request) => boolean } {
+  const trusted = new WeakSet<Request>();
+  const gate: RequestHandler = (req, res, next) => {
+    const auth = req.headers.authorization;
+    if (typeof auth !== 'string' || !auth.startsWith(STOP_SCHEME)) return next();
+    const token = auth.slice(STOP_SCHEME.length), scope = lifecycleStops.get(token);
+    lifecycleStops.delete(token);
+    const branch = scope && state.getBranch(scope.branchId);
+    if (!scope || !branch || req.method !== 'POST' || !isLoopbackAddress(req.socket.remoteAddress)
+      || req.socket.localPort !== scope.port || req.originalUrl !== scope.route
+      || Date.now() < scope.issuedAt || Date.now() - scope.issuedAt > 30_000
+      || (branch.projectId || 'default') !== scope.projectId || branch.createdAt !== scope.createdAt || branch.githubCommitSha !== scope.sha || branch.lastPushAt !== scope.pushedAt
+      || branch.lastDeployStartedAt !== scope.startedAt || branch.lastReadyAt !== scope.readyAt
+      || req.headers['x-cds-source-project-id'] !== scope.projectId || req.headers['x-cds-source-branch-id'] !== scope.branchId
+      || req.headers['x-cds-internal'] !== '1' || req.headers['x-cds-trigger'] !== 'auto-lifecycle'
+      || !req.body || Object.keys(req.body).length !== 1 || req.body.lifecycleReason !== scope.reason) {
+      res.status(401).json({ error: 'invalid_lifecycle_stop' }); return;
+    }
+    trusted.add(req); next();
+  };
+  return { gate, isTrusted: req => trusted.has(req) };
+}
+
+/** 与控制面使用同一个鉴权、取消部署、停止副本及日志保留入口。 */
+export async function stopBranchForLifecycle(baseUrl: string, branch: BranchEntry, reason: 'startup-timeout' | 'archive'): Promise<void> {
+  const target = new URL(`${baseUrl}/api/branches/${encodeURIComponent(branch.id)}/stop`);
+  if (target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || !target.port || target.username || target.password || target.search || target.hash) throw new Error('生命周期停止仅允许同进程回环地址');
+  const token = randomUUID(), projectId = branch.projectId || 'default';
+  lifecycleStops.set(token, { branchId: branch.id, projectId, createdAt: branch.createdAt, sha: branch.githubCommitSha, pushedAt: branch.lastPushAt,
+    startedAt: branch.lastDeployStartedAt, readyAt: branch.lastReadyAt, reason, route: target.pathname, port: Number(target.port), issuedAt: Date.now() });
+  const stoppedNames = [...Object.values(branch.services).flatMap(service => serviceRuntimeRefs(service).map(runtime => runtime.containerName)),
+    ...Object.values(branch.replicaSets || {}).flatMap(set => set.members.map(member => member.containerName).filter((name): name is string => !!name))];
+  try {
+    const response = await fetch(target, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CDS-Internal': '1', 'X-CDS-Trigger': 'auto-lifecycle',
+        'X-CDS-Source-Project-Id': projectId, 'X-CDS-Source-Branch-Id': branch.id, Authorization: STOP_SCHEME + token },
+      body: JSON.stringify({ lifecycleReason: reason }), signal: AbortSignal.timeout(120_000),
+    });
+    await response.arrayBuffer();
+    if (response.status !== 200) throw new Error('分支停止未完成，请稍后查看操作记录');
+    forgetConfirmedStoppedContainers(stoppedNames);
+  } finally { lifecycleStops.delete(token); }
+}
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;

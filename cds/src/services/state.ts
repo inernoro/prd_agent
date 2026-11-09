@@ -11,6 +11,7 @@ import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdenti
 import fs from 'node:fs';
 import { worktreePathActivity } from './worktree-path-activity.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import { customProbeTargetId } from './uptime-custom-monitor.js';
 import type {
   DbLedgerEntry,
   CdsState,
@@ -1859,7 +1860,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const orphaned = Object.values(this.state.uptimeMonitors || {})
       .filter((monitor) => monitor.boundBranchId === id)
       .map((monitor) => monitor.id);
-    for (const mid of orphaned) delete this.state.uptimeMonitors?.[mid];
+    for (const mid of orphaned) this.deleteUptimeMonitorState(mid);
     if (orphaned.length > 0) {
       for (const listener of this.orphanedMonitorListeners) {
         // 各自 try/catch：一个观察者抛了不该让删分支这件事失败。
@@ -2671,6 +2672,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       grants: (this.state.projectGrants || []).filter(p => projectGrantsToRevoke.includes(p.id)),
       dbLedger: (this.state.dbLedger || []).filter(p => p.projectId === id),
       monitors: uptimeMonitorsToRemove.map(mid => this.state.uptimeMonitors![mid]),
+      monitorNotifications: uptimeMonitorsToRemove.map(mid => {
+        const targetId = customProbeTargetId({ id: mid });
+        const settings = this.state.monitorNotifications;
+        return { targetId, override: settings?.overrides?.[targetId], mutedUntil: settings?.mutedUntil?.[targetId], acknowledgedAt: settings?.acknowledgedAt?.[targetId] };
+      }),
       customEnv: this.state.customEnv?.[id],
     });
     let restored = false;
@@ -2687,6 +2693,13 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       for (const b of snapshot.branches) this.state.branches[b.id] ??= b;
       for (const [bid, logs] of Object.entries(snapshot.logs)) this.state.logs[bid] ??= logs;
       for (const m of snapshot.monitors) (this.state.uptimeMonitors ??= {})[m.id] ??= m;
+      for (const previous of snapshot.monitorNotifications) {
+        if (previous.override === undefined && previous.mutedUntil === undefined && previous.acknowledgedAt === undefined) continue;
+        const settings = this.state.monitorNotifications ??= {};
+        if (previous.override !== undefined) (settings.overrides ??= {})[previous.targetId] ??= previous.override;
+        if (previous.mutedUntil !== undefined) (settings.mutedUntil ??= {})[previous.targetId] ??= previous.mutedUntil;
+        if (previous.acknowledgedAt !== undefined) (settings.acknowledgedAt ??= {})[previous.targetId] ??= previous.acknowledgedAt;
+      }
       if (snapshot.customEnv) this.state.customEnv[id] ??= snapshot.customEnv;
       for (const previous of snapshot.grants) {
         const current = this.state.projectGrants?.find(g => g.id === previous.id);
@@ -2743,7 +2756,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       if (this.state.dbLedger) {
         this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
       }
-      for (const mid of uptimeMonitorsToRemove) delete this.state.uptimeMonitors?.[mid];
+      for (const mid of uptimeMonitorsToRemove) this.deleteUptimeMonitorState(mid);
 
       this.state.projects = this.state.projects.filter((p) => p.id !== id);
       this.save();
@@ -3191,6 +3204,25 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     this.save();
   }
 
+  getMonitorNotifications(): import('./alarm-route.js').MonitorNotificationSettings {
+    return structuredClone(this.state.monitorNotifications ?? {});
+  }
+
+  setMonitorNotifications(settings: import('./alarm-route.js').MonitorNotificationSettings): void {
+    this.state.monitorNotifications = structuredClone(settings);
+    this.save(HINT_GLOBAL);
+  }
+
+  async recordMcpMonitorAudit(evidence: import('./mcp-monitor.js').McpCallEvidence): Promise<void> {
+    this.state.mcpMonitorAudits = [evidence, ...(this.state.mcpMonitorAudits ?? [])].slice(0, 200);
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  listMcpMonitorAudits(): import('./mcp-monitor.js').McpCallEvidence[] {
+    return structuredClone(this.state.mcpMonitorAudits ?? []);
+  }
+
   getUptimeMonitor(id: string): UptimeCustomMonitor | undefined {
     return this.state.uptimeMonitors?.[id];
   }
@@ -3209,15 +3241,32 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       createdAt: existing?.createdAt || monitor.createdAt || now,
       updatedAt: now,
     };
+    // 新接入不能继承旧版本删除后残留的静默；正常编辑保留现有通知。
+    if (!existing) this.clearUptimeMonitorNotifications(monitor.id);
     this.state.uptimeMonitors[monitor.id] = saved;
     this.save(HINT_GLOBAL);
     return saved;
   }
 
   removeUptimeMonitor(id: string): boolean {
+    if (!this.deleteUptimeMonitorState(id)) return false;
+    this.save(HINT_GLOBAL);
+    return true;
+  }
+
+  private clearUptimeMonitorNotifications(id: string): void {
+    const targetId = customProbeTargetId({ id });
+    const settings = this.state.monitorNotifications;
+    for (const entries of [settings?.overrides, settings?.mutedUntil, settings?.acknowledgedAt]) {
+      if (entries) delete entries[targetId];
+    }
+  }
+
+  /** 由单项、分支、项目删除共用；各调用者仍只提交自己的原子保存。 */
+  private deleteUptimeMonitorState(id: string): boolean {
     if (!this.state.uptimeMonitors?.[id]) return false;
     delete this.state.uptimeMonitors[id];
-    this.save(HINT_GLOBAL);
+    this.clearUptimeMonitorNotifications(id);
     return true;
   }
 
@@ -5336,6 +5385,15 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const next = list.filter((c) => c.id !== id);
     if (next.length === list.length) return false;
     this.state.alarmChannels = next;
+    const settings = this.state.monitorNotifications;
+    if (settings?.defaultChannelIds) settings.defaultChannelIds = settings.defaultChannelIds.filter(channelId => channelId !== id);
+    if (settings?.overrides) {
+      for (const [targetId, channelIds] of Object.entries(settings.overrides)) {
+        // Keep empty overrides explicit: removing their keys would subscribe
+        // these services to the default channels instead of leaving them off.
+        settings.overrides[targetId] = channelIds.filter(channelId => channelId !== id);
+      }
+    }
     this.save();
     return true;
   }
