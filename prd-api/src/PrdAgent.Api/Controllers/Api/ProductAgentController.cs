@@ -1222,9 +1222,10 @@ public partial class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(submission.ResultId))
             result = await _db.ReviewResults.Find(x => x.Id == submission.ResultId).FirstOrDefaultAsync();
         var passed = result?.IsPassed ?? submission.IsPassed;
-        var status = submission.Status == ReviewStatuses.Done
-            ? (passed == true ? "decision_pending" : "review_failed")
-            : "review_pending";
+        var status = submission.Status == ReviewStatuses.Error ? "review_failed"
+            : submission.Status == ReviewStatuses.Done
+                ? (passed == true ? "decision_pending" : "review_failed")
+                : "review_pending";
         if (item.ReviewSubmissionId == submission.Id && item.Status == status
             && item.ReviewPassed == passed && item.ReviewScore == result?.TotalScore)
             return Ok(ApiResponse<object>.Ok(item));

@@ -320,7 +320,7 @@ const gatewayFailoverBackupNote = 'stable-smoke-failover-backup';
 // GW-007 故障注入写进 Offering 的 Endpoint 前缀：机读标记，也是硬中断后识别「上一轮遗留注入态」的唯一依据。
 // 注入路径自带原值：`stable-smoke-<kind>-failure/<时间戳>[-<序号>]~<base64url(原 Endpoint)>`，
 // 硬中断后不需要任何外部记录就能把它精确还原（网关只要求相对路径、无控制字符、无反斜杠、不超过 500 字符）。
-const gatewayInjectedEndpointPattern = /^stable-smoke-(?:primary|all)-failure\//;
+const gatewayInjectedEndpointPattern = /^(?:v1\/)?stable-smoke-(?:primary|all)-failure\//;
 const isGatewayInjectedEndpoint = (offering: GatewayOffering) => gatewayInjectedEndpointPattern.test(offering.endpointPath || '');
 // 只认本夹具写入的精确格式（标记开头、紧跟冒号），管理员在别的 Offering 备注里顺带提到这串字也不会被当成夹具。
 const isGatewayFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').trimStart().startsWith(`${gatewayFailoverBackupNote}:`);
@@ -328,12 +328,13 @@ const isGatewayFailoverBackup = (offering: GatewayOffering) => (offering.notes |
 // 硬中断后只能靠相同路由契约的捐出方还原（或人工处理），但故障注入本身照常执行，不会因为路径太长而验不了切换。
 const gatewayEndpointPathLimit = 500;
 const buildGatewayInjectedEndpoint = (kind: 'primary' | 'all', originalEndpointPath: string, index?: number) => {
-  const stem = `stable-smoke-${kind}-failure/${Date.now()}${index === undefined ? '' : `-${index}`}`;
+  // APIyi 的非 API 路径会返回 HTTP 200 的站点 HTML；必须在 API 命名空间注入真实失败。
+  const stem = `v1/stable-smoke-${kind}-failure/${Date.now()}${index === undefined ? '' : `-${index}`}`;
   const embedded = `${stem}~${Buffer.from(originalEndpointPath, 'utf8').toString('base64url')}`;
   return embedded.length <= gatewayEndpointPathLimit ? embedded : stem;
 };
 const decodeGatewayInjectedEndpoint = (endpointPath: string): string | null => {
-  const match = /^stable-smoke-(?:primary|all)-failure\/[^~]*~([A-Za-z0-9_-]*)$/.exec(endpointPath);
+  const match = /^(?:v1\/)?stable-smoke-(?:primary|all)-failure\/[^~]*~([A-Za-z0-9_-]*)$/.exec(endpointPath);
   return match ? Buffer.from(match[1], 'base64url').toString('utf8') : null;
 };
 const sameGatewayRoutingContract = (left: GatewayOffering, right: GatewayOffering) => (
@@ -3929,6 +3930,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       // 注入路径构造器本身的边界：短路径（含多字节）可逆，超过网关 500 字符上限时退回不带原值的旧格式。
       expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('all', 'v1/图片/generations?x=1', 2))).toBe('v1/图片/generations?x=1');
       expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('primary', ''))).toBe('');
+      expect(buildGatewayInjectedEndpoint('primary', '')).toMatch(/^v1\/stable-smoke-primary-failure\//);
+      expect(decodeGatewayInjectedEndpoint('stable-smoke-primary-failure/legacy~djEvaW1hZ2Vz')).toBe('v1/images');
       const longInjected = buildGatewayInjectedEndpoint('all', 'a'.repeat(480), 3);
       expect(longInjected.length).toBeLessThanOrEqual(gatewayEndpointPathLimit);
       expect(gatewayInjectedEndpointPattern.test(longInjected)).toBe(true);

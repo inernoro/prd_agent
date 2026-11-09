@@ -566,12 +566,27 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
 
     setReviewStage('streaming');
     appendLog('连接评审流，等待 Agent 分析打分…');
-    await sse.start({ url: getResultStreamUrl(submissionId) });
+    const syncFailureState = async () => {
+      try {
+        const synced = await syncInitiationReview(saved.id, submissionId);
+        if (synced.success) setItem(synced.data);
+        else appendLog('评审状态暂未同步，原立项已保存，请刷新后继续。');
+      } catch {
+        appendLog('评审状态暂未同步，原立项已保存，请刷新后继续。');
+      }
+    };
+    try {
+      await sse.start({ url: getResultStreamUrl(submissionId) });
+    } catch (error) {
+      await syncFailureState();
+      throw error;
+    }
 
     const outcome = sseOutcomeRef.current;
     const recoverable = hasRecoverableSseOutcome(outcome);
 
     if (streamErrorRef.current && !recoverable) {
+      await syncFailureState();
       throw new Error(streamErrorRef.current);
     }
     if (streamErrorRef.current && recoverable) {
@@ -582,6 +597,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       appendLog('确认服务端评审状态…');
       const waited = await waitForSubmissionDone(submissionId);
       if (!waited.ok && !recoverable) {
+        await syncFailureState();
         throw new Error(waited.message);
       }
       if (!waited.ok && recoverable) {

@@ -1295,8 +1295,10 @@ public class ProductVersionClaimGuardTests
         Assert.Equal("approved", stored.Status);
     }
 
-    [Fact]
-    public async Task FailedReviewRetainsAllInputsAndRetryUsesSameInitiation()
+    [Theory]
+    [InlineData(ReviewStatuses.Done)]
+    [InlineData(ReviewStatuses.Error)]
+    public async Task FailedReviewRetainsAllInputsAndRetryUsesSameInitiation(string reviewStatus)
     {
         await using var fixture = await Fixture.CreateAsync();
         var plannedAt = new DateTime(2026, 10, 21, 0, 0, 0, DateTimeKind.Utc);
@@ -1309,6 +1311,8 @@ public class ProductVersionClaimGuardTests
         var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateInitiation("product", input));
         var item = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
         var failedReview = Review("failed-review", "me", false);
+        failedReview.Status = reviewStatus;
+        if (reviewStatus == ReviewStatuses.Error) failedReview.IsPassed = null;
         failedReview.FileName = "第二稿.md";
         await fixture.Db.ReviewSubmissions.InsertOneAsync(failedReview);
         Assert.IsType<OkObjectResult>(await fixture.Controller().SyncInitiationReview(item.Id,
