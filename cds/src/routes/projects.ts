@@ -795,7 +795,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // legacy 'default' project, which preserves the pre-P4 rollup
     // behaviour for the legacy project.
     const isSharedService = project.kind === 'shared-service';
-    const branches = isSharedService ? [] : stateService.getBranchesForProject(project.id);
+    const branches = isSharedService ? [] : stateService.getBranchesForProject(project.id).filter(branch => !branch.archive);
     let runningBranchCount = 0;
     let appServiceCount = 0;
     let runningServiceCount = 0;

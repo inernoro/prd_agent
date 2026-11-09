@@ -1,6 +1,8 @@
+import '../../pages/code-reviews/review-design.css';
+
 /** Code and data waits share the filter/list silhouette, without a submission form. */
 export function CodeReviewsSkeleton(): JSX.Element {
-  return <div role="status" aria-label="正在读取代码审查" aria-busy="true" className="mx-auto max-w-[90rem] space-y-5" data-code-reviews-skeleton>
+  return <div role="status" aria-label="正在读取代码审查" aria-busy="true" className="w-full space-y-5" data-code-reviews-skeleton>
     <header className="flex items-start justify-between gap-4" aria-hidden="true">
       <div className="min-w-0 flex-1 space-y-2"><div className="cds-loading-skeleton-line h-7 w-64 max-w-full" /><div className="cds-loading-skeleton-line h-4 w-full max-w-xl" /></div>
       <div className="cds-loading-skeleton-panel h-9 w-28 shrink-0 rounded-md" />

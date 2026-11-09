@@ -3305,6 +3305,8 @@ const activityTypeLabels: Record<string, string> = {
   'ai-release': 'AI 占用结束',
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
+  'branch-archived': '归档分支',
+  'branch-restored': '恢复归档',
 };
 
 interface ProjectDeliveryResponse {

@@ -226,6 +226,8 @@ MCP 客户端发请求时带 `Authorization: Bearer sk-ak-xxx`。这把密钥经
 
 ## 十、关联文档与规则
 
+- [MCP 多上游语音能力](./plan.platform.mcp.speech.md) —— 基础语音的环境配置、上游差异、声音预设与历史资产闭环。
+
 - [doc/design.skill.marketplace-open-api.md](./design.skill.marketplace-open-api.md) —— Agent 开放接口 + AgentApiKey 的上游设计（本设计建在其 P3 基础设施之上）
 - [doc/design.open-platform.open-api.md](./design.open-platform.open-api.md) —— OpenAI 兼容网关（同源鉴权范式参照）
 - `.claude/rules/no-rootless-tree.md` —— 借用法则：MCP 连接器借用现成桩，不重建

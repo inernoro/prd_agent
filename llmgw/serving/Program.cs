@@ -301,7 +301,8 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifi
         sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>>()));
 
 // 模型调度执行器
-builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, CodeReviewUserKeyResolver>();
 
 // LLM Gateway 统一守门员（HOST 既有实现）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
@@ -390,6 +391,7 @@ gwApiKey ??= DevServeKey; // 非生产保留便利回落
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? string.Empty;
 
 app.MapGatewayServingEndpoints(jsonOpts, gwApiKey, gitCommit);
+app.MapCodeReviewUserKeys();
 app.MapLiveAsrGatewayEndpoint();
 
 app.Run();

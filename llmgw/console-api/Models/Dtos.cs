@@ -1658,6 +1658,7 @@ public sealed class ExchangeItem
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string ModelAlias { get; set; } = "";
     public List<string> ModelAliases { get; set; } = new(); public List<ExchangeModelItem> Models { get; set; } = new();
     public string TargetUrl { get; set; } = ""; public string TargetAuthScheme { get; set; } = ""; public string TransformerType { get; set; } = "";
+    public string? ResourceId { get; set; }
     public bool Enabled { get; set; } public string? Description { get; set; } public bool HasKey { get; set; }
     public string SourceCollection { get; set; } = "model_exchanges"; public string Authority { get; set; } = "map";
     public string? ClaimedAt { get; set; }
@@ -1697,6 +1698,7 @@ public sealed class CreateExchangeRequest
     public string? ApiKey { get; set; }
     public string? TargetAuthScheme { get; set; }
     public string? TransformerType { get; set; }
+    public string? ResourceId { get; set; }
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
 }
@@ -1707,6 +1709,7 @@ public sealed class UpdateExchangeRequest
     public string? TargetUrl { get; set; }
     public string? TargetAuthScheme { get; set; }
     public string? TransformerType { get; set; }
+    public string? ResourceId { get; set; }
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
     public long? Version { get; set; }

@@ -1,3 +1,4 @@
+import { BranchLifecycleService, stopBranchForLifecycle } from './services/branch-lifecycle.js';
 import { inspectionHealthDocument } from './services/project-inspections.js';
 import { createProjectInspectionsRouter } from './routes/project-inspections.js';
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
@@ -141,6 +142,7 @@ import { readPreviewMirror, registerLoadedPreviewMirror } from './services/previ
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { diagnoseCiImage, ciDiagnosisSnapshot } from './services/ci-image-diagnosis.js';
 import { startRotationRecoveryArtifactCleanup } from './services/infra-local-recovery-drill.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
@@ -3968,65 +3970,62 @@ janitorService.setOrphanInfraScan(async () => {
   return orphans;
 });
 
-janitorService.setRemoveFn(async (slug: string) => {
-  // Reuse the existing removal path: stop containers → git worktree remove → drop state.
-  const branch = stateService.getBranch(slug);
-  if (!branch) return;
-  stateService.assertBranchStorageRemovalAllowed(slug);
-  const branchOperationLease = beginBackgroundBranchOperation({
-    branchId: slug,
-    kind: 'janitor-remove',
-    trigger: 'janitor',
-    actor: 'janitor',
-    source: 'janitorService.setRemoveFn',
-    reason: 'Janitor 自动回收：超过保留期或磁盘清理',
-  });
-  let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+const removeExpiredLifecycleBranch = async (id: string): Promise<void> => {
+  const branch = stateService.getBranch(id);
+  if (!branch?.archive || Date.now() < Date.parse(branch.archive.retireAt)) return;
+  if (isRemoteExecutorOwned(branch.executorId)) throw new Error('远端分支归档仍保留，需要在所属执行器确认回收，未删除本地记录');
+  stateService.assertBranchStorageRemovalAllowed(id);
+  const lease = beginBackgroundBranchOperation({ branchId: id, kind: 'janitor-remove', trigger: 'janitor',
+    actor: 'janitor', source: 'branch-lifecycle.retire', reason: '归档保留30天到期回收' });
+  let finalStatus: 'completed' | 'failed' = 'completed';
   try {
-  // janitor 回收前先留痕，否则用户看到分支整个消失却无任何记录。
-  await new DeploymentRunService(stateService).persistBranchCancellation(branch.projectId || 'default', branch.id, branchOperationLease);
-  try {
-    stateService.appendActivityLog(branch.projectId, {
-      type: 'branch-deleted',
-      branchId: branch.id,
-      branchName: branch.branch,
-      actor: 'janitor',
-      note: 'Janitor 自动回收：停止容器并移除 worktree（超过保留期 / 磁盘清理）',
-    });
-  } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
-  for (const svc of Object.values(branch.services)) {
-    branchOperationLease?.assertCurrent(`janitor remove before ${svc.profileId}`);
-    try {
-      await containerService.removeRuntimeGroup(svc, {
-        projectId: branch.projectId,
-        branchId: branch.id,
-        profileId: svc.profileId,
-        operationId: branchOperationLease?.operationId || null,
-        actor: 'janitor',
-        trigger: 'janitor',
-        operation: 'janitor-remove',
-        source: 'janitorService.setRemoveFn',
-        reason: 'Janitor 自动回收：超过保留期或磁盘清理',
-      });
-    } catch { /* best effort */ }
-  }
-  try {
-    const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
-    await worktreeService.remove(repoRoot, branch.worktreePath);
-  } catch { /* best effort */ }
-  // 分支专属网络（cds-br-*）随分支回收：不清会缓慢堆积空网络
-  //（debt.cds.branch-isolation BNI-cleanup，2026-07-09 接线）。内部已容错
-  // not-found/仍被占用，失败不阻断删除主流程。
-  await containerService.removeBranchNetwork(slug, branch.replacementNetworks).catch(() => { /* best-effort */ });
-  branchOperationLease?.assertCurrent('janitor remove before state delete');
-  stateService.removeBranch(slug);
-  stateService.save();
-  } catch (err) {
-    branchOperationFinalStatus = 'failed';
-    throw err;
-  } finally {
-    completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
-  }
+    await new DeploymentRunService(stateService).persistBranchCancellation(branch.projectId || 'default', id, lease);
+    const context = { projectId: branch.projectId, branchId: id, operationId: lease?.operationId || null,
+      actor: 'janitor', trigger: 'janitor', operation: 'archive-retirement', source: 'branch-lifecycle.retire', reason: '归档保留30天到期回收' };
+    for (const service of Object.values(branch.services)) {
+      lease?.assertCurrent('archive retirement before service removal');
+      await containerService.removeRuntimeGroup(service, { ...context, profileId: service.profileId });
+    }
+    for (const set of Object.values(branch.replicaSets || {})) for (const member of set.members) {
+      if (!member.containerName) continue;
+      lease?.assertCurrent('archive retirement before replica removal');
+      await containerService.remove(member.containerName, { ...context, profileId: `${set.profileId}--${member.id}` });
+    }
+    lease?.assertCurrent('archive retirement before workspace removal');
+    if (fs.existsSync(branch.worktreePath)) await worktreeService.remove(stateService.getProjectRepoRoot(branch.projectId, config.repoRoot), branch.worktreePath);
+    await containerService.removeBranchNetwork(id, branch.replacementNetworks);
+    lease?.assertCurrent('archive retirement before state removal');
+    stateService.appendActivityLog(branch.projectId, { type: 'branch-deleted', branchId: id, branchName: branch.branch,
+      actor: 'janitor', note: '归档保留30天到期，已回收本分支容器及工作区；未触碰共享基础设施' });
+    stateService.removeBranch(id); stateService.save(); await stateService.flush();
+  } catch (error) { finalStatus = 'failed'; throw error; }
+  finally { completeBackgroundBranchOperation(lease, finalStatus); }
+};
+
+const branchLifecycleService = new BranchLifecycleService({
+  state: stateService,
+  observed: getObservedRunningContainerNames,
+  active: id => branchOperationCoordinator.getActiveOperations(id).length > 0,
+  canInterruptStartup: id => branchOperationCoordinator.getActiveOperations(id).every(operation =>
+    ['deploy', 'deploy-profile', 'restart', 'force-rebuild', 'auto-lifecycle-redeploy', 'auto-restart'].includes(operation.request.kind)),
+  expectedProfiles: branch => stateService.getEffectiveProfilesForBranch(branch).map(profile => profile.id),
+  pinnedBranches: config.scheduler?.pinnedBranches,
+  audit: activeServerEventLogStore,
+  flush: () => stateService.flush(),
+  paused: () => isSelfUpdateDraining(Date.now()),
+  lock: branch => {
+    const lease = beginBackgroundBranchOperation({ branchId: branch.id, kind: 'stop', trigger: 'auto-lifecycle',
+      actor: 'system:lifecycle', source: 'branch-lifecycle', reason: '保存分支归档状态' });
+    return { assertCurrent: () => lease?.assertCurrent('branch archive state write'),
+      release: failed => completeBackgroundBranchOperation(lease, failed ? 'failed' : 'completed') };
+  },
+  stop: (branch, reason) => stopBranchForLifecycle(`http://127.0.0.1:${config.masterPort}`, branch, reason),
+  remove: removeExpiredLifecycleBranch,
+});
+// 旧 TTL 回收也先归档，统一遵守30天恢复窗口；到期删除只由生命周期服务派发。
+janitorService.setRemoveFn(async id => {
+  if (stateService.getBranch(id)?.archive) return;
+  await branchLifecycleService.archive(id, '闲置超过项目回收期，先归档保留30天', 'janitor');
 });
 
 // The BranchDispatcher (Phase 3) is instantiated later, inside the scheduler-mode
@@ -5409,10 +5408,9 @@ startPerfHealthMonitor();
 // 前端旧逻辑还把它误渲染成「容器停止 · 无记录 · 时间未知」（用户 2026-06-24 反馈
 // 「莫名其妙停止 / 可观测性有问题」的真因）。
 //
-// 看门狗：waiting 超过阈值（默认 15 分钟，无匹配 workflow_run）即翻 'failed' +
-// 写人类可读 ciImageError 归因 + server-event + branch.updated 事件，让分支卡显示
-// 「CI 镜像未就绪（原因）」而非假的「停止」。翻 failed 不阻断恢复：真 CI 完成事件
-// 晚到时 handleWorkflowRun 的 waiting||failed matcher 仍可 failed → ready。
+// 先对账 GitHub，再分类原因。排队/构建超过15分钟不等于失败；查询不可用仅标状态未知。
+// 已失败的历史分支也低频复核；对账结果只补原因，不绕过镜像准入自动部署。
+// 真 CI 完成事件晚到时，原 waiting||failed matcher 仍可恢复 ready。
 const CI_WAIT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.CDS_CI_WAIT_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60 * 1000;
@@ -5422,24 +5420,30 @@ const CI_WAIT_TIMEOUT_MS = (() => {
 // 的 ciImageError——GitHub 上该 commit 连 "CDS Deploy" 条目都没有，用户在 PR 上
 // 看到的是彻底静默。这里独立构造一个 CheckRunRunner（与 server.ts 内部实例互不
 // 干扰，GitHubAppClient 仅是 token 缓存的无状态封装），超时时补一个红灯。
-const ciWaitCheckRunRunner = config.githubApp
+const ciWaitGithubApp = config.githubApp ? new GitHubAppClient({
+  appId: config.githubApp.appId, privateKey: config.githubApp.privateKey, appSlug: config.githubApp.appSlug,
+}) : undefined;
+const ciWaitCheckRunRunner = ciWaitGithubApp
   ? new CheckRunRunner({
       stateService,
-      githubApp: new GitHubAppClient({
-        appId: config.githubApp.appId,
-        privateKey: config.githubApp.privateKey,
-        appSlug: config.githubApp.appSlug,
-      }),
+      githubApp: ciWaitGithubApp,
       config,
     })
   : undefined;
 function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
-  const check = (): void => {
+  let checking = false;
+  const lastAttempt = new Map<string, number>();
+  const check = async (): Promise<void> => {
+    if (checking) return;
+    checking = true;
     try {
       const state = stateService.getState();
       const now = Date.now();
-      for (const b of Object.values(state.branches || {})) {
-        if (b.ciImageStatus !== 'waiting') continue;
+      let queried = 0;
+      const branches = Object.values(state.branches || {}).sort((a, b) => (lastAttempt.get(a.id) || 0) - (lastAttempt.get(b.id) || 0));
+      for (const id of lastAttempt.keys()) if (!state.branches[id]) lastAttempt.delete(id);
+      for (const b of branches) {
+        if (b.archive || (b.ciImageStatus !== 'waiting' && b.ciImageStatus !== 'failed')) continue;
         // 校验分支**当前**仍是极速版：用户若把部署 override 从 express 切回 dev/static，
         // profile 路由只存 override、不清旧的 ciImageStatus='waiting'，看门狗不该据此把一个
         // 已退出极速版的源码模式分支误判超时翻 failed（Codex P2，与 workflow_run 同口径）。
@@ -5454,22 +5458,58 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         const sinceMs = sinceIso ? Date.parse(sinceIso) : Number.NaN;
         if (!Number.isFinite(sinceMs)) continue;
         const waitedMs = now - sinceMs;
+        const project = stateService.getProject(b.projectId);
+        const repository = project?.githubRepoFullName;
+        const installationId = project?.githubInstallationId;
+        if (ciWaitGithubApp && repository && installationId && activeServerEventLogStore) {
+          const cooldown = b.ciImageStatus === 'waiting' ? 60_000 : 10 * 60_000;
+          if (queried >= 6 || now - (lastAttempt.get(b.id) || 0) < cooldown) continue;
+          queried++;
+          lastAttempt.set(b.id, now);
+          const targetSha = b.ciTargetSha;
+          const previousStatus = b.ciImageStatus;
+          const snapshot = ciDiagnosisSnapshot(b);
+          try {
+            const patch = await diagnoseCiImage({ repository, branch: b.branch, targetSha: targetSha || '',
+              projectId: b.projectId, branchId: b.id,
+              authorization: async () => `Bearer ${await ciWaitGithubApp.getInstallationToken(installationId)}`, waitedMs,
+              timeoutMs: CI_WAIT_TIMEOUT_MS, audit: activeServerEventLogStore });
+            // 网络等待期间可能又 push、切模式、删除，或真正 completion 已到达；绝不覆盖新状态。
+            const fresh = stateService.getBranch(b.id);
+            const freshProject = fresh && stateService.getProject(fresh.projectId);
+            if (!fresh || ciDiagnosisSnapshot(fresh) !== snapshot
+              || freshProject?.githubRepoFullName !== repository || freshProject?.githubInstallationId !== installationId
+              || !branchUsesPrebuiltMode(stateService.getBuildProfilesForProject(fresh.projectId), fresh)) continue;
+            if (patch.ciDiagnosis?.code === 'unknown' && previousStatus === 'failed' && fresh.ciDiagnosis?.code !== 'unknown'
+              && fresh.ciWorkflowConclusion !== 'timed_out_no_run' && fresh.ciWorkflowConclusion !== 'status_unknown') continue;
+            stateService.updateBranchGithubMeta(b.id, patch);
+            stateService.save();
+            branchEvents.emitEvent({ type: 'branch.updated', payload: { branchId: b.id, projectId: b.projectId, patch, ts: nowIso() } });
+            if (previousStatus === 'waiting' && patch.ciImageStatus === 'failed') {
+              void ciWaitCheckRunRunner?.concludeWithoutDeploy(fresh, { conclusion: 'failure',
+                title: patch.ciDiagnosis?.title || 'CI image unavailable', summary: patch.ciImageError || '' }).catch(() => {});
+            }
+          } catch (error) {
+            console.warn('[ci-image-diagnosis] GitHub 对账暂不可用:', error instanceof Error ? error.name : 'unknown');
+          }
+          continue;
+        }
+        if (b.ciImageStatus !== 'waiting') continue;
         if (waitedMs < CI_WAIT_TIMEOUT_MS) continue;
         const waitedMin = Math.round(waitedMs / 60000);
         const shortSha = (b.ciTargetSha || b.githubCommitSha || '').slice(0, 7);
-        const reason = `CI 预构建镜像${shortSha ? ` ${shortSha}` : ''}等待超时（${waitedMin} 分钟无匹配构建完成）。常见原因：该分支缺少 .github/workflows/branch-image.yml（从旧 main 切出）、CI 未运行或事件丢失。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`;
+        const reason = `CI 镜像${shortSha ? ` ${shortSha}` : ''}状态未确认（${waitedMin} 分钟未收到匹配完成回执）。当前无法主动核对 GitHub，请打开 Actions 查看实际状态。`;
         stateService.updateBranchGithubMeta(b.id, {
           ciImageStatus: 'failed',
-          ciWorkflowConclusion: 'timed_out_no_run',
+          ciWorkflowConclusion: 'status_unknown',
           // 清空字段一律用 '' 而非 undefined：/api/branches/stream 的 branch.updated 会
           // 从 state 重新序列化**整个 branch** 下发，BranchList 按 data.branch merge 覆盖旧项；
           // JSON.stringify 丢 undefined 字段 → 客户端 merge 时保留旧值（旧「查看构建」链接/
           // 旧等待时间）。空串可序列化 + falsy，真正清空（Bugbot/Codex P2）。
           ciWaitingSince: '',
           ciImageError: reason,
-          // 超时原因是「无匹配构建完成」，任何旧 run 链接都与本次失败无关，清掉避免
-          // 卡片「查看构建」指向一个误导性的历史 Actions run。
-          ciWorkflowRunUrl: '',
+          // 没有主动查询权限时，保留当前目标已有入口；新 push 已在 dispatcher 清理旧入口。
+          ciWorkflowRunUrl: b.ciWorkflowRunUrl || '',
         });
         stateService.save();
         activeServerEventLogStore?.record({
@@ -5488,7 +5528,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
             branchId: b.id,
             projectId: b.projectId,
             // patch 仅作语义「本次变了什么」；真正驱动 UI 的是 SSE 层补的整 branch（见上）。
-            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'timed_out_no_run', ciImageError: reason, ciWorkflowRunUrl: '' },
+            patch: { ciImageStatus: 'failed', ciWorkflowConclusion: 'status_unknown', ciImageError: reason, ciWorkflowRunUrl: b.ciWorkflowRunUrl || '' },
             ts: nowIso(),
           },
         });
@@ -5514,6 +5554,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         }).catch(() => { /* best-effort */ });
       }
     } catch { /* 自检不致命 */ }
+    finally { checking = false; }
   };
   const timer = setInterval(check, 60 * 1000);
   timer.unref?.();
@@ -5559,6 +5600,7 @@ startMainThreadDiagnostics();
 // ── Master server (dashboard + API on masterPort) ──
 // serverDeps 保留引用：uptimeMonitor 在下面才构造，建好后回填给 /healthz 用。
 const serverDeps: ServerDeps = {
+  branchLifecycleService,
   getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,
   worktreeService,
@@ -5582,6 +5624,10 @@ const serverDeps: ServerDeps = {
   offhostAudit: activeServerEventLogStore instanceof OffHostAuditLogSink ? activeServerEventLogStore : null,
 };
 const app = createServer(serverDeps);
+if (config.mode !== 'executor' && !isPreviewInstance()) {
+  branchLifecycleService.start();
+  resourceShutdownTasks.add(() => branchLifecycleService.close());
+}
 
 // ── Helper: kill process on port so CDS can bind ──
 // force=true → kill any process (used for masterPort which belongs exclusively to CDS)

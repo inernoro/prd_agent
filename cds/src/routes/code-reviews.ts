@@ -1,3 +1,4 @@
+import type { ReviewUserKeyInput } from '../services/code-review-user-keys.js';
 import { Router, json, raw, type Request, type Response } from 'express';
 import { createHash, randomUUID } from 'node:crypto';
 import type { StateService } from '../services/state.js';
@@ -11,6 +12,7 @@ import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 import { isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
 import { validateCodeReviewSettings } from '../services/code-review-settings.js';
 import { REVIEW_SEVERITIES } from '../shared/code-review-result.js';
+import { pageCodeReviewTasks, REVIEW_LIST_SOURCES, REVIEW_LIST_STATUSES, type ReviewListSource, type ReviewListStatus } from '../shared/code-review-list.js';
 
 interface ReviewRequest extends Request, HumanAuthContext {
   cdsProjectKey?: { projectId: string; keyId: string };
@@ -60,6 +62,14 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
       res.status(status).json({ error: status === 500 ? 'review_error' : 'invalid_review_request', message: maskSecrets((error as Error).message).slice(0, 1000) });
     });
   };
+  const credentialOwner = (req: ReviewRequest): string => {
+    const user = req.cdsUser as { id?: string; username?: string; authProvider?: string } | undefined;
+    if (user && (req.cdsSession || req._cdsBasicHumanAuth) && (user.id || user.username)) return `human:${user.id || `${user.authProvider || 'basic'}:${user.username}`}`;
+    if (req.cdsProjectKey) return `project-key:${req.cdsProjectKey.projectId}:${req.cdsProjectKey.keyId}`;
+    const key = req.cdsAccess?.keyId;
+    if (key) return `access-key:${key}`;
+    throw new CodeReviewError(403, '用户 Key 需要可验证的登录账号或项目凭据');
+  };
   const settingsAdmin = (req: ReviewRequest) => {
     const denied = assertUnscopedAdmin(req);
     if (denied || (req.cdsUser && !isHumanSystemOwner(req))) throw new CodeReviewError(403, '仅限系统管理员配置审查引擎');
@@ -96,8 +106,25 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     if (req.query.projectId !== undefined) project(req, req.query.projectId);
     const tasks = service.list(typeof req.query.projectId === 'string' ? req.query.projectId : req.cdsProjectKey?.projectId)
       .filter((task) => !assertProjectAccess(req, task.projectId) && canHumanAccessProject(req, state, task.projectId));
+    if (req.query.limit !== undefined) {
+      const limit = Number(req.query.limit), offset = Number(req.query.offset || 0);
+      const source = req.query.source || 'source', status = req.query.status || 'all', query = req.query.q || '';
+      const snapshotAt = req.query.snapshotAt;
+      if (typeof req.query.limit !== 'string' || req.query.offset !== undefined && typeof req.query.offset !== 'string'
+        || req.query.history !== undefined && typeof req.query.history !== 'string'
+        || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0
+        || !REVIEW_LIST_SOURCES.includes(source as ReviewListSource) || !REVIEW_LIST_STATUSES.includes(status as ReviewListStatus)
+        || typeof query !== 'string' || query.length > 300 || req.query.history !== undefined && !['0', '1'].includes(String(req.query.history))
+        || snapshotAt !== undefined && (typeof snapshotAt !== 'string' || !/^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(snapshotAt) || !Number.isFinite(Date.parse(snapshotAt)))) {
+        throw new CodeReviewError(400, '任务筛选或分页参数无效');
+      }
+      const result = pageCodeReviewTasks(tasks, { source: source as ReviewListSource, status: status as ReviewListStatus, query,
+        history: req.query.history === '1', offset, limit, snapshotAt: snapshotAt as string | undefined });
+      return res.json({ ...result, tasks: result.tasks.map(publicCodeReviewTask) });
+    }
     return res.json({ tasks: tasks.map(publicCodeReviewTask) });
   }));
+  router.use('/code-reviews', (req, res, next) => { if (req.method === 'POST') res.locals.cdsSuppressRequestBodyLog = true; next(); });
   router.post('/code-reviews', ...parse, handler(async (req, res) => {
     const { fields, file, filename } = await body(req);
     const projectId = project(req, fields.projectId);
@@ -105,7 +132,9 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     const sourceType = fields.sourceType;
     if (sourceType !== 'github' && sourceType !== 'zip' && sourceType !== 'cds') throw new CodeReviewError(400, '请选择上传源码或 CDS 项目分支');
     if (sourceType !== 'zip' && file) throw new CodeReviewError(400, '仓库来源不能同时上传 ZIP');
-    const task = await service.submit({ projectId, sourceType, zip: file, filename, branchId: typeof fields.branchId === 'string' ? fields.branchId : undefined,
+    let userKey = fields.userKey;
+    if (typeof userKey === 'string') { try { userKey = JSON.parse(userKey); } catch { throw new CodeReviewError(400, '用户 Key 配置无效'); } }
+    const task = await service.submit({ userKey: userKey as ReviewUserKeyInput | undefined, credentialOwner: userKey ? credentialOwner(req) : undefined, projectId, sourceType, zip: file, filename, branchId: typeof fields.branchId === 'string' ? fields.branchId : undefined,
       title: typeof fields.title === 'string' ? fields.title : undefined,
       githubUrl: typeof fields.githubUrl === 'string' ? fields.githubUrl : undefined,
       ref: fields.ref as string | undefined, excludePatterns: fields.excludePatterns as string[] | undefined,
@@ -177,6 +206,14 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
       || query !== undefined && (typeof query !== 'string' || query.length > 300)) throw new CodeReviewError(400, '结果筛选或分页参数无效');
     return res.json({ task: publicCodeReviewTask(task), ...await service.result(task.id, { offset, limit, severity: severity as string | undefined, query: query as string | undefined }) });
   }));
+  router.get('/code-reviews/:id/usage', handler(async (req, res) => {
+    const task = taskFor(req);
+    if (!task.userKeyBinding && task.modelCredential?.source === 'user') throw new CodeReviewError(409, '用户 Key 绑定未完成，暂无用量');
+    if (!task.userKeyBinding) return res.json({ credentialSource: 'platform' });
+    if (task.userKeyBinding.owner !== credentialOwner(req) && !isHumanSystemOwner(req)) throw new CodeReviewError(403, '只能查看自己的 Key 用量');
+    if (!service.deps.userKeys?.configured()) throw new CodeReviewError(503, '用户 Key 用量通道未配置');
+    return res.json(await service.deps.userKeys.usage(task.userKeyBinding, task.projectId));
+  }));
   router.get('/code-reviews/:id/audit', handler(async (req, res) => {
     const task = taskFor(req); const before = req.query.before === undefined ? undefined : Number(req.query.before);
     if (before !== undefined && (!Number.isSafeInteger(before) || before < 1)) throw new CodeReviewError(400, '审计分页参数无效');
@@ -187,6 +224,7 @@ export function createCodeReviewsRouter({ state, service }: { state: StateServic
     ['cancel', (id: string) => service.cancel(id)], ['retry', (id: string) => service.retry(id)], ['delivery/retry', (id: string) => service.deliver(id)],
   ] as const) router.post(`/code-reviews/:id/${action}`, handler(async (req, res) => {
     const task = taskFor(req);
+    if (action === 'retry' && task.userKeyBinding && task.userKeyBinding.owner !== credentialOwner(req)) throw new CodeReviewError(403, '只有 Key 所有者可以继续消费此任务的额度');
     const result = action === 'retry' ? await service.retry(task.id, req.get('X-CDS-Review-Expected-Updated-At')) : await run(task.id);
     return res.json({ task: publicCodeReviewTask(result) });
   }));

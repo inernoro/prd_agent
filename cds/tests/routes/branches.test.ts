@@ -416,6 +416,26 @@ describe('Branch Routes', () => {
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it('归档分支拒绝部署、重启及镜像认领，旧停止分支清理不能提前删除', async () => {
+    const branch: BranchEntry = { id: 'archived-fixture', projectId: 'default', branch: 'feature/archived', worktreePath: tmpDir,
+      status: 'idle', createdAt: new Date().toISOString(), services: { api: { profileId: 'api', containerName: 'archived-api', hostPort: 12001, status: 'stopped' } },
+      archive: { archivedAt: new Date().toISOString(), retireAt: '2099-01-01T00:00:00Z', reason: 'manual', actor: 'user' } };
+    stateService.addBranch(branch);
+    for (const action of ['deploy', 'deploy/api', 'restart', 'force-rebuild/api', 'prebuilt-image/claim']) {
+      const response = await request(server, 'POST', `/api/branches/${branch.id}/${action}`, {});
+      expect(response.status).toBe(409); expect(response.body).toMatchObject({ error: 'branch_archived' });
+    }
+    const scoped = await request(server, 'POST', `/api/branches/${branch.id}/deploy`, {}, { 'x-test-key': 'A' });
+    expect(scoped.status).toBe(403);
+    const cleanup = await request(server, 'POST', '/api/branches/cleanup-stopped?project=default', {});
+    expect(cleanup.body).toMatchObject({ removedCount: 0, skippedProtectedCount: 1 });
+    expect(stateService.getBranch(branch.id)?.archive).toBeTruthy(); expect(fs.existsSync(tmpDir)).toBe(true);
+    // webhook已排队、随后用户归档的竞态，也必须在最终删除入口保留数据。
+    const automaticDelete = await request(server, 'DELETE', `/api/branches/${branch.id}`, undefined, { 'x-cds-trigger': 'webhook' });
+    expect(automaticDelete.status).toBe(409); expect(automaticDelete.body).toMatchObject({ error: 'archived_branch_auto_delete_refused' });
+    expect(stateService.getBranch(branch.id)?.archive).toBeTruthy(); expect(fs.existsSync(tmpDir)).toBe(true);
+  });
+
   it('手动新建在首个 mkdir 等待前冻结默认，期间修改项目不会留下半分支', async () => {
     stateService.addBuildProfile({ id: 'default-api', projectId: 'default', name: 'API', dockerImage: 'node:20', workDir: '.', command: 'node server.js', containerPort: 3000,
       cacheMounts: [{kind:'bind',hostPath:'/owned/fixture-config',containerPath:'/fixture-config',readOnly:true}],

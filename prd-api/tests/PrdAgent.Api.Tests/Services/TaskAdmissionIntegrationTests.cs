@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Middleware;
@@ -16,6 +17,7 @@ using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -299,6 +301,88 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
             admission.AdmitAuthenticatedPaidBranchAsync(unknown, default));
         Assert.Equal(1, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+    }
+
+    [DesignScopeMongoFact]
+    public async Task VideoQueue_TwoDeploymentsAndLegacyWorkerCannotStealEachOthersNewRuns()
+    {
+        var rows = new[]
+        {
+            new VideoGenRun { Id = "legacy", Status = VideoGenRunStatus.Queued, CreatedAt = DateTime.UtcNow.AddHours(-3) },
+            new VideoGenRun { Id = "branch-b", Status = VideoGenRunStatus.ScopedQueued, DeploymentSlug = "branch-b", CreatedAt = DateTime.UtcNow.AddHours(-2) },
+            new VideoGenRun { Id = "branch-a", Status = VideoGenRunStatus.ScopedQueued, DeploymentSlug = "branch-a", CreatedAt = DateTime.UtcNow.AddHours(-1) },
+            new VideoGenRun { Id = "production", Status = VideoGenRunStatus.ScopedQueued },
+        };
+        await _business.VideoGenRuns.InsertManyAsync(rows);
+        Assert.Equal(["legacy"], await _business.VideoGenRuns.Find(x => x.Status == VideoGenRunStatus.Queued)
+            .Project(x => x.Id).ToListAsync());
+        async Task<VideoGenRun?> Claim(string? deployment)
+        {
+            using var services = new ServiceCollection().BuildServiceProvider();
+            using var worker = new PrdAgent.Api.Services.VideoGenRunWorker(_business,
+                services.GetRequiredService<IServiceScopeFactory>(), Mock.Of<IRunEventStore>(), Mock.Of<IAssetStorage>(),
+                NullLogger<PrdAgent.Api.Services.VideoGenRunWorker>.Instance);
+            typeof(PrdAgent.Api.Services.VideoGenRunWorker).GetProperty("QueueDeploymentScope", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(worker, deployment);
+            return await (Task<VideoGenRun?>)typeof(PrdAgent.Api.Services.VideoGenRunWorker)
+                .GetMethod("ClaimQueuedRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(worker, [CancellationToken.None])!;
+        }
+        Assert.Equal("branch-a", (await Claim("branch-a"))!.Id);
+        Assert.Null(await Claim("branch-a"));
+        Assert.Equal("branch-b", (await Claim("branch-b"))!.Id);
+        Assert.Equal("legacy", (await Claim(null))!.Id);
+        Assert.Equal("production", (await Claim(null))!.Id);
+        Assert.Null(await Claim(null));
+        // 旧 Worker 的 Queued 查询不会看见新任务；JSON 仍输出既有 Queued 状态。
+        var waiting = new VideoGenRun { Status = VideoGenRunStatus.ScopedQueued, DeploymentSlug = "branch-a" };
+        var json = JsonSerializer.SerializeToElement(waiting, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(VideoGenRunStatus.Queued, json.GetProperty("status").GetString());
+        Assert.False(json.TryGetProperty("deploymentSlug", out _));
+        Assert.Equal(VideoGenRunStatus.ScopedQueued, waiting.ToBsonDocument()["Status"].AsString);
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("CreateRun", "ApiKey", "agent-apikey")]
+    [InlineData("VideoGenDirect", "StableSmoke", "stable-smoke-signature")]
+    public async Task DirectVideo_AgentPermitCoversLongPollingAndDownload_ButStillStopsAtItsFiniteLimit(
+        string action, string scheme, string auth)
+    {
+        const string videoCaller = AppCallerRegistry.VideoAgent.VideoGen.Generate;
+        var http = HttpAction(action, scheme, auth, "PrdAgent.Api.Controllers.Api.VideoAgentController");
+        var sends = 0;
+        await new TaskAdmissionMiddleware(async _ =>
+        {
+            var identity = TaskExecutionContext.Current!;
+            using var run = TaskExecutionContext.Enter(identity with { RunId = "long-video-run" });
+            var authorizer = new TaskExecutionAuthorizer(_data, _config);
+            // 模拟网关核销：一次提交、100 次查询和一次下载，不请求任何供应商。
+            for (var call = 0; call < 102; call++)
+            {
+                using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gw/v1/raw");
+                await authorizer.AuthorizeOutboundAsync(message, videoCaller,
+                    new GatewayRequestContext { UserId = "actor" }, default);
+                Assert.True(message.Headers.Contains("X-Gateway-Task-Permit"));
+                await Permits.UpdateOneAsync(x => x.Id == identity.PermitId,
+                    Builders<GatewayTaskPermitRecord>.Update.Inc(x => x.CallCount, 1));
+                sends++;
+            }
+            var permit = await Permits.Find(x => x.Id == identity.PermitId).SingleAsync();
+            Assert.Equal(TaskExecutionOrigins.Agent, permit.Origin);
+            Assert.Equal(128, permit.MaxCalls);
+            Assert.Equal(["long-video-run"], permit.BoundRunIds);
+            await Permits.UpdateOneAsync(x => x.Id == identity.PermitId,
+                Builders<GatewayTaskPermitRecord>.Update.Set(x => x.CallCount, permit.MaxCalls));
+            using var exhausted = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gw/v1/raw");
+            var denied = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+                authorizer.AuthorizeOutboundAsync(exhausted, videoCaller,
+                    new GatewayRequestContext { UserId = "actor" }, default));
+            Assert.Equal("TASK_PERMIT_INVALID", denied.Code);
+            Assert.False(exhausted.Headers.Contains("X-Gateway-Task-Permit"));
+            // 普通任务的 Agent 限额不随视频调整。
+            Assert.Equal(16, TaskAdmissionPolicies.Find(Controller, "RunStream")!.AgentMaxCalls);
+        }).InvokeAsync(http, new TaskAdmissionService(_data, _config));
+        Assert.Equal(102, sends);
+        Assert.Null(TaskExecutionContext.Current);
     }
 
     [DesignScopeMongoFact]
