@@ -22,14 +22,15 @@ afterEach(() => {
   if (originalKey === undefined) delete process.env.CDS_SECRET_KEY; else process.env.CDS_SECRET_KEY = originalKey;
 });
 const tool: McpTool = { name: 'health', inputSchema: { type: 'object', required: ['region'], properties: { region: { type: 'string', enum: ['cn'] } }, additionalProperties: false }, readOnly: true };
-async function serve(options: { sse?: boolean; error?: boolean; invalid?: boolean; hang?: boolean; token?: string; httpError?: boolean; reflectToken?: boolean; rawResponse?: { body: string; contentType: string; partial?: boolean } } = {}) {
+async function serve(options: { sse?: boolean; error?: boolean; invalid?: boolean; hang?: boolean; token?: string; httpError?: boolean; reflectToken?: boolean; toolResult?: unknown; rpcError?: { code: number; message: string }; rawResponse?: { body: string; contentType: string; partial?: boolean; status?: number } } = {}) {
+  const responses: string[] = [];
   const seen: Array<{ method: string; params?: any; authorization?: string; session?: string }> = [];
   const server = http.createServer((req, res) => {
     let body = ''; req.on('data', data => { body += data; });
     req.on('end', () => {
       const rpc = JSON.parse(body); seen.push({ ...rpc, authorization: req.headers.authorization, session: req.headers['mcp-session-id'] });
       if (options.rawResponse) {
-        res.writeHead(200, { 'content-type': options.rawResponse.contentType });
+        res.writeHead(options.rawResponse.status ?? 200, { 'content-type': options.rawResponse.contentType });
         if (options.rawResponse.partial) res.write(options.rawResponse.body);
         else res.end(options.rawResponse.body);
         return;
@@ -40,14 +41,16 @@ async function serve(options: { sse?: boolean; error?: boolean; invalid?: boolea
       if (rpc.method === 'notifications/initialized') { res.writeHead(202); res.end(); return; }
       const result = rpc.method === 'initialize' ? { protocolVersion: '2025-03-26', serverInfo: { name: options.reflectToken ? `service ${options.token}` : 'fixture', version: '1' }, capabilities: { tools: {} } }
         : rpc.method === 'tools/list' ? { tools: [{ ...tool, ...(options.reflectToken ? { description: `tool ${options.token}` } : {}), annotations: { readOnlyHint: true } }, { name: 'delete', inputSchema: { type: 'object' } }] }
-          : { isError: !!options.error, content: [{ type: 'text', text: 'private-document-do-not-log' }] };
-      const out = options.invalid ? 'not JSON' : JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result });
+          : options.toolResult === undefined ? { isError: !!options.error, content: [{ type: 'text', text: 'private-document-do-not-log' }] } : options.toolResult;
+      const out = options.invalid ? 'not JSON' : JSON.stringify(rpc.method === 'tools/call' && options.rpcError
+        ? { jsonrpc: '2.0', id: rpc.id, error: options.rpcError } : { jsonrpc: '2.0', id: rpc.id, result });
+      responses.push(out);
       res.writeHead(200, { 'content-type': options.sse ? 'text/event-stream' : 'application/json', ...(rpc.method === 'initialize' ? { 'mcp-session-id': 'private-session-fixture' } : {}) });
       if (options.sse) { res.write(`event: message\r\ndata: ${out}\r\n\r\n`); } else res.end(out);
     });
   });
   servers.push(server); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`, seen };
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`, seen, responses };
 }
 function state() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-monitor-')); directories.push(dir);
@@ -55,6 +58,110 @@ function state() {
 }
 
 describe('真正 MCP 工具巡检', () => {
+  it('非2xx未知JSON字段的同长度不同原文也保留完整摘要，不改401友好错误', async () => {
+    const { store, file, dir } = state();
+    const bodies = ['permission denied', 'quota is exceeded'].map(detail => JSON.stringify({ detail, bearer: 'fixture-bearer-never-real' }));
+    expect(Buffer.byteLength(bodies[0])).toBe(Buffer.byteLength(bodies[1]));
+    const digests: string[] = [];
+    for (const body of bodies) {
+      const remote = await serve({ rawResponse: { body, contentType: 'application/json', status: 401 } });
+      const client = new McpMonitorClient(remote.url, 'e', 1000, evidence => store.recordMcpMonitorAudit(evidence));
+      await expect(client.discover()).rejects.toThrow('MCP 服务未授权，请检查访问令牌');
+      const expectedHash = crypto.createHash('sha256').update(body).digest('hex');
+      expect(client.evidence[0]).toMatchObject({ received: true, status: 401, verdict: 'upstream-error', responseBytes: Buffer.byteLength(body), snapshot: {
+        httpStatus: 401, bodySha256: expectedHash, hashedBytes: Buffer.byteLength(body), bodyComplete: true, hashScope: 'entire-response',
+      } });
+      expect(client.evidence[0].snapshot?.bodySha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(client.evidence)).not.toContain('fixture-bearer-never-real');
+      expect(JSON.stringify(client.evidence)).not.toContain(body);
+      digests.push(expectedHash);
+    }
+    expect(digests[0]).not.toBe(digests[1]);
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.listMcpMonitorAudits().map(e => e.snapshot?.bodySha256)).toEqual([...digests].reverse());
+  });
+
+  it('非2xx响应中断仍持久化真实已收字节与前缀摘要，不只记录通用超时', async () => {
+    const { store, file, dir } = state();
+    const body = '{"detail":"fixture-bearer-never-real","step":';
+    const remote = await serve({ rawResponse: { body, contentType: 'application/json', status: 401, partial: true } });
+    const client = new McpMonitorClient(remote.url, 'fixture-bearer-never-real', 150, evidence => store.recordMcpMonitorAudit(evidence));
+    await expect(client.discover()).rejects.toThrow('连接服务超时');
+    expect(client.evidence[0]).toMatchObject({ received: true, status: 401, verdict: 'upstream-error', responseBytes: Buffer.byteLength(body), snapshot: {
+      httpStatus: 401, bodySha256: crypto.createHash('sha256').update(body).digest('hex'), hashedBytes: Buffer.byteLength(body), bodyComplete: false, hashScope: 'received-prefix',
+    } });
+    expect(JSON.stringify(client.evidence)).not.toContain('fixture-bearer-never-real');
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.listMcpMonitorAudits()[0].snapshot).toEqual(client.evidence[0].snapshot);
+  });
+
+  it('非2xx继续使用原8KB上限，超限保留实读前缀原字节摘要而非解码文本哈希', async () => {
+    const body = 'x'.repeat(8192 + 4096);
+    const remote = await serve({ rawResponse: { body, contentType: 'text/html', status: 401 } });
+    const client = new McpMonitorClient(remote.url, '1', 1000);
+    await expect(client.discover()).rejects.toThrow('MCP 服务未授权，请检查访问令牌');
+    const evidence = client.evidence[0];
+    expect(evidence.responseBytes).toBeGreaterThan(8192);
+    expect(evidence).toMatchObject({ status: 401, truncated: true, verdict: 'upstream-error', snapshot: {
+      bodySha256: crypto.createHash('sha256').update(body.slice(0, evidence.responseBytes)).digest('hex'), hashedBytes: evidence.responseBytes,
+      bodyComplete: false, hashScope: 'received-prefix',
+    } });
+    expect(JSON.stringify(evidence)).not.toContain('x'.repeat(100));
+  });
+
+
+  it.each(['e', 'fixture-bearer-never-real'])('HTTP200同长度工具失败保留可区分的原字节摘要并冷读持久化（token=%s）', async token => {
+    const { store, file, dir } = state();
+    const digests: string[] = [];
+    const responseSizes: number[] = [];
+    for (const message of ['permission denied', 'quota is exceeded']) {
+      const text = `${message} fixture-bearer-never-real user@example.test`;
+      const toolResult = { isError: true, content: [{ type: 'text', text }] };
+      const remote = await serve({ token, toolResult });
+      const client = new McpMonitorClient(remote.url, token, 1000, evidence => store.recordMcpMonitorAudit(evidence));
+      const discovered = await client.discover();
+      expect(await client.call(discovered.tools[0], { region: 'cn' })).toEqual(toolResult);
+      const raw = remote.responses.at(-1)!;
+      const evidence = client.evidence.at(-1)!;
+      const expectedHash = crypto.createHash('sha256').update(raw).digest('hex');
+      expect(evidence).toMatchObject({ operation: 'tools/call', received: true, status: 200, responseBytes: Buffer.byteLength(raw),
+        snapshot: { bodySha256: expectedHash, hashedBytes: Buffer.byteLength(raw), bodyComplete: true, hashScope: 'entire-response', result: { isError: true } } });
+      expect(evidence.snapshot?.bodySha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(evidence)).not.toContain(message);
+      expect(JSON.stringify(evidence)).not.toContain('fixture-bearer-never-real');
+      expect(JSON.stringify(evidence)).not.toContain('user@example.test');
+      digests.push(expectedHash); responseSizes.push(Buffer.byteLength(raw));
+    }
+    expect(responseSizes[0]).toBe(responseSizes[1]); expect(digests[0]).not.toBe(digests[1]);
+    const reloaded = new StateService(file, dir); reloaded.load();
+    expect(reloaded.listMcpMonitorAudits().filter(e => e.operation === 'tools/call').map(e => e.snapshot?.bodySha256)).toEqual([...digests].reverse());
+  });
+
+  it.each(['JSONRPC错误', '非法result'])('已解析的%s也保留原字节摘要，不依赖某个错误分支', async kind => {
+    const remote = await serve(kind === 'JSONRPC错误' ? { rpcError: { code: -32001, message: 'fixture permission denied' } } : { toolResult: 'invalid-result' });
+    const client = new McpMonitorClient(remote.url, '1', 1000);
+    const discovered = await client.discover();
+    await expect(client.call(discovered.tools[0], { region: 'cn' })).rejects.toThrow(kind === 'JSONRPC错误' ? 'MCP 服务拒绝了请求' : 'MCP 服务返回结果格式不正确');
+    const raw = remote.responses.at(-1)!;
+    expect(client.evidence.at(-1)).toMatchObject({ status: 200, snapshot: {
+      bodySha256: crypto.createHash('sha256').update(raw).digest('hex'), hashedBytes: Buffer.byteLength(raw), bodyComplete: true, hashScope: 'entire-response',
+    } });
+  });
+
+  it('正常SSE工具结果保持原样，提前返回的摘要诚实标注为已收到前缀', async () => {
+    const toolResult = { isError: false, content: [{ type: 'text', text: 'private-success-result' }], structuredContent: { healthy: true } };
+    const remote = await serve({ sse: true, toolResult });
+    const client = new McpMonitorClient(remote.url, 'e', 1000);
+    const discovered = await client.discover();
+    expect(await client.call(discovered.tools[0], { region: 'cn' })).toEqual(toolResult);
+    const raw = `event: message\r\ndata: ${remote.responses.at(-1)}\r\n\r\n`;
+    expect(client.evidence.at(-1)).toMatchObject({ status: 200, snapshot: {
+      bodySha256: crypto.createHash('sha256').update(raw).digest('hex'), hashedBytes: Buffer.byteLength(raw), bodyComplete: false, hashScope: 'received-prefix',
+    } });
+    expect(JSON.stringify(client.evidence)).not.toContain('private-success-result');
+  });
+
+
   it.each(['1', 'http'])('合法短令牌 %s 不应改写真实配置端点，响应回显仍须脱敏', async (token) => {
     const { store, file, dir } = state();
     const remote = await serve({ token, reflectToken: true });
@@ -146,7 +253,12 @@ describe('真正 MCP 工具巡检', () => {
     const assertStringsMasked = (value: unknown): void => {
       if (typeof value === 'string') expect(value).not.toContain(token);
       else if (Array.isArray(value)) value.forEach(assertStringsMasked);
-      else if (value && typeof value === 'object') Object.values(value).forEach(assertStringsMasked);
+      else if (value && typeof value === 'object') Object.entries(value).forEach(([key, item]) => {
+        // Newly retained system byte metadata is not an upstream secret echo.
+        if (key === 'bodySha256') expect(item).toMatch(/^[a-f0-9]{64}$/);
+        else if (key === 'hashScope') expect(['entire-response', 'received-prefix']).toContain(item);
+        else assertStringsMasked(item);
+      });
     };
     for (const evidence of recorded) {
       expect(evidence.received).toBe(true);

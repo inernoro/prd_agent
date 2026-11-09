@@ -6553,7 +6553,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           operationId: item.id, projectId: item.event.projectId, message: '同源检查已归入已有事故',
           details: { kind: 'policy', targetId: item.event.targetId, targetName: item.event.targetName, reason: 'shared-incident' },
         });
-        else alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
+        else if (!result.cancelled) alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
         const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
         if (!result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
           channelId: item.channelId, channelName: channel?.name ?? '已删除的通知通道', channelKind: channel?.kind ?? 'bark',

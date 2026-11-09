@@ -88,7 +88,7 @@ export class AlarmRelay {
 export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps: {
   channels: () => AlarmChannelConfig[];
   getNotifications?: () => MonitorNotificationSettings;
-  acknowledged: (item: Item, result: { ok: boolean; reason?: string; merged?: boolean }) => Promise<void>;
+  acknowledged: (item: Item, result: { ok: boolean; reason?: string; merged?: boolean; cancelled?: boolean }) => Promise<void>;
 }) {
   const retireUnavailable = async () => {
     const channels = deps.channels();
@@ -98,7 +98,7 @@ export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps
       if (!reason) continue;
       // 先处理取消记录，再移出主站队列；不再交给接收端，也不能把取消当成送达。
       try {
-        await deps.acknowledged(item, { ok: false, reason });
+        await deps.acknowledged(item, { ok: false, reason, cancelled: true });
       } catch { throw new Error('未能保存取消记录，请稍后重试'); }
       relay.acknowledge(item.id);
     }

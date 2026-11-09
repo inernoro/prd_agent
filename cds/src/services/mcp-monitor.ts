@@ -101,11 +101,11 @@ async function readResponse(
   res: Response,
   id: string | undefined,
   onBytes?: (bytes: number) => void,
-  onFailure?: (evidence: ResponseBodyEvidence) => void,
+  onEvidence?: (evidence: ResponseBodyEvidence) => void,
 ): Promise<{ doc?: Record<string, unknown>; bytes: number }> {
   if (id === undefined) { await res.body?.cancel(); return { bytes: 0 }; }
   if (!res.body) {
-    onFailure?.({ bodySha256: crypto.createHash('sha256').digest('hex'), hashedBytes: 0, bodyComplete: true, hashScope: 'entire-response' });
+    onEvidence?.({ bodySha256: crypto.createHash('sha256').digest('hex'), hashedBytes: 0, bodyComplete: true, hashScope: 'entire-response' });
     throw new Error('MCP 服务未返回内容');
   }
   const reader = res.body.getReader();
@@ -141,11 +141,11 @@ async function readResponse(
     try { doc = JSON.parse(raw) as Record<string, unknown>; } catch { throw new Error('MCP 响应不是有效 JSON'); }
     if (doc?.id !== id) throw new Error('MCP 响应标识与请求不一致');
     return { doc, bytes };
-  } catch (error) {
-    onFailure?.({ bodySha256: digest.digest('hex'), hashedBytes: bytes, bodyComplete,
-      hashScope: bodyComplete ? 'entire-response' : 'received-prefix' });
-    throw error;
   } finally {
+    // Parsed RPC replies need the same raw-byte evidence as parse failures:
+    // tool-level errors and omitted content must remain distinguishable too.
+    onEvidence?.({ bodySha256: digest.digest('hex'), hashedBytes: bytes, bodyComplete,
+      hashScope: bodyComplete ? 'entire-response' : 'received-prefix' });
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
@@ -179,22 +179,32 @@ export class McpMonitorClient {
         // Keep bounded, redacted business error facts without retaining an HTML
         // page, personal document, credentials, or arbitrary response headers.
         const reader = res.body?.getReader(); let bytes = 0; let raw = '';
+        const digest = crypto.createHash('sha256');
+        let bodyComplete = !reader;
         try {
           if (reader) for (;;) {
-            const part = await reader.read(); if (part.done) break;
+            const part = await reader.read(); if (part.done) { bodyComplete = true; break; }
+            digest.update(part.value);
             bytes += part.value.length;
             raw += new TextDecoder().decode(part.value.subarray(0, Math.max(0, 8192 - raw.length)));
             if (bytes > 8192) { evidence.truncated = true; break; }
           }
-        } finally { await reader?.cancel().catch(() => undefined); reader?.releaseLock(); }
-        evidence.responseBytes = bytes;
+        } finally {
+          // Keep actual received-byte evidence even when the error response
+          // cannot finish or has no recognized business-error fields.
+          evidence.responseBytes = bytes;
+          evidence.snapshot = { httpStatus: res.status, bodySha256: digest.digest('hex'), hashedBytes: bytes,
+            bodyComplete, hashScope: bodyComplete ? 'entire-response' : 'received-prefix',
+            bodyOmitted: '响应正文未保留，仅记录实际接收字节摘要和白名单事实' };
+          await reader?.cancel().catch(() => undefined); reader?.releaseLock();
+        }
         let facts: Record<string, unknown> = {};
         try {
           const parsed = JSON.parse(raw) as Record<string, unknown>;
           const error = parsed.error && typeof parsed.error === 'object' ? parsed.error as Record<string, unknown> : parsed;
           facts = { code: typeof error.code === 'number' ? error.code : this.label(error.code, 64), message: this.label(error.message, 300), error: typeof parsed.error === 'string' ? this.label(parsed.error, 100) : undefined };
-        } catch { facts = { bodySha256: crypto.createHash('sha256').update(raw).digest('hex'), bodyOmitted: '非结构化响应正文已省略，仅保留有界摘要哈希' }; }
-        evidence.snapshot = { httpStatus: res.status, ...facts };
+        } catch { facts = { bodyOmitted: '非结构化响应正文已省略，仅保留有界原字节摘要' }; }
+        evidence.snapshot = { ...evidence.snapshot, ...facts };
 
         throw new Error(res.status === 401 || res.status === 403 ? 'MCP 服务未授权，请检查访问令牌' : `MCP 服务返回 HTTP ${res.status}`);
       }
@@ -202,9 +212,9 @@ export class McpMonitorClient {
       evidence.verdict = 'invalid-response';
       const { doc, bytes } = await readResponse(res, id, bytes => { evidence.responseBytes = bytes; }, bodyEvidence => {
         evidence.responseBytes = bodyEvidence.hashedBytes;
-        evidence.snapshot = { ...bodyEvidence, bodyOmitted: '响应解析失败或中断，仅保留已接收字节的摘要，正文未保留' };
+        evidence.snapshot = { ...bodyEvidence, bodyOmitted: '响应正文未保留，仅记录实际接收字节摘要和白名单事实' };
       });
-      evidence.responseBytes = bytes; evidence.snapshot = snapshotRpc(doc, this.token);
+      evidence.responseBytes = bytes; evidence.snapshot = { ...evidence.snapshot, ...snapshotRpc(doc, this.token) };
       if (doc?.error) { evidence.verdict = 'upstream-error'; throw new Error('MCP 服务拒绝了请求，请查看调用审计'); }
       if (!notification && (!doc?.result || typeof doc.result !== 'object')) throw new Error('MCP 服务返回结果格式不正确');
       evidence.verdict = 'ok';
