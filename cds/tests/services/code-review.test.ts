@@ -717,7 +717,7 @@ describe('代码审查任务完整闭环', () => {
     expect(original).toContain('代码审查报告'); expect(run).toHaveBeenCalledTimes(1);
   });
   it('读取既有中断任务只取回原生结果并缓存，不重试、不归档、不改变失败状态', async () => {
-    const readExisting = vi.fn(async () => ({ ...result(), totalFiles: 2, scannedFiles: 1 }));
+    const readExisting = vi.fn(async () => ({ ...result(), totalFiles: 2, scannedFiles: 2 }));
     run.mockImplementationOnce(async input => {
       await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '分析中', engineTaskId: 'stopped-native' });
       throw new Error('模型服务不可用');
@@ -726,10 +726,10 @@ describe('代码审查任务完整闭环', () => {
     const task = await submit(); await service.pump();
     const pages = await Promise.all([service.result(task.id), service.result(task.id)]);
     expect(pages[0]).toMatchObject({ result: null, resultLoading: true });
-    await vi.waitFor(async () => expect((await service.result(task.id)).result).toMatchObject({ coverage: { complete: false, scannedFiles: 1, totalFiles: 2 }, findings: [{ verified: false }] }));
+    await vi.waitFor(async () => expect((await service.result(task.id)).result).toMatchObject({ coverage: { complete: false, scannedFiles: 2, totalFiles: 2, unfinishedFiles: 0 }, findings: [{ verified: false }] }));
     await service.result(task.id);
     expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
-    expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'stopped-native' });
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'stopped-native', progress: { totalFiles: 2, scannedFiles: 2 } });
     expect(service.get(task.id).reportId).toBeUndefined(); expect(state.listAcceptanceReports('a')).toHaveLength(0);
     expect(send).not.toHaveBeenCalled();
     const base = await serve();
