@@ -2576,8 +2576,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(body.error?.message || '');
   });
 
-  test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-010][REG-video-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }) => {
-    test.setTimeout(420_000);
+  test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-010][REG-video-001][REG-video-poll-budget-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.setTimeout(720_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
       id: string;
@@ -2630,7 +2630,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const visibleProgress = new Set<string>();
       const startedAt = Date.now();
       let videoUrl = '';
-      while (Date.now() - startedAt < 360_000) {
+      // 覆盖服务端完整 10 分钟生成窗口，并保留下载与清理时间。
+      while (Date.now() - startedAt < 660_000) {
         const status = await readEnvelope<{
           status: string;
           videoAssetUrl?: string;
@@ -3406,18 +3407,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-auth-synthetic-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
     const { baseUrl, headers } = await loginGateway(request);
 
-    const [context, models, logicalModels, health, authority, logs, poolTypes, asrPools, authFailureHealth] = await Promise.all([
+    const [context, models, logicalModels, health, authority, logs, authFailureHealth] = await Promise.all([
       request.get(`${baseUrl}/gw/auth/context`, { headers }),
       request.get(`${baseUrl}/gw/models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/key-health`, { headers }),
       request.get(`${baseUrl}/gw/config-authority/report`, { headers }),
       request.get(`${baseUrl}/gw/logs?limit=20`, { headers }),
-      request.get(`${baseUrl}/gw/pool-types`, { headers }),
-      request.get(`${baseUrl}/gw/pools?modelType=asr&sinceHours=168`, { headers }),
       request.get(`${baseUrl}/gw/auth/failure-health?windowMinutes=10&threshold=3`, { headers }),
     ]);
-    for (const response of [context, models, logicalModels, health, authority, logs, poolTypes, asrPools, authFailureHealth]) {
+    for (const response of [context, models, logicalModels, health, authority, logs, authFailureHealth]) {
       expect(response.ok(), `网关审计接口 ${response.url()} 不可用`).toBe(true);
     }
 
@@ -3448,7 +3447,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       publicId?: string;
       modelType?: string;
       enabled?: boolean;
-      offerings?: Array<{ protocol?: string; endpointPath?: string; priority?: number; weight?: number }>;
+      isDefaultForType?: boolean;
+      defaultForAppCallerCodes?: string[];
+      offerings?: Array<{
+        targetId?: string; upstreamModelId?: string; enabled?: boolean; targetUsable?: boolean;
+        healthStatus?: number; protocol?: string; endpointPath?: string; priority?: number; weight?: number;
+      }>;
     }> }>;
     expect(logicalJson.success).toBe(true);
     expect(logicalJson.data.items.length).toBeGreaterThan(0);
@@ -3464,35 +3468,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
     }
 
-    const poolTypesJson = await poolTypes.json() as ApiEnvelope<{ items: Array<{
-      code: string;
-      defaultPoolId: string;
-      modelCount: number;
-      ready: boolean;
-    }> }>;
-    const asrType = poolTypesJson.data.items.find((item) => item.code === 'asr');
-    expect(asrType, '网关必须注册 ASR 类型和默认池').toBeTruthy();
-    expect(asrType?.ready, 'ASR 默认池必须处于就绪状态').toBe(true);
-    expect(asrType?.modelCount, 'ASR 默认池必须至少有主备两个成员').toBeGreaterThanOrEqual(2);
-
-    const asrPoolsJson = await asrPools.json() as ApiEnvelope<{ items: Array<{
-      id: string;
-      isDefaultForType: boolean;
-      health: string;
-      healthyMembers: number;
-      models: Array<{ modelId: string; platformId: string; priority: number; healthStatus: number }>;
-    }> }>;
-    const defaultAsrPool = asrPoolsJson.data.items.find((pool) => pool.id === asrType?.defaultPoolId);
-    expect(defaultAsrPool, 'ASR 类型指针必须命中可读取的默认池').toBeTruthy();
-    expect(defaultAsrPool?.isDefaultForType).toBe(true);
-    expect(defaultAsrPool?.health).not.toBe('unavailable');
-    expect(defaultAsrPool?.healthyMembers || 0).toBeGreaterThan(0);
-    expect(defaultAsrPool?.models.length || 0).toBeGreaterThanOrEqual(2);
-    expect(new Set((defaultAsrPool?.models || []).map((model) => model.modelId)).size).toBeGreaterThanOrEqual(2);
-    for (const model of defaultAsrPool?.models || []) {
-      expect(model.modelId).toBeTruthy();
-      expect(model.platformId).toBeTruthy();
-      expect(model.priority).toBeGreaterThan(0);
+    // 运行时路由以逻辑模型与 Offering 为权威，迁移前 /gw/pools 不再承载当前主备配置。
+    const defaultAsr = logicalJson.data.items.find((item) => item.modelType === 'asr' && item.isDefaultForType);
+    expect(defaultAsr, '网关必须注册当前运行时默认 ASR 逻辑模型').toBeTruthy();
+    const asrMembers = (defaultAsr?.offerings || []).filter((offering) =>
+      offering.enabled && offering.targetUsable && offering.healthStatus !== 2);
+    expect(asrMembers.length, '当前 ASR 默认路由必须至少有主备两条可用线路').toBeGreaterThanOrEqual(2);
+    expect(new Set(asrMembers.map((offering) => `${offering.targetId}:${offering.upstreamModelId}`)).size,
+      '主备必须指向不同上游目标或模型，不能重复计数').toBeGreaterThanOrEqual(2);
+    for (const offering of asrMembers) {
+      expect(offering.targetId).toBeTruthy();
+      expect(offering.upstreamModelId).toBeTruthy();
+      expect(offering.priority).toBeGreaterThan(0);
     }
   });
 

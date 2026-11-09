@@ -69,6 +69,7 @@ public sealed class TaskAdmissionPolicyTests
             Assert.NotEmpty(policy.AppCallers);
             Assert.DoesNotContain("*", policy.AppCallers);
             Assert.InRange(policy.InteractiveMaxCalls, 1, GatewayTaskPermitRecord.MaximumCalls);
+            Assert.InRange(policy.AgentMaxCalls, 1, GatewayTaskPermitRecord.MaximumCalls);
             Assert.Null(TaskAdmissionPolicies.Find(typeName, "FutureUnregisteredPaidAction"));
         }
     }

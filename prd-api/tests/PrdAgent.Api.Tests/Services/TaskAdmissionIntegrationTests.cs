@@ -301,6 +301,50 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         Assert.Equal(1, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
     }
 
+    [DesignScopeMongoTheory]
+    [InlineData("CreateRun", "ApiKey", "agent-apikey")]
+    [InlineData("VideoGenDirect", "StableSmoke", "stable-smoke-signature")]
+    public async Task DirectVideo_AgentPermitCoversLongPollingAndDownload_ButStillStopsAtItsFiniteLimit(
+        string action, string scheme, string auth)
+    {
+        const string videoCaller = AppCallerRegistry.VideoAgent.VideoGen.Generate;
+        var http = HttpAction(action, scheme, auth, "PrdAgent.Api.Controllers.Api.VideoAgentController");
+        var sends = 0;
+        await new TaskAdmissionMiddleware(async _ =>
+        {
+            var identity = TaskExecutionContext.Current!;
+            using var run = TaskExecutionContext.Enter(identity with { RunId = "long-video-run" });
+            var authorizer = new TaskExecutionAuthorizer(_data, _config);
+            // 模拟网关核销：一次提交、100 次查询和一次下载，不请求任何供应商。
+            for (var call = 0; call < 102; call++)
+            {
+                using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gw/v1/raw");
+                await authorizer.AuthorizeOutboundAsync(message, videoCaller,
+                    new GatewayRequestContext { UserId = "actor" }, default);
+                Assert.True(message.Headers.Contains("X-Gateway-Task-Permit"));
+                await Permits.UpdateOneAsync(x => x.Id == identity.PermitId,
+                    Builders<GatewayTaskPermitRecord>.Update.Inc(x => x.CallCount, 1));
+                sends++;
+            }
+            var permit = await Permits.Find(x => x.Id == identity.PermitId).SingleAsync();
+            Assert.Equal(TaskExecutionOrigins.Agent, permit.Origin);
+            Assert.Equal(128, permit.MaxCalls);
+            Assert.Equal(["long-video-run"], permit.BoundRunIds);
+            await Permits.UpdateOneAsync(x => x.Id == identity.PermitId,
+                Builders<GatewayTaskPermitRecord>.Update.Set(x => x.CallCount, permit.MaxCalls));
+            using var exhausted = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gw/v1/raw");
+            var denied = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+                authorizer.AuthorizeOutboundAsync(exhausted, videoCaller,
+                    new GatewayRequestContext { UserId = "actor" }, default));
+            Assert.Equal("TASK_PERMIT_INVALID", denied.Code);
+            Assert.False(exhausted.Headers.Contains("X-Gateway-Task-Permit"));
+            // 普通任务的 Agent 限额不随视频调整。
+            Assert.Equal(16, TaskAdmissionPolicies.Find(Controller, "RunStream")!.AgentMaxCalls);
+        }).InvokeAsync(http, new TaskAdmissionService(_data, _config));
+        Assert.Equal(102, sends);
+        Assert.Null(TaskExecutionContext.Current);
+    }
+
     [DesignScopeMongoFact]
     public async Task NewBusinessMissingAdmission_CannotBorrowAmbientTask_WhileCrudRemainsUsable()
     {
