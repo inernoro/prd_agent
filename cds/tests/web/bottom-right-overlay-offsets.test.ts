@@ -55,7 +55,7 @@ describe('全局操作与信息中心', () => {
   });
 
   it('普通提醒在信息中心聚合，授权申请同时保留右下角决策浮窗', () => {
-    expect(shell).toContain('<SiteNoticeInbox />');
+    expect(shell).toContain('<SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} />');
     expect(shell).toContain('id="cds-information-center-host"');
     expect(informationCenter).toContain('<AccessRequestInbox placement="floating" onCountChange={handleAccessCount} />');
     expect(informationCenter).toContain('<AccessRequestInbox />');

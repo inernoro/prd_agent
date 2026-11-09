@@ -438,6 +438,7 @@ function hardenHtmlWithFactRetention(
   html = convertRelativeKnowledgeAnchors(html);
   // Keep the legacy declarative path unchanged; only verified packages allow scripted interaction.
   const cssSources = verifiedPackagePaths === undefined ? [html] : collectVerifiedPackageCssSources(html);
+  const emptyAttributes = new Map<string, string | undefined>();
   for (const tag of iterateHtmlTags(html)) {
     const name = tag.name.toLowerCase();
     if (tag.isClosing) continue;
@@ -453,7 +454,7 @@ function hardenHtmlWithFactRetention(
         'index.html contains a disallowed SVG animation primitive',
       );
     }
-    const attributes = parseHtmlAttributes(tag.attributes);
+    const attributes = tag.attributes.trim() ? parseHtmlAttributes(tag.attributes) : emptyAttributes;
     for (const attribute of ['src', 'href', 'poster', 'background']) {
       const rawValue = attributes.get(attribute);
       if (rawValue === undefined) continue;

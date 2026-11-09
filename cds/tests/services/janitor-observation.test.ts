@@ -1,3 +1,4 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -44,18 +45,19 @@ else if(args[0]==='ps') {
   const operation = { exec: vi.fn((...args: Parameters<ShellExecutor['exec']>) => new ShellExecutor().exec(...args)) };
   const owned = ownedRemoval ? new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2,
     maxQueued: 4, maxBytes: 256 * 1024, reservedCleanup: 1, reservedCleanupBytes: 64 * 1024 }) : undefined;
+  if (owned) { traceExecutor(owned, 'janitor-operation'); executors.push(owned); }
+  const shell = new IsolatedShellExecutor({ ...operation,
+    ...(owned ? { execOwnedOperation: owned.execOwnedOperation.bind(owned) } : {}) });
+  traceExecutor(shell, 'janitor-observation'); executors.push(shell);
+  // 两个独立夹具池并行准备，业务仍等两者就绪；各自启动和用例5秒期限均不变。
+  await Promise.all([shell.start(), ...(owned ? [owned.start()] : [])]);
   if (owned) {
-    executors.push(owned); await owned.start();
     const deadline = Date.now() + 5000;
     while (owned.getStats().actors.filter(actor => actor.heapLimit !== undefined).length !== 2) {
       if (Date.now() >= deadline) throw new Error('Owned fixture not ready within original startup budget');
       await new Promise(resolve => setTimeout(resolve, 5));
     }
   }
-  const shell = new IsolatedShellExecutor({ ...operation,
-    ...(owned ? { execOwnedOperation: owned.execOwnedOperation.bind(owned) } : {}) });
-  executors.push(shell);
-  await shell.start();
   const adapters = process.env.CDS_JANITOR_REFERENCE === '1'
     ? { imageDocker: janitorModule.defaultImageDocker, orphanWorktreeFs: janitorModule.defaultOrphanWorktreeFs, dockerPrune: janitorModule.defaultDockerPrune }
     : janitorModule.createJanitorDockerAdapters(shell);

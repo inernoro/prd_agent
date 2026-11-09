@@ -1,3 +1,4 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,7 +21,7 @@ async function until(predicate: () => boolean | Promise<boolean>, attempts = 500
   for (let i = 0; i < attempts; i++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); }
   throw new Error('Journal fixture did not become ready');
 }
-async function fixture(mode = 'normal') {
+async function fixture(mode = 'normal', prewarmed?: ObservationStreamExecutor) {
   const dir = await mkdtemp(path.join(tmpdir(), 'cds-journal-stream-')); dirs.push(dir);
   const traceFile = path.join(dir, 'trace.jsonl'); const childFile = path.join(dir, 'child.pid');
   const script = String.raw`#!${process.execPath}
@@ -43,7 +44,9 @@ if(!args.includes('-f')) {
 `;
   await writeFile(path.join(dir, 'journalctl'), script, { mode: 0o700 });
   process.env.PATH = `${dir}:${originalPath || ''}`;
-  const streams = new ObservationStreamExecutor(1); pools.push(streams); await streams.start(); vi.clearAllMocks();
+  const streams = prewarmed ?? traceExecutor(new ObservationStreamExecutor(1), `system-journal:${mode}`);
+  if (!prewarmed) pools.push(streams);
+  await streams.start(); vi.clearAllMocks();
   const trace = async (): Promise<Array<{ pid: number; ppid: number; args: string[] }>> => {
     try { return (await readFile(traceFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch { return []; }
   };
@@ -86,7 +89,9 @@ describe('系统journal独立读取与真实收尾', () => {
     await monitor.stop(); expect(f.streams.getStats().admitted).toBe(0); expect(monitor.getStats().bufferedBytes).toBe(0);
   });
   it('12MiB历史和未换行超长尾部不积累全文，跳过整行后继续记录', async () => {
-    const f = await fixture('large-backfill'); const rows: any[] = [];
+    // 保留两份独立池与全部原数据量；提前并行预热第二池，不在半途串行重复冷启动。
+    const nextStreams = traceExecutor(new ObservationStreamExecutor(1), 'system-journal:overflow'); pools.push(nextStreams);
+    const [f] = await Promise.all([fixture('large-backfill'), nextStreams.start()]); const rows: any[] = [];
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
     await monitor.start(); await until(() => rows.some(row => row.action === 'journal.tail'));
     if (process.env.CDS_JOURNAL_REFERENCE === '1') console.info(JSON.stringify({ maximumMessage: Math.max(...rows.map(row => row.message.length)), actions: rows.map(row => row.action) }));
@@ -95,7 +100,7 @@ describe('系统journal独立读取与真实收尾', () => {
     expect(rows.every(row => Buffer.byteLength(row.message) <= 65536)).toBe(true);
     expect(monitor.getStats().overflowLines).toBe(1);
     await monitor.stop(); expect(f.streams.getStats().admitted).toBe(0);
-    const next = await fixture('overflow'); const tailRows: any[] = [];
+    const next = await fixture('overflow', nextStreams); const tailRows: any[] = [];
     const tail = new SystemLogMonitor(new ShellExecutor(), { record: row => tailRows.push(row) }, ['fixture.service'], next.streams); monitors.push(tail);
     await tail.start(); await until(() => tail.getStats().overflowLines === 1);
     expect(tail.getStats().bufferedBytes).toBeLessThanOrEqual(65536);
@@ -118,7 +123,7 @@ describe('系统journal独立读取与真实收尾', () => {
   it('stop取消正在历史读取的真实父子进程，完成后不启动迟到监听', async () => {
     const f = await fixture('hang'); const rows: any[] = [];
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
-    void monitor.start(); await until(async () => { try { await access(f.childFile); return true; } catch { return false; } });
+    void monitor.start(); await until(async () => { try { return Number((await readFile(f.childFile, 'utf8')).trim()) > 1; } catch { return false; } });
     const pid = Number((await readFile(f.childFile, 'utf8')).trim());
     const stopping = monitor.stop(); expect(stopping).toBeInstanceOf(Promise); await stopping;
     expect(f.streams.getStats().admitted).toBe(0);

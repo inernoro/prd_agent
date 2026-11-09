@@ -18,6 +18,7 @@ import os from 'node:os';
 import express from 'express';
 import { StateService } from '../../src/services/state.js';
 import { createReportsRouter } from '../../src/routes/reports.js';
+import { buildReportsOverview } from '../../src/services/acceptance-overview.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 interface Res { status: number; body: any; rawBody: Buffer; headers: http.IncomingHttpHeaders; }
@@ -212,6 +213,25 @@ describe('Acceptance report routes — project-scoped key access', () => {
     const list = await call(server, 'GET', '/api/reports', { projectKey: 'proj-a' });
     const ids = (list.body.reports as Array<{ id: string }>).map((r) => r.id);
     expect(ids).toContain(created.body.report.id);
+  });
+
+  it.each([
+    { title: '普通失败验收', reportType: 'code-review' },
+    { title: '代码审查报告 · 普通失败验收' },
+    { title: '代码审查报告 · 普通失败验收 · 2026-11-07' },
+  ])('普通验收不能靠类型或标题绕开质量统计：$title', async fields => {
+    const created = await call(server, 'POST', '/api/reports', {
+      projectKey: 'proj-a', body: { ...fields, format: 'md', content: '# 失败验收', verdict: 'fail', defectCounts: { p0: 1 } },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.report.reportType).not.toBe('code-review');
+    const report = service.getAcceptanceReport(created.body.report.id)!;
+    expect(report.reportType).toBe('acceptance');
+    // The aggregation window has an exclusive end; keep this classification test inside its own window.
+    const overview = buildReportsOverview([report], [], { to: new Date(Date.parse(report.createdAt) + 1) });
+    expect(overview.totals.counted).toBe(1);
+    expect(overview.totals.fail).toBe(1);
+    expect(overview.kinds).toEqual([{ kind: '其他', count: 1 }]);
   });
 
   it('project key cannot create a report under another project', async () => {

@@ -25,6 +25,7 @@ const selectors = {
   'agent-table': '[data-agent-requests-skeleton]', 'topology': '[data-topology-page-skeleton]', 'release-center': '[data-release-center-skeleton]', monitor: '[aria-label="正在读取监控数据"]',
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'release-console': '[data-release-console-skeleton]', rows: '[role="status"][aria-busy="true"]',
+  'code-reviews': '[data-code-reviews-skeleton]',
 };
 const gate = () => { let release; const promise = new Promise(r => release = r); return { promise, release }; };
 const browser = await chromium.launch({ headless: true });

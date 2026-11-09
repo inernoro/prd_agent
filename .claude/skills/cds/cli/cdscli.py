@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.20.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -381,7 +381,9 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
     if extra_headers:
         headers.update(extra_headers)
     data: bytes | None = None
-    if body is not None:
+    if isinstance(body, bytes):
+        data = body
+    elif body is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, method=method, data=data, headers=headers)
@@ -3556,6 +3558,144 @@ def cmd_branch_extra_remove(args: argparse.Namespace) -> None:
 # ── 验收报告 / 报告文件夹（CDS 自托管，POST /api/reports + /api/report-folders）──
 # 本会话沉淀:把「视觉取证 → 自托管验收报告 → 项目/文件夹归类 → 直达深链」做成一等公民。
 # 取证管线(chromium 穿 agent 代理 + 截图入库)见 cli/acceptance/ 与 reference/acceptance-reports.md。
+
+def _code_review_project(args: argparse.Namespace) -> str:
+    bound = os.environ.get("CDS_PROJECT_ID", "").strip()
+    project = (getattr(args, "project", None) or bound).strip()
+    if not project:
+        die("代码审查需要项目：请先 cdscli connect，或传 --project <projectId>")
+    if (os.environ.get("CDS_PROJECT_KEY", "").strip() and bound and project != bound):
+        die("项目级凭据不能用于其他项目的代码审查")
+    return project
+
+
+def _code_review_request(method: str, path: str, body: Any = None,
+                         headers: dict[str, str] | None = None) -> Any:
+    status, result, _ = _request(method, path, body=body, timeout=60,
+                                 extra_headers=headers, follow_redirects=False)
+    if not 200 <= status < 300:
+        # Upstream SMTP/model failures may contain credentials. Protected CDS
+        # diagnostics hold the details; CLI errors expose only fixed status text.
+        message = {400: "参数不符合要求", 401: "项目凭据无效或已过期", 403: "当前项目无权访问此资源",
+                   404: "任务或报告不存在", 409: "任务状态或幂等键冲突", 413: "上传超过大小限制",
+                   429: "请求过于频繁", 502: "审查上游服务失败", 503: "审查或邮件服务未配置或不可用"}.get(status, "请求失败，请查看 CDS 任务详情")
+        die(f"HTTP {status}: {message}", code=2 if 400 <= status < 500 else 3)
+    if not isinstance(result, dict):
+        die("CDS 代码审查响应格式错误")
+    return result
+
+
+def _code_review_assert_project(result: Any, project: str, field: str = "task") -> None:
+    resource = result.get(field) if isinstance(result, dict) else None
+    if not isinstance(resource, dict) or resource.get("projectId") != project:
+        die("CDS 返回资源与当前项目不匹配")
+
+
+def _code_review_file(filename: str, allowed: tuple[str, ...], limit: int) -> tuple[str, bytes]:
+    source = Path(filename).expanduser()
+    if source.suffix.lower() not in allowed:
+        die(f"上传文件类型必须为 {' / '.join(allowed)}")
+    try:
+        if not source.is_file() or source.stat().st_size > limit:
+            die(f"上传文件必须为普通文件且不超过 {limit // 1024 // 1024} MiB")
+        with source.open("rb") as handle:
+            content = handle.read(limit + 1)
+    except OSError:
+        die("上传文件不存在或不可读")
+    if not content or len(content) > limit:
+        die(f"上传文件必须非空且不超过 {limit // 1024 // 1024} MiB")
+    return source.name, content
+
+
+def _code_review_multipart(fields: dict[str, Any], filename: str, content: bytes,
+                            mime: str) -> tuple[bytes, dict[str, str]]:
+    boundary = "cds-review-" + secrets.token_hex(16)
+    chunks = []
+    for key, value in fields.items():
+        if value is not None:
+            chunks.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode("utf-8"))
+    # File names are presentation metadata, never paths; exclude header delimiters.
+    safe_name = re.sub(r'[\r\n"\\]', "_", filename)
+    chunks.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{safe_name}"\r\nContent-Type: {mime}\r\n\r\n'.encode("utf-8"))
+    chunks.extend([content, f"\r\n--{boundary}--\r\n".encode("ascii")])
+    return b"".join(chunks), {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+
+
+def cmd_code_review_submit(args: argparse.Namespace) -> None:
+    project = _code_review_project(args)
+    fields: dict[str, Any] = {"projectId": project}
+    if args.ref and not args.github:
+        die("只有 --github 来源接受 --ref；CDS 分支请使用 --branch-id")
+    for name in ("title", "email", "idempotency_key"):
+        if value := getattr(args, name, None):
+            fields["idempotencyKey" if name == "idempotency_key" else name] = value
+    if args.zip_file:
+        if args.ref:
+            die("ZIP 不接受 --ref；仓库版本只适用于 --github")
+        filename, content = _code_review_file(args.zip_file, (".zip",), 100 * 1024 * 1024)
+        fields["sourceType"] = "zip"
+        if args.exclude:
+            fields["excludePatterns"] = json.dumps(args.exclude, ensure_ascii=False)
+        body, headers = _code_review_multipart(fields, filename, content, "application/zip")
+        result = _code_review_request("POST", "/api/code-reviews", body, headers)
+    else:
+        fields.update({"sourceType": "cds", "branchId": args.branch_id} if args.branch_id else {"sourceType": "github", "githubUrl": args.github})
+        if args.ref:
+            fields["ref"] = args.ref
+        if args.exclude:
+            fields["excludePatterns"] = args.exclude
+        result = _code_review_request("POST", "/api/code-reviews", fields)
+    _code_review_assert_project(result, project)
+    ok(result)
+
+
+def cmd_code_review_list(args: argparse.Namespace) -> None:
+    project = _code_review_project(args)
+    result = _code_review_request("GET", "/api/code-reviews?" + urllib.parse.urlencode({"projectId": project}))
+    if not isinstance(result.get("tasks"), list):
+        die("CDS 返回任务列表格式错误")
+    for task in result["tasks"]:
+        _code_review_assert_project({"task": task}, project)
+    if args.include_branches:
+        branches = _code_review_request("GET", "/api/code-reviews/branches?" + urllib.parse.urlencode({"projectId": project})).get("branches")
+        if not isinstance(branches, list) or any(not isinstance(branch, dict) or not isinstance(branch.get("id"), str) or not isinstance(branch.get("branch"), str) for branch in branches):
+            die("CDS 返回分支列表格式错误")
+        result["branches"] = [{key: branch.get(key) for key in ("id", "branch", "status")} for branch in branches]
+    ok(result)
+
+
+def cmd_code_review_task(args: argparse.Namespace) -> None:
+    project = _code_review_project(args)
+    endpoint = "/api/code-reviews/" + urllib.parse.quote(args.id, safe="")
+    method = "GET"
+    if args.sub == "show" and getattr(args, "results", False):
+        query = {"includeResult": "1", "offset": args.offset, "limit": args.limit}
+        if args.severity:
+            query["severity"] = args.severity
+        endpoint += "?" + urllib.parse.urlencode(query)
+    if args.sub != "show":
+        endpoint += {"cancel": "/cancel", "retry": "/retry", "mail-retry": "/delivery/retry"}[args.sub]
+        method = "POST"
+    result = _code_review_request(method, endpoint, {} if method == "POST" else None)
+    _code_review_assert_project(result, project)
+    if args.sub == "show" and getattr(args, "results", False) and result.get("result") is not None:
+        _code_review_assert_project(result, project, "result")
+        if result["result"].get("taskId") != args.id:
+            die("CDS 返回问题与请求任务不匹配")
+    ok(result)
+
+
+def cmd_code_review_upload_report(args: argparse.Namespace) -> None:
+    project = _code_review_project(args)
+    filename, content = _code_review_file(args.file, (".html", ".htm", ".md", ".markdown"), 10 * 1024 * 1024)
+    fmt = "md" if filename.lower().endswith((".md", ".markdown")) else "html"
+    fields = {"projectId": project, "title": args.title, "format": fmt,
+              "idempotencyKey": args.idempotency_key}
+    body, headers = _code_review_multipart(fields, filename, content, "text/markdown" if fmt == "md" else "text/html")
+    result = _code_review_request("POST", "/api/code-reviews/reports", body, headers)
+    _code_review_assert_project(result, project, "report")
+    ok(result)
+
 
 def cmd_report_list(args: argparse.Namespace) -> None:
     qs = []
@@ -10680,6 +10820,35 @@ def _build_parser() -> argparse.ArgumentParser:
     sd = sch.add_parser("delete", help="删除任务")
     sd.add_argument("id", help="scheduledJobId")
     sd.set_defaults(func=cmd_schedule_delete)
+
+    # 代码审查：异步任务与已有报告上传，共用 CDS 项目级鉴权。
+    review = sub.add_parser("code-review", help="代码审查：ZIP/GitHub/CDS 分支提交、任务、邮件重试、报告上传").add_subparsers(dest="sub", required=True)
+    review_submit = review.add_parser("submit", help="提交源码审查，默认归档 CDS；--email 额外发送邮件")
+    review_source = review_submit.add_mutually_exclusive_group(required=True)
+    review_source.add_argument("--zip-file", help="本地 ZIP 文件路径")
+    review_source.add_argument("--github", help="GitHub 仓库 HTTPS 地址")
+    review_source.add_argument("--branch-id", help="当前项目的 CDS 分支 ID，使用 list --include-branches 查询")
+    review_submit.add_argument("--project"); review_submit.add_argument("--ref")
+    review_submit.add_argument("--title"); review_submit.add_argument("--email")
+    review_submit.add_argument("--exclude", action="append", default=[], help="排除目录或模式，可重复")
+    review_submit.add_argument("--idempotency-key", help="重试同一次提交时复用的幂等键")
+    review_submit.set_defaults(func=cmd_code_review_submit)
+    review_list = review.add_parser("list", help="列出当前项目的任务及报告")
+    review_list.add_argument("--project"); review_list.set_defaults(func=cmd_code_review_list)
+    review_list.add_argument("--include-branches", action="store_true", help="附带当前项目可审查的 CDS 分支 ID 与名称")
+    for action, help_text in (("show", "查询进度和结果"), ("cancel", "取消任务"), ("retry", "重试失败任务"), ("mail-retry", "只重试邮件投递")):
+        review_task = review.add_parser(action, help=help_text)
+        review_task.add_argument("id"); review_task.add_argument("--project")
+        if action == "show":
+            review_task.add_argument("--results", action="store_true", help="读取已保存的问题、真实覆盖和报告链接，不执行分析")
+            review_task.add_argument("--offset", type=int, default=0)
+            review_task.add_argument("--limit", type=int, default=50)
+            review_task.add_argument("--severity", choices=["critical", "high", "medium", "low", "info"])
+        review_task.set_defaults(func=cmd_code_review_task)
+    review_upload = review.add_parser("upload-report", help="将已有 HTML/Markdown 报告归档为代码审查报告")
+    review_upload.add_argument("--file", required=True); review_upload.add_argument("--title", required=True)
+    review_upload.add_argument("--project"); review_upload.add_argument("--idempotency-key")
+    review_upload.set_defaults(func=cmd_code_review_upload_report)
 
     # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
     rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)
