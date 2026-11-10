@@ -19,3 +19,5 @@
 @media(max-width:760px){.monitor-workspace .monitor-service-detail .chl{grid-template-columns:minmax(0,1fr) auto}.monitor-workspace .monitor-service-detail .chl .dest{grid-column:1;grid-row:2}.monitor-workspace .monitor-service-detail .rt{grid-template-columns:1fr .8fr 1fr 1fr;gap:10px 6px}.monitor-workspace .monitor-service-detail .lk .tag{max-width:100%}}
 
 .monitor-workspace .monitor-service-detail .thl{top:calc(var(--threshold-y) - 18px)}
+
+.monitor-workspace .monitor-service-detail .detail-probe-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
