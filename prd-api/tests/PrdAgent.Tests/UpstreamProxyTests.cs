@@ -3,6 +3,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using PrdAgent.GatewayTransport;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway;
 using MongoDB.Bson;
 using Xunit;
 
@@ -10,6 +12,28 @@ namespace PrdAgent.Tests;
 
 public class UpstreamProxyTests
 {
+    [Fact]
+    public void InvalidFallbackProxyCannotBreakValidPrimaryOrBecomeDirectFallback()
+    {
+        var invalid = new BsonDocument { { "Mode", "custom" }, { "Address", "http://proxy.example:8080" }, { "PasswordEncrypted", "broken" } };
+        var docs = new Dictionary<string, BsonDocument>
+        {
+            ["primary"] = new("UpstreamProxy", Config("direct")),
+            ["broken"] = new("UpstreamProxy", invalid),
+            ["healthy"] = new("UpstreamProxy", Config("custom", "socks5://proxy.example:1080")),
+        };
+        var bad = new ModelResolutionResult { ActualPlatformId = "broken" };
+        var good = new ModelResolutionResult { ActualPlatformId = "healthy" };
+        var primary = new ModelResolutionResult { ActualPlatformId = "primary", RetryCandidates = [bad, good] };
+        var rejected = new List<ModelResolutionResult>();
+        ModelResolver.ApplyProxySnapshots(primary, docs, null, _ => null, (candidate, _) => rejected.Add(candidate));
+        Assert.Equal("direct", primary.UpstreamProxy!.Mode);
+        Assert.Same(good, Assert.Single(primary.RetryCandidates!));
+        Assert.Equal("custom", good.UpstreamProxy!.Mode);
+        Assert.Same(bad, Assert.Single(rejected));
+        Assert.Throws<InvalidOperationException>(() => ModelResolver.ApplyProxySnapshots(bad, docs, null, _ => null, (_, _) => { }));
+    }
+
     private static BsonDocument Config(string mode, string? address = null)
         => UpstreamProxy.Build(new() { Mode = mode, Address = address }, null, value => "cipher:" + value);
 

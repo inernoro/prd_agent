@@ -904,6 +904,8 @@ public sealed partial class GatewayTaskAdmissionIntegrationTests
     private sealed class UnknownAsrConnector(Func<Task>? afterAttempt = null) : ISafeOutboundWebSocketConnector
     {
         public int Calls;
+        public Uri ValidateProxyTarget(string? url)
+            => throw new InvalidOperationException("no proxy target in this fixture");
         public Task<SafeWebSocketTarget> PrepareAsync(string? url, CancellationToken ct = default)
             => throw new InvalidOperationException("no network resolution in this fixture");
         public async Task<IDisposable> ConnectAsync(ClientWebSocket socket, string? url, CancellationToken ct = default)

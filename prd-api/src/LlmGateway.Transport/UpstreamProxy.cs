@@ -83,20 +83,7 @@ public static class UpstreamProxy
         return new("custom", view.Address, view.Username, password);
     }
 
-    public static bool IsPublicAddress(IPAddress address)
-    {
-        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-        if (IPAddress.IsLoopback(address)) return false;
-        var bytes = address.GetAddressBytes();
-        if (address.AddressFamily == AddressFamily.InterNetworkV6)
-            return (bytes[0] & 0xe0) == 0x20 && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8);
-        return bytes[0] != 0 && bytes[0] != 10 && bytes[0] != 127 && bytes[0] < 224
-            && !(bytes[0] == 169 && bytes[1] == 254)
-            && !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
-            && !(bytes[0] == 192 && bytes[1] == 168)
-            && !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127)
-            && !(bytes[0] == 198 && bytes[1] is 18 or 19);
-    }
+    public static bool IsPublicAddress(IPAddress address) => SafeOutboundAddressPolicy.IsPublicAddress(address);
 
     public static SocketsHttpHandler CreateHandler(ResolvedUpstreamProxy proxy, bool publicOnly)
     {

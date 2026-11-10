@@ -65,6 +65,7 @@ public class SafeOutboundUrlValidatorTests
     public void IsSafeAddress_BlocksSpecialPurposeAndReservedRanges(string address)
     {
         Assert.False(_validator.IsSafeAddress(System.Net.IPAddress.Parse(address)));
+        Assert.False(PrdAgent.GatewayTransport.UpstreamProxy.IsPublicAddress(System.Net.IPAddress.Parse(address)));
     }
 
     [Theory]
@@ -84,6 +85,7 @@ public class SafeOutboundUrlValidatorTests
     public void IsSafeAddress_AllowsGloballyRoutableAddresses(string address)
     {
         Assert.True(_validator.IsSafeAddress(System.Net.IPAddress.Parse(address)));
+        Assert.True(PrdAgent.GatewayTransport.UpstreamProxy.IsPublicAddress(System.Net.IPAddress.Parse(address)));
     }
 
     [Theory]
@@ -100,6 +102,16 @@ public class SafeOutboundUrlValidatorTests
         var connector = new SafeOutboundWebSocketConnector(_validator);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => connector.PrepareAsync(url));
+        Assert.Throws<InvalidOperationException>(() => connector.ValidateProxyTarget(url));
+    }
+
+    [Fact]
+    public void SafeWebSocket_ProxyValidationDoesNotResolveTargetDns()
+    {
+        var connector = new SafeOutboundWebSocketConnector(_validator);
+        var target = connector.ValidateProxyTarget("wss://proxy-resolved-asr.invalid/asr");
+        Assert.Equal("proxy-resolved-asr.invalid", target.IdnHost);
+        Assert.Equal("wss", target.Scheme);
     }
 
     [Fact]

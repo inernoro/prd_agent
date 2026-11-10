@@ -122,6 +122,7 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                 int? status = null;
                 string? contentType = null;
                 string? upstreamRequestId = null;
+                string? failureStage = null;
                 string message;
                 bool connected;
                 try
@@ -143,10 +144,16 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                         _ => "已收到响应",
                     };
                 }
-                catch (OperationCanceledException) when (!http.RequestAborted.IsCancellationRequested)
-                { connected = false; message = "5 秒内未收到响应，请检查代理、上游地址或稍后重试"; }
+                catch (OperationCanceledException)
+                {
+                    connected = false;
+                    failureStage = http.RequestAborted.IsCancellationRequested ? "request-canceled" : "response-timeout";
+                    message = http.RequestAborted.IsCancellationRequested
+                        ? "客户端已中断连接测试，未收到响应"
+                        : "5 秒内未收到响应，请检查代理、上游地址或稍后重试";
+                }
                 catch (HttpRequestException)
-                { connected = false; message = "连接失败，请检查代理地址、认证信息及上游是否可访问"; }
+                { connected = false; failureStage = "connection"; message = "连接失败，请检查代理地址、认证信息及上游是否可访问"; }
                 sw.Stop();
                 var sample = new UpstreamNetworkSample(index, connected, status, sw.ElapsedMilliseconds, message);
                 samples.Add(sample);
@@ -158,8 +165,11 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                     { "httpStatus", (BsonValue?)status ?? BsonNull.Value }, { "contentType", (BsonValue?)contentType ?? BsonNull.Value },
                     { "upstreamRequestId", upstreamRequestId is null ? BsonNull.Value : new BsonString(new string(upstreamRequestId.Where(c => !char.IsControl(c)).Take(128).ToArray())) },
                     { "message", sample.Message }, { "responseBodyOmittedReason", "HEAD 请求没有响应正文；只保留安全响应头及本地判定" },
+                    { "failureStage", (BsonValue?)failureStage ?? BsonNull.Value },
                     { "timeoutMs", 5000 },
                 }, CancellationToken.None);
+                // 请求取消也先持久化本次实际探测，再停止后续采样并传播取消。
+                http.RequestAborted.ThrowIfCancellationRequested();
             }
             var successful = samples.Where(x => x.Connected).Select(x => x.ElapsedMs).ToArray();
             return Ok(new UpstreamNetworkTestResult(route, probeUri.GetLeftPart(UriPartial.Path), samples.Count, successful.Length,

@@ -246,7 +246,10 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
                 if (requirePublicPinnedWebSocket)
                 {
                     if (_safeWebSocketConnector is null) throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
-                    await _safeWebSocketConnector.PrepareAsync(wsUrl, ct);
+                    if (upstreamProxy.Mode == "custom")
+                        _safeWebSocketConnector.ValidateProxyTarget(wsUrl);
+                    else
+                        await _safeWebSocketConnector.PrepareAsync(wsUrl, ct);
                 }
                 var invoker = new HttpMessageInvoker(UpstreamProxy.CreateHandler(upstreamProxy, requirePublicPinnedWebSocket), disposeHandler: true);
                 safeTransport = invoker;
