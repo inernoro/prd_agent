@@ -40,6 +40,7 @@ test('列表连接标签直接保存代理，Provider保留其他字段，Exchan
           if (name === 'getImageLayeringCapability') return 'export async function getImageLayeringCapability(){return {success:true,data:{state:"not-installed"}}}';
           if (name === 'getUpstreamProxy') return 'export async function getUpstreamProxy(){return {success:true,data:{mode:"custom",address:"http://global.test:3128",hasPassword:false}}}';
           if (name === 'getCatalogEntries') return 'export async function getCatalogEntries(){return {success:true,data:{items:[],knownCapabilities:["chat"]}}}';
+          if (name === 'setPlatformEnabled') return 'export async function setPlatformEnabled(id,enabled){const f=globalThis.__quickProxyFixture;f.calls.push({kind:"platform-enabled",id,enabled});if(f.rejectDisable)return {success:false,error:{message:"停用未完成，请重试"}};f.provider={...f.provider,enabled};return {success:true,data:f.provider,error:null}}';
           if (name === 'updatePlatform') return 'export async function updatePlatform(id,draft){const f=globalThis.__quickProxyFixture;f.calls.push({kind:"platform",id,draft});f.provider={...f.provider,...draft,updatedAt:"new"};return {success:true,data:f.provider,error:null}}';
           if (name === 'updateExchangeProxy') return 'export async function updateExchangeProxy(id,draft){const f=globalThis.__quickProxyFixture;f.calls.push({kind:"exchange",id,draft});if(f.rejectExchange)return {success:false,error:{message:"版本已变更，请刷新清单"}};f.exchange={...f.exchange,proxy:draft.proxy,version:8};return {success:true,data:f.exchange,error:null}}';
           return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
@@ -81,6 +82,9 @@ test('列表连接标签直接保存代理，Provider保留其他字段，Exchan
     await fill(document.querySelector('[role="dialog"] select'), 'inherit');
     await click(button('取消', document.querySelector('[role="dialog"]')));
     assert.equal(fixture.calls.length, 1, '取消不发送请求');
+    await click(document.querySelector('[aria-label="更多操作"]'));
+    assert.equal(button('重新停用'), undefined, '启用中的上游不显示重复停用入口');
+    await click(document.querySelector('[aria-label="更多操作"]'));
     fixture.role = 'viewer';
     await mount(PlatformsPage, 'viewer');
     assert.equal(document.querySelector('[aria-label="更改官方上游的连接方式"]'), null);
@@ -102,6 +106,21 @@ test('列表连接标签直接保存代理，Provider保留其他字段，Exchan
     assert.equal(fixture.exchange.targetUrl, 'https://official.test/tts');
     assert.equal(document.querySelector('[role="dialog"]'), null);
     assert.match(document.querySelector('[aria-label="更改语音上游的连接方式"]').textContent, /全局代理/);
+
+    fixture.provider = { ...fixture.provider, enabled: false };
+    await mount(PlatformsPage, 'disabled-provider');
+    await click(document.querySelector('[aria-label="更多操作"]'));
+    assert.ok(button('启用'), '原有启用入口保留');
+    await click(button('重新停用'));
+    assert.deepEqual(fixture.calls.at(-1), { kind: 'platform-enabled', id: 'provider', enabled: false });
+    assert.equal(fixture.provider.enabled, false);
+    assert.match(document.body.textContent, /已停用平台「官方上游」/);
+    fixture.rejectDisable = true;
+    await click(document.querySelector('[aria-label="更多操作"]'));
+    await click(button('重新停用'));
+    assert.equal(fixture.provider.enabled, false, '重复停用失败保留原停用状态');
+    assert.match(document.body.textContent, /停用未完成，请重试/);
+    assert.deepEqual(fixture.calls.filter(call => call.kind === 'platform-enabled').map(call => call.enabled), [false, false], '重复停用不能先启用再停用');
 
     const { UpstreamModelPicker } = await server.ssrLoadModule('/src/components/ProviderSetup.tsx');
     let imported = [];

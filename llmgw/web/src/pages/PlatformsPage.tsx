@@ -218,10 +218,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     if (logical.success) setLogicalModels(logical.data.items);
   }
 
-  async function toggle(p: PlatformItem) {
+  async function toggle(p: PlatformItem, enabled = !p.enabled) {
     setBusyId(p.id);
     setToast(null);
-    const res = await setPlatformEnabled(p.id, !p.enabled);
+    const res = await setPlatformEnabled(p.id, enabled);
     setBusyId(null);
     if (res.success) {
       setItems((prev) => (prev ? prev.map((x) => (x.id === p.id ? res.data : x)) : prev));
@@ -732,6 +732,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                               disabled: busyId === p.id,
                               onSelect: () => void toggle(p),
                             },
+                            ...(!p.enabled ? [{ key: 'disable-again', label: '重新停用', disabled: busyId === p.id, onSelect: () => void toggle(p, false) }] : []),
                             // 这条上游到底有没有在被调、报什么错——不看日志答不上来
                             { key: 'logs', label: '查看日志', to: `/logs?platformId=${encodeURIComponent(p.id)}` },
                             ...(p.authority === 'llm_gateway' ? [
