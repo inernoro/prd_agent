@@ -107,4 +107,15 @@ describe('通知交叉分类与唯一模板目录', () => {
     expect(state.listAcceptanceReports(null)).toHaveLength(2);
   });
 
+  it('手机演练不虚构失败检查，也不显示并不存在的监控目标', async () => {
+    const state = new StateService(path.join(dir, crypto.randomUUID() + '.json'), dir); state.load();
+    const recorder = new NotificationReportRecorder(state);
+    const saved = await recorder.record({ ...event, targetId: undefined, drill: true });
+    const report = state.getAcceptanceReport(saved.reportId)!;
+    expect(report.monitorEvent!.snapshots[0].consecutiveFailedChecks).toBe(0);
+    const content = await state.readAcceptanceReportContentAsync(saved.reportId);
+    expect(content).toContain('不代表服务故障'); expect(content).toContain('## 演练记录');
+    expect(content).not.toContain('连续失败检查'); expect(content).not.toContain('查看同一监控目标');
+  });
+
 });

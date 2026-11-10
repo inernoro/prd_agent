@@ -34,7 +34,7 @@ export function ClassificationSummary({ report, onSaved }: { report: AcceptanceR
   return <div className="shrink-0 space-y-1 border-b border-[hsl(var(--hairline))] bg-card px-3 py-2 text-xs" aria-label="报告交叉分类">
     <p>类别：{c.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、') || '未分类'}　系统：{NOTIFICATION_SYSTEMS[c.primarySystem]}{c.relatedSystems.length ? `；关联 ${c.relatedSystems.map(k => NOTIFICATION_SYSTEMS[k]).join('、')}` : ''}　环境：{c.environments.map(k => NOTIFICATION_ENVIRONMENTS[k]).join('、')}</p>
     <div className="flex flex-wrap items-center gap-3">
-      {report.monitorEvent ? <><span>事件：{report.monitorEvent.state === 'drill' ? '通知演练' : report.monitorEvent.state === 'recovered' ? '已恢复' : '检查异常'} · {report.monitorEvent.snapshots.length} 条发生与恢复记录</span>
+      {report.monitorEvent ? <><span>事件：{report.monitorEvent.state === 'drill' ? '通知演练' : report.monitorEvent.state === 'recovered' ? '已恢复' : '检查异常'} · {report.monitorEvent.snapshots.length} {report.monitorEvent.state === 'drill' ? '条演练记录' : '条发生与恢复记录'}</span>
         {report.monitorEvent.targetId && <Link className="text-primary underline" to={monitorIncidentPath(report.monitorEvent.targetId, report.monitorEvent.incidentId, report.monitorEvent.snapshots[0]?.detectedAt)}>查看同一监控目标</Link>}</>
         : <button type="button" className="text-primary underline" onClick={() => { setValue(report.classification || UNKNOWN_CLASSIFICATION); setEditing(true); }}>编辑交叉分类</button>}
     </div>
