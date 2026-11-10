@@ -1,6 +1,7 @@
 /**
  * 本机编译页面的导航回归。响应形状裁剪自真实录制，值与鉴权均为合成样本。
- * 只测渲染和导航，不证明操作员登录或生产集成；任何未知 API、写请求都失败。
+ * 只测渲染和导航，不证明操作员登录或生产集成；未知 API、导航写请求都失败。
+ * 接入清理回归只拦截明确登记的本机 POST/DELETE，不请求真实后端。
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -215,10 +216,98 @@ export async function verifyMonitorWorkspaceNavigation(browser, base, out) {
   return report;
 }
 
+/** 过期轮询和关闭竞态：回放录制的 session-created 形状，不创建任何真实会话。 */
+export async function verifyMonitorOnboardingSessionCleanup(browser, base, out) {
+  assert(['127.0.0.1', 'localhost', '[::1]'].includes(new URL(base).hostname), '接入清理合成回归只允许本机');
+  await fs.mkdir(out, { recursive: true });
+  const results = [];
+  const assets = new Set();
+  const cases = [
+    { name: 'poll404-cancel', pollStatus: 404, action: 'cancel' },
+    { name: 'poll410-mcp', pollStatus: 410, action: 'mcp' },
+    { name: 'close-before-poll-delete404', deleteStatus: 404, action: 'close' },
+    { name: 'mcp-before-poll-delete410', deleteStatus: 410, action: 'mcp' },
+    { name: 'delete401-preserves-dialog', deleteStatus: 401, action: 'close', mustFail: true },
+    { name: 'delete403-preserves-dialog', deleteStatus: 403, action: 'close', mustFail: true },
+    { name: 'delete-network-preserves-dialog', deleteStatus: 'network', action: 'close', mustFail: true },
+  ];
+  for (const scenario of cases) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark', ...(process.env.CDS_NAVIGATION_STORAGE_STATE ? { storageState: process.env.CDS_NAVIGATION_STORAGE_STATE } : {}) });
+    const issues = { errors: [], unregistered: [], writes: [] }, calls = [];
+    await context.addInitScript(() => localStorage.setItem('cds_theme', 'dark'));
+    await installReadOnlyFixtures(context, issues);
+    const created = structuredClone(recorded.onboardingCreated);
+    created.expiresAt = Date.now() + 3600000;
+    created.timeline[0].at = new Date().toISOString();
+    let releasePoll, closing = false, deleteStatus = scenario.deleteStatus ?? 404;
+    const pollGate = new Promise(resolve => { releasePoll = resolve; });
+    await context.route('**/api/uptime/onboarding**', async route => {
+      const request = route.request(), pathname = new URL(request.url()).pathname.replace(/^\/_cds/, ''), method = request.method();
+      calls.push({ method, pathname });
+      if (pathname === '/api/uptime/onboarding' && method === 'POST') return route.fulfill({ status: 201, json: created });
+      if (pathname === `/api/uptime/onboarding/${created.id}` && method === 'GET') {
+        if (scenario.pollStatus) return route.fulfill({ status: scenario.pollStatus, json: { error: scenario.pollStatus === 404 ? '接入会话不存在，请重新开始。' : '接入令牌已过期，请重新开始。' } });
+        // 关闭先于轮询结果：不要依赖鼠标是否赶在500ms定时器前执行。
+        await pollGate;
+        if (closing) return route.abort().catch(() => undefined);
+        const { token: _token, scope: _scope, ...view } = created;
+        return route.fulfill({ json: view });
+      }
+      if (pathname === `/api/uptime/onboarding/${created.id}` && method === 'DELETE') {
+        if (deleteStatus === 'network') return route.abort('connectionfailed');
+        return route.fulfill({ status: deleteStatus, json: deleteStatus === 200 ? { ok: true } : { error: deleteStatus === 404 ? '接入会话不存在，请重新开始。' : deleteStatus === 410 ? '接入令牌已过期，请重新开始。' : '没有管理本次接入会话的权限，请重新登录后重试。' } });
+      }
+      issues.unregistered.push(`${method} ${pathname}`);
+      return route.abort();
+    });
+    const page = await context.newPage();
+    page.on('pageerror', error => issues.errors.push(error.message));
+    page.on('response', response => { if (/\/assets\/StatusPage-[^/]+\.js$/.test(response.url())) assets.add(new URL(response.url()).pathname); });
+    const result = { name: scenario.name, calls };
+    try {
+      await page.goto(`${base}/status`); await ready(page, 'g');
+      await page.getByRole('button', { name: '接入我的服务', exact: true }).first().click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('button', { name: '已交给智能体', exact: true }).waitFor();
+      await page.waitForFunction(() => document.querySelector('.drawer .code')?.textContent.includes('INVALID_NAVIGATION_REPLAY_TOKEN'));
+      if (scenario.pollStatus) {
+        await dialog.getByRole('alert').waitFor();
+        assert(!(await dialog.locator('.code').textContent()).includes('INVALID_NAVIGATION_REPLAY_TOKEN'), '过期轮询仍保留已失效令牌');
+      }
+      const action = scenario.action === 'mcp' ? dialog.getByRole('button', { name: '连接 MCP', exact: true }) : scenario.action === 'cancel' ? dialog.getByRole('button', { name: '取消', exact: true }) : dialog.getByRole('button', { name: '关闭', exact: true });
+      await action.click();
+      if (scenario.mustFail) {
+        await dialog.getByRole('alert').waitFor();
+        assert(await dialog.isVisible(), '鉴权或网络失败被当作清理成功');
+        await page.waitForFunction(() => document.querySelector('.drawer .xb')?.disabled === false);
+        assert.equal(calls.filter(call => call.method === 'DELETE').length, 1, '失败时不应自行重复撤销');
+        deleteStatus = 200;
+        await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+        await dialog.waitFor({ state: 'hidden', timeout: 5000 });
+        result.failureVisibleAndRetryCloses = true;
+      } else if (scenario.action === 'mcp') await dialog.getByLabel('MCP 服务地址', { exact: true }).waitFor({ timeout: 5000 });
+      else await dialog.waitFor({ state: 'hidden', timeout: 5000 });
+      if (scenario.pollStatus) assert.equal(calls.filter(call => call.method === 'DELETE').length, 0, '轮询已终结会话，关闭时仍使用了旧active引用');
+      else assert(calls.some(call => call.method === 'DELETE'), '关闭竞态没有执行合成撤销请求');
+      assert.deepEqual(issues, { errors: [], unregistered: [], writes: [] });
+      result.pass = true;
+      await page.screenshot({ path: path.join(out, `${scenario.name}.png`) });
+    } catch (error) { result.pass = false; result.error = String(error); result.issues = issues; await page.screenshot({ path: path.join(out, `${scenario.name}-failure.png`) }); }
+    finally { closing = true; releasePoll(); await context.close(); }
+    results.push(result);
+    console.log(`${result.pass ? 'PASS' : 'FAIL'} onboarding cleanup ${scenario.name}${result.error ? `: ${result.error}` : ''}`);
+  }
+  const report = { scope: 'Loopback-only onboarding cleanup regression; recorded session shape and fully intercepted synthetic POST/DELETE, no backend sessions or monitors created', assets: [...assets], results };
+  await fs.writeFile(path.join(out, 'onboarding-cleanup-results.json'), JSON.stringify(report, null, 2));
+  assert.equal(assets.size, 1, '本轮接入回归必须使用同一份编译资源');
+  assert(results.every(result => result.pass), results.filter(result => !result.pass).map(result => `${result.name}: ${result.error}`).join('\n'));
+  return report;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const base = process.argv.find(argument => /^https?:/.test(argument)) ?? 'http://127.0.0.1:8870';
   const outFlag = process.argv.indexOf('--out'), out = outFlag >= 0 ? process.argv[outFlag + 1] : '/tmp/cds-monitor-navigation';
   const browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
-  try { const report = await verifyMonitorWorkspaceNavigation(browser, base, out); console.log(`PASS monitor navigation: ${report.results.length} cases`); }
+  try { const report = await (process.argv.includes('--only-onboarding') ? verifyMonitorOnboardingSessionCleanup : verifyMonitorWorkspaceNavigation)(browser, base, out); console.log(`PASS monitor regression: ${report.results.length} cases`); }
   finally { await browser.close(); }
 }

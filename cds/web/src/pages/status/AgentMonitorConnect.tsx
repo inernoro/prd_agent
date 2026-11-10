@@ -66,7 +66,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
         active.current=value;setSession(value);
         if(value.status==='proposed'&&proposalsSeen.current!==value.id){proposalsSeen.current=value.id;setSelected(value.proposals.filter(p=>!p.existingMonitorId).map(p=>p.id));}
         if(value.status==='completed'||value.status==='revoked')return;
-      }catch(e){if(!disposed){setError(monitorErrorMessage(e));if(e instanceof ApiError&&[401,404,410].includes(e.status)){setSecret('');setSession(prev=>prev?{...prev,status:'revoked'}:null);return;}}}
+      }catch(e){if(!disposed){setError(monitorErrorMessage(e));if(e instanceof ApiError&&[401,404,410].includes(e.status)){setSecret('');if(e.status!==401&&active.current?.id===sessionId)active.current={...active.current,status:'revoked'};setSession(prev=>prev?{...prev,status:'revoked'}:null);return;}}}
       if(!disposed)timer=setTimeout(()=>void poll(),2000);
     };
     timer=setTimeout(()=>void poll(),500);
@@ -76,7 +76,10 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
     if(busy)return;setBusy(true);onBusy?.(true);
     try{
       const current=active.current;
-      if(current&&current.status!=='completed'&&current.status!=='revoked')await apiRequest(`/api/uptime/onboarding/${current.id}`,{method:'DELETE'});
+      if(current&&current.status!=='completed'&&current.status!=='revoked'){
+        try{await apiRequest(`/api/uptime/onboarding/${current.id}`,{method:'DELETE'});}
+        catch(e){if(!(e instanceof ApiError&&[404,410].includes(e.status)))throw e;}
+      }
       active.current=null;setSecret('');next();
     }catch(e){setError(monitorErrorMessage(e));}
     finally{setBusy(false);onBusy?.(false);}

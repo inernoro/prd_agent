@@ -123,5 +123,20 @@
     "recentSamples": [],
     "range": "24h",
     "maxPoints": 48
+  },
+  "onboardingCreated": {
+    "id": "navigation-cleanup-session",
+    "expiresAt": 0,
+    "projectId": null,
+    "status": "waiting",
+    "timeline": [
+      {
+        "at": "2000-01-01T00:00:00.000Z",
+        "kind": "created"
+      }
+    ],
+    "proposals": [],
+    "token": "INVALID_NAVIGATION_REPLAY_TOKEN",
+    "scope": "propose-only"
   }
 }

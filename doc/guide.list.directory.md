@@ -145,6 +145,7 @@
 - [MAP MCP 连接器 · 设计](./design.platform.map-mcp-connector.md) `design.platform.map-mcp-connector`
 - [AppCaller 模型池选择与池内调度 · 设计](./design.platform.model-pool.md) `design.platform.model-pool`
 - [网络诊断功能 · 设计](./design.platform.network-diagnostics.md) `design.platform.network-diagnostics`
+- [通知分类与短讯报告 · 设计](./design.platform.notification.templates.md) `design.platform.notification.templates`
 - [桌面端更新与分布式登录/会话审计说明 · 设计](./design.platform.ops-auth.md) `design.platform.ops-auth`
 - [系统级跨节点互传（Peer Sync） · 设计](./design.platform.peer-sync.md) `design.platform.peer-sync`
 - [RBAC 权限系统 · 设计](./design.platform.rbac-permission.md) `design.platform.rbac-permission`
@@ -359,6 +360,7 @@
 
 ### 六、技术债务台账
 
+- [CDS 通知验收边界 · 债务台账](./debt.cds.notification.md) `debt.cds.notification`
 - [平台后台任务与消费治理 · 债务台账](./debt.platform.background-task-safety.md) `debt.platform.background-task-safety`
 - [缺陷提交可靠性 · 债务台账](./debt.defect-agent.submit-reliability.md) `debt.defect-agent.submit-reliability`
 
@@ -473,6 +475,3 @@
 - [PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策](./pdr.platform.001.product-foundation.md) `pdr.platform.001.product-foundation`
 - [PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策](./pdr.product-agent.001.rule-evolution.md) `pdr.product-agent.001.rule-evolution`
 - [PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策](./pdr.product-agent.002.version-claim-boundary.md) `pdr.product-agent.002.version-claim-boundary`
-
-- [通知分类与短讯报告 · 设计](./design.platform.notification.templates.md) `design.platform.notification.templates`
-- [CDS 通知验收边界](./debt.cds.notification.md) `debt.cds.notification`

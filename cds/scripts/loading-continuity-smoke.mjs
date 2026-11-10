@@ -8,7 +8,7 @@ import { verifyPublicLoading } from './loading-public-smoke.mjs';
 import { verifySettingsRefresh } from './project-settings-refresh-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
 import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
-import { verifyMonitorWorkspaceNavigation } from './monitor-workspace-navigation-smoke.mjs';
+import { verifyMonitorWorkspaceNavigation, verifyMonitorOnboardingSessionCleanup } from './monitor-workspace-navigation-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -157,6 +157,7 @@ try {
       console.log('PASS refresh retains content/input/focus; failure/retry; navigate away and reopen');
       await verifyMonitorWorkspaceNavigation(browser, base, path.join(out, 'monitor-navigation'));
       console.log('PASS monitor navigation preserves location, selection and sidebar transitions');
+      await verifyMonitorOnboardingSessionCleanup(browser, base, path.join(out, 'monitor-onboarding-cleanup'));
     } catch(e) {results.push({route:'refresh-regression',failure:String(e)}); console.log('FAIL refresh-regression '+String(e));}
   }
 } finally { await browser.close(); }
