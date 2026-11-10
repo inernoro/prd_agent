@@ -12,7 +12,7 @@ const BUCKET_STATES = { up: 'ok', down: 'fail', partial: 'part', none: 'gap' } a
 const BUCKET_LABELS = { up: '满足检查条件', down: '检查失败', partial: '部分失败', none: '无观测' } as const;
 const percent = (value: number | null): string => value === null ? '—' : `${(value * 100).toFixed(2)}%`;
 const time = (at: number): string => new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-const chartTime = (at: number, range: HistoryRange): string => range === '24h' ? time(at) : new Date(at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+const chartTime = (at: number, range: HistoryRange): string => range === '24h' ? new Date(at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : new Date(at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 export interface ServiceDetailEntry {
   incidentId?: string;
