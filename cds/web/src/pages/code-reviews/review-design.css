@@ -819,6 +819,12 @@
   border-top: 1px solid var(--cr-line);
   padding-top: 1.176471rem;
 }
+.cr-reader {
+  gap: 0.882353rem;
+}
+.cr-reader > .cr-page-header {
+  align-items: center;
+}
 .cr-document {
   min-width: 0;
   background: var(--cr-surface);

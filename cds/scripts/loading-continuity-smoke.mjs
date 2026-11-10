@@ -7,6 +7,7 @@ import { chromium } from 'playwright';
 import { verifyPublicLoading } from './loading-public-smoke.mjs';
 import { verifySettingsRefresh } from './project-settings-refresh-smoke.mjs';
 import { verifyLoadingRefresh } from './loading-refresh-smoke.mjs';
+import { verifyCodeReviewDocument } from './code-review-document-smoke.mjs';
 import { resolveFixture, isEventStream } from './fixtures/mobile-layout-fixtures.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -111,6 +112,7 @@ try {
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
       if (!before && scene.kind === 'code-reviews') {
+        result.documentScroll = await verifyCodeReviewDocument(browser, base, out);
         await page.locator('.cr-ui h1').waitFor();
         result.fontMatrix = [];
         for (const density of ['80', '85', '100']) {
