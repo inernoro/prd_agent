@@ -114,6 +114,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const current = stack[stack.length - 1];
   const layoutCache = useRef<{ key: string; categoryIds: string[]; value: MonitorLayout; tracks?: string; counts: Record<string, number>; reserves: Record<string, number> }>();
   const measuredRows = useRef<{ key: string; value: string }>();
+  const categoryTracks = useRef(new Map<string, { key: string; value: string }>());
   const visibleSlots = useRef(new Map<string, string[]>());
   const layoutKey = JSON.stringify([density, size.width, size.height, size.narrow]);
   const ids = model.categories.map(c => c.id), previous = layoutCache.current;
@@ -127,7 +128,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     layoutCache.current = { key: layoutKey, categoryIds: ids, counts: { ...previous.counts, ...Object.fromEntries(added.map(({ category }) => [category.id, category.services.length])) }, reserves: { ...previous.reserves, ...Object.fromEntries(added.map(({ category }) => [category.id, category.custom ? 3 : 0])) }, tracks: `${tracks ?? previous.value.bands.map(b => `${b.height}px`).join(' ')} ${extra.map(b => `${b.height}px`).join(' ')}`, value: { ...previous.value, bands: [...previous.value.bands, ...extra], fits: false } };
   }
   const layout = layoutCache.current!.value;
-  useLayoutEffect(() => { const grid = root.current?.querySelector<HTMLElement>('.cg'); if (!grid) return; const record = () => { const value = getComputedStyle(grid).gridTemplateRows; if (value !== 'none') measuredRows.current = { key: layoutKey, value }; }; record(); const observer = new ResizeObserver(record); observer.observe(grid); return () => observer.disconnect(); }, [layoutKey, ids.join('|'), layout.bands.length]);
+  useLayoutEffect(() => { const grid = root.current?.querySelector<HTMLElement>('.cg'); if (!grid) return; const record = () => { const value = getComputedStyle(grid).gridTemplateRows; if (value !== 'none') measuredRows.current = { key: layoutKey, value }; root.current?.querySelectorAll<HTMLElement>('.Lg .cat .cgrid').forEach(element => { const id = element.closest<HTMLElement>('[data-anchor]')?.dataset.anchor, tracks = getComputedStyle(element).gridTemplateRows; if (id && tracks !== 'none' && categoryTracks.current.get(id)?.key !== layoutKey) categoryTracks.current.set(id, { key: layoutKey, value: tracks }); }); }; record(); const observer = new ResizeObserver(record); observer.observe(grid); return () => observer.disconnect(); }, [layoutKey, ids.join('|'), layout.bands.length]);
   const category = model.categories.find((c) => c.id === categoryId);
   const service = model.services.find((s) => s.id === serviceId);
   const q = query.trim().toLocaleLowerCase();
@@ -268,13 +269,15 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     const hb = hidden.filter(s => s.state === 'bad').length, hw = hidden.filter(s => s.state === 'warn').length, hn = hidden.filter(s => s.state === 'none').length;
     const selected = selection === c.id || Boolean(selection && hidden.some(s => s.id === selection));
     const lv = MONITOR_LEVELS[level], rows = Math.max(1, part.rows), ovH = Math.min(lv.rowHeight, 30);
-    const gridStyle: CSSProperties = { gridTemplateColumns: `repeat(${stacked ? 1 : part.columns},minmax(0,1fr))`, ...(stacked ? { gridAutoRows: `${lv.rowHeight}px` } : { gridTemplateRows: hidden.length ? `${rows > 1 ? `repeat(${rows - 1},minmax(${lv.rowHeight}px,1fr)) ` : ''}minmax(${ovH}px,auto)` : `repeat(${rows},minmax(${lv.rowHeight}px,1fr))` }) };
+    const appendOverflow = !stacked && hidden.length > 0 && part.visible >= initialCount;
+    const frozenTracks = categoryTracks.current.get(`cat:${c.id}`);
+    const gridStyle: CSSProperties = { gridTemplateColumns: `repeat(${stacked ? 1 : part.columns},minmax(0,1fr))`, ...(appendOverflow && frozenTracks?.key === layoutKey ? { gridTemplateRows: `${frozenTracks.value} ${ovH}px`, flex: '0 0 auto' } : stacked ? { gridAutoRows: `${lv.rowHeight}px` } : { gridTemplateRows: hidden.length ? `${rows > 1 ? `repeat(${rows - 1},minmax(${lv.rowHeight}px,1fr)) ` : ''}minmax(${ovH}px,auto)` : `repeat(${rows},minmax(${lv.rowHeight}px,1fr))` }) };
     return <div key={c.id} className={`${stacked ? 'sg' : 'cat'} ${level}${c.services.some(s => matches(s, c)) ? '' : ' dim'}${selected ? ' sel' : ''}`} data-anchor={`cat:${c.id}`}>
       <button className={stacked ? 'sgh' : 'ch'} onClick={() => openCategory(c)} aria-label={`打开${c.name}，${c.services.length}项服务`}><span className="cn">{c.name}</span><span className="cc">{c.services.length} 项</span>{c.custom ? <span className="tag acc">自定义</span> : null}<span className="ctoks">{tokens(c)}</span>{!stacked ? <span className="go"><ChevronRight className="ic s" /></span> : null}</button>
       <div className="cb2"><div className="cgrid" style={gridStyle}>
         {shown.map(s => <ServiceTile key={s.id} service={s} mode={level} matches={matches(s, c)} selected={selection === s.id} searched={Boolean(q)} anchor={`svc:${s.id}`} onOpen={() => openService(s)} />)}
         {c.custom && !hidden.length ? <button className={`it-add ${level}`} onClick={onAdd} title="接入我的服务"><Plus className="ic xs" /><span className="ia-t">接入我的服务</span></button> : null}
-        {hidden.length ? <button className="ovf" style={{ gridColumn: '1 / -1', gridRow: rows }} title={`另 ${hidden.length} 项未在首屏显示：${hb} 异常、${hw} 待确认、${hn} 无观测，进入分类查看全部`} onClick={() => openCategory(c)}><span className="ovn">另 <b>{hidden.length}</b> 项</span>{hb ? <span className="ovs ob"><Glyph state="bad" />{hb}<span className="ovt">异常</span></span> : null}{hw ? <span className="ovs ow"><Glyph state="warn" />{hw}<span className="ovt">待确认</span></span> : null}{hn ? <span className="ovs on"><Glyph state="none" />{hn}<span className="ovt">无观测</span></span> : null}{!hb && !hw && !hn ? <span className="ok2">均满足预期</span> : null}<span className="go2">进入分类 →</span></button> : null}
+        {hidden.length ? <button className="ovf" style={{ gridColumn: '1 / -1', gridRow: appendOverflow ? rows + 1 : rows }} title={`另 ${hidden.length} 项未在首屏显示：${hb} 异常、${hw} 待确认、${hn} 无观测，进入分类查看全部`} onClick={() => openCategory(c)}><span className="ovn">另 <b>{hidden.length}</b> 项</span>{hb ? <span className="ovs ob"><Glyph state="bad" />{hb}<span className="ovt">异常</span></span> : null}{hw ? <span className="ovs ow"><Glyph state="warn" />{hw}<span className="ovt">待确认</span></span> : null}{hn ? <span className="ovs on"><Glyph state="none" />{hn}<span className="ovt">无观测</span></span> : null}{!hb && !hw && !hn ? <span className="ok2">均满足预期</span> : null}<span className="go2">进入分类 →</span></button> : null}
       </div></div>
     </div>;
   };
