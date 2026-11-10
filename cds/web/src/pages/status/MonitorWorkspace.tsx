@@ -12,7 +12,7 @@ import './monitor-workspace.css';
 type Density = MonitorDensity;
 type LayerKey = 'g' | 'c' | 's';
 type Box = { x: number; y: number; w: number; h: number };
-type Location = { kind: LayerKey; categoryId?: string; serviceId?: string; skipReturn?: boolean; rect?: Box };
+type Location = { kind: LayerKey; categoryId?: string; serviceId?: string; skipReturn?: boolean; rect?: Box; from?: LayerKey };
 type Pose = CSSProperties;
 const STATES: Record<WorkspaceState, string> = { ok: '正常', bad: '异常', warn: '待确认', none: '无观测' };
 const serviceStateLabel = (service: WorkspaceService): string => service.fresh ? '等待首次观测' : STATES[service.state];
@@ -56,12 +56,12 @@ function Sparkline({ buckets }: { buckets: UptimeBucket[] }) {
   return <svg className="spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-label="实际观测响应延迟">{groups.map((group, i) => <polyline key={i} points={group.map((v) => `${v.i / Math.max(1, buckets.length - 1) * 100},${27 - v.value / max * 23}`).join(' ')} />)}</svg>;
 }
 
-function ServiceTile({ service: s, mode, matches, selected, searched = false, anchor, onOpen }: { service: WorkspaceService; mode: MonitorLevel; matches: boolean; selected: boolean; searched?: boolean; anchor: string; onOpen: () => void }) {
+function ServiceTile({ service: s, mode, matches, selected, located = false, searched = false, anchor, onOpen }: { service: WorkspaceService; mode: MonitorLevel; matches: boolean; selected: boolean; located?: boolean; searched?: boolean; anchor: string; onOpen: () => void }) {
   const metric = measurementView(s.target.lastSample), attention = s.state === 'bad' || s.state === 'warn';
   const actual = metric?.actual ?? (s.state === 'none' ? serviceStateLabel(s) : s.latency);
   const expected = metric ? `预期 ${metric.expected}` : s.state === 'none' ? s.reason : `24h ${s.rate}`;
   const title = `${s.name} · ${serviceStateLabel(s)}${metric ? ` · ${metric.name} 实际 ${metric.actual}，预期 ${metric.expected}（${metric.gap}）` : ` · ${s.reason}`}`;
-  return <button className={`it ${mode} ${s.state}${matches ? '' : ' dim'}${selected ? ' sel' : ''}${searched && matches ? ' hit' : ''}`} data-anchor={anchor} onClick={onOpen} title={title}>
+  return <button className={`it ${mode} ${s.state}${matches ? '' : ' dim'}${selected ? ' sel' : ''}${located ? ' loc' : ''}${searched && matches ? ' hit' : ''}`} data-anchor={anchor} onClick={onOpen} title={title}>
     <span className="i-n"><Glyph state={s.state} /><span className="nm">{s.name}</span><span className="i-v">{attention ? metric?.shortGap ?? serviceStateLabel(s) : s.state === 'none' ? serviceStateLabel(s) : ''}</span></span>
     <span className={`i-s ${s.state}`}>{serviceStateLabel(s)} · {metric ? `${metric.name} ${metric.actual}` : s.reason}</span>
     <span className="i-m"><span className="mono">{mode === 'L1' && attention && metric ? metric.shortGap : actual}</span><span>{mode === 'L1' && attention ? s.ago : expected}</span><span className="ago">{s.ago}</span></span>
@@ -101,6 +101,8 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const [categoryId, setCategoryId] = useState<string>();
   const [serviceId, setServiceId] = useState<string>();
   const [selection, setSelection] = useState<string>();
+  const [categorySelection, setCategorySelection] = useState<string>();
+  const [locating, setLocating] = useState<string>();
   const [markedAlert, setMarkedAlert] = useState<string>();
   const [entryActive, setEntryActive] = useState(false);
   const [toast, setToast] = useState<{ key: number; text: string }>();
@@ -137,7 +139,8 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const service = model.services.find((s) => s.id === serviceId);
   const q = query.trim().toLocaleLowerCase();
   const matches = (s: WorkspaceService, c: WorkspaceCategory) => (!q || `${s.name} ${c.name}`.toLocaleLowerCase().includes(q)) && (status === 'all' || s.state === status) && (source === 'all' || s.custom === (source === 'custom'));
-  const results = q ? model.services.filter((s) => { const c = model.categories.find((entry) => entry.id === s.categoryId); return c && `${s.name} ${c.name}`.toLocaleLowerCase().includes(q); }).slice(0, 8) : [];
+  const searchMatches = q ? model.services.filter((s) => { const c = model.categories.find((entry) => entry.id === s.categoryId); return c && `${s.name} ${c.name}`.toLocaleLowerCase().includes(q); }) : [];
+  const results = searchMatches.slice(0, 8);
   const alerts = model.services.filter((s) => s.state === 'bad' || s.state === 'warn').sort((a, b) => (a.state === 'bad' ? 0 : 1) - (b.state === 'bad' ? 0 : 1) || (a.target.statusSince ?? now) - (b.target.statusSince ?? now));
   const notifications = useWorkspaceNotifications(summary.generatedAt);
   const globalNotification = effectiveNotifications(notifications, summary);
@@ -195,6 +198,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     const rect = entry.rect ?? { x: 50, y: 50, w: 200, h: 110 };
     if (entry.categoryId) setCategoryId(entry.categoryId);
     setServiceId(entry.serviceId);
+    setCategorySelection(entry.kind === 's' ? entry.serviceId : undefined);
     setStack((prev) => prev.concat(entries)); setDropdownOpen(false);
     const initial = { g: HIDDEN, c: HIDDEN, s: HIDDEN }; initial[from] = IDENTITY; initial[to] = reduced ? { ...IDENTITY, opacity: 0 } : collapsed(rect);
     setPoses(initial); setStage({ [to]: 'pre' });
@@ -208,8 +212,11 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     if (busyRef.current || index < 0 || index >= history.length - 1) return;
     busyRef.current = true;
     const from = history[history.length - 1], to = history[index], via = history[index + 1];
-    const anchor = findAnchor(to.kind, via.kind === 'c' ? `cat:${via.categoryId}` : `svc:${via.serviceId}`) ?? findAnchor(to.kind, `cat:${via.categoryId}`);
-    const rect = anchor ? relative(anchor) : via.rect ?? { x: size.width / 2 - 90, y: size.height / 2 - 60, w: 180, h: 120 };
+    const serviceEntry = via.skipReturn ? history[index + 2] : via;
+    const anchor = to.kind === 'g' && via.skipReturn
+      ? findAnchor('g', `svc:${serviceEntry?.serviceId}`) ?? findAnchor('g', `ovf:${via.categoryId}`) ?? findAnchor('g', `cat:${via.categoryId}`)
+      : findAnchor(to.kind, via.kind === 'c' ? `cat:${via.categoryId}` : `svc:${via.serviceId}`) ?? findAnchor(to.kind, `cat:${via.categoryId}`);
+    const rect = via.from === to.kind && via.rect ? via.rect : anchor ? relative(anchor) : via.rect ?? { x: size.width / 2 - 90, y: size.height / 2 - 60, w: 180, h: 120 };
     const initial = { g: HIDDEN, c: HIDDEN, s: HIDDEN }; initial[from.kind] = IDENTITY; initial[to.kind] = reduced ? IDENTITY : zoomed(rect); setPoses(initial);
     raf(() => {
       setStage({ [from.kind]: 'out' }); setPoses({ ...initial, [to.kind]: { ...IDENTITY, transition: reduced ? 'none' : `transform 460ms ${EASE}, opacity 460ms ${EASE}` }, [from.kind]: reduced ? { ...IDENTITY, opacity: 0, transition: 'opacity 160ms linear' } : { ...collapsed(rect), transition: `transform 460ms ${EASE}, clip-path 460ms ${EASE}, opacity 180ms linear 280ms` } });
@@ -221,20 +228,53 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     if (stackRef.current.length > 1) { const existing = stackRef.current.findIndex((e) => e.kind === 'c' && e.categoryId === c.id); if (existing > 0) { if (existing < stackRef.current.length - 1) pop(existing); return; } pop(0, () => openCategory(c)); return; }
     const el = findAnchor('g', `cat:${c.id}`); if (!el) return;
     setSelection(c.id); setEntryActive(false);
-    push([{ kind: c.services.length === 1 ? 's' : 'c', categoryId: c.id, serviceId: c.services.length === 1 ? c.services[0].id : undefined, rect: relative(el) }]);
+    push([{ kind: c.services.length === 1 ? 's' : 'c', categoryId: c.id, serviceId: c.services.length === 1 ? c.services[0].id : undefined, rect: relative(el), from: 'g' }]);
   };
-  const openService = (s: WorkspaceService) => {
+  // Switching between details is an in-place fade, never a trip through a parent.
+  const swapService = (s: WorkspaceService, c: WorkspaceCategory) => {
+    busyRef.current = true;
+    const from = stackRef.current.at(-1)!.kind;
+    setDropdownOpen(false); setEntryActive(false);
+    setPoses({ g: HIDDEN, c: HIDDEN, s: HIDDEN, [from]: { ...IDENTITY, opacity: 0, pointerEvents: 'none', transition: reduced ? 'none' : 'opacity 140ms linear' } });
+    later(reduced ? 0 : 150, () => {
+      const visible = Boolean(findAnchor('g', `svc:${s.id}`));
+      setCategoryId(c.id); setServiceId(s.id); setCategorySelection(s.id);
+      setSelection(visible ? s.id : c.id); setMarkedAlert(s.id);
+      setStack([{ kind: 'g' }, ...(c.services.length > 1 ? [{ kind: 'c' as const, categoryId: c.id, from: 'g' as const, skipReturn: true }] : []), { kind: 's', categoryId: c.id, serviceId: s.id, from: 'g' }]);
+      setPoses({ g: HIDDEN, c: HIDDEN, s: { ...IDENTITY, opacity: 0 } }); setStage({ s: 'pre' });
+      raf(() => {
+        setStage({}); setPoses({ g: HIDDEN, c: HIDDEN, s: { ...IDENTITY, transition: reduced ? 'none' : 'opacity 200ms linear' } });
+        later(reduced ? 0 : 220, () => { setPoses({ g: HIDDEN, c: HIDDEN, s: IDENTITY }); busyRef.current = false; });
+      });
+    });
+  };
+  const openService = (s: WorkspaceService, locate = true) => {
     if (busyRef.current || stackRef.current.at(-1)?.serviceId === s.id) return;
     const c = model.categories.find((entry) => entry.id === s.categoryId); if (!c) return;
-    setSelection(s.id); setMarkedAlert(s.id); setEntryActive(false);
     const from = stackRef.current.at(-1)!;
-    if (from.kind === 's' && from.categoryId === c.id && stackRef.current.length > 2) { pop(stackRef.current.length - 2, () => openService(s)); return; }
-    if (from.kind !== 'g' && !(from.kind === 'c' && from.categoryId === c.id)) { pop(0, () => openService(s)); return; }
-    const el = findAnchor(from.kind, `svc:${s.id}`) ?? findAnchor('g', `cat:${c.id}`); if (!el) return;
-    const entries: Location[] = [];
-    if (from.kind === 'g' && c.services.length > 1) { const ce = findAnchor('g', `cat:${c.id}`); entries.push({ kind: 'c', categoryId: c.id, rect: ce ? relative(ce) : relative(el), skipReturn: true }); }
-    entries.push({ kind: 's', categoryId: c.id, serviceId: s.id, rect: relative(el) }); push(entries);
+    setDropdownOpen(false); setEntryActive(false);
+    if (from.kind !== 'g' && !(from.kind === 'c' && from.categoryId === c.id)) { swapService(s, c); return; }
+    const enter = () => {
+      const el = findAnchor(from.kind, `svc:${s.id}`) ?? findAnchor('g', `ovf:${c.id}`) ?? findAnchor('g', `cat:${c.id}`); if (!el) return;
+      const rect = relative(el), entries: Location[] = [];
+      if (from.kind === 'g') setSelection(findAnchor('g', `svc:${s.id}`) ? s.id : c.id);
+      setMarkedAlert(s.id);
+      if (from.kind === 'g' && c.services.length > 1) entries.push({ kind: 'c', categoryId: c.id, rect, from: 'g', skipReturn: true });
+      entries.push({ kind: 's', categoryId: c.id, serviceId: s.id, rect, from: from.kind }); push(entries);
+    };
+    if (from.kind === 'g' && locate) {
+      // First show the destination on the full map, then zoom from its real row.
+      const visible = Boolean(findAnchor('g', `svc:${s.id}`));
+      const anchor = findAnchor('g', visible ? `svc:${s.id}` : `cat:${c.id}`); if (!anchor) return;
+      relative(anchor); setLocating(visible ? s.id : c.id); setSelection(visible ? s.id : c.id); setMarkedAlert(s.id);
+      busyRef.current = true;
+      later(reduced ? 0 : 200, () => { busyRef.current = false; enter(); later(720, () => setLocating(undefined)); });
+    } else enter();
   };
+  useLayoutEffect(() => {
+    // The layer survives between details; its scroll position must not.
+    if (serviceId) root.current?.querySelector('.Ls')?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [serviceId]);
   const resetDensity = (value: Density) => { if (busyRef.current) return; setDensity(value); setStack((prev) => prev.map((entry) => ({ ...entry, rect: undefined }))); };
   const categoryDensity = categoryMonitorLayout(category?.services.length ?? 0, size.width, size.height);
   const categoryServices = category ? sort === 'issues' ? [...category.services].sort((a, b) => ({ bad: 0, warn: 1, none: 2, ok: 3 }[a.state]) - ({ bad: 0, warn: 1, none: 2, ok: 3 }[b.state])) : category.services : [];
@@ -243,7 +283,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   useEffect(() => {
     timers.current.forEach(clearTimeout); timers.current = []; busyRef.current = false;
     setStack([{ kind: 'g' }]); setPoses({ g: IDENTITY, c: HIDDEN, s: HIDDEN }); setStage({});
-    setCategoryId(undefined); setServiceId(undefined); setSelection(undefined); setMarkedAlert(undefined); setEntryActive(false); setToast(undefined); handledEntry.current = undefined;
+    setCategoryId(undefined); setServiceId(undefined); setCategorySelection(undefined); setLocating(undefined); setSelection(undefined); setMarkedAlert(undefined); setEntryActive(false); setToast(undefined); handledEntry.current = undefined;
   }, [route.key]);
   const handledEntry = useRef<string>();
   const entryKey = entry ? `${route.key}:${entry.targetId}:${entry.incidentId}:${entry.detectedAt ?? ''}` : '';
@@ -251,7 +291,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     if (!entry || !entryKey || handledEntry.current === entryKey) return;
     const item = model.services.find(s => s.id === entry.targetId), group = model.categories.find(c => c.id === item?.categoryId);
     if (!item || !group) return;
-    handledEntry.current = entryKey; setCategoryId(group.id); setServiceId(item.id); setSelection(item.id); setMarkedAlert(item.id); setEntryActive(true);
+    handledEntry.current = entryKey; setCategoryId(group.id); setServiceId(item.id); setCategorySelection(item.id); setLocating(undefined); setSelection(item.id); setMarkedAlert(item.id); setEntryActive(true);
     setStack([{ kind: 'g' }, ...(group.services.length > 1 ? [{ kind: 'c' as const, categoryId: group.id, skipReturn: true }] : []), { kind: 's', categoryId: group.id, serviceId: item.id }]);
     setPoses({ g: HIDDEN, c: HIDDEN, s: IDENTITY }); setStage({}); busyRef.current = false;
   }, [entryKey, model]);
@@ -264,7 +304,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     handledAdded.current = added.key;
     timers.current.forEach(clearTimeout); timers.current = []; busyRef.current = false;
     setStack([{ kind: 'g' }]); setPoses({ g: IDENTITY, c: HIDDEN, s: HIDDEN }); setStage({});
-    setCategoryId(undefined); setServiceId(undefined); setEntryActive(false); setMarkedAlert(undefined); setSelection(groups[0].id);
+    setCategoryId(undefined); setServiceId(undefined); setCategorySelection(undefined); setLocating(undefined); setEntryActive(false); setMarkedAlert(undefined); setSelection(groups[0].id);
     setQuery(''); setDropdownOpen(false); setStatus('all'); setSource('all');
     setToast({ key: added.key, text: `已追加 ${items.length} 项到「${groups.map(group => group.name).join('、')}」${items.every(item => item.state === 'none') ? ' · 等待首次观测' : ''}` });
     later(5200, () => setToast(current => current?.key === added.key ? undefined : current));
@@ -291,12 +331,12 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     const appendOverflow = !stacked && hidden.length > 0 && part.visible >= initialCount;
     const frozenTracks = categoryTracks.current.get(`cat:${c.id}`);
     const gridStyle: CSSProperties = { gridTemplateColumns: `repeat(${stacked ? 1 : part.columns},minmax(0,1fr))`, ...(appendOverflow && frozenTracks?.key === layoutKey ? { gridTemplateRows: `${frozenTracks.value} ${ovH}px`, flex: '0 0 auto' } : stacked ? { gridAutoRows: `${lv.rowHeight}px` } : { gridTemplateRows: hidden.length ? `${rows > 1 ? `repeat(${rows - 1},minmax(${lv.rowHeight}px,1fr)) ` : ''}minmax(${ovH}px,auto)` : `repeat(${rows},minmax(${lv.rowHeight}px,1fr))` }) };
-    return <div key={c.id} className={`${stacked ? 'sg' : 'cat'} ${level}${c.services.some(s => matches(s, c)) ? '' : ' dim'}${selected ? ' sel' : ''}`} data-anchor={`cat:${c.id}`}>
+    return <div key={c.id} className={`${stacked ? 'sg' : 'cat'} ${level}${c.services.some(s => matches(s, c)) ? '' : ' dim'}${selected ? ' sel' : ''}${locating === c.id ? ' loc' : ''}`} data-anchor={`cat:${c.id}`}>
       <button className={stacked ? 'sgh' : 'ch'} onClick={() => openCategory(c)} aria-label={`打开${c.name}，${c.services.length}项服务`}><span className="cn">{c.name}</span><span className="cc">{c.services.length} 项</span>{c.custom ? <span className="tag acc">自定义</span> : null}<span className="ctoks">{tokens(c)}</span>{!stacked ? <span className="go"><ChevronRight className="ic s" /></span> : null}</button>
       <div className="cb2"><div className="cgrid" style={gridStyle}>
-        {shown.map(s => <ServiceTile key={s.id} service={s} mode={level} matches={matches(s, c)} selected={selection === s.id} searched={Boolean(q)} anchor={`svc:${s.id}`} onOpen={() => openService(s)} />)}
+        {shown.map(s => <ServiceTile key={s.id} service={s} mode={level} matches={matches(s, c)} selected={selection === s.id} located={locating === s.id} searched={Boolean(q)} anchor={`svc:${s.id}`} onOpen={() => openService(s, false)} />)}
         {c.custom && !hidden.length ? <button className={`it-add ${level}`} onClick={onAdd} title="接入我的服务"><Plus className="ic xs" /><span className="ia-t">接入我的服务</span></button> : null}
-        {hidden.length ? <button className="ovf" style={{ gridColumn: '1 / -1', gridRow: appendOverflow ? rows + 1 : rows }} title={`另 ${hidden.length} 项未在首屏显示：${hb} 异常、${hw} 待确认、${hn} 无观测，进入分类查看全部`} onClick={() => openCategory(c)}><span className="ovn">另 <b>{hidden.length}</b> 项</span>{hb ? <span className="ovs ob"><Glyph state="bad" />{hb}<span className="ovt">异常</span></span> : null}{hw ? <span className="ovs ow"><Glyph state="warn" />{hw}<span className="ovt">待确认</span></span> : null}{hn ? <span className="ovs on"><Glyph state="none" />{hn}<span className="ovt">无观测</span></span> : null}{!hb && !hw && !hn ? <span className="ok2">均满足预期</span> : null}<span className="go2">进入分类 →</span></button> : null}
+        {hidden.length ? <button className="ovf" data-anchor={`ovf:${c.id}`} style={{ gridColumn: '1 / -1', gridRow: appendOverflow ? rows + 1 : rows }} title={`另 ${hidden.length} 项未在首屏显示：${hb} 异常、${hw} 待确认、${hn} 无观测，进入分类查看全部`} onClick={() => openCategory(c)}><span className="ovn">另 <b>{hidden.length}</b> 项</span>{hb ? <span className="ovs ob"><Glyph state="bad" />{hb}<span className="ovt">异常</span></span> : null}{hw ? <span className="ovs ow"><Glyph state="warn" />{hw}<span className="ovt">待确认</span></span> : null}{hn ? <span className="ovs on"><Glyph state="none" />{hn}<span className="ovt">无观测</span></span> : null}{!hb && !hw && !hn ? <span className="ok2">均满足预期</span> : null}<span className="go2">进入分类 →</span></button> : null}
       </div></div>
     </div>;
   };
@@ -309,13 +349,13 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   };
   return <div className="monitor-workspace" ref={root}>
     <div className="main">
-      <div className="t2"><div className="search"><Search className="ic s" /><input type="search" aria-label="搜索服务或分类" placeholder={`搜索 ${model.services.length} 项服务、分类`} value={query} onChange={e => { setQuery(e.target.value); setDropdownOpen(true); setSelection(undefined); }} onFocus={() => setDropdownOpen(true)} onKeyDown={e => { if (e.key === 'Escape') setDropdownOpen(false); if (e.key === 'Enter' && results[0]) openService(results[0]); }} />{dropdownOpen && q ? <div className="dd"><p className="dd-h">{results.length ? `匹配服务 · 最多显示 8 项` : '没有找到匹配的服务或分类'}</p>{results.map(s => <button key={s.id} onClick={() => openService(s)}><Glyph state={s.state} /><span className="nm">{s.name}</span><span className="loc">{model.categories.find(c => c.id === s.categoryId)?.name}</span></button>)}</div> : null}</div><select className="source-filter" aria-label="服务来源" value={source} onChange={e => { setSource(e.target.value as typeof source); setSelection(undefined); }}><option value="all">全部来源</option><option value="public">公共基础设施</option><option value="custom">我的服务</option></select><div className="tokens" role="group" aria-label="按当前状态筛选">{(Object.keys(STATES) as WorkspaceState[]).map(state => <button key={state} className={`tok ${state}${status === state ? ' on' : ''}`} aria-pressed={status === state} onClick={() => { setStatus(status === state ? 'all' : state); setSelection(undefined); }}><Glyph state={state} /><b>{model.counts[state]}</b><span className="tkl">{STATES[state]}</span></button>)}</div><span className="sp" /><span className="seg-l">密度</span><div className="seg vseg" role="group" aria-label="视图密度">{([{ key: 'auto', label: '自动' }, { key: 'L1', label: '卡片' }, { key: 'L2', label: '两行' }, { key: 'L3', label: '单行' }] as const).map(x => <button key={x.key} className={density === x.key ? 'on' : ''} aria-pressed={density === x.key} onClick={() => resetDensity(x.key)}>{x.label}</button>)}</div><button className={`rm-b${reduced ? ' on' : ''}`} aria-label="减少动态效果" title="减少动态效果" aria-pressed={reduced} onClick={() => setReduced(!reduced)}><Wind className="ic s" /></button></div>
+      <div className="t2"><div className="search"><Search className="ic s" /><input type="search" aria-label="搜索服务或分类" placeholder={`搜索 ${model.services.length} 项服务、分类`} value={query} onChange={e => { setQuery(e.target.value); setDropdownOpen(true); setSelection(undefined); }} onFocus={() => setDropdownOpen(true)} onKeyDown={e => { if (e.key === 'Escape') setDropdownOpen(false); if (e.key === 'Enter' && results[0]) openService(results[0]); }} />{dropdownOpen && q ? <div className="dd"><p className="dd-h">{results.length ? `匹配 ${searchMatches.length} 项${searchMatches.length > 8 ? '，显示前 8 项' : ''} · 画布中已高亮，其余变暗；点击直接定位` : '没有找到匹配的服务或分类'}</p>{results.map(s => <button key={s.id} onClick={() => openService(s)}><Glyph state={s.state} /><span className="nm">{s.name}</span><span className="loc">{model.categories.find(c => c.id === s.categoryId)?.name} · {serviceStateLabel(s)}</span></button>)}</div> : null}</div><select className="source-filter" aria-label="服务来源" value={source} onChange={e => { setSource(e.target.value as typeof source); setSelection(undefined); }}><option value="all">全部来源</option><option value="public">公共基础设施</option><option value="custom">我的服务</option></select><div className="tokens" role="group" aria-label="按当前状态筛选">{(Object.keys(STATES) as WorkspaceState[]).map(state => <button key={state} className={`tok ${state}${status === state ? ' on' : ''}`} aria-pressed={status === state} onClick={() => { setStatus(status === state ? 'all' : state); setSelection(undefined); }}><Glyph state={state} /><b>{model.counts[state]}</b><span className="tkl">{STATES[state]}</span></button>)}</div><span className="sp" /><span className="seg-l">密度</span><div className="seg vseg" role="group" aria-label="视图密度">{([{ key: 'auto', label: '自动' }, { key: 'L1', label: '卡片' }, { key: 'L2', label: '两行' }, { key: 'L3', label: '单行' }] as const).map(x => <button key={x.key} className={density === x.key ? 'on' : ''} aria-pressed={density === x.key} onClick={() => resetDensity(x.key)}>{x.label}</button>)}</div><button className={`rm-b${reduced ? ' on' : ''}`} aria-label="减少动态效果" title="减少动态效果" aria-pressed={reduced} onClick={() => setReduced(!reduced)}><Wind className="ic s" /></button></div>
       <div className="t2r"><button className="rail-tg" aria-expanded={railOpen} onClick={() => setRailOpen(!railOpen)}><h2>需要处理</h2><span className="cnt bad">{model.counts.bad} 异常</span><span className="cnt warn">{model.counts.warn} 待确认</span><ChevronDown className="ic s chev" /></button></div>
-      <section className="wsw" aria-label="工作区"><div className="crumbs"><button className="cb" disabled={stack.length === 1} onClick={() => pop()} aria-label={stack.length === 1 ? '已在全部服务' : stack.at(-2)?.skipReturn || stack.length === 2 ? '返回全部服务' : '返回分类'}><ArrowLeft className="ic s" />返回</button>{stack.map((place, i) => <Fragment key={`${place.kind}:${i}`}>{i > 0 ? <span className="csep">/</span> : null}{i === stack.length - 1 ? <span className="crumb-t cur">{place.kind === 'g' ? '全部服务' : place.kind === 'c' ? model.categories.find(c => c.id === place.categoryId)?.name : model.services.find(s => s.id === place.serviceId)?.name}</span> : <button className="cb" onClick={() => pop(i)}>{place.kind === 'g' ? '全部服务' : model.categories.find(c => c.id === place.categoryId)?.name}</button>}</Fragment>)}<span className="sp" />{current.kind !== 'g' ? <div className="oth"><span className="lab">其他分类</span>{model.categories.filter(c => c.id !== categoryId && c.counts.bad + c.counts.warn > 0).map(c => <button key={c.id} className={`ochip${c.counts.bad ? '' : ' w'}`} onClick={() => openCategory(c)}><Glyph state={c.counts.bad ? 'bad' : 'warn'} />{c.name} · {c.counts.bad + c.counts.warn}</button>)}</div> : <span className="mode-l">密度按空间{density === 'auto' ? '自动' : '固定'} · {layout.bands[0]?.level.name ?? '单行'}</span>}</div>
+      <section className="wsw" aria-label="工作区"><div className="crumbs"><button className="cb" disabled={stack.length === 1} onClick={() => pop()} aria-label={stack.length === 1 ? '已在全部服务' : stack.at(-2)?.skipReturn || stack.length === 2 ? '返回全部服务' : '返回分类'}><ArrowLeft className="ic s" />返回</button>{stack.map((place, i) => <Fragment key={`${place.kind}:${i}`}>{i > 0 ? <span className="csep">/</span> : null}{i === stack.length - 1 ? <span className="crumb-t cur">{place.kind === 'g' ? '全部服务' : place.kind === 'c' ? model.categories.find(c => c.id === place.categoryId)?.name : model.services.find(s => s.id === place.serviceId)?.name}</span> : <button className="cb" onClick={() => pop(i)}>{place.kind === 'g' ? '全部服务' : model.categories.find(c => c.id === place.categoryId)?.name}</button>}</Fragment>)}<span className="sp" />{current.kind !== 'g' ? <div className="oth"><span className="lab">其他分类</span>{model.categories.filter(c => c.id !== categoryId && c.counts.bad + c.counts.warn > 0).slice(0, 5).map(c => <button key={c.id} className={`ochip${c.counts.bad ? '' : ' w'}`} onClick={() => { const item = c.services.find(s => s.state === 'bad') ?? c.services.find(s => s.state === 'warn'); if (item) openService(item); }}><Glyph state={c.counts.bad ? 'bad' : 'warn'} />{c.name} · {c.counts.bad ? `${c.counts.bad} 异常` : `${c.counts.warn} 待确认`}</button>)}</div> : <span className="mode-l">密度按空间{density === 'auto' ? '自动' : '固定'} · {layout.bands[0]?.level.name ?? '单行'}</span>}</div>
         {entry && !model.services.some(s => s.id === entry.targetId) ? <div role="alert" className="entry-warning">通知对应的服务不存在，或当前账号没有访问权限。请选择可见的服务查看，未自动定位到其他服务。</div> : null}
         <div className="ws" ref={workspace}>
           <div className={`layer Lg ${stage.g ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 'g'} style={poses.g}>{model.categories.length ? <div className={`cg${layout.fits && !layoutCache.current!.tracks ? ' fit' : ''}`} style={{ gridTemplateRows: layoutCache.current!.tracks ?? layout.bands.map(b => layout.narrow ? 'auto' : layout.fits ? `${b.height}fr` : `${b.height}px`).join(' ') }}>{layout.bands.flatMap((band, bi) => band.parts.map((part, pi) => part.stacked ? <Fragment key={`${bi}:${pi}`}>{renderStack(part, band)}</Fragment> : <div className="category-slot" key={`${bi}:${pi}`} style={{ gridColumn: `span ${part.span}` }}>{renderCategory(model.categories[part.indices[0]], part, band.level.key, false)}</div>))}</div> : <div className="workspace-empty"><h2>接入服务，开始统一观测</h2><p>已接入的公共基础设施和个人服务会铺满这里。</p><button className="btn pri" onClick={onAdd}><Plus className="ic s" />接入我的服务</button></div>}</div>
-          <div className={`layer Lc ${stage.c ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 'c'} style={poses.c}>{category ? <div className="lv"><div className="lvh"><div><p className="eyebrow">分类 · {category.custom ? '我的服务' : '公共基础设施'} · {category.services.length} 项</p><h2>{category.name}</h2></div><div className="ltoks">{tokens(category, true)}</div><span className="sp" /><div className="lvn rv rv2"><Bell className="ic xs" />异常时通知 <b>{globalNotification.known ? '按此服务实际通道设置' : '通知规则待确认'}</b><button className="linkb" onClick={() => onNotify()}>调整</button></div><div className="seg rv rv2" role="group" aria-label="排列"><button className={sort === 'original' ? 'on' : ''} onClick={() => setSort('original')}>原始顺序</button><button className={sort === 'issues' ? 'on' : ''} onClick={() => setSort('issues')}>异常优先</button></div></div><div className="ctiles rv rv2" style={{ gridTemplateColumns: `repeat(${categoryDensity.columns},minmax(0,1fr))`, gridAutoRows: `${categoryDensity.rowHeight}px`, rowGap: `${categoryDensity.gap}px` }}>{categoryServices.map(s => <ServiceTile key={s.id} service={s} mode={categoryDensity.level} matches={matches(s, category)} selected={current.kind === 's' && serviceId === s.id} searched={Boolean(q)} anchor={`svc:${s.id}`} onOpen={() => openService(s)} />)}</div></div> : null}</div>
+          <div className={`layer Lc ${stage.c ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 'c'} style={poses.c}>{category ? <div className="lv"><div className="lvh"><div><p className="eyebrow">分类 · {category.custom ? '我的服务' : '公共基础设施'} · {category.services.length} 项</p><h2>{category.name}</h2></div><div className="ltoks">{tokens(category, true)}</div><span className="sp" /><div className="lvn rv rv2"><Bell className="ic xs" />异常时通知 <b>{globalNotification.known ? '按此服务实际通道设置' : '通知规则待确认'}</b><button className="linkb" onClick={() => onNotify()}>调整</button></div><div className="seg rv rv2" role="group" aria-label="排列"><button className={sort === 'original' ? 'on' : ''} onClick={() => setSort('original')}>原始顺序</button><button className={sort === 'issues' ? 'on' : ''} onClick={() => setSort('issues')}>异常优先</button></div></div><div className="ctiles rv rv2" style={{ gridTemplateColumns: `repeat(${categoryDensity.columns},minmax(0,1fr))`, gridAutoRows: `${categoryDensity.rowHeight}px`, rowGap: `${categoryDensity.gap}px` }}>{categoryServices.map(s => <ServiceTile key={s.id} service={s} mode={categoryDensity.level} matches={matches(s, category)} selected={categorySelection === s.id} searched={Boolean(q)} anchor={`svc:${s.id}`} onOpen={() => openService(s, false)} />)}</div></div> : null}</div>
           <div className={`layer Ls ${stage.s ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 's'} style={poses.s}>{service && category ? <ServiceDetail key={service.id} service={service} category={category} summary={summary} incidents={incidents} now={now} onNotify={() => onNotify(service.id)} onProbe={() => onProbe(service.id)} onManage={() => onManage(service.id)} notifications={notifications} entry={entryActive && entry ? { incidentId: entry.incidentId, detectedAt: entry.detectedAt, source: '通知' } : undefined} onOpenService={id => { const item = model.services.find(s => s.id === id); if (item) openService(item); }} /> : null}</div>
           {toast ? <div className="toast" role="status"><Glyph state="none" /><span>{toast.text}</span><button className="toast-close" aria-label="关闭接入成功提示" onClick={() => setToast(undefined)}><X className="ic xs" /></button></div> : null}
         </div>

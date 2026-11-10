@@ -27,8 +27,33 @@ describe('监控真实指标与事件快照', () => {
     expect(view).toMatchObject({ actual: '1,240 ms', expected: '≤ 300 ms', shortGap: '4.1×' });
     expect(view?.gap).toContain('940 ms');
     const percentage = measurementView({ t: 1, up: false, ms: 12, measurement: { ...measurement, actual: 96.8, expected: '99.9', op: 'gte', unit: '%' } });
-    expect(percentage).toMatchObject({ expected: '≥ 99.9%', shortGap: '−3.1 点' });
+    expect(percentage).toMatchObject({ expected: '≥ 99.90%', shortGap: '−3.1 点' });
     expect(percentage?.gap).toContain('3.1 个百分点');
+  });
+
+  it('百分比下限按原稿放大接近100%的差距，边界及其他单位不改变判定语义', () => {
+    const percentage = (actual: number, expected: string, op: UptimeMeasurement['op'] = 'gte', unit = '%') => measurementView({ t: 1, up: false, ms: 1, measurement: { ...measurement, actual, expected, op, unit } })!;
+    const lower = percentage(96.8, '99.9');
+    expect(lower.numeric?.actualPercent).toBeCloseTo(54.54545, 4);
+    expect(lower.numeric?.expectedPercent).toBeCloseTo(98.57955, 4);
+    expect(percentage(100, '100', 'gt').gap).toContain('未满足当前条件');
+    for (const view of [percentage(100, '100', 'gt'), percentage(0, '100'), percentage(-5, '-2'), percentage(101, '100')]) {
+      expect(Object.values(view.numeric!).every(Number.isFinite)).toBe(true);
+      expect(view.numeric!.actualPercent).toBeGreaterThanOrEqual(0);
+      expect(view.numeric!.actualPercent).toBeLessThanOrEqual(100);
+    }
+    expect(percentage(1240, '300', 'lte', 'ms').numeric).toMatchObject({ actualPercent: 80, expectedPercent: 300 / 1550 * 100 });
+    expect(percentage(-5, '-2').numeric?.actualPercent).toBe(0);
+  });
+
+  it('百分比显示沿用原稿精度，但不截断大于100的真实值或改写词法相等条件', () => {
+    const view = (actual: UptimeMeasurement['actual'], expected = '99.9', op: UptimeMeasurement['op'] = 'gte') => measurementView({ t: 1, up: false, ms: 1, measurement: { ...measurement, actual, expected, op, unit: '%' } })!;
+    expect(view('99.2')).toMatchObject({ actual: '99.20%', expected: '≥ 99.90%' });
+    expect(view(96.8).actual).toBe('96.8%');
+    expect(view(100).actual).toBe('100%');
+    expect(view(101.2).actual).toBe('101.2%');
+    expect(view('001', '1', 'eq')).toMatchObject({ actual: '001%', expected: '= 1%' });
+    expect(view('001', '1', 'eq').numeric).toBeUndefined();
   });
 
   it('零边界和严格不等号不产生 Infinity，也不把等于边界解释成通过', () => {

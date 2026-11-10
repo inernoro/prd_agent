@@ -66,7 +66,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
         active.current=value;setSession(value);
         if(value.status==='proposed'&&proposalsSeen.current!==value.id){proposalsSeen.current=value.id;setSelected(value.proposals.filter(p=>!p.existingMonitorId).map(p=>p.id));}
         if(value.status==='completed'||value.status==='revoked')return;
-      }catch(e){if(!disposed){setError(monitorErrorMessage(e));if(e instanceof ApiError&&[401,404,410].includes(e.status)){setSecret('');setSession(prev=>prev?{...prev,status:'revoked'}:null);return;}}}
+      }catch(e){if(!disposed){setError(monitorErrorMessage(e));if(e instanceof ApiError&&[401,404,410].includes(e.status)){setSecret('');if(e.status!==401&&active.current?.id===sessionId)active.current={...active.current,status:'revoked'};setSession(prev=>prev?{...prev,status:'revoked'}:null);return;}}}
       if(!disposed)timer=setTimeout(()=>void poll(),2000);
     };
     timer=setTimeout(()=>void poll(),500);
@@ -76,7 +76,10 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
     if(busy)return;setBusy(true);onBusy?.(true);
     try{
       const current=active.current;
-      if(current&&current.status!=='completed'&&current.status!=='revoked')await apiRequest(`/api/uptime/onboarding/${current.id}`,{method:'DELETE'});
+      if(current&&current.status!=='completed'&&current.status!=='revoked'){
+        try{await apiRequest(`/api/uptime/onboarding/${current.id}`,{method:'DELETE'});}
+        catch(e){if(!(e instanceof ApiError&&[404,410].includes(e.status)))throw e;}
+      }
       active.current=null;setSecret('');next();
     }catch(e){setError(monitorErrorMessage(e));}
     finally{setBusy(false);onBusy?.(false);}
@@ -116,7 +119,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
         <div className="soft"><b>智能体会做什么</b><ol><li>读取本次接入的监控规范和可用检查方式</li><li>在你的项目里找出健康检查与只读接口</li><li>向 CDS 提交监控提议，等待你确认</li><li>确认后，由 CDS 按真实规则定时观测</li></ol></div>
       </>:session&&step===2?<>
         <div className="tl">{session.timeline.map((item,i)=><div className="tli" key={`${item.kind}:${i}`}><span className="d"/><span>{TIMELINE[item.kind]||'接入状态已更新'}</span><time className="t">{new Date(item.at).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</time></div>)}{session.status!=='proposed'&&<div className="tli wait"><span className="d"/><span>{session.status==='connected'?'等待智能体提交监控提议':'等待智能体连接'}</span></div>}</div>
-        {session.status==='proposed'?<section className="sect"><h3>{session.agentName||'智能体'} 提交了 {session.proposals.length} 项提议</h3><p className="hint">只会追加你勾选的项目。此时尚未执行检查，也未创建监控。</p><div className="disc">{session.proposals.map(p=><label className={`di${p.existingMonitorId?' ex':''}`} key={p.id}><input type="checkbox" disabled={!!p.existingMonitorId} checked={selected.includes(p.id)} onChange={()=>setSelected(prev=>prev.includes(p.id)?prev.filter(id=>id!==p.id):[...prev,p.id])}/><span className="di-b"><b>{p.name}</b><span className="tool">{p.kind==='tcp'?`TCP ${p.host}:${p.port}`:`${p.method||'GET'} ${p.url}`}</span><span className="hint">{p.kind==='health-json'?'读取自检结果并核对所选判据':p.kind==='tcp'?'检查端口连通性':`预期状态码 ${p.expectedStatus||'200-399'}`}</span></span><span className="tag">{p.existingMonitorId?'已有监控':'只读'}</span></label>)}</div></section>:<p className="hint">收到提议后会在这里逐项列出；当前尚未创建任何监控。</p>}
+        {session.status==='proposed'?<section className="sect"><h3>{session.agentName||'智能体'} 提交了 {session.proposals.length} 项提议</h3><p className="hint">只会追加你勾选的项目。此时尚未执行检查，也未创建监控。</p><div className="disc">{session.proposals.map(p=><label className={`di${selected.includes(p.id)?' on':''}${p.existingMonitorId?' ex':''}`} key={p.id}><input type="checkbox" disabled={!!p.existingMonitorId} checked={selected.includes(p.id)} onChange={()=>setSelected(prev=>prev.includes(p.id)?prev.filter(id=>id!==p.id):[...prev,p.id])}/><span className="di-b"><b>{p.name}</b><span className="tool">{p.kind==='tcp'?`TCP ${p.host}:${p.port}`:`${p.method||'GET'} ${p.url}`}</span><span className="hint">{p.kind==='health-json'?'读取自检结果并核对所选判据':p.kind==='tcp'?'检查端口连通性':`预期状态码 ${p.expectedStatus||'200-399'}`}</span></span><span className="tag">{p.existingMonitorId?'已有监控':'只读'}</span></label>)}</div></section>:<p className="hint">收到提议后会在这里逐项列出；当前尚未创建任何监控。</p>}
       </>:session&&step===3?<>
         <section className="sect"><h3>异常时通知</h3><p className="hint">默认沿用当前通知设置；你也可以为这次追加的服务单独选择通道。</p>{channels.loading?<ContentLoading label="读取通知通道" variant="rows" />:channels.error?<div role="alert" className="drawer-error">{channels.error}<button type="button" className="linkb" disabled={busy} onClick={()=>void channels.reload()}>重试加载通知通道</button></div>:channels.data?<><ChannelFields data={channels.data} selected={selectedChannels} projectId={session.projectId} disabled={busy} onToggle={id=>setCustomChannels(selectedChannels.includes(id)?selectedChannels.filter(v=>v!==id):[...selectedChannels,id])} onManage={()=>void close(onManageNotifications)}/>{customChannels!==undefined&&<button type="button" className="linkb" onClick={()=>setCustomChannels(undefined)}>恢复沿用默认</button>}</>:null}<div className="hint">沿用系统当前异常与恢复通知规则；服务未收到有效观测前不会显示正常。</div></section>
         <section className="sect"><h3>将追加 {selected.length} 项服务</h3><div className="chrows">{session.proposals.filter(p=>selected.includes(p.id)).map(p=><div className="chrow" key={p.id}><Check className="ic xs"/>{p.name}</div>)}</div></section>
