@@ -230,6 +230,8 @@ export async function verifyMonitorOnboardingSessionCleanup(browser, base, out) 
     { name: 'delete401-preserves-dialog', deleteStatus: 401, action: 'close', mustFail: true },
     { name: 'delete403-preserves-dialog', deleteStatus: 403, action: 'close', mustFail: true },
     { name: 'delete-network-preserves-dialog', deleteStatus: 'network', action: 'close', mustFail: true },
+    { name: 'escape-revoke-failure-preserves-session', deleteStatus: 403, action: 'escape', mustFail: true },
+    { name: 'outside-revoke-failure-preserves-session', deleteStatus: 'network', action: 'outside', mustFail: true },
   ];
   for (const scenario of cases) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark', ...(process.env.CDS_NAVIGATION_STORAGE_STATE ? { storageState: process.env.CDS_NAVIGATION_STORAGE_STATE } : {}) });
@@ -275,7 +277,9 @@ export async function verifyMonitorOnboardingSessionCleanup(browser, base, out) 
         assert(!(await dialog.locator('.code').textContent()).includes('INVALID_NAVIGATION_REPLAY_TOKEN'), '过期轮询仍保留已失效令牌');
       }
       const action = scenario.action === 'mcp' ? dialog.getByRole('button', { name: '连接 MCP', exact: true }) : scenario.action === 'cancel' ? dialog.getByRole('button', { name: '取消', exact: true }) : dialog.getByRole('button', { name: '关闭', exact: true });
-      await action.click();
+      if (scenario.action === 'escape') await page.keyboard.press('Escape');
+      else if (scenario.action === 'outside') await page.mouse.click(10, 400);
+      else await action.click();
       if (scenario.mustFail) {
         await dialog.getByRole('alert').waitFor();
         assert(await dialog.isVisible(), '鉴权或网络失败被当作清理成功');

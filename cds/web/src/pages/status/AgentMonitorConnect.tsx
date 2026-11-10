@@ -16,13 +16,14 @@ interface Session {
 interface Props {
   onClose(): void; onSaved(result: { targetIds: string[] }): void | Promise<void>; onBusy?(busy: boolean): void;
   onManageNotifications(): void; onUseMcp?(): void;
+  onDismissHandler?(handler: (() => void) | null): void;
 }
 const TIMELINE: Record<string, string> = { created: '已生成接入令牌，等待智能体使用', connected: '智能体已连接', 'instructions-read': '已读取只读监控提交说明', 'proposals-submitted': '已提交监控提议，等待你确认', completed: '已确认并保存监控', revoked: '接入已取消，令牌已撤销' };
 const CLIENTS = [{id:'cli',label:'命令行智能体'},{id:'ide',label:'IDE 智能体'},{id:'http',label:'自建智能体'}] as const;
 const shellQuote = (value:string):string => `'${value.replace(/'/g,"'\\''")}'`;
 
 /** Actual draft-only session; every progress item comes from the server. */
-export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotifications,onUseMcp}:Props):JSX.Element {
+export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotifications,onUseMcp,onDismissHandler}:Props):JSX.Element {
   const [session,setSession]=useState<Session|null>(null);
   const [secret,setSecret]=useState('');
   const [step,setStep]=useState<1|2|3>(1);
@@ -37,6 +38,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
   const [advanced,setAdvanced]=useState(false);
   const [client,setClient]=useState<typeof CLIENTS[number]['id']>('cli');
   const active=useRef<Session|null>(null);
+  const closing=useRef(false);
   const proposalsSeen=useRef('');
   const channels=useChannels();
   const defaultIds=channels.data?.settings.defaultChannelIds ?? channels.data?.channels.filter(c=>c.enabled&&(!c.projects.length||(session?.projectId!=null&&c.projects.includes(session.projectId)))).map(c=>c.id) ?? [];
@@ -73,7 +75,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
     return ()=>{disposed=true;clearTimeout(timer);};
   },[sessionId]);
   const close=async(next:()=>void):Promise<void>=>{
-    if(busy)return;setBusy(true);onBusy?.(true);
+    if(busy||closing.current)return;closing.current=true;setBusy(true);onBusy?.(true);
     try{
       const current=active.current;
       if(current&&current.status!=='completed'&&current.status!=='revoked'){
@@ -82,8 +84,12 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
       }
       active.current=null;setSecret('');next();
     }catch(e){setError(monitorErrorMessage(e));}
-    finally{setBusy(false);onBusy?.(false);}
+    finally{closing.current=false;setBusy(false);onBusy?.(false);}
   };
+  useEffect(()=>{
+    onDismissHandler?.(()=>void close(onClose));
+    return ()=>onDismissHandler?.(null);
+  });
   const origin=window.location.origin;
   const instructions=session?`${origin}${apiUrl(`/api/uptime/onboarding-agent/${session.id}/instructions`)}`:'';
   const prompt='请为我的服务找出健康检查和关键只读接口，按上面的 CDS 说明提交监控提议，等我在页面确认。不要提交密码、密钥和写入操作。';
