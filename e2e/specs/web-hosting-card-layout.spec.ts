@@ -128,7 +128,7 @@ for (const width of [390, 1440]) {
         const image = await cards.first().locator('..').screenshot();
         await testInfo.attach(`真实列表-${width}-${theme}-${size}`, { body: image, contentType: 'image/png' });
         await testInfo.attach('布局测量', { body: JSON.stringify(metrics, null, 2), contentType: 'application/json' });
-        // 三档都提供常驻按钮，详情不折叠、不省略；查看详情不是打开网页，不写访问记录。
+        // 三档都提供常驻按钮；属性与文件切换，查看详情不写访问记录。
         if (size === 'large') {
           const lastAccess = cards.nth(3).locator('[title^="最近访问"]');
           await expect(lastAccess).toContainText('刚刚');
@@ -156,7 +156,25 @@ for (const width of [390, 1440]) {
         await expect(dialog.getByText('创建时间', { exact: true })).toHaveCount(1);
         await expect(dialog.getByText('更新时间', { exact: true })).toHaveCount(1);
         await expect(dialog.locator('details, [aria-expanded="false"]')).toHaveCount(0);
+        await expect(dialog.getByRole('tab', { name: '基本信息', exact: true })).toHaveAttribute('aria-selected', 'true');
+        await expect(dialog.getByRole('region', { name: '完整文件列表' })).toHaveCount(0);
+        await expect(dialog).toHaveCSS('max-width', '840px');
+        await expect.poll(async () => (await dialog.boundingBox())!.width).toBeCloseTo(Math.min(840, width * 0.92), 1);
+        expect(await dialog.evaluate(el => ({
+          bodyFont: getComputedStyle(el.querySelector('[data-site-details]')!).fontSize,
+          titleFont: getComputedStyle(el.querySelector('[data-site-details] h2')!).fontSize,
+          columns: getComputedStyle(el.querySelector('[data-site-details-columns]')!).gridTemplateColumns.split(/\s+/).length,
+        }))).toMatchObject({ bodyFont: '12px', titleFont: '14px', columns: width >= 768 ? 2 : 1 });
+        if (width >= 768) {
+          const rows = dialog.locator('dt').filter({ hasText: /^(已发布的内容修改|创建时间|更新时间|最近访问)$/ }).locator('..');
+          expect(await rows.evaluateAll(items => items.every(row => Array.from(row.children).every(cell => {
+            return cell.getBoundingClientRect().height <= parseFloat(getComputedStyle(cell).lineHeight) + 1;
+          })))).toBe(true);
+        }
+        await dialog.getByRole('tab', { name: '文件 · 103', exact: true }).click();
         await expect(dialog.getByRole('region', { name: '完整文件列表' }).locator('li')).toHaveCount(103);
+        await expect(allTraffic).toContainText('987654321 次');
+        await expect(externalTraffic).toContainText('2 次');
         expect(await dialog.evaluate(el => {
           const rect = el.getBoundingClientRect();
           const body = el.querySelector('.prd-dialog-body')!;
