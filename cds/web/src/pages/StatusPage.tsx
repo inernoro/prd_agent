@@ -396,7 +396,7 @@ export function StatusPage(): JSX.Element {
           ) : null}
 
           {phase === 'loading' ? (
-            boardView === 'home' ? <MonitorCenterSkeleton overview /> : <MonitorCenterSkeleton />
+            <MonitorCenterSkeleton />
           ) : phase === 'error' || !summary || !headline ? (
             <MonitorCenterErrorCard message={error || '未知错误'} onRetry={() => void load()} retrying={refreshing} pollSeconds={POLL_INTERVAL_MS / 1000} />
           ) : (
