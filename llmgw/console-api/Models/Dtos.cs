@@ -1722,6 +1722,12 @@ public sealed class UpdateExchangeRequest
     public long? Version { get; set; }
 }
 
+public sealed class UpdateExchangeProxyRequest
+{
+    public UpstreamProxyWrite? Proxy { get; set; }
+    public long? Version { get; set; }
+}
+
 public sealed class InstallImageLayeringCapabilityRequest
 {
     public string? ApiKey { get; set; }
