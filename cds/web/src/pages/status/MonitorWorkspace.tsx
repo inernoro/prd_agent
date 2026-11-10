@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ArrowLeft, Bell, ChevronDown, ChevronRight, Plus, Search, Wind } from 'lucide-react';
+import { ArrowLeft, Bell, ChevronDown, ChevronRight, Plus, Search, Wind, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { buildWorkspaceModel, visibleWorkspaceServices, workspaceHealthCell, type WorkspaceCategory, type WorkspaceService, type WorkspaceState } from '@/lib/monitorWorkspace';
 import { formatRelative, type UptimeBucket, type UptimeIncidentView, type UptimeSummary, type UptimeTargetSummary } from '@/lib/monitorCenter';
@@ -34,6 +34,8 @@ export interface MonitorWorkspaceProps {
   onManage: (targetId?: string) => void;
   onReload: () => void;
   entry?: { targetId: string; incidentId: string; detectedAt?: string };
+  added?: { key: number; targetIds: string[] };
+  onAddedSeen?: () => void;
 }
 
 function Glyph({ state, large = false }: { state: WorkspaceState; large?: boolean }) {
@@ -74,7 +76,7 @@ function AlertNotification({ service, notifications, summary, now }: { service: 
   return <span className="ai-n ai-one"><span className="ai-nt">{text}</span>{config.mutedUntil <= now && names.slice(0, 2).map((name, i) => <span className="chn" key={`${name}:${i}`}>{name}</span>)}</span>;
 }
 
-export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNotify, onProbe, onManage, entry }: MonitorWorkspaceProps): JSX.Element {
+export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNotify, onProbe, onManage, entry, added, onAddedSeen }: MonitorWorkspaceProps): JSX.Element {
   const route = useLocation();
   const firstSeen = useRef({ categories: new Map<string, number>(), services: new Map<string, number>() });
   const model = useMemo(() => {
@@ -101,6 +103,8 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const [selection, setSelection] = useState<string>();
   const [markedAlert, setMarkedAlert] = useState<string>();
   const [entryActive, setEntryActive] = useState(false);
+  const [toast, setToast] = useState<{ key: number; text: string }>();
+  const handledAdded = useRef<number>();
   const [query, setQuery] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [status, setStatus] = useState<WorkspaceState | 'all'>('all');
@@ -239,7 +243,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   useEffect(() => {
     timers.current.forEach(clearTimeout); timers.current = []; busyRef.current = false;
     setStack([{ kind: 'g' }]); setPoses({ g: IDENTITY, c: HIDDEN, s: HIDDEN }); setStage({});
-    setCategoryId(undefined); setServiceId(undefined); setSelection(undefined); setMarkedAlert(undefined); setEntryActive(false); handledEntry.current = undefined;
+    setCategoryId(undefined); setServiceId(undefined); setSelection(undefined); setMarkedAlert(undefined); setEntryActive(false); setToast(undefined); handledEntry.current = undefined;
   }, [route.key]);
   const handledEntry = useRef<string>();
   const entryKey = entry ? `${route.key}:${entry.targetId}:${entry.incidentId}:${entry.detectedAt ?? ''}` : '';
@@ -251,6 +255,21 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
     setStack([{ kind: 'g' }, ...(group.services.length > 1 ? [{ kind: 'c' as const, categoryId: group.id, skipReturn: true }] : []), { kind: 's', categoryId: group.id, serviceId: item.id }]);
     setPoses({ g: HIDDEN, c: HIDDEN, s: IDENTITY }); setStage({}); busyRef.current = false;
   }, [entryKey, model]);
+  useEffect(() => {
+    if (!added || handledAdded.current === added.key) return;
+    const ids = [...new Set(added.targetIds)], items = ids.flatMap(id => { const item = model.services.find(service => service.id === id); return item ? [item] : []; });
+    if (!ids.length || items.length !== ids.length) return;
+    const groups = [...new Set(items.map(item => item.categoryId))].flatMap(id => { const group = model.categories.find(category => category.id === id); return group ? [group] : []; });
+    if (!groups.length) return;
+    handledAdded.current = added.key;
+    timers.current.forEach(clearTimeout); timers.current = []; busyRef.current = false;
+    setStack([{ kind: 'g' }]); setPoses({ g: IDENTITY, c: HIDDEN, s: HIDDEN }); setStage({});
+    setCategoryId(undefined); setServiceId(undefined); setEntryActive(false); setMarkedAlert(undefined); setSelection(groups[0].id);
+    setQuery(''); setDropdownOpen(false); setStatus('all'); setSource('all');
+    setToast({ key: added.key, text: `已追加 ${items.length} 项到「${groups.map(group => group.name).join('、')}」${items.every(item => item.state === 'none') ? ' · 等待首次观测' : ''}` });
+    later(5200, () => setToast(current => current?.key === added.key ? undefined : current));
+    onAddedSeen?.();
+  }, [added, model, onAddedSeen]);
   const regions = [...new Set(model.services.map(s => s.region))];
   const badRegions = regions.filter(region => model.services.some(s => s.region === region && s.state === 'bad'));
   const noneGroups = new Map<string, { category: WorkspaceCategory; reason: string; services: WorkspaceService[] }>();
@@ -298,6 +317,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
           <div className={`layer Lg ${stage.g ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 'g'} style={poses.g}>{model.categories.length ? <div className={`cg${layout.fits && !layoutCache.current!.tracks ? ' fit' : ''}`} style={{ gridTemplateRows: layoutCache.current!.tracks ?? layout.bands.map(b => layout.narrow ? 'auto' : layout.fits ? `${b.height}fr` : `${b.height}px`).join(' ') }}>{layout.bands.flatMap((band, bi) => band.parts.map((part, pi) => part.stacked ? <Fragment key={`${bi}:${pi}`}>{renderStack(part, band)}</Fragment> : <div className="category-slot" key={`${bi}:${pi}`} style={{ gridColumn: `span ${part.span}` }}>{renderCategory(model.categories[part.indices[0]], part, band.level.key, false)}</div>))}</div> : <div className="workspace-empty"><h2>接入服务，开始统一观测</h2><p>已接入的公共基础设施和个人服务会铺满这里。</p><button className="btn pri" onClick={onAdd}><Plus className="ic s" />接入我的服务</button></div>}</div>
           <div className={`layer Lc ${stage.c ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 'c'} style={poses.c}>{category ? <div className="lv"><div className="lvh"><div><p className="eyebrow">分类 · {category.custom ? '我的服务' : '公共基础设施'} · {category.services.length} 项</p><h2>{category.name}</h2></div><div className="ltoks">{tokens(category, true)}</div><span className="sp" /><div className="lvn rv rv2"><Bell className="ic xs" />异常时通知 <b>{globalNotification.known ? '按此服务实际通道设置' : '通知规则待确认'}</b><button className="linkb" onClick={() => onNotify()}>调整</button></div><div className="seg rv rv2" role="group" aria-label="排列"><button className={sort === 'original' ? 'on' : ''} onClick={() => setSort('original')}>原始顺序</button><button className={sort === 'issues' ? 'on' : ''} onClick={() => setSort('issues')}>异常优先</button></div></div><div className="ctiles rv rv2" style={{ gridTemplateColumns: `repeat(${categoryDensity.columns},minmax(0,1fr))`, gridAutoRows: `${categoryDensity.rowHeight}px`, rowGap: `${categoryDensity.gap}px` }}>{categoryServices.map(s => <ServiceTile key={s.id} service={s} mode={categoryDensity.level} matches={matches(s, category)} selected={current.kind === 's' && serviceId === s.id} searched={Boolean(q)} anchor={`svc:${s.id}`} onOpen={() => openService(s)} />)}</div></div> : null}</div>
           <div className={`layer Ls ${stage.s ?? ''}${reduced ? ' nomo' : ''}`} aria-hidden={current.kind !== 's'} style={poses.s}>{service && category ? <ServiceDetail key={service.id} service={service} category={category} summary={summary} incidents={incidents} now={now} onNotify={() => onNotify(service.id)} onProbe={() => onProbe(service.id)} onManage={() => onManage(service.id)} notifications={notifications} entry={entryActive && entry ? { incidentId: entry.incidentId, detectedAt: entry.detectedAt, source: '通知' } : undefined} onOpenService={id => { const item = model.services.find(s => s.id === id); if (item) openService(item); }} /> : null}</div>
+          {toast ? <div className="toast" role="status"><Glyph state="none" /><span>{toast.text}</span><button className="toast-close" aria-label="关闭接入成功提示" onClick={() => setToast(undefined)}><X className="ic xs" /></button></div> : null}
         </div>
       </section>
       <aside className={`alw${railOpen ? '' : ' closed'}`} aria-label="需要处理的异常"><div className="hm"><div className="hm-h"><span className="hm-t">健康总览</span><span className={`hm-s${badRegions.length ? ' bad' : ''}`}>{badRegions.length ? `异常在 ${badRegions.slice(0, 3).join('、')}` : !model.services.length ? '尚未接入服务' : model.counts.none || model.counts.warn ? '有待确认或无观测服务' : '全部服务最近检查通过'}</span></div><div className="hm-scroll"><div className="hm-g" style={{ gridTemplateColumns: `var(--hm-label-width) repeat(${Math.max(1, regions.length)},minmax(var(--hm-cell-min),1fr))` }}><span />{regions.map(region => <span className="hm-hd" key={region} title={region}>{region}</span>)}{model.categories.map(c => <Fragment key={c.id}><button className={`hmr${categoryId === c.id && current.kind !== 'g' ? ' cur' : ''}`} title={c.name} onClick={() => openCategory(c)}>{c.name}</button>{regions.map(region => { const cell = workspaceHealthCell(c, region); return <button key={region} className={`hmc ${cell.state === 'empty' ? 'em' : cell.state}${current.kind !== 'g' && categoryId === c.id && service?.region === region ? ' cur' : ''}`} disabled={cell.state === 'empty'} title={cell.title} aria-label={cell.title} onClick={() => { const item = model.services.find(s => s.id === cell.serviceId); if (item) openService(item); else openCategory(c); }}>{cell.counts.bad + cell.counts.warn || ''}</button>; })}</Fragment>)}</div></div></div>

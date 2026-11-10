@@ -629,3 +629,9 @@
 .monitor-workspace .t2 .tokens{width:auto;flex:1 1 200px}
 .monitor-workspace .source-filter{flex:0 0 100px;width:100px;max-width:100px}
 }
+
+/* Keep the original success toast within the workspace at narrow widths. */
+.monitor-workspace .toast{max-width:calc(100% - 24px);white-space:normal;overflow-wrap:anywhere}
+.monitor-workspace .toast>span:not(.gl){min-width:0}
+.monitor-workspace .toast-close{display:grid;place-items:center;flex:none;width:20px;height:20px;color:var(--t2)}
+.monitor-workspace .toast-close:hover{color:var(--t1)}
