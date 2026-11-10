@@ -158,13 +158,19 @@ for (const width of [390, 1440]) {
         await expect(dialog.locator('details, [aria-expanded="false"]')).toHaveCount(0);
         await expect(dialog.getByRole('tab', { name: '基本信息', exact: true })).toHaveAttribute('aria-selected', 'true');
         await expect(dialog.getByRole('region', { name: '完整文件列表' })).toHaveCount(0);
-        await expect(dialog).toHaveCSS('max-width', '520px');
-        await expect.poll(async () => (await dialog.boundingBox())!.width).toBeCloseTo(Math.min(520, width * 0.92), 1);
+        await expect(dialog).toHaveCSS('max-width', '840px');
+        await expect.poll(async () => (await dialog.boundingBox())!.width).toBeCloseTo(Math.min(840, width * 0.92), 1);
         expect(await dialog.evaluate(el => ({
           bodyFont: getComputedStyle(el.querySelector('[data-site-details]')!).fontSize,
           titleFont: getComputedStyle(el.querySelector('[data-site-details] h2')!).fontSize,
           columns: getComputedStyle(el.querySelector('[data-site-details-columns]')!).gridTemplateColumns.split(/\s+/).length,
-        }))).toMatchObject({ bodyFont: '12px', titleFont: '14px', columns: width >= 640 ? 2 : 1 });
+        }))).toMatchObject({ bodyFont: '12px', titleFont: '14px', columns: width >= 768 ? 2 : 1 });
+        if (width >= 768) {
+          const rows = dialog.locator('dt').filter({ hasText: /^(已发布的内容修改|创建时间|更新时间|最近访问)$/ }).locator('..');
+          expect(await rows.evaluateAll(items => items.every(row => [...row.children].every(cell => {
+            return cell.getBoundingClientRect().height <= parseFloat(getComputedStyle(cell).lineHeight) + 1;
+          })))).toBe(true);
+        }
         await dialog.getByRole('tab', { name: '文件 · 103', exact: true }).click();
         await expect(dialog.getByRole('region', { name: '完整文件列表' }).locator('li')).toHaveCount(103);
         await expect(allTraffic).toContainText('987654321 次');

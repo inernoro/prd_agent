@@ -18,7 +18,7 @@ const site: SiteCardProps['site'] = {
 
 describe('网页详情的信息保留', () => {
   for (const size of ['small', 'medium', 'large'] as const) {
-    it(`${size} 以原尺寸切换属性和完整文件，保留统计且不触发访问、选择或修改`, async () => {
+    it(`${size} 以系统字号和双栏宽度切换属性和完整文件，保留统计且不触发访问、选择或修改`, async () => {
       const container = document.createElement('div'); document.body.append(container);
       const root = createRoot(container);
       const action = vi.fn();
@@ -44,7 +44,7 @@ describe('网页详情的信息保留', () => {
         }
         expect(dialog.querySelector('[aria-label="全部访问（含作者）"]')?.textContent).toContain('7 次');
         expect(dialog.querySelector('[aria-label="外部访问（不含已登录作者）"]')?.textContent).toContain('2 次');
-        expect((dialog as HTMLElement).style.maxWidth).toBe('520px');
+        expect((dialog as HTMLElement).style.maxWidth).toBe('840px');
         expect(dialog.querySelector('[data-site-details]')?.classList.contains('text-xs')).toBe(true);
         const filesTab = dialog.querySelector<HTMLButtonElement>('[role="tab"][data-state="inactive"]')!;
         const infoTab = dialog.querySelector<HTMLButtonElement>('[role="tab"][data-state="active"]')!;

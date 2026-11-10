@@ -29,7 +29,7 @@ export function SiteDetailsDialog({ site, activity, traffic, shared, ownerCard, 
     ['分组', site.folder || '未分组'],
     ['入口文件', site.entryFile],
   ];
-  return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} title="网页详情" maxWidth={520}
+  return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} title="网页详情" maxWidth={840}
     contentStyle={{ maxHeight: 'calc(100dvh - 48px)' }}
     content={<div data-site-details data-no-drag className="space-y-4 text-xs text-token-secondary" style={{ overflowWrap: 'anywhere' }}>
       <div>
@@ -39,7 +39,7 @@ export function SiteDetailsDialog({ site, activity, traffic, shared, ownerCard, 
       <div aria-label="全部标签" className="flex flex-wrap gap-1.5">
         {site.tags.length ? site.tags.map((tag) => <span key={tag} className="rounded px-2 py-1" style={{ background: 'var(--bg-secondary)' }}>{tag}</span>) : <span>暂无标签</span>}
       </div>
-      <div data-site-details-columns className="grid items-start gap-4 sm:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+      <div data-site-details-columns className="grid items-start gap-4 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         <TabsPrimitive.Root defaultValue="info" className="min-w-0">
           <TabsPrimitive.List aria-label="网页详情内容" className="mb-3 flex gap-4 border-b border-token-default">
             {[{ value: 'info', label: '基本信息' }, { value: 'files', label: `文件 · ${site.files.length}` }].map((tab) => (
@@ -51,7 +51,7 @@ export function SiteDetailsDialog({ site, activity, traffic, shared, ownerCard, 
           </TabsPrimitive.List>
           <TabsPrimitive.Content value="info" className="outline-none">
             <dl className="rounded-lg border border-token-default px-3">
-              {rows.map(([label, value]) => <div key={label} className="grid grid-cols-[110px_minmax(0,1fr)] sm:grid-cols-[80px_minmax(0,1fr)] gap-3 border-b py-2 last:border-b-0"
+              {rows.map(([label, value]) => <div key={label} className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 border-b py-2 last:border-b-0"
                 style={{ borderColor: 'var(--border-subtle)' }}>
                 <dt className="text-token-muted">{label}</dt><dd className="whitespace-pre-wrap text-token-primary">{value}</dd>
               </div>)}
@@ -79,7 +79,7 @@ export function SiteDetailsDialog({ site, activity, traffic, shared, ownerCard, 
                   ['访问次数', value ? `${value.visits} 次` : '统计暂不可用'],
                   ['独立访客', value ? `${value.visitors} 位` : '统计暂不可用'],
                   ['最近访问', value ? timestamp(value.lastViewedAt ?? undefined) : '统计暂不可用'],
-                ].map(([name, text]) => <div key={name} className="grid grid-cols-[64px_minmax(0,1fr)] gap-3"><dt className="text-token-muted">{name}</dt><dd className="text-token-primary">{text}</dd></div>)}
+                ].map(([name, text]) => <div key={name} className="grid grid-cols-[64px_minmax(0,1fr)] md:grid-cols-[80px_minmax(0,1fr)] gap-3"><dt className="text-token-muted">{name}</dt><dd className="text-token-primary">{text}</dd></div>)}
               </dl>
             </section>;
           })}
