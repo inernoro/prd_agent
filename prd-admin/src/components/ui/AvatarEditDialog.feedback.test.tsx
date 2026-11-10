@@ -86,6 +86,8 @@ describe('头像上传反馈与空描述恢复', () => {
     await mount(() => pending); await generatedPreview(); await chooseFile();
     expect(host.querySelector('[data-avatar-phase]')?.getAttribute('data-avatar-phase')).toBe('uploading');
     expect(host.querySelector('[role="status"]')?.textContent).toContain('正在上传头像');
+    expect(host.textContent).not.toContain('正在替换');
+    expect(button('使用此头像').disabled).toBe(true);
     await act(async () => finish({ success: false, data: null, error: { code: 'UPLOAD_FAILED', message: '合成失败' } }));
     expect(calls.apply).not.toHaveBeenCalled();
   });
@@ -97,6 +99,7 @@ describe('头像上传反馈与空描述恢复', () => {
     await act(async () => button('使用此头像').click());
     expect(host.querySelector('[data-avatar-phase]')?.getAttribute('data-avatar-phase')).toBe('applying');
     expect(host.querySelector('[role="status"]')?.textContent).toContain('正在替换头像');
+    expect(button('正在替换').disabled).toBe(true);
     await act(async () => finish({ success: false, data: null, error: { code: 'EXPIRED', message: '合成预览失效' } }));
     expect(host.querySelector('[data-avatar-phase]')?.getAttribute('data-avatar-phase')).toBe('preview');
     expect(button('使用此头像').disabled).toBe(false);

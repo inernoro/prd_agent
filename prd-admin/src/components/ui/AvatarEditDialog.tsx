@@ -435,7 +435,7 @@ export function AvatarEditDialog(props: {
                     </Button>
                     <Button variant="primary" size="sm" className="min-h-11" onClick={() => void onApplyGeneratedAvatar()} disabled={uploading || !generatedAssetSha256}>
                       {uploading ? <MapSpinner size={14} /> : <Check size={14} />}
-                      {uploading ? '正在替换' : '使用此头像'}
+                      {uploadPhase === 'applying' ? '正在替换' : '使用此头像'}
                     </Button>
                   </div>
                 </div>
