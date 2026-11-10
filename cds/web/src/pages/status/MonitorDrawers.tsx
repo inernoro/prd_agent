@@ -1,29 +1,12 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { ChevronRight, X } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest } from '@/lib/api';
 import type { UptimeTargetSummary } from '@/lib/monitorCenter';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
+import { ChannelFields, existingChannelIds, monitorErrorMessage as message, useChannels, type Channel } from './monitorChannels';
 import './monitor-drawers.css';
 
-type ChannelKind = 'bark' | 'webhook' | 'map';
-interface Channel {
-  id: string;
-  name: string;
-  kind: ChannelKind;
-  enabled: boolean;
-  events: string[];
-  projects: string[];
-  bark?: { serverUrl: string; keySet: boolean; keyTail: string };
-  webhook?: { url: string };
-  map?: { username: string };
-}
-interface ChannelStatus { id: string; status: string }
-interface NotificationSettings {
-  defaultChannelIds?: string[];
-  overrides?: Record<string, string[]>;
-}
 interface Tool {
   name: string;
   title?: string;
@@ -33,117 +16,8 @@ interface Tool {
   reason?: string;
 }
 interface Discovery { server: { name: string; version: string }; tools: Tool[]; requestId: string }
-interface ChannelsState { channels: Channel[]; status: ChannelStatus[]; settings: NotificationSettings }
-interface NotificationsPayload { settings: NotificationSettings; legacyChannel?: Channel & { status: string } }
-const KIND_LABEL: Record<ChannelKind, string> = { bark: 'Bark', webhook: 'Webhook', map: 'MAP' };
-const STATUS_LABEL: Record<string, string> = {
-  healthy: '最近投递成功', failing: '上次未送达', untested: '尚未验证送达', unconfigured: '尚未配齐',
-};
-
-function message(error: unknown): string {
-  return error instanceof ApiError ? error.message : '操作未完成，请重试；仍失败时请检查服务地址和访问权限。';
-}
-
-function destination(channel: Channel): string {
-  if (channel.kind === 'map') return channel.map?.username || channel.name;
-  if (channel.kind === 'bark') return channel.bark?.keySet ? `手机 · 尾号 ${channel.bark.keyTail}` : '尚未填写推送地址';
-  try { return new URL(channel.webhook?.url || '').hostname; } catch { return '尚未填写接收地址'; }
-}
-
-/** Remove deleted IDs without changing empty selections or still-registered preferences. */
-function existingChannelIds(ids: readonly string[], channels: readonly Channel[]): string[] {
-  const registered = new Set(channels.map((channel) => channel.id));
-  return ids.filter((id) => registered.has(id));
-}
-
-function channelState(channels: { channels: Channel[]; status: ChannelStatus[] }, notifications: NotificationsPayload): ChannelsState {
-  const legacy = notifications.legacyChannel;
-  const registry = legacy && !channels.channels.some((channel) => channel.id === legacy.id) ? [...channels.channels, legacy] : channels.channels;
-  const settings = notifications.settings;
-  return {
-    channels: registry,
-    status: legacy ? [...channels.status, { id: legacy.id, status: legacy.status }] : channels.status,
-    settings: {
-      ...settings,
-      ...(settings.defaultChannelIds === undefined ? {} : { defaultChannelIds: existingChannelIds(settings.defaultChannelIds, registry) }),
-      ...(settings.overrides === undefined ? {} : { overrides: Object.fromEntries(Object.entries(settings.overrides)
-        .map(([targetId, ids]) => [targetId, existingChannelIds(ids, registry)])) }),
-    },
-  };
-}
-
-function useChannels(): {
-  data: ChannelsState | null; loading: boolean; error: string | null; reload(): Promise<void>;
-} {
-  const [data, setData] = useState<ChannelsState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const reload = async (): Promise<void> => {
-    setLoading(true); setError(null);
-    try {
-      const [channels, settings] = await Promise.all([
-        apiRequest<{ channels: Channel[]; status: ChannelStatus[] }>('/api/cds-system/alarm-channels'),
-        apiRequest<NotificationsPayload>('/api/uptime/notifications'),
-      ]);
-      setData(channelState(channels, settings));
-    } catch (e) { setError(message(e)); }
-    finally { setLoading(false); }
-  };
-  useEffect(() => {
-    const controller = new AbortController();
-    void Promise.all([
-      apiRequest<{ channels: Channel[]; status: ChannelStatus[] }>('/api/cds-system/alarm-channels', { signal: controller.signal }),
-      apiRequest<NotificationsPayload>('/api/uptime/notifications', { signal: controller.signal }),
-    ]).then(([channels, settings]) => {
-      setData(channelState(channels, settings));
-    }).catch((e: unknown) => { if (!controller.signal.aborted) setError(message(e)); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, []);
-  return { data, loading, error, reload };
-}
-
 function ErrorNotice({ text }: { text: string | null }): JSX.Element | null {
   return text ? <div className="drawer-error" role="alert">{text}</div> : null;
-}
-
-function Switch({ checked, label, disabled, onChange }: {
-  checked: boolean; label: string; disabled?: boolean; onChange(): void;
-}): JSX.Element {
-  return <button type="button" className={`sw${checked ? ' on' : ''}`} role="switch" aria-label={label}
-    aria-checked={checked} disabled={disabled} onClick={onChange} />;
-}
-
-function ManageChannels({ onManage }: { onManage?(): void }): JSX.Element {
-  return onManage
-    ? <button type="button" className="btn ghost sm" onClick={onManage}>管理通知通道</button>
-    : <Link className="btn ghost sm" to="/cds-settings#alarm-notify">管理通知通道</Link>;
-}
-
-function ChannelFields({ data, selected, onToggle, onManage, projectId }: {
-  data: ChannelsState; selected: string[]; onToggle(id: string): void; onManage?(): void; projectId?: string | null;
-}): JSX.Element {
-  const projectMatches = (channel: Channel): boolean => projectId === undefined
-    || channel.projects.length === 0 || (projectId !== null && channel.projects.includes(projectId));
-  return <>
-    <div className="fld"><span className="lbl2">通知谁</span>
-      <div className="chips">{data.channels.map((channel) => <button type="button" key={channel.id}
-        className={`chip tg${selected.includes(channel.id) && projectMatches(channel) ? ' on' : ''}`}
-        aria-pressed={selected.includes(channel.id) && projectMatches(channel)}
-        disabled={!channel.enabled || !projectMatches(channel)} onClick={() => onToggle(channel.id)}>{channel.name}</button>)}</div>
-      {!data.channels.length && <p className="hint">还没有通知对象。先添加手机推送、群 Webhook 或 MAP 通知通道。</p>}
-    </div>
-    <div className="fld"><span className="lbl2">发到哪里</span>
-      <div className="chrows">{data.channels.map((channel) => <div className="chrow" key={channel.id}>
-        <span className="chn2">{KIND_LABEL[channel.kind]}</span>
-        <span className="dest" title={channel.name}>{destination(channel)} · {!projectMatches(channel) ? '不适用于此项目' : channel.enabled
-          ? STATUS_LABEL[data.status.find((item) => item.id === channel.id)?.status || 'untested'] || '状态未知' : '已停用'}</span>
-        <Switch checked={selected.includes(channel.id) && projectMatches(channel)} disabled={!channel.enabled || !projectMatches(channel)} label={`通知到${channel.name}`}
-          onChange={() => onToggle(channel.id)} />
-      </div>)}</div>
-      <div className="manage-channels"><ManageChannels onManage={onManage} /></div>
-    </div>
-  </>;
 }
 
 function DeliveryRule({ channels, selected }: { channels: Channel[]; selected: string[] }): JSX.Element {
@@ -166,9 +40,10 @@ interface DrawerBodyProps {
   onSaved(): Promise<void>;
   onBusy(busy: boolean): void;
   onManage?(): void;
+  onUseAgent?(): void;
 }
 
-function ConnectDrawer({ targets, onClose, onSaved, onBusy, onManage }: DrawerBodyProps): JSX.Element {
+function ConnectDrawer({ targets, onClose, onSaved, onBusy, onManage, onUseAgent }: DrawerBodyProps): JSX.Element {
   const id = useId();
   const [step, setStep] = useState(1);
   const [url, setUrl] = useState('');
@@ -237,6 +112,7 @@ function ConnectDrawer({ targets, onClose, onSaved, onBusy, onManage }: DrawerBo
     && (channel.projects.length === 0 || channel.projects.includes(projectId))).map((channel) => channel.name) || [];
   return <>
     <div className="dh"><div className="dh-r"><Dialog.Title asChild><h2>接入我的服务</h2></Dialog.Title><span className="sp" />
+      {onUseAgent && <button type="button" className="btn ghost sm" disabled={busy} onClick={onUseAgent}>智能体提交</button>}
       <Dialog.Close className="xb" aria-label="关闭" disabled={busy}><X className="ic" /></Dialog.Close></div>
       <Dialog.Description className="hint">公共基础设施服务已默认在监控中。这里只需添加你自己的 MCP 服务，三步完成。</Dialog.Description>
       <div className="steps">{['粘贴地址', '确认监控项', '通知并完成'].map((label, index) => <div key={label}
@@ -289,10 +165,10 @@ function ConnectDrawer({ targets, onClose, onSaved, onBusy, onManage }: DrawerBo
       {step === 3 && <>
         {channels.loading ? <ContentLoading label="读取通知通道" variant="rows" /> : channels.error ? <>
           <ErrorNotice text={channels.error} /><button type="button" className="btn ghost" onClick={() => void channels.reload()}>重试读取通知通道</button>
-        </> : channels.data && <ChannelFields data={channels.data} selected={effectiveIds} onToggle={toggleChannel} onManage={onManage} projectId={projectId || null} />}
+        </> : channels.data && <ChannelFields data={channels.data} selected={effectiveIds} onToggle={toggleChannel} onManage={onManage} projectId={projectId || null} disabled={busy} />}
         <div className="soft"><b>{selected.length} 项监控等待接入</b><p className="hint">{!customNotify ? '沿用全局默认通知设置。' : selectedNames.length
           ? `异常时通知到 ${selectedNames.join('、')}。` : '没有选择通道，新接入的监控不发送通知。'}设置通知不会发送测试消息。</p>
-          {customNotify && <button type="button" className="linkb" onClick={() => setCustomNotify(false)}>恢复全局默认</button>}</div>
+          {customNotify && <button type="button" className="linkb" disabled={busy} onClick={() => setCustomNotify(false)}>恢复全局默认</button>}</div>
         <div className="sentence">完成后按计划调用所选只读工具获取真实结果；首次检查完成前显示“等待首次观测”，不会提前标为正常。</div>
       </>}
       {busy && <ContentLoading label={step === 1 ? '正在连接服务并读取工具列表' : '正在保存监控与通知设置'} variant="rows" />}
@@ -342,7 +218,7 @@ function NotificationDrawer({ targets, targetId, onClose, onSaved, onBusy, onMan
     finally { setBusy(false); onBusy(false); }
   };
   return <>
-    <div className="dh"><div className="dh-r"><Dialog.Title asChild><h2>{scope === 'service' ? '通知设置 · 此服务' : '通知设置'}</h2></Dialog.Title>
+    <div className="dh"><div className="dh-r"><Dialog.Title asChild><h2>{scope === 'service' ? `通知设置 · ${target?.name || '此服务'}` : '通知设置'}</h2></Dialog.Title>
       <span className="sp" /><Dialog.Close className="xb" aria-label="关闭" disabled={busy}><X className="ic" /></Dialog.Close></div>
       <Dialog.Description className="hint">{scope === 'service' ? `${target?.name || '当前服务'} · 单项设置优先于全局默认。` : '设置所有服务的默认通知对象与渠道，单项服务可单独调整。'}</Dialog.Description>
       <div className="seg scope-seg" role="group" aria-label="设置范围"><button type="button" className={scope === 'default' ? 'on' : ''} disabled={busy}
@@ -357,18 +233,18 @@ function NotificationDrawer({ targets, targetId, onClose, onSaved, onBusy, onMan
           <dt>规则</dt><dd>业务新异常保留 30 分钟冷却，连续健康 10 分钟后通知恢复；按通道订阅的事件发送</dd></dl>
           <button type="button" className="btn pri sm" onClick={() => { setOwn(true); setDirty(true); }}>为此服务单独设置</button></div> : <>
           <ChannelFields data={channels.data} selected={selected} onToggle={toggle} onManage={onManage}
-            projectId={scope === 'service' ? target?.projectId || null : undefined} />
+            projectId={scope === 'service' ? target?.projectId || null : undefined} disabled={busy} />
           <DeliveryRule channels={applicableChannels} selected={selected} />
           <div className="sentence">{names.length ? `异常时通知到 ${names.join('、')}。` : '当前没有选择通知通道，本范围内不新增通知。'}{scope === 'service' ? '仅应用于此服务。' : '应用于没有单项覆盖的服务。'}已交给通知渠道或独立接收端的消息不保证撤回。</div>
         </>}
         {scope === 'default' && <>
-          <div className="fld"><div className="sec-h"><span className="lbl2">分类默认</span><span className="hint">各分类沿用全局默认</span></div>
+          <div className="fld"><div className="sec-h"><span className="lbl2">默认投递范围</span><span className="hint">按通道的项目与事件设置执行</span></div>
             <div className="soft"><p className="hint">已配置通道仍按项目及事件范围投递，服务单项设置优先。</p></div></div>
           <div className="fld"><div className="sec-h"><span className="lbl2">单项服务调整</span><span className="hint">在服务详情中调整通知</span></div>
             <div className="ovl">{Object.entries(channels.data.settings.overrides || {}).map(([itemId, ids]) => <div className="ovr" key={itemId}>
               <span className="nm">{targets.find((item) => item.id === itemId)?.name || '已移除的服务'}</span><span className="dest">
                 {channels.data?.channels.filter((channel) => ids.includes(channel.id)).map((channel) => channel.name).join('、') || '不发送通知'}</span>
-              <button type="button" className="linkb" onClick={() => { setServiceId(itemId); setScope('service'); }}>查看</button></div>)}</div>
+              <button type="button" className="linkb" disabled={busy} onClick={() => { setServiceId(itemId); setScope('service'); }}>查看</button></div>)}</div>
             {!Object.keys(channels.data.settings.overrides || {}).length && <p className="hint">暂无单项覆盖，所有服务沿用默认。</p>}
           </div>
         </>}
