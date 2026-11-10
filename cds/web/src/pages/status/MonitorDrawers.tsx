@@ -1,6 +1,6 @@
 import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import * as Dialog from '@radix-ui/react-dialog';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronRight, X } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
@@ -275,13 +275,18 @@ export function MonitorDrawers({ panel, targetId, targets, onClose, onSaved, onM
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const [connectMode, setConnectMode] = useState<'agent' | 'mcp'>('agent');
+  const dismissAgent = useRef<(() => void) | null>(null);
   useEffect(() => { if (!panel) { setBusy(false); setConnectMode('agent'); } }, [panel]);
   const manageNotifications = (): void => {
     onClose();
     if (onManageNotifications) onManageNotifications();
     else navigate('/cds-settings#alarm-notify');
   };
-  return <Dialog.Root open={panel !== null} onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+  return <Dialog.Root open={panel !== null} onOpenChange={(open) => {
+    if (open || busy) return;
+    if (panel === 'connect' && connectMode === 'agent') dismissAgent.current?.();
+    else onClose();
+  }}>
     <Dialog.Portal><div className="monitor-drawers">
       <Dialog.Overlay className="scrim" />
       <Dialog.Content className="drawer" style={{ height: '100dvh', minHeight: 0 }}
@@ -289,6 +294,7 @@ export function MonitorDrawers({ panel, targetId, targets, onClose, onSaved, onM
         onPointerDownOutside={(event) => { if (busy) event.preventDefault(); }}>
         {panel === 'connect' ? connectMode === 'agent'
           ? <AgentMonitorConnect key="agent-connect" onClose={onClose} onSaved={onSaved} onBusy={setBusy}
+              onDismissHandler={handler => { dismissAgent.current = handler; }}
               onManageNotifications={manageNotifications} onUseMcp={() => setConnectMode('mcp')} />
           : <ConnectDrawer key="mcp-connect" targets={targets} onClose={onClose} onSaved={onSaved}
               onBusy={setBusy} onManage={manageNotifications} onUseAgent={() => setConnectMode('agent')} />
