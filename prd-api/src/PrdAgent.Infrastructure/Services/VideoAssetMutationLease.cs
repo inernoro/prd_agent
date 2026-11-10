@@ -71,13 +71,14 @@ public static class VideoAssetMutationLease
         throw new TimeoutException("视频资产正在被其他任务处理，请稍后重试。");
     }
 
-    public static async Task<bool> HasReferencesAsync(MongoDbContext db, string sha256, string url, CancellationToken ct)
+    public static async Task<bool> HasReferencesAsync(MongoDbContext db, string sha256, string url, CancellationToken ct, bool liveSourcesOnly = false)
     {
         var runFb = Builders<VideoGenRun>.Filter;
         var runFilter = runFb.Or(runFb.Eq(x => x.VideoAssetUrl, url),
             runFb.Eq("Scenes.VideoUrl", url), runFb.Eq("Scenes.Versions.VideoUrl", url));
         if (!string.IsNullOrEmpty(sha256))
             runFilter |= runFb.Or(runFb.Eq(x => x.VideoAssetSha256, sha256), runFb.Eq("Scenes.Versions.AssetSha256", sha256));
+        if (liveSourcesOnly) runFilter &= runFb.Eq(x => x.DeletionRequestedAt, null);
         var runReferences = await db.VideoGenRuns.CountDocumentsAsync(runFilter, cancellationToken: ct);
         if (runReferences > 0) return true;
 
@@ -111,14 +112,29 @@ public static class VideoAssetMutationLease
         var held = new List<IAsyncDisposable>();
         try
         {
-            foreach (var url in targets.Select(x => x.Url).Distinct().Order(StringComparer.Ordinal))
-                held.Add(await AcquireAsync(db, $"generated-video-reference:{url}", ct));
+            held.Add(await AcquireReferencesAsync(db, targets.Select(x => x.Url), ct));
             foreach (var target in targets)
             {
-                if (!await HasReferencesAsync(db, target.Sha, target.Url, ct))
+                if (!await HasReferencesAsync(db, target.Sha, target.Url, ct, liveSourcesOnly: true))
                     throw new InvalidOperationException("所选生成视频素材已不可用，请重新选择仍在项目或生成记录中的素材。");
                 target.Set(target.Url);
             }
+            return new ReferenceHandles(held);
+        }
+        catch
+        {
+            for (var i = held.Count - 1; i >= 0; i--) await held[i].DisposeAsync();
+            throw;
+        }
+    }
+
+    public static async Task<IAsyncDisposable> AcquireReferencesAsync(MongoDbContext db, IEnumerable<string> urls, CancellationToken ct)
+    {
+        var held = new List<IAsyncDisposable>();
+        try
+        {
+            foreach (var url in urls.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Split('?', '#')[0]).Distinct().Order(StringComparer.Ordinal))
+                held.Add(await AcquireAsync(db, $"generated-video-reference:{url}", ct));
             return new ReferenceHandles(held);
         }
         catch

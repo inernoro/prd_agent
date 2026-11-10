@@ -730,6 +730,8 @@ public class VideoGenService : IVideoGenService
                 _db,
                 $"generated-video:{artifact.Sha256}",
                 cleanupToken);
+            await using var referenceLeases = await VideoAssetMutationLease.AcquireReferencesAsync(
+                _db, artifact.Urls, cleanupToken);
             var referenceFilters = new List<FilterDefinition<VideoGenRun>>
             {
                 fb.Eq(x => x.VideoAssetSha256, artifact.Sha256),
