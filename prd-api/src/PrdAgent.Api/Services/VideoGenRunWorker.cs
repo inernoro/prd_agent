@@ -581,7 +581,7 @@ public partial class VideoGenRunWorker : BackgroundService
     {
         // 抛错可能仍有数据库操作在途；保留对象，不用独立读取猜测写回已经失败。
         var committed = await commit();
-        if (!committed) await DeleteStoredVideoIfUnreferencedAsync(stored.Sha256, stored.Url);
+        if (!committed && stored.CreatedNew == true) await DeleteStoredVideoIfUnreferencedAsync(stored.Sha256, stored.Url);
         return committed;
     }
 
@@ -594,29 +594,7 @@ public partial class VideoGenRunWorker : BackgroundService
     {
         if (string.IsNullOrWhiteSpace(sha256) || string.IsNullOrWhiteSpace(url)) return;
 
-        var runFb = Builders<VideoGenRun>.Filter;
-        var runReferences = await _db.VideoGenRuns.CountDocumentsAsync(
-            runFb.Or(
-                runFb.Eq(x => x.VideoAssetSha256, sha256),
-                runFb.Eq("Scenes.Versions.AssetSha256", sha256),
-                runFb.Eq(x => x.VideoAssetUrl, url),
-                runFb.Eq("Scenes.VideoUrl", url),
-                runFb.Eq("Scenes.Versions.VideoUrl", url)),
-            cancellationToken: CancellationToken.None);
-        if (runReferences > 0) return;
-
-        var projectFb = Builders<VideoProject>.Filter;
-        var projectReferences = await _db.VideoProjects.CountDocumentsAsync(
-            projectFb.Or(
-                projectFb.Eq("TimelineTracks.Clips.AssetUrl", url),
-                projectFb.Eq("Assets.Url", url)),
-            cancellationToken: CancellationToken.None);
-        if (projectReferences > 0) return;
-
-        var exportReferences = await _db.VideoExportTasks.CountDocumentsAsync(
-            Builders<VideoExportTask>.Filter.Eq(x => x.OutputUrl, url),
-            cancellationToken: CancellationToken.None);
-        if (exportReferences > 0) return;
+        if (await VideoAssetMutationLease.HasReferencesAsync(_db, sha256, url, CancellationToken.None)) return;
 
         await _assetStorage.DeleteByShaAsync(
             sha256,

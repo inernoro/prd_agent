@@ -241,6 +241,59 @@ public partial class VideoSceneConcurrencyTests
             "recorded-model", "recorded-offering", CancellationToken.None), Times.Once);
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task Compensation_PreservesReusedOrUncertainSaveOrigin(bool? createdNew)
+    {
+        using var test = new DirectCancellationFixture("recorded-offering");
+        test.PrepareAssetCompletion("none", createdNew);
+        await test.ProcessAsync();
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        test.AssetStorage.Verify(x => x.DeleteByShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<string?>()), Times.Never);
+        test.Client.Verify(x => x.SubmitAsync(It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task LocalSave_ReportsNewOrReusedWithoutExposingInternalOrigin()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "video-save-origin-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var storage = new LocalAssetStorage(path);
+            var first = await storage.SaveAsync([1, 2, 3], "video/mp4", CancellationToken.None);
+            var reused = await storage.SaveAsync([1, 2, 3], "video/mp4", CancellationToken.None);
+            first.CreatedNew.ShouldBe(true); reused.CreatedNew.ShouldBe(false);
+            first.Key.ShouldBe(reused.Key);
+            System.Text.Json.JsonSerializer.Serialize(first).ShouldNotContain(nameof(StoredAsset.CreatedNew));
+        }
+        finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("/local-assets/video-agent/video/", "/local-assets/video-agent/video/", true)]
+    [InlineData("https://assets.example.invalid/video-agent/video/", "https://assets.example.invalid/video-agent/video/", true)]
+    [InlineData("https://other.invalid/video-agent/video/", "https://assets.example.invalid/video-agent/video/", false)]
+    public void GeneratedReference_UsesStorageCanonicalUrlBeforeParsingRelativeQuery(string source, string target, bool expected)
+    {
+        var sha = new string('a', 64);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.BuildUrlForLogicalKey("video-agent/video/" + sha + ".mp4")).Returns(target + sha + ".mp4");
+        var method = typeof(VideoAssetMutationLease).GetMethod("TryCanonicalGeneratedReference", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var result = method.Invoke(null, [storage.Object, source + sha + ".mp4?token=synthetic"]);
+        if (expected)
+        {
+            var resolved = ((string Sha, string Url))result!;
+            resolved.Sha.ShouldBe(sha); resolved.Url.ShouldBe(target + sha + ".mp4");
+        }
+        else result.ShouldBeNull();
+        storage.VerifyAll();
+    }
+
     // This fixture never constructs MongoClient or an application host. All persistence and upstream calls are strict mocks.
     private sealed class DirectCancellationFixture : IDisposable
     {
@@ -261,7 +314,7 @@ public partial class VideoSceneConcurrencyTests
         public bool ThrowOnAssetCommit { get; set; }
         public bool CommitFailureObserved { get; private set; }
 
-        public void PrepareAssetCompletion(string reference)
+        public void PrepareAssetCompletion(string reference, bool? createdNew = true)
         {
             AssetReference = reference;
             Run.CancelRequested = false;
@@ -272,7 +325,7 @@ public partial class VideoSceneConcurrencyTests
             AssetStorage.Setup(x => x.SaveAsync(It.IsAny<byte[]>(), "video/mp4", CancellationToken.None,
                 AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo, null, null))
                 .Callback(() => Run.CancelRequested = true)
-                .ReturnsAsync(new StoredAsset(AssetSha, AssetUrl, 3, "video/mp4"));
+                .ReturnsAsync(new StoredAsset(AssetSha, AssetUrl, 3, "video/mp4") { CreatedNew = createdNew });
             AssetStorage.Setup(x => x.DeleteByShaAsync(AssetSha, CancellationToken.None,
                 AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo))
                 .Callback(() => AssetLeaseHeldAtDeletion = AssetLeaseHeld).Returns(Task.CompletedTask);

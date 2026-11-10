@@ -1,6 +1,8 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -67,6 +69,85 @@ public static class VideoAssetMutationLease
         }
 
         throw new TimeoutException("视频资产正在被其他任务处理，请稍后重试。");
+    }
+
+    public static async Task<bool> HasReferencesAsync(MongoDbContext db, string sha256, string url, CancellationToken ct)
+    {
+        var runFb = Builders<VideoGenRun>.Filter;
+        var runReferences = await db.VideoGenRuns.CountDocumentsAsync(
+            runFb.Or(
+                runFb.Eq(x => x.VideoAssetSha256, sha256),
+                runFb.Eq("Scenes.Versions.AssetSha256", sha256),
+                runFb.Eq(x => x.VideoAssetUrl, url),
+                runFb.Eq("Scenes.VideoUrl", url),
+                runFb.Eq("Scenes.Versions.VideoUrl", url)),
+            cancellationToken: ct);
+        if (runReferences > 0) return true;
+
+        var projectFb = Builders<VideoProject>.Filter;
+        var projectReferences = await db.VideoProjects.CountDocumentsAsync(
+            projectFb.Or(
+                projectFb.Eq("TimelineTracks.Clips.AssetUrl", url),
+                projectFb.Eq("Assets.Url", url)),
+            cancellationToken: ct);
+        if (projectReferences > 0) return true;
+
+        var exportReferences = await db.VideoExportTasks.CountDocumentsAsync(
+            Builders<VideoExportTask>.Filter.Eq(x => x.OutputUrl, url),
+            cancellationToken: ct);
+        return exportReferences > 0;
+
+    }
+
+    public static async Task<IAsyncDisposable> GuardProjectReferencesAsync(MongoDbContext db, IAssetStorage storage,
+        IEnumerable<VideoProjectAsset> assets, IEnumerable<VideoTimelineTrack> tracks, CancellationToken ct)
+    {
+        var targets = new List<(string Sha, string Url, Action<string> Set)>();
+        var inputs = assets.Select(asset => (asset.Url, Set: (Action<string>)(url => asset.Url = url)))
+            .Concat(tracks.SelectMany(track => track.Clips).Select(clip => (Url: clip.AssetUrl, Set: (Action<string>)(url => clip.AssetUrl = url))));
+        foreach (var (url, set) in inputs)
+        {
+            if (string.IsNullOrWhiteSpace(url)) continue;
+            var reference = TryCanonicalGeneratedReference(storage, url);
+            if (reference != null) targets.Add((reference.Value.Sha, reference.Value.Url, set));
+        }
+        var held = new List<IAsyncDisposable>();
+        try
+        {
+            foreach (var sha in targets.Select(x => x.Sha).Distinct().Order(StringComparer.Ordinal))
+                held.Add(await AcquireAsync(db, $"generated-video:{sha}", ct));
+            foreach (var target in targets)
+            {
+                if (!await HasReferencesAsync(db, target.Sha, target.Url, ct))
+                    throw new InvalidOperationException("所选生成视频素材已不可用，请重新选择仍在项目或生成记录中的素材。");
+                target.Set(target.Url);
+            }
+            return new ReferenceHandles(held);
+        }
+        catch
+        {
+            for (var i = held.Count - 1; i >= 0; i--) await held[i].DisposeAsync();
+            throw;
+        }
+    }
+
+    internal static (string Sha, string Url)? TryCanonicalGeneratedReference(IAssetStorage storage, string url)
+    {
+        var clean = url.Split('?', '#')[0];
+        var path = Uri.TryCreate(clean, UriKind.Absolute, out var uri) ? uri.AbsolutePath : clean;
+        if (!path.Contains("/video-agent/video/", StringComparison.Ordinal)) return null;
+        var file = Path.GetFileName(path); var sha = Path.GetFileNameWithoutExtension(file);
+        if (sha.Length != 64 || !sha.All(Uri.IsHexDigit)) return null;
+        var canonical = storage.BuildUrlForLogicalKey($"{AppDomainPaths.DomainVideoAgent}/{AppDomainPaths.TypeVideo}/{file}");
+        return string.Equals(clean, canonical, StringComparison.Ordinal) ? (sha.ToLowerInvariant(), canonical) : null;
+    }
+
+    private sealed class ReferenceHandles(List<IAsyncDisposable> held) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            for (var i = held.Count - 1; i >= 0; i--) await held[i].DisposeAsync();
+        }
     }
 
     private sealed class LeaseHandle : IAsyncDisposable
