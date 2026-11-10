@@ -74,6 +74,7 @@ export function MessageContentRenderer({ content, canvasItems, onPreview }: Mess
       if (item && item.src) {
         return (
           <ReadOnlyImageChip
+            className="[&>span]:!text-[var(--text-primary)]"
             key={`${keyPrefix}-${index}`}
             refId={refId}
             src={item.src}
@@ -101,7 +102,7 @@ export function MessageContentRenderer({ content, canvasItems, onPreview }: Mess
         const item = canvasItems.find((candidate) => candidate.key === segment.canvasKey);
         const src = item?.src || segment.src;
         result.push((/^(?:https?:\/\/|data:image\/)/i.test(src) || src.startsWith('/local-assets/'))
-          ? <ReadOnlyImageChip key={`token-${result.length}`} refId={segment.refId} src={src}
+          ? <ReadOnlyImageChip className="[&>span]:!text-[var(--text-primary)]" key={`token-${result.length}`} refId={segment.refId} src={src}
               label={cleanChipLabel(item?.prompt, segment.refId)}
               onClick={() => onPreview?.(src, item?.prompt || '')} />
           : <NeutralRefChip key={`token-${result.length}`} refId={segment.refId} />);
@@ -117,7 +118,7 @@ export function MessageContentRenderer({ content, canvasItems, onPreview }: Mess
         } else if (match[2]) {
           const imgUrl = match[2];
           const imgLabel = cleanChipLabel(match[3] || '', 0);
-          result.push(<ReadOnlyImageChip key={`emb-${result.length}`} refId={0} src={imgUrl}
+          result.push(<ReadOnlyImageChip className="[&>span]:!text-[var(--text-primary)]" key={`emb-${result.length}`} refId={0} src={imgUrl}
             label={imgLabel} onClick={(event) => {
               event.stopPropagation();
               onPreview?.(imgUrl, imgLabel);

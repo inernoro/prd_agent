@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, createElement } from 'react';
+import { compile } from 'tailwindcss';
 import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
@@ -80,5 +81,26 @@ describe('本地资源引用的既有地址契约', () => {
       content: `[@image:#1:original:${src}]`, canvasItems: [],
     }));
     expect(html).not.toContain('<img');
+  });
+});
+
+
+describe('历史引用标签的主题可读性', () => {
+  it.each([
+    '[@image:#1:original:https://example.com/a.png]',
+    '@img1',
+    '[IMG:https://example.com/a.png|参考图]',
+  ])('实际渲染路径接入可覆盖旧白字的主题规则：%s', async (content) => {
+    const host = document.createElement('div');
+    host.innerHTML = renderToStaticMarkup(createElement(MessageContentRenderer, {
+      content, canvasItems: [{ key: 'original', refId: 1, src: 'https://example.com/a.png' }],
+    }));
+    const chip = host.querySelector('img')!.parentElement!;
+    const candidate = [...chip.classList].find((name) => name.startsWith('[&>span]'));
+    expect(candidate).toBeDefined();
+    const compiled = await compile('@tailwind utilities;');
+    const css = compiled.build([candidate!]);
+    expect(css).toContain('&>span');
+    expect(css).toMatch(/color:\s*var\(--text-primary\)\s*!important/);
   });
 });

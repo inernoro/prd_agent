@@ -238,7 +238,8 @@ function ImageChipComponent({
         style={{
           fontSize: 13,
           fontWeight: 500,
-          color: `rgba(255,255,255,${textOpacity})`,
+          color: 'var(--text-primary)',
+          opacity: textOpacity,
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
