@@ -8,6 +8,16 @@ namespace PrdAgent.Tests;
 public class WebPageAskEvidenceTests
 {
     [Fact]
+    public void 系统规则不能包含可能被误当内部提示的网页资料()
+    {
+        var site = new HostedSite { Title = "业务资料专用标题" };
+        var snapshot = new SiteContentSnapshot { Text = "页面实值-全栈_27" };
+        var prompt = WebPageAskPrompt.Build(snapshot);
+        Assert.DoesNotContain(site.Title, prompt);
+        Assert.DoesNotContain(snapshot.Text, prompt);
+    }
+
+    [Fact]
     public void 原文以结构化数据传递_逐字保留标识和控制包装文本()
     {
         const string first = "stsmk-Owned_7.2-正文标记\n他说：\"保持原样\"，路径 C:\\docs";
@@ -27,8 +37,9 @@ public class WebPageAskEvidenceTests
     {
         const string marker = "stsmk-owned-share-正文标记";
         var snapshot = new SiteContentSnapshot { Text = marker };
-        var prompt = WebPageAskPrompt.Build(new HostedSite { Title = "验收页面" }, snapshot);
-        Assert.Contains(marker, prompt);
+        var prompt = WebPageAskPrompt.Build(snapshot);
+        using var message = JsonDocument.Parse(WebPageAskPrompt.BuildUserMessage(new HostedSite { Title = "验收页面" }, new WebPageAskEvidence(snapshot.Text), "正文标记是什么？"));
+        Assert.Equal(marker, message.RootElement.GetProperty("sources")[0].GetProperty("text").GetString());
         Assert.Contains("逐字保留完整值，包括字母、数字和前后缀", prompt);
         Assert.Contains("不能因其看起来像测试值或占位文字而忽略已有内容", prompt);
     }
@@ -89,8 +100,11 @@ public class WebPageAskEvidenceTests
     {
         var snapshot = new SiteContentSnapshot { Text = "第一段\n\n第二段", Truncated = true };
         var evidence = new WebPageAskEvidence(snapshot.Text);
-        var prompt = WebPageAskPrompt.Build(new HostedSite { Title = "测试页" }, snapshot, evidence);
-        Assert.Contains(evidence.ToPromptText(), prompt);
+        var prompt = WebPageAskPrompt.Build(snapshot);
+        using var input = JsonDocument.Parse(WebPageAskPrompt.BuildUserMessage(new HostedSite { Title = "测试页" }, evidence, "完整问题\"不会切出字段\""));
+        Assert.Equal("完整问题\"不会切出字段\"", input.RootElement.GetProperty("question").GetString());
+        Assert.Equal("测试页", input.RootElement.GetProperty("pageTitle").GetString());
+        Assert.Equal(2, input.RootElement.GetProperty("sources").GetArrayLength());
         using var document = JsonDocument.Parse(evidence.ToPromptText());
         Assert.Equal(new[] { "第一段", "第二段" }, document.RootElement.EnumerateArray()
             .Select(item => item.GetProperty("text").GetString()).ToArray());

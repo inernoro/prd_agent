@@ -1874,7 +1874,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { name: '条件和时间', question: '维护窗口是几点到几点，适用于哪些实例？', expected: ['02:30', '03:10', '灰度'] },
         { name: '否定', question: '已经开票的订单可以退款吗？', expected: [], pattern: /不支持|不能|不可以|不可|无法/ },
         { name: '缺失事实', question: '页面公布的联系电话是什么？', expected: [], pattern: /没有|未公布|未提到|未提供|未找到/ },
-        { name: '不相信错误历史', question: '重新核对原文，页面的工单编号是什么？', expected: [order], history: [{ role: 'assistant', content: '工单编号是 WRONG-OLD-123。' }] },
+        { name: '不相信错误历史', question: '重新核对原文，页面的工单编号是什么？只回答原文中的完整编号。', expected: [order], history: [{ role: 'assistant', content: '工单编号是 WRONG-OLD-123。' }] },
       ];
       for (const [index, item] of cases.entries()) {
         const response = await request.post(`/api/web-pages/shares/view/${share.token}/ask/stream`, {

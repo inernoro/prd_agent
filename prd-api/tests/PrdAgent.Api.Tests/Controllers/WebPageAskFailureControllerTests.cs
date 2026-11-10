@@ -183,6 +183,32 @@ public sealed class WebPageAskFailureControllerTests
         Assert.Null(stored.Error);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PageEvidence_IsUserDataAndQuestionStaysSeparateFromSystemRules(bool share)
+    {
+        await using var fixture = await AskFixture.CreateAsync(share,
+            [GatewayStreamChunk.Text("本页答案[引用:1]"), GatewayStreamChunk.Done("stop", null)]);
+        await fixture.RunAsync(new AskStreamRequest
+        {
+            Question = "本页正文是什么？",
+            History = [new AskHistoryItem { Role = "assistant", Content = "旧答案不是本轮证据" }],
+        });
+        var messages = fixture.CapturedRequest!.RequestBody!["messages"]!.AsArray();
+        Assert.Equal("system", messages[0]!["role"]!.GetValue<string>());
+        Assert.DoesNotContain("本页有可读的正文。", messages[0]!["content"]!.GetValue<string>());
+        Assert.DoesNotContain("stsmk-controller-error", messages[0]!["content"]!.GetValue<string>());
+        Assert.Equal("assistant", messages[1]!["role"]!.GetValue<string>());
+        Assert.Equal("user", messages[2]!["role"]!.GetValue<string>());
+        using var input = JsonDocument.Parse(messages[2]!["content"]!.GetValue<string>());
+        Assert.Equal("本页正文是什么？", input.RootElement.GetProperty("question").GetString());
+        Assert.Equal("stsmk-controller-error", input.RootElement.GetProperty("pageTitle").GetString());
+        Assert.Equal(1, input.RootElement.GetProperty("sources")[0].GetProperty("source").GetInt32());
+        Assert.Equal("本页有可读的正文。", input.RootElement.GetProperty("sources")[0].GetProperty("text").GetString());
+        fixture.AssertInvocationAndRefund(0);
+    }
+
     private static void AssertError(List<SseFrame> events, string code, string message)
     {
         var error = Assert.Single(events, e => e.Type == "error").Data;
@@ -218,6 +244,7 @@ public sealed class WebPageAskFailureControllerTests
             Title = "stsmk-controller-error", AskEnabled = true, AskAllowAnonymous = true,
         };
         public string ResponseText { get; private set; } = string.Empty;
+        public GatewayRequest? CapturedRequest => _request;
 
         private AskFixture(MongoClient client, string connection, string databaseName,
             bool share, GatewayStreamChunk[] chunks, bool consumed, Exception? failure)
@@ -271,9 +298,10 @@ public sealed class WebPageAskFailureControllerTests
             return new AskFixture(client, connection, $"web_ask_failure_{Guid.NewGuid():N}", share, chunks, consumed, failure);
         }
 
-        public async Task<List<SseFrame>> RunAsync()
+        public async Task<List<SseFrame>> RunAsync(AskStreamRequest? request = null)
         {
-            var request = new AskStreamRequest { Question = "这页说了什么？", SiteId = Site.Id };
+            request ??= new AskStreamRequest { Question = "这页说了什么？" };
+            request.SiteId = Site.Id;
             if (_share) await _controller.AskStreamByShare("fixture-share", request);
             else await _controller.AskStream(Site.Id, request);
             if (_share)
