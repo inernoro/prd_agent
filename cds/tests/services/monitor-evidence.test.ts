@@ -17,6 +17,17 @@ describe('近期真实请求／响应摘录', () => {
       expect(Buffer.byteLength(String(text))).toBeLessThanOrEqual(4096);
     }
   });
+  it('真实判据错误拼入JSON时隐藏非结构化内容，实际值仍单独提供脱敏预览', () => {
+    const actual = JSON.stringify({ password: 'hidden-assert-secret', count: 12 });
+    const err = `实际 ${actual}，期望等于 10`;
+    const observation = publicMonitorObservation({ at: '', ok: false, elapsedMs: 1,
+      results: [{ path: 'payload', op: 'eq', actual, expected: '10', ok: false, err }] });
+    const sample = publicUptimeSample({ t: 1, up: false, ms: 1, err, finding: err });
+    expect(JSON.stringify([observation, sample])).not.toContain('hidden-assert-secret');
+    expect(observation.results[0].actual).toContain('12');
+    expect(observation.results[0].err).toContain('已隐藏');
+    expect(sample.err).toContain('已隐藏');
+  });
   it('HTTP200但实际指标越界保留收到响应与阈值证据，不把目标错误叫采集失败', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ checks: { orders: [{ componentId: 'orders', observedValue: 12, status: 'fail', password: 'not-for-evidence' }] } }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const outcome = await probeCustomMonitor(monitor, 1000);

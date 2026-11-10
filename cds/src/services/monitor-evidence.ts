@@ -11,6 +11,8 @@ export function diagnosticValue(value: unknown): unknown {
     if (depth > 5) return '[层级已截断]';
     if (typeof item === 'string') {
       if (/^\s*[\[{]/.test(item)) { try { return JSON.stringify(walk(JSON.parse(item), depth + 1)); } catch { /* unstructured text */ } }
+      // 判据失败说明会拼入原始JSON。只检测敏感键并隐藏整句，不解析自由文本片段。
+      if ([...item.matchAll(/"([^"\\]+)"\s*:/g)].some(([, key]) => sensitivePath(key))) return '[含敏感 JSON 字段的非结构化内容已隐藏]';
       return maskSecrets(item, { mask: true }).replace(/https?:\/\/[^\s<>\"']+/gi, url => diagnosticUrl(url)).slice(0, 1024);
     }
     if (item === null || typeof item === 'boolean' || typeof item === 'number') return item;
