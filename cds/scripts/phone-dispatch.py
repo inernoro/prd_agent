@@ -1,6 +1,10 @@
 """手机出口的持久化摘要队列。调用者持有进程文件锁，凭据与记录仅在私有目录。"""
 import hashlib
 import json
+from pathlib import Path
+
+# 与 CDS 报告中心、服务端共用唯一模板文件；不在 Python 里复制通知句子。
+CATALOG = json.loads((Path(__file__).resolve().parents[1] / 'src/shared/notification-templates.json').read_text())
 
 
 class PhoneDispatch:
@@ -42,14 +46,19 @@ class PhoneDispatch:
             items.sort(key=lambda i: i['message'].get('level') == 'passive')
             message = dict(items[0]['message'])
             if len(items) > 1:
-                titles = list(dict.fromkeys(i['message']['title'] for i in items))
-                message.update(title=f'新增严重故障，共 {len(items)} 项变化' if urgent_ready else f'有 {len(items)} 项监控变化，请查看',
-                    body='；'.join(titles[:3]) + (f'；另有 {len(titles)-3} 项' if len(titles) > 3 else '') + '。各项故障分别保留，点击查看详情。',
+                # 收件环境与主体从服务端的结构化消息取得，不能以转发服务器替代。
+                origins = [i['message'].get('notificationOrigin', {}) for i in items]
+                environments = {o.get('environment', 'unknown') for o in origins}
+                systems = {o.get('system', 'unknown') for o in origins}
+                env = CATALOG['environments'].get(next(iter(environments)), CATALOG['environments']['unknown']) if len(environments) == 1 else CATALOG['digest']['mixedEnvironment']
+                system = CATALOG['systems'].get(next(iter(systems)), CATALOG['systems']['unknown']) if len(systems) == 1 else CATALOG['digest']['mixedSystem']
+                message.update(title=env + ' ' + system,
+                    body=CATALOG['templates']['MSG-01']['text'].replace('{count}', str(len(items))),
                     level='active' if any(i['message'].get('level') != 'passive' for i in items) else 'passive')
                 # 摘要落到列表，不能让多项故障都只指向第一项。原始深链仍在私有台账中。
                 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
                 url = urlsplit(message.get('url', ''))
-                query = [(k, v) for k, v in parse_qsl(url.query) if k not in ('target', 'detectedAt', 'incident')]
+                query = [(k, v) for k, v in parse_qsl(url.query) if k not in ('target', 'detectedAt', 'incident', 'report')]
                 fragment = dict(parse_qsl(url.fragment))
                 from datetime import datetime, timezone
                 notice = {'detectedAt': datetime.fromtimestamp(now, timezone.utc).isoformat(), 'name': '监控通知汇总', 'finding': message['body'], 'count': len(items), 'assessment': 'notification-digest'}

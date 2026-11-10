@@ -142,6 +142,7 @@ export function TargetDetail({
             </Button>
           ) : null}
           <div className="min-w-0 flex-1">
+            <Link className="mb-2 inline-block text-sm text-primary underline" to={`/reports?target=${encodeURIComponent(target.id)}`}>查看关联事件报告</Link>
             <p className="mb-2 text-muted-foreground">{target.projectName || target.projectId || '未归属项目'} · {target.environmentLabel}</p>
             <div className="flex flex-wrap items-center gap-2">
               <HomeStateBadge state={homeState(target, now)} />

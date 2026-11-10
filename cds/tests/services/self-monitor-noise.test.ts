@@ -93,7 +93,7 @@ describe('通知恢复策略', () => {
   });
   it('内部指标异常不再声称业务挂掉', () => {
     const result = renderAlarmMessage({ projectId: 'cds-self-monitor', targetName: 'P95', kind: 'business-down', message: '观测超标', detectedAt: '', consecutiveFailures: 3 });
-    expect(result.title).toBe('P95：检查异常'); expect(result.level).toBe('active');
+    expect(result.title).toBe('环境待确认 系统待确认'); expect(result.body).toContain('P95检查异常'); expect(result.level).toBe('active');
     expect(result.body).not.toContain('用户现在用不了');
   });
 });

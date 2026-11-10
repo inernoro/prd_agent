@@ -473,3 +473,6 @@
 - [PDR-PLATFORM-001 知识协作的产品根基与承重契约 · 产品决策](./pdr.platform.001.product-foundation.md) `pdr.platform.001.product-foundation`
 - [PDR-PRODUCT-001 重要业务规则保留历史适用依据 · 产品决策](./pdr.product-agent.001.rule-evolution.md) `pdr.product-agent.001.rule-evolution`
 - [PDR-PRODUCT-002 正式版本申领与后续资料分离 · 产品决策](./pdr.product-agent.002.version-claim-boundary.md) `pdr.product-agent.002.version-claim-boundary`
+
+- [通知分类与短讯报告 · 设计](./design.platform.notification.templates.md) `design.platform.notification.templates`
+- [CDS 通知验收边界](./debt.cds.notification.md) `debt.cds.notification`

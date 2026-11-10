@@ -13,6 +13,8 @@ import urllib.parse
 import uuid
 
 
+CATALOG = json.loads((Path(__file__).resolve().parents[1] / 'src/shared/notification-templates.json').read_text())
+
 def iso(now):
     return dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat()
 
@@ -130,14 +132,16 @@ def notify(config, state, transition, now, dispatcher=None):
     if transition == 'recovered' and not any(d.get('accepted') and d.get('incidentId') == event.get('id') and d.get('transition') != 'recovered' for d in state.get('deliveries', [])):
         return True
     identity = config.get('identity', {})
-    subject = config.get('displayName', '监控平台')
-    environment = identity.get('subject', {}).get('environment', '生产')
-    result = '已恢复' if transition == 'recovered' else '访问无响应' if event.get('reason') == 'unreachable' else '状态暂时无法确认'
-    title = subject + ' · ' + environment + '：' + result
-    payload = {'device_key': bark['key'], 'title': title,
-               'body': '外部检查持续失败，相关检查已合并。点击查看影响与处理建议。' if transition != 'recovered' else '外部访问已持续恢复。点击查看处理记录。',
+    declared = identity.get('subject', {}).get('environment')
+    environment = declared if declared in CATALOG['environments'] else next((key for key, label in CATALOG['environments'].items() if label == declared), CATALOG.get('environmentAliases', {}).get(declared, 'unknown'))
+    template_id = 'MON-03' if transition == 'recovered' else 'MON-01' if event.get('reason') == 'unreachable' else 'MON-02'
+    function = '入口' if event.get('reason') == 'unreachable' else '监控读取'
+    title = CATALOG['environments'][environment] + ' ' + CATALOG['systems']['cds']
+    body = CATALOG['templates'][template_id]['text'].replace('{function}', function).replace('{subject}', CATALOG['systems']['cds'])
+    payload = {'device_key': bark['key'], 'title': title, 'body': body,
+               'notificationOrigin': {'environment': environment, 'system': 'cds'},
                'url': incident_url(config, event.get('id', '')),
-               'group': subject + ' · ' + identity.get('subject', {}).get('environment', '生产'), 'level': 'passive' if transition == 'recovered' else 'active'}
+               'group': title, 'level': 'passive' if transition == 'recovered' else 'active'}
     icon = identity.get('observer', {}).get('iconUrl') or bark.get('iconUrl')
     if icon:
         parsed = urllib.parse.urlsplit(icon)

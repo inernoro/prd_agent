@@ -8,7 +8,7 @@ import ts from 'typescript';
 import { AlarmRelay } from '../../src/services/alarm-relay.js';
 import { AlarmLedger } from '../../src/services/alarm-channel.js';
 import { withAlarmDeliveryHistory } from '../../src/services/alarm-delivery-history.js';
-import type { AlarmChannelConfig, AlarmEvent, MonitorNotificationSettings } from '../../src/services/alarm-route.js';
+import { renderAlarmMessage, type AlarmChannelConfig, type AlarmEvent, type MonitorNotificationSettings } from '../../src/services/alarm-route.js';
 
 it('只有持有私钥的接收端可获得投递配置；确认就绪后主站让出所有权，重启保留待投递事件', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alarm-relay-'));
@@ -226,9 +226,9 @@ it('真实应用取消回调保留通道健康和冷读状态，真正投递失�
       if (channel) channel.lastDelivery = last;
     } });
     const markAlarmDelivered = vi.fn(async () => undefined);
-    const callback = new Function('alarmLedger', 'activeServerEventLogStore', 'stateService', 'withAlarmDeliveryHistory', 'uptimeMonitor', `return (${handler!.getText(ast)})`)(
+    const callback = new Function('alarmLedger', 'activeServerEventLogStore', 'stateService', 'withAlarmDeliveryHistory', 'uptimeMonitor', 'renderAlarmMessage', `return (${handler!.getText(ast)})`)(
       ledger, { record: (row: typeof records[number]) => records.push(row) },
-      { listAlarmChannels: () => f.channels }, withAlarmDeliveryHistory, { markAlarmDelivered },
+      { listAlarmChannels: () => f.channels }, withAlarmDeliveryHistory, { markAlarmDelivered }, renderAlarmMessage,
     );
     f.acknowledged.mockImplementation(callback);
     ledger.record('phone', { ok: true, status: 200 }, 'drill', 123);

@@ -190,6 +190,7 @@ export function ServiceDetail({ service: service, category, summary, incidents, 
       <div><p className="eyebrow">{category.name} · {target.environmentLabel} · {service.custom ? '我的服务' : '平台服务'}</p><h2>{service.name}</h2></div>
       <span className={`pill ${service.state}`}><Glyph state={service.state} />当前 · {label}</span><span className="sp" />
       {service.state === 'bad' ? <><button className="btn ghost sm" disabled={notificationBusy || settings === undefined} onClick={() => void updateNotification({ acknowledged: !acknowledged })}>{acknowledged ? '已确认 · 撤销' : '确认处理'}</button><button className="btn ghost sm" disabled={notificationBusy || settings === undefined} onClick={() => void updateNotification({ muteUntil: muted ? null : Date.now() + 30 * 60_000 })}>{muted ? '取消静默' : '静默 30 分钟'}</button></> : null}
+      <a className="btn ghost sm" href={`/reports?target=${encodeURIComponent(target.id)}`}>事件报告</a>
       <button className="btn ghost sm" onClick={onNotify}>通知设置</button>
     </div>
     <div className="svm">

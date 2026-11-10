@@ -18,9 +18,10 @@ it('真实预构建在完全没有源码目录时也可导入快照模块', () =
     expect(build.status, build.stderr).toBe(0);
     expect(fs.existsSync(path.join(root, 'src'))).toBe(false);
     const imported = spawnSync(process.execPath, ['--input-type=module', '-e',
-      `const m=await import(${JSON.stringify(pathToFileURL(path.join(dist, 'services/preview-instance-seed.js')).href)});if(typeof m.seedPreviewInstanceSnapshot!=='function')process.exit(2);`],
+      `const m=await import(${JSON.stringify(pathToFileURL(path.join(dist, 'services/preview-instance-seed.js')).href)});if(typeof m.seedPreviewInstanceSnapshot!=='function')process.exit(2);const n=await import(${JSON.stringify(pathToFileURL(path.join(dist, 'shared/notification-templates.js')).href)});if(n.renderNotification('MSG-02',{environment:'test',system:'cds'}).sentence!=='测试 CDS 手机通知测试')process.exit(3);`],
     { cwd: root, encoding: 'utf8', timeout: 20_000 });
     expect(imported.status, imported.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(dist, 'shared/notification-templates.json'))).toEqual(fs.readFileSync(path.join(cdsRoot, 'src/shared/notification-templates.json')));
     expect(fs.readFileSync(path.join(dist, 'services/preview-demo-snapshot.json')))
       .toEqual(fs.readFileSync(path.join(cdsRoot, 'src/services/preview-demo-snapshot.json')));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }

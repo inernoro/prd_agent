@@ -1,0 +1,321 @@
+{
+  "categories": {
+    "availability": "服务可用性",
+    "result": "功能结果",
+    "upstream": "上游依赖",
+    "billing": "额度账单",
+    "usage": "价格用量",
+    "release": "发布回滚",
+    "acceptance": "验收巡检",
+    "collaboration": "任务协作",
+    "expiry": "资源到期",
+    "delivery": "通知链路"
+  },
+  "systems": {
+    "map": "MAP",
+    "llmgw": "LLMGW",
+    "cds": "CDS",
+    "other": "其他系统",
+    "unknown": "系统待确认"
+  },
+  "environments": {
+    "production": "正式",
+    "test": "测试",
+    "staging": "预发",
+    "preview": "分支预览",
+    "local": "本地",
+    "unknown": "环境待确认"
+  },
+  "templates": {
+    "MON-01": {
+      "categories": [
+        "availability",
+        "result"
+      ],
+      "text": "{function}已不可用",
+      "required": [
+        "function"
+      ]
+    },
+    "MON-02": {
+      "categories": [
+        "availability"
+      ],
+      "text": "监控读取失败，{subject}状态未知"
+    },
+    "MON-03": {
+      "categories": [
+        "availability",
+        "result"
+      ],
+      "text": "{function}已恢复",
+      "required": [
+        "function"
+      ]
+    },
+    "MON-04": {
+      "categories": [
+        "availability"
+      ],
+      "text": "{function}检查异常，原因未明",
+      "required": [
+        "function"
+      ]
+    },
+    "GW-01": {
+      "categories": [
+        "billing",
+        "upstream",
+        "result"
+      ],
+      "text": "{function} {provider}账号欠费",
+      "required": [
+        "provider"
+      ]
+    },
+    "GW-02": {
+      "categories": [
+        "billing",
+        "upstream"
+      ],
+      "text": "{function} {provider}余额不足",
+      "required": [
+        "provider"
+      ]
+    },
+    "GW-03": {
+      "categories": [
+        "billing",
+        "upstream"
+      ],
+      "text": "{provider}密钥额度已用完",
+      "required": [
+        "provider"
+      ]
+    },
+    "GW-04": {
+      "categories": [
+        "upstream",
+        "result"
+      ],
+      "text": "{function} {provider} {window}限流{count}次",
+      "required": [
+        "function",
+        "provider",
+        "count"
+      ]
+    },
+    "GW-05": {
+      "categories": [
+        "upstream",
+        "result"
+      ],
+      "text": "{function} {provider}未授权",
+      "required": [
+        "function",
+        "provider"
+      ]
+    },
+    "GW-06": {
+      "categories": [
+        "usage"
+      ],
+      "text": "{modelCount}个模型未配价格",
+      "required": [
+        "modelCount"
+      ]
+    },
+    "GW-07": {
+      "categories": [
+        "usage"
+      ],
+      "text": "文本{count}次用量为0",
+      "required": [
+        "count"
+      ]
+    },
+    "GW-08": {
+      "categories": [
+        "upstream",
+        "result"
+      ],
+      "text": "{function}备路完成，主路异常",
+      "required": [
+        "function"
+      ]
+    },
+    "REL-01": {
+      "categories": [
+        "release"
+      ],
+      "text": "{version}发布完成",
+      "required": [
+        "version"
+      ]
+    },
+    "REL-02": {
+      "categories": [
+        "release"
+      ],
+      "text": "{version}发布失败",
+      "required": [
+        "version"
+      ]
+    },
+    "REL-03": {
+      "categories": [
+        "release"
+      ],
+      "text": "已回滚至{version}",
+      "required": [
+        "version"
+      ]
+    },
+    "ACC-01": {
+      "categories": [
+        "acceptance"
+      ],
+      "text": "验收{total}项全通过",
+      "required": [
+        "total"
+      ]
+    },
+    "ACC-02": {
+      "categories": [
+        "acceptance",
+        "result"
+      ],
+      "text": "验收{failed}项未通过",
+      "required": [
+        "failed"
+      ]
+    },
+    "ACC-03": {
+      "categories": [
+        "acceptance",
+        "upstream"
+      ],
+      "text": "验收{blocked}项受阻",
+      "required": [
+        "blocked"
+      ]
+    },
+    "TASK-01": {
+      "categories": [
+        "result",
+        "collaboration"
+      ],
+      "text": "{function}已完成",
+      "required": [
+        "function"
+      ]
+    },
+    "TASK-02": {
+      "categories": [
+        "result",
+        "collaboration"
+      ],
+      "text": "{function} {provider} {window}失败{count}次",
+      "required": [
+        "function",
+        "count"
+      ]
+    },
+    "TASK-03": {
+      "categories": [
+        "collaboration"
+      ],
+      "text": "{task}等待{waitingFor}",
+      "required": [
+        "task",
+        "waitingFor"
+      ]
+    },
+    "WORK-01": {
+      "categories": [
+        "collaboration"
+      ],
+      "text": "缺陷「{shortTitle}」分配给你",
+      "required": [
+        "shortTitle"
+      ]
+    },
+    "WORK-02": {
+      "categories": [
+        "collaboration",
+        "acceptance"
+      ],
+      "text": "「{shortTitle}」修复待验收",
+      "required": [
+        "shortTitle"
+      ]
+    },
+    "WORK-03": {
+      "categories": [
+        "collaboration"
+      ],
+      "text": "{documentType}「{shortTitle}」待审",
+      "required": [
+        "documentType",
+        "shortTitle"
+      ]
+    },
+    "WORK-04": {
+      "categories": [
+        "collaboration"
+      ],
+      "text": "新增反馈「{shortTitle}」",
+      "required": [
+        "shortTitle"
+      ]
+    },
+    "OPS-01": {
+      "categories": [
+        "expiry",
+        "availability"
+      ],
+      "text": "{resource}将在{days}天后到期",
+      "required": [
+        "resource",
+        "days"
+      ]
+    },
+    "MSG-01": {
+      "categories": [
+        "delivery"
+      ],
+      "text": "新增{count}项消息",
+      "required": [
+        "count"
+      ]
+    },
+    "MSG-02": {
+      "categories": [
+        "delivery"
+      ],
+      "text": "手机通知测试"
+    },
+    "MSG-03": {
+      "categories": [
+        "delivery"
+      ],
+      "text": "{channel}通知投递失败",
+      "required": [
+        "channel"
+      ]
+    },
+    "MSG-04": {
+      "categories": [
+        "delivery"
+      ],
+      "text": "来源需核对"
+    }
+  },
+  "digest": {
+    "mixedEnvironment": "多环境",
+    "mixedSystem": "多系统"
+  },
+  "environmentAliases": {
+    "生产": "production"
+  }
+}

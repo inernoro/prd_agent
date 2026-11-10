@@ -1,3 +1,6 @@
+import { notificationFunction } from './shared/notification-templates.js';
+import { NotificationReportRecorder, systemForProject } from './services/notification-report.js';
+import type { AlarmEvent } from './services/alarm-route.js';
 import { BranchLifecycleService, stopBranchForLifecycle } from './services/branch-lifecycle.js';
 import { inspectionHealthDocument } from './services/project-inspections.js';
 import { createProjectInspectionsRouter } from './routes/project-inspections.js';
@@ -174,7 +177,7 @@ import { backfillReportReadScope } from './services/connection/pairing-service.j
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
-import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected } from './services/alarm-route.js';
+import { channelConfigured, classifyAlert, routeAlarm, notificationChannelSelected, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
@@ -6236,6 +6239,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     return hosts;
   };
 
+  const notificationReports = new NotificationReportRecorder(stateService);
   const uptimeMonitor = new UptimeMonitorService({
     state: {
       getAllBranches: () => stateService.getAllBranches(),
@@ -6276,8 +6280,37 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       operationId: crypto.randomUUID(), projectId: data.projectId, message: `${data.targetName}：通知已合并（${data.reason}）`,
       details: { kind: 'policy', targetId: data.targetId, targetName: data.targetName, reason: data.reason, detectedAt: new Date(data.at).toISOString() },
     }),
-    onAlert: (type, data) => {
+    onAlert: async (type, data) => {
       cdsEventsBus.publish(type, data);
+      // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
+      // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
+      // 上游已去抖，重试会把一次翻转变成多条通知）。
+      const event: AlarmEvent = {
+        notificationFacts: { environment: data.notificationEnvironment || 'unknown', system: systemForProject(data.projectId === '__self__' ? 'cds' : stateService.getProject(data.projectId)?.slug),
+          function: notificationFunction(data.targetName) },
+        identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
+        correlationKey: data.assessment === 'observation-unavailable'
+          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
+          : data.targetId,
+        incidentId: data.incidentId,
+        targetId: data.targetId,
+        urgency: data.urgency,
+        kind: classifyAlert(type, data.source),
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
+        projectId: data.projectId,
+        targetName: data.targetName,
+        message: data.message,
+        detectedAt: data.detectedAt,
+        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
+        consecutiveFailures: data.consecutiveFailures,
+      };
+      let boardUrl = alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt);
+      try {
+        const record = await notificationReports.record(event);
+        event.reportId = record.reportId;
+        event.eventId = record.eventId;
+        if (boardUrl) { const url = new URL(boardUrl); url.pathname = '/reports'; url.search = new URLSearchParams({ report: record.reportId }).toString(); boardUrl = url.toString(); }
+      } catch { console.warn('[alarm] 监控事件报告归档失败，通知继续发送，详情保留监控入口。'); }
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
@@ -6290,7 +6323,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         projectId: data.projectId,
         branchId: data.branchId,
         probeUrl: data.probeUrl,
-        boardUrl: alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt),
+        boardUrl,
+        notificationFacts: event.notificationFacts,
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,
@@ -6307,27 +6341,6 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           console.warn(`[map-notifier] ${reason}`);
         });
 
-      // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
-      // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
-      // 上游已去抖，重试会把一次翻转变成多条通知）。
-      const event = {
-        identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
-        correlationKey: data.assessment === 'observation-unavailable'
-          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
-          : data.targetId,
-        targetId: data.targetId,
-        incidentId: data.incidentId,
-        urgency: data.urgency,
-        kind: classifyAlert(type, data.source),
-        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
-        projectId: data.projectId,
-        targetName: data.targetName,
-        message: data.message,
-        detectedAt: data.detectedAt,
-        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
-        consecutiveFailures: data.consecutiveFailures,
-      };
-      const boardUrl = alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt);
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event, stateService.getMonitorNotifications())) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
         if (alarmRelay.owns(channel.id)) {
@@ -6622,13 +6635,15 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           channelId: item.channelId, channelName: channel?.name ?? '已删除的通知通道', channelKind: channel?.kind ?? 'bark',
           kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
           targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
-          title: item.event.targetName, body: '由独立监控统一投递，详细证据保留在事件记录中。',
+          reportId: item.event.reportId, eventId: item.event.eventId,
+          title: renderAlarmMessage(item.event).title, body: renderAlarmMessage(item.event).body,
         }, async () => result);
         if (result.ok && item.event.kind.endsWith('-down') && item.event.targetId && !item.event.drill)
           await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channelId, item.event.detectedAt);
       },
     });
     registerAlarmChannelRoutes(r, {
+      recordEvent: (event) => notificationReports.record(event),
       relay: alarmRelay,
       getIdentity: () => stateService.getAlarmIdentity(),
       setIdentity: (identity) => stateService.setAlarmIdentity(identity),

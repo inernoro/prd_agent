@@ -1,3 +1,4 @@
+import { notificationEnvironment } from '../shared/notification-templates.js';
 import type { AlarmRelay } from '../services/alarm-relay.js';
 import { parseAlarmIdentity, identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-identity.js';
 /*
@@ -40,6 +41,7 @@ import {
 } from '../services/alarm-route.js';
 
 export interface AlarmChannelRoutesDeps {
+  recordEvent?: (event: import('../services/alarm-route.js').AlarmEvent) => Promise<{ reportId: string; eventId: string }>;
   relay?: AlarmRelay;
   getIdentity?: () => AlarmIdentitySettings | undefined;
   setIdentity?: (identity: AlarmIdentitySettings) => void;
@@ -350,17 +352,25 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     const channel = deps.list().find((c) => c.id === req.params.id);
     if (!channel) { res.status(404).json({ error: '通道不存在' }); return; }
     const now = Date.now();
-    const boardUrl = deps.boardUrl?.();
+    let boardUrl = deps.boardUrl?.();
+    const identity = identityForAlarm(deps.getIdentity?.());
+    const declared = identity?.observer.environment;
+    const environment = notificationEnvironment({ declared });
+    const event = { ...drillEvent(now), identity, notificationFacts: { environment, system: 'cds' as const } };
+    if (deps.recordEvent) {
+      try { const record = await deps.recordEvent(event); Object.assign(event, record); if (boardUrl) { const url = new URL(boardUrl); url.pathname = '/reports'; url.search = new URLSearchParams({ report: record.reportId }).toString(); boardUrl = url.toString(); } }
+      catch { res.status(503).json({ message: '通知演练报告未保存，本次未发送，请稍后重试' }); return; }
+    }
     if (deps.relay?.owns(channel.id)) {
-      const id = deps.relay.enqueue(channel.id, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, boardUrl);
-      res.json({ queued: true, id, owner: '独立监控' }); return;
+      const id = deps.relay.enqueue(channel.id, event, boardUrl);
+      res.json({ queued: true, id, reportId: (event as import('../services/alarm-route.js').AlarmEvent).reportId, owner: '独立监控' }); return;
     }
     if (channel.kind === 'bark' && phoneDispatchConfigured()) {
-      void sendAlarm(channel, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, { boardUrl, history: deps.history, deliveryKind: 'drill' })
+      void sendAlarm(channel, event, { boardUrl, history: deps.history, deliveryKind: 'drill' })
         .catch(() => console.warn('[alarm] 演练入队失败，请检查私有通知队列'));
-      res.json({ queued: true, owner: '通知摘要队列' }); return;
+      res.json({ queued: true, reportId: (event as import('../services/alarm-route.js').AlarmEvent).reportId, owner: '通知摘要队列' }); return;
     }
-    const result = await sendAlarm(channel, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, { boardUrl, history: deps.history, deliveryKind: 'drill' });
+    const result = await sendAlarm(channel, event, { boardUrl, history: deps.history, deliveryKind: 'drill' });
     deps.ledger.record(channel.id, result, 'drill', now);
     res.json({ ...result, status: deps.ledger.view(channel, channelConfigured(channel)) });
   });

@@ -2937,6 +2937,8 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
+  classification?: import('./shared/notification-templates.js').ReportClassification;
+  monitorEvent?: import('./shared/notification-templates.js').ReportMonitorEvent;
   reportType?: 'acceptance' | 'code-review';
   reviewTaskId?: string;
   /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */

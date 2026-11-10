@@ -1,3 +1,5 @@
+import { alarmNotification } from './notification-report.js';
+import { NOTIFICATION_ENVIRONMENTS, type NotificationFacts } from '../shared/notification-templates.js';
 import { identityLabel, type AlarmIdentity } from './alarm-identity.js';
 import { classifyAlert as sharedClassifyAlert, type AlarmEventKind } from '../shared/alarm-classification.js';
 export type { AlarmEventKind } from '../shared/alarm-classification.js';
@@ -155,6 +157,9 @@ export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | '
 /** 一条要发出去的事。已经过分类，协议层只认它，不认 uptime 的原始事件。 */
 export interface AlarmEvent {
   incidentId?: string;
+  notificationFacts?: NotificationFacts;
+  reportId?: string;
+  eventId?: string;
   /** 服务端根据已确认的生产可用性故障判定；不读取标题或推送音效。 */
   urgency?: 'urgent' | 'normal';
   businessName?: string;
@@ -211,6 +216,7 @@ export function routeAlarm(
 
 /** 一条渲染好的通知。协议层只管把它变成各自的请求，不再自己拼句子。 */
 export interface AlarmMessage {
+  notificationOrigin?: Pick<NotificationFacts, 'environment' | 'system'>;
   icon?: string;
   group?: string;
   title: string;
@@ -231,26 +237,15 @@ export interface AlarmMessage {
 export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string } = {}): AlarmMessage {
   const message = renderAlarmContent(event, opts);
   if (!event.identity) return message;
-  const { observer, subject } = event.identity;
+  const { observer } = event.identity;
   return { ...message, icon: observer.iconUrl,
-    group: `${event.businessName || event.projectId} · ${event.environmentLabel || subject.environment}` };
+    group: `${event.businessName || event.projectId} · ${NOTIFICATION_ENVIRONMENTS[message.notificationOrigin?.environment || 'unknown']}` };
 }
 function renderAlarmContent(event: AlarmEvent, opts: { boardUrl?: string }): AlarmMessage {
-  const recovered = event.kind.endsWith('-recovered');
-  const collection = event.assessment === 'observation-unavailable';
-  const scope = event.environmentLabel ? ` · ${event.environmentLabel}` : '';
-  const result = recovered ? '已稳定恢复' : collection ? '暂时无法确认状态' : '检查异常';
-  const impact = collection
-    ? `${event.affectedChecks || '多'} 项检查暂时无法读取，尚未确认业务中断。`
-    : (event.finding || '检查连续未通过，影响范围需结合实际业务核实。');
-  return {
-    title: event.drill ? '通知演练：新通知样式已启用' : `${collection ? event.businessName || event.targetName : event.targetName}${scope}：${result}`,
-    body: event.drill ? '这是一条演练通知。共同异常会合并，独立故障仍分别报告。点击查看示例。' : recovered
-      ? '检查已持续恢复。点击查看处理记录。'
-      : `${impact}\n下一步：查看原因与处理建议。`,
-    level: recovered ? 'passive' : 'active',
-    ...(opts.boardUrl ? { url: opts.boardUrl } : {}),
-  };
+  const notification = alarmNotification(event);
+  return { title: notification.title, body: notification.body, notificationOrigin: { environment: notification.facts.environment, system: notification.id === 'MON-02' ? 'cds' : notification.facts.system },
+    level: event.kind.endsWith('-recovered') ? 'passive' : 'active',
+    ...(opts.boardUrl ? { url: opts.boardUrl } : {}) };
 }
 
 /** 模板占位符。有限的一张表——模板里写别的名字就是原样留着，不静默变空。 */
