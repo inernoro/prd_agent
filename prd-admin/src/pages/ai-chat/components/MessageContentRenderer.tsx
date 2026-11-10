@@ -100,7 +100,7 @@ export function MessageContentRenderer({ content, canvasItems, onPreview }: Mess
       if (segment.type === 'chip') {
         const item = canvasItems.find((candidate) => candidate.key === segment.canvasKey);
         const src = item?.src || segment.src;
-        result.push(/^(?:https?:\/\/|data:image\/)/i.test(src)
+        result.push((/^(?:https?:\/\/|data:image\/)/i.test(src) || src.startsWith('/local-assets/'))
           ? <ReadOnlyImageChip key={`token-${result.length}`} refId={segment.refId} src={src}
               label={cleanChipLabel(item?.prompt, segment.refId)}
               onClick={() => onPreview?.(src, item?.prompt || '')} />
