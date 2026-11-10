@@ -16,6 +16,7 @@
  */
 
 import net from 'node:net';
+import { diagnosticUrl, diagnosticValue } from './monitor-evidence.js';
 import { maskSecrets } from './secret-masker.js';
 import { internalProbeHeaders } from './self-check-auth.js';
 import type { MonitorObservation, UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
@@ -897,8 +898,10 @@ async function readBodyPrefix(res: Response, limitBytes: number): Promise<string
 async function httpProbe(
   monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'observeMode' | 'sampleCountPath'>,
   timeoutMs: number,
-  snapshot?: { body: string; code: number },
+  snapshot?: { body: string; code: number; contentType?: string; requestMethod?: string },
 ): Promise<CustomProbeOutcome> {
+  const exchange: NonNullable<UptimeSample['exchange']> = { request: { method: snapshot?.requestMethod || monitor.method || 'GET', url: diagnosticUrl(monitor.url || '') }, note: '仅保留响应状态与本检查的脱敏指标摘录；未保留完整正文及请求头。' };
+  const run = async (): Promise<CustomProbeOutcome> => {
   const startedAt = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -912,6 +915,7 @@ async function httpProbe(
       headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', ...internalProbeHeaders(monitor.url || '') },
     });
     const code = res.status;
+    exchange.response = { status: code, contentType: (snapshot ? snapshot.contentType || '' : res.headers.get('content-type') || '').slice(0, 100) };
     if (!statusMatches(code, monitor.expectedStatus)) {
       await res.body?.cancel().catch(() => undefined);
       return { up: false, ms: Date.now() - startedAt, code, err: `HTTP ${code}，不在期望范围 ${monitor.expectedStatus || DEFAULT_EXPECTED_STATUS}` };
@@ -923,6 +927,10 @@ async function httpProbe(
       }
     } else if (monitor.kind === 'health-json') {
       const body = await readBodyPrefix(res, HEALTH_BODY_LIMIT_BYTES);
+      try {
+        const check = findHealthCheck(JSON.parse(body), monitor.healthComponentId || '');
+        if (check) exchange.response!.excerpt = diagnosticValue({ componentId: monitor.healthComponentId, field: monitor.healthField || 'observedValue', observedValue: check[monitor.healthField || 'observedValue'], status: check.status });
+      } catch { exchange.note = '响应不是有效 JSON；未保留原始正文。'; }
       const field = monitor.healthField || 'observedValue';
       const op = monitor.healthOp || 'eq';
       const verdict = evaluateHealthJson(
@@ -993,6 +1001,9 @@ async function httpProbe(
   } finally {
     clearTimeout(timer);
   }
+  };
+  const outcome = await run();
+  return { ...outcome, exchange };
 }
 
 /** 同一个自检端点只读取一次；采集失败与真实指标越界分别返回。 */
@@ -1002,11 +1013,13 @@ export async function probeHealthJsonBatch(monitors: UptimeCustomMonitor[], time
   const started = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const exchange: NonNullable<UptimeSample['exchange']> = { request: { method: 'GET', url: diagnosticUrl(monitors[0]?.url || '') }, note: '共享采集请求；仅保留响应回执，完整正文未保留。' };
   try {
     const first = monitors[0];
     if (!first?.url || monitors.some(m => m.kind !== 'health-json' || m.url !== first.url)) throw new Error('自检分组配置不一致');
     const res = await fetch(first.url, { signal: ctrl.signal, redirect: 'manual',
       headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', ...internalProbeHeaders(first.url) } });
+    exchange.response = { status: res.status, contentType: (res.headers.get('content-type') || '').slice(0, 100) };
     if (res.status < 200 || res.status >= 300) {
       await res.body?.cancel().catch(() => undefined);
       throw new Error(`自检接口返回 HTTP ${res.status}`);
@@ -1016,16 +1029,16 @@ export async function probeHealthJsonBatch(monitors: UptimeCustomMonitor[], time
     if (!doc || typeof doc.checks !== 'object' || !doc.checks) throw new Error('自检响应缺少检查数据');
     const ms = Date.now() - started;
     const members = await Promise.all(monitors.map(async m => {
-      const outcome = await httpProbe(m, timeoutMs, { body, code: res.status });
+      const outcome = await httpProbe(m, timeoutMs, { body, code: res.status, contentType: res.headers.get('content-type') || undefined, requestMethod: 'GET' });
       const check = findHealthCheck(doc, m.healthComponentId || '');
       const value = check?.[m.healthField || 'observedValue'];
       return { ...outcome, ms, ...(value === undefined || value === null ? { up: false, noData: true } : {}) };
     }));
     const missing = monitors.filter((m, i) => { const value = findHealthCheck(doc, m.healthComponentId || '')?.[m.healthField || 'observedValue']; return members[i].observation?.sampleCount !== 0 && (value === undefined || value === null); }).length;
-    return { collection: missing ? { up: false, ms, code: res.status, err: `${missing} 项自检缺少读数，无法判断` } : { up: true, ms, code: res.status }, members };
+    return { collection: missing ? { up: false, ms, code: res.status, exchange, err: `${missing} 项自检缺少读数，无法判断` } : { up: true, ms, code: res.status, exchange }, members };
   } catch (error) {
     const err = ctrl.signal.aborted ? `自检数据读取超时（${timeoutMs}ms）` : '自检数据读取失败';
-    const collection = { up: false, ms: Date.now() - started, err };
+    const collection = { up: false, ms: Date.now() - started, err, exchange, ...(exchange.response ? { code: exchange.response.status } : {}) };
     return { collection, members: monitors.map(() => ({ ...collection, noData: true })) };
   } finally { clearTimeout(timer); }
 }

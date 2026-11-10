@@ -60,7 +60,7 @@ export function applyThemeMode(mode: ThemeMode): void {
 export type RippleOrigin = { x: number; y: number };
 
 type ViewTransitionDocument = Document & {
-  startViewTransition?: (callback: () => void) => { ready: Promise<void> };
+  startViewTransition?: (callback: () => void) => { ready: Promise<void>; finished: Promise<void> };
 };
 
 /**
@@ -86,11 +86,12 @@ export function runThemeTransition(origin: RippleOrigin | null, apply: () => voi
   const start = (document as ViewTransitionDocument).startViewTransition;
   const reduced = typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduced || typeof start !== 'function') {
+  if (reduced || root.classList.contains('cds-surface-motion') || typeof start !== 'function') {
     apply();
     return;
   }
 
+  root.classList.add('cds-theme-motion');
   const transition = start.call(document, () => {
     // 冻结全局 micro-motion，让「新」快照捕到的是最终配色而不是过渡中途色
     root.classList.add('vt-snapshotting');
@@ -98,6 +99,7 @@ export function runThemeTransition(origin: RippleOrigin | null, apply: () => voi
   });
   const unfreeze = (): void => root.classList.remove('vt-snapshotting');
   transition.ready.then(unfreeze, unfreeze);
+  void transition.finished.catch(() => undefined).finally(() => root.classList.remove('cds-theme-motion'));
 }
 
 export function useTheme(): {

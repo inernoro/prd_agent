@@ -1,8 +1,9 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 import { ProjectSettingsRefreshContext, useProjectSettingsRefresh, useSettingsReadRequest, type SettingsRead, mergeCleanSettings } from '@/components/project/ProjectSettingsRefresh';
 import { SettingsPageSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -613,7 +614,7 @@ export function ProjectSettingsPage(): JSX.Element {
   }
 
   useEffect(() => {
-    window.history.replaceState(null, '', `#${activeTab}`);
+    window.history.replaceState(window.history.state, '', `#${activeTab}`);
   }, [activeTab]);
 
   useEffect(() => {

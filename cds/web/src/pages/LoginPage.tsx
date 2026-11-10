@@ -1,3 +1,4 @@
+import { MotionLink as Link, useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import { AuthPageFrame, AuthFormSkeleton } from '@/components/skeletons/AuthPageSkeleton';
 /*
  * LoginPage — CDS 控制台的唯一认证入口。
@@ -17,7 +18,7 @@ import { AuthPageFrame, AuthFormSkeleton } from '@/components/skeletons/AuthPage
  *   - GitHub OAuth 入口
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+
 import { ArrowRight, Eye, EyeOff, Github, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';

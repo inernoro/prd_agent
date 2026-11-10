@@ -1,9 +1,11 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
+import { RouteMotion, RouteMotionCommit } from './RouteMotion';
 import { InstanceSwitcher } from '@/components/InstanceSwitcher';
 import { loadingSceneForPath } from '@/components/skeletons/loadingScenes';
 import { createContext, Suspense, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, SearchCode, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
@@ -243,6 +245,7 @@ export function ConsoleLayout(): JSX.Element {
   return (
     <ShellFrameContext.Provider value={true}>
       <ShellChrome active={activeNavKeyFor(pathname)}>
+        <RouteMotion />
         <ListLoadingBoundary key={pathname} enabled={listPage}>
           <Suspense fallback={<ConsoleRouteFallback />}>
             <Outlet />
@@ -310,6 +313,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
       {topbar}
       <main className={cn('cds-main cds-page-enter', wide ? 'cds-main--wide' : null)}>
         {children}
+        <RouteMotionCommit />
       </main>
     </>
   );

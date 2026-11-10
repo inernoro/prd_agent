@@ -1,3 +1,4 @@
+import { publicUptimeSample } from './monitor-evidence.js';
 import { decideSelfMonitorAlarm, type SelfMonitorAlarmState } from './self-monitor-alarm-policy.js';
 /**
  * uptime-monitor — CDS 自建存活监控（Uptime Kuma 风格）的探测器。
@@ -1848,7 +1849,10 @@ export class UptimeMonitorService {
   ): void {
     const record = this.records.get(target.id);
     if (!record) return;
-    const sample = options.allowDegrade ? this.maybeDegrade(target, record, rawSample) : rawSample;
+    const sanitized = publicUptimeSample(rawSample);
+    const sample = options.allowDegrade ? this.maybeDegrade(target, record, sanitized) : sanitized;
+    // Detailed receipts are retained only for the latest twenty attempts; charts keep their existing window.
+    if (record.samples.length >= 20) delete record.samples[record.samples.length - 20].exchange;
     if (sample.noData) {
       appendCapped(record.samples, sample, this.deps.config.maxSamples);
       if (!record.lastSample?.noData && target.source === 'custom') this.deps.onAlarmSuppressed?.({
@@ -2091,7 +2095,7 @@ export class UptimeMonitorService {
         excluded: Boolean(record.excluded),
         degraded: Boolean(record.degraded),
         degradeReason: record.degradeReason,
-        lastSample: record.lastSample,
+        lastSample: record.lastSample ? publicUptimeSample(record.lastSample) : null,
         availability24h: a24.ratio,
         availability7d: a7.ratio,
         avgLatencyMs24h: a24.avgLatencyMs,
@@ -2266,7 +2270,7 @@ export class UptimeMonitorService {
     const points = needsRollup
       ? dailyRollupPoints(record, from, now)
       : bucketizeSamples(record.samples, from, now, bucketCount);
-    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points, recentSamples: record.samples.slice(-20).reverse() };
+    return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points, recentSamples: record.samples.slice(-20).reverse().map(publicUptimeSample) };
   }
 
   /** 全局故障事件时间线，最近的在前。 */
@@ -2345,7 +2349,9 @@ export class UptimeMonitorService {
       if (!parsed || !Array.isArray(parsed.targets)) return;
       for (const record of parsed.targets) {
         if (!record || typeof record.id !== 'string') continue;
-        record.samples = Array.isArray(record.samples) ? record.samples.slice(-this.deps.config.maxSamples) : [];
+        record.samples = Array.isArray(record.samples) ? record.samples.slice(-this.deps.config.maxSamples).map(publicUptimeSample) : [];
+        for (const sample of record.samples.slice(0, -20)) delete sample.exchange;
+        if (record.lastSample) record.lastSample = publicUptimeSample(record.lastSample);
         record.daily = Array.isArray(record.daily) ? record.daily.slice(-MAX_DAILY_ROLLUPS) : [];
         record.incidents = Array.isArray(record.incidents) ? record.incidents.slice(-MAX_INCIDENTS_PER_TARGET) : [];
         if (!record.source) record.source = probeSourceOfId(record.id);

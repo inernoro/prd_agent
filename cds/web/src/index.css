@@ -405,7 +405,7 @@
   z-index: 1;
 }
 
-::view-transition-new(root) {
+:root.cds-theme-motion::view-transition-new(root) {
   z-index: 9999;
   clip-path: circle(0% at var(--ripple-x, 50%) var(--ripple-y, 0));
   animation: cds-theme-ripple-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
@@ -6586,3 +6586,27 @@ body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-ag
     opacity: 0.4;
   }
 }
+
+/* Route snapshots share the monitor camera; native chrome and live fixed layers stay still. */
+:root.cds-surface-motion .cds-main { view-transition-name: cds-content; }
+.cds-branch-detail-drawer { view-transition-name: cds-detail; }
+:root.cds-surface-motion::view-transition-new(root),
+:root.cds-surface-motion::view-transition-old(root),
+:root.cds-surface-motion::view-transition-new(cds-content),
+:root.cds-surface-motion::view-transition-old(cds-content),
+:root.cds-surface-motion::view-transition-new(cds-detail),
+:root.cds-surface-motion::view-transition-old(cds-detail) { animation: none; mix-blend-mode: normal; }
+:root.cds-surface-motion::view-transition-group(cds-content),
+:root.cds-surface-motion::view-transition-group(cds-detail) { animation-duration: 0s; }
+:root.cds-surface-motion::view-transition-old(cds-content),
+:root.cds-surface-motion::view-transition-new(cds-content),
+:root.cds-surface-motion::view-transition-old(cds-detail),
+:root.cds-surface-motion::view-transition-new(cds-detail) { transform-origin: 0 0; }
+.cds-surface-motion .cds-page-enter, .cds-surface-motion .cds-drawer-anim { animation: none !important; }
+
+.cds-theme-motion .cds-main, .cds-theme-motion .cds-branch-detail-drawer { view-transition-name: none; }
+
+.cds-reduced-motion .cds-page-enter, .cds-reduced-motion .cds-drawer-anim { animation: none !important; }
+
+:root.cds-surface-motion::view-transition-old(root) { opacity: 0; z-index: 0; }
+:root.cds-surface-motion::view-transition-new(root) { z-index: 1; }

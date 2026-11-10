@@ -1,7 +1,8 @@
+import { useSurfaceNavigate as useNavigate } from '@/components/layout/RouteMotion';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { ChevronRight, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+
 import { apiRequest } from '@/lib/api';
 import type { UptimeTargetSummary } from '@/lib/monitorCenter';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';

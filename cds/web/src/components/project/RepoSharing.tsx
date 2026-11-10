@@ -1,3 +1,4 @@
+import { MotionLink as Link } from '@/components/layout/RouteMotion';
 /**
  * 「这个仓库还喂着别的项目」这件事在界面上的全部表达。
  *
@@ -24,7 +25,7 @@
  * 所以这里从头到尾展示的是兄弟项目本身，没有任何一枚写着「多项目」的徽章。
  */
 
-import { Link } from 'react-router-dom';
+
 import { GitBranch, Database, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 

@@ -1220,6 +1220,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
+    [/^PUT \/uptime\/targets\/[^/]+\/subscription$/, '调整监控总览订阅'],
     [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
     [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
     [/^POST \/cds-system\/alarm-channels\/[^/]+\/drill$/, '演练通知通道'],

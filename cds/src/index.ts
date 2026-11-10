@@ -6619,6 +6619,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
       upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
       removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      getMonitorSubscriptions: () => stateService.getMonitorSubscriptions(),
+      setMonitorSubscription: (targetId, subscribed, actor) => stateService.setMonitorSubscription(targetId, subscribed, actor),
+      flush: () => stateService.flush(),
       getProject: (projectId: string) => stateService.getProject(projectId),
     },
   }));
