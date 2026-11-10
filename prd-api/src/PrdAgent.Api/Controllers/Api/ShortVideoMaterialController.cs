@@ -100,6 +100,29 @@ public class ShortVideoMaterialController : ControllerBase
         return Ok(ApiResponse<ShortVideoMaterialRun>.Ok(run));
     }
 
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(string runId)
+    {
+        var userId = GetUserId();
+        var filter = Builders<ShortVideoMaterialRun>.Filter;
+        // 与 Worker 领取使用同一条原子状态条件；任何尚有处理身份的记录都不能删除。
+        var deletable = filter.Eq(r => r.Id, runId)
+            & filter.Eq(r => r.UserId, userId)
+            & filter.Eq(r => r.ProcessingToken, null)
+            & filter.In(r => r.Status, new[] { "queued", "done", "failed", "cancelled" });
+        // 数据库包装器负责撤销旧执行许可，并把许可快照约束加回最终删除条件。
+        var result = await _db.ShortVideoMaterialRuns.DeleteOneAsync(deletable, CancellationToken.None);
+        if (result.DeletedCount == 1)
+            return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+
+        var existing = await _db.ShortVideoMaterialRuns
+            .Find(r => r.Id == runId && r.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (existing == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
+        return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_ACTIVE", "素材仍在处理中或状态已变化，请等待处理结束后再删除"));
+    }
+
     private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)
     {
         if (!string.IsNullOrWhiteSpace(storeId))
