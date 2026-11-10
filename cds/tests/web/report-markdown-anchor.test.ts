@@ -74,4 +74,13 @@ describe('Markdown 报告同页锚点', () => {
     expect(buildMarkdownReportDocument('', 'light')).toContain('#2563eb');
     expect(buildMarkdownReportDocument('', 'dark')).toContain('#60a5fa');
   });
+
+  it('保留引号内的大于号与属性文本，章节身份不写入属性值', () => {
+    const document = buildMarkdownReportDocument(
+      '<h2 title="a > b">Hello</h2>\n\n<h2 title=\'a > b\' id="kept">Existing</h2>',
+      'light',
+    );
+    expect(document).toContain('<h2 title="a > b" id="hello">Hello</h2>');
+    expect(document).toContain('<h2 title=\'a > b\' id="kept">Existing</h2>');
+  });
 });
