@@ -62,7 +62,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
     const poll=async():Promise<void>=>{
       try{
         const value=await apiRequest<Session>(`/api/uptime/onboarding/${sessionId}`);
-        if(disposed||active.current?.id!==sessionId)return;
+        if(disposed||active.current?.id!==sessionId||active.current.status==='completed')return;
         active.current=value;setSession(value);
         if(value.status==='proposed'&&proposalsSeen.current!==value.id){proposalsSeen.current=value.id;setSelected(value.proposals.filter(p=>!p.existingMonitorId).map(p=>p.id));}
         if(value.status==='completed'||value.status==='revoked')return;
@@ -97,7 +97,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
     setBusy(true);onBusy?.(true);setError(null);
     try{
       const result=await apiRequest<NonNullable<Session['result']>>(`/api/uptime/onboarding/${session.id}/confirm`,{method:'POST',body:{proposalIds:selected,...(customChannels!==undefined?{channelIds:selectedChannels}:{})}});
-      const completed:Session={...session,status:'completed',result};active.current=completed;setSession(completed);setSecret('');await onSaved();
+      const completed:Session={...session,status:'completed',result};active.current=completed;setSecret('');await onSaved();onClose();
     }catch(e){setError(monitorErrorMessage(e));}
     finally{setBusy(false);onBusy?.(false);}
   };
