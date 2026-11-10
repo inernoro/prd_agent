@@ -39,7 +39,7 @@ interface DrawerBodyProps {
   targets: UptimeTargetSummary[];
   targetId?: string;
   onClose(): void;
-  onSaved(): Promise<void>;
+  onSaved(result?: { targetIds: string[] }): Promise<void>;
   onBusy(busy: boolean): void;
   onManage?(): void;
   onUseAgent?(): void;
@@ -98,11 +98,11 @@ function ConnectDrawer({ targets, onClose, onSaved, onBusy, onManage, onUseAgent
           if (!arguments_ || typeof arguments_ !== 'object' || Array.isArray(arguments_)) throw new Error(`arguments:${tool.title || tool.name}`);
           return { name: tool.name, arguments: arguments_, nameLabel: tool.title || tool.name };
         });
-        await apiRequest('/api/uptime/mcp/import', {
+        const result = await apiRequest<{ targetIds: string[] }>('/api/uptime/mcp/import', {
           method: 'POST', body: { url: url.trim(), ...(auth && token ? { token } : {}), projectId: projectId || null, tools,
             ...(customNotify ? { channelIds: existingChannelIds(channelIds, channels.data?.channels ?? []) } : {}) },
         });
-        setToken(''); await onSaved(); onClose();
+        setToken(''); await onSaved(result); onClose();
       }
     } catch (e) {
       const detail = e instanceof Error ? e.message : '';
@@ -265,7 +265,7 @@ export interface MonitorDrawersProps {
   targetId?: string;
   targets: UptimeTargetSummary[];
   onClose(): void;
-  onSaved(): Promise<void>;
+  onSaved(result?: { targetIds: string[] }): Promise<void>;
   onManageNotifications?(): void;
 }
 

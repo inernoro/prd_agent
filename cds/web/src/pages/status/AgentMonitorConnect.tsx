@@ -14,7 +14,7 @@ interface Session {
   result?: { monitors: Array<{id: string; name: string}>; targetIds: string[] };
 }
 interface Props {
-  onClose(): void; onSaved(): void | Promise<void>; onBusy?(busy: boolean): void;
+  onClose(): void; onSaved(result: { targetIds: string[] }): void | Promise<void>; onBusy?(busy: boolean): void;
   onManageNotifications(): void; onUseMcp?(): void;
 }
 const TIMELINE: Record<string, string> = { created: '已生成接入令牌，等待智能体使用', connected: '智能体已连接', 'instructions-read': '已读取只读监控提交说明', 'proposals-submitted': '已提交监控提议，等待你确认', completed: '已确认并保存监控', revoked: '接入已取消，令牌已撤销' };
@@ -97,7 +97,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
     setBusy(true);onBusy?.(true);setError(null);
     try{
       const result=await apiRequest<NonNullable<Session['result']>>(`/api/uptime/onboarding/${session.id}/confirm`,{method:'POST',body:{proposalIds:selected,...(customChannels!==undefined?{channelIds:selectedChannels}:{})}});
-      const completed:Session={...session,status:'completed',result};active.current=completed;setSecret('');await onSaved();onClose();
+      const completed:Session={...session,status:'completed',result};active.current=completed;setSecret('');await onSaved(result);onClose();
     }catch(e){setError(monitorErrorMessage(e));}
     finally{setBusy(false);onBusy?.(false);}
   };
