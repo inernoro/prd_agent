@@ -30,18 +30,15 @@ public partial class VideoGenRunWorker
         if (_unavailableReceipts.Count > 0) query &= f.Nin(x => x.Id, _unavailableReceipts.Keys);
         var run = await _db.VideoGenRuns.Find(query).SortBy(x => x.QueueEnteredAt).ThenBy(x => x.CreatedAt).ThenBy(x => x.Id).FirstOrDefaultAsync(ct);
         if (run is null) return;
-        var scene = run.Mode == VideoGenMode.Storyboard ? run.Scenes
-            .Where((item, i) => item.Index == i && item.ReconciledAt is null
-                && !string.IsNullOrWhiteSpace(item.TaskPermitId) && !string.IsNullOrWhiteSpace(item.JobId)
-                && !string.IsNullOrWhiteSpace(item.Model) && !string.IsNullOrWhiteSpace(item.OfferingId)
-                && (item.ReceiptQueuedAt is null || item.ReceiptQueuedAt <= now)
-                && !_unavailableReceipts.ContainsKey($"{run.Id}_scene_{i}"))
+        var scene = run.Mode == VideoGenMode.Storyboard ? PendingSceneReceipts(run)
+            .Where(item => (item.ReceiptQueuedAt is null || item.ReceiptQueuedAt <= now)
+                && !_unavailableReceipts.ContainsKey($"{run.Id}_scene_{item.Index}"))
             .OrderBy(x => x.ReceiptQueuedAt).ThenBy(x => x.Index).FirstOrDefault() : null;
         var receiptKey = scene is null ? run.Id : $"{run.Id}_scene_{scene.Index}";
         if (run.Mode == VideoGenMode.Storyboard && scene is null)
         {
             if (_unavailableReceipts.Count >= 1000) _unavailableReceipts.Clear();
-            _unavailableReceipts[run.Id] = now.AddSeconds(6);
+            _unavailableReceipts[run.Id] = NextSceneReceiptAttempt(run, now);
             return;
         }
         try
@@ -52,9 +49,24 @@ public partial class VideoGenRunWorker
         catch (TaskExecutionAdmissionException)
         {
             if (_unavailableReceipts.Count >= 1000) _unavailableReceipts.Clear();
-            _unavailableReceipts[receiptKey] = now.AddMinutes(1);
+            var retryAt = DateTime.UtcNow.AddMinutes(1);
+            _unavailableReceipts[receiptKey] = retryAt;
+            if (scene is not null) _unavailableReceipts[run.Id] = NextSceneReceiptAttempt(run, DateTime.UtcNow);
         }
     }
+
+    private static IEnumerable<VideoGenScene> PendingSceneReceipts(VideoGenRun run) => run.Scenes
+        .Where((item, i) => item.Index == i && item.ReconciledAt is null
+            && !string.IsNullOrWhiteSpace(item.TaskPermitId) && !string.IsNullOrWhiteSpace(item.JobId)
+            && !string.IsNullOrWhiteSpace(item.Model) && !string.IsNullOrWhiteSpace(item.OfferingId));
+
+    private DateTime NextSceneReceiptAttempt(VideoGenRun run, DateTime now) => PendingSceneReceipts(run)
+        .Select(item =>
+        {
+            var ready = item.ReceiptQueuedAt ?? now;
+            return _unavailableReceipts.TryGetValue($"{run.Id}_scene_{item.Index}", out var unavailable) && unavailable > ready
+                ? unavailable : ready;
+        }).DefaultIfEmpty(now.AddMinutes(1)).Min();
 
     private async Task ReconcileCancelledSceneAsync(VideoGenRun run, VideoGenScene scene)
     {

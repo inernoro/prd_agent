@@ -330,4 +330,44 @@ public partial class VideoSceneConcurrencyTests
             It.IsAny<UpdateOptions>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SceneReceiptMock_UnavailableSceneBacksOffParentOnlyUntilAnotherSceneIsEligible(bool otherEligible)
+    {
+        var run = new VideoGenRun { Id = "backoff-parent", Mode = VideoGenMode.Storyboard,
+            Status = VideoGenRunStatus.Cancelled, CancelRequested = true,
+            Scenes = [new() { Index = 0, TaskPermitId = "original-permit", JobId = "original-job", Model = "model", OfferingId = "offering" }] };
+        if (otherEligible) run.Scenes.Add(new() { Index = 1, TaskPermitId = "second-permit", JobId = "second-job", Model = "model", OfferingId = "offering" });
+        var rows = new Mock<IMongoCollection<VideoGenRun>>(MockBehavior.Strict);
+        rows.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoGenRun>>(), It.IsAny<FindOptions<VideoGenRun, VideoGenRun>>(), CancellationToken.None))
+            .Returns(() =>
+            {
+                var cursor = new Mock<IAsyncCursor<VideoGenRun>>(MockBehavior.Strict);
+                cursor.SetupGet(x => x.Current).Returns(new[] { run });
+                cursor.SetupSequence(x => x.MoveNextAsync(CancellationToken.None)).ReturnsAsync(true).ReturnsAsync(false);
+                cursor.Setup(x => x.Dispose()); return Task.FromResult(cursor.Object);
+            });
+        var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs", null)).Returns(rows.Object);
+        var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
+        typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, database.Object);
+        var coordinator = new Mock<ITaskExecutionCoordinator>(MockBehavior.Strict);
+        coordinator.Setup(x => x.AcquireVideoReceiptAsync("original-permit", "backoff-parent_scene_0", CancellationToken.None))
+            .ThrowsAsync(new TaskExecutionAdmissionException("TASK_VIDEO_RECEIPT_SCOPE_DENIED", "原收据暂不可用"));
+        using var services = new ServiceCollection().BuildServiceProvider();
+        using var worker = new VideoGenRunWorker(context, services.GetRequiredService<IServiceScopeFactory>(),
+            new Mock<IRunEventStore>(MockBehavior.Strict).Object, new Mock<IAssetStorage>(MockBehavior.Strict).Object,
+            NullLogger<VideoGenRunWorker>.Instance, coordinator.Object);
+        await (Task)typeof(VideoGenRunWorker).GetMethod("ResumeCancelledVideoReceiptAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(worker, [CancellationToken.None])!;
+        var pauses = (Dictionary<string, DateTime>)typeof(VideoGenRunWorker).GetField("_unavailableReceipts", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worker)!;
+        Assert.True(pauses["backoff-parent_scene_0"] > DateTime.UtcNow);
+        Assert.True(pauses.TryGetValue(run.Id, out var parent));
+        if (otherEligible) Assert.True(parent <= DateTime.UtcNow);
+        else Assert.Equal(pauses["backoff-parent_scene_0"], parent);
+        coordinator.VerifyAll();
+    }
+
 }
