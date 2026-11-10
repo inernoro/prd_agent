@@ -510,7 +510,7 @@ export function StatusPage(): JSX.Element {
         onSelectBranch={openBranch}
       />
       <CoverageDialog open={coverageOpen} onOpenChange={setCoverageOpen} coverage={summary?.coverage} prober={summary?.prober} />
-      <MonitorDrawers panel={workspacePanel?.panel ?? null} targetId={workspacePanel?.targetId} targets={targets} onClose={() => setWorkspacePanel(null)} onSaved={load} onManageNotifications={() => { window.location.assign('/cds-settings#alarm-notify'); }} />
+      <MonitorDrawers panel={workspacePanel?.panel ?? null} targetId={workspacePanel?.targetId} targets={targets} onClose={() => setWorkspacePanel(null)} onSaved={async () => { await load(); if (workspacePanel?.panel === 'connect') setSearchParams({}); }} onManageNotifications={() => { window.location.assign('/cds-settings#alarm-notify'); }} />
       <MonitorEditorDialog
         open={editor.open}
         monitor={editor.monitor}
