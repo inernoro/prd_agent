@@ -22,7 +22,7 @@
         "dependency:AddScoped:87deb1e0730f71b4eabeb930": 1,
         "dependency:GetRequiredService:664d0f011014dc1ca726026f": 1,
         "dependency:GetRequiredService:90d2dee49fdf73bb2e4c8f6d": 1,
-        "new:LiveAsrSessionOrchestrator:fc2ec2ba096a6114bcf089ba": 1
+        "new:LiveAsrSessionOrchestrator:7ab11f147c8be7e77fefffee": 1
       },
       "purpose": "既有 serving 宿主底层网关/ASR DI 装配，首发发送权限 IGatewayInvocationAuthority 强制注入编排器并沿可信 scope/context 校验；注册、解析与构造逐调用指纹锁定，新后台业务不能借宿主新增直连"
     },
@@ -541,7 +541,6 @@
       "calls": {
         "call:ConnectAsync:16340894d7650f435b42009d": 1,
         "call:ConnectAsync:8e60750c4511c6d2eb6e7a62": 2,
-        "call:ConnectAsync:9df1f41827e900f4c8dd18b2": 1,
         "call:SendAsync:1067fb7b7ee4cb00860d2e9d": 1,
         "call:SendAsync:1421228745a492c9eb431d35": 1,
         "call:SendAsync:1454859d44303654c3075406": 1,
@@ -552,11 +551,11 @@
         "call:SendAsync:c776c93e1aa98712a926e37b": 1,
         "new:ClientWebSocket:36bd3392c05703dedc118869": 2,
         "new:ClientWebSocket:dd7e2055959419ea01832018": 1,
-        "new:HttpMessageInvoker:ee5293d69ca49087cc545453": 1,
+        "new:HttpMessageInvoker:f5c62b709c1eecfe567c6b9f": 1,
         "new:ProcessStartInfo:20f45ee679d31ef328f59831": 1,
         "static:Process.Start:94e9a735f0b575204178362e": 1
       },
-      "purpose": "网关 serving 复用的既有供应商发送源；新增代理 WebSocket 握手只消费网关确定的配置，仍经原发送授权，外部租户保留公网目标校验并固定代理对端。MAP 未注册底层 executor；保留既有 ffmpeg 转码用途，所有连接与子进程逐调用审计。"
+      "purpose": "网关 serving 复用的既有供应商发送源；新增代理 WebSocket 握手只消费网关确定的配置，仍经原发送授权，外部租户保留公网目标校验并固定代理对端。MAP 未注册底层 executor；保留既有 ffmpeg 转码用途，所有连接与子进程逐调用审计。 文件与实时 ASR 共用同一个代理连接器，逐候选消费解析快照；只有服务端确认的内部组织可连接私网代理，实时目标保持原公网校验，发送授权与审计边界不变。"
     },
     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmClient.cs": {
       "calls": {

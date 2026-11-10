@@ -1,5 +1,11 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using PrdAgent.GatewayTransport;
+using PrdAgent.Infrastructure.Services;
 using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.LlmGateway;
@@ -15,6 +21,63 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class LiveAsrProtocolTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SessionOrchestrator_UsesCandidateProxyAndRestrictsPrivateProxyToInternalTenant(bool internalTenant)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var proxy = new TcpListener(IPAddress.Loopback, 0);
+        proxy.Start();
+        var port = ((IPEndPoint)proxy.LocalEndpoint).Port;
+        var candidate = new ModelResolutionResult
+        {
+            Success = true, IsExchange = true, ActualPlatformId = "proxied-asr", ActualModel = "doubao-asr-stream",
+            ExchangeTransformerType = "doubao-asr-stream", ApiKey = "app|access",
+            ApiUrl = "wss://proxy-only-live.invalid/asr",
+            UpstreamProxy = new ResolvedUpstreamProxy("custom", $"http://127.0.0.1:{port}", null, null),
+        };
+        var resolver = HealthyResolver();
+        resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(candidate);
+        var gateway = new Mock<ILlmGateway>();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:InternalTenantId"] = "configured-internal-org",
+        }).Build();
+        var orchestrator = new LiveAsrSessionOrchestrator(resolver.Object,
+            new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance,
+                new SafeOutboundWebSocketConnector(new SafeOutboundUrlValidator())),
+            new LiveAsrBatchFallbackService(gateway.Object, resolver.Object, NullLogger<LiveAsrBatchFallbackService>.Instance),
+            NullLogger<LiveAsrSessionOrchestrator>.Instance, configuration: configuration);
+        var capture = internalTenant ? CaptureProxyConnectAsync() : null;
+        var sends = 0;
+        var result = await orchestrator.ExecuteAsync(new CompletingLiveAsrTransport(), new GatewayRequestContext
+        {
+            TenantId = internalTenant ? "configured-internal-org" : "external-org",
+        }, _ => Task.CompletedTask, () => sends++, platformCancellationToken: deadline.Token,
+            beforeFallbackSend: LimitedTaskPermit());
+        Assert.Equal(1, sends);
+        Assert.NotNull(result.SessionResult);
+        Assert.False(result.SessionResult!.Completed);
+        if (capture is not null)
+            Assert.Contains("CONNECT proxy-only-live.invalid:443 HTTP/1.1", await capture);
+        else
+            Assert.False(proxy.Pending());
+
+        async Task<string> CaptureProxyConnectAsync()
+        {
+            using var peer = await proxy.AcceptTcpClientAsync(deadline.Token);
+            using var stream = peer.GetStream();
+            using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
+            var firstLine = await reader.ReadLineAsync(deadline.Token);
+            while (!string.IsNullOrEmpty(await reader.ReadLineAsync(deadline.Token))) { }
+            // 只验证出口握手，不连接供应商、不发送音频，也不产生推理费用。
+            await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"), deadline.Token);
+            return firstLine ?? "";
+        }
+    }
+
     private static GatewayRequestContext TestRequestContext()
         => new()
         {
