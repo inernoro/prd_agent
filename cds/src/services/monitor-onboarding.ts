@@ -11,12 +11,13 @@ interface Session {
   id: string; hash: Buffer; expiresAt: number; projectId: string | null; status: OnboardingStatus;
   agentName?: string; proposals: MonitorProposal[]; timeline: Array<{ at: string; kind: string }>;
   result?: OnboardingResult; confirming?: Promise<OnboardingResult>; confirmedSelection?: string;
-  terminalOrder?: number;
+  terminalOrder?: number; receiptExpiresAt?: number;
 }
 export class OnboardingError extends Error { constructor(public status: number, message: string) { super(message); } }
 const FIELDS = new Set(['name', 'kind', 'url', 'host', 'port', 'method', 'expectedStatus', 'keyword', 'healthComponentId', 'healthField', 'healthOp', 'healthValue', 'intervalSeconds', 'timeoutMs', 'environment', 'observeMode', 'sampleCountPath']);
 const hash = (value: string): Buffer => createHash('sha256').update(value).digest();
 const id = (): string => randomBytes(16).toString('hex');
+const COMPLETED_RECEIPT_GRACE_MS = 15 * 60_000;
 const probeIdentity = (m: UptimeCustomMonitor): string => JSON.stringify([m.projectId || null, m.kind, m.url || null, m.host || null, m.port || null,
   m.method || 'GET', m.expectedStatus || '200-399', m.keyword || null, m.healthComponentId || null, m.healthField || 'observedValue', m.healthOp || 'eq', m.healthValue ?? null]);
 
@@ -35,8 +36,11 @@ export class MonitorOnboardingService {
     forgetTarget?: (targetId: string) => boolean;
   }) {}
   private now(): number { return this.deps.now?.() ?? Date.now(); }
+  private retentionExpiresAt(s: Session): number {
+    return s.status === 'completed' ? s.receiptExpiresAt ?? s.expiresAt : s.expiresAt;
+  }
   private prune(): void {
-    for (const [key, s] of this.sessions) if (s.expiresAt <= this.now() && !s.confirming) this.sessions.delete(key);
+    for (const [key, s] of this.sessions) if (this.retentionExpiresAt(s) <= this.now() && !s.confirming) this.sessions.delete(key);
     // Canceled dialogs must not consume live capacity or evict recent idempotent confirmations.
     // Keep at most 100 live sessions plus 100 results and 100 revoked-session receipts.
     for (const status of ['completed', 'revoked'] as const) {
@@ -49,7 +53,7 @@ export class MonitorOnboardingService {
   private session(sessionId: string): Session {
     const s = this.sessions.get(sessionId);
     if (!s) throw new OnboardingError(404, '接入会话不存在，请重新开始。');
-    if (s.expiresAt <= this.now()) { this.sessions.delete(sessionId); throw new OnboardingError(410, '接入令牌已过期，请重新开始。'); }
+    if (this.retentionExpiresAt(s) <= this.now() && !s.confirming) { this.sessions.delete(sessionId); throw new OnboardingError(410, '接入令牌已过期，请重新开始。'); }
     return s;
   }
   create(input: { ttlHours?: unknown; projectId?: unknown } = {}): Record<string, unknown> {
@@ -178,6 +182,9 @@ export class MonitorOnboardingService {
           if (this.deps.refreshTarget && !this.deps.refreshTarget(customProbeTargetId(m))) throw new Error('target registration failed');
         }
         s.result = { monitors: saved.map(m => ({ id: m.id, name: m.name })), targetIds: saved.map(customProbeTargetId) };
+        // Preserve a bounded owner receipt if persistence crossed the agent token's deadline.
+        // Reads/retries never renew it, and agent() still checks the original token expiry.
+        s.receiptExpiresAt = Math.max(s.expiresAt, this.now() + COMPLETED_RECEIPT_GRACE_MS);
         s.status = 'completed'; s.hash = randomBytes(32); s.terminalOrder = ++this.terminalSequence; this.event(s, 'completed'); this.prune();
         return structuredClone(s.result);
       } catch {

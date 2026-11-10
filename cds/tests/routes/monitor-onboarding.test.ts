@@ -161,6 +161,35 @@ describe('真实只读监控提议与用户确认', () => {
     expect(()=>service.submit(s.id,s.token,{proposals:[DRAFT]})).toThrow(/令牌无效/);
     release();expect(await a).toEqual(await b);await original();expect(store.listUptimeMonitors()).toHaveLength(1);
   });
+  it('跨令牌到期的在途确认不被owner读取或撤销删除，完成回执短期可重放且不续期', async () => {
+    const {service,store,file,advance}=setup();const s=service.create({ttlHours:1}) as {id:string;token:string};
+    service.submit(s.id,s.token,{proposals:[DRAFT]});const args={proposalIds:(service.view(s.id).proposals as Array<{id:string}>).map(p=>p.id)};
+    advance(3_600_000-5);let release!:()=>void;const pending=new Promise<void>(resolve=>{release=resolve;});const flush=store.flush.bind(store);
+    vi.spyOn(store,'flush').mockImplementationOnce(async()=>{await pending;await flush();});
+    const first=service.confirm(s.id,args);advance(10);
+    expect(service.view(s.id).status).toBe('confirming');
+    expect(()=>service.revoke(s.id)).toThrow(/正在保存/);
+    expect(()=>service.instructions(s.id,s.token)).toThrow(/令牌无效/);
+    expect(()=>service.submit(s.id,s.token,{proposals:[DRAFT]})).toThrow(/令牌无效/);
+    const retry=service.confirm(s.id,args);service.create();expect(service.view(s.id).status).toBe('confirming');
+    release();const result=await first;expect(await retry).toEqual(result);
+    expect(service.view(s.id).status).toBe('completed');expect(await service.confirm(s.id,args)).toEqual(result);
+    const cold=new StateService(file,path.dirname(file));cold.load();expect(cold.listUptimeMonitors()).toHaveLength(1);
+    advance(14*60_000);expect(await service.confirm(s.id,args)).toEqual(result);service.create();expect(service.view(s.id).status).toBe('completed');
+    advance(60_000+1);expect(()=>service.view(s.id)).toThrow(/已过期/);
+    expect(()=>service.confirm(s.id,args)).toThrow(/不存在/);expect(()=>service.instructions(s.id,s.token)).toThrow(/令牌无效/);
+    expect(store.listUptimeMonitors()).toHaveLength(1);
+  });
+  it('跨令牌到期保存失败后仍回滚，不给未完成提议延长有效期', async () => {
+    const {service,store,advance}=setup();const s=service.create({ttlHours:1}) as {id:string;token:string};
+    service.submit(s.id,s.token,{proposals:[DRAFT]});const args={proposalIds:(service.view(s.id).proposals as Array<{id:string}>).map(p=>p.id)};
+    let reject!:()=>void;const pending=new Promise<void>((_resolve,fail)=>{reject=()=>fail(new Error('disk unavailable'));});
+    vi.spyOn(store,'flush').mockImplementationOnce(()=>pending);const first=service.confirm(s.id,args);advance(3_600_000+1);
+    expect(service.view(s.id).status).toBe('confirming');const retry=service.confirm(s.id,args);
+    const assertions=[expect(first).rejects.toThrow(/未保留本次追加/),expect(retry).rejects.toThrow(/未保留本次追加/)];reject();await Promise.all(assertions);
+    expect(store.listUptimeMonitors()).toHaveLength(0);expect(()=>service.view(s.id)).toThrow(/已过期/);
+    expect(()=>service.instructions(s.id,s.token)).toThrow(/令牌无效/);expect(()=>service.confirm(s.id,args)).toThrow(/不存在/);
+  });
   it('保存失败回滚本次监控，但保留其他服务同时更新的通知设置', async () => {
     const {service,create,store}=setup();store.setMonitorNotifications({defaultChannelIds:['phone'],overrides:{other:['phone']},mutedUntil:{other:123}});
     const s=create();service.submit(s.id,s.token,{proposals:[DRAFT]});const proposals=service.view(s.id).proposals as Array<{id:string}>;
@@ -172,6 +201,33 @@ describe('真实只读监控提议与用户确认', () => {
 });
 
 describe('HTTP 网关与会话凭据隔离', () => {
+  it('真实并发owner轮询和撤销不会删除跨TTL在途确认，重试返回同一持久化结果', async () => {
+    const {service,store,advance}=setup();const app=express();app.use(express.json());
+    app.use(createGithubAuthMiddleware({authService:{validateSession:async(token:string)=>token==='owner'?{user:{isSystemOwner:true},session:{}}:null} as never,
+      isPublicRequest:req=>isMonitorOnboardingAgentRoute(req.method,req.path)}));app.use('/api',createMonitorOnboardingRouter(service));
+    const server=app.listen(0);await new Promise<void>(r=>server.once('listening',r));const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+    const owner={Cookie:'cds_gh_session=owner'};
+    const call=async(method:string,url:string,body?:unknown,headers:Record<string,string>=owner)=>{const response=await fetch(base+url,{method,headers:{'Content-Type':'application/json',...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:response.status,body:await response.json() as any};};
+    let release:()=>void=()=>undefined;let first:ReturnType<typeof call>|undefined;let retry:ReturnType<typeof call>|undefined;
+    try{
+      const created=await call('POST','/api/uptime/onboarding',{ttlHours:1});expect(created.status).toBe(201);const {id,token}=created.body;
+      expect((await call('POST',`/api/uptime/onboarding-agent/${id}/proposals`,{proposals:[DRAFT]},{Authorization:`Bearer ${token}`})).status).toBe(202);
+      const view=await call('GET',`/api/uptime/onboarding/${id}`);const args={proposalIds:[view.body.proposals[0].id]};
+      let entered!:()=>void;const waiting=new Promise<void>(r=>{entered=r;});const blocked=new Promise<void>(r=>{release=r;});const flush=store.flush.bind(store);
+      vi.spyOn(store,'flush').mockImplementationOnce(async()=>{entered();await blocked;await flush();});
+      const confirms=vi.spyOn(service,'confirm');
+      advance(3_600_000-5);first=call('POST',`/api/uptime/onboarding/${id}/confirm`,args);await waiting;advance(10);
+      retry=call('POST',`/api/uptime/onboarding/${id}/confirm`,args);
+      const [poll,revoke]=await Promise.all([call('GET',`/api/uptime/onboarding/${id}`),call('DELETE',`/api/uptime/onboarding/${id}`)]);
+      await vi.waitFor(()=>expect(confirms).toHaveBeenCalledTimes(2));
+      expect(poll).toMatchObject({status:200,body:{status:'confirming'}});expect(revoke.status).toBe(409);
+      expect((await call('GET',`/api/uptime/onboarding-agent/${id}/instructions`,undefined,{Authorization:`Bearer ${token}`})).status).toBe(401);
+      release();const [one,two]=await Promise.all([first,retry]);expect(one.status).toBe(201);expect(two).toEqual(one);
+      expect(store.listUptimeMonitors()).toHaveLength(1);expect((await call('GET',`/api/uptime/onboarding/${id}`)).body.status).toBe('completed');
+      advance(15*60_000+1);expect((await call('GET',`/api/uptime/onboarding/${id}`)).status).toBe(410);
+      expect((await call('GET',`/api/uptime/onboarding-agent/${id}/instructions`,undefined,{Authorization:`Bearer ${token}`})).status).toBe(401);
+    }finally{release();await Promise.allSettled([first,retry]);server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+  });
   it('提议令牌不能访问owner接口或其他系统API，非owner用户与项目key被拒', async () => {
     const {service}=setup();const app=express();app.use(express.json());
     app.use(createGithubAuthMiddleware({authService:{validateSession:async(token:string)=>token==='owner'?{user:{isSystemOwner:true},session:{}}:token==='member'?{user:{isSystemOwner:false},session:{}}:null} as never,
