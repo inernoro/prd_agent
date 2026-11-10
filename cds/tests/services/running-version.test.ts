@@ -1,10 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { runningCommitSha, branchVersionFacts } from '../../src/services/running-version.js';
+import { runningCommitSha, branchVersionFacts, confirmedRunningRevisionSha } from '../../src/services/running-version.js';
 import type { BranchEntry, DeploymentVersion } from '../../src/types.js';
 const A = 'a'.repeat(40), B = 'b'.repeat(40);
 const branch = (extra = {}) => ({ id: 'lab-main', projectId: 'lab', status: 'running', githubCommitSha: B, ciTargetSha: B, ciImageStatus: 'failed', currentVersionId: 'vA', services: { web: { profileId: 'web', status: 'running', deployedImage: `ghcr.io/test/lab:sha-${A}` } }, ...extra }) as unknown as BranchEntry;
 const version = { id: 'vA', projectId: 'lab', branchId: 'lab-main', commitSha: A, profiles: [{ profileId: 'web', artifactImage: 'managed:immutable-A' }] } as DeploymentVersion;
 describe('运行版本只由真实产物证明', () => {
+  it('同步快照可复核已冻结的源码提交，同时保留旧镜像专用查询语义', () => {
+    const b = branch({ services: { web: { profileId: 'web', status: 'running', deployedImage: 'node:22', sourceCommitSha: A } } });
+    expect(confirmedRunningRevisionSha(b)).toBe(A); expect(runningCommitSha(b)).toBeUndefined();
+  });
+  it('同步快照拒绝未知、混合版本和托管配置指纹', () => {
+    const b = branch(); b.services.api = { ...b.services.web, profileId: 'api', deployedImage: 'node:22', sourceCommitSha: B };
+    expect(confirmedRunningRevisionSha(b)).toBeUndefined(); b.services.api.sourceCommitSha = A;
+    expect(confirmedRunningRevisionSha(b)).toBe(A); b.services.api.sourceCommitSha = undefined;
+    expect(confirmedRunningRevisionSha(b)).toBeUndefined();
+    b.services.api.deployedImage = `cds-managed/lab:sha-${A}`; b.services.api.sourceCommitSha = A;
+    expect(confirmedRunningRevisionSha(b)).toBeUndefined();
+  });
   it('失败推送 B 不会冒充运行 A，API 同时给出目标 B', () => {
     expect(branchVersionFacts(branch())).toEqual({ runningCommitSha: A, targetCommitSha: B });
   });
