@@ -48,9 +48,7 @@ export function ImageQuickEditInput({
         ...glassInputArea,
         width: 320,
         height: 38,
-        background: focused
-          ? 'rgba(32, 32, 38, 0.98)'
-          : 'rgba(32, 32, 38, 0.92)',
+        background: 'var(--bg-elevated)',
         border: focused
           ? '1px solid rgba(99, 102, 241, 0.50)'
           : '1px solid var(--border-subtle)',
@@ -73,9 +71,10 @@ export function ImageQuickEditInput({
       <input
         ref={inputRef}
         type="text"
+        aria-label="快捷编辑描述"
         className="flex-1 min-w-0 h-full bg-transparent text-[13px] placeholder:text-token-muted"
         style={{ color: 'var(--text-primary)', outline: 'none', border: 'none', boxShadow: 'none' }}
-        placeholder="Describe your edit here"
+        placeholder="描述要如何调整这张图"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
