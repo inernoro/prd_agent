@@ -22,12 +22,15 @@ export function systemForProject(slug: string | undefined): NotificationSystem {
 function markdownText(value: string): string { return value.replace(/[\r\n]/g, ' ').replace(/[\\`*_{}\[\]<>|]/g, '\\$&'); }
 function reportContent(name: string, classification: ReportClassification, monitor: ReportMonitorEvent): string {
   const labels = classification.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、');
+  const drill = monitor.state === 'drill';
   return `# ${markdownText(name)}\n\n${monitor.snapshots.at(-1)!.sentence}\n\n`
     + `类别：${labels}\n\n主体系统：${NOTIFICATION_SYSTEMS[classification.primarySystem]}；关联系统：${classification.relatedSystems.map(k => NOTIFICATION_SYSTEMS[k]).join('、') || '无'}\n\n`
     + `环境：${classification.environments.map(k => NOTIFICATION_ENVIRONMENTS[k]).join('、')}\n\n事件编号：${monitor.eventId}\n\n`
-    + `[查看同一监控目标](${monitorIncidentPath(monitor.targetId, monitor.incidentId, monitor.snapshots[0]?.detectedAt)})\n\n## 发生与恢复记录\n\n`
-    + monitor.snapshots.map(s => `- ${s.detectedAt}：${s.sentence}；连续失败检查 ${s.consecutiveFailedChecks} 次`).join('\n')
-    + '\n\n统计口径为监控检查，不能据此推断上游调用次数或失败用户任务数。恢复记录追加保存，不覆盖发生时的事实。\n';
+    + (monitor.targetId ? `[查看同一监控目标](${monitorIncidentPath(monitor.targetId, monitor.incidentId, monitor.snapshots[0]?.detectedAt)})\n\n` : '')
+    + `## ${drill ? '演练记录' : '发生与恢复记录'}\n\n`
+    + monitor.snapshots.map(s => `- ${s.detectedAt}：${s.sentence}${drill ? '' : `；连续失败检查 ${s.consecutiveFailedChecks} 次`}`).join('\n')
+    + (drill ? '\n\n本记录为通知演练，不代表服务故障。推送服务受理不代表手机或手表已展示或已读。\n'
+      : '\n\n统计口径为监控检查，不能据此推断上游调用次数或失败用户任务数。恢复记录追加保存，不覆盖发生时的事实。\n');
 }
 
 /** 复用报告对象存储；按监控目标串行归档，恢复追加同一事件，重复回调不增报告。 */
@@ -50,21 +53,18 @@ export class NotificationReportRecorder {
     const existing = this.state.listAcceptanceReports(projectId).filter(r => (r.projectId || null) === projectId && r.sourcePath === key && r.monitorEvent
       && !event.drill && r.monitorEvent.state !== 'drill')
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const duplicate = existing.find(r => (!event.incidentId || r.monitorEvent!.incidentId === event.incidentId)
-      && r.monitorEvent!.snapshots.some(s => s.detectedAt === event.detectedAt && s.kind === event.kind));
+    const duplicate = existing.find(r => r.monitorEvent!.snapshots.some(s => s.detectedAt === event.detectedAt && s.kind === event.kind));
     if (duplicate) return { reportId: duplicate.id, eventId: duplicate.monitorEvent!.eventId };
-    // A real recovery can already have closed the report before the delayed
-    // notification recovery arrives. Stable incident identity joins both.
-    const sameIncident = event.incidentId ? existing.find(r => r.monitorEvent!.incidentId === event.incidentId) : undefined;
-    const previous = existing.find(r => r.monitorEvent!.state === 'open' && (!event.incidentId || !r.monitorEvent!.incidentId));
-    const appendTo = sameIncident || (recovered ? previous : undefined);
+    const previous = existing.find(r => r.monitorEvent!.state === 'open');
+    // 未稳定恢复前的再次异常仍属于同一未关闭事件，避免冷却重报留下多个永久打开的报告。
+    const appendTo = event.drill ? undefined : previous;
     const eventId = appendTo?.monitorEvent!.eventId || createHash('sha256').update(JSON.stringify([key, event.detectedAt, event.drill])).digest('hex');
     const classification: ReportClassification = { categories: [...NOTIFICATION_TEMPLATES[notification.id].categories],
       primarySystem: event.assessment === 'observation-unavailable' && !event.drill ? 'cds' : subject,
       relatedSystems: event.assessment === 'observation-unavailable' && subject !== 'cds' && !event.drill ? [subject] : [], environments: [notification.facts.environment] };
     const monitorEvent: ReportMonitorEvent = { incidentId: appendTo?.monitorEvent?.incidentId || event.incidentId, eventId, targetId: event.targetId || '', state: event.drill ? 'drill' : recovered ? 'recovered' : 'open',
       snapshots: [...(appendTo?.monitorEvent!.snapshots || []), { detectedAt: event.detectedAt, kind: event.kind,
-        templateId: notification.id, sentence: notification.sentence, consecutiveFailedChecks: event.consecutiveFailures }] };
+        templateId: notification.id, sentence: notification.sentence, consecutiveFailedChecks: event.drill ? 0 : event.consecutiveFailures }] };
     const content = reportContent(event.targetName, classification, monitorEvent);
     const report = appendTo ? await this.state.updateAcceptanceReportAsync(appendTo.id, { content, classification, monitorEvent })
       : await this.state.createAcceptanceReportAsync({ title: notification.sentence, format: 'md', content, projectId,

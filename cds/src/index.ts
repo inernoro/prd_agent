@@ -105,11 +105,11 @@ import { matchPreviewHost } from './services/uptime-custom-monitor.js';
 import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
 import { runMonitorDiscovery, type DiscoveryRunSummary } from './services/monitor-discovery-runner.js';
 import { customProbeTargetId } from './services/uptime-custom-monitor.js';
-import { UptimeMonitorService, uptimeConfigFromEnv, type UptimeAlertEventData, type UptimeAlertEventType } from './services/uptime-monitor.js';
+import { UptimeMonitorService, uptimeConfigFromEnv, type UptimeAlertEventType, type UptimeAlertEventData } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
 import { availabilityOverRange } from './services/uptime-metrics.js';
-import { monitorIncidentPath } from './services/monitor-incident-link.js';
+import { monitorIncidentPath, monitorReportUrl } from './services/monitor-incident-link.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -6239,26 +6239,28 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     return hosts;
   };
 
+  const alarmEventFor = (type: UptimeAlertEventType, data: UptimeAlertEventData): AlarmEvent => {
+    return {
+        notificationFacts: { environment: data.notificationEnvironment || 'unknown', system: systemForProject(data.projectId === '__self__' ? 'cds' : stateService.getProject(data.projectId)?.slug),
+          function: notificationFunction(data.targetName) },
+        identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
+        correlationKey: data.assessment === 'observation-unavailable'
+          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
+          : data.targetId,
+        incidentId: data.incidentId,
+        targetId: data.targetId,
+        urgency: data.urgency,
+        kind: classifyAlert(type, data.source),
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
+        projectId: data.projectId,
+        targetName: data.targetName,
+        message: data.message,
+        detectedAt: data.detectedAt,
+        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
+        consecutiveFailures: data.consecutiveFailures,
+      };
+  };
   const notificationReports = new NotificationReportRecorder(stateService);
-  const monitorAlarmEvent = (type: UptimeAlertEventType, data: UptimeAlertEventData): AlarmEvent => ({
-    notificationFacts: { environment: data.notificationEnvironment || 'unknown', system: systemForProject(data.projectId === '__self__' ? 'cds' : stateService.getProject(data.projectId)?.slug),
-      function: notificationFunction(data.targetName) },
-    identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
-    correlationKey: data.assessment === 'observation-unavailable'
-      ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
-      : data.targetId,
-    incidentId: data.incidentId,
-    targetId: data.targetId,
-    urgency: data.urgency,
-    kind: classifyAlert(type, data.source),
-    businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
-    projectId: data.projectId,
-    targetName: data.targetName,
-    message: data.message,
-    detectedAt: data.detectedAt,
-    ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
-    consecutiveFailures: data.consecutiveFailures,
-  });
   const uptimeMonitor = new UptimeMonitorService({
     state: {
       getAllBranches: () => stateService.getAllBranches(),
@@ -6299,22 +6301,22 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       operationId: crypto.randomUUID(), projectId: data.projectId, message: `${data.targetName}：通知已合并（${data.reason}）`,
       details: { kind: 'policy', targetId: data.targetId, targetName: data.targetName, reason: data.reason, detectedAt: new Date(data.at).toISOString() },
     }),
-    onIncident: async (type, data) => {
-      try { await notificationReports.record(monitorAlarmEvent(type, data)); }
-      catch { console.warn('[alarm] 监控生命周期报告归档失败，通知策略保持不变。'); }
+    onReportEvent: (type, data) => {
+      void notificationReports.record(alarmEventFor(type, data))
+        .catch(() => console.warn('[alarm] 未发送通知的状态事实归档失败，请检查报告存储。'));
     },
     onAlert: async (type, data) => {
       cdsEventsBus.publish(type, data);
       // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
       // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
       // 上游已去抖，重试会把一次翻转变成多条通知）。
-      const event = monitorAlarmEvent(type, data);
+      const event = alarmEventFor(type, data);
       let boardUrl = alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt);
       try {
         const record = await notificationReports.record(event);
         event.reportId = record.reportId;
         event.eventId = record.eventId;
-        if (boardUrl) { const url = new URL(boardUrl); url.pathname = '/reports'; url.search = new URLSearchParams({ report: record.reportId }).toString(); boardUrl = url.toString(); }
+        if (boardUrl) { boardUrl = monitorReportUrl(boardUrl, record.reportId); }
       } catch { console.warn('[alarm] 监控事件报告归档失败，通知继续发送，详情保留监控入口。'); }
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。

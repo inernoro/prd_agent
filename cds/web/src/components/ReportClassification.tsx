@@ -1,6 +1,7 @@
+import { monitorIncidentPath } from '../../../src/services/monitor-incident-link';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { NOTIFICATION_CATEGORIES, NOTIFICATION_SYSTEMS, NOTIFICATION_ENVIRONMENTS, NOTIFICATION_TEMPLATES, UNKNOWN_CLASSIFICATION, type ReportClassification } from '../../../src/shared/notification-templates';
+import { NOTIFICATION_CATEGORIES, NOTIFICATION_SYSTEMS, NOTIFICATION_ENVIRONMENTS, NOTIFICATION_TEMPLATES, UNKNOWN_CLASSIFICATION, notificationTemplatePattern, type NotificationTemplateId, type ReportClassification } from '../../../src/shared/notification-templates';
 import { apiRequest, type AcceptanceReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -33,8 +34,8 @@ export function ClassificationSummary({ report, onSaved }: { report: AcceptanceR
   return <div className="shrink-0 space-y-1 border-b border-[hsl(var(--hairline))] bg-card px-3 py-2 text-xs" aria-label="报告交叉分类">
     <p>类别：{c.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、') || '未分类'}　系统：{NOTIFICATION_SYSTEMS[c.primarySystem]}{c.relatedSystems.length ? `；关联 ${c.relatedSystems.map(k => NOTIFICATION_SYSTEMS[k]).join('、')}` : ''}　环境：{c.environments.map(k => NOTIFICATION_ENVIRONMENTS[k]).join('、')}</p>
     <div className="flex flex-wrap items-center gap-3">
-      {report.monitorEvent ? <><span>事件：{report.monitorEvent.state === 'drill' ? '通知演练' : report.monitorEvent.state === 'recovered' ? '已恢复' : '检查异常'} · {report.monitorEvent.snapshots.length} 条发生与恢复记录</span>
-        {report.monitorEvent.targetId && <Link className="text-primary underline" to={`/status?target=${encodeURIComponent(report.monitorEvent.targetId)}`}>查看同一监控目标</Link>}</>
+      {report.monitorEvent ? <><span>事件：{report.monitorEvent.state === 'drill' ? '通知演练' : report.monitorEvent.state === 'recovered' ? '已恢复' : '检查异常'} · {report.monitorEvent.snapshots.length} {report.monitorEvent.state === 'drill' ? '条演练记录' : '条发生与恢复记录'}</span>
+        {report.monitorEvent.targetId && <Link className="text-primary underline" to={monitorIncidentPath(report.monitorEvent.targetId, report.monitorEvent.incidentId, report.monitorEvent.snapshots[0]?.detectedAt)}>查看同一监控目标</Link>}</>
         : <button type="button" className="text-primary underline" onClick={() => { setValue(report.classification || UNKNOWN_CLASSIFICATION); setEditing(true); }}>编辑交叉分类</button>}
     </div>
     <Dialog open={editing} onOpenChange={setEditing}><DialogContent><DialogHeader><DialogTitle>编辑报告交叉分类</DialogTitle></DialogHeader>
@@ -57,6 +58,6 @@ export function NotificationTemplateCatalog() {
     <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>通知模板 · 单文件维护</DialogTitle></DialogHeader>
       <p className="text-sm text-muted-foreground">手机与手表采用同一句话：环境、系统、功能、结果。优先30字，最多40字。详情进入对应事件报告。</p>
       <p className="break-all text-xs text-muted-foreground">维护文件：cds/src/shared/notification-templates.json</p>
-      <div className="space-y-2">{Object.entries(NOTIFICATION_TEMPLATES).map(([id, t]) => <div key={id} className="rounded border border-[hsl(var(--hairline))] p-2 text-sm"><p className="font-medium">{id} · {t.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、')}</p><p>{'{环境} {系统} '}{t.text.replace('{subject}', '{受影响系统}')}</p></div>)}</div>
+      <div className="space-y-2">{Object.entries(NOTIFICATION_TEMPLATES).map(([id, t]) => <div key={id} className="rounded border border-[hsl(var(--hairline))] p-2 text-sm"><p className="font-medium">{id} · {t.categories.map(k => NOTIFICATION_CATEGORIES[k]).join('、')}</p><p>{notificationTemplatePattern(id as NotificationTemplateId)}</p></div>)}</div>
     </DialogContent></Dialog></>;
 }
