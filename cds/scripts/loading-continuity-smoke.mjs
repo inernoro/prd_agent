@@ -110,6 +110,28 @@ try {
       data.release();
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
+      if (!before && scene.kind === 'code-reviews') {
+        await page.locator('.cr-ui h1').waitFor();
+        result.fontMatrix = [];
+        for (const density of ['80', '85', '100']) {
+          await page.evaluate(value => {
+            if (value === '85') delete document.documentElement.dataset.uiScale;
+            else document.documentElement.dataset.uiScale = value;
+          }, density);
+          for (const width of [1440, 1536, 1920, 2048]) {
+            await page.setViewportSize({ width, height: 940 });
+            result.fontMatrix.push(await page.evaluate(({ density, width }) => ({
+              density, width,
+              heading: getComputedStyle(document.querySelector('.cr-ui h1')).fontSize,
+              body: getComputedStyle(document.querySelector('.cr-ui')).fontSize,
+            }), { density, width }));
+          }
+          const sizes = result.fontMatrix.filter(item => item.density === density);
+          assert.equal(new Set(sizes.map(item => item.heading)).size, 1, `review heading changes with viewport at density ${density}`);
+          assert.equal(new Set(sizes.map(item => item.body)).size, 1, `review body changes with viewport at density ${density}`);
+        }
+        assert(parseFloat(result.fontMatrix.at(-1).body) > parseFloat(result.fontMatrix[0].body), 'the user density preference must still change text size');
+      }
       if (scene.kind === 'branch-detail') {
         await page.locator('summary').filter({hasText:'生效配置'}).click();
         await page.getByText('没有任何自定义环境变量层。',{exact:true}).waitFor();
