@@ -344,6 +344,38 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         storage.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ShortVideoCaller_PreservesTrustedAuditCorrelation(bool rejected)
+    {
+        using var content = new ByteArrayContent(rejected ? Encoding.UTF8.GetBytes("{\"error\":\"expired\"}") : Mp4Bytes());
+        content.Headers.ContentType = new MediaTypeHeaderValue(rejected ? "application/json" : "video/mp4");
+        using var services = BuildDownloadServices(content, out var storage, rejected ? HttpStatusCode.Forbidden : HttpStatusCode.OK);
+        if (!rejected)
+            storage.Setup(x => x.SaveAsync(It.IsAny<byte[]>(), "video/mp4", It.IsAny<CancellationToken>(), "workflow-agent", "doc", null, null))
+                .ReturnsAsync(new StoredAsset("synthetic-sha", "https://synthetic.invalid/video.mp4", 32, "video/mp4"));
+        var context = (PrdAgent.Infrastructure.Database.MongoDbContext)System.Runtime.CompilerServices.RuntimeHelpers
+            .GetUninitializedObject(typeof(PrdAgent.Infrastructure.Database.MongoDbContext));
+        var documents = new Mock<IDocumentService>(MockBehavior.Strict);
+        var processor = new ShortVideoMaterialProcessor(context, documents.Object,
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(), services,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialProcessor>.Instance);
+        var method = typeof(ShortVideoMaterialProcessor).GetMethod("DownloadVideoMaterialAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var parsed = Activator.CreateInstance(method.GetParameters()[0].ParameterType,
+            [null, null, "direct-video", "synthetic", null, "https://download.example.invalid/video.mp4", null]);
+        var run = new ShortVideoMaterialRun { Id = "synthetic-short-video-run", UserId = "synthetic-owner" };
+        var task = (Task)method.Invoke(processor, [parsed, run])!;
+        if (rejected) await Should.ThrowAsync<InvalidOperationException>(() => task);
+        else await task;
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        audit.RequestId.ShouldBe(run.Id); audit.SessionId.ShouldBe(run.Id); audit.UserId.ShouldBe(run.UserId);
+        if (rejected) storage.VerifyNoOtherCalls();
+        documents.VerifyNoOtherCalls();
+    }
+
     private static Task<CapsuleExecutor.CapsuleResult> Download(ServiceProvider services, long maxBytes, int timeoutSeconds = 120)
         => CapsuleExecutor.ExecuteVideoDownloaderAsync(services, new WorkflowNode
         {

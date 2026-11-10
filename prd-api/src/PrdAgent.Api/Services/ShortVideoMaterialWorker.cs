@@ -295,7 +295,7 @@ public sealed class ShortVideoMaterialProcessor
         MarkStage(run, "source", "running", $"正在把视频文件保存到知识库「{store.Name}」");
         await SaveRunAsync(run);
 
-        var videoMaterial = await DownloadVideoMaterialAsync(parsed);
+        var videoMaterial = await DownloadVideoMaterialAsync(parsed, run);
         var sourceEntry = await CreateVideoEntryAsync(
             store,
             run.UserId,
@@ -435,7 +435,7 @@ public sealed class ShortVideoMaterialProcessor
             store.PrimaryEntryId = entryId;
     }
 
-    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed)
+    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed, ShortVideoMaterialRun run)
     {
         var videoUrl = RequireResolvedVideoUrl(parsed.VideoUrl);
 
@@ -454,7 +454,8 @@ public sealed class ShortVideoMaterialProcessor
             _serviceProvider,
             node,
             new Dictionary<string, string>(),
-            new List<ExecutionArtifact>());
+            new List<ExecutionArtifact>(),
+            new WorkflowDesignInvocation(run.UserId, run.Id, node.NodeId, run.Id, run.UserId));
         return ExtractDownloadedVideo(result.Artifacts.FirstOrDefault()?.InlineContent);
     }
 
