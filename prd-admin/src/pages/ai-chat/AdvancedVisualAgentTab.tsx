@@ -1246,9 +1246,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [uploadToast, setUploadToast] = useState<{ text: string } | null>(null);
   const uploadToastTimerRef = useRef<number | null>(null);
-  const showUploadToast = useCallback((text: string) => {
+  const uploadToastPriorityRef = useRef<'info' | 'warning'>('info');
+  const showUploadToast = useCallback((text: string, priority: 'info' | 'warning' = 'info') => {
     const t = String(text ?? '').trim();
     if (!t) return;
+    // 批量上传仍在异步完成时，成功提示不能抹掉“部分输入未上传”的警告。
+    if (priority === 'info' && uploadToastPriorityRef.current === 'warning') return;
+    uploadToastPriorityRef.current = priority;
     setUploadToast({ text: t });
     if (uploadToastTimerRef.current != null) {
       window.clearTimeout(uploadToastTimerRef.current);
@@ -1257,7 +1261,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     uploadToastTimerRef.current = window.setTimeout(() => {
       setUploadToast(null);
       uploadToastTimerRef.current = null;
-    }, 1600);
+      uploadToastPriorityRef.current = 'info';
+    }, priority === 'warning' ? 6000 : 1600);
   }, []);
   useEffect(() => {
     return () => {
@@ -5956,7 +5961,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     const imageFiles = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
     if (imageFiles.length > 20) {
-      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加', 'warning');
     }
     // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
     // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
