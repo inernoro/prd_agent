@@ -28,6 +28,7 @@ import {
   getLogicalModels,
   getLogicalModelUsage,
   getModels,
+  getPlatforms,
   setLogicalModelEnabled,
   setModelOfferingEnabled,
   recoverModelOffering,
@@ -73,6 +74,7 @@ export function LogicalModelsPage() {
   const { promptText, confirm } = useDialogs();
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
+  const [platformNames, setPlatformNames] = useState<Map<string, string>>(() => new Map());
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
   const [modelTypes, setModelTypes] = useState<ExchangeOptionItem[]>([]);
   const [modelTypesError, setModelTypesError] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export function LogicalModelsPage() {
   const [offeringFor, setOfferingFor] = useState<string | null>(null);
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [routingRefreshFailed, setRoutingRefreshFailed] = useState(false);
   const [claimDraft, setClaimDraft] = useState<{ id: string; value: string } | null>(null);
   const [allowlistDraft, setAllowlistDraft] = useState<{ id: string; value: string } | null>(null);
   const [draft, setDraft] = useState<CreateLogicalModelRequest>({
@@ -105,8 +108,8 @@ export function LogicalModelsPage() {
 
   async function reload() {
     setError(null);
-    const [logicalRes, modelsRes, exchangesRes, usageRes, metaRes] = await Promise.all([
-      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }), getLogicalModelUsage(30), getExchangeMeta(),
+    const [logicalRes, modelsRes, exchangesRes, usageRes, metaRes, platformsRes] = await Promise.all([
+      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }), getLogicalModelUsage(30), getExchangeMeta(), getPlatforms(),
     ]);
     setModelTypes(metaRes.success ? metaRes.data.modelTypes : []);
     setModelTypesError(metaRes.success && metaRes.data.modelTypes.length > 0 ? null : '模型用途目录暂不可用，请刷新后再创建。');
@@ -116,17 +119,35 @@ export function LogicalModelsPage() {
       return;
     }
     setItems(logicalRes.data.items);
+    setRoutingRefreshFailed(false);
+    setPlatformNames(platformsRes.success ? new Map(platformsRes.data.items.map(platform => [platform.id, platform.name])) : new Map());
     if (modelsRes.success) setModels(modelsRes.data.items.filter((x) => x.authority === 'llm_gateway'));
     if (exchangesRes.success) setExchanges(exchangesRes.data.items.filter((x) => x.authority === 'llm_gateway'));
     // 用量只是锦上添花，取不到不该让整页报错——列表照常渲染，那一列留空。
     setUsage(usageRes.success ? new Map(usageRes.data.items.map((x) => [x.publicId, x])) : null);
   }
 
+  // 一条线路的变更会影响所有兄弟线路的排队位置，只读服务端完整队列，不在客户端拼接。
+  async function refreshRoutes(): Promise<boolean> {
+    try {
+      const res = await getLogicalModels();
+      if (res.success) {
+        setItems(res.data.items);
+        setRoutingRefreshFailed(false);
+        setNotice(null);
+        return true;
+      }
+    } catch { /* 写入已成功，读取失败需要单独呈现，不能让用户重复提交写入。 */ }
+    setRoutingRefreshFailed(true);
+    failNotice('上游变更已保存，但最新线路状态未读取成功。请刷新线路状态后再确认主备与可用性。');
+    return false;
+  }
+
   useEffect(() => { void reload(); }, []);
 
   const targets = useMemo(() => offeringDraft.targetKind === 'model'
-    ? models.map((x) => ({ id: x.id, label: `${x.name || x.modelName} · ${x.modelName}` }))
-    : exchanges.map((x) => ({ id: x.id, label: x.name })), [models, exchanges, offeringDraft.targetKind]);
+    ? models.map((x) => ({ id: x.id, label: `${platformNames.get(x.platformId || '') || (x.platformId ? `上游 ${x.platformId.slice(0, 8)}` : '未知上游')} · ${x.modelName || x.name}${x.name && x.name !== x.modelName ? `（${x.name}）` : ''}` }))
+    : exchanges.map((x) => ({ id: x.id, label: x.name })), [models, exchanges, platformNames, offeringDraft.targetKind]);
 
   async function submitLogical(event: React.FormEvent) {
     event.preventDefault();
@@ -163,14 +184,13 @@ export function LogicalModelsPage() {
           rateLimitPerMinute: offeringDraft.rateLimitPerMinute ?? 0,
         })
       : await createModelOffering(logical.id, offeringDraft);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '添加 Offering 失败'); return; }
+    const refreshed = await refreshRoutes();
     setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '添加 Offering 失败'); return; }
-    setItems((prev) => prev?.map((x) => x.id === logical.id
-      ? { ...x, offerings: editingOfferingId ? x.offerings.map((o) => o.id === editingOfferingId ? res.data : o) : [...x.offerings, res.data] }
-      : x) || null);
     setOfferingFor(null);
     setEditingOfferingId(null);
     setOfferingDraft({ targetKind: 'model', targetId: '', priority: 100, weight: 100 });
+    if (!refreshed) return;
     okNotice(editingOfferingId ? `已更新「${logical.name}」的上游 ${res.data.targetName}` : `已为「${logical.name}」添加上游 ${res.data.targetName}`);
   }
 
@@ -318,11 +338,9 @@ export function LogicalModelsPage() {
   async function toggleOffering(logical: LogicalModelItem, offeringId: string, enabled: boolean) {
     setBusy(offeringId);
     const res = await setModelOfferingEnabled(logical.id, offeringId, !enabled);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '操作失败'); return; }
+    await refreshRoutes();
     setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '操作失败'); return; }
-    setItems((prev) => prev?.map((x) => x.id === logical.id
-      ? { ...x, offerings: x.offerings.map((o) => o.id === offeringId ? res.data : o) }
-      : x) || null);
   }
 
   async function removeOffering(logical: LogicalModelItem, offering: ModelOfferingItem) {
@@ -330,9 +348,10 @@ export function LogicalModelsPage() {
     if (!await confirm({ title: '移除这条停用线路？', description: `仅移除「${logical.name}」的这条上游线路，保留公开模型 ${logical.publicId} 和 MAP 昵称。请先验证替代线路；仍有业务依赖或请求执行中时服务端会拒绝。`, tone: 'danger', confirmLabel: '移除线路' })) return;
     setBusy(offering.id); setNotice(null);
     const res = await deleteModelOffering(logical.id, offering.id);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '线路未移除，请刷新清单后重试'); return; }
+    const refreshed = await refreshRoutes();
     setBusy(null);
-    if (!res.success) { failNotice(res.error?.message || '线路未移除，请刷新清单后重试'); return; }
-    setItems(current => current?.map(item => item.id === logical.id ? { ...item, offerings: item.offerings.filter(route => route.id !== offering.id) } : item) ?? current);
+    if (!refreshed) return;
     okNotice(`已移除「${logical.name}」的一条停用线路，公开模型和 MAP 昵称保留。`);
   }
 
@@ -348,16 +367,16 @@ export function LogicalModelsPage() {
     setBusy(offeringId);
     const res = await recoverModelOffering(logical.id, offeringId);
     if (!res.success) { setBusy(null); failNotice(res.error?.message || '恢复失败'); return; }
-    await reload();
+    await refreshRoutes();
     setBusy(null);
   }
 
   const offeringCount = items?.reduce((sum, x) => sum + x.offerings.length, 0) ?? 0;
   // 抬头先给结论再给数字：一排孤零零的计数读完不知道该干嘛，出问题的那几个才是要先看的。
-  const attention = useMemo(() => (items ?? [])
+  const attention = useMemo(() => (routingRefreshFailed ? [] : items ?? [])
     .filter((x) => x.enabled)
     .map((x) => ({ item: x, health: summarizeHealth(x, describeRoutes(x, models)) }))
-    .filter((x) => x.health.tone === 'warn'), [items, models]);
+    .filter((x) => x.health.tone === 'warn'), [items, models, routingRefreshFailed]);
   const monthlyCostUsd = useMemo(
     () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.totalCostUsd || 0), 0),
     [usage]);
@@ -582,6 +601,7 @@ export function LogicalModelsPage() {
       <PageBody className="lg-collection-page">
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
+        {routingRefreshFailed ? <Button size="sm" disabled={busy !== null} onClick={async () => { setBusy('refresh-routes'); await refreshRoutes(); setBusy(null); }}>{busy === 'refresh-routes' ? '读取中…' : '刷新线路状态'}</Button> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
 
         {createOpen && canWrite ? (
@@ -658,7 +678,7 @@ export function LogicalModelsPage() {
           </Card>
         ) : null}
 
-        {items !== null && items.length > 0 ? (
+        {items !== null && items.length > 0 && !routingRefreshFailed ? (
           <div className="lg-collection-workspace">
           <Card className="lg-logical-model-list lg-collection-list" style={{ padding: 0 }}>
             <CollectionView items={items} placeholder="搜索模型名称或公开标识" searchText={(item) => `${item.name} ${item.publicId}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
