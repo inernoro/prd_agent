@@ -18,7 +18,7 @@ const site: SiteCardProps['site'] = {
 
 describe('网页详情的信息保留', () => {
   for (const size of ['small', 'medium', 'large'] as const) {
-    it(`${size} 直接打开完整信息，零次显示且不触发访问、选择或修改`, async () => {
+    it(`${size} 以原尺寸切换属性和完整文件，保留统计且不触发访问、选择或修改`, async () => {
       const container = document.createElement('div'); document.body.append(container);
       const root = createRoot(container);
       const action = vi.fn();
@@ -44,9 +44,23 @@ describe('网页详情的信息保留', () => {
         }
         expect(dialog.querySelector('[aria-label="全部访问（含作者）"]')?.textContent).toContain('7 次');
         expect(dialog.querySelector('[aria-label="外部访问（不含已登录作者）"]')?.textContent).toContain('2 次');
+        expect((dialog as HTMLElement).style.maxWidth).toBe('520px');
+        expect(dialog.querySelector('[data-site-details]')?.classList.contains('text-xs')).toBe(true);
+        const filesTab = dialog.querySelector<HTMLButtonElement>('[role="tab"][data-state="inactive"]')!;
+        const infoTab = dialog.querySelector<HTMLButtonElement>('[role="tab"][data-state="active"]')!;
+        expect(infoTab.textContent).toBe('基本信息');
+        expect(filesTab.textContent).toBe('文件 · 103');
+        expect(dialog.querySelectorAll('li')).toHaveLength(0);
+        await act(async () => filesTab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })));
+        expect(filesTab.getAttribute('aria-selected')).toBe('true');
+        expect(dialog.querySelector('[aria-label="访问统计"]')?.textContent).toContain('7 次');
         expect(dialog.querySelectorAll('li')).toHaveLength(103);
         expect(dialog.textContent).toContain('第102个文件.html');
         expect(dialog.querySelector('details, [aria-expanded="false"]')).toBeNull();
+        await act(async () => infoTab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 })));
+        expect(infoTab.getAttribute('aria-selected')).toBe('true');
+        expect(dialog.textContent).toContain('987654321 次（旧口径）');
+        expect(dialog.querySelectorAll('li')).toHaveLength(0);
         expect(action).not.toHaveBeenCalled();
         await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="关闭"]')!.click());
         expect(document.querySelector('[role="dialog"]')).toBeNull();
