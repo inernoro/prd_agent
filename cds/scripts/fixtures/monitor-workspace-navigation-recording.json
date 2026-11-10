@@ -1,0 +1,127 @@
+{
+  "_provenance": {
+    "method": "Reduced and sanitized copies of genuine recorded uptime summary, target and history response contracts; all identifiers, names, locations and values below are synthetic test data. No credentials, live endpoints, recipients or original incident payloads.",
+    "schemaSource": "CDS uptime summary and target history GET responses, recorded 2026-11-10; reduced to one target template and empty point arrays.",
+    "scope": "Loopback-only navigation regression, not operator-login or production acceptance."
+  },
+  "summary": {
+    "enabled": true,
+    "generatedAt": 1794320290363,
+    "intervalSeconds": 10,
+    "timeoutMs": 5000,
+    "failureThreshold": 3,
+    "firstDataEtaSeconds": 10,
+    "lastCycleAt": 1794320290363,
+    "cycle": {
+      "ok": true,
+      "running": false,
+      "lastCycleAt": 1794320290363,
+      "sinceLastCycleMs": 0,
+      "stale": false,
+      "watchdogResets": 0,
+      "probeDeadlineHits": 0
+    },
+    "excludePatterns": [],
+    "overall": {
+      "total": 223,
+      "up": 173,
+      "down": 7,
+      "paused": 0,
+      "unknown": 43,
+      "excluded": 0,
+      "unmeasured": 0,
+      "ok": false
+    },
+    "targets": [],
+    "coverage": {
+      "total": 223,
+      "covered": 223,
+      "uncovered": [],
+      "byReason": [],
+      "scope": "all"
+    },
+    "prober": {
+      "lastCycleAt": 1794320290363,
+      "lastCycleDurationMs": 3,
+      "lastCycleProbed": 2,
+      "lastCycleTargets": 223,
+      "stalled": false,
+      "userViewEnabled": false
+    },
+    "alarm": {
+      "status": "unconfigured",
+      "channel": "MAP 站内通知",
+      "delivered": 0,
+      "failed": 0,
+      "missing": []
+    },
+    "alarmChannels": []
+  },
+  "target": {
+    "collectionTargetId": "monitor@navigation",
+    "id": "monitor@navigation",
+    "source": "custom",
+    "name": "导航回归样本",
+    "branchId": "",
+    "projectId": "navigation",
+    "profileId": "navigation",
+    "probeKind": "url",
+    "probeUrl": "https://navigation.example.invalid/healthz",
+    "status": "down",
+    "excluded": false,
+    "degraded": false,
+    "lastSample": {
+      "up": false,
+      "ms": 101,
+      "code": 200,
+      "err": "合成异常，用于导航回归",
+      "measurement": {
+        "name": "回归耗时",
+        "field": "observedValue",
+        "op": "lte",
+        "expected": "300",
+        "actual": 1240,
+        "unit": "ms"
+      },
+      "finding": "合成异常，用于导航回归",
+      "t": 1794320289363
+    },
+    "availability24h": 0.9583333333333333,
+    "availability7d": 0.99566,
+    "avgLatencyMs24h": 101,
+    "sampleCount24h": 48,
+    "buckets": [],
+    "openIncidentSince": 1794318070363,
+    "statusSince": 1794318070363,
+    "incidentCount": 1,
+    "probeDescription": "只读导航回归，不发送探测",
+    "intervalSeconds": 300,
+    "timeoutMs": 15000,
+    "measured": true,
+    "projectName": "导航回归",
+    "environment": "production",
+    "environmentLabel": "生产",
+    "observeMode": "active",
+    "monitorId": "navigation",
+    "tags": [],
+    "enabled": true,
+    "publicVisible": false,
+    "healthCheck": null,
+    "addedBy": {
+      "by": "fixture",
+      "kind": "human",
+      "origin": "manual"
+    }
+  },
+  "history": {
+    "id": "monitor@navigation",
+    "name": "导航回归样本",
+    "from": 1794233890363,
+    "to": 1794320290363,
+    "bucketCount": 48,
+    "points": [],
+    "recentSamples": [],
+    "range": "24h",
+    "maxPoints": 48
+  }
+}

@@ -11,12 +11,17 @@
 .monitor-workspace .monitor-service-detail .rate:hover > span{color:var(--t1)}
 .monitor-workspace .monitor-service-detail .metric-point{fill:var(--t2)}
 .monitor-workspace .monitor-service-detail .metric-point.bad{fill:var(--bad)}
-.monitor-workspace .monitor-service-detail .detail-history-ranges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
-.monitor-workspace .monitor-service-detail .detail-history-ranges button{padding:4px 8px;border-radius:6px;color:var(--t2);font-size:12px;background:var(--p2)}
-.monitor-workspace .monitor-service-detail .detail-history-ranges button[aria-pressed=true]{color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+.monitor-workspace .monitor-service-detail .detail-history-ranges{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+.monitor-workspace .monitor-service-detail .detail-history-ranges button{border-radius:3px;color:var(--t2);font-size:12.5px;white-space:nowrap}
+.monitor-workspace .monitor-service-detail .detail-history-ranges button[aria-pressed=true]{color:var(--t1)}
+.monitor-workspace .monitor-service-detail .detail-history-ranges button:hover{color:var(--acc)}
+.monitor-workspace .monitor-service-detail .detail-history-summary{gap:4px 12px}
+.monitor-workspace .monitor-service-detail .detail-history-note{margin-top:6px;font-size:11px;line-height:16px}
+.monitor-workspace .monitor-service-detail .detail-time-axis time{white-space:nowrap}
 .monitor-workspace .monitor-service-detail .history-progress{height:2px;margin-bottom:5px;background:linear-gradient(90deg,transparent,var(--acc),transparent);background-size:200% 100%;animation:monitor-history-progress 1.2s linear infinite}
 @keyframes monitor-history-progress{from{background-position:200% 0}to{background-position:0 0}}
 @media(max-width:760px){.monitor-workspace .monitor-service-detail .chl{grid-template-columns:minmax(0,1fr) auto}.monitor-workspace .monitor-service-detail .chl .dest{grid-column:1;grid-row:2}.monitor-workspace .monitor-service-detail .rt{grid-template-columns:1fr .8fr 1fr 1fr;gap:10px 6px}.monitor-workspace .monitor-service-detail .lk .tag{max-width:100%}}
+@media(max-width:760px){.monitor-workspace .monitor-service-detail .detail-time-axis time:nth-child(even){display:none}}
 
 .monitor-workspace .monitor-service-detail .thl{top:calc(var(--threshold-y) - 18px)}
 

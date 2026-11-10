@@ -626,7 +626,11 @@
 .monitor-workspace .t2r{grid-row:2}
 .monitor-workspace .alw{grid-row:3}
 .monitor-workspace .wsw{grid-row:4}
-.monitor-workspace .t2 .tokens{width:auto;flex:1 1 200px}
+/* Search and source share a row; all four status counters keep their own row. */
+.monitor-workspace .t2 .search{width:auto;flex:1 1 170px}
+.monitor-workspace .t2 .tokens{width:100%;flex:0 0 100%;justify-content:space-between;flex-wrap:wrap;overflow:visible}
+.monitor-workspace .t2 .tok{padding:0 4px;gap:6px}
+.monitor-workspace .t2 .rm-b{display:none !important}
 .monitor-workspace .source-filter{flex:0 0 100px;width:100px;max-width:100px}
 }
 

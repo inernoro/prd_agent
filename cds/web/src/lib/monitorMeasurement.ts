@@ -21,6 +21,12 @@ function numeric(value: unknown): number | null {
 
 export function formatMeasurementValue(value: string | number | boolean | null, unit = ''): string {
   if (value === null) return '—';
+  // Match the supplied artwork's percentage precision without clipping genuine
+  // readings outside 0–100. Lexical health conditions keep their original text.
+  if (unit === '%' && typeof value === 'number' && Number.isFinite(value)) {
+    const digits = value >= 99 && value < 100 ? 2 : value === 100 ? 0 : 1;
+    return `${new Intl.NumberFormat('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value)}%`;
+  }
   const body = typeof value === 'number'
     ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(value)
     : String(value);
@@ -31,10 +37,11 @@ export function measurementView(sample?: UptimeSample | null): MeasurementView |
   const measurement = sample?.measurement;
   if (!measurement || sample?.noData) return null;
   const { actual, expected, unit, op } = measurement;
+  const format = (value: typeof actual): string => formatMeasurementValue(unit === '%' && op !== 'eq' && op !== 'ne' ? numeric(value) ?? value : value, unit);
   const view: MeasurementView = {
     name: measurement.name,
-    actual: formatMeasurementValue(actual, unit),
-    expected: `${OPERATORS[op]} ${formatMeasurementValue(expected, unit)}`,
+    actual: format(actual),
+    expected: `${OPERATORS[op]} ${format(expected)}`,
     gap: actual === null ? '本次未取得有效指标读数' : '按配置条件判定',
     shortGap: '',
   };
@@ -43,10 +50,14 @@ export function measurementView(sample?: UptimeSample | null): MeasurementView |
   if (op === 'eq' || op === 'ne') return view;
   const a = numeric(actual), e = numeric(expected);
   if (a === null || e === null) return view;
-  const low = Math.min(0, a, e);
-  const high = Math.max(1, a, e) * 1.25;
+  const percentageFloor = unit === '%' && (op === 'gt' || op === 'gte') && a >= 0 && a <= 100 && e >= 0 && e <= 100;
+  // Lower-bound percentages use the reference's local scale near 100%, so a
+  // small shortfall remains visible. Other contracts retain their real scale.
+  const minimum = Math.min(a, e);
+  const low = percentageFloor && minimum < 100 ? Math.max(0, minimum - (100 - minimum) * 1.2) : Math.min(0, a, e);
+  const high = percentageFloor ? 100 : Math.max(1, a, e) * 1.25;
   const span = high - low;
-  view.numeric = { actual: a, expected: e, actualPercent: (a - low) / span * 100, expectedPercent: (e - low) / span * 100 };
+  view.numeric = { actual: a, expected: e, actualPercent: Math.max(percentageFloor ? 2 : 0, (a - low) / span * 100), expectedPercent: (e - low) / span * 100 };
   const delta = a - e;
   const higherFails = op === 'lt' || op === 'lte';
   const lowerFails = op === 'gt' || op === 'gte';
