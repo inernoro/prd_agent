@@ -40,8 +40,8 @@ public static class UpstreamProxy
         Func<string, string> encrypt, bool global = false)
     {
         var mode = (input.Mode ?? "").Trim().ToLowerInvariant();
-        if (mode is not ("inherit" or "direct" or "custom") || global && mode == "inherit")
-            throw new ArgumentException("请选择跟随全局、强制直连或独立代理；全局设置请选择直连或代理");
+        if (mode is not ("inherit" or "direct" or "custom"))
+            throw new ArgumentException(global ? "请选择部署默认、强制直连或使用代理" : "请选择跟随全局、强制直连或独立代理");
         if (mode != "custom") return new BsonDocument("Mode", mode);
         if (!Uri.TryCreate(input.Address?.Trim(), UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https" or "socks5")
@@ -68,6 +68,7 @@ public static class UpstreamProxy
         var selected = View(local).Mode == "inherit" ? global : local;
         if (selected is null) return null; // 未配置时保留部署既有的出站行为。
         var view = View(selected, "direct");
+        if (view.Mode == "inherit") return null; // 全局继承保留部署默认出口，空配置保存后也不改路由。
         if (view.Mode == "direct") return new("direct", null, null, null);
         if (view.Mode != "custom" || string.IsNullOrEmpty(view.Address))
             throw new InvalidOperationException("代理配置无效，请重新保存代理设置");

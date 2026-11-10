@@ -16,7 +16,8 @@ export function ProxyBadge({ proxy }: { proxy?: UpstreamProxyView | null }) {
   const global = useContext(GlobalProxyContext);
   const mode = proxy?.mode ?? 'inherit';
   const label = mode === 'custom' ? '独立代理' : mode === 'direct' ? '强制直连'
-    : global === null ? '跟随全局' : global.mode === 'custom' ? '全局代理' : '直连 · 跟随全局';
+    : global === null ? '跟随全局' : global.mode === 'custom' ? '全局代理'
+    : global.mode === 'inherit' ? '部署默认 · 跟随全局' : '直连 · 跟随全局';
   const address = mode === 'custom' ? proxy?.address : mode === 'inherit' ? global?.address : null;
   return <span title={address || label}><Chip label={label} color="var(--text-secondary)" bg="var(--bg-elevated)" /></span>;
 }
@@ -29,8 +30,8 @@ export function ProxyFields({ value, onChange, stored, global = false }: {
     <label style={FIELD_LABEL}>
       <span>连接方式</span>
       <select aria-label={global ? '全局连接方式' : '上游连接方式'} value={value.mode} onChange={e => onChange({ ...value, mode: e.target.value as UpstreamProxyDraft['mode'] })} style={FIELD_INPUT}>
-        {!global ? <option value="inherit">跟随全局设置</option> : null}
-        <option value="direct">{global ? '直连' : '强制直连'}</option>
+        <option value="inherit">{global ? '部署默认' : '跟随全局设置'}</option>
+        <option value="direct">强制直连</option>
         <option value="custom">{global ? '使用代理' : '使用独立代理'}</option>
       </select>
     </label>
@@ -50,7 +51,7 @@ export function UpstreamProxyProvider({ children }: { children: ReactNode }) {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [saved, setSaved] = useState<UpstreamProxyView | null>(null);
-  const [draft, setDraft] = useState<UpstreamProxyDraft>({ mode: 'direct' });
+  const [draft, setDraft] = useState<UpstreamProxyDraft>({ mode: 'inherit' });
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -75,8 +76,8 @@ export function UpstreamProxyProvider({ children }: { children: ReactNode }) {
   }
   return <GlobalProxyContext.Provider value={saved}>
     <details style={{ flexShrink: 0, border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '10px 12px', maxHeight: '55vh', overflow: 'auto' }}>
-      <summary style={{ ...SECTION_TITLE, cursor: 'pointer' }}>全局上游代理 · {saved === null ? '尚未加载' : saved.mode === 'custom' ? saved.address : '直连'}</summary>
-      <p style={HINT_TEXT}>应用于当前组织内所有跟随全局设置的上游，也包括之后新增的上游。单个上游可以独立配置代理或强制直连。</p>
+      <summary style={{ ...SECTION_TITLE, cursor: 'pointer' }}>全局上游代理 · {saved === null ? '尚未加载' : saved.mode === 'custom' ? saved.address : saved.mode === 'inherit' ? '部署默认' : '强制直连'}</summary>
+      <p style={HINT_TEXT}>应用于当前组织内所有跟随全局设置的上游，也包括之后新增的上游。部署默认保留服务器已有出口设置，强制直连会关闭代理；单个上游也可独立配置。</p>
       {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
       {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
       {canWrite && loaded ? <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 10 }}>

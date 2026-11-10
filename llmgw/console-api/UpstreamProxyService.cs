@@ -61,7 +61,7 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
         IResult Fail(string code, string message, int status = 400) => Results.Json(ApiEnvelope<object>.Fail(code, message), json, statusCode: status);
 
         app.MapGet("/gw/upstream-proxy", async (HttpContext http, CancellationToken ct) =>
-            Ok(UpstreamProxy.View(await GlobalAsync(TenantAccess.GetRequired(http).TenantId, ct), "direct")))
+            Ok(UpstreamProxy.View(await GlobalAsync(TenantAccess.GetRequired(http).TenantId, ct))))
             .RequireAuthorization("LogsRead");
 
         app.MapPut("/gw/upstream-proxy", async (HttpContext http, UpstreamProxyWrite body) =>
@@ -78,7 +78,7 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
                     { "mode", UpstreamProxy.View(doc).Mode }, { "address", (BsonValue?)UpstreamProxy.View(doc).Address ?? BsonNull.Value },
                     { "hasPassword", UpstreamProxy.View(doc).HasPassword },
                 }, CancellationToken.None);
-                return Ok(UpstreamProxy.View(doc, "direct"));
+                return Ok(UpstreamProxy.View(doc));
             }
             catch (ArgumentException ex) { return Fail("INVALID_PROXY", ex.Message); }
             catch (InvalidOperationException) { return Fail("PROXY_SECRET_UNAVAILABLE", "代理密码未能加密，请检查网关的加密配置后重试"); }

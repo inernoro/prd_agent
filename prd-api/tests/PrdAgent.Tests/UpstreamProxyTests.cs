@@ -13,6 +13,30 @@ namespace PrdAgent.Tests;
 public class UpstreamProxyTests
 {
     [Fact]
+    public void SavingDisplayedUnconfiguredGlobalProxyPreservesDeploymentClient()
+    {
+        var displayed = UpstreamProxy.View(null);
+        Assert.Equal("inherit", displayed.Mode);
+        var saved = UpstreamProxy.Build(new() { Mode = displayed.Mode }, null,
+            _ => throw new Exception("部署默认不需要加密凭据"), global: true);
+        var resolved = UpstreamProxy.Resolve(Config("inherit"), saved, _ => null);
+        Assert.Null(resolved);
+        var factory = new CountingClientFactory();
+        using var clients = new UpstreamProxyClientScope(factory, false);
+        clients.Get(new ModelResolutionResult { UpstreamProxy = resolved }, 30);
+        Assert.Equal(1, factory.Calls);
+        var direct = UpstreamProxy.Build(new() { Mode = "direct" }, saved, _ => "unused", global: true);
+        clients.Get(new ModelResolutionResult { UpstreamProxy = UpstreamProxy.Resolve(null, direct, _ => null) }, 30);
+        Assert.Equal(1, factory.Calls); // 显式直连使用独立 handler，不能与部署默认混为一谈。
+    }
+
+    private sealed class CountingClientFactory : IHttpClientFactory
+    {
+        public int Calls;
+        public HttpClient CreateClient(string name) { Calls++; return new HttpClient(); }
+    }
+
+    [Fact]
     public void ProxiedProbeValidationAllowsRemoteDnsButRejectsUnsafeLiteralTargets()
     {
         Assert.Null(UpstreamProxy.ValidateProxyTarget("https://proxy-only-models.invalid/v1"));
