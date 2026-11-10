@@ -5935,8 +5935,9 @@ public static class CapsuleExecutor
         var snapshotState = "binary-omitted";
         if (contentType?.Contains("xml", StringComparison.OrdinalIgnoreCase) == true)
             snapshotState = "xml-unsafe-snapshot-omitted";
-        else if (contentType != null && (contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
-            || contentType.Contains("json", StringComparison.OrdinalIgnoreCase)))
+        else if (contentType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true)
+            snapshotState = "text-unsafe-snapshot-omitted";
+        else if (contentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
         {
             var text = Encoding.UTF8.GetString(prefix, 0, read);
             try
@@ -5947,21 +5948,15 @@ public static class CapsuleExecutor
                     try { node = JsonNode.Parse(text); }
                     catch (JsonException) { snapshotState = "invalid-json-redacted-text"; }
                 }
-                if (node != null)
+                if (node is JsonObject or JsonArray)
                 {
-                    if (node is JsonValue root && root.TryGetValue<string>(out var rootText))
-                        node = JsonValue.Create(RedactDownloadResponseText(rootText))!;
-                    else
-                        RedactDownloadResponseNode(node);
+                    RedactDownloadResponseNode(node);
                     snapshot = node.ToJsonString();
                     snapshotState = "redacted-json";
                 }
                 else
-                {
-                    snapshot = RedactDownloadResponseText(text);
-                    if (snapshotState != "invalid-json-redacted-text") snapshotState = "redacted-text-prefix";
-                }
-                if (snapshot.Length > 4096) snapshot = snapshot[..4096] + "[TRUNCATED]";
+                    snapshotState = "nonstructured-json-unsafe-snapshot-omitted";
+                if (snapshot is { Length: > 4096 }) snapshot = snapshot[..4096] + "[TRUNCATED]";
             }
             catch (Exception ex)
             {

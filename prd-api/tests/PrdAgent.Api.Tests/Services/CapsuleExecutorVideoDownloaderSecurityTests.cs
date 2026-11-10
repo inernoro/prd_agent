@@ -239,7 +239,10 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         audit.UserId.ShouldBe("synthetic-user");
         ex.Message.ShouldContain(audit.Id);
         audit.ResponseBody.ShouldNotBeNull();
-        audit.ResponseBody!.ShouldContain("link-expired");
+        if (mime == "application/json" && body.StartsWith("{", StringComparison.Ordinal))
+            audit.ResponseBody!.ShouldContain("link-expired");
+        else
+            audit.ResponseBody!.ShouldContain("unsafe-snapshot-omitted");
         audit.ResponseBody.ShouldContain("prefixSha256");
         audit.ResponseBody.ShouldNotContain("private-token-marker");
         audit.ResponseBody.ShouldNotContain("synthetic-query-marker");
@@ -259,7 +262,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         ex.Message.ShouldNotContain("private-token-marker");
         var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
         audit.ResponseBody.ShouldNotBeNull();
-        audit.ResponseBody!.ShouldContain("link-expired");
+        audit.ResponseBody!.ShouldContain("text-unsafe-snapshot-omitted");
         audit.ResponseBody.ShouldContain("\"bodyComplete\":false");
         audit.ResponseBody.ShouldNotContain("private-token-marker");
         source.BytesRead.ShouldBe(4096);
@@ -374,6 +377,26 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         audit.RequestId.ShouldBe(run.Id); audit.SessionId.ShouldBe(run.Id); audit.UserId.ShouldBe(run.UserId);
         if (rejected) storage.VerifyNoOtherCalls();
         documents.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("text/html", "<input name='access_token' value='synthetic-markup-secret'>")]
+    [InlineData("text/plain", "<Token>synthetic-markup-secret</Token>")]
+    [InlineData("application/json", "\"<Token>synthetic-markup-secret</Token>\"")]
+    public async Task UnsafeUnstructuredSnapshots_AreExplicitlyOmitted(string mime, string body)
+    {
+        var bytes = Encoding.UTF8.GetBytes(body);
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue(mime);
+        using var services = BuildDownloadServices(content, out var storage, HttpStatusCode.Forbidden);
+        await Should.ThrowAsync<InvalidOperationException>(() => Download(services, 8192));
+        var audit = services.GetRequiredService<List<ApiRequestLog>>().Single();
+        var evidence = audit.ResponseBody ?? throw new InvalidOperationException("Missing audit evidence");
+        evidence.ShouldNotContain("synthetic-markup-secret");
+        evidence.ShouldContain("unsafe-snapshot-omitted");
+        evidence.ShouldContain(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant());
+        storage.VerifyNoOtherCalls();
     }
 
     private static Task<CapsuleExecutor.CapsuleResult> Download(ServiceProvider services, long maxBytes, int timeoutSeconds = 120)
