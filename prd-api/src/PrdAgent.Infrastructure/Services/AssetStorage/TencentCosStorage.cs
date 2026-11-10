@@ -764,6 +764,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "audio/webm" => "weba",
             // 视频
             "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
             "video/webm" => "webm",
             "video/quicktime" => "mov",
             "video/x-matroska" => "mkv",
@@ -803,6 +804,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
             "weba" => "audio/webm",
             // 视频
             "mp4" => "video/mp4",
+            "m4v" => "video/x-m4v",
             "webm" => "video/webm",
             "mov" => "video/quicktime",
             "mkv" => "video/x-matroska",

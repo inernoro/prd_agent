@@ -320,4 +320,18 @@ public class ShortVideoMaterialProcessorTests
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialProcessor>.Instance), stored, attachments, entries);
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(typeof(PrdAgent.Infrastructure.Services.AssetStorage.TencentCosStorage))]
+    [InlineData(typeof(PrdAgent.Infrastructure.Services.AssetStorage.CloudflareR2Storage))]
+    [InlineData(typeof(PrdAgent.Infrastructure.Services.AssetStorage.LocalAssetStorage))]
+    public void SupportedM4v_UsesPlayableStorageExtensionAndMime(Type storageType)
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+        var resolve = storageType.GetMethod("ResolveExtension", flags)!;
+        var reverse = storageType.GetMethod("ExtToMime", flags)!;
+        resolve.Invoke(null, [null, null, "video/x-m4v"]).ShouldBe("m4v");
+        reverse.Invoke(null, ["m4v"]).ShouldBe("video/x-m4v");
+    }
+
 }
