@@ -70,3 +70,17 @@ it('解散须确认并只调用合集接口，不触发原文档删除', async (
   expect(api.dissolveCollection).toHaveBeenCalledWith('col', 4);
   expect(close).toHaveBeenCalledOnce();
 });
+
+
+it('设计 Demo 保存与分享在本地演示，不调用真实合集服务', async () => {
+  await act(async () => root.render(<HostedCollectionEditor initialSites={sites} demo onClose={vi.fn()} />));
+  await input('演示资料');
+  await click('保存合集');
+  expect(api.createCollection).not.toHaveBeenCalled();
+  expect(api.updateCollection).not.toHaveBeenCalled();
+  await click('生成分享链接');
+  await click('确认范围并生成链接');
+  expect(api.previewCollectionSharing).not.toHaveBeenCalled();
+  expect(api.createCollectionShare).not.toHaveBeenCalled();
+  expect(element.textContent).toContain('/_dev/web-hosting-share');
+});

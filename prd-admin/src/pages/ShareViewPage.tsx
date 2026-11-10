@@ -186,6 +186,9 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   const isMobile = useIsMobile();
   const [data, setData] = useState<ShareViewData | null>(null);
   const [collectionManagerOpen, setCollectionManagerOpen] = useState(false);
+  const [collectionShareFirst, setCollectionShareFirst] = useState(false);
+  const loadedCollectionToken = useRef<string>();
+  const readsSingleSite = data?.sites.length === 1 && (embedded || data.shareType !== 'collection');
   const requestedRelatedSiteId = siteIdOverride ?? searchParams.get('siteId');
   const [relatedAccountSite, setRelatedAccountSite] = useState<HostedSite | null>(null);
   const [relatedSharedSite, setRelatedSharedSite] = useState<RelatedDocument | null>(null);
@@ -197,7 +200,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
       relatedPreview.cancel(); setRelatedAccountSite(null); setRelatedSharedSite(item);
     } else void relatedPreview.open(item.id);
   });
-  const openedSiteId = data?.sites.length === 1 ? data.sites[0].id : undefined;
+  const openedSiteId = readsSingleSite ? data!.sites[0].id : undefined;
   useEffect(() => {
     if (isAuthenticated && currentUserId && openedSiteId) void recordSiteView(openedSiteId);
   }, [isAuthenticated, currentUserId, openedSiteId]);
@@ -300,8 +303,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
     } : current);
   }, []);
 
-  const review = useHostedReview(reviewFrameRef, data?.sites.length === 1 ? data.sites[0] : null,
-    token && data?.sites.length === 1 && !data.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
+  const review = useHostedReview(reviewFrameRef, readsSingleSite ? data!.sites[0] : null,
+    token && readsSingleSite && !data!.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
     () => setShowComments(true), handleOwnerSitePublished);
   const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
     token ? { token, password: password || undefined } : undefined, reviewFrameRef);
@@ -368,7 +371,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
    * 落盘仍走同源 Blob（saveBlobAsFile），不给托管直链挂 a[download]。
    */
   const handleDownloadSource = useCallback(async () => {
-    if (!token || !data || data.sites.length !== 1) return;
+    if (!token || !data || !readsSingleSite) return;
     const site = data.sites[0];
     const plan = planSourceDownload(site);
 
@@ -395,7 +398,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
       return;
     }
     setDownloadNote({ text: describeOfflineExportResult(outcome.summary).text, tone: 'info' });
-  }, [token, data, password, runOfflineExport]);
+  }, [token, data, password, runOfflineExport, readsSingleSite]);
 
   const fetchShare = async (pwd?: string) => {
     if (!token) return;
@@ -413,7 +416,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
         setError({ code: 'NOT_FOUND', message: '文档不存在或无权访问' });
         return;
       }
-      setData(selected ? { ...res.data, sites: [selected] } : res.data);
+      loadedCollectionToken.current = res.data.shareType === 'collection' ? token : undefined;
+      setData(embedded && selected ? { ...res.data, sites: [selected] } : res.data);
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);
@@ -437,6 +441,8 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   };
 
   useEffect(() => {
+    // 切换同一合集的文档只改变阅读位置，目录、搜索和分页保持挂载。
+    if (!embedded && loadedCollectionToken.current === token && data?.shareType === 'collection') return;
     void fetchShare(password || undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, requestedRelatedSiteId]);
@@ -473,13 +479,13 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
 
   // 顶栏「评论 N」初始计数：单站点分享 + token 就绪后拉一次（抽屉打开后由 onCountChange 接管）
   useEffect(() => {
-    if (!token || !data || data.sites.length !== 1) return;
+    if (!token || !data || !readsSingleSite) return;
     let alive = true;
     listShareComments(token, password || undefined, data.sites[0].id)
       .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.filter(c => !c.parentId).length); })
       .catch(() => {});
     return () => { alive = false; };
-  }, [token, password, data]);
+  }, [token, password, data, readsSingleSite]);
 
   // 取回入口 HTML 走**服务端同源代理**（getShareSiteContent），不是浏览器直接 fetch(site.siteUrl)。
   // 托管内容在独立域名且不返回 Access-Control-Allow-Origin，浏览器侧跨域 fetch 一律被拦，
@@ -487,7 +493,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
   // 这就是「三个网页无法预览」的根因之一。改回浏览器 fetch 会让这条兜底再次变成死代码，
   // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
-    const site = data?.sites.length === 1 ? data.sites[0] : null;
+    const site = readsSingleSite ? data!.sites[0] : null;
     if (!site || !token || !shouldFetchPreviewHtml(site)) {
       // 多文件网站和包装资产站（PDF/视频）走真实地址——直接落到 settled，
       // 让 resolvePreviewSource 立刻给 direct，不要让这类站点白等一个超时窗口。
@@ -562,7 +568,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
       });
 
     return () => { alive = false; window.clearTimeout(fallbackTimer); };
-  }, [data, token, password]);
+  }, [data, token, password, readsSingleSite]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -836,6 +842,22 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
 
   const isOwner = isAuthenticated && currentUserId && data.createdBy === currentUserId;
 
+  if (!embedded && data.shareType === 'collection') {
+  // Keep the original share token: member pages use the same authorization scope.
+  return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
+    selectedSiteId={requestedRelatedSiteId} onSelect={id => navigate(id ? `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: id })}` : `/s/wp/${encodeURIComponent(token!)}`)}
+    reader={requestedRelatedSiteId && data.sites.some(item => item.id === requestedRelatedSiteId) ? <ShareViewPage key={requestedRelatedSiteId} tokenOverride={token} siteIdOverride={requestedRelatedSiteId} passwordOverride={password} embedded /> : undefined}
+    related={data.mainSiteId && token ? <RelatedDocumentsBar siteId={data.mainSiteId} source={{ token, password: password || undefined }} /> : undefined}
+    action={isOwner ? <><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(true); setCollectionManagerOpen(true); }}>分享</button><button className="hosted-share-save" onClick={() => { setCollectionShareFirst(false); setCollectionManagerOpen(true); }}>管理合集</button>
+      {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
+      {saving ? <><MapSpinner size={13} />保存中...</>
+        : saveStatus === 'saved' ? <><Check size={13} />已保存</>
+        : saveStatus === 'already' ? <><Check size={13} />你已经保存过了</>
+        : !isAuthenticated ? <><LogIn size={13} />登录并保存</>
+        : <><Download size={13} />保存到我的托管</>}
+    </button>} />;
+  }
+
   // Single site -> directly embed in iframe
   if (data.sites.length === 1) {
     const liveSite = data.sites[0];
@@ -923,9 +945,9 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
             </div>
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
-              {data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
-              {isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => setCollectionManagerOpen(true)}>管理合集</button>}
-              {collectionManagerOpen && <HostedCollectionEditor shareToken={token} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
+              {!embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
+              {!embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => setCollectionManagerOpen(true)}>管理合集</button>}
+              {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" source={{ token, password: password || undefined }}
                 onNavigate={openRelatedDocument} />
               {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
@@ -1240,16 +1262,7 @@ export default function ShareViewPage({ tokenOverride, siteIdOverride, passwordO
     );
   }
 
-  // Keep the original share token: member pages use the same authorization scope.
-  return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
-    action={isOwner ? <><button className="hosted-share-save" onClick={() => setCollectionManagerOpen(true)}>管理合集</button>
-      {collectionManagerOpen && <HostedCollectionEditor shareToken={token} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
-      {saving ? <><MapSpinner size={13} />保存中...</>
-        : saveStatus === 'saved' ? <><Check size={13} />已保存</>
-        : saveStatus === 'already' ? <><Check size={13} />你已经保存过了</>
-        : !isAuthenticated ? <><LogIn size={13} />登录并保存</>
-        : <><Download size={13} />保存到我的托管</>}
-    </button>} />;
+  return null;
 }
 
 const styles: Record<string, React.CSSProperties> = {
