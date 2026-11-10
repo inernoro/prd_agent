@@ -103,6 +103,7 @@ import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-mon
 import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
 import { availabilityOverRange } from './services/uptime-metrics.js';
+import { monitorIncidentPath } from './services/monitor-incident-link.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -6193,10 +6194,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       targetName: alert.targetName, detectedAt: alert.detectedAt, title: payload.title, body: payload.message,
     }, () => notifier.send(alert));
   };
-  const alarmBoardUrl = (targetId?: string): string | undefined => {
+  const alarmBoardUrl = (targetId?: string, incidentId?: string, detectedAt?: string): string | undefined => {
     const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
     // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
-    return base ? `${base}/status${targetId ? `?target=${encodeURIComponent(targetId)}` : ''}` : undefined;
+    return base ? `${base}${monitorIncidentPath(targetId, incidentId, detectedAt)}` : undefined;
   };
 
   /**
@@ -6286,7 +6287,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         projectId: data.projectId,
         branchId: data.branchId,
         probeUrl: data.probeUrl,
-        boardUrl: alarmBoardUrl(data.targetId),
+        boardUrl: alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt),
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,
@@ -6312,6 +6313,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
           : data.targetId,
         targetId: data.targetId,
+        incidentId: data.incidentId,
         urgency: data.urgency,
         kind: classifyAlert(type, data.source),
         businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
@@ -6322,7 +6324,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
         consecutiveFailures: data.consecutiveFailures,
       };
-      const boardUrl = alarmBoardUrl(data.targetId);
+      const boardUrl = alarmBoardUrl(data.targetId, data.incidentId, data.detectedAt);
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event, stateService.getMonitorNotifications())) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
         if (alarmRelay.owns(channel.id)) {

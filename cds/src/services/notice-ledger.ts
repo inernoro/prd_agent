@@ -26,6 +26,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { monitorIncidentPath } from './monitor-incident-link.js';
 import {
   cdsEventNoticeCopy,
   cdsEventsBus,
@@ -401,6 +402,8 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     projectName?: string;
     projectSlug?: string;
     targetId?: string;
+    incidentId?: string;
+    detectedAt?: string;
     targetName?: string;
     releaseId?: string;
     branchId?: string;
@@ -434,7 +437,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     const query = params.toString();
     href = query ? `/release-center?${query}` : '/release-center';
   } else if (copy.link === 'status') {
-    href = data.targetId ? `/status?target=${encodeURIComponent(data.targetId)}` : '/status';
+    href = monitorIncidentPath(data.targetId, data.incidentId, data.detectedAt);
   } else if (copy.link === 'maintenance') {
     href = '/cds-settings';
   }

@@ -901,6 +901,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 自建存活监控 / 状态页（2026-07-27）
     'GET /uptime/summary': '查看存活总览',
     'GET /uptime/incidents': '列出存活故障',
+    'GET /uptime/incidents/:id': '查看故障通知上下文',
     // 监控中心自定义监控（2026-09-08）
     'GET /uptime/monitors': '列出自定义监控',
     'POST /uptime/monitors': '新增自定义监控',
@@ -1212,6 +1213,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],

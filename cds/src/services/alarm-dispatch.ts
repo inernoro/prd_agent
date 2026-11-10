@@ -127,10 +127,11 @@ export function independentIncidentUrl(channel: AlarmChannelConfig, event: Alarm
     const url = new URL(channel.incidentPageUrl);
     if (url.protocol !== 'https:' || url.username || url.password) return undefined;
     if (event.targetId) url.searchParams.set('target', event.targetId);
+    if (event.incidentId) { url.searchParams.set('view', 'home'); url.searchParams.set('incident', event.incidentId); }
     url.searchParams.set('detectedAt', event.detectedAt);
     // 通知上下文只放片段，不发送给静态托管方，也不写进公开快照。
     const fragment = new URLSearchParams(url.hash.slice(1));
-    fragment.set('notice', JSON.stringify({ detailUrl, targetId: event.targetId, name: event.targetName.slice(0, 120),
+    fragment.set('notice', JSON.stringify({ detailUrl, targetId: event.targetId, incidentId: event.incidentId, name: event.targetName.slice(0, 120),
       environment: event.environmentLabel, drill: event.drill, finding: event.finding, assessment: event.assessment, count: event.affectedChecks,
       detectedAt: event.detectedAt, recovered: event.kind.endsWith('-recovered') }));
     url.hash = fragment.toString();
