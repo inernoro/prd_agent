@@ -43,6 +43,7 @@ export function configurePhoneDispatch(file: string, history: ServerEventLogSink
       channelId: first.channel.id, channelName: first.channel.name, channelKind: 'bark',
       kind: first.event.drill ? 'drill' : 'alert', eventKind: first.event.kind,
       projectId: first.event.projectId, targetId: first.event.targetId, targetName: first.event.targetName,
+      reportId: first.event.reportId, eventId: first.event.eventId,
       detectedAt: first.event.detectedAt, title: message.title, body: message.body,
     }, () => httpSend(buildBarkUrl(first.channel, message), { method: 'GET' }, DEFAULT_TIMEOUT_MS));
   }, delivered);
@@ -148,7 +149,7 @@ export async function sendAlarm(
   const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   if (channel.kind === 'bark' && phoneQueue) return phoneQueue.enqueue({ channel, event, message, boardUrl: opts.boardUrl });
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
-    identity: event.identity,
+    identity: event.identity, notificationFacts: event.notificationFacts,
     urgency: event.drill ? 'normal' : event.urgency,
     finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,
     type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
@@ -158,6 +159,7 @@ export async function sendAlarm(
   return withAlarmDeliveryHistory(opts.history, {
     channelId: channel.id, channelName: channel.name, channelKind: channel.kind,
     kind: opts.deliveryKind ?? 'alert', eventKind: event.kind, projectId: event.projectId,
+    reportId: event.reportId, eventId: event.eventId,
     targetId: event.targetId, targetName: event.targetName, detectedAt: event.detectedAt,
     title: mapPayload?.title ?? message.title, body: mapPayload?.message ?? message.body,
   }, () => sendAlarmTransport(channel, event, opts));
@@ -210,7 +212,7 @@ async function sendAlarmTransport(
       timeoutMs,
     });
     return await notifier.send({
-      identity: event.identity,
+      identity: event.identity, notificationFacts: event.notificationFacts,
       urgency: event.drill ? 'normal' : event.urgency,
       finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,
       type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
@@ -235,6 +237,7 @@ export function drillEvent(now: number): AlarmEvent {
     kind: 'business-down',
     projectId: 'cds',
     targetName: '通知演练',
+    notificationFacts: { environment: 'unknown', system: 'cds' },
     drill: true, assessment: 'observation-unavailable', affectedChecks: 5,
     message: '这是一次演练，没有任何业务真的出问题',
     detectedAt: new Date(now).toISOString(),

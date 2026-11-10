@@ -40,6 +40,7 @@ export interface MapNotifierConfig {
 }
 
 export interface MapNotifierAlert {
+  notificationFacts?: import('../shared/notification-templates.js').NotificationFacts;
   urgency?: 'urgent' | 'normal';
   businessName?: string;
   finding?: string;

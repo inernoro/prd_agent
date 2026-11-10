@@ -1,3 +1,5 @@
+import { ClassificationFilters, ClassificationSummary, NotificationTemplateCatalog, type ClassificationSelection } from '@/components/ReportClassification';
+import { matchesClassification } from '../../../src/shared/notification-templates';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
@@ -149,7 +151,10 @@ function formatTime(iso: string): string {
 }
 
 export function ReportsPage(): JSX.Element {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const classificationFilters: ClassificationSelection = { categories: searchParams.get('categories')?.split(',').filter(Boolean) || [], systems: searchParams.get('systems')?.split(',').filter(Boolean) || [], environments: searchParams.get('environments')?.split(',').filter(Boolean) || [] };
+  const setClassificationFilters = (v: ClassificationSelection) => { const next = new URLSearchParams(searchParams); for (const [key, values] of Object.entries(v)) { if (values.length) next.set(key, values.join(',')); else next.delete(key); } setSearchParams(next, { replace: true }); };
+  const monitorTarget = searchParams.get('target') || '';
   // 项目作用域：从 URL ?project= 取（项目卡右上角入口带）。空 = 全局（CDS 自身）报告。
   const projectId = searchParams.get('project') || '';
   // 直达深链：?report=<id> 自动打开该报告；?folder=<id> 自动激活该文件夹。
@@ -380,9 +385,10 @@ export function ReportsPage(): JSX.Element {
   // 标题搜索：在当前项目 + 视图筛选之上再过滤；搜索时列表平铺展示命中项（不走文件夹树）。
   const searchedReports = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return visibleReports;
-    return visibleReports.filter((r) => r.title.toLowerCase().includes(q));
-  }, [visibleReports, searchQuery]);
+    return visibleReports.filter((r) => (!q || r.title.toLowerCase().includes(q))
+      && matchesClassification(r.classification, classificationFilters)
+      && (!monitorTarget || r.monitorEvent?.targetId === monitorTarget));
+  }, [visibleReports, searchQuery, searchParams]);
   const searching = searchQuery.trim().length > 0;
 
   const folderCounts = useMemo(() => {
@@ -614,8 +620,10 @@ export function ReportsPage(): JSX.Element {
           {state.status === 'loading' ? <LoadingBlock label="正在加载验收报告" /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} transient={state.transient} /> : null}
 
+          {state.status === 'ok' && !selected && <div className="shrink-0 space-y-2"><div className="flex flex-wrap items-center gap-3"><span className="text-sm">交叉分类 · 命中 {searchedReports.length} 份报告</span><NotificationTemplateCatalog />{monitorTarget && <span className="text-xs text-muted-foreground">当前监控目标的事件报告</span>}</div><ClassificationFilters value={classificationFilters} onChange={setClassificationFilters} /></div>}
           {state.status === 'ok' && !selected ? (
             <ReportsHome
+              classificationActive={Boolean(monitorTarget || classificationFilters.categories.length || classificationFilters.systems.length || classificationFilters.environments.length)}
               overviewState={overviewState}
               pipelineState={pipelineState}
               // 「全局」= 既没有 URL 的 ?project=，筛选也停在「全部项目」。
@@ -707,7 +715,7 @@ export function ReportsPage(): JSX.Element {
                       showProjectFilter={!projectId}
                       className={selected ? 'hidden lg:flex' : undefined}
                     />
-                    <ReportViewer report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
+                    <ReportViewer onClassified={(updated) => { setSelected(updated); setState(cur => cur.status === 'ok' ? { ...cur, reports: cur.reports.map(r => r.id === updated.id ? updated : r) } : cur); }} report={selected} onBack={() => setSelected(null)} onOpenNav={() => setNavDrawerOpen(true)} onSync={openMapImport} />
                   </>
                 )}
               </div>
@@ -820,10 +828,11 @@ export function ReportsPage(): JSX.Element {
  * 默认折叠被取代的早期版本（同一验收目标只展示最新版，标「v3 · 取代 2 份」）。
  */
 function ReportsHome({
-  overviewState, pipelineState, isGlobalScope, onOpenProject, onRetryOverview, allReports, reports, folders, scopedFolders, projects, projectCounts, folderCounts,
+  classificationActive = false, overviewState, pipelineState, isGlobalScope, onOpenProject, onRetryOverview, allReports, reports, folders, scopedFolders, projects, projectCounts, folderCounts,
   activeProjectFilter, activeFolder, searchQuery, onSearchChange, showProjectFilter, onProjectFilterSelect, onFilterSelect,
   onCreateFolder, onCreate, onSelect, onDelete, onMove, onCopy, onSync, onManageConnections,
 }: {
+  classificationActive?: boolean;
   overviewState: OverviewState;
   pipelineState: PipelineState;
   isGlobalScope: boolean;
@@ -974,7 +983,7 @@ function ReportsHome({
         不再承担首页的职责。这是 2026-09-09 从需求重推的结论：首页的问题是「有哪几件
         事要我管」，不是「这一份报告结论如何」。
       */}
-      {isGlobalScope ? (
+      {!classificationActive && (isGlobalScope ? (
         <>
           {pipelineState.status === 'loading' ? <LoadingBlock label="正在汇总验收流水线" /> : null}
           {pipelineState.status === 'error' ? (
@@ -1004,7 +1013,7 @@ function ReportsHome({
             <ReportsOverviewPanel overview={overview} projectName={projectName} onOpenReport={openById} onOpenCluster={openCluster} onJump={jumpTo} />
           ) : null}
         </>
-      )}
+      ))}
 
       <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card">
         {/*
@@ -2274,8 +2283,9 @@ function RenameFolderDialog({
  * of becoming a blank iframe. Raw downloads retain server CSP.
  */
 function ReportViewer({
-  report, onBack, onOpenNav, onSync,
+  report, onBack, onOpenNav, onSync, onClassified,
 }: {
+  onClassified?: (report: AcceptanceReport) => void;
   report: AcceptanceReport | null;
   onBack?: () => void;
   onOpenNav?: () => void;
@@ -2388,6 +2398,7 @@ function ReportViewer({
           </Button>
         </div>
       </div>
+      <ClassificationSummary report={report} onSaved={onClassified} />
       <div className="min-h-0 flex-1 bg-white">
         {mdError ? (
           <div className="space-y-3 p-4">

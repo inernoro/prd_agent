@@ -194,6 +194,8 @@ export type ReportFormat = 'html' | 'md';
 export type ReportVerdict = 'pass' | 'conditional' | 'fail';
 
 export interface AcceptanceReport {
+  classification?: import('../../../src/shared/notification-templates').ReportClassification;
+  monitorEvent?: import('../../../src/shared/notification-templates').ReportMonitorEvent;
   reportType?: 'acceptance' | 'code-review';
   reviewTaskId?: string;
   id: string;

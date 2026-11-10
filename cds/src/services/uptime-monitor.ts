@@ -222,6 +222,7 @@ export interface UptimeAlertEventData {
   finding?: string;
   assessment?: 'observation-unavailable' | 'check-failed';
   affectedChecks?: number;
+  notificationEnvironment?: import('../shared/notification-templates.js').NotificationEnvironment;
   environmentLabel?: string;
   /** 自监控恢复只发给实际接收过本轮故障的通道。 */
   recoveryChannelIds?: string[];
@@ -1944,6 +1945,9 @@ export class UptimeMonitorService {
         finding: record.lastSample?.finding,
         assessment: target.collection ? 'observation-unavailable' : 'check-failed',
         affectedChecks: target.collectionMembers?.length,
+        notificationEnvironment: facet.environment === 'preview' ? 'preview'
+          : target.source === 'release' ? (facet.environment === 'production' ? 'production' : facet.environment === 'staging' ? 'staging' : 'unknown')
+          : target.monitor?.environment === 'production' ? 'production' : target.monitor?.environment === 'staging' ? 'staging' : 'unknown',
         environmentLabel: facet.environmentLabel,
         ...(type === 'uptime.target.recovered' && target.source === 'custom'
           ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),

@@ -142,6 +142,23 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect((res.body.reports as Array<{ id: string }>).map((report) => report.id)).toEqual([reportA.id]);
   });
 
+  it('交叉分类在创建、修改与列表真实路径生效，不越项目、不重复计数', async () => {
+    const classification = { categories: ['result', 'billing', 'upstream'], primarySystem: 'map', relatedSystems: ['llmgw'], environments: ['production', 'test'] };
+    const made = await call(server, 'POST', '/api/reports', { projectKey: 'proj-a', body: { title: '交叉分类验证', format: 'md', content: '# 验证', classification } });
+    expect(made.status).toBe(201);
+    expect(made.body.report.classification).toEqual(classification);
+    const list = await call(server, 'GET', '/api/reports?categories=billing,upstream&systems=llmgw&environments=test', { projectKey: 'proj-a' });
+    expect(list.body.reports.map((r: any) => r.id)).toEqual([made.body.report.id]);
+    expect((await call(server, 'GET', '/api/reports?categories=billing&systems=map&environments=production', { projectKey: 'proj-b' })).body.reports).toEqual([]);
+    expect((await call(server, 'PATCH', `/api/reports/${made.body.report.id}`, { projectKey: 'proj-b', body: { classification } })).status).toBe(403);
+    const invalid = await call(server, 'PATCH', `/api/reports/${made.body.report.id}`, { projectKey: 'proj-a', body: { title: '不得部分写入', classification: { ...classification, environments: ['invented'] } } });
+    expect(invalid.status).toBe(400);
+    expect(service.getAcceptanceReport(made.body.report.id)!.title).toBe('交叉分类验证');
+    const changed = await call(server, 'PATCH', `/api/reports/${made.body.report.id}`, { projectKey: 'proj-a', body: { classification: { ...classification, categories: ['acceptance'] } } });
+    expect(changed.status).toBe(200);
+    expect(changed.body.report.classification.categories).toEqual(['acceptance']);
+  });
+
   it('downloads an offline ZIP containing body, metadata and referenced assets', async () => {
     const assetName = `${'a'.repeat(64)}.png`;
     service.writeReportAsset(assetName, Buffer.from([1, 2, 3, 4]));
