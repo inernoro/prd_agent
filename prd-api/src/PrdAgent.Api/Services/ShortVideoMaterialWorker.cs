@@ -84,7 +84,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
                 ownerScope);
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
-                recoverFilter,
+                recoverFilter & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true),
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.ProcessingToken, (string?)null)
@@ -93,6 +93,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            await AcknowledgeCancelledAsync(db, recoverFilter);
             if (recovered.ModifiedCount > 0)
                 _logger.LogWarning("[short-video-material] 启动兜底：{Count} 个残留 running run 标记为失败", recovered.ModifiedCount);
         }
@@ -131,7 +132,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
                 ownerScope);
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
-                filter,
+                filter & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true),
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.ProcessingToken, (string?)null)
@@ -140,6 +141,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                     .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            await AcknowledgeCancelledAsync(db, filter);
             if (res.ModifiedCount > 0)
                 _logger.LogWarning("[short-video-material] 周期兜底：{Count} 个卡死 running run 标记为失败", res.ModifiedCount);
         }
@@ -157,8 +159,10 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            await AcknowledgeCancelledAsync(db, ShortVideoMaterialProcessor.ActiveRunFilter(currentRun), many: false);
             await db.ShortVideoMaterialRuns.UpdateOneAsync(
-                ShortVideoMaterialProcessor.ActiveRunFilter(currentRun),
+                ShortVideoMaterialProcessor.ActiveRunFilter(currentRun)
+                    & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true),
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
                     .Set(r => r.ProcessingToken, (string?)null)
@@ -168,6 +172,16 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 cancellationToken: CancellationToken.None);
         }
         catch { /* ignore */ }
+    }
+
+    private static Task<UpdateResult> AcknowledgeCancelledAsync(MongoDbContext db, FilterDefinition<ShortVideoMaterialRun> identity, bool many = true)
+    {
+        var filter = identity & Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.CancelRequested, true);
+        var update = Builders<ShortVideoMaterialRun>.Update.Set(r => r.Status, "cancelled")
+            .Set(r => r.ProcessingToken, (string?)null).Set(r => r.ErrorCode, (string?)null)
+            .Set(r => r.ErrorMessage, "已取消短视频素材处理").Set(r => r.UpdatedAt, DateTime.UtcNow);
+        return many ? db.ShortVideoMaterialRuns.UpdateManyAsync(filter, update, cancellationToken: CancellationToken.None)
+            : db.ShortVideoMaterialRuns.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
     }
 
     private async Task ProcessNextRunAsync()
@@ -189,6 +203,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+                Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true),
                 ownerScope),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
@@ -219,16 +234,23 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[short-video-material] Process failed run={RunId}", run.Id);
-            var latest = await db.ShortVideoMaterialRuns.Find(ShortVideoMaterialProcessor.ActiveRunFilter(run)).FirstOrDefaultAsync(CancellationToken.None);
-            if (latest != null)
+            // 取消与失败写回竞争时，只能更新刚读到的取消状态；新处理身份始终不受影响。
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                latest.Status = "failed";
+                var latest = await db.ShortVideoMaterialRuns.Find(ShortVideoMaterialProcessor.ActiveRunFilter(run)).FirstOrDefaultAsync(CancellationToken.None);
+                if (latest == null) break;
+                var cancelled = latest.CancelRequested;
+                latest.Status = cancelled ? "cancelled" : "failed";
                 latest.ProcessingToken = null;
-                latest.ErrorCode = ErrorCodes.INTERNAL_ERROR;
-                latest.ErrorMessage = ex.Message;
-                ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
+                latest.ErrorCode = cancelled ? null : ErrorCodes.INTERNAL_ERROR;
+                latest.ErrorMessage = cancelled ? "已取消短视频素材处理" : ex.Message;
+                ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, latest.ErrorMessage);
                 latest.UpdatedAt = DateTime.UtcNow;
-                await db.ShortVideoMaterialRuns.ReplaceOneAsync(ShortVideoMaterialProcessor.ActiveRunFilter(run), latest, cancellationToken: CancellationToken.None);
+                var cancellationState = cancelled ? Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.CancelRequested, true)
+                    : Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true);
+                var saved = await db.ShortVideoMaterialRuns.ReplaceOneAsync(
+                    ShortVideoMaterialProcessor.ActiveRunFilter(run) & cancellationState, latest, cancellationToken: CancellationToken.None);
+                if (saved.MatchedCount == 1) break;
             }
         }
         finally
@@ -271,6 +293,50 @@ public sealed class ShortVideoMaterialProcessor
         if (taskExecutionAttempt.ShouldSkip) return;
         using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
             ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
+        using var authorityStop = CancellationTokenSource.CreateLinkedTokenSource(taskExecutionAttempt.Lease?.LostToken ?? CancellationToken.None);
+        using var monitorStop = new CancellationTokenSource();
+        var monitor = WatchProcessingAuthorityAsync(run, authorityStop, monitorStop.Token);
+        try { await ProcessCoreAsync(run, authorityStop.Token); }
+        finally
+        {
+            monitorStop.Cancel();
+            await monitor;
+        }
+    }
+
+    private async Task WatchProcessingAuthorityAsync(ShortVideoMaterialRun run, CancellationTokenSource authorityStop, CancellationToken stop)
+    {
+        var expectedProcessing = ContinuableRunFilter(run);
+        try
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                if (await _db.ShortVideoMaterialRuns.Find(expectedProcessing).FirstOrDefaultAsync(CancellationToken.None) == null)
+                {
+                    authorityStop.Cancel();
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromSeconds(1), stop);
+            }
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "短视频处理身份核对失败，停止后续阶段 run={RunId}", run.Id);
+            authorityStop.Cancel();
+        }
+    }
+
+    private async Task EnsureProcessingAuthorityAsync(ShortVideoMaterialRun run, CancellationToken authorityToken)
+    {
+        authorityToken.ThrowIfCancellationRequested();
+        if (await _db.ShortVideoMaterialRuns.Find(ContinuableRunFilter(run)).FirstOrDefaultAsync(CancellationToken.None) == null)
+            throw new OperationCanceledException("短视频处理已取消或处理身份已变化", authorityToken);
+    }
+
+    private async Task ProcessCoreAsync(ShortVideoMaterialRun run, CancellationToken authorityToken)
+    {
+        await EnsureProcessingAuthorityAsync(run, authorityToken);
         var user = await _db.Users.Find(u => u.UserId == run.UserId).FirstOrDefaultAsync(CancellationToken.None);
         var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? run.UserId : user.DisplayName!;
         var now = DateTime.UtcNow;
@@ -281,6 +347,7 @@ public sealed class ShortVideoMaterialProcessor
         await SaveRunAsync(run);
 
         var parsed = await ResolveParsedSourceAsync(run.VideoUrl, run.Platform, run.InputSourceText, run.RequestedTitle);
+        await EnsureProcessingAuthorityAsync(run, authorityToken);
         var title = CleanTitle(run.RequestedTitle) ?? CleanTitle(parsed.Title) ?? run.Title;
         run.Title = title;
         run.SourceMode = parsed.SourceMode;
@@ -291,11 +358,13 @@ public sealed class ShortVideoMaterialProcessor
         await SaveRunAsync(run);
 
         var store = await ResolveStoreAsync(run.StoreId, run.UserId);
+        await EnsureProcessingAuthorityAsync(run, authorityToken);
         run.StoreId = store.Id;
         MarkStage(run, "source", "running", $"正在把视频文件保存到知识库「{store.Name}」");
         await SaveRunAsync(run);
 
-        var videoMaterial = await DownloadVideoMaterialAsync(parsed, run);
+        var videoMaterial = await DownloadVideoMaterialAsync(parsed, run, authorityToken);
+        await EnsureProcessingAuthorityAsync(run, authorityToken);
         var sourceEntry = await CreateVideoEntryAsync(
             store,
             run.UserId,
@@ -308,6 +377,7 @@ public sealed class ShortVideoMaterialProcessor
             run.Id,
             now);
         run.SourceEntryId = sourceEntry.Id;
+        await EnsureProcessingAuthorityAsync(run, authorityToken);
         run.SourceVideoUrl = videoMaterial.Url;
         if (run.Card != null)
             run.Card.VideoUrl = videoMaterial.Url; // 入库后改用 COS 永久地址播放
@@ -319,7 +389,8 @@ public sealed class ShortVideoMaterialProcessor
 
         var transcriptAttempt = parsed.SourceMode == "manual"
             ? new VideoTranscriptionAttempt(parsed.SourceText, null)
-            : await TryTranscribeVideoAsync(videoMaterial.Url, title);
+            : await TryTranscribeVideoAsync(videoMaterial.Url, title, authorityToken);
+        await EnsureProcessingAuthorityAsync(run, authorityToken);
         if (!string.IsNullOrWhiteSpace(transcriptAttempt.Text))
         {
             var transcriptEntry = await CreateMarkdownEntryAsync(
@@ -342,6 +413,7 @@ public sealed class ShortVideoMaterialProcessor
                 },
                 now);
             run.TranscriptEntryId = transcriptEntry.Id;
+            await EnsureProcessingAuthorityAsync(run, authorityToken);
             run.EntryId = transcriptEntry.Id;
             MarkStage(run, "transcript", "done", "已从视频转写出原始文字并保存到知识库");
             MarkStage(run, "ready", "done", "视频和原始文字已就绪，可继续转文案、润色或整理时间线");
@@ -435,7 +507,7 @@ public sealed class ShortVideoMaterialProcessor
             store.PrimaryEntryId = entryId;
     }
 
-    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed, ShortVideoMaterialRun run)
+    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed, ShortVideoMaterialRun run, CancellationToken authorityToken)
     {
         var videoUrl = RequireResolvedVideoUrl(parsed.VideoUrl);
 
@@ -455,11 +527,11 @@ public sealed class ShortVideoMaterialProcessor
             node,
             new Dictionary<string, string>(),
             new List<ExecutionArtifact>(),
-            new WorkflowDesignInvocation(run.UserId, run.Id, node.NodeId, run.Id, run.UserId));
+            new WorkflowDesignInvocation(run.UserId, run.Id, node.NodeId, run.Id, run.UserId), authorityToken);
         return ExtractDownloadedVideo(result.Artifacts.FirstOrDefault()?.InlineContent);
     }
 
-    private async Task<VideoTranscriptionAttempt> TryTranscribeVideoAsync(string videoUrl, string title)
+    private async Task<VideoTranscriptionAttempt> TryTranscribeVideoAsync(string videoUrl, string title, CancellationToken authorityToken)
     {
         try
         {
@@ -491,12 +563,13 @@ public sealed class ShortVideoMaterialProcessor
                         InlineContent = input,
                     },
                 },
-                null);
+                null, authorityToken);
             var text = ExtractTranscript(result.Artifacts.FirstOrDefault()?.InlineContent);
             return string.IsNullOrWhiteSpace(text)
                 ? new VideoTranscriptionAttempt(null, "ASR 模型未返回可用文字")
                 : new VideoTranscriptionAttempt(text, null);
         }
+        catch (OperationCanceledException) when (authorityToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "短视频 ASR 转写失败 videoUrl={VideoUrl}", videoUrl);
@@ -659,7 +732,7 @@ public sealed class ShortVideoMaterialProcessor
     private async Task SaveRunAsync(ShortVideoMaterialRun run)
     {
         // 先冻结本次处理条件，再清终态标识；不允许迟到保存重建已删除或接管的记录。
-        var filter = ActiveRunFilter(run);
+        var filter = ContinuableRunFilter(run);
         run.UpdatedAt = DateTime.UtcNow;
         if (run.Status is "done" or "failed" or "cancelled") run.ProcessingToken = null;
         var saved = await _db.ShortVideoMaterialRuns.ReplaceOneAsync(
@@ -667,6 +740,9 @@ public sealed class ShortVideoMaterialProcessor
         if (saved.MatchedCount != 1)
             throw new InvalidOperationException("短视频任务处理权已失效，已停止继续写入");
     }
+
+    private static FilterDefinition<ShortVideoMaterialRun> ContinuableRunFilter(ShortVideoMaterialRun run)
+        => ActiveRunFilter(run) & Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.CancelRequested, true);
 
     public static List<ShortVideoMaterialStage> BuildInitialStages()
         => new()

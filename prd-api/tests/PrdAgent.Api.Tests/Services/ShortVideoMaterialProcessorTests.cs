@@ -114,7 +114,9 @@ public class ShortVideoMaterialProcessorTests
     private static bool MatchesStoredRun(BsonDocument filter, BsonDocument stored)
         => filter.All(field => field.Name == "$and"
             ? field.Value.AsBsonArray.All(child => MatchesStoredRun(child.AsBsonDocument, stored))
-            : !field.Name.StartsWith('$') && stored.GetValue(field.Name, BsonNull.Value) == field.Value);
+            : !field.Name.StartsWith('$') && (field.Value is BsonDocument operation && operation.Contains("$ne")
+                ? stored.GetValue(field.Name, BsonNull.Value) != operation["$ne"]
+                : stored.GetValue(field.Name, BsonNull.Value) == field.Value));
 
     [Fact]
     [Trait("Category", "Unit")]

@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
@@ -20,6 +22,8 @@ using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -179,6 +183,231 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         Assert.Equal(replacePermit ? "queued" : "running", actual.Status);
         Assert.Equal(replacePermit ? null : "new-processing", actual.ProcessingToken);
         _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    private async Task<HttpResponseMessage> Cancel(string id)
+    {
+        var response = await _http.PostAsync("/api/short-video-materials/runs/" + id + "/cancel", null);
+        _output.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            method = "POST", path = "/api/short-video-materials/runs/" + id + "/cancel",
+            status = (int)response.StatusCode, body = await response.Content.ReadAsStringAsync(),
+        }));
+        return response;
+    }
+
+    [Fact]
+    public async Task Cancel_QueuedWithoutProcessingIdentity_BecomesCancelledAndRevokesOnlyOwnPermit()
+    {
+        var run = Run("queued");
+        var other = Run("queued", user: "another-local-fixture-actor");
+        await _rows.InsertManyAsync(new[] { run, other });
+        using var response = await Cancel(run.Id);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var raw = await _database.GetCollection<BsonDocument>("short_video_material_runs")
+            .Find(new BsonDocument("_id", run.Id)).SingleAsync();
+        Assert.Equal("cancelled", raw["Status"].AsString);
+        Assert.True(raw["CancelRequested"].AsBoolean);
+        Assert.True(raw["ProcessingToken"].IsBsonNull);
+        Assert.Equal("queued", (await _rows.Find(x => x.Id == other.Id).SingleAsync()).Status);
+        _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("current-processing")]
+    public async Task Cancel_Running_RequestsCancellationButRetainsProcessingIdentityUntilAcknowledged(string? token)
+    {
+        var run = Run("running", token);
+        await _rows.InsertOneAsync(run);
+        using var response = await Cancel(run.Id);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var raw = await _database.GetCollection<BsonDocument>("short_video_material_runs")
+            .Find(new BsonDocument("_id", run.Id)).SingleAsync();
+        Assert.True(raw["CancelRequested"].AsBoolean);
+        Assert.Equal("running", raw["Status"].AsString);
+        Assert.Equal(token is null ? BsonNull.Value : new BsonString(token), raw["ProcessingToken"]);
+        using var deletion = await Delete(run.Id);
+        Assert.Equal(HttpStatusCode.Conflict, deletion.StatusCode);
+        _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("done")]
+    [InlineData("failed")]
+    [InlineData("cancelled")]
+    public async Task Cancel_Terminal_IsIdempotentAndDoesNotRewriteRecord(string status)
+    {
+        var run = Run(status);
+        await _rows.InsertOneAsync(run);
+        using var response = await Cancel(run.Id);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(run.ToBsonDocument(), (await _rows.Find(x => x.Id == run.Id).SingleAsync()).ToBsonDocument());
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Cancel_MissingOrOtherActor_DoesNotRevealOrMutateRecord()
+    {
+        var run = Run("running", "other-processing", "another-local-fixture-actor");
+        await _rows.InsertOneAsync(run);
+        using var denied = await Cancel(run.Id);
+        using var missing = await Cancel(Guid.NewGuid().ToString("N"));
+        Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal(run.ToBsonDocument(), (await _rows.Find(x => x.Id == run.Id).SingleAsync()).ToBsonDocument());
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Cancel_Anonymous_DoesNotMutateRecord()
+    {
+        var run = Run("queued");
+        await _rows.InsertOneAsync(run);
+        _http.DefaultRequestHeaders.Remove("X-Fixture-Actor");
+        using var response = await Cancel(run.Id);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal("queued", (await _rows.Find(x => x.Id == run.Id).SingleAsync()).Status);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Cancel_WhenProcessingOrPermitChangesDuringRevocation_DoesNotCancelNewIdentity(bool replacePermit)
+    {
+        var run = Run("running", "old-processing");
+        await _rows.InsertOneAsync(run);
+        _coordinator.Setup(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None))
+            .Returns(async () =>
+            {
+                await _rows.UpdateOneAsync(x => x.Id == run.Id,
+                    replacePermit ? Builders<ShortVideoMaterialRun>.Update.Set(x => x.TaskPermitId, "new-permit")
+                        : Builders<ShortVideoMaterialRun>.Update.Set(x => x.ProcessingToken, "new-processing").Set(x => x.OwnerInstanceId, "new-owner"));
+            });
+        using var response = await Cancel(run.Id);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var raw = await _database.GetCollection<BsonDocument>("short_video_material_runs")
+            .Find(new BsonDocument("_id", run.Id)).SingleAsync();
+        Assert.False(raw.GetValue("CancelRequested", false).AsBoolean);
+        Assert.Equal(replacePermit ? "new-permit" : run.TaskPermitId, raw["TaskPermitId"].AsString);
+        Assert.Equal(replacePermit ? "old-processing" : "new-processing", raw["ProcessingToken"].AsString);
+        _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Cancel_DuringActualWorkerDownload_StopsBeforeAssetsOrTranscriptionAndAcknowledgesCancellation()
+    {
+        using var handler = new WaitingLocalHandler();
+        var validator = new Mock<ISafeOutboundUrlValidator>(MockBehavior.Strict);
+        validator.Setup(x => x.EnsureSafeHttpUrlAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string url, string _, CancellationToken _) => new Uri(url));
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IConfiguration>(_app.Configuration);
+        services.AddSingleton(_app.Services.GetRequiredService<MongoDbContext>());
+        services.AddSingleton(_app.Services.GetRequiredService<IDocumentService>());
+        services.AddSingleton(validator.Object);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        services.AddSingleton(storage.Object);
+        services.AddHttpClient("SafeOutbound").ConfigurePrimaryHttpMessageHandler(() => handler);
+        services.AddScoped(sp => new ShortVideoMaterialProcessor(sp.GetRequiredService<MongoDbContext>(),
+            sp.GetRequiredService<IDocumentService>(), sp.GetRequiredService<IConfiguration>(), sp,
+            NullLogger<ShortVideoMaterialProcessor>.Instance));
+        await using var provider = services.BuildServiceProvider();
+        var run = Run("queued");
+        run.OwnerInstanceId = InstanceIdentity.Get(_app.Configuration);
+        run.VideoUrl = "https://local-fixture.invalid/video.mp4";
+        run.InputSourceText = "本机取消测试，不是真实视频任务";
+        await _rows.InsertOneAsync(run);
+        var worker = new ShortVideoMaterialWorker(provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<ShortVideoMaterialWorker>.Instance);
+        var work = (Task)typeof(ShortVideoMaterialWorker).GetMethod("ProcessNextRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(worker, null)!;
+        try
+        {
+            await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var response = await Cancel(run.Id);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            await work.WaitAsync(TimeSpan.FromSeconds(6));
+            var actual = await _rows.Find(x => x.Id == run.Id).SingleAsync();
+            Assert.Equal("cancelled", actual.Status);
+            Assert.Null(actual.ProcessingToken);
+            Assert.True(handler.AuthorityCancellationObserved);
+            Assert.Equal(0, await _database.GetCollection<Attachment>("attachments").CountDocumentsAsync(FilterDefinition<Attachment>.Empty));
+            Assert.Equal(0, await _database.GetCollection<DocumentEntry>("document_entries").CountDocumentsAsync(FilterDefinition<DocumentEntry>.Empty));
+            storage.VerifyNoOtherCalls();
+            // 请求和后台终态写回都经过现有许可包装器，各自幂等撤销同一原许可。
+            _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Exactly(2));
+            _coordinator.VerifyNoOtherCalls();
+        }
+        finally
+        {
+            handler.Abort.Cancel();
+            await work.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    private sealed class WaitingLocalHandler : HttpMessageHandler
+    {
+        public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly CancellationTokenSource Abort = new();
+        public bool AuthorityCancellationObserved { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Started.TrySetResult();
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, Abort.Token);
+            try { await Task.Delay(Timeout.Infinite, linked.Token); }
+            finally { AuthorityCancellationObserved = ct.IsCancellationRequested; }
+            throw new InvalidOperationException("本机测试不可发送真实 HTTP 请求");
+        }
+    }
+
+    [Fact]
+    public async Task Cancel_LegacyQueuedRecordWithoutFlag_AndRepeatedRunningRequestRemainSupported()
+    {
+        var queued = Run("queued");
+        var running = Run("running", "current-processing");
+        await _rows.InsertManyAsync(new[] { queued, running });
+        await _database.GetCollection<BsonDocument>("short_video_material_runs").UpdateOneAsync(
+            new BsonDocument("_id", queued.Id), new BsonDocument("$unset", new BsonDocument("CancelRequested", "")));
+        using var legacy = await Cancel(queued.Id);
+        using var first = await Cancel(running.Id);
+        var before = (await _rows.Find(x => x.Id == running.Id).SingleAsync()).ToBsonDocument();
+        using var repeated = await Cancel(running.Id);
+        Assert.Equal(HttpStatusCode.OK, legacy.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, repeated.StatusCode);
+        Assert.Equal(before, (await _rows.Find(x => x.Id == running.Id).SingleAsync()).ToBsonDocument());
+        _coordinator.Verify(x => x.RevokeAsync(queued.TaskPermitId!, queued.Id, CancellationToken.None), Times.Once);
+        _coordinator.Verify(x => x.RevokeAsync(running.TaskPermitId!, running.Id, CancellationToken.None), Times.Once);
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Recovery_AcknowledgesRequestedCancellationWithoutRewritingOtherOwners()
+    {
+        var cancelled = Run("running", "current-processing");
+        cancelled.CancelRequested = true;
+        cancelled.OwnerInstanceId = InstanceIdentity.Get(_app.Configuration);
+        var failed = Run("running", "another-processing");
+        failed.OwnerInstanceId = cancelled.OwnerInstanceId;
+        var other = Run("running", "other-processing");
+        other.OwnerInstanceId = "another-owner";
+        await _rows.InsertManyAsync(new[] { cancelled, failed, other });
+        var worker = new ShortVideoMaterialWorker(_app.Services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<ShortVideoMaterialWorker>.Instance);
+        await (Task)typeof(ShortVideoMaterialWorker).GetMethod("RecoverRunningRunsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(worker, null)!;
+        Assert.Equal("cancelled", (await _rows.Find(x => x.Id == cancelled.Id).SingleAsync()).Status);
+        Assert.Null((await _rows.Find(x => x.Id == cancelled.Id).SingleAsync()).ProcessingToken);
+        Assert.Equal("failed", (await _rows.Find(x => x.Id == failed.Id).SingleAsync()).Status);
+        Assert.Equal(other.ToBsonDocument(), (await _rows.Find(x => x.Id == other.Id).SingleAsync()).ToBsonDocument());
+        _coordinator.Verify(x => x.RevokeAsync(cancelled.TaskPermitId!, cancelled.Id, CancellationToken.None), Times.Once);
         _coordinator.VerifyNoOtherCalls();
     }
 

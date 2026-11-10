@@ -123,6 +123,38 @@ public class ShortVideoMaterialController : ControllerBase
         return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_ACTIVE", "素材仍在处理中或状态已变化，请等待处理结束后再删除"));
     }
 
+    [HttpPost("runs/{runId}/cancel")]
+    public async Task<IActionResult> CancelRun(string runId)
+    {
+        var userId = GetUserId();
+        var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId && r.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
+        if (run.Status is "done" or "failed" or "cancelled")
+            return Ok(ApiResponse<object>.Ok(new { cancelled = run.Status == "cancelled", status = run.Status }));
+        if (run.Status == "running" && run.CancelRequested)
+            return Accepted(ApiResponse<object>.Ok(new { cancelled = false, cancellationRequested = true }));
+        if (run.Status != "running" && (run.Status != "queued" || run.ProcessingToken != null))
+            return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_CHANGED", "素材状态已变化，请刷新后查看当前处理结果"));
+
+        var f = Builders<ShortVideoMaterialRun>.Filter;
+        var observed = f.Eq(r => r.Id, run.Id) & f.Eq(r => r.UserId, userId)
+            & f.Eq(r => r.Status, run.Status) & f.Eq(r => r.OwnerInstanceId, run.OwnerInstanceId)
+            & f.Eq(r => r.TaskPermitId, run.TaskPermitId) & f.Eq(r => r.ProcessingToken, run.ProcessingToken)
+            & f.Ne(r => r.CancelRequested, true);
+        var update = Builders<ShortVideoMaterialRun>.Update.Set(r => r.CancelRequested, true)
+            .Set(r => r.UpdatedAt, DateTime.UtcNow);
+        if (run.Status == "queued") update = update.Set(r => r.Status, "cancelled");
+        // 沿用数据库包装器撤销原许可；处理中的身份由后台停止确认后释放。
+        var changed = await _db.ShortVideoMaterialRuns.UpdateOneAsync(observed, update, cancellationToken: CancellationToken.None);
+        if (changed.ModifiedCount != 1)
+            return Conflict(ApiResponse<object>.Fail("SHORT_VIDEO_RUN_CHANGED", "素材状态已变化，请刷新后查看当前处理结果"));
+        return run.Status == "queued"
+            ? Ok(ApiResponse<object>.Ok(new { cancelled = true }))
+            : Accepted(ApiResponse<object>.Ok(new { cancelled = false, cancellationRequested = true }));
+    }
+
     private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)
     {
         if (!string.IsNullOrWhiteSpace(storeId))
