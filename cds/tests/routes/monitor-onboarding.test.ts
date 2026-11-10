@@ -9,6 +9,7 @@ import { MonitorOnboardingService, OnboardingError } from '../../src/services/mo
 import { createMonitorOnboardingRouter } from '../../src/routes/monitor-onboarding.js';
 import { isMonitorOnboardingAgentRoute } from '../../src/shared/monitor-onboarding.js';
 import { createGithubAuthMiddleware } from '../../src/middleware/github-auth.js';
+import { UptimeMonitorService } from '../../src/services/uptime-monitor.js';
 
 const roots: string[] = [];
 const DRAFT = { name: '订单服务 · 健康检查', kind: 'http', url: 'https://orders.example/healthz', expectedStatus: '200-299' };
@@ -89,6 +90,38 @@ describe('真实只读监控提议与用户确认', () => {
     for(const target of a.targetIds)expect(cold.getMonitorNotifications().overrides?.[target]).toEqual([]);
     expect(()=>service.instructions(s.id,s.token)).toThrow(/令牌无效/);
     expect(()=>service.confirm(s.id,{proposalIds:[proposals[0].id]})).toThrow(/无法确认/);
+  });
+  it('确认后立即进入真实summary且保持无观测，重放不重复注册，失败无残留目标', async () => {
+    const {store}=setup();const probe=vi.fn(async()=>{throw new Error('不得发出网络探测');});const onAlert=vi.fn();
+    const fetchProbe=vi.spyOn(globalThis,'fetch').mockRejectedValue(new Error('不得向外请求'));
+    const monitor=new UptimeMonitorService({state:{getAllBranches:()=>[],getUptimeMonitors:()=>store.listUptimeMonitors()},
+      config:{enabled:true,intervalMs:60_000,timeoutMs:5000,failureThreshold:3,recoveryThreshold:1,maxSamples:60,excludePatterns:[],scope:'all',storePath:''},probe,onAlert});
+    const service=new MonitorOnboardingService({store,refreshTarget:key=>monitor.refreshTarget(key),forgetTarget:key=>monitor.forgetTarget(key)});
+    const s=service.create() as {id:string;token:string};service.submit(s.id,s.token,{proposals:[DRAFT]});
+    const args={proposalIds:(service.view(s.id).proposals as Array<{id:string}>).map(p=>p.id)};
+    expect(monitor.getSummary().targets).toHaveLength(0);
+    const result=await service.confirm(s.id,args);const summary=monitor.getSummary();
+    expect(summary.targets).toHaveLength(1);expect(summary.targets[0]).toMatchObject({id:result.targetIds[0],status:'unknown',lastSample:null});
+    expect(summary.targets[0].sampleCount24h).toBe(0);
+    expect(await service.confirm(s.id,args)).toEqual(result);expect(monitor.getSummary().targets).toHaveLength(1);
+    const fail=service.create() as {id:string;token:string};service.submit(fail.id,fail.token,{proposals:[{...DRAFT,url:'https://fail.example/healthz'}]});
+    const failArgs={proposalIds:(service.view(fail.id).proposals as Array<{id:string}>).map(p=>p.id)};
+    vi.spyOn(store,'flush').mockRejectedValueOnce(new Error('disk unavailable'));
+    await expect(service.confirm(fail.id,failArgs)).rejects.toThrow(/未保留本次追加/);
+    expect(store.listUptimeMonitors()).toHaveLength(1);expect(monitor.getSummary().targets.map(t=>t.id)).toEqual(result.targetIds);
+    expect(probe).not.toHaveBeenCalled();expect(fetchProbe).not.toHaveBeenCalled();expect(onAlert).not.toHaveBeenCalled();
+  });
+  it('目标注册中途失败也回滚真实台账，不留半批订阅', async () => {
+    const {store}=setup();const monitor=new UptimeMonitorService({state:{getAllBranches:()=>[],getUptimeMonitors:()=>store.listUptimeMonitors()},
+      config:{enabled:true,intervalMs:60_000,timeoutMs:5000,failureThreshold:3,recoveryThreshold:1,maxSamples:60,excludePatterns:[],scope:'all',storePath:''}});
+    let registrations=0;const service=new MonitorOnboardingService({store,refreshTarget:key=>{if(++registrations===2)throw new Error('registration failed');return monitor.refreshTarget(key);},forgetTarget:key=>monitor.forgetTarget(key)});
+    const s=service.create() as {id:string;token:string};service.submit(s.id,s.token,{proposals:[DRAFT,{...DRAFT,url:'https://stock.example/healthz'}]});
+    const args={proposalIds:(service.view(s.id).proposals as Array<{id:string}>).map(p=>p.id)};
+    await expect(service.confirm(s.id,args)).rejects.toThrow(/未保留本次追加/);
+    expect(store.listUptimeMonitors()).toHaveLength(0);expect(monitor.getSummary().targets).toHaveLength(0);
+    expect(service.view(s.id).status).toBe('proposed');
+    await service.confirm(s.id,args);expect(store.listUptimeMonitors()).toHaveLength(2);expect(monitor.getSummary().targets).toHaveLength(2);
+    expect(monitor.getSummary().targets.every(t=>t.status==='unknown'&&t.lastSample===null)).toBe(true);
   });
   it('提交后的草案不能被晚到消息替换，确认只接受本会话选中项', async () => {
     const {service,create,store}=setup();const a=create(),b=create();service.submit(a.id,a.token,{proposals:[DRAFT]});service.submit(b.id,b.token,{proposals:[DRAFT]});

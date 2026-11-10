@@ -6525,6 +6525,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   }));
   app.use('/api', createMonitorOnboardingRouter(new MonitorOnboardingService({
     store: stateService,
+    refreshTarget: targetId => uptimeMonitor.refreshTarget(targetId),
+    forgetTarget: targetId => uptimeMonitor.forgetTarget(targetId),
     getNotifications: () => stateService.getMonitorNotifications(),
     setNotifications: settings => stateService.setMonitorNotifications(settings),
     listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],

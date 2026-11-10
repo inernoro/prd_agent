@@ -31,6 +31,8 @@ export class MonitorOnboardingService {
     setNotifications?: (settings: MonitorNotificationSettings) => void;
     listChannelIds?: () => string[];
     stampPreviewBranch?: (monitor: UptimeCustomMonitor) => void;
+    refreshTarget?: (targetId: string) => boolean;
+    forgetTarget?: (targetId: string) => boolean;
   }) {}
   private now(): number { return this.deps.now?.() ?? Date.now(); }
   private prune(): void {
@@ -171,11 +173,16 @@ export class MonitorOnboardingService {
           this.deps.setNotifications!(settings);
         }
         await this.deps.store.flush?.();
+        // Register an empty, unknown record immediately; this neither probes nor emits an alert.
+        for (const m of saved) {
+          if (this.deps.refreshTarget && !this.deps.refreshTarget(customProbeTargetId(m))) throw new Error('target registration failed');
+        }
         s.result = { monitors: saved.map(m => ({ id: m.id, name: m.name })), targetIds: saved.map(customProbeTargetId) };
         s.status = 'completed'; s.hash = randomBytes(32); s.terminalOrder = ++this.terminalSequence; this.event(s, 'completed'); this.prune();
         return structuredClone(s.result);
       } catch {
         for (const m of saved) this.deps.store.removeUptimeMonitor(m.id);
+        for (const m of saved) this.deps.forgetTarget?.(customProbeTargetId(m));
         if (previousNotifications && this.deps.getNotifications && this.deps.setNotifications) {
           const current = structuredClone(this.deps.getNotifications());
           for (const key of ['overrides', 'mutedUntil', 'acknowledgedAt'] as const) {
