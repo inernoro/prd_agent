@@ -11,6 +11,7 @@ interface Session {
   id: string; hash: Buffer; expiresAt: number; projectId: string | null; status: OnboardingStatus;
   agentName?: string; proposals: MonitorProposal[]; timeline: Array<{ at: string; kind: string }>;
   result?: OnboardingResult; confirming?: Promise<OnboardingResult>; confirmedSelection?: string;
+  terminalOrder?: number;
 }
 export class OnboardingError extends Error { constructor(public status: number, message: string) { super(message); } }
 const FIELDS = new Set(['name', 'kind', 'url', 'host', 'port', 'method', 'expectedStatus', 'keyword', 'healthComponentId', 'healthField', 'healthOp', 'healthValue', 'intervalSeconds', 'timeoutMs', 'environment', 'observeMode', 'sampleCountPath']);
@@ -22,6 +23,7 @@ const probeIdentity = (m: UptimeCustomMonitor): string => JSON.stringify([m.proj
 /** A token can only contribute drafts to one owner-created session. It never grants CDS API identity. */
 export class MonitorOnboardingService {
   private sessions = new Map<string, Session>();
+  private terminalSequence = 0;
   constructor(private deps: {
     store: UptimeMonitorStore;
     now?: () => number;
@@ -31,6 +33,16 @@ export class MonitorOnboardingService {
     stampPreviewBranch?: (monitor: UptimeCustomMonitor) => void;
   }) {}
   private now(): number { return this.deps.now?.() ?? Date.now(); }
+  private prune(): void {
+    for (const [key, s] of this.sessions) if (s.expiresAt <= this.now() && !s.confirming) this.sessions.delete(key);
+    // Canceled dialogs must not consume live capacity or evict recent idempotent confirmations.
+    // Keep at most 100 live sessions plus 100 results and 100 revoked-session receipts.
+    for (const status of ['completed', 'revoked'] as const) {
+      const history = [...this.sessions.values()].filter(s => s.status === status)
+        .sort((a, b) => (a.terminalOrder ?? 0) - (b.terminalOrder ?? 0));
+      for (const s of history.slice(0, Math.max(0, history.length - 100))) this.sessions.delete(s.id);
+    }
+  }
   private event(s: Session, kind: string): void { s.timeline.push({ at: new Date(this.now()).toISOString(), kind }); }
   private session(sessionId: string): Session {
     const s = this.sessions.get(sessionId);
@@ -39,8 +51,9 @@ export class MonitorOnboardingService {
     return s;
   }
   create(input: { ttlHours?: unknown; projectId?: unknown } = {}): Record<string, unknown> {
-    for (const [key, s] of this.sessions) if (s.expiresAt <= this.now() && !s.confirming) this.sessions.delete(key);
-    if (this.sessions.size >= 100) throw new OnboardingError(429, '待处理接入会话过多，请关闭旧会话后重试。');
+    this.prune();
+    const activeCount = [...this.sessions.values()].filter(s => s.status !== 'completed' && s.status !== 'revoked').length;
+    if (activeCount >= 100) throw new OnboardingError(429, '待处理接入会话过多，请关闭旧会话后重试。');
     const ttlHours = input.ttlHours === undefined ? 24 : input.ttlHours;
     if (ttlHours !== 1 && ttlHours !== 24) throw new OnboardingError(400, '有效期仅支持 1 小时或 24 小时。');
     if (input.projectId !== undefined && input.projectId !== null && typeof input.projectId !== 'string') throw new OnboardingError(400, '归属项目无效。');
@@ -110,7 +123,7 @@ export class MonitorOnboardingService {
   revoke(sessionId: string): void {
     const s = this.session(sessionId);
     if (s.confirming) throw new OnboardingError(409, '正在保存已确认的监控，请等待完成。');
-    s.status = 'revoked'; s.hash = randomBytes(32); s.proposals = []; this.event(s, 'revoked');
+    s.status = 'revoked'; s.hash = randomBytes(32); s.proposals = []; s.terminalOrder = ++this.terminalSequence; this.event(s, 'revoked'); this.prune();
   }
   confirm(sessionId: string, input: { proposalIds?: unknown; channelIds?: unknown }): Promise<OnboardingResult> {
     const s = this.session(sessionId);
@@ -159,7 +172,7 @@ export class MonitorOnboardingService {
         }
         await this.deps.store.flush?.();
         s.result = { monitors: saved.map(m => ({ id: m.id, name: m.name })), targetIds: saved.map(customProbeTargetId) };
-        s.status = 'completed'; s.hash = randomBytes(32); this.event(s, 'completed');
+        s.status = 'completed'; s.hash = randomBytes(32); s.terminalOrder = ++this.terminalSequence; this.event(s, 'completed'); this.prune();
         return structuredClone(s.result);
       } catch {
         for (const m of saved) this.deps.store.removeUptimeMonitor(m.id);

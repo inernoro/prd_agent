@@ -54,6 +54,31 @@ describe('真实只读监控提议与用户确认', () => {
     for(const input of [{proposals:Array(21).fill(DRAFT)},{proposals:[{...DRAFT,name:'x'.repeat(70_000)}]},{proposals:[{...DRAFT,name:s.token}]}])expect(()=>service.submit(s.id,s.token,input)).toThrow(OnboardingError);
     service.instructions(s.id,s.token,s.token);expect(JSON.stringify(service.view(s.id))).not.toContain(s.token);
   });
+  it('只把未结束会话计入容量，撤销立即释放且历史记录有界', () => {
+    const {service,create,store}=setup();const live=Array.from({length:100},create);
+    expect(()=>create()).toThrow(/待处理接入会话过多/);
+    for(const s of live)service.revoke(s.id);
+    const next=create();expect(service.view(next.id).status).toBe('waiting');
+    let last=live[99];
+    for(let i=0;i<125;i++){last=create();service.revoke(last.id);}
+    expect(()=>service.view(live[0].id)).toThrow(/不存在/);
+    expect(service.view(last.id).status).toBe('revoked');
+    expect(()=>service.instructions(last.id,last.token)).toThrow(/令牌无效/);
+    expect(store.listUptimeMonitors()).toHaveLength(0);
+  });
+  it('已完成历史有界，反复取消不占其容量或破坏近期确认幂等', async () => {
+    const {service,create,store}=setup();let oldest='';let recent!:ReturnType<typeof create>;let selection!: {proposalIds:string[]};let result;
+    for(let i=0;i<101;i++){
+      recent=create();if(!i)oldest=recent.id;
+      service.submit(recent.id,recent.token,{proposals:[{...DRAFT,url:`https://orders.example/healthz/${i}`}]});
+      selection={proposalIds:(service.view(recent.id).proposals as Array<{id:string}>).map(p=>p.id)};
+      result=await service.confirm(recent.id,selection);
+    }
+    expect(()=>service.view(oldest)).toThrow(/不存在/);
+    for(let i=0;i<125;i++){const s=create();service.revoke(s.id);}
+    expect(await service.confirm(recent.id,selection)).toEqual(result);
+    expect(store.listUptimeMonitors()).toHaveLength(101);
+  });
   it('真实持久化且冷读仍存在，完成令牌失效，重复确认不重复建项', async () => {
     const {service,create,store,file}=setup();const s=create();service.submit(s.id,s.token,{proposals:[DRAFT,{...DRAFT,name:'库存服务',url:'https://stock.example/healthz'}]});
     const proposals=service.view(s.id).proposals as Array<{id:string}>;
