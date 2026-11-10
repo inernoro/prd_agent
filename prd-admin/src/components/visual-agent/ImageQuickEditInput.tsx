@@ -48,9 +48,7 @@ export function ImageQuickEditInput({
         ...glassInputArea,
         width: 320,
         height: 38,
-        background: focused
-          ? 'rgba(32, 32, 38, 0.98)'
-          : 'rgba(32, 32, 38, 0.92)',
+        background: 'var(--bg-elevated)',
         border: focused
           ? '1px solid rgba(99, 102, 241, 0.50)'
           : '1px solid var(--border-subtle)',
