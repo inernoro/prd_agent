@@ -4967,7 +4967,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-005][MVIS-006] 多图重复与超限输入给出明确行为', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[MVIS-005][MVIS-006] 多图重复与超限输入给出明确行为', { tag: '@cleanup' }, async ({ page, browser, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行重复和超限图片输入');
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
@@ -4987,11 +4987,52 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.locator('[data-testid="canvas-image"][alt="dup2.png"]')).toHaveCount(1);
 
       await picker.setInputFiles(Array.from({ length: 21 }, (_, index) => file(`limit-${String(index + 1).padStart(2, '0')}.png`)));
-      await expect(page.getByText('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加')).toBeVisible();
+      const warning = page.getByText('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+      await expect(warning).toBeVisible();
+      const warningBox = await warning.boundingBox();
+      expect(warningBox).not.toBeNull();
+      expect(warningBox!.x).toBeGreaterThanOrEqual(0);
+      expect(warningBox!.x + warningBox!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+      expect(await warning.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+      await page.waitForTimeout(2000);
+      await expect(warning, '普通上传成功不得覆盖仍需阅读的超限警告').toBeVisible();
       await expect(page.getByTestId('canvas-image')).toHaveCount(22, { timeout: 60_000 });
       await expect(page.locator('[data-testid="canvas-image"][alt="limit-21.png"]')).toHaveCount(0);
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await testInfo.attach('multi-image-boundaries', { body: await page.screenshot(), contentType: 'image/png' });
+
+      const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+      const mobilePage = await mobileContext.newPage();
+      const mobileToken = await loginAndReadToken(mobilePage, request, '/visual-agent');
+      const { workspace: mobileWorkspace } = await createVisualWorkspace(mobilePage, mobileToken, 'mobile-upload-warning');
+      try {
+        await mobilePage.goto(`/visual-agent/${mobileWorkspace.id}`, { waitUntil: 'domcontentloaded' });
+        await dismissBlockingTutorial(mobilePage);
+        await mobilePage.getByRole('button', { name: '画布', exact: true }).click();
+        await dismissBlockingTutorial(mobilePage);
+        expect(await mobilePage.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+        const mobilePicker = mobilePage.locator('input[type="file"][accept="image/*"]');
+        await expect(mobilePicker).toBeEnabled({ timeout: 30_000 });
+        await mobilePicker.setInputFiles(Array.from({ length: 21 }, (_, index) => file(`mobile-limit-${index + 1}.png`)));
+        const mobileWarning = mobilePage.getByText('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+        await expect(mobileWarning).toBeVisible();
+        const mobileBox = await mobileWarning.boundingBox();
+        expect(mobileBox).not.toBeNull();
+        expect(mobileBox!.x).toBeGreaterThanOrEqual(0);
+        expect(mobileBox!.x + mobileBox!.width).toBeLessThanOrEqual(mobilePage.viewportSize()!.width);
+        expect(await mobileWarning.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+        await mobilePage.waitForTimeout(2000);
+        await expect(mobileWarning).toBeVisible();
+        await testInfo.attach('mobile-upload-warning', { body: await mobilePage.screenshot(), contentType: 'image/png' });
+        await expect(mobilePage.getByTestId('canvas-image')).toHaveCount(20);
+        await expect(mobilePage.locator('[data-testid="canvas-image"][alt="mobile-limit-21.png"]')).toHaveCount(0);
+        await expect(mobilePage.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      } finally {
+        await expectDeleteSucceeded(await mobilePage.request.delete(`/api/visual-agent/image-master/workspaces/${mobileWorkspace.id}`, {
+          headers: { ...authHeaders(mobileToken), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${mobileWorkspace.id}-mobile-warning-delete` },
+        }), '删除手机上传提示工作区失败');
+        await mobileContext.close();
+      }
     } finally {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-boundaries-delete` },

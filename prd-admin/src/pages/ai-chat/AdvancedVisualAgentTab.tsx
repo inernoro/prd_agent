@@ -6597,7 +6597,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     <div ref={containerRef} data-tour-id="visual-editor-root" className="h-full min-h-0 bg-token-nested">
       {uploadToast ? (
         <div
-          className="fixed left-1/2 z-9999"
+          className="fixed left-1/2 z-9999 w-max max-w-[calc(100vw-24px)]"
           style={{
             top: 18,
             transform: 'translateX(-50%)',
@@ -6606,9 +6606,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           aria-live="polite"
           aria-atomic="true"
         >
-          <div className="surface-popover text-token-primary inline-flex h-10 items-center gap-2 rounded-full px-4 text-[13px] font-semibold">
-            <Check size={16} />
-            <span className="truncate max-w-[520px]">{uploadToast.text}</span>
+          <div className="surface-popover text-token-primary inline-flex min-h-10 max-w-full items-center gap-2 rounded-2xl px-4 py-2 text-[13px] font-semibold">
+            <Check size={16} className="shrink-0" />
+            <span className="min-w-0 max-w-[520px] whitespace-normal break-words">{uploadToast.text}</span>
           </div>
         </div>
       ) : null}
