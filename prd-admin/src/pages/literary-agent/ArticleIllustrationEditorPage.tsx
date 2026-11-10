@@ -488,6 +488,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
+  // 迟到的工作区读取不能覆盖本次读取期间已经成功读入的新文章。
+  const articleMutationVersionRef = useRef(0);
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
@@ -1239,6 +1241,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
+    const articleVersionAtStart = articleMutationVersionRef.current;
     try {
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
@@ -1248,6 +1251,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         autoSubmitSuppressedRef.current = suppressAutoSubmit;
         setAutoSubmitSuppressed(suppressAutoSubmit);
         setAutoSubmitEnabled(!suppressAutoSubmit);
+        if (articleMutationVersionRef.current !== articleVersionAtStart) {
+          pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
+          await loadLiteraryPrompts();
+          return;
+        }
         const content = ws.articleContent || '';
         setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
@@ -1451,6 +1459,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(fileName);
 
@@ -1508,6 +1517,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(file.name);
 

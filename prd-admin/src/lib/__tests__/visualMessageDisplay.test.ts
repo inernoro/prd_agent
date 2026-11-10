@@ -11,9 +11,18 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseVisualMessageDisplay, cleanChipLabel } from '../visualMessageDisplay';
+import { parseVisualMessageDisplay, cleanChipLabel, normalizeHistoricalVisualNotice, visualUploadNotice } from '../visualMessageDisplay';
+import { cleanDisplayTitle } from '../visualAgentPromptUtils';
 
 describe('parseVisualMessageDisplay — 展示层清洗', () => {
+  it('画板标题、悬浮说明与替代文本不暴露复制占位符或图片地址', () => {
+    expect(cleanDisplayTitle('请把 [@image:#1:original:https://example.com/private.png] 改成水彩风格')).toBe('请把 改成水彩风格');
+  });
+  it('历史系统上传提示回读为可操作文案，保留原有数量与新增语义', () => {
+    expect(normalizeHistoricalVisualNotice('已把 2 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。')).toBe(visualUploadNotice(2));
+    expect(normalizeHistoricalVisualNotice('已在选中图旁新增 1 张（原图保留，不会被覆盖）。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。')).toBe(visualUploadNotice(1, true));
+    expect(normalizeHistoricalVisualNotice('我想写一份 @imgN 的使用说明')).toBe('我想写一份 @imgN 的使用说明');
+  });
   it('普通文本原样保留', () => {
     const r = parseVisualMessageDisplay('画一只在草地上奔跑的柴犬');
     expect(r.text).toBe('画一只在草地上奔跑的柴犬');
