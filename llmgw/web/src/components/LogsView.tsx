@@ -159,6 +159,7 @@ function isExchangeProvider(item: Pick<LlmLogListItem, 'platformName' | 'provide
 
 function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>) {
   const query = new URLSearchParams();
+  if (item.platformId?.startsWith('user-key:')) return `/logs?serviceKeyId=${encodeURIComponent(item.platformId)}&clientCode=cds-user-key`;
   if (isExchangeProvider(item)) {
     if (item.platformId) query.set('exchangeId', item.platformId);
     if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);

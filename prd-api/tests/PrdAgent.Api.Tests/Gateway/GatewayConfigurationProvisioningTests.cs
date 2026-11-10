@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
@@ -11,6 +12,114 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class GatewayConfigurationProvisioningTests
 {
+    private static CreateExchangeRequest SpeechExchange(string? resourceId = "seed-tts-2.0") => new()
+    {
+        Name = "豆包 TTS 测试配置",
+        TargetUrl = "https://openspeech.example/api/v3/tts/unidirectional",
+        ApiKey = "test-only-private-key",
+        TargetAuthScheme = "XApiKey",
+        TransformerType = "doubao-tts",
+        ResourceId = resourceId,
+        Models = [new ExchangeModelWriteRequest { ModelId = "configured-speech-model", ModelType = "tts" }],
+    };
+
+    [Theory]
+    [InlineData("XApiKey", "XApiKey")]
+    [InlineData("DoubaoTts", "DoubaoTts")]
+    [InlineData("doubao-tts", "DoubaoTts")]
+    public void SpeechExchange_CreatePersistsExplicitResourceAndBothAuthenticationModes(string input, string expected)
+    {
+        var request = SpeechExchange();
+        request.TargetAuthScheme = input;
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out var draft, out var error).ShouldBeTrue(error);
+        draft!.TargetAuthScheme.ShouldBe(expected);
+        var document = GatewayConfigurationProvisioning.BuildExchangeDocument(draft,
+            "server-tenant", "exchange-tts", "ciphertext", DateTime.UnixEpoch, "admin");
+        document["TransformerConfig"]["resourceId"].AsString.ShouldBe("seed-tts-2.0");
+        GatewayConfigurationProvisioning.ReadExchangeResourceId(document).ShouldBe("seed-tts-2.0");
+        document.ToJson().ShouldNotContain("test-only-private-key");
+        GatewayConfigurationProvisioning.GetExchangeTransformerOptions().ShouldContain(x => x.Value == "doubao-tts");
+        GatewayConfigurationProvisioning.GetExchangeAuthSchemeOptions().ShouldContain(x => x.Value == "DoubaoTts");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("resource\r\nX-Api-Key: test")]
+    [InlineData("{\"token\":\"private\"}")]
+    [InlineData("resource/key")]
+    public void SpeechExchange_RequiresResourceAndRejectsHeaderOrObjectInjection(string? value)
+    {
+        GatewayConfigurationProvisioning.TryNormalizeExchange(SpeechExchange(value), out _, out var error).ShouldBeFalse();
+        error.ShouldContain("resourceId");
+        GatewayConfigurationProvisioning.ReadExchangeResourceId(new BsonDocument
+        {
+            ["TransformerType"] = "doubao-tts",
+            ["TransformerConfig"] = new BsonDocument("resourceId", value is null ? BsonNull.Value : value),
+        }).ShouldBeNull();
+    }
+
+    [Fact]
+    public void SpeechExchange_UpdateChangesOnlyResourceLeafAndRetainsVersionGuardContract()
+    {
+        var request = new UpdateExchangeRequest
+        {
+            Name = "豆包 TTS 测试配置",
+            TargetUrl = "https://openspeech.example/api/v3/tts/unidirectional",
+            TargetAuthScheme = "XApiKey",
+            TransformerType = "doubao-tts",
+            ResourceId = "seed-tts-1.0",
+            Models = SpeechExchange().Models,
+            Version = 4,
+        };
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out var draft, out var error).ShouldBeTrue(error);
+        draft!.Version.ShouldBe(4);
+        var document = new BsonDocument
+        {
+            ["TransformerType"] = "doubao-tts",
+            ["TransformerConfig"] = new BsonDocument
+            {
+                ["resourceId"] = "seed-tts-2.0",
+                ["uid"] = "existing-nonpublic-uid",
+                ["secret"] = "existing-private-secret",
+            },
+            ["TargetApiKeyEncrypted"] = "private-ciphertext",
+            ["Version"] = 4L,
+        };
+        var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(draft, document, "admin", DateTime.UnixEpoch, 5);
+        var rendered = update.Render(new RenderArgs<BsonDocument>(BsonSerializer.LookupSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
+        var changes = rendered["$set"].AsBsonDocument;
+        changes["TransformerConfig.resourceId"].AsString.ShouldBe("seed-tts-1.0");
+        changes.Contains("TransformerConfig").ShouldBeFalse();
+        changes.Contains("TargetApiKeyEncrypted").ShouldBeFalse();
+        changes["Version"].AsInt64.ShouldBe(5);
+        rendered.ToJson().ShouldNotContain("existing-private-secret");
+        document["TransformerConfig"]["uid"].AsString.ShouldBe("existing-nonpublic-uid");
+        document["TransformerConfig"]["secret"].AsString.ShouldBe("existing-private-secret");
+        request.Version = null;
+        GatewayConfigurationProvisioning.TryNormalizeExchange(request, out _, out error).ShouldBeFalse();
+        error.ShouldContain("version");
+    }
+
+    [Fact]
+    public void SpeechExchange_OnlyExposesResourceIdAndInitializesLegacyNullConfig()
+    {
+        GatewayConfigurationProvisioning.TryNormalizeExchange(SpeechExchange(), out var draft, out var error).ShouldBeTrue(error);
+        var document = new BsonDocument { ["TransformerConfig"] = BsonNull.Value };
+        var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(draft!, document, "admin", DateTime.UnixEpoch, 1);
+        var rendered = update.Render(new RenderArgs<BsonDocument>(BsonSerializer.LookupSerializer<BsonDocument>(), BsonSerializer.SerializerRegistry));
+        rendered["$set"]["TransformerConfig"]["resourceId"].AsString.ShouldBe("seed-tts-2.0");
+        typeof(ExchangeItem).GetProperty("ResourceId").ShouldNotBeNull();
+        foreach (var type in new[] { typeof(ExchangeItem), typeof(CreateExchangeRequest), typeof(UpdateExchangeRequest) })
+            type.GetProperty("TransformerConfig").ShouldBeNull();
+        document["TransformerType"] = "doubao-tts";
+        document["TransformerConfig"] = new BsonDocument { ["resourceId"] = "seed-tts-2.0", ["token"] = "private-token" };
+        var item = new ExchangeItem { ResourceId = GatewayConfigurationProvisioning.ReadExchangeResourceId(document) };
+        System.Text.Json.JsonSerializer.Serialize(item).ShouldNotContain("private-token");
+        document["TransformerType"] = "doubao-asr";
+        GatewayConfigurationProvisioning.ReadExchangeResourceId(document).ShouldBeNull();
+    }
+
     [Theory]
     [InlineData("openrouter", "openai")]
     [InlineData("openai-compatible", "openai")]

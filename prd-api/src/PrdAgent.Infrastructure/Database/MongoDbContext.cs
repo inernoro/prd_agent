@@ -67,6 +67,10 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<SpeechSettings> SpeechSettings => _database.GetCollection<SpeechSettings>("speech_settings");
+    public IMongoCollection<SpeechPreset> SpeechPresets => _database.GetCollection<SpeechPreset>("speech_presets");
+    public IMongoCollection<SpeechRun> SpeechRuns => _database.GetCollection<SpeechRun>("speech_runs");
+    public IMongoCollection<SpeechQuotaLedger> SpeechQuotaLedgers => _database.GetCollection<SpeechQuotaLedger>("speech_quota_ledgers");
     public IMongoCollection<ProductPermissionConfiguration> ProductPermissionConfigurations =>
         _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
@@ -545,6 +549,7 @@ public class MongoDbContext
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
     public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
     public IMongoCollection<ProductAgentSettings> ProductAgentSettings => _database.GetCollection<ProductAgentSettings>("product_agent_settings");
+    public IMongoCollection<ProductScheduledNotification> ProductScheduledNotifications => _database.GetCollection<ProductScheduledNotification>("product_scheduled_notifications");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");

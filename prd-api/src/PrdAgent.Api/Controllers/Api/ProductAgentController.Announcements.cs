@@ -7,6 +7,15 @@ namespace PrdAgent.Api.Controllers.Api;
 
 public partial class ProductAgentController
 {
+    [HttpGet("version-workflow/announcements/records")]
+    public async Task<IActionResult> GetAnnouncementRecords([FromServices] ProductAnnouncementSyncService sync,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] bool failedOnly = false, [FromQuery] string? search = null)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        return Ok(ApiResponse<ProductAnnouncementRecords>.Ok(await sync.RecordsAsync(page, pageSize, failedOnly, search)));
+    }
+
     [HttpGet("version-workflow/announcements/status")]
     public async Task<IActionResult> GetAnnouncementSyncStatus([FromServices] ProductAnnouncementSyncService sync)
     {

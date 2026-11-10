@@ -152,6 +152,7 @@ export class CodeReviewEngine {
 
   async run(input: {
     taskId: string; zip: Buffer; signal: AbortSignal; excludePatterns: string[]; engineTaskId?: string; retryFailed?: boolean;
+    userKeyConfig?: { baseUrl: string; token: string; model: string };
     onProgress: (progress: { phase: string; totalFiles: number; scannedFiles: number; engineTaskId?: string;
       processedFiles?: number; failedFiles?: number; skippedFiles?: number; engineIdentityConfirmed?: boolean }) => Promise<void>;
     audit: CodeReviewAudit;
@@ -163,6 +164,7 @@ export class CodeReviewEngine {
       // Explicit retries may need a legacy resubmission; ordinary tracking must never reparse its snapshot.
       const snapshot = await readCodeReviewSnapshot(input.zip);
       preparedUpload = new FormData();
+      if (input.userKeyConfig) preparedUpload.set('cds_llm_binding', JSON.stringify(input.userKeyConfig));
       preparedUpload.set('file', new Blob([new Uint8Array(input.zip)], { type: 'application/zip' }), 'snapshot.zip');
       // CDS already applied boundary-based exclusions; explicit targets bypass legacy sampling.
       preparedUpload.set('scan_config', JSON.stringify({ exclude_patterns: [], max_analyze_files: 0,
@@ -171,6 +173,10 @@ export class CodeReviewEngine {
     }
     if (!this.token) await this.login(input.signal, input.audit);
     const request = this.requester(input);
+    if (input.userKeyConfig) {
+      const support = await request('deepaudit.user_key_capabilities', '/scan/capabilities') as { cds_user_key_binding?: number };
+      if (support?.cds_user_key_binding !== 1) throw new Error('当前审查引擎不支持用户 Key 任务隔离；未提交源码或使用平台额度');
+    }
     let engineTaskId = input.engineTaskId;
     try {
       if (engineTaskId && input.retryFailed) {
@@ -178,7 +184,7 @@ export class CodeReviewEngine {
         if (existing.status === 'failed' || existing.status === 'cancelled'
           || (existing.status === 'completed' && hasIncompleteFiles(existing))) {
           if (existing.resumable === true) {
-            const resumed = await request('deepaudit.resume_task', `/tasks/${encodeURIComponent(engineTaskId)}/resume`, { method: 'POST' }) as { task_id?: string };
+            const resumed = await request('deepaudit.resume_task', `/tasks/${encodeURIComponent(engineTaskId)}/resume`, { method: 'POST', ...(input.userKeyConfig ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cds_llm_binding: input.userKeyConfig }) } : {}) }) as { task_id?: string };
             if (resumed.task_id !== engineTaskId) throw new Error('DeepAudit 续跑返回了不同的任务编号');
           } else if (existing.checkpoint_version === 1) {
             // A checkpointed scan may still have in-flight workers or an unavailable snapshot. Never replay it as legacy.

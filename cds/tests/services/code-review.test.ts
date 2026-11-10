@@ -5,6 +5,7 @@ import os from 'node:os';
 import express from 'express';
 import type { Server } from 'node:http';
 import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { CodeReviewService } from '../../src/services/code-review.js';
 import { createCodeReviewsRouter } from '../../src/routes/code-reviews.js';
 import { buildZip } from '../../src/utils/zip.js';
@@ -51,7 +52,9 @@ describe('代码审查任务完整闭环', () => {
   afterEach(async () => {
     service.stop();
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
-    server = undefined; await state.flush(); delete process.env.CDS_CACHE_BASE;
+    server = undefined; await state.flush();
+    // Cold-read StateService instances also enqueue normalization writes. Drain every live store before deleting their shared fixture directory.
+    await flushAllJsonStateStores(); delete process.env.CDS_CACHE_BASE;
     await fs.rm(dir, { recursive: true, force: true });
   });
   it('归档前持久化任务和固定源码，报告可在新 StateService 中读取且正文已转义', async () => {
@@ -605,6 +608,22 @@ describe('代码审查任务完整闭环', () => {
     server = await new Promise<Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     return `http://127.0.0.1:${(server.address() as any).port}/api/code-reviews`;
   }
+  it('HTTP列表可选分页在权限过滤后计数；旧MCP列表契约保持完整，非法参数拒绝', async () => {
+    const a = await submit(), b = await submit({ projectId: 'b' });
+    for (let i = 0; i < 14; i++) await state.putCodeReviewTask({ ...a, id: `page-${i}`, createdAt: new Date(Date.parse(a.createdAt) - i - 1).toISOString() });
+    const base = await serve(), headers = { 'x-project': 'a' };
+    const original = await (await fetch(base, { headers })).json();
+    expect(original.tasks).toHaveLength(15); expect(original.page).toBeUndefined();
+    const response = await fetch(`${base}?limit=10&history=1&source=all`, { headers });
+    const page = await response.json();
+    expect(response.status).toBe(200); expect(page.tasks).toHaveLength(10); expect(page.page.total).toBe(15);
+    expect(page.totals).toEqual({ source: 15, report: 0, all: 15 }); expect(page.tasks.some((t: CodeReviewTask) => t.id === b.id)).toBe(false);
+    expect(JSON.stringify(page)).not.toContain('inputKey');
+    expect((await fetch(`${base}?limit=10&projectId=b`, { headers })).status).toBe(403);
+    for (const query of ['limit=0', 'limit=101', 'limit=2&offset=-1', 'limit=2&source=bad', 'limit=2&status=bad', 'limit=2&history=bad', 'limit=2&snapshotAt=invalid', 'limit[]=10', 'limit=2&history[]=1']) {
+      expect((await fetch(`${base}?${query}`, { headers })).status, query).toBe(400);
+    }
+  });
   it('真实HTTP审计沿继续游标读取旧证据，跨项目及无效分页在对象读取前拒绝', async () => {
     const task = await submit();
     for (let sequence = 1; sequence <= 150; sequence++) blobs.set(`http-history-${sequence}`, Buffer.from(JSON.stringify({
@@ -698,7 +717,7 @@ describe('代码审查任务完整闭环', () => {
     expect(original).toContain('代码审查报告'); expect(run).toHaveBeenCalledTimes(1);
   });
   it('读取既有中断任务只取回原生结果并缓存，不重试、不归档、不改变失败状态', async () => {
-    const readExisting = vi.fn(async () => ({ ...result(), totalFiles: 2, scannedFiles: 1 }));
+    const readExisting = vi.fn(async () => ({ ...result(), totalFiles: 2, scannedFiles: 2 }));
     run.mockImplementationOnce(async input => {
       await input.onProgress({ totalFiles: 2, scannedFiles: 1, phase: '分析中', engineTaskId: 'stopped-native' });
       throw new Error('模型服务不可用');
@@ -707,10 +726,10 @@ describe('代码审查任务完整闭环', () => {
     const task = await submit(); await service.pump();
     const pages = await Promise.all([service.result(task.id), service.result(task.id)]);
     expect(pages[0]).toMatchObject({ result: null, resultLoading: true });
-    await vi.waitFor(async () => expect((await service.result(task.id)).result).toMatchObject({ coverage: { complete: false, scannedFiles: 1, totalFiles: 2 }, findings: [{ verified: false }] }));
+    await vi.waitFor(async () => expect((await service.result(task.id)).result).toMatchObject({ coverage: { complete: false, scannedFiles: 2, totalFiles: 2, unfinishedFiles: 0 }, findings: [{ verified: false }] }));
     await service.result(task.id);
     expect(readExisting).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledTimes(1);
-    expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'stopped-native' });
+    expect(service.get(task.id)).toMatchObject({ status: 'failed', engineTaskId: 'stopped-native', progress: { totalFiles: 2, scannedFiles: 2 } });
     expect(service.get(task.id).reportId).toBeUndefined(); expect(state.listAcceptanceReports('a')).toHaveLength(0);
     expect(send).not.toHaveBeenCalled();
     const base = await serve();

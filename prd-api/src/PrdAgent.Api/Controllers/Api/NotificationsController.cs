@@ -9,6 +9,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
 

@@ -103,6 +103,7 @@ public class BackgroundTaskAdmissionTests
                      typeof(PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker),
                      typeof(PrdAgent.Api.Services.ProductAgent.ProductClaimWebhookWorker),
                      typeof(PrdAgent.Api.Services.ProductAgent.ProductAnnouncementSyncWorker),
+                     typeof(PrdAgent.Api.Services.ProductAgent.ProductScheduledNotificationWorker),
                  })
         {
             var state = registry.Check(type);
@@ -114,6 +115,10 @@ public class BackgroundTaskAdmissionTests
         registry.Check(typeof(ChatRunWorker)).Allowed.ShouldBeTrue();
         registry.Check(typeof(WorkflowRunWorker)).Allowed.ShouldBeTrue();
         registry.Check(typeof(TranscriptRunWorker)).Allowed.ShouldBeTrue();
+        registry.Check(typeof(PrdAgent.Api.Services.Speech.SpeechRunWorker)).Kind.ShouldBe(BackgroundTaskKind.UserRunConsumer);
+        registry.Check(typeof(PrdAgent.Api.Services.Speech.SpeechRunWorker)).Allowed.ShouldBeTrue();
+        new BackgroundTaskAdmissionRegistry(Configuration(preview: true))
+            .Check(typeof(PrdAgent.Api.Services.Speech.SpeechRunWorker)).Allowed.ShouldBeTrue();
     }
 
     [Fact]

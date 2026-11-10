@@ -133,10 +133,11 @@ public static partial class VersionRegistrationMessageParser
         if (string.IsNullOrWhiteSpace(text)) return null;
         foreach (var label in labels)
         {
+            var labelPattern = string.Join(@"\s*", label.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(Regex.Escape));
             foreach (var line in text.Split('\n'))
             {
                 var candidate = line.Trim();
-                var match = Regex.Match(candidate, $@"^(?:[-*]\s*)?{Regex.Escape(label)}\s*[：:]\s*(?<value>.+?)\s*$", RegexOptions.IgnoreCase);
+                var match = Regex.Match(candidate, $@"^(?:[-*]\s*)?{labelPattern}\s*[：:]\s*(?<value>.+?)\s*$", RegexOptions.IgnoreCase);
                 if (match.Success)
                     return match.Groups["value"].Value.Trim();
             }

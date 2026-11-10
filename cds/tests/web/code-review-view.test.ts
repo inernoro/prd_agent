@@ -26,7 +26,9 @@ describe('代码审查结果的可理解性与真实性', () => {
     expect(reviewCoverage(uploaded).kind).toBe('external');
     expect(summarizeReviews([uploaded])).toMatchObject({ active: 0, reports: 0, archives: 1, attention: 0 });
     const html = renderToStaticMarkup(createElement(ReviewTaskList, { items: [uploaded], selectedId: '', projectName: () => '项目', onSelect: () => undefined }));
-    expect(html).toContain('上传档案');
+    expect(html).toContain('导入文档');
+    expect(html).toContain('已保存');
+    expect(html).toContain('未执行源码审查');
     expect(html).not.toContain('已完成');
   });
 

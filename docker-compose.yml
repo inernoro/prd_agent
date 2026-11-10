@@ -58,6 +58,8 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
+      # 正式实例明确承担既有定时任务；共库预览仍由 CDS 标记与运行时权限拒绝。
+      - Deployment__SharedScheduledWorkEnabled=${SHARED_SCHEDULED_WORK_ENABLED:-true}
       # 首次引入部署域时，生产默认接管固定截止线前由旧 main owner 创建的任务。
       # 截止线之后由仍在线旧容器创建的新任务不会进入生产 worker；显式 false 可紧急关闭。
       - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
