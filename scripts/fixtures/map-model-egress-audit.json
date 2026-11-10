@@ -27,6 +27,13 @@
       },
       "purpose": "任务金额包装器只创建回到自身的GatewayLLMClient，全部发送复用既有统一网关；不创建HTTP客户端或供应商SDK，新调用仍须逐指纹审计"
     },
+    "prd-api/src/LlmGateway.Transport/UpstreamProxy.cs": {
+      "calls": {
+        "new:Socket:24335da45e7ef64864319a84": 1,
+        "new:SocketsHttpHandler:b90988f6fe013dbdc2d65ba4": 1
+      },
+      "purpose": "组织级及单上游代理的共享连接器；只创建关闭自动跳转的 HTTP/SOCKS5 handler，外部租户固定代理或直连目标的已校验公网 IP；不选择模型、不发送模型报文。调用点仅限网关发送器和不产生推理费用的控制台探测，逐调用指纹锁定。"
+    },
     "prd-api/src/PrdAgent.Api/Controllers/Api/AdminPeerNodesController.cs": {
       "calls": {
         "call:CreateClient:84815a312d0eaebc157871c8": 4,
@@ -526,6 +533,7 @@
     },
     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/Asr/DoubaoStreamAsrService.cs": {
       "calls": {
+        "call:ConnectAsync:16340894d7650f435b42009d": 1,
         "call:ConnectAsync:8e60750c4511c6d2eb6e7a62": 2,
         "call:ConnectAsync:9df1f41827e900f4c8dd18b2": 1,
         "call:SendAsync:1067fb7b7ee4cb00860d2e9d": 1,
@@ -538,10 +546,11 @@
         "call:SendAsync:c776c93e1aa98712a926e37b": 1,
         "new:ClientWebSocket:36bd3392c05703dedc118869": 2,
         "new:ClientWebSocket:dd7e2055959419ea01832018": 1,
+        "new:HttpMessageInvoker:ee5293d69ca49087cc545453": 1,
         "new:ProcessStartInfo:20f45ee679d31ef328f59831": 1,
         "static:Process.Start:94e9a735f0b575204178362e": 1
       },
-      "purpose": "网关serving复用的既有供应商发送源；MAP未注册底层客户端，工厂出口禁止直接付费模型协议；保留既有 ffmpeg 音频格式转换，新子进程用途须单独审计，进程网络仍需部署层隔离"
+      "purpose": "网关 serving 复用的既有供应商发送源；新增代理 WebSocket 握手只消费网关确定的配置，仍经原发送授权，外部租户保留公网目标校验并固定代理对端。MAP 未注册底层 executor；保留既有 ffmpeg 转码用途，所有连接与子进程逐调用审计。"
     },
     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmClient.cs": {
       "calls": {
@@ -563,12 +572,18 @@
     },
     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs": {
       "calls": {
-        "call:CreateClient:86be3be12ce50e82474c5315": 1,
-        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
         "new:DoubaoStreamAsrService:dab59fb88a9ab46474ead984": 1,
         "new:GatewayLLMClient:80375ead04f1ba6a2bf35bcb": 1
       },
-      "purpose": "网关 serving 复用的统一发送源及既有 GatewayLLMClient 构造；授权叶子拦截无许可执行，新增运输逐调用审计"
+      "purpose": "网关 serving 复用的统一发送源及既有 GatewayLLMClient 构造；代理客户端构造收敛至内部 UpstreamProxyClientScope，移除已迁出的旧工厂许可，发送前仍由授权叶子校验，新增运输逐调用审计。"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LlmGateway/UpstreamProxyClientScope.cs": {
+      "calls": {
+        "call:CreateClient:007bf574b64ef30dbfccf6fc": 1,
+        "call:CreateClient:c3dbeb32338105b6c2256b11": 1,
+        "new:HttpClient:44c248368d7640f892def6e2": 1
+      },
+      "purpose": "统一网关发送阶段的内部客户端作用域；只消费解析阶段已确定的代理快照，重试仍由原网关准入、发送授权及审计链路控制。MAP 不注册进程内发送器，不能从业务服务借此新建客户端；只登记当前构造与工厂调用，不放行后续新增调用。"
     },
     "prd-api/src/PrdAgent.Infrastructure/ModelPool/HttpPoolDispatcher.cs": {
       "calls": {
@@ -794,6 +809,9 @@
       "MongoDB.Driver",
       "Polly",
       "Polly.Extensions.Http"
+    ],
+    "prd-api/src/LlmGateway.Transport/LlmGateway.Transport.csproj": [
+      "MongoDB.Bson"
     ],
     "prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj": [
       "Jint",
