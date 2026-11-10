@@ -50,6 +50,8 @@ it.each(['peers-first', 'standby-first'])('saved peer survives %s loading; unsav
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(response) });
     });
     await page.goto(`${origin}/__standby-preview-fixture.html`);
+    // 初始化模块与读取落定后再核对选中状态；沿用原10秒等待及60秒总期限。
+    await page.waitForLoadState('networkidle');
     await page.waitForFunction(() => document.querySelectorAll<HTMLInputElement>('input[name="migration-peer"]')[1]?.checked === true);
     await page.locator('label').filter({ hasText: '分支同步策略' }).locator('select').selectOption('warm-running');
     await page.getByLabel('按间隔持续核对', { exact: true }).check();
