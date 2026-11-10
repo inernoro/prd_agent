@@ -32,6 +32,11 @@ export function diagnosticUrl(raw: string): string {
   } catch { return '[地址不可用]'; }
 }
 
+function diagnosticText(value: unknown): string {
+  const safe = diagnosticValue(value);
+  return typeof safe === 'string' ? safe : JSON.stringify(safe) ?? '';
+}
+
 export function publicMonitorObservation(observation: MonitorObservation): MonitorObservation {
   let requestBody: string | undefined;
   if (observation.requestBody) {
@@ -45,12 +50,12 @@ export function publicMonitorObservation(observation: MonitorObservation): Monit
   return {
     at: observation.at, ok: observation.ok, elapsedMs: observation.elapsedMs,
     code: observation.code, sampleCount: observation.sampleCount,
-    err: observation.err ? observation.results.some(result => sensitivePath(result.path)) ? '部分判据涉及敏感字段，请核对脱敏判据结果' : String(diagnosticValue(observation.err)) : undefined,
+    err: observation.err ? observation.results.some(result => sensitivePath(result.path)) ? '部分判据涉及敏感字段，请核对脱敏判据结果' : diagnosticText(observation.err) : undefined,
     requestBody,
     results: observation.results.slice(0, 30).map(result => ({ ...result,
-      actual: sensitivePath(result.path) ? '[已脱敏]' : result.actual === undefined ? undefined : String(diagnosticValue(result.actual)),
-      expected: sensitivePath(result.path) ? '[已脱敏]' : result.expected === undefined ? undefined : String(diagnosticValue(result.expected)),
-      err: result.err === undefined ? undefined : sensitivePath(result.path) ? '[已脱敏]' : String(diagnosticValue(result.err)),
+      actual: sensitivePath(result.path) ? '[已脱敏]' : result.actual === undefined ? undefined : diagnosticText(result.actual),
+      expected: sensitivePath(result.path) ? '[已脱敏]' : result.expected === undefined ? undefined : diagnosticText(result.expected),
+      err: result.err === undefined ? undefined : sensitivePath(result.path) ? '[已脱敏]' : diagnosticText(result.err),
     })),
     // Upstream MCP evidence is already a fixed-schema, redacted receipt; do not include tool content.
     upstreamCalls: observation.upstreamCalls?.slice(0, 20).map(call => ({ ...call, endpoint: diagnosticUrl(call.endpoint), snapshot: diagnosticValue(call.snapshot) as Record<string, unknown> | undefined })),
@@ -63,21 +68,22 @@ export function publicUptimeSample(sample: UptimeSample): UptimeSample {
   const legacy = (sample as UptimeSample & { observation?: MonitorObservation }).observation;
   const sensitiveFailure = legacy?.results?.some(result => sensitivePath(result.path));
   const exchange = sample.exchange;
+  const measurementActual = sample.measurement ? diagnosticValue(sample.measurement.actual) : undefined;
   return {
     t: sample.t, up: sample.up, ms: sample.ms,
     ...(sample.noData === undefined ? {} : { noData: sample.noData }),
     ...(sample.code === undefined ? {} : { code: sample.code }),
-    ...(sample.err === undefined ? {} : { err: sensitiveFailure ? '部分判据涉及敏感字段，请核对脱敏观测结果' : String(diagnosticValue(sample.err)) }),
-    ...(sample.finding === undefined ? {} : { finding: String(diagnosticValue(sample.finding)) }),
-    ...(sample.measurement ? { measurement: { ...sample.measurement, actual: diagnosticValue(sample.measurement.actual) as typeof sample.measurement.actual } } : {}),
+    ...(sample.err === undefined ? {} : { err: sensitiveFailure ? '部分判据涉及敏感字段，请核对脱敏观测结果' : diagnosticText(sample.err) }),
+    ...(sample.finding === undefined ? {} : { finding: diagnosticText(sample.finding) }),
+    ...(sample.measurement ? { measurement: { ...sample.measurement, actual: (measurementActual !== null && typeof measurementActual === 'object' ? JSON.stringify(measurementActual) : measurementActual) as typeof sample.measurement.actual } } : {}),
     ...(exchange ? { exchange: {
       request: { method: /^[A-Z]{3,8}$/.test(exchange.request.method) ? exchange.request.method : '未知', url: diagnosticUrl(exchange.request.url) },
       ...(exchange.response ? { response: {
         status: Number.isFinite(exchange.response.status) ? exchange.response.status : 0,
-        contentType: String(diagnosticValue(exchange.response.contentType || '')).slice(0, 100),
+        contentType: diagnosticText(exchange.response.contentType || '').slice(0, 100),
         ...(exchange.response.excerpt === undefined ? {} : { excerpt: diagnosticValue(exchange.response.excerpt) }),
       } } : {}),
-      note: String(diagnosticValue(exchange.note)).slice(0, 300),
+      note: diagnosticText(exchange.note).slice(0, 300),
     } } : {}),
   };
 }

@@ -4,6 +4,19 @@ import { probeCustomMonitor } from '../../src/services/uptime-custom-monitor.js'
 afterEach(() => vi.restoreAllMocks());
 const monitor = { id: 'evidence', name: '订单读数', kind: 'health-json' as const, enabled: true, url: 'https://orders.example/health?api_key=private-value', healthComponentId: 'orders', healthField: 'observedValue' as const, healthOp: 'lte' as const, healthValue: '10', createdAt: '', updatedAt: '' };
 describe('近期真实请求／响应摘录', () => {
+  it('超过4KB的JSON证据仍是可读且脱敏的文本，标量读数不返回对象', () => {
+    const large = JSON.stringify({ password: 'hidden-big-secret', marker: '诊断可读', rows: Array.from({ length: 20 }, () => '中'.repeat(800)) });
+    const observation = publicMonitorObservation({ at: '', ok: false, elapsedMs: 1, err: large,
+      results: [{ path: 'data', op: 'eq', ok: false, actual: large, expected: large, err: large }] });
+    const sample = publicUptimeSample({ t: 1, up: false, ms: 1, err: large, finding: large,
+      measurement: { name: '读数', field: 'observedValue', actual: large, expected: '0', op: 'eq' } });
+    for (const text of [observation.err, observation.results[0].actual, observation.results[0].expected, observation.results[0].err, sample.err, sample.finding, sample.measurement?.actual]) {
+      expect(typeof text).toBe('string');
+      expect(text).toContain('预览');
+      expect(text).not.toMatch(/hidden-big-secret|\[object Object\]/);
+      expect(Buffer.byteLength(String(text))).toBeLessThanOrEqual(4096);
+    }
+  });
   it('HTTP200但实际指标越界保留收到响应与阈值证据，不把目标错误叫采集失败', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ checks: { orders: [{ componentId: 'orders', observedValue: 12, status: 'fail', password: 'not-for-evidence' }] } }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const outcome = await probeCustomMonitor(monitor, 1000);
