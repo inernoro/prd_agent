@@ -1,4 +1,5 @@
-/* v0.1 design contract, scoped to the code-review workspace. Geometry scales with the platform root size. */
+/* Review text and geometry follow the platform rem density.
+ * Viewport width changes layout, never whole-workspace magnification. */
 .cds-main:has(> .cr-ui) {
   --cds-main-px: 2.352941rem;
   --cds-main-pt: 1.764706rem;
@@ -325,6 +326,30 @@
   min-width: 0;
   overflow: hidden;
 }
+.cr-list-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.588235rem 1.176471rem;
+}
+.cr-history-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.294118rem;
+  color: var(--cr-accent);
+  font-size: 0.955882rem;
+  font-weight: 500;
+  text-underline-offset: .2em;
+}
+.cr-history-link:hover { text-decoration: underline; }
+.cr-history-link svg { width: 1em; height: 1em; }
+.cr-skeleton-title { height: 2.352941rem; width: 16rem; max-width: 100%; }
+.cr-skeleton-subtitle { height: 1.470588rem; width: 34rem; max-width: 100%; margin-top: 2px; }
+.cr-skeleton-control { height: 2.352941rem; border-radius: .441176rem; max-width: 100%; }
+.cr-skeleton-action { width: 7.352941rem; }
+.cr-skeleton-segment { width: 18.75rem; }
+.cr-skeleton-cell { height: 1.323529rem; width: 70%; max-width: 14rem; }
+.cr-skeleton-row { cursor: default; }
 .cr-table-scroll {
   overflow-x: auto;
 }
@@ -335,6 +360,16 @@
   align-items: start;
   padding: 0.882353rem 1.176471rem;
   min-width: 71.764706rem;
+}
+.cr-table-grid .cr-row-inline > svg {
+  width: 1.029412rem;
+  height: 1.029412rem;
+}
+.cr-table-grid .cr-row-inline.cr-truncate {
+  display: block;
+}
+.cr-table-grid .cr-row-inline.cr-truncate > svg {
+  vertical-align: -.15em;
 }
 .cr-table-head {
   font-size: 0.882353rem;
@@ -783,6 +818,12 @@
 .cr-finding-footer {
   border-top: 1px solid var(--cr-line);
   padding-top: 1.176471rem;
+}
+.cr-reader {
+  gap: 0.882353rem;
+}
+.cr-reader > .cr-page-header {
+  align-items: center;
 }
 .cr-document {
   min-width: 0;
