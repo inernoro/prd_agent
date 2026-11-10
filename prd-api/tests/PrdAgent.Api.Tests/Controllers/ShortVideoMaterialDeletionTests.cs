@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
@@ -67,6 +68,7 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(db);
         builder.Services.AddSingleton(Mock.Of<IDocumentService>(MockBehavior.Strict));
+        builder.Services.AddScoped<ShortVideoMaterialProcessor>();
         builder.Services.AddAuthentication("fixture").AddScheme<AuthenticationSchemeOptions, FixtureIdentity>("fixture", _ => { });
         builder.Services.AddAuthorization();
         builder.Services.AddControllers().AddApplicationPart(typeof(ShortVideoMaterialController).Assembly)
@@ -212,7 +214,7 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         Assert.True(raw["CancelRequested"].AsBoolean);
         Assert.True(raw["ProcessingToken"].IsBsonNull);
         Assert.Equal("queued", (await _rows.Find(x => x.Id == other.Id).SingleAsync()).Status);
-        _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
+        _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Exactly(2));
         _coordinator.VerifyNoOtherCalls();
     }
 
@@ -300,10 +302,17 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         _coordinator.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task Cancel_DuringActualWorkerDownload_StopsBeforeAssetsOrTranscriptionAndAcknowledgesCancellation()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Cancel_DuringActualWorkerDownload_StopsBeforeAssetsOrTranscriptionAndAcknowledgesCancellation(bool transientLookupFailure)
     {
         using var handler = new WaitingLocalHandler();
+        var fault = new LocalReadFault { Ready = () => handler.Started.Task.IsCompleted };
+        var db = _app.Services.GetRequiredService<MongoDbContext>();
+        if (transientLookupFailure)
+            typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(db, LocalReadFaultProxy.Wrap(db.Database, fault));
         var validator = new Mock<ISafeOutboundUrlValidator>(MockBehavior.Strict);
         validator.Setup(x => x.EnsureSafeHttpUrlAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string url, string _, CancellationToken _) => new Uri(url));
@@ -332,6 +341,13 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         try
         {
             await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (transientLookupFailure)
+            {
+                await fault.Injected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.Delay(250);
+                Assert.False(work.IsCompleted);
+                Assert.False(handler.AuthorityCancellationObserved);
+            }
             using var response = await Cancel(run.Id);
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             await work.WaitAsync(TimeSpan.FromSeconds(6));
@@ -350,6 +366,41 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         {
             handler.Abort.Cancel();
             await work.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    public sealed class LocalReadFault
+    {
+        public Func<bool> Ready = () => false;
+        public readonly TaskCompletionSource Injected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Fired;
+    }
+
+    public class LocalReadFaultProxy : DispatchProxy
+    {
+        private object _inner = null!;
+        private LocalReadFault _fault = null!;
+        public static T Wrap<T>(T inner, LocalReadFault fault) where T : class
+        {
+            var proxy = Create<T, LocalReadFaultProxy>();
+            ((LocalReadFaultProxy)(object)proxy)._inner = inner;
+            ((LocalReadFaultProxy)(object)proxy)._fault = fault;
+            return proxy;
+        }
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method!.Name == "FindAsync" && _fault.Ready() && Interlocked.CompareExchange(ref _fault.Fired, 1, 0) == 0)
+            {
+                _fault.Injected.TrySetResult();
+                throw new TimeoutException("本机只注入一次身份查询超时，未取消任务");
+            }
+            try
+            {
+                var result = method.Invoke(_inner, args);
+                return result is IMongoCollection<ShortVideoMaterialRun> rows ? Wrap(rows, _fault) : result;
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException is not null)
+            { ExceptionDispatchInfo.Capture(ex.InnerException).Throw(); throw; }
         }
     }
 
@@ -384,7 +435,7 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, repeated.StatusCode);
         Assert.Equal(before, (await _rows.Find(x => x.Id == running.Id).SingleAsync()).ToBsonDocument());
-        _coordinator.Verify(x => x.RevokeAsync(queued.TaskPermitId!, queued.Id, CancellationToken.None), Times.Once);
+        _coordinator.Verify(x => x.RevokeAsync(queued.TaskPermitId!, queued.Id, CancellationToken.None), Times.Exactly(2));
         _coordinator.Verify(x => x.RevokeAsync(running.TaskPermitId!, running.Id, CancellationToken.None), Times.Once);
         _coordinator.VerifyNoOtherCalls();
     }
@@ -399,16 +450,23 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
         failed.OwnerInstanceId = cancelled.OwnerInstanceId;
         var other = Run("running", "other-processing");
         other.OwnerInstanceId = "another-owner";
-        await _rows.InsertManyAsync(new[] { cancelled, failed, other });
+        var pending = Run("queued");
+        pending.CancelRequested = true;
+        pending.OwnerInstanceId = cancelled.OwnerInstanceId;
+        await _rows.InsertManyAsync(new[] { cancelled, failed, other, pending });
         var worker = new ShortVideoMaterialWorker(_app.Services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<ShortVideoMaterialWorker>.Instance);
         await (Task)typeof(ShortVideoMaterialWorker).GetMethod("RecoverRunningRunsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(worker, null)!;
+        await (Task)typeof(ShortVideoMaterialWorker).GetMethod("ProcessNextRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(worker, null)!;
         Assert.Equal("cancelled", (await _rows.Find(x => x.Id == cancelled.Id).SingleAsync()).Status);
         Assert.Null((await _rows.Find(x => x.Id == cancelled.Id).SingleAsync()).ProcessingToken);
         Assert.Equal("failed", (await _rows.Find(x => x.Id == failed.Id).SingleAsync()).Status);
         Assert.Equal(other.ToBsonDocument(), (await _rows.Find(x => x.Id == other.Id).SingleAsync()).ToBsonDocument());
+        Assert.Equal("cancelled", (await _rows.Find(x => x.Id == pending.Id).SingleAsync()).Status);
         _coordinator.Verify(x => x.RevokeAsync(cancelled.TaskPermitId!, cancelled.Id, CancellationToken.None), Times.Once);
+        _coordinator.Verify(x => x.RevokeAsync(pending.TaskPermitId!, pending.Id, CancellationToken.None), Times.Once);
         _coordinator.VerifyNoOtherCalls();
     }
 
@@ -438,6 +496,41 @@ public sealed class ShortVideoMaterialDeletionTests : IAsyncLifetime
             .Invoke(worker, null)!;
         var actual = await _rows.Find(x => x.Id == run.Id).SingleAsync();
         Assert.Equal("cancelled", actual.Status);
+        Assert.Null(actual.ProcessingToken);
+        _coordinator.Verify(x => x.AcquireAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
+        _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Exactly(2));
+        _coordinator.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Cancel_QueuedClaimFinishesDuringPermitRevocation_AcknowledgesSameTaskInsteadOfLeavingFailed()
+    {
+        var run = Run("queued");
+        run.OwnerInstanceId = InstanceIdentity.Get(_app.Configuration);
+        await _rows.InsertOneAsync(run);
+        _coordinator.Setup(x => x.AcquireAsync(run.TaskPermitId!, run.Id, CancellationToken.None))
+            .ThrowsAsync(new TaskExecutionAdmissionException("TASK_EXECUTION_UNAVAILABLE", "本机模拟取消已撤销许可", 409));
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfiguration>(_app.Configuration);
+        services.AddSingleton(_app.Services.GetRequiredService<MongoDbContext>());
+        services.AddScoped(sp => new ShortVideoMaterialProcessor(sp.GetRequiredService<MongoDbContext>(),
+            _app.Services.GetRequiredService<IDocumentService>(), sp.GetRequiredService<IConfiguration>(), sp,
+            NullLogger<ShortVideoMaterialProcessor>.Instance, _coordinator.Object));
+        await using var provider = services.BuildServiceProvider();
+        using var worker = new ShortVideoMaterialWorker(provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<ShortVideoMaterialWorker>.Instance);
+        var revocations = 0;
+        _coordinator.Setup(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None)).Returns(async () =>
+        {
+            if (++revocations == 1)
+                await (Task)typeof(ShortVideoMaterialWorker).GetMethod("ProcessNextRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(worker, null)!;
+        });
+        using var response = await Cancel(run.Id);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var actual = await _rows.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.Equal("cancelled", actual.Status);
+        Assert.True(actual.CancelRequested);
         Assert.Null(actual.ProcessingToken);
         _coordinator.Verify(x => x.AcquireAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Once);
         _coordinator.Verify(x => x.RevokeAsync(run.TaskPermitId!, run.Id, CancellationToken.None), Times.Exactly(2));

@@ -200,6 +200,9 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             includeUnowned: true,
             retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
             legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
+        await AcknowledgeCancelledAsync(db, ownerScope
+            & Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued")
+            & Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.ProcessingToken, null));
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
@@ -313,20 +316,23 @@ public sealed class ShortVideoMaterialProcessor
         {
             while (!stop.IsCancellationRequested)
             {
-                if (await _db.ShortVideoMaterialRuns.Find(expectedProcessing).FirstOrDefaultAsync(CancellationToken.None) == null)
+                try
                 {
-                    authorityStop.Cancel();
-                    return;
+                    if (await _db.ShortVideoMaterialRuns.Find(expectedProcessing).FirstOrDefaultAsync(CancellationToken.None) == null)
+                    {
+                        authorityStop.Cancel();
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 查询失败是未知状态，不是用户取消；平台 LostToken 和阶段前核对仍独立生效。
+                    _logger.LogWarning(ex, "短视频处理身份暂未核对，稍后重试 run={RunId}", run.Id);
                 }
                 await Task.Delay(TimeSpan.FromSeconds(1), stop);
             }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "短视频处理身份核对失败，停止后续阶段 run={RunId}", run.Id);
-            authorityStop.Cancel();
-        }
     }
 
     private async Task EnsureProcessingAuthorityAsync(ShortVideoMaterialRun run, CancellationToken authorityToken)

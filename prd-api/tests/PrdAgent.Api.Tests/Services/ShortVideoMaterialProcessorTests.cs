@@ -141,6 +141,10 @@ public class ShortVideoMaterialProcessorTests
             OwnerInstanceId = changedOwner ? "new-owner" : "original-owner", TaskPermitId = claimed.TaskPermitId, Status = "running" };
         SetProcessingToken(claimed, "original-processing"); SetProcessingToken(stored, replacement ? "replacement-processing" : "original-processing");
         var rows = new Mock<IMongoCollection<ShortVideoMaterialRun>>(MockBehavior.Strict);
+        // 本组只有 running 记录；领取前的待确认 queued 取消回收没有匹配项。
+        rows.Setup(x => x.UpdateManyAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(),
+            It.IsAny<UpdateDefinition<ShortVideoMaterialRun>>(), null, CancellationToken.None))
+            .ReturnsAsync(new UpdateResult.Acknowledged(0, 0, null));
         rows.Setup(x => x.FindOneAndUpdateAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(),
             It.IsAny<UpdateDefinition<ShortVideoMaterialRun>>(), It.IsAny<FindOneAndUpdateOptions<ShortVideoMaterialRun, ShortVideoMaterialRun>>(),
             CancellationToken.None)).ReturnsAsync(claimed);
