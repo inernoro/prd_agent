@@ -281,7 +281,7 @@ public class GatewayWhitelistPublishingTests
         // 界面据此放行选择，并把状态说清楚
         var setup = ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx");
         Assert.Contains("needsRegistration", setup);
-        Assert.Contains("已导入·未登记", setup);
+        Assert.Contains("待建立线路", setup);
         Assert.DoesNotContain("const disabled = m.alreadyImported || blocked;", setup);
     }
 

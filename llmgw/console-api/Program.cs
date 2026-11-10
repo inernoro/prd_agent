@@ -15186,12 +15186,8 @@ app.MapPut("/gw/exchanges/{id}/proxy", async (HttpContext http, string id, [From
     catch (InvalidOperationException) { return Json(ApiEnvelope<ExchangeItem>.Fail("PROXY_SECRET_UNAVAILABLE", "代理密码未能加密，本次未保存，请检查网关加密配置"), jsonOptions, 503); }
     if (tenantId != internalTenantId)
     {
-        var pending = document.DeepClone().AsBsonDocument;
-        pending[UpstreamProxy.Field] = proxy;
-        var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, pending);
-        if (proxyError is not null)
-            return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
-        var targetError = await ValidateExternalExchangeTargetAsync(document.GetStringOrEmpty("TargetUrl"), document.GetStringOrEmpty("TransformerType"), http.RequestAborted, effectiveProxy);
+        // 本次热修保留正式基线既有的公网目标校验，不引入主干上的代理解析接口变更。
+        var targetError = await ValidateExternalExchangeTargetAsync(document.GetStringOrEmpty("TargetUrl"), document.GetStringOrEmpty("TransformerType"), http.RequestAborted);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
