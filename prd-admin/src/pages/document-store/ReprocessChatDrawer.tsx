@@ -16,7 +16,7 @@ import { VisualCreationMiniPanel } from '@/components/visual-creation/VisualCrea
 import { PosterFeedCardView } from '@/components/weekly-poster/WeeklyPosterModal';
 import type { WeeklyPosterPage } from '@/services/real/weeklyPoster';
 import type { ShortVideoCard } from '@/services/real/shortVideoMaterials';
-import { useShortVideoRunStore, type ShortVideoRunStatus } from '@/stores/shortVideoRunStore';
+import { useShortVideoRunStore, normalizeShortVideoRunStatus, isTerminalShortVideoRunStatus } from '@/stores/shortVideoRunStore';
 import {
   listReprocessAgents,
   createReprocessAgent,
@@ -449,7 +449,7 @@ function shortVideoResultFromRun(run: import('@/services').ShortVideoMaterialRun
  */
 function syncShortVideoRunToStore(run: import('@/services').ShortVideoMaterialRun, fallbackStoreId: string) {
   const store = useShortVideoRunStore.getState();
-  const status: ShortVideoRunStatus = run.status === 'done' ? 'done' : run.status === 'failed' ? 'failed' : 'running';
+  const status = normalizeShortVideoRunStatus(run.status);
   const title = run.title || run.videoUrl || '短视频素材';
   const phase = shortVideoCompactStatus(run).text;
   const patch = {
@@ -504,7 +504,8 @@ const SHORT_VIDEO_STAGE_LABELS: Record<string, string> = {
 };
 
 /** 卡片下方的一行状态（取代大段进度文字块；解析细节等卡片之后才轮到）。 */
-export function shortVideoCompactStatus(run: import('@/services').ShortVideoMaterialRun): { text: string; tone: 'busy' | 'done' | 'error' } {
+export function shortVideoCompactStatus(run: import('@/services').ShortVideoMaterialRun): { text: string; tone: 'busy' | 'done' | 'error' | 'cancelled' } {
+  if (run.status === 'cancelled') return { text: '已取消', tone: 'cancelled' };
   if (run.status === 'failed') return { text: '解析失败，可重试', tone: 'error' };
   const stages = run.stages ?? [];
   const running = stages.find((s) => s.status === 'running');
@@ -1371,10 +1372,12 @@ export function ReprocessChatDrawer({
         return;
       }
 
-      if (run.status === 'failed') {
-        const message = shortVideoFailureMessage(run.errorMessage, run.errorCode);
+      if (isTerminalShortVideoRunStatus(run.status)) {
+        const cancelled = run.status === 'cancelled';
+        const message = cancelled ? '已取消短视频素材处理' : shortVideoFailureMessage(run.errorMessage, run.errorCode);
         setMessages((prev) => prev.map((m) => m.id === messageId
-          ? { ...m, streaming: false, phase: 'error', shortVideoRun: run, content: `${formatShortVideoProgress(run)}\n\n（解析失败：${message}）` }
+          ? { ...m, streaming: false, phase: cancelled ? 'done' : 'error', shortVideoRun: run,
+              content: `${formatShortVideoProgress(run)}\n\n（${cancelled ? message : `解析失败：${message}`}）` }
           : m));
         setStreamingId(null);
         sendLockRef.current = false;
@@ -2672,11 +2675,10 @@ function ShortVideoCardBlock({ run, phase, content }: {
   // 仅靠上面那行 compact 状态看不出"为什么没有文字"。把转写失败原因显式补一行（Codex P2）。
   const transcriptStage = (run.stages ?? []).find((s) => s.key === 'transcript');
   const transcriptFailed = run.status === 'done' && transcriptStage?.status === 'failed';
-  const toneColor = tone === 'error'
-    ? 'rgba(248,113,113,0.95)'
-    : tone === 'done'
-      ? 'rgba(110,231,158,0.9)'
-      : 'rgba(96,165,250,0.9)';
+  const toneColor = {
+    error: 'var(--accent-fg-error)', done: 'var(--accent-fg-success)',
+    busy: 'var(--accent-fg-info)', cancelled: 'var(--text-muted)',
+  }[tone];
   return (
     <div>
       <div style={{ width: '100%', maxWidth: 300, aspectRatio: '9 / 16', margin: '0 auto' }}>
