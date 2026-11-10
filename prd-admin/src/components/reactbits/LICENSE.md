@@ -15,6 +15,7 @@ upstream changed.
 
 | File | Upstream | Variant |
 |------|----------|---------|
+| `Threads.tsx` / `Threads.css` | `src/ts-default/Backgrounds/Threads/` at `c83b5e7e026f003af33ff9ebc3d93afb5c86ad22` | TS + CSS |
 | `SpotlightCard.tsx` | `src/ts-tailwind/Components/SpotlightCard/SpotlightCard.tsx` | TS + Tailwind |
 | `BlurText.tsx` / `CountUp.tsx` / `DecryptedText.tsx` / `ShinyText.tsx` / `SplitText.tsx` | same path tree | TS + Tailwind |
 
@@ -22,6 +23,9 @@ upstream changed.
 该 vendored 文件已移除。
 
 ## Attribution
+
+`Threads.tsx` differs from the pinned upstream only by declaring `currentMouse`
+with `const` to satisfy the repository's `prefer-const` lint rule. Behavior is unchanged.
 
 Copyright (c) 2024 David Haz Dev. Licensed under MIT + Commons Clause —
 see https://github.com/DavidHDev/react-bits/blob/main/LICENSE.md for full text.
