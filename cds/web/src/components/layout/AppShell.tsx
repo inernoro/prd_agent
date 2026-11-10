@@ -21,6 +21,7 @@ import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
 import { readStatusLocation } from '@/lib/statusHome';
+import { MonitorViewNav } from './MonitorViewNav';
 import '@/pages/status/monitor-frame.css';
 import { canReadApproval, type ApprovalCapabilities } from '@/hooks/approvalPolling';
 
@@ -268,7 +269,10 @@ function ConsoleRouteFallback(): JSX.Element {
   const listPage = projectList || branchList;
   return (
     <>
-      {!monitoringHome && (listPage ? <TopBar
+      {monitoringHome ? <TopBar
+        left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '监控中心' }]} />}
+        center={<MonitorViewNav />}
+      /> : listPage ? <TopBar
         left={<div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" aria-hidden />}
         center={branchList ? <div className="cds-loading-skeleton-line h-9 w-full" aria-hidden /> : undefined}
       /> : <header className="cds-topbar" aria-hidden>
@@ -276,7 +280,7 @@ function ConsoleRouteFallback(): JSX.Element {
           <CdsGem mode="brand" detail="simple" className="h-[1.875rem] w-[1.875rem]" />
         </span>
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
-      </header>)}
+      </header>}
       <main className="cds-main">
         {/*
           骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：

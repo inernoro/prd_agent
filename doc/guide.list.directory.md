@@ -318,6 +318,7 @@
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 本地多用户认证解耦 · 计划](./plan.cds.local-multi-user-auth.md) `plan.cds.local-multi-user-auth`
+- [CDS 监控工作区按完整设计还原 · 计划](./plan.cds.monitor-workspace-v2.md) `plan.cds.monitor-workspace-v2`
 - [CDS 一仓多项目与身份层 · 计划](./plan.cds.multi-project-identity.md) `plan.cds.multi-project-identity`
 - [CDS 多项目剩余交付 · 计划](./plan.cds.multi-project-phases.md) `plan.cds.multi-project-phases`
 - [CDS 长期性能优化与独立验收 · 计划](./plan.cds.performance.optimization.md) `plan.cds.performance.optimization`

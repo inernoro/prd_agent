@@ -26,8 +26,10 @@ import { MonitorCatalog } from './status/BusinessHome';
 import { MonitorWorkspace } from './status/MonitorWorkspace';
 import { MonitorDrawers } from './status/MonitorDrawers';
 import { readStatusLocation, type StatusHomeView } from '@/lib/statusHome';
+import { MonitorViewNav } from '@/components/layout/MonitorViewNav';
 import './status/status-home.css';
 import './status/monitor-fonts.css';
+import './status/monitor-design-fonts.css';
 import { Plus, RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -106,6 +108,12 @@ function describeProbeResult(target: UptimeTargetSummary, sample: UptimeSample, 
 export function StatusPage(): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = readStatusLocation(searchParams);
+  const workspaceEntry = useMemo(() => {
+    const targetId = searchParams.get('target');
+    const incidentId = searchParams.get('incident');
+    if (!targetId || !incidentId) return undefined;
+    return { targetId, incidentId, detectedAt: searchParams.get('detectedAt') ?? undefined };
+  }, [searchParams]);
   const [catalogProject, setCatalogProject] = useState<string | null>(null);
   const [summary, setSummary] = useState<UptimeSummary | null>(null);
   const [incidents, setIncidents] = useState<UptimeIncidentView[]>([]);
@@ -332,10 +340,25 @@ export function StatusPage(): JSX.Element {
   return (
     <AppShell
       active="status"
-      topbar={boardView === 'home' ? undefined : (
+      topbar={(
         <TopBar
           left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '监控中心' }]} />}
-          right={(
+          center={<MonitorViewNav />}
+          right={boardView === 'home' ? (
+            <>
+              <PaletteHint />
+              <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
+                <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
+                {refreshing ? '刷新中' : '刷新'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setWorkspacePanel({ panel: 'notify' })} disabled={phase !== 'ready'}>
+                通知设置
+              </Button>
+              <Button size="sm" onClick={() => setWorkspacePanel({ panel: 'connect' })} disabled={phase !== 'ready'}>
+                <Plus />接入我的服务
+              </Button>
+            </>
+          ) : (
             <>
               <PaletteHint />
               <Button variant="outline" size="sm" onClick={() => void load()} disabled={refreshing}>
@@ -377,15 +400,9 @@ export function StatusPage(): JSX.Element {
             <MonitorCenterErrorCard message={error || '未知错误'} onRetry={() => void load()} retrying={refreshing} pollSeconds={POLL_INTERVAL_MS / 1000} />
           ) : (
             <>
-              {boardView !== 'home' && <nav className="status-home-nav" aria-label="监控视图">
-                {([{ value: 'home', label: '业务总览' }, { value: 'catalog', label: '监控列表' }, { value: 'history', label: '处理记录' }] as const).map((tab) => (
-                  <button key={tab.value} aria-current={boardView === tab.value ? 'page' : undefined} onClick={() => setBoardView(tab.value)}>{tab.label}</button>
-                ))}
-                <button aria-current={boardView === 'owner' || boardView === 'all' ? 'page' : undefined} onClick={() => setBoardView('owner')}>监控管理</button>
-              </nav>}
               {proberLiveness(summary)?.stalled || !summary.enabled ? <div role="alert" className="rounded-lg border border-warn/40 bg-warn-soft p-4 text-warn">{summary.enabled ? '检查器未按时更新' : '检查器已关闭'}，下方为最近记录，不能据此确认当前业务正常。请在监控管理中排查检查器。</div> : null}
               <div key={`${boardView}:${location.targetId ?? ''}`} className={boardView === 'home' ? 'monitor-page-content' : 'status-home-content'}>
-              {boardView === 'home' ? <MonitorWorkspace targets={targets} now={now} summary={summary} incidents={incidents} onAdd={() => setWorkspacePanel({ panel: 'connect' })} onNotify={(targetId) => setWorkspacePanel({ panel: 'notify', targetId })} onManage={(targetId) => targetId ? openTarget(targetId) : setBoardView('owner')} onProbe={async (targetId) => { await probeTarget(targetId); await load(); }} onReload={() => void load()} /> :
+              {boardView === 'home' ? <MonitorWorkspace targets={targets} now={now} summary={summary} incidents={incidents} entry={workspaceEntry} onAdd={() => setWorkspacePanel({ panel: 'connect' })} onNotify={(targetId) => setWorkspacePanel({ panel: 'notify', targetId })} onManage={(targetId) => targetId ? openTarget(targetId) : setBoardView('owner')} onProbe={async (targetId) => { await probeTarget(targetId); await load(); }} onReload={() => void load()} /> :
                 boardView === 'catalog' ? <MonitorCatalog targets={targets} now={now} projectId={catalogProject} onProject={setCatalogProject} onOpen={openTarget} /> :
                 boardView === 'history' ? <div><h1>处理记录</h1><p className="status-home-muted mb-4">最近 100 条故障发生与恢复记录。立即检查会追加采样，只有达到恢复判据才会结束故障。</p><IncidentTimeline scrollMode="page" incidents={incidents} filter={incidentFilter} onFilter={setIncidentFilter} onOpenTarget={openTarget} /></div> :
                 boardView === 'detail' ? <div className="status-home-detail">{selected ? <TargetDetail scrollMode="page" key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}

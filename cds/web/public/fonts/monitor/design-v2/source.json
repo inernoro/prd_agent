@@ -1,0 +1,88 @@
+{
+  "source": "User supplied full monitoring design, 31 boards",
+  "license": "SIL OFL 1.1 (../OFL.txt)",
+  "fonts": [
+    {
+      "family": "Inter",
+      "weight": "400",
+      "sha256": "ca300d27bc3fafe4aae7bc82d3911ea51649334b39ea6dc59acffac5f08589b1",
+      "postScriptNames": [
+        "Inter-Regular"
+      ],
+      "glyphCount": 119
+    },
+    {
+      "family": "Inter",
+      "weight": "500",
+      "sha256": "ae0382226406c24db9fd3a62ed3460a5f9666806c3894b683336ce719d2cfc69",
+      "postScriptNames": [
+        "Inter-Medium"
+      ],
+      "glyphCount": 119
+    },
+    {
+      "family": "Inter",
+      "weight": "600",
+      "sha256": "400366fd7889bfc1c7689b9f73705e17a69ca18cf6b17e8abc5b33d6aab410d6",
+      "postScriptNames": [
+        "Inter-SemiBold"
+      ],
+      "glyphCount": 119
+    },
+    {
+      "family": "Inter",
+      "weight": "700",
+      "sha256": "4c09de670decc36a3bff9185a7cff0bf8011e52fa36423e3c2e4bcda73b46e26",
+      "postScriptNames": [
+        "Inter-Bold"
+      ],
+      "glyphCount": 119
+    },
+    {
+      "family": "JetBrains Mono",
+      "weight": "400 500",
+      "sha256": "a81c184286d74377b0ff71749801ea0e7379fe0430b252bfcd2611c1d45975d4",
+      "postScriptNames": [
+        "JetBrainsMono-Regular"
+      ],
+      "glyphCount": 115
+    },
+    {
+      "family": "JetBrains Mono",
+      "weight": "600 700",
+      "sha256": "4115c7dd280dc1bd11388f7a6887311648b197b911f05ceeaa4e36cc161e5841",
+      "postScriptNames": [
+        "JetBrainsMono-Bold"
+      ],
+      "glyphCount": 115
+    },
+    {
+      "family": "Noto Sans SC",
+      "weight": "400",
+      "sha256": "e995dd32e7f7008d4f1a023eb1e814df39fe21d010ab11c966909749740f56d2",
+      "postScriptNames": [
+        "NotoSansCJKsc-Regular"
+      ],
+      "glyphCount": 908
+    },
+    {
+      "family": "Noto Sans SC",
+      "weight": "500",
+      "sha256": "4bc72604342a2c3b38c18051f8bcfed13936397e3cbca5b5dc63164ddc8499f0",
+      "postScriptNames": [
+        "NotoSansCJKsc-Medium"
+      ],
+      "glyphCount": 908
+    },
+    {
+      "family": "Noto Sans SC",
+      "weight": "600 700",
+      "sha256": "ace9d4cabd6c3d4bbc2e28bc01238a651cd58b3f8d2ed61eb3b8c1bf06d71f93",
+      "postScriptNames": [
+        "NotoSansCJKsc-Bold"
+      ],
+      "glyphCount": 908
+    }
+  ],
+  "fallback": "Design CJK subsets contain 908 glyphs. Keep full existing Monitor Noto Sans SC for other real service names."
+}

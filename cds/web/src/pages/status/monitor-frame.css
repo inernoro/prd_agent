@@ -1,7 +1,15 @@
 /* Eagerly loaded: lazy-route and data loading use exactly the same canvas frame. */
 .monitor-page-shell { height: 100%; overflow: hidden; }
 .monitor-page-content { flex: 1; min-height: 0; overflow: hidden; }
-.cds-app-shell:has(.monitor-page-shell) { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-.cds-app-shell:has(.monitor-page-shell) .cds-rail { display: none; }
-.cds-app-shell:has(.monitor-page-shell) .cds-main { grid-column: 1; grid-row: 1; animation: none; }
+.cds-app-shell:has(.monitor-page-shell) .cds-main { animation: none; }
 body:has(.monitor-drawers [role='dialog'][data-state='open']) [data-testid='preview-instance-pill'] { z-index: 88; }
+
+.monitor-view-nav { display: flex; align-items: center; gap: .25rem; min-width: 0; }
+.monitor-view-nav a { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; min-height: 2.25rem; padding: 0 .875rem; border-radius: .5rem; color: hsl(var(--muted-foreground)); font-size: .875rem; white-space: nowrap; text-decoration: none; }
+.monitor-view-nav a:hover { color: hsl(var(--foreground)); background: hsl(var(--surface-raised)); }
+.monitor-view-nav a[aria-current='page'] { color: hsl(var(--foreground)); background: hsl(var(--accent)); box-shadow: inset 0 -2px hsl(var(--primary)); font-weight: 600; }
+.monitor-view-nav a:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; }
+@media (max-width: 767px) {
+  .monitor-view-nav { justify-content: space-between; width: 100%; }
+  .monitor-view-nav a { flex: 1 1 0; min-width: 0; min-height: 2.5rem; padding-inline: .375rem; }
+}
