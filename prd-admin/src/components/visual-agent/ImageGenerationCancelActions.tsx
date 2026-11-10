@@ -36,7 +36,7 @@ export function ImageGenerationCancelActions({ items }: { items: readonly Active
       {runs.map(([runId, item], index) => (
         <div key={runId} className="flex min-w-0 items-center gap-2 text-xs text-token-muted">
           <span className="min-w-0 flex-1 truncate" title={item.prompt}>生成任务 {index + 1}：{item.prompt || '图片'}</span>
-          <button type="button" className="surface-action shrink-0 rounded-full px-3 py-1 disabled:opacity-50"
+          <button type="button" className="surface-action shrink-0 rounded-full px-3 py-1 max-sm:min-h-11 max-sm:px-4 disabled:opacity-50"
             disabled={requestingId !== null} onClick={() => void cancel(runId)}
             aria-label={`取消生成 ${index + 1}`}>
             {requestingId === runId ? '正在取消…' : '取消生成'}

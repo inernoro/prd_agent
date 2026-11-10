@@ -783,11 +783,7 @@ public class ImageMasterController : ControllerBase
                 .ToListAsync(ct);
         }
 
-        var canvas = await _db.ImageMasterCanvases
-            .Find(x => x.WorkspaceId == wid)
-            .SortByDescending(x => x.UpdatedAt)
-            .ThenByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+        var canvas = await ReadWorkspaceCanvasWithPendingRunsAsync(wid, adminId, ct);
 
         // best-effort：更新 lastOpenedAt + 每用户「最近打开」台账（首页继续上次）
         try
@@ -974,7 +970,7 @@ public class ImageMasterController : ControllerBase
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
 
-        var canvas = await _db.ImageMasterCanvases.Find(x => x.WorkspaceId == wid).FirstOrDefaultAsync(ct);
+        var canvas = await ReadWorkspaceCanvasWithPendingRunsAsync(wid, adminId, ct);
         if (canvas == null) return Ok(ApiResponse<object>.Ok(new { canvas = (object?)null }));
 
         return Ok(ApiResponse<object>.Ok(new
@@ -989,6 +985,49 @@ public class ImageMasterController : ControllerBase
                 updatedAt = canvas.UpdatedAt
             }
         }));
+    }
+
+    // 画布快照可能来自另一页的较早保存。后台运行台账补齐缺失占位，不改存储快照、
+    // 不新建任务；详情与单独读取画布必须使用同一兜底，刷新不能把在途任务藏起来。
+    private async Task<ImageMasterCanvas?> ReadWorkspaceCanvasWithPendingRunsAsync(string wid, string adminId, CancellationToken ct)
+    {
+        var canvas = await _db.ImageMasterCanvases.Find(x => x.WorkspaceId == wid)
+            .SortByDescending(x => x.UpdatedAt).ThenByDescending(x => x.CreatedAt).FirstOrDefaultAsync(ct);
+        var runs = await _db.ImageGenRuns.Find(x => x.WorkspaceId == wid && x.OwnerAdminId == adminId
+                && (x.Status == ImageGenRunStatus.Queued || x.Status == ImageGenRunStatus.ScopedQueued || x.Status == ImageGenRunStatus.Running))
+            .SortByDescending(x => x.CreatedAt)
+            .Project(x => new ImageGenRun { Id = x.Id, TargetCanvasKey = x.TargetCanvasKey, Items = x.Items,
+                AppCallerCode = x.AppCallerCode, LogicalModelPublicId = x.LogicalModelPublicId })
+            .ToListAsync(ct);
+        if (runs.Count == 0) return canvas;
+        JsonObject root;
+        try { root = string.IsNullOrWhiteSpace(canvas?.PayloadJson)
+            ? new JsonObject { ["schemaVersion"] = 1, ["elements"] = new JsonArray() }
+            : JsonNode.Parse(canvas.PayloadJson) as JsonObject ?? new JsonObject(); }
+        catch (JsonException) { return canvas; }
+        if (root["schemaVersion"] is not JsonValue schema || !schema.TryGetValue<int>(out var version)
+            || version != 1 || root["elements"] is not JsonArray elements) return canvas;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var changed = false;
+        foreach (var run in runs)
+        {
+            var key = (run.TargetCanvasKey ?? "").Trim();
+            if (key.Length == 0 || Services.ImageGenRunWorker.IsLayeringRun(run) || !seen.Add(key)) continue;
+            var target = elements.OfType<JsonObject>().FirstOrDefault(x => ReadCanvasStr(x, "id") == key || ReadCanvasStr(x, "key") == key);
+            if (target == null)
+            {
+                target = new JsonObject { ["id"] = key, ["kind"] = "image", ["status"] = "running",
+                    ["name"] = run.Items?.FirstOrDefault()?.DisplayPrompt ?? "图片生成", ["x"] = 0, ["y"] = 0, ["w"] = 512, ["h"] = 512 };
+                elements.Add(target);
+            }
+            else if (ReadCanvasStr(target, "status") != "running" || !string.IsNullOrWhiteSpace(ReadCanvasStr(target, "src"))) continue;
+            target["runId"] = run.Id;
+            changed = true;
+        }
+        if (!changed) return canvas;
+        canvas ??= new ImageMasterCanvas { WorkspaceId = wid, OwnerUserId = adminId };
+        canvas.PayloadJson = root.ToJsonString(JsonOptions);
+        return canvas;
     }
 
     [HttpPut("workspaces/{id}/canvas")]

@@ -15,6 +15,18 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public class DoubaoTtsTransformerTests
 {
+    [Fact]
+    public void HeaderResourceRefusalKeepsPreciseSafeCauseAndNeverBecomesAudio()
+    {
+        var result = Transform("""{"header":{"reqid":"private-request-id","code":45000030,"message":"requested resource not granted"}}""");
+        result.Success.ShouldBeFalse();
+        result.ErrorCode.ShouldBe("TTS_RESOURCE_NOT_GRANTED");
+        result.BinaryContent.ShouldBeNull();
+        result.ErrorMessage!.ShouldContain("未获授权");
+        result.ErrorMessage.ShouldNotContain("private-request-id");
+        JsonNode.Parse(result.AuditSummary)!["provider_code"]!.GetValue<int>().ShouldBe(45000030);
+    }
+
     private readonly DoubaoTtsTransformer _transformer = new();
     private static Dictionary<string, object> Config => new() { ["resourceId"] = "seed-tts-2.0" };
     private static JsonObject Request => new()

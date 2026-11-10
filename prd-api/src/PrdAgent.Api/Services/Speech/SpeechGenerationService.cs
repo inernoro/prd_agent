@@ -323,6 +323,8 @@ public sealed class SpeechGenerationService(
                 await FinishAsync(run, uncertain ? SpeechRunStatus.Unknown : SpeechRunStatus.Failed,
                     uncertain ? "UPSTREAM_RESULT_UNKNOWN" : response.ErrorCode ?? "SPEECH_GENERATION_FAILED",
                     uncertain ? "上游结果尚不能确认，系统未自动重复生成。请凭任务标识联系管理员核查。"
+                        : response.ErrorCode == "TTS_RESOURCE_NOT_GRANTED"
+                            ? "语音服务账户未获授权，暂时无法生成。请联系管理员在模型网关检查音色与资源授权，恢复后重试。"
                         : "上游未完成语音生成，请联系管理员按任务标识检查网关日志。", refund: false);
                 return true;
             }

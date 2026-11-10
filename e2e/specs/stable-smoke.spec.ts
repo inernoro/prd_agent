@@ -1876,12 +1876,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { name: '缺失事实', question: '页面公布的联系电话是什么？', expected: [], pattern: /没有|未公布|未提到|未提供|未找到/ },
         { name: '不相信错误历史', question: '重新核对原文，页面的工单编号是什么？', expected: [order], history: [{ role: 'assistant', content: '工单编号是 WRONG-OLD-123。' }] },
       ];
-      for (const item of cases) {
+      for (const [index, item] of cases.entries()) {
         const response = await request.post(`/api/web-pages/shares/view/${share.token}/ask/stream`, {
-          headers: { ...authHeaders(token), Accept: 'text/event-stream' }, data: { siteId, question: item.question, history: item.history }, timeout: 120_000,
+          headers: { ...authHeaders(token), Accept: 'text/event-stream', 'Idempotency-Key': `${runKey}-${index}` }, data: { siteId, question: item.question, history: item.history }, timeout: 120_000,
         });
         const stream = await response.text();
-        expect(response.status(), item.name).toBe(200);
+        expect(response.status(), `${item.name}: ${stream}`).toBe(200);
         expect(stream, item.name).toContain('event: done');
         expect(stream, item.name).not.toContain('event: error');
         const answer = readSseTypingText(stream);

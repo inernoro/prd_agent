@@ -232,6 +232,27 @@ public sealed class SpeechGenerationIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ResourceRefusalIsPersistedWithSafeRecoveryActionWithoutRepeatingTheCall()
+    {
+        await ConfigureAsync();
+        upstream = new() { Success = false, StatusCode = 403, ErrorCode = "TTS_RESOURCE_NOT_GRANTED",
+            ErrorMessage = "raw private-request-id token=secret", LogId = "resource-refused-log" };
+        var created = await service.CreateAsync("owner-a", null, new() { Text = "资源拒绝验收" });
+        Assert.True(await service.ProcessNextAsync("worker-a"));
+        var run = (await service.GetRunAsync("owner-a", created.Run.Id))!;
+        Assert.Equal(SpeechRunStatus.Failed, run.Status);
+        Assert.Equal("TTS_RESOURCE_NOT_GRANTED", run.ErrorCode);
+        Assert.Contains("未获授权", run.ErrorMessage);
+        Assert.Contains("模型网关", run.ErrorMessage);
+        Assert.Contains("恢复后重试", run.ErrorMessage);
+        Assert.DoesNotContain("secret", run.ErrorMessage);
+        Assert.Equal("resource-refused-log", run.LogId);
+        Assert.Single(sent);
+        Assert.Empty(storage.Objects);
+        Assert.False(await service.ProcessNextAsync("worker-b"));
+    }
+
+    [Fact]
     public async Task ChangedProfileInvalidatesPresetAndOptimisticUpdateRejectsStaleSettings()
     {
         var profile = await ConfigureAsync();
