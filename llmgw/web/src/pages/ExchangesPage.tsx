@@ -1,4 +1,4 @@
-import { ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
+import { EditableProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
 import type { UpstreamProxyDraft, UpstreamProxyView } from '@/lib/types';
 // Exchange：把非 OpenAI/Claude 标准上游映射为 Gateway 可调度的虚拟平台。
 // tenantId 永远由服务端会话解析；密钥仅写入，不从 API 读回。
@@ -31,6 +31,7 @@ import {
   installImageLayeringCapability,
   rotateExchangeApiKey,
   updateExchange,
+  updateExchangeProxy,
 } from '@/lib/api';
 import type {
   CreateExchangeRequest,
@@ -635,7 +636,11 @@ export function ExchangesPage() {
                   {/* 路由行：adapter 与目标地址此前都是同一种灰字，读起来像一句话而不是两个字段。
                       adapter 本来就是枚举值，改用 Chip；目标地址前加标签，方向感由箭头承担。 */}
                   <div style={{ ...INSET_BLOCK, ...rowStyle, marginTop: GAP.section }}>
-                    <ProxyBadge proxy={item.proxy} />
+                    <EditableProxyBadge key={`${item.id}:${item.version}`} name={item.name || item.id} proxy={item.proxy} onSave={canWrite && item.authority === 'llm_gateway' ? async proxy => {
+                      const res = await updateExchangeProxy(item.id, { proxy, version: item.version });
+                      if (res.success) setItems(current => current?.map(candidate => candidate.id === item.id ? res.data : candidate) ?? current);
+                      return res;
+                    } : undefined} />
                     <Chip label={item.transformerType || 'passthrough'} color="var(--text-secondary)" bg="var(--bg-base)" />
                     <ArrowRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                     <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.targetUrl}>{item.targetUrl || '未配置目标地址'}</code>

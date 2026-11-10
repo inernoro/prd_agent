@@ -654,6 +654,12 @@ export function updateModelOffering(logicalModelId: string, offeringId: string, 
     { method: 'PUT', body: req },
   );
 }
+export function deleteModelOffering(logicalModelId: string, offeringId: string): Promise<ApiResponse<{ offeringId: string }>> {
+  return apiRequest<{ offeringId: string }>(
+    `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}`,
+    { method: 'DELETE' },
+  );
+}
 export function setLogicalModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<LogicalModelItem>> {
   return apiRequest<LogicalModelItem>(`/logical-models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
 }
@@ -960,8 +966,8 @@ export function deleteModel(id: string): Promise<ApiResponse<ModelDeleteBlockers
  * 删除整条上游。被引用时后端返回 409 + PLATFORM_IN_USE，
  * data 里带占用清单（哪些模型、哪些池还挂着），照着摘干净才能删。
  */
-export function deletePlatform(id: string): Promise<ApiResponse<PlatformDeleteBlockers>> {
-  return apiRequest<PlatformDeleteBlockers>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export function deletePlatform(id: string, cleanupUnusedModels = true): Promise<ApiResponse<PlatformDeleteBlockers>> {
+  return apiRequest<PlatformDeleteBlockers>(`/platforms/${encodeURIComponent(id)}`, { method: 'DELETE', query: { cleanupUnusedModels: String(cleanupUnusedModels) } });
 }
 export function setModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
@@ -989,6 +995,9 @@ export function createExchange(req: CreateExchangeRequest): Promise<ApiResponse<
 }
 export function updateExchange(id: string, req: UpdateExchangeRequest): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function updateExchangeProxy(id: string, req: import('./types').UpdateExchangeProxyRequest): Promise<ApiResponse<ExchangeItem>> {
+  return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/proxy`, { method: 'PUT', body: req });
 }
 export function rotateExchangeApiKey(id: string, apiKey: string): Promise<ApiResponse<ExchangeItem>> {
   return apiRequest<ExchangeItem>(`/exchanges/${encodeURIComponent(id)}/api-key`, { method: 'PUT', body: { apiKey } });

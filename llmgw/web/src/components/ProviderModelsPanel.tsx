@@ -4,7 +4,7 @@
 // 它是上游卖的货，展开上游就该看到。同时它还回答了另一个更要紧的问题——
 // **哪些货登记了、哪些没登记**。没登记的模型躺在库里，调用方按公开名请求时找不到它，
 // 而在这之前这件事只能靠在两个页面之间来回对照才能看出来。
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import type { LogicalModelItem, ModelItem } from '@/lib/types';
 import { Chip } from '@/components/ui';
@@ -49,31 +49,26 @@ export function collectProviderModels(
 
 /** 一句话结论，给上游那一行用。「3 个模型」读不出该不该管，「2 个没登记」读得出。 */
 export function summarizeProviderModels(rows: ProviderModelRow[]): string {
-  if (rows.length === 0) return '还没有模型';
+  if (rows.length === 0) return '接入模型';
   const unregistered = rows.filter((x) => x.publicIds.length === 0).length;
   return unregistered === 0
-    ? `${rows.length} 个模型 · 都已登记`
-    : `${rows.length} 个模型 · ${unregistered} 个没登记`;
+    ? `${rows.length} 个模型 · 已接入`
+    : `${rows.length} 个模型 · ${unregistered} 个待接入`;
 }
 
 export function ProviderModelsPanel({ rows, onRegister }: { rows: ProviderModelRow[]; onRegister?: () => void }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const returnRef = useRef<HTMLButtonElement>(null);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const selected = rows.find((row) => row.model.id === selectedId);
-  useEffect(() => {
-    if (selected) returnRef.current?.focus({ preventScroll: true });
-    else if (triggerRef.current?.isConnected) triggerRef.current.focus({ preventScroll: true });
-  }, [selected?.model.id]);
   const unregistered = useMemo(() => rows.filter((row) => row.publicIds.length === 0).length, [rows]);
   return <>
-    <CollectionView afterToolbar={<div className="lg-collection-subhead"><Chip label={`${unregistered} 个未登记`} color="var(--warn)" bg="var(--warn-bg)" /><span className="lg-collection-spacer" />{onRegister ? <button type="button" onClick={onRegister} style={linkButton}>从上游批量登记</button> : null}</div>} className={selected ? 'lg-collection-hidden' : ''} items={rows} placeholder="搜索上游模型或公开标识" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${publicIds.join(' ')}`} filters={[{ value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }, { value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }]}>
-      {(pageRows) => <><table className="lg-collection-owned-table"><colgroup><col style={{width:'62%'}}/><col style={{width:'20%'}}/><col style={{width:'18%'}}/></colgroup><thead><tr><th>模型</th><th>登记</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}>
-        <td title={`${model.modelName || model.name} · ${publicIds.length ? `已登记到 ${publicIds.length} 个公开模型` : '还没登记，调用方找不到它'}`}><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}><strong>{model.modelName || model.name}</strong></Link></td>
-        <td><Chip label={publicIds.length ? '已登记' : '未登记'} color={publicIds.length ? 'var(--ok)' : 'var(--warn)'} bg={publicIds.length ? 'var(--ok-bg)' : 'var(--warn-bg)'} /></td><td>{publicIds.length ? <button type="button" onClick={(event) => {triggerRef.current=event.currentTarget;setSelectedId(model.id);}} style={linkButton}>登记详情</button> : <Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}>详情</Link>}</td>
-      </tr>)}</tbody></table></>}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <span style={HINT_TEXT}>接入后自动建立公开模型线路；MAP 按调用方权限使用。同一公开模型可有多个上游。</span>
+      {onRegister ? <button type="button" onClick={onRegister} style={linkButton}>接入更多模型</button> : null}
+    </div>
+    <CollectionView afterToolbar={<div className="lg-collection-subhead"><Chip label={unregistered ? `${unregistered} 个待接入` : '全部已接入'} color={unregistered ? 'var(--warn)' : 'var(--ok)'} bg={unregistered ? 'var(--warn-bg)' : 'var(--ok-bg)'} /></div>} items={rows} placeholder="搜索模型或公开标识" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${publicIds.join(' ')}`} filters={[{ value: 'unregistered', label: '待接入', matches: (row) => row.publicIds.length === 0 }, { value: 'registered', label: '已接入', matches: (row) => row.publicIds.length > 0 }]} emptyText={rows.length ? '没有匹配结果' : '尚未接入模型，点击“接入更多模型”选择需要的模型。'}>
+      {(pageRows) => <table className="lg-collection-owned-table"><colgroup><col style={{width:'45%'}}/><col style={{width:'55%'}}/></colgroup><thead><tr><th>上游模型</th><th>公开模型 / 接入状态</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}>
+        <td><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}><strong>{model.modelName || model.name}</strong></Link></td>
+        <td>{publicIds.length ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>{publicIds.map(id => <Link key={id} to={`/models/view?model=${encodeURIComponent(id)}`}>{id}</Link>)}</div> : <span style={{ ...HINT_TEXT, color: 'var(--warn)' }} title="尚未接入公开模型，调用方暂时不可用">待接入{onRegister ? <button type="button" onClick={onRegister} style={{ ...linkButton, marginLeft: 8 }}>选择接入</button> : null}</span>}</td>
+      </tr>)}</tbody></table>}
     </CollectionView>
-    {selected ? <><div className="lg-collection-toolbar"><button ref={returnRef} type="button" style={linkButton} onClick={() => setSelectedId(null)}>返回名下模型</button><span style={HINT_TEXT}>{selected.publicIds.length} 个公开模型</span></div><CollectionView key={selected.model.id} items={selected.publicIds} searchText={(id) => id} placeholder="搜索登记的公开模型">{(ids) => <>{ids.map((id) => <div className="lg-collection-code" key={id}><Link to={`/models/view?model=${encodeURIComponent(id)}`}>{id}</Link></div>)}</>}</CollectionView></> : null}
   </>;
 }
 const linkButton: React.CSSProperties = { background: 'none', border: 'none', padding: 0, color: 'var(--accent)', fontSize: 'var(--fs-secondary)', cursor: 'pointer' };

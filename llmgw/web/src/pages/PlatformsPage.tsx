@@ -3,7 +3,7 @@
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
 import { Link } from 'react-router-dom';
-import { ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
+import { EditableProxyBadge, ProxyBadge, ProxyFields, UpstreamNetworkTest, proxyDraft } from '@/components/UpstreamProxySettings';
 import { Server } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
@@ -39,6 +39,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [deleteBlockedName, setDeleteBlockedName] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [draft, setDraft] = useState<CreatePlatformRequest>({
@@ -391,7 +392,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   async function removePlatform(p: PlatformItem) {
     const typed = await promptText({
       title: `删除上游「${p.name}」`,
-      description: `${p.apiUrl || '无地址'}\n删除后这条上游的地址与密钥一并消失，无法撤销。`,
+      description: `${p.apiUrl || '无地址'}\n删除上游及密钥，清理未被线路使用的名下模型，保留公开模型和 MAP 昵称。仍有引用时拒绝删除，请先迁移并验证替代线路。删除无法撤销。`,
       inputLabel: '确认请输入平台名',
       requireExact: p.name,
       tone: 'danger',
@@ -404,6 +405,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     }
     setBusyId(p.id);
     setToast(null);
+    setDeleteBlockedName(null);
     const res = await deletePlatform(p.id);
     setBusyId(null);
     if (res.success) {
@@ -415,6 +417,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
         return next;
       });
       setToast(`已删除上游「${p.name}」`);
+      return;
+    }
+    if (res.error?.code === 'PLATFORM_IN_USE') {
+      setDeleteBlockedName(p.name);
       return;
     }
     setToast(res.error?.message || '删除失败');
@@ -558,6 +564,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
+      {deleteBlockedName ? <InlineAlert tone="error">「{deleteBlockedName}」仍被模型或线路使用，尚未删除。<Link to="/logical-models">前往模型迁移并移除旧线路</Link></InlineAlert> : null}
       {/* 自测结果与模型清单挂在表格上方：接完之后「通没通、上游有什么」必须看得见。 */}
       {Object.entries(testResult).map(([platformId, result]) => {
         const owner = providerItems.find((x) => x.id === platformId);
@@ -638,7 +645,14 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                   <td style={td}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                       <span style={{ fontWeight: 600 }}>{p.name}</span>
-                      <ProxyBadge proxy={p.proxy} />
+                      <EditableProxyBadge key={`${p.id}:${p.updatedAt}`} name={p.name} proxy={p.proxy} onSave={canWrite && p.authority === 'llm_gateway' ? async proxy => {
+                        const res = await updatePlatform(p.id, { proxy });
+                        if (res.success) {
+                          setItems(current => current?.map(item => item.id === p.id ? res.data : item) ?? current);
+                          setToast(`已更新「${p.name}」的连接方式`);
+                        }
+                        return res;
+                      } : undefined} />
                       <EntityPreviewDrawer
                         buttonLabel="查看接口"
                         kicker="Provider 接口预览"

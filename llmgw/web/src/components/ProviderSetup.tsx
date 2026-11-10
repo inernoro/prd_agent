@@ -148,6 +148,7 @@ export function UpstreamModelPicker({
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => defaultSelection(data.items));
   const [onlyNew, setOnlyNew] = useState(true);
+  const [query, setQuery] = useState('');
   /*
     名录外模型默认勾不动：它们的用途只能靠模型名猜，猜错了照样入池、被调度到，
     用户看到的就是「一请求就报错」。要用得管理员在这里明确放行一次（这个动作进审计），
@@ -209,7 +210,8 @@ export function UpstreamModelPicker({
   // 那句下一步就没法照做，用户只能手工去建对外模型和线路——一条自己给出、自己堵死的路。
   // 导入本身是幂等的（已存在的模型走 Skipped，再补名单），所以重勾一次是安全的。
   const needsRegistration = (m: UpstreamModelItem) => m.alreadyImported && !m.alreadyPublished;
-  const visible = onlyNew ? data.items.filter((m) => !m.alreadyImported || needsRegistration(m)) : data.items;
+  const visible = data.items.filter(m => (!onlyNew || !m.alreadyImported || needsRegistration(m))
+    && `${m.modelId} ${m.displayName || ''} ${m.inferredCapabilities.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()));
   const isBlocked = (m: UpstreamModelItem) => !m.inCatalog && !allowOutside;
   const selectable = visible.filter((m) => (!m.alreadyImported || needsRegistration(m)) && !isBlocked(m));
   const selectedCount = selectable.filter((m) => selected.has(m.modelId)).length;
@@ -234,7 +236,7 @@ export function UpstreamModelPicker({
           上游共 {data.truncatedFromTotal ?? data.total} 个模型
           {data.truncatedFromTotal ? `（过多，只展示前 ${data.total} 个）` : ''}
         </span>
-        <span style={HINT_TEXT}>已导入 {data.alreadyImportedCount} 个</span>
+        <span style={HINT_TEXT}>已保存 {data.alreadyImportedCount} 个</span>
         <Chip
           label={data.pricingProvided ? '价格取自上游' : '上游未提供价格'}
           color={data.pricingProvided ? '#5fd08a' : 'var(--text-muted)'}
@@ -245,7 +247,7 @@ export function UpstreamModelPicker({
         />
         <label style={checkRowStyle}>
           <input type="checkbox" checked={onlyNew} onChange={(e) => setOnlyNew(e.target.checked)} />
-          只看未导入
+          只看待接入
         </label>
         {outsideCount > 0 ? (
           <label style={checkRowStyle} title="名录外模型的用途只能按模型名猜；放行后请到模型页逐个核对用途，这个动作会记进审计">
@@ -272,6 +274,13 @@ export function UpstreamModelPicker({
         </span>
       </div>
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <input type="search" aria-label="搜索上游模型" placeholder="搜索模型名称或用途" value={query} onChange={event => setQuery(event.target.value)} style={{ ...FIELD_INPUT, flex: '1 1 220px' }} />
+        <Button variant="ghost" size="sm" disabled={busy || !selectable.length} onClick={() => setSelected(new Set(selectable.slice(0, MAX_IMPORT_BATCH).map(model => model.modelId)))}>选择当前结果</Button>
+        <Button variant="ghost" size="sm" disabled={busy || selected.size === 0} onClick={() => setSelected(new Set())}>清空选择</Button>
+        <span style={HINT_TEXT}>{visible.length} 个结果 · 已选 {selectedCount} 个</span>
+      </div>
+      <div style={HINT_TEXT}>选中后一次接入；同一公开模型自动增加上游线路，MAP 按调用方权限使用。</div>
       <div style={modelListStyle}>
         {visible.map((m) => {
           const blocked = isBlocked(m);
@@ -293,32 +302,32 @@ export function UpstreamModelPicker({
                 {m.alreadyImported ? (
                   needsRegistration(m) ? (
                     <Chip
-                      label="已导入·未登记"
+                      label="待建立线路"
                       color="var(--warn)"
                       bg="var(--warn-bg)"
                       title="模型已经在库里，但没有登上白名单——调用方按公开模型名请求找不到它。补齐能力后勾上再导一次即可补登，不会重复建"
                     />
                   ) : (
-                    <Chip label="已导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
+                    <Chip label="已接入" color="var(--text-muted)" bg="var(--bg-elevated)" />
                   )
                 ) : null}
                 {/* 用途是查出来的还是猜出来的，必须一眼分得清——它决定了用户要不要去核对 */}
                 {m.inCatalog ? (
                   <Chip
-                    label="名录内"
+                    label="用途已识别"
                     color="#5fd08a"
                     bg="rgba(95,208,138,0.14)"
                     title={`内置名录登记：${m.catalogDisplayName || m.modelId}${m.catalogVendor ? ` · ${m.catalogVendor}` : ''}。用途是查出来的事实，不是猜的`}
                   />
                 ) : registeredIds.has(m.modelId) ? (
                   <Chip
-                    label="已补登"
+                    label="用途已保存"
                     color="#5fd08a"
                     bg="rgba(95,208,138,0.14)"
                     title="这条补登已经存下了。这一行的标记要等清单重新拉一次才会变成「名录内」"
                   />
                 ) : (
-                  <Chip label="名录外" color="#e0b341" bg="rgba(224,179,65,0.14)" title="不在内置名录里，用途只能按模型名猜；要用得显式放行并自行核对" />
+                  <Chip label="用途需确认" color="#e0b341" bg="rgba(224,179,65,0.14)" title="不在内置名录里，用途只能按模型名猜；要用得显式放行并自行核对" />
                 )}
                 {/* 就地补登：看到它不认识，当场告诉它这是什么。按钮在 label 里，
                     不拦住默认行为的话点它会顺手把这一行的勾选切掉。 */}
@@ -329,7 +338,7 @@ export function UpstreamModelPicker({
                     style={{ height: 22, padding: '0 8px' }}
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); openRegister(m); }}
                   >
-                    补登
+                    设置用途
                   </Button>
                 ) : null}
                 {m.requiresImageInput ? (
@@ -367,8 +376,7 @@ export function UpstreamModelPicker({
       {registering && knownCapabilities ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={HINT_TEXT}>
-            补登 <code>{registering.modelId}</code>：告诉系统这个模型是什么。用途已按模型名预填，
-            <strong>那是猜的，保存前请核对</strong>。存下之后它就是登记在案的事实，立刻生效，不用发版。
+            设置 <code>{registering.modelId}</code> 的用途。预填内容由名称推测，<strong>保存前请核对</strong>。
           </span>
           <CatalogEntryEditor
             draft={registering.draft}
@@ -391,15 +399,14 @@ export function UpstreamModelPicker({
           onClick={() => onImport(selectable.filter((m) => selected.has(m.modelId)))}
         >
           {busy ? <Spinner size={14} /> : null}
-          {busy ? '导入中…' : `导入选中的 ${selectedCount} 个模型`}
+          {busy ? '接入中…' : `接入选中的 ${selectedCount} 个模型`}
         </Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={onCancel}>关闭</Button>
         {overBatchLimit ? (
           <span style={HINT_TEXT}>一次最多导入 {MAX_IMPORT_BATCH} 个，请取消一些再导，剩下的分批来。</span>
         ) : (
           <span style={HINT_TEXT}>
-            默认只勾了名录内的模型——它们的用途是查出来的事实。名录外的用途只能按模型名猜，猜错了入池后一请求就报错。
-            {outsideCount > 0 ? `这个上游有 ${outsideCount} 个不在名录里，确实要用就打开上面的放行。` : ''}
+            仅默认选择用途已识别的模型。用途不明的模型需先核对，不能直接用于普通对话或生图。
             {eligibleCount > MAX_IMPORT_BATCH ? `可导的有 ${eligibleCount} 个，超过单批上限，已先勾前 ${MAX_IMPORT_BATCH} 个，导完再来一轮。` : ''}
           </span>
         )}

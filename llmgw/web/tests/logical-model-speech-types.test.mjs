@@ -34,14 +34,16 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
       load(id) {
         if (id === '\0logical-speech-router') return Object.keys(globalThis.__logicalSpeechRouter).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__logicalSpeechRouter.${name};`).join('\n');
         if (id.endsWith('/src/lib/auth.tsx')) return 'export function useAuth(){return {tenant:{role:"admin"}}}';
-        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async()=>false,promptText:async()=>null}}';
+        if (id.endsWith('/src/components/ConfirmDialog.tsx')) return 'export function useDialogs(){return {confirm:async(options)=>{globalThis.__logicalSpeechFixture.confirmOptions=options;return true},promptText:async()=>null}}';
         if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
           if (name === 'getLogicalModels') return 'export async function getLogicalModels(){return {success:true,data:{items:globalThis.__logicalSpeechFixture.items}}}';
           if (name === 'getExchanges') return 'export async function getExchanges(){return {success:true,data:{items:[globalThis.__logicalSpeechFixture.exchange]}}}';
           if (name === 'getExchangeMeta') return 'export async function getExchangeMeta(){const f=globalThis.__logicalSpeechFixture;return f.metadataAvailable?{success:true,data:{modelTypes:f.modelTypes.map(value=>({value,label:value==="tts"?"语音合成":value}))}}:{success:false,error:{message:"unavailable"}}}';
           if (name === 'createLogicalModel') return 'export async function createLogicalModel(draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"create",draft});const item={...draft,id:"logical-tts",enabled:true,isDefaultForType:false,defaultForAppCallerCodes:[],offerings:[]};f.items=[item];return {success:true,data:item}}';
-          if (name === 'createModelOffering') return 'export async function createModelOffering(id,draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"offering",id,draft});const item={...draft,id:"offering-tts",enabled:true,targetUsable:true,targetName:f.exchange.name,healthStatus:0};return {success:true,data:item}}';
+          if (name === 'createModelOffering') return 'export async function createModelOffering(id,draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"offering",id,draft});const item={...draft,id:"offering-tts",enabled:true,targetUsable:true,targetName:f.exchange.name,healthStatus:0};f.offering=item;return {success:true,data:item}}';
           if (name === 'updateModelOffering') return 'export async function updateModelOffering(id,offeringId,draft){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"edit",id,offeringId,draft});return {success:true,data:{...draft,id:offeringId,enabled:true,targetUsable:true,targetName:f.exchange.name,healthStatus:0}}}';
+          if (name === 'setModelOfferingEnabled') return 'export async function setModelOfferingEnabled(id,offeringId,enabled){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"toggle",id,offeringId,enabled});f.offering={...f.offering,enabled};return {success:true,data:f.offering}}';
+          if (name === 'deleteModelOffering') return 'export async function deleteModelOffering(id,offeringId){const f=globalThis.__logicalSpeechFixture;f.calls.push({operation:"remove",id,offeringId});return f.rejectRemove?{success:false,error:{message:"替代线路未验证，拒绝移除"}}:{success:true,data:{offeringId}}}';
           return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
         }).join('\n');
       },
@@ -99,6 +101,21 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
     await click('保存修改');
     assert.equal(fixture.calls[2].draft.upstreamModelId, 'doubao-tts-1.0');
     assert.equal(fixture.items[0].modelType, 'tts');
+    const routeActions = () => document.querySelector('.lg-collection-route-actions');
+    const routeButton = text => [...routeActions().querySelectorAll('button')].find(element => element.textContent.trim() === text);
+    assert.equal(routeButton('移除').disabled, true, '启用中的线路不能直接删除');
+    await act(async () => routeButton('停用').click());
+    assert.equal(routeButton('移除').disabled, false);
+    fixture.rejectRemove = true;
+    await act(async () => routeButton('移除').click());
+    assert.match(document.body.textContent, /替代线路未验证，拒绝移除/);
+    assert.ok(routeButton('移除'), '拒绝后线路应保留');
+    assert.match(fixture.confirmOptions.description, /保留公开模型 doubao-tts-1.0 和 MAP 昵称/);
+    fixture.rejectRemove = false;
+    await act(async () => routeButton('移除').click());
+    assert.equal(document.querySelector('.lg-collection-route-actions'), null);
+    assert.match(document.body.textContent, /豆包语音/);
+    assert.match(document.body.textContent, /doubao-tts-1.0/);
     fixture.metadataAvailable = false;
     await render('unavailable');
     assert.match(document.body.textContent, /豆包语音/);
@@ -106,7 +123,7 @@ test('真实表单从网关用途目录创建TTS、绑定已有Exchange并编辑
     assert.equal(field('模型类型', 'select').disabled, true);
     assert.equal(button('保存逻辑模型').disabled, true);
     assert.match(document.body.textContent, /用途目录暂不可用/);
-    assert.equal(fixture.calls.length, 3, '元数据失败不能回退为旧用途表或发起创建');
+    assert.equal(fixture.calls.length, 6, '元数据失败不能回退为旧用途表或发起创建');
   } finally {
     if (root) await act(async () => root.unmount());
     await server.close();

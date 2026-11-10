@@ -22,6 +22,7 @@ import {
   createLogicalModel,
   createModelOffering,
   deleteLogicalModel,
+  deleteModelOffering,
   getExchangeMeta,
   getExchanges,
   getLogicalModels,
@@ -69,7 +70,7 @@ export function LogicalModelsPage() {
   const navigate = useNavigate();
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
-  const { promptText } = useDialogs();
+  const { promptText, confirm } = useDialogs();
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
@@ -324,6 +325,17 @@ export function LogicalModelsPage() {
       : x) || null);
   }
 
+  async function removeOffering(logical: LogicalModelItem, offering: ModelOfferingItem) {
+    if (offering.enabled) return;
+    if (!await confirm({ title: '移除这条停用线路？', description: `仅移除「${logical.name}」的这条上游线路，保留公开模型 ${logical.publicId} 和 MAP 昵称。请先验证替代线路；仍有业务依赖或请求执行中时服务端会拒绝。`, tone: 'danger', confirmLabel: '移除线路' })) return;
+    setBusy(offering.id); setNotice(null);
+    const res = await deleteModelOffering(logical.id, offering.id);
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '线路未移除，请刷新清单后重试'); return; }
+    setItems(current => current?.map(item => item.id === logical.id ? { ...item, offerings: item.offerings.filter(route => route.id !== offering.id) } : item) ?? current);
+    okNotice(`已移除「${logical.name}」的一条停用线路，公开模型和 MAP 昵称保留。`);
+  }
+
   /**
    * 手动恢复一条被熔断摘掉的线路：立刻给它进半开的资格，省掉冷却期的等待。
    *
@@ -531,7 +543,7 @@ export function LogicalModelsPage() {
                         <div className="lg-logical-model-route-detail" key={`detail-${route.id}`}>
                           <div className="lg-collection-route-heading"><strong title={route.upstreamModelId || route.offering.targetName || route.label}>{route.upstreamModelId || route.offering.targetName || route.label}</strong><Chip label={route.roleLabel} color="var(--accent)" bg="var(--accent-soft)" /></div>
                           <div className="lg-collection-route-meta"><span title={route.label}>{route.providerName || route.label} · 优先级 {route.priority}</span><span title={route.priceOrigin}>{route.price}</span></div>
-                          <div className="lg-collection-route-actions"><RouteDot health={route.health} /><span style={HINT_TEXT}>{route.protocol}</span><span style={{flex:1}} />{canWrite ? <><Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>{route.health === 'down' ? <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button> : null}<Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button></> : null}</div>
+                          <div className="lg-collection-route-actions"><RouteDot health={route.health} /><span style={HINT_TEXT}>{route.protocol}</span><span style={{flex:1}} />{canWrite ? <><Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>{route.health === 'down' ? <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button> : null}<Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button><Button size="sm" variant="ghost" disabled={busy === route.id || route.offering.enabled} title={route.offering.enabled ? '先验证替代线路并停用当前线路，再移除' : '仅移除线路，保留公开模型与 MAP 昵称'} onClick={() => void removeOffering(item, route.offering)}>移除</Button></> : null}</div>
                           <details className="lg-collection-route-properties"><summary>线路参数</summary><div>{route.label} · {route.priceOrigin}<br />优先级 {route.priority} · 权重 {route.weight} · {route.governance}</div></details>
                         </div>
                       ))}</>}
