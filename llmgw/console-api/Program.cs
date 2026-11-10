@@ -13908,22 +13908,67 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
                 contractError), jsonOptions, 409);
     }
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
-    await targetPlatforms.UpdateOneAsync(filter, update);
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "platform.set_enabled",
-        targetType: targetAuthority == "llm_gateway" ? "llmgw_platform" : "llmplatform",
-        targetId: id,
-        targetName: doc.AsNullableString("Name"),
-        success: true,
-        reason: null,
-        changes: new BsonDocument
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    if (ProviderRemovalPolicy.ShouldDisableMapMirror(tenantId, internalTenantId, enabled))
+    {
+        // 即使 GW 已停用也重查镜像，重复 false 可以修复历史“只关 GW”的状态。
+        var mapDocument = targetAuthority == "map" ? doc : await platforms.Find(sourceFilter).FirstOrDefaultAsync();
+        string disableAudit;
+        try
         {
-            { "enabled", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("Enabled")) }, { "to", enabled } } },
-            { "authority", targetAuthority },
-        });
+            disableAudit = await BeginRequiredOperationAuditAsync(operationAudits, http,
+                action: "platform.set_enabled", targetType: "llmgw_platform", targetId: id,
+                targetName: doc.AsNullableString("Name"), changes: new BsonDocument
+                {
+                    { "enabled", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("Enabled")) }, { "to", false } } },
+                    { "mapMirror", mapDocument is not null }, { "authority", targetAuthority },
+                });
+        }
+        catch { return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_AUDIT_FAILED", "无法先建立停用审计，本次未修改上游，请稍后重试"), jsonOptions, 503); }
+        try
+        {
+            // 先关闭会被 pinned fallback 读取的 MAP 镜像，再关闭 GW；不改镜像密钥或模型配置。
+            if (targetAuthority == "llm_gateway" && mapDocument is not null)
+            {
+                var mirrorResult = await platforms.UpdateOneAsync(ProviderRemovalPolicy.UnchangedFilter(mapDocument), update, cancellationToken: CancellationToken.None);
+                if (mirrorResult.MatchedCount == 0)
+                    throw new InvalidOperationException("map_platform_changed");
+            }
+            var targetResult = await targetPlatforms.UpdateOneAsync(
+                ProviderRemovalPolicy.UnchangedFilter(doc, targetAuthority == "llm_gateway" ? tenantId : null),
+                update, cancellationToken: CancellationToken.None);
+            if (targetResult.MatchedCount == 0)
+                throw new InvalidOperationException("platform_changed");
+        }
+        catch
+        {
+            await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, disableAudit, success: false, reason: "platform_copies_disable_incomplete");
+            return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_DISABLE_INCOMPLETE", "上游及旧副本尚未全部确认停用，可能已有一侧停用。请刷新并检查审计，再次点击停用以完成同步。"), jsonOptions, 409);
+        }
+        try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, disableAudit, success: true, reason: null); }
+        catch { return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_AUDIT_PENDING", "上游及旧副本已停用，审计仍待收口，请刷新列表并检查审计"), jsonOptions, 503); }
+    }
+    else
+    {
+        await targetPlatforms.UpdateOneAsync(filter, update);
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "platform.set_enabled",
+            targetType: targetAuthority == "llm_gateway" ? "llmgw_platform" : "llmplatform",
+            targetId: id,
+            targetName: doc.AsNullableString("Name"),
+            success: true,
+            reason: null,
+            changes: new BsonDocument
+            {
+                { "enabled", new BsonDocument { { "from", ToBsonAuditValue(doc.AsNullableBool("Enabled")) }, { "to", enabled } } },
+                { "authority", targetAuthority },
+            });
+    }
     var fresh = await targetPlatforms.Find(filter).FirstOrDefaultAsync();
+    if (fresh is null)
+        return Json(ApiEnvelope<PlatformItem>.Fail("PLATFORM_READBACK_FAILED", "上游状态修改后未能读回，请刷新列表核对"), jsonOptions, 503);
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(fresh, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
@@ -14573,23 +14618,27 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(updated, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 删除上游平台：只删 GW 权威的，且必须先确认没人引用。
+// 删除上游平台：由 GW 控制面治理，内部租户同时清理同 ID 的 MAP 旧副本，且必须先确认没人引用。
 //
 // 为什么一定要挡引用：池成员是按 (modelId, platformId) 定位的，平台删了成员还在，
 // 池子看起来正常、实际解析不到上游——这类静默损坏最难查（本仓库刚为同类问题排查过一整轮）。
-// 所以宁可拒绝并列清单，让运维先把引用摘干净，也不做级联删除。
+// 所以先拒绝并列清单，让运维迁移并摘掉线路；不级联删除公开模型或 MAP 业务设置。
 app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool? cleanupUnusedModels) =>
 {
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-    var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var isInternal = ProviderRemovalPolicy.MayRemoveMapMirror(tenantId, internalTenantId);
+    var gatewayDocument = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
+    var mapDocument = isInternal
+        ? await platforms.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).FirstOrDefaultAsync()
+        : null;
+    var doc = ProviderRemovalPolicy.SelectSource(gatewayDocument, mapDocument, isInternal);
     if (doc is null)
-        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的平台；MAP 来源平台请先认领"), jsonOptions, 409);
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_FOUND", "上游不存在或不属于当前组织，请刷新列表"), jsonOptions, 404);
 
     if (cleanupUnusedModels == true)
     {
         var fb = Builders<BsonDocument>.Filter;
-        var tenantId = TenantAccess.GetRequired(http).TenantId;
-        var isInternal = tenantId == internalTenantId;
         var platformModels = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync();
         var legacyModels = isInternal ? await models.Find(fb.Eq("PlatformId", id)).ToListAsync() : [];
         var modelIds = platformModels.Concat(legacyModels).Select(x => x.GetStringOrEmpty("_id")).Distinct(StringComparer.Ordinal).ToList();
@@ -14660,29 +14709,45 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id, bool? cl
             409);
     }
 
-    var unchangedPlatform = Builders<BsonDocument>.Filter.And(filter,
-        doc.Contains("UpdatedAt") ? Builders<BsonDocument>.Filter.Eq("UpdatedAt", doc["UpdatedAt"]) : Builders<BsonDocument>.Filter.Exists("UpdatedAt", false));
-    var removedPlatform = await gwPlatforms.DeleteOneAsync(unchangedPlatform, CancellationToken.None);
-    if (removedPlatform.DeletedCount != 1)
-        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_CONCURRENTLY_MODIFIED", "上游已被其他操作修改，未删除上游；请刷新后核对配置"), jsonOptions, 409);
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "platform.delete",
-        targetType: "llmgw_platform",
-        targetId: id,
-        targetName: doc.AsNullableString("Name"),
-        success: true,
-        reason: null,
-        // 删掉之后文档就没了，快照留在审计里，方便事后核对删的是不是这一条
-        changes: new BsonDocument
+    string deleteAudit;
+    try
+    {
+        deleteAudit = await BeginRequiredOperationAuditAsync(operationAudits, http,
+            action: "platform.delete", targetType: "llmgw_platform", targetId: id,
+            targetName: doc.AsNullableString("Name"), changes: new BsonDocument
+            {
+                { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
+                { "gatewayCopy", gatewayDocument is not null }, { "mapMirror", mapDocument is not null },
+                { "hadKey", !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) },
+            });
+    }
+    catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_FAILED", "无法先建立平台删除审计，平台副本已保留，请稍后重试"), jsonOptions, 503); }
+    try
+    {
+        // 先删同 ID 的 MAP 镜像，最后删 GW 权威副本，避免 GW 删除后旧镜像重新出现在列表。
+        // 任一侧条件冲突就保留其余副本；下一次删除可合法处理只剩 MAP 或只剩 GW 的状态。
+        if (isInternal && mapDocument is not null)
         {
-            { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
-            { "apiUrl", ToBsonAuditValue(doc.AsNullableString("ApiUrl")) },
-            { "platformType", ToBsonAuditValue(doc.AsNullableString("PlatformType")) },
-            { "hadKey", !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) },
-            { "authority", "llm_gateway" },
-        });
+            var removedMirror = await platforms.DeleteOneAsync(ProviderRemovalPolicy.UnchangedFilter(mapDocument), CancellationToken.None);
+            if (removedMirror.DeletedCount == 0
+                && await platforms.Find(Builders<BsonDocument>.Filter.Eq("_id", id)).AnyAsync())
+                throw new InvalidOperationException("map_platform_changed");
+        }
+        if (gatewayDocument is not null)
+        {
+            var removedGateway = await gwPlatforms.DeleteOneAsync(ProviderRemovalPolicy.UnchangedFilter(gatewayDocument, tenantId), CancellationToken.None);
+            if (removedGateway.DeletedCount == 0 && await gwPlatforms.Find(filter).AnyAsync())
+                throw new InvalidOperationException("gateway_platform_changed");
+        }
+    }
+    catch
+    {
+        await TryCompleteRequiredOperationAuditAsync(operationAudits, tenantId, deleteAudit, success: false, reason: "platform_copies_delete_incomplete");
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_DELETE_INCOMPLETE",
+            "上游副本清理尚未完成，可能已有一侧删除或被其他操作更新。请刷新并检查审计后重试；公开模型和 MAP 业务设置未删除。"), jsonOptions, 409);
+    }
+    try { await CompleteRequiredOperationAuditAsync(operationAudits, tenantId, deleteAudit, success: true, reason: null); }
+    catch { return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("PLATFORM_AUDIT_PENDING", "上游及旧副本已删除，审计仍待收口，请刷新列表并检查审计"), jsonOptions, 503); }
     return Json(ApiEnvelope<PlatformDeleteBlockers>.Ok(new PlatformDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
