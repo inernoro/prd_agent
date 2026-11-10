@@ -1959,7 +1959,7 @@ export class UptimeMonitorService {
         assessment: target.collection ? 'observation-unavailable' : 'check-failed',
         affectedChecks: target.collectionMembers?.length,
         notificationEnvironment: facet.environment === 'preview' ? 'preview'
-          : target.source === 'release' ? (facet.environment === 'production' ? 'production' : facet.environment === 'staging' ? 'staging' : 'unknown')
+          : target.collection || target.source === 'release' ? (facet.environment === 'production' ? 'production' : facet.environment === 'staging' ? 'staging' : 'unknown')
           : target.monitor?.environment === 'production' ? 'production' : target.monitor?.environment === 'staging' ? 'staging' : 'unknown',
         environmentLabel: facet.environmentLabel,
         ...(type === 'uptime.target.recovered' && target.source === 'custom'
