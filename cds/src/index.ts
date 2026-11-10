@@ -96,6 +96,9 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
+import { createMonitorOnboardingRouter } from './routes/monitor-onboarding.js';
+import { MonitorOnboardingService } from './services/monitor-onboarding.js';
+import { matchPreviewHost } from './services/uptime-custom-monitor.js';
 import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
 import { runMonitorDiscovery, type DiscoveryRunSummary } from './services/monitor-discovery-runner.js';
 import { customProbeTargetId } from './services/uptime-custom-monitor.js';
@@ -6520,6 +6523,16 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     getProject: (id) => stateService.getProject(id),
     save: (id, monitoringInspections) => { stateService.updateProject(id, { monitoringInspections }); },
   }));
+  app.use('/api', createMonitorOnboardingRouter(new MonitorOnboardingService({
+    store: stateService,
+    getNotifications: () => stateService.getMonitorNotifications(),
+    setNotifications: settings => stateService.setMonitorNotifications(settings),
+    listChannelIds: () => [...stateService.listAlarmChannels().map(c => c.id), ...(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv() ? ['legacy-map'] : [])],
+    stampPreviewBranch: monitor => {
+      const hit = monitor.projectId && monitor.url ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId)) : undefined;
+      monitor.previewBranchId = hit ? hit.branchId : undefined;
+    },
+  })));
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
     getNotifications: () => stateService.getMonitorNotifications(),
