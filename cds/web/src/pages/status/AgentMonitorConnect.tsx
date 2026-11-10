@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, ChevronLeft, Copy, LoaderCircle, X } from 'lucide-react';
+import { Check, ChevronLeft, LoaderCircle, X } from 'lucide-react';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
 import { ChannelFields, existingChannelIds, monitorErrorMessage, useChannels } from './monitorChannels';
 import './agent-monitor-connect.css';
@@ -17,6 +17,8 @@ interface Props {
   onManageNotifications(): void; onUseMcp?(): void;
 }
 const TIMELINE: Record<string, string> = { created: '已生成接入令牌，等待智能体使用', connected: '智能体已连接', 'instructions-read': '已读取只读监控提交说明', 'proposals-submitted': '已提交监控提议，等待你确认', completed: '已确认并保存监控', revoked: '接入已取消，令牌已撤销' };
+const CLIENTS = [{id:'cli',label:'命令行智能体'},{id:'ide',label:'IDE 智能体'},{id:'http',label:'自建智能体'}] as const;
+const shellQuote = (value:string):string => `'${value.replace(/'/g,"'\\''")}'`;
 
 /** Actual draft-only session; every progress item comes from the server. */
 export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotifications,onUseMcp}:Props):JSX.Element {
@@ -32,6 +34,7 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
   const [customChannels,setCustomChannels]=useState<string[]|undefined>();
   const [copied,setCopied]=useState('');
   const [advanced,setAdvanced]=useState(false);
+  const [client,setClient]=useState<typeof CLIENTS[number]['id']>('cli');
   const active=useRef<Session|null>(null);
   const proposalsSeen=useRef('');
   const channels=useChannels();
@@ -79,7 +82,12 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
   };
   const origin=window.location.origin;
   const instructions=session?`${origin}${apiUrl(`/api/uptime/onboarding-agent/${session.id}/instructions`)}`:'';
-  const snippet=session&&secret?`读取 ${instructions}，请求头 Authorization: Bearer ${secret}。\n按返回的说明提交本服务的只读监控提议。不要执行写操作，不要提交任何密码或密钥；由我在 CDS 确认后才启用。`:'';
+  const prompt='请为我的服务找出健康检查和关键只读接口，按上面的 CDS 说明提交监控提议，等我在页面确认。不要提交密码、密钥和写入操作。';
+  const snippet=session&&secret?(client==='cli'
+    ?`curl --fail --silent --show-error \\\n  --header ${shellQuote(`Authorization: Bearer ${secret}`)} \\\n  ${shellQuote(instructions)}`
+    :client==='ide'
+      ?`请先读取本次 CDS 监控接入说明：\nGET ${instructions}\nAuthorization: Bearer ${secret}\n按响应的 submitPath 提交只读监控提议，等待我在 CDS 确认。`
+      :`const response = await fetch(${JSON.stringify(instructions)}, {\n  headers: { Authorization: ${JSON.stringify(`Bearer ${secret}`)} }\n});\nif (!response.ok) throw new Error(\`CDS HTTP \${response.status}\`);\nconst instructions = await response.json();\n// 按 instructions.submitPath 提交只读提议，等待用户确认。`):'';
   const copy=async(value:string,key:string):Promise<void>=>{try{await navigator.clipboard.writeText(value);setCopied(key);}catch{setError('复制未完成，请选中文本手动复制。');}};
   const next=async():Promise<void>=>{
     if(!session||busy)return;
@@ -99,8 +107,9 @@ export function AgentMonitorConnect({onClose,onSaved,onBusy,onManageNotification
       {error&&<div role="alert" className="drawer-error">{error}<button type="button" className="linkb" onClick={()=>{setError(null);if(!session||session.status==='revoked'){setStep(1);setGeneration(v=>v+1);}}}>重试</button></div>}
       {creating?<div className="card" role="status"><LoaderCircle className="ic"/>正在生成本次接入令牌…</div>:null}
       {done?<div className="ob-done"><span className="pill ok"><Check className="ic s"/>接入完成</span><h3>已追加 {session.result?.monitors.length??0} 项监控</h3><p className="hint">第一次检查到达前显示“等待首次观测”；不会用示例数据代替检查结果。</p><div className="chrows">{session.result?.monitors.map(m=><div key={m.id} className="chrow"><span className="gl none"/><b>{m.name}</b><span className="sp"/><span className="hint">等待首次观测</span></div>)}</div></div>:session&&step===1?<>
-        <div className="fld"><div className="sec-h"><span className="lbl2">① 让智能体读取 CDS 监控说明</span><span className="sp"/><button type="button" className="linkb" onClick={()=>void copy(snippet,'prompt')}><Copy className="ic s"/>{copied==='prompt'?'已复制':'复制'}</button></div><pre className="code">{snippet}</pre><p className="hint">只允许提交提议 · 有效至 {new Date(session.expiresAt).toLocaleString('zh-CN')} · 完成或关闭接入后撤销</p></div>
-        <div className="fld"><span className="lbl2">② 对智能体说</span><div className="say">请为我的服务找出健康检查和关键只读接口，按上面的 CDS 说明提交监控提议，等我在页面确认。不要提交密码、密钥和写入操作。</div></div>
+        <div className="fld"><span className="lbl2">你的智能体</span><div className="seg agent-clients" role="group" aria-label="智能体类型">{CLIENTS.map(item=><button type="button" key={item.id} className={client===item.id?'on':''} aria-pressed={client===item.id} onClick={()=>{setClient(item.id);setCopied('');}}>{item.label}</button>)}</div></div>
+        <div className="fld"><div className="sec-h"><span className="lbl2">① 让智能体读取 CDS 监控说明</span><span className="sp"/><button type="button" className="linkb" onClick={()=>void copy(snippet,'prompt')}>{copied==='prompt'?'已复制':'复制'}</button></div><pre className="code">{snippet}</pre><p className="hint">只允许提交提议 · 有效至 {new Date(session.expiresAt).toLocaleString('zh-CN')} · 完成或关闭接入后撤销</p></div>
+        <div className="fld"><div className="sec-h"><span className="lbl2">② 对智能体说</span><span className="sp"/><button type="button" className="linkb" onClick={()=>void copy(prompt,'say')}>{copied==='say'?'已复制':'复制'}</button></div><div className="say">{prompt}</div></div>
         <button type="button" className="adv" aria-expanded={advanced} onClick={()=>setAdvanced(!advanced)}>{advanced?'收起高级选项':'高级选项'}</button>
         {advanced&&<div className="advb"><div className="fld"><span className="lbl2">令牌权限</span><span className="tag">仅提交提议 · 由你确认后生效</span></div><div className="fld"><label htmlFor="monitor-agent-expiry">有效期</label><select id="monitor-agent-expiry" className="inp" value={ttlHours} onChange={e=>setTtlHours(Number(e.target.value) as 1|24)} disabled={busy||session.status!=='waiting'}><option value={1}>1 小时</option><option value={24}>24 小时</option></select></div></div>}
         <div className="soft"><b>智能体会做什么</b><ol><li>读取本次接入的监控规范和可用检查方式</li><li>在你的项目里找出健康检查与只读接口</li><li>向 CDS 提交监控提议，等待你确认</li><li>确认后，由 CDS 按真实规则定时观测</li></ol></div>
