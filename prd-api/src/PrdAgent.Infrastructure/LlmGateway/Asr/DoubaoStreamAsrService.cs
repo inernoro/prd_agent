@@ -1,3 +1,4 @@
+using PrdAgent.GatewayTransport;
 using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
@@ -21,7 +22,8 @@ public interface IDoubaoStreamAsrExecutor
         byte[] audioData,
         Dictionary<string, object>? config = null,
         CancellationToken ct = default,
-        bool requirePublicPinnedWebSocket = false);
+        bool requirePublicPinnedWebSocket = false,
+        ResolvedUpstreamProxy? upstreamProxy = null);
 }
 
 /// <summary>
@@ -96,7 +98,8 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         byte[] audioData,
         Dictionary<string, object>? config = null,
         CancellationToken ct = default,
-        bool requirePublicPinnedWebSocket = false)
+        bool requirePublicPinnedWebSocket = false,
+        ResolvedUpstreamProxy? upstreamProxy = null)
     {
         var result = new StreamAsrResult();
         var diag = InitializeDiagnostic(result, wsUrl, appKey, accessKey, config);
@@ -238,7 +241,18 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         try
         {
             // 1. 连接
-            if (requirePublicPinnedWebSocket)
+            if (upstreamProxy is not null)
+            {
+                if (requirePublicPinnedWebSocket)
+                {
+                    if (_safeWebSocketConnector is null) throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
+                    await _safeWebSocketConnector.PrepareAsync(wsUrl, ct);
+                }
+                var invoker = new HttpMessageInvoker(UpstreamProxy.CreateHandler(upstreamProxy, requirePublicPinnedWebSocket), disposeHandler: true);
+                safeTransport = invoker;
+                await ws.ConnectAsync(new Uri(wsUrl), invoker, ct);
+            }
+            else if (requirePublicPinnedWebSocket)
             {
                 if (_safeWebSocketConnector is null)
                     throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");

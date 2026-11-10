@@ -149,6 +149,9 @@ public class GatewayResponse
 /// </summary>
 public class GatewayModelResolution
 {
+    [JsonIgnore]
+    public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; init; }
+
     /// <summary>本次调用已确认的线路计费拒绝；即使备用线路成功也必须传回 MAP。</summary>
     public IReadOnlyList<GatewayBillingAlert> BillingAlerts { get; init; } = [];
 

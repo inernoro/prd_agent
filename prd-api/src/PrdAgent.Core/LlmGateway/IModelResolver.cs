@@ -83,6 +83,9 @@ public interface IModelResolver
 /// </summary>
 public class ModelResolutionResult
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public global::PrdAgent.GatewayTransport.ResolvedUpstreamProxy? UpstreamProxy { get; set; }
+
     /// <summary>调用方选择的逻辑模型 ID；旧池路径为空。</summary>
     public string? LogicalModelId { get; init; }
 
@@ -428,6 +431,7 @@ public class ModelResolutionResult
             ExchangeTransformerType = ExchangeTransformerType,
             // 发送阶段所需字段（compute-then-send 原则）
             ApiKey = ApiKey,
+            UpstreamProxy = UpstreamProxy,
             ExchangeAuthScheme = ExchangeAuthScheme,
             ExchangeTransformerConfig = ExchangeTransformerConfig,
             RetryCandidates = RetryCandidates

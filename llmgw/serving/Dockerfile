@@ -12,6 +12,7 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY ["llmgw/serving/PrdAgent.LlmGateway.csproj", "llmgw/serving/"]
 COPY ["prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj", "prd-api/src/PrdAgent.Core/"]
+COPY ["prd-api/src/LlmGateway.Transport/LlmGateway.Transport.csproj", "prd-api/src/LlmGateway.Transport/"]
 COPY ["prd-api/src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj", "prd-api/src/PrdAgent.Infrastructure/"]
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore "llmgw/serving/PrdAgent.LlmGateway.csproj"

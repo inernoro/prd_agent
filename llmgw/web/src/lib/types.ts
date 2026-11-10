@@ -690,6 +690,7 @@ export type UpsertPoolModelRequest = {
 
 // ── 平台（密钥明文永不下发；只有头尾打码的指纹）──
 export type PlatformItem = {
+  proxy?: UpstreamProxyView | null;
   id: string; name: string; platformType: string; providerId?: string | null; apiUrl?: string | null;
   enabled: boolean; maxConcurrency: number; remark?: string | null; hasKey: boolean;
   /** 密钥指纹（如 sk-or-…9c2a）。仅具备 config:write 时下发，其余为 null。永远不是完整密钥。 */
@@ -713,6 +714,7 @@ export type LogicalModelDeleteResult = { offeringsDeleted: number };
 export type AppCallerDeleteResult = { promptPolicyVersionsDeleted: number };
 /** 编辑上游：只改这几项，密钥走独立的轮换端点。 */
 export type UpdatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
   name?: string;
   platformType?: string;
   apiUrl?: string;
@@ -721,6 +723,7 @@ export type UpdatePlatformRequest = {
 };
 export type PlatformsData = { items: PlatformItem[]; total: number };
 export type CreatePlatformRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   platformType: 'openai' | 'claude';
   providerId?: string;
@@ -1184,6 +1187,7 @@ export type ExchangeModelItem = {
   enabled: boolean;
 };
 export type ExchangeItem = {
+  proxy?: UpstreamProxyView | null;
   id: string;
   name: string;
   modelAlias: string;
@@ -1218,6 +1222,7 @@ export type ExchangeModelWriteRequest = {
   enabled: boolean;
 };
 export type CreateExchangeRequest = {
+  proxy?: UpstreamProxyDraft;
   name: string;
   models: ExchangeModelWriteRequest[];
   targetUrl: string;
@@ -1803,3 +1808,12 @@ export interface ConsumptionAlert {
   createdAt: string;
   updatedAt: string;
 }
+
+export type UpstreamProxyMode = 'inherit' | 'direct' | 'custom';
+export type UpstreamProxyView = { mode: UpstreamProxyMode; address?: string | null; username?: string | null; hasPassword: boolean };
+export type UpstreamProxyDraft = { mode: UpstreamProxyMode; address?: string; username?: string; password?: string; clearPassword?: boolean };
+export type UpstreamNetworkTestResult = {
+  route: string; probedUrl: string; sampleCount: number; successCount: number; successRate: number;
+  averageMs: number | null; minMs: number | null; maxMs: number | null; testedAt: string;
+  samples: Array<{ attempt: number; connected: boolean; httpStatus: number | null; elapsedMs: number; message: string }>;
+};

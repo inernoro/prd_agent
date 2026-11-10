@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
+using PrdAgent.GatewayTransport;
 using MongoDB.Driver;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
@@ -89,8 +90,8 @@ public class ModelResolver : IModelResolver
         var resolved = await ResolveCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
         // 钉了具体成员的请求不许在门内换人：用户点名要 A，给他 B 就是「选 A 给 B」，
         // 那是本仓库专门立过规矩要防的事（llm-gateway 规则 1/2）。宁可如实报这条钉住的用不了。
-        return await ApplyCatalogGateAsync(
-            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
+        return await ApplyProxySettingsAsync(await ApplyCatalogGateAsync(
+            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct), ct);
     }
 
     public async Task<ModelResolutionResult> ResolveMetadataAsync(
@@ -103,8 +104,29 @@ public class ModelResolver : IModelResolver
     {
         var resolved = await ResolveCoreAsync(
             appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct, readOnlyMetadata: true);
-        return await ApplyCatalogGateAsync(
-            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct);
+        return await ApplyProxySettingsAsync(await ApplyCatalogGateAsync(
+            resolved, appCallerCode, allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId), ct), ct);
+    }
+
+    private async Task<ModelResolutionResult> ApplyProxySettingsAsync(ModelResolutionResult resolved, CancellationToken ct)
+    {
+        if (!resolved.Success || _gatewayDb is null) return resolved;
+        var fb = Builders<BsonDocument>.Filter;
+        var tenant = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_tenants")
+            .Find(fb.Eq("_id", CurrentTenantId)).FirstOrDefaultAsync(ct);
+        var global = UpstreamProxy.Read(tenant);
+        var candidates = new[] { resolved }.Concat(resolved.RetryCandidates ?? new()).ToList();
+        var ids = candidates.Select(x => x.ActualPlatformId).Where(x => !string.IsNullOrEmpty(x)).Distinct().ToArray();
+        var filter = fb.And(fb.Eq("TenantId", CurrentTenantId), fb.In("_id", ids));
+        var platforms = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_platforms").Find(filter).ToListAsync(ct);
+        var exchanges = await _gatewayDb.Database.GetCollection<BsonDocument>("llmgw_model_exchanges").Find(filter).ToListAsync(ct);
+        var docs = platforms.Concat(exchanges).ToDictionary(x => x["_id"].AsString);
+        foreach (var candidate in candidates)
+        {
+            var local = candidate.ActualPlatformId is { } id && docs.TryGetValue(id, out var doc) ? UpstreamProxy.Read(doc) : null;
+            candidate.UpstreamProxy = UpstreamProxy.Resolve(local, global, encrypted => ApiKeyCryptoKeyRing.DecryptPlainOrNull(encrypted, _config));
+        }
+        return resolved;
     }
 
     /// <summary>
@@ -603,7 +625,7 @@ public class ModelResolver : IModelResolver
     {
         var resolved = await ResolveOfferingCoreAsync(appCallerCode, modelType, offeringId, ct);
         // 调用方点名了某个 offering，门内不许换成别的：他要的就是这一个。
-        return await ApplyCatalogGateAsync(resolved, appCallerCode, allowPromotion: false, ct);
+        return await ApplyProxySettingsAsync(await ApplyCatalogGateAsync(resolved, appCallerCode, allowPromotion: false, ct), ct);
     }
 
     private async Task<ModelResolutionResult> ResolveOfferingCoreAsync(
