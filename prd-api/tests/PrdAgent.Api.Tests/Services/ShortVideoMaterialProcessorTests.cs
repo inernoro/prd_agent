@@ -1,3 +1,14 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
+using Moq;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using PrdAgent.Api.Services;
 using Shouldly;
 using Xunit;
@@ -49,4 +60,278 @@ public class ShortVideoMaterialProcessorTests
     {
         ShortVideoMaterialProcessor.IsHttpUrl(value).ShouldBeTrue();
     }
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("running", "original-owner", "original-permit", "original-user", true)]
+    [InlineData("done", "original-owner", "original-permit", "original-user", false)]
+    [InlineData("failed", "original-owner", "original-permit", "original-user", false)]
+    [InlineData("cancelled", "original-owner", "original-permit", "original-user", false)]
+    [InlineData("running", "new-owner", "original-permit", "original-user", false)]
+    [InlineData("running", "original-owner", "new-permit", "original-user", false)]
+    [InlineData("running", "original-owner", "original-permit", "another-user", false)]
+    [InlineData(null, null, null, null, false)]
+    public async Task ProcessingSaveConsumer_RejectsLostOwnershipAndNeverRecreatesRun(
+        string? status, string? owner, string? permit, string? user, bool shouldMatch)
+    {
+        var pending = new ShortVideoMaterialRun { Id = "synthetic-run", Status = "done",
+            OwnerInstanceId = "original-owner", TaskPermitId = "original-permit", UserId = "original-user" };
+        var stored = status is null ? null : new ShortVideoMaterialRun { Id = pending.Id,
+            Status = status, OwnerInstanceId = owner, TaskPermitId = permit, UserId = user! };
+        SetProcessingToken(pending, "original-processing");
+        if (stored is not null) SetProcessingToken(stored, "original-processing");
+        var rows = new Mock<IMongoCollection<ShortVideoMaterialRun>>(MockBehavior.Strict);
+        FilterDefinition<ShortVideoMaterialRun>? captured = null; ReplaceOptions? options = null;
+        rows.Setup(x => x.ReplaceOneAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(), pending,
+            It.IsAny<ReplaceOptions>(), CancellationToken.None))
+            .Returns<FilterDefinition<ShortVideoMaterialRun>, ShortVideoMaterialRun, ReplaceOptions, CancellationToken>(
+                (query, _, supplied, _) =>
+                {
+                    captured = query; options = supplied;
+                    var filter = query.Render(new RenderArgs<ShortVideoMaterialRun>(
+                        BsonSerializer.LookupSerializer<ShortVideoMaterialRun>(), BsonSerializer.SerializerRegistry)).AsBsonDocument;
+                    var match = stored is not null && MatchesStoredRun(filter, stored.ToBsonDocument());
+                    return Task.FromResult<ReplaceOneResult>(new ReplaceOneResult.Acknowledged(match ? 1 : 0, match ? 1 : 0, null));
+                });
+        var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<ShortVideoMaterialRun>("short_video_material_runs", null)).Returns(rows.Object);
+        var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
+        typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, database.Object);
+        var services = new Mock<IServiceProvider>(MockBehavior.Strict);
+        var documents = new Mock<IDocumentService>(MockBehavior.Strict);
+        var processor = new ShortVideoMaterialProcessor(context, documents.Object, new ConfigurationBuilder().Build(),
+            services.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialProcessor>.Instance);
+        var method = typeof(ShortVideoMaterialProcessor).GetMethod("SaveRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var failure = await Record.ExceptionAsync(async () => await (Task)method.Invoke(processor, [pending])!);
+        if (shouldMatch) failure.ShouldBeNull();
+        else failure.ShouldBeOfType<InvalidOperationException>();
+        options.ShouldNotBeNull(); options.IsUpsert.ShouldBeFalse(); captured.ShouldNotBeNull();
+        services.VerifyNoOtherCalls(); documents.VerifyNoOtherCalls();
+    }
+
+    private static void SetProcessingToken(ShortVideoMaterialRun run, string? token)
+        => typeof(ShortVideoMaterialRun).GetProperty("ProcessingToken")?.SetValue(run, token);
+
+    private static bool MatchesStoredRun(BsonDocument filter, BsonDocument stored)
+        => filter.All(field => field.Name == "$and"
+            ? field.Value.AsBsonArray.All(child => MatchesStoredRun(child.AsBsonDocument, stored))
+            : !field.Name.StartsWith('$') && stored.GetValue(field.Name, BsonNull.Value) == field.Value);
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public Task ErrorCompletionConsumer_DoesNotOverwriteReplacementOwner()
+        => AssertErrorCompletionKeepsReplacementAsync(true);
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public Task ErrorCompletionConsumer_DoesNotOverwriteNewProcessingInSameOwner()
+        => AssertErrorCompletionKeepsReplacementAsync(false);
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public Task ErrorCompletionConsumer_CompletesOriginalProcessing()
+        => AssertErrorCompletionKeepsReplacementAsync(false, false);
+
+    private static async Task AssertErrorCompletionKeepsReplacementAsync(bool changedOwner, bool replacement = true)
+    {
+        var claimed = new ShortVideoMaterialRun { Id = "synthetic-run", UserId = "synthetic-user",
+            OwnerInstanceId = "original-owner", TaskPermitId = "original-permit", Status = "running" };
+        var stored = new ShortVideoMaterialRun { Id = claimed.Id, UserId = claimed.UserId,
+            OwnerInstanceId = changedOwner ? "new-owner" : "original-owner", TaskPermitId = claimed.TaskPermitId, Status = "running" };
+        SetProcessingToken(claimed, "original-processing"); SetProcessingToken(stored, replacement ? "replacement-processing" : "original-processing");
+        var rows = new Mock<IMongoCollection<ShortVideoMaterialRun>>(MockBehavior.Strict);
+        rows.Setup(x => x.FindOneAndUpdateAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(),
+            It.IsAny<UpdateDefinition<ShortVideoMaterialRun>>(), It.IsAny<FindOneAndUpdateOptions<ShortVideoMaterialRun, ShortVideoMaterialRun>>(),
+            CancellationToken.None)).ReturnsAsync(claimed);
+        var reads = 0; var writes = 0;
+        rows.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(),
+            It.IsAny<FindOptions<ShortVideoMaterialRun, ShortVideoMaterialRun>>(), CancellationToken.None))
+            .Returns<FilterDefinition<ShortVideoMaterialRun>, FindOptions<ShortVideoMaterialRun, ShortVideoMaterialRun>, CancellationToken>((query, _, _) =>
+            {
+                var result = ++reads == 1 ? claimed : MatchesStoredRun(query.Render(new RenderArgs<ShortVideoMaterialRun>(
+                    BsonSerializer.LookupSerializer<ShortVideoMaterialRun>(), BsonSerializer.SerializerRegistry)).AsBsonDocument,
+                    stored.ToBsonDocument()) ? stored : null;
+                return Task.FromResult(CursorFor(result));
+            });
+        rows.Setup(x => x.ReplaceOneAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(),
+            It.IsAny<ShortVideoMaterialRun>(), It.IsAny<ReplaceOptions>(), CancellationToken.None))
+            .Returns<FilterDefinition<ShortVideoMaterialRun>, ShortVideoMaterialRun, ReplaceOptions, CancellationToken>((_, _, _, _) =>
+            { writes++; return Task.FromResult<ReplaceOneResult>(new ReplaceOneResult.Acknowledged(1, 1, null)); });
+        var context = ContextForRows(rows.Object);
+        var coordinator = new Mock<ITaskExecutionCoordinator>(MockBehavior.Strict);
+        coordinator.Setup(x => x.AcquireAsync(claimed.TaskPermitId, claimed.Id, CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("synthetic pre-I/O processing failure"));
+        var processor = new ShortVideoMaterialProcessor(context, new Mock<IDocumentService>(MockBehavior.Strict).Object,
+            new ConfigurationBuilder().Build(), new Mock<IServiceProvider>(MockBehavior.Strict).Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialProcessor>.Instance, coordinator.Object);
+        using var services = new ServiceCollection().AddSingleton<IConfiguration>(new ConfigurationBuilder().Build())
+            .AddSingleton(context).AddSingleton(processor).BuildServiceProvider();
+        using var worker = new ShortVideoMaterialWorker(services.GetRequiredService<IServiceScopeFactory>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialWorker>.Instance);
+        await (Task)typeof(ShortVideoMaterialWorker).GetMethod("ProcessNextRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(worker, null)!;
+        writes.ShouldBe(replacement ? 0 : 1); stored.Status.ShouldBe(replacement ? "running" : "failed"); stored.OwnerInstanceId.ShouldBe(changedOwner ? "new-owner" : "original-owner");
+        coordinator.Verify(x => x.AcquireAsync(claimed.TaskPermitId, claimed.Id, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public Task StopCompletionConsumer_DoesNotFailReplacementOwner()
+        => AssertStopCompletionKeepsReplacementAsync(true);
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public Task StopCompletionConsumer_DoesNotFailNewProcessingInSameOwner()
+        => AssertStopCompletionKeepsReplacementAsync(false);
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public Task StopCompletionConsumer_CompletesOriginalProcessing()
+        => AssertStopCompletionKeepsReplacementAsync(false, false);
+
+    private static async Task AssertStopCompletionKeepsReplacementAsync(bool changedOwner, bool replacement = true)
+    {
+        var claimed = new ShortVideoMaterialRun { Id = "synthetic-run", UserId = "synthetic-user",
+            OwnerInstanceId = "original-owner", TaskPermitId = "original-permit", Status = "running" };
+        var stored = new ShortVideoMaterialRun { Id = claimed.Id, UserId = claimed.UserId,
+            OwnerInstanceId = changedOwner ? "new-owner" : "original-owner", TaskPermitId = claimed.TaskPermitId, Status = "running" };
+        SetProcessingToken(claimed, "original-processing"); SetProcessingToken(stored, replacement ? "replacement-processing" : "original-processing");
+        var rows = new Mock<IMongoCollection<ShortVideoMaterialRun>>(MockBehavior.Strict); var writes = 0;
+        rows.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<ShortVideoMaterialRun>>(),
+            It.IsAny<UpdateDefinition<ShortVideoMaterialRun>>(), null, CancellationToken.None))
+            .Returns<FilterDefinition<ShortVideoMaterialRun>, UpdateDefinition<ShortVideoMaterialRun>, UpdateOptions, CancellationToken>((query, _, _, _) =>
+            {
+                var match = MatchesStoredRun(query.Render(new RenderArgs<ShortVideoMaterialRun>(
+                    BsonSerializer.LookupSerializer<ShortVideoMaterialRun>(), BsonSerializer.SerializerRegistry)).AsBsonDocument, stored.ToBsonDocument());
+                if (match) { writes++; stored.Status = "failed"; }
+                return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(match ? 1 : 0, match ? 1 : 0, null));
+            });
+        using var services = new ServiceCollection().AddSingleton(ContextForRows(rows.Object)).BuildServiceProvider();
+        using var worker = new ShortVideoMaterialWorker(services.GetRequiredService<IServiceScopeFactory>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialWorker>.Instance);
+        typeof(ShortVideoMaterialWorker).GetField("_currentRunId", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(worker, claimed.Id);
+        typeof(ShortVideoMaterialWorker).GetField("_currentRun", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(worker, claimed);
+        await (Task)typeof(ShortVideoMaterialWorker).GetMethod("MarkCurrentRunFailedAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(worker, ["synthetic normal stop"] )!;
+        writes.ShouldBe(replacement ? 0 : 1); stored.Status.ShouldBe(replacement ? "running" : "failed");
+    }
+
+    private static MongoDbContext ContextForRows(IMongoCollection<ShortVideoMaterialRun> rows)
+    {
+        var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<ShortVideoMaterialRun>("short_video_material_runs", null)).Returns(rows);
+        var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
+        typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, database.Object);
+        return context;
+    }
+
+    private static IAsyncCursor<ShortVideoMaterialRun> CursorFor(ShortVideoMaterialRun? run)
+    {
+        var cursor = new Mock<IAsyncCursor<ShortVideoMaterialRun>>(MockBehavior.Strict);
+        cursor.SetupGet(x => x.Current).Returns(run is null ? Array.Empty<ShortVideoMaterialRun>() : [run]);
+        cursor.SetupSequence(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true).ReturnsAsync(false);
+        cursor.Setup(x => x.Dispose()); return cursor.Object;
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("https://synthetic.invalid/video.mp4", null, "direct-video")]
+    [InlineData("https://synthetic.invalid/VIDEO.MOV?token=synthetic", null, "direct-video")]
+    [InlineData("https://synthetic.invalid/video.webm", " 用户提供的原文 ", "manual")]
+    public async Task DirectFileConsumer_DoesNotRequirePlatformParser(string url, string? text, string expectedMode)
+    {
+        var provider = new Moq.Mock<IServiceProvider>(Moq.MockBehavior.Strict);
+        var context = (PrdAgent.Infrastructure.Database.MongoDbContext)System.Runtime.CompilerServices.RuntimeHelpers
+            .GetUninitializedObject(typeof(PrdAgent.Infrastructure.Database.MongoDbContext));
+        var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["ShortVideo:TikHubApiKey"] = "" }).Build();
+        var processor = new ShortVideoMaterialProcessor(context,
+            new Moq.Mock<PrdAgent.Core.Interfaces.IDocumentService>(Moq.MockBehavior.Strict).Object,
+            config, provider.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialProcessor>.Instance);
+        var method = typeof(ShortVideoMaterialProcessor).GetMethod("ResolveParsedSourceAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var task = (Task)method.Invoke(processor, [url, "unknown", text, "合成标题"])!;
+        await task;
+        var result = task.GetType().GetProperty("Result")!.GetValue(task)!;
+        result.GetType().GetProperty("VideoUrl")!.GetValue(result).ShouldBe(url);
+        result.GetType().GetProperty("SourceMode")!.GetValue(result).ShouldBe(expectedMode);
+        result.GetType().GetProperty("SourceText")!.GetValue(result).ShouldBe(text?.Trim());
+        provider.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("video/mp4", "合成素材.mp4")]
+    [InlineData("video/quicktime", "合成素材.mov")]
+    [InlineData("video/webm", "合成素材.webm")]
+    [InlineData("video/x-matroska", "合成素材.mkv")]
+    [InlineData("video/x-msvideo", "合成素材.avi")]
+    public async Task StoredFileConsumer_UsesActualContainerExtension(string mime, string expected)
+    {
+        var (processor, stored, attachments, entries) = CreateStoredFileConsumer();
+        var method = typeof(ShortVideoMaterialProcessor).GetMethod("CreateVideoEntryAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var parameters = method.GetParameters();
+        var video = Activator.CreateInstance(parameters[4].ParameterType,
+            ["https://synthetic.invalid/stored", mime, 4L, "synthetic-sha"]);
+        var parsed = Activator.CreateInstance(parameters[5].ParameterType,
+            [null, null, "direct-video", "synthetic", null, "https://synthetic.invalid/source", null]);
+        var task = (Task)method.Invoke(processor,
+            [new PrdAgent.Core.Models.DocumentStore { Id = "synthetic-store" }, "synthetic-owner", "合成用户",
+                "合成素材", video, parsed, "https://synthetic.invalid/source", "unknown", "synthetic-run", DateTime.UnixEpoch])!;
+        await task;
+        var entry = (PrdAgent.Core.Models.DocumentEntry)task.GetType().GetProperty("Result")!.GetValue(task)!;
+        stored.Single().FileName.ShouldBe(expected);
+        stored.Single().MimeType.ShouldBe(mime);
+        entry.Title.ShouldBe(expected); entry.ContentType.ShouldBe(mime);
+        attachments.Verify(x => x.InsertOneAsync(Moq.It.IsAny<PrdAgent.Core.Models.Attachment>(), null,
+            CancellationToken.None), Moq.Times.Once);
+        entries.Verify(x => x.InsertOneAsync(Moq.It.IsAny<PrdAgent.Core.Models.DocumentEntry>(), null,
+            CancellationToken.None), Moq.Times.Once);
+    }
+
+    private static (ShortVideoMaterialProcessor Processor, List<PrdAgent.Core.Models.Attachment> Stored,
+        Moq.Mock<MongoDB.Driver.IMongoCollection<PrdAgent.Core.Models.Attachment>> Attachments,
+        Moq.Mock<MongoDB.Driver.IMongoCollection<PrdAgent.Core.Models.DocumentEntry>> Entries) CreateStoredFileConsumer()
+    {
+        var stored = new List<PrdAgent.Core.Models.Attachment>();
+        var attachments = new Moq.Mock<MongoDB.Driver.IMongoCollection<PrdAgent.Core.Models.Attachment>>(Moq.MockBehavior.Strict);
+        attachments.Setup(x => x.InsertOneAsync(Moq.It.IsAny<PrdAgent.Core.Models.Attachment>(), null,
+            CancellationToken.None)).Callback<PrdAgent.Core.Models.Attachment, MongoDB.Driver.InsertOneOptions, CancellationToken>(
+                (item, _, _) => stored.Add(item)).Returns(Task.CompletedTask);
+        var entries = new Moq.Mock<MongoDB.Driver.IMongoCollection<PrdAgent.Core.Models.DocumentEntry>>(Moq.MockBehavior.Strict);
+        entries.Setup(x => x.InsertOneAsync(Moq.It.IsAny<PrdAgent.Core.Models.DocumentEntry>(), null,
+            CancellationToken.None)).Returns(Task.CompletedTask);
+        var stores = new Moq.Mock<MongoDB.Driver.IMongoCollection<PrdAgent.Core.Models.DocumentStore>>(Moq.MockBehavior.Strict);
+        stores.Setup(x => x.UpdateOneAsync(Moq.It.IsAny<MongoDB.Driver.FilterDefinition<PrdAgent.Core.Models.DocumentStore>>(),
+            Moq.It.IsAny<MongoDB.Driver.UpdateDefinition<PrdAgent.Core.Models.DocumentStore>>(), null,
+            CancellationToken.None)).ReturnsAsync(new MongoDB.Driver.UpdateResult.Acknowledged(1, 1, null));
+        var database = new Moq.Mock<MongoDB.Driver.IMongoDatabase>(Moq.MockBehavior.Strict);
+        database.Setup(x => x.GetCollection<PrdAgent.Core.Models.Attachment>("attachments", null)).Returns(attachments.Object);
+        database.Setup(x => x.GetCollection<PrdAgent.Core.Models.DocumentEntry>("document_entries", null)).Returns(entries.Object);
+        database.Setup(x => x.GetCollection<PrdAgent.Core.Models.DocumentStore>("document_stores", null)).Returns(stores.Object);
+        var context = (PrdAgent.Infrastructure.Database.MongoDbContext)System.Runtime.CompilerServices.RuntimeHelpers
+            .GetUninitializedObject(typeof(PrdAgent.Infrastructure.Database.MongoDbContext));
+        typeof(PrdAgent.Infrastructure.Database.MongoDbContext).GetField("_database",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(context, database.Object);
+        return (new ShortVideoMaterialProcessor(context,
+            new Moq.Mock<PrdAgent.Core.Interfaces.IDocumentService>(Moq.MockBehavior.Strict).Object,
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
+            new Moq.Mock<IServiceProvider>(Moq.MockBehavior.Strict).Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ShortVideoMaterialProcessor>.Instance), stored, attachments, entries);
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData(typeof(PrdAgent.Infrastructure.Services.AssetStorage.TencentCosStorage))]
+    [InlineData(typeof(PrdAgent.Infrastructure.Services.AssetStorage.CloudflareR2Storage))]
+    [InlineData(typeof(PrdAgent.Infrastructure.Services.AssetStorage.LocalAssetStorage))]
+    public void SupportedM4v_UsesPlayableStorageExtensionAndMime(Type storageType)
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+        var resolve = storageType.GetMethod("ResolveExtension", flags)!;
+        var reverse = storageType.GetMethod("ExtToMime", flags)!;
+        resolve.Invoke(null, [null, null, "video/x-m4v"]).ShouldBe("m4v");
+        reverse.Invoke(null, ["m4v"]).ShouldBe("video/x-m4v");
+    }
+
 }
