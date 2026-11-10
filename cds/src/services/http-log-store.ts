@@ -134,8 +134,8 @@ const URL_USERINFO_PASSWORD = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"]*:)[^\s@/"]+@/g
 function redactUrlUserinfo(value: string): string {
   return value.replace(URL_USERINFO_PASSWORD, '$1[redacted]@');
 }
-/** CDS 自己签发的凭据明文形状：cdsu_ / cdsp_ / cdsg_ / ct_ 加足够长的随机段。 */
-const CDS_CREDENTIAL_VALUE = /\b(cds[upg]_[A-Za-z0-9_.~+/=-]{12,}|ct_[A-Za-z0-9_.~+/=-]{12,})/g;
+/** CDS 自己签发的凭据明文形状：cdsu_ / cdsp_ / cdsg_ / cdsmon_ / ct_ 加足够长的随机段。 */
+const CDS_CREDENTIAL_VALUE = /\b(cds(?:[upg]|mon)_[A-Za-z0-9_.~+/=-]{12,}|ct_[A-Za-z0-9_.~+/=-]{12,})/g;
 const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
