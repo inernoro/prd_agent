@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { ImageGenerationCancelActions } from '@/components/visual-agent/ImageGenerationCancelActions';
 import { Button } from '@/components/design/Button';
 import { glassTooltip } from '@/lib/glassStyles';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -9271,6 +9272,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 {error}
               </div>
             ) : null}
+
+            <ImageGenerationCancelActions key={workspaceId || ''} items={workspaceReady ? canvas : []} />
 
             {!workspaceReady ? (
               <div role="status" className={`mt-2 text-[10px] text-token-muted ${booting ? 'animate-pulse' : ''}`}>

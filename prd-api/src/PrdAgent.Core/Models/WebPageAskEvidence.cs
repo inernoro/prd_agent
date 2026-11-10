@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace PrdAgent.Core.Models;
@@ -43,8 +45,11 @@ public sealed class WebPageAskEvidence
         Excerpts = excerpts.AsReadOnly();
     }
 
-    public string ToPromptText() => string.Join("\n\n", Excerpts.Select((text, i) =>
-        $"【原文片段 {i + 1}】\n{text}"));
+    // 包装与页面文字分开编码。原文里的分隔符、引号和编号仍然是 text 的内容，
+    // 标识符即使没有定义或看起来像测试值，也保持可直接引用的原文字面值。
+    public string ToPromptText() => JsonSerializer.Serialize(
+        Excerpts.Select((text, i) => new { source = i + 1, text }),
+        new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
     public string CompleteAnswer(string answer)
     {

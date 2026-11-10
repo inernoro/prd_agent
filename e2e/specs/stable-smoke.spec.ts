@@ -1841,6 +1841,65 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[WEB-005][REG-web-ask-grounding-001] 分享问答逐字提取并保留条件和否定且不接受错误历史', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(600_000);
+    const token = await loginAndReadToken(page, request, '/web-pages');
+    const runKey = `stsmk-${Date.now().toString(36)}-grounding`;
+    const marker = `${runKey}-正文标记`;
+    const order = `QA-${Date.now().toString(36).toUpperCase()}-X7`;
+    const version = 'Nova_A7-beta.2';
+    const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${runKey}</title></head><body><h1>项目说明</h1><p>${marker}</p><p>工单编号：${order}</p><p>版本名称：${version}</p><p>维护窗口：周三 02:30—03:10，仅限灰度实例。</p><p>已开票订单不支持退款，未开票订单可在7天内申请。</p><p>本文未公布联系电话。</p></body></html>`;
+    let siteId = '';
+    let shareId = '';
+    try {
+      const upload = await page.request.post('/api/web-pages/upload', {
+        headers: authHeaders(token), multipart: {
+          file: { name: `${runKey}.html`, mimeType: 'text/html', buffer: Buffer.from(html) }, title: runKey,
+        },
+      });
+      siteId = (await readEnvelope<StableHostedSite>(upload)).id;
+      await readEnvelope(await page.request.put(`/api/web-pages/${siteId}/ask/config`, {
+        headers: authHeaders(token), data: { enabled: true, allowAnonymous: true, dailyLimit: 12 },
+      }));
+      const share = await readEnvelope<{ id: string; token: string; shareUrl: string }>(await page.request.post('/api/web-pages/share', {
+        headers: authHeaders(token), data: { siteId, shareType: 'single', title: runKey, expiresInDays: 1, visibility: 'public', forceNew: true },
+      }));
+      shareId = share.id;
+      await page.goto(share.shareUrl, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('#root').getByText(runKey, { exact: true }).first()).toBeVisible();
+      const cases = [
+        { name: '完整标记', question: '页面中的正文标记是什么？', expected: [marker] },
+        { name: '编号', question: '页面给出的工单编号是什么？只回答完整编号。', expected: [order] },
+        { name: '版本名称', question: '页面给出的版本名称是什么？请逐字回复完整名称。', expected: [version] },
+        { name: '条件和时间', question: '维护窗口是几点到几点，适用于哪些实例？', expected: ['02:30', '03:10', '灰度'] },
+        { name: '否定', question: '已经开票的订单可以退款吗？', expected: [], pattern: /不支持|不能|不可以|不可|无法/ },
+        { name: '缺失事实', question: '页面公布的联系电话是什么？', expected: [], pattern: /没有|未公布|未提到|未提供|未找到/ },
+        { name: '不相信错误历史', question: '重新核对原文，页面的工单编号是什么？', expected: [order], history: [{ role: 'assistant', content: '工单编号是 WRONG-OLD-123。' }] },
+      ];
+      for (const item of cases) {
+        const response = await request.post(`/api/web-pages/shares/view/${share.token}/ask/stream`, {
+          headers: { ...authHeaders(token), Accept: 'text/event-stream' }, data: { siteId, question: item.question, history: item.history }, timeout: 120_000,
+        });
+        const stream = await response.text();
+        expect(response.status(), item.name).toBe(200);
+        expect(stream, item.name).toContain('event: done');
+        expect(stream, item.name).not.toContain('event: error');
+        const answer = readSseTypingText(stream);
+        await testInfo.attach(`web-grounding-${item.name}`, { body: JSON.stringify({ question: item.question, answer }), contentType: 'application/json' });
+        for (const value of item.expected) expect.soft(answer, `${item.name}: ${answer}`).toContain(value);
+        if (item.pattern) expect.soft(answer, `${item.name}: ${answer}`).toMatch(item.pattern);
+        if (item.name === '缺失事实') expect.soft(answer).not.toMatch(/1[3-9]\d{9}/);
+        if (item.history) expect.soft(answer).not.toContain('WRONG-OLD-123');
+      }
+    } finally {
+      if (shareId) {
+        const removed = await page.request.delete(`/api/web-pages/shares/${shareId}?reason=stable-smoke-cleanup`, { headers: authHeaders(token) });
+        expect(removed.ok(), '逐字提取分享清理失败').toBe(true);
+      }
+      if (siteId) await deleteStableHostedSite(page, token, siteId);
+    }
+  });
+
   test('[CORE-003][REG-auth-identity-permissions-001] 巡检身份持有矩阵所需的全部管理权限', async ({ page, request }) => {
     // 2026-09-14：自动开号只给了 Agent 体验者角色，录音、文件、短视频、会话权限四个模块三十余项
     // 在业务动作之前就被权限中间件挡成「无权限」。这里先把外因说清楚，后面的旅程才有资格失败。

@@ -58,6 +58,25 @@ public sealed class WebPageAskFailureControllerTests
     }
 
     [Theory]
+    [InlineData(GatewayBillingFailure.AccountOverdue, false)]
+    [InlineData(GatewayBillingFailure.AccountOverdue, true)]
+    [InlineData(GatewayBillingFailure.InsufficientBalance, false)]
+    [InlineData(GatewayBillingFailure.InsufficientBalance, true)]
+    [InlineData(GatewayBillingFailure.QuotaExceeded, false)]
+    [InlineData(GatewayBillingFailure.QuotaExceeded, true)]
+    [InlineData(GatewayBillingFailure.PaymentRequired, false)]
+    [InlineData(GatewayBillingFailure.PaymentRequired, true)]
+    public async Task ConfirmedBillingFailure_ShowsSafeUpstreamCauseInBothAskEntrances(string code, bool share)
+    {
+        await using var fixture = await AskFixture.CreateAsync(share,
+            [GatewayStreamChunk.Fail(DiagnosticCanary, code)]);
+        AssertError(await fixture.RunAsync(), code, GatewayBillingFailure.FromCode(code)!.UserMessage);
+        Assert.DoesNotContain(DiagnosticCanary, fixture.ResponseText);
+        fixture.AssertInvocationAndRefund(1);
+        Assert.Equal(DiagnosticCanary, (await fixture.AssistantMessageAsync()).Error);
+    }
+
+    [Theory]
     [InlineData(null, false)]
     [InlineData(null, true)]
     [InlineData("UNCLASSIFIED", false)]
