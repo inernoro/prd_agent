@@ -43,6 +43,8 @@ export interface UptimeSample {
 }
 
 export interface UptimeBucket {
+  /** Same-metric numeric reading mean; unavailable/mixed-contract buckets omit it. */
+  measurement?: UptimeMeasurement & { aggregation: 'average'; sampleCount: number };
   from: number;
   to: number;
   up: number;
@@ -261,6 +263,8 @@ export interface UptimeIncidentView {
   /** Persisted samples at the incident transitions, absent for legacy records. */
   startedSample?: UptimeSample;
   endedSample?: UptimeSample;
+  /** Alert-trigger samples, not proof of successful notification delivery. */
+  notificationSamples?: UptimeSample[];
   ongoing: boolean;
   /** 疑似引入本次故障的发布（生产目标才有）。无归因时后端不下发。 */
   releaseId?: string;
