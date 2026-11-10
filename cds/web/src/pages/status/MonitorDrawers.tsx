@@ -1,10 +1,12 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useId, useMemo, useState } from 'react';
 import { ChevronRight, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { apiRequest } from '@/lib/api';
 import type { UptimeTargetSummary } from '@/lib/monitorCenter';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { ChannelFields, existingChannelIds, monitorErrorMessage as message, useChannels, type Channel } from './monitorChannels';
+import { AgentMonitorConnect } from './AgentMonitorConnect';
 import './monitor-drawers.css';
 
 interface Tool {
@@ -269,16 +271,27 @@ export interface MonitorDrawersProps {
 
 /** 原设计抽屉，业务动作全部提交到真实监控与通知 API。 */
 export function MonitorDrawers({ panel, targetId, targets, onClose, onSaved, onManageNotifications }: MonitorDrawersProps): JSX.Element {
+  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (!panel) setBusy(false); }, [panel]);
+  const [connectMode, setConnectMode] = useState<'agent' | 'mcp'>('agent');
+  useEffect(() => { if (!panel) { setBusy(false); setConnectMode('agent'); } }, [panel]);
+  const manageNotifications = (): void => {
+    onClose();
+    if (onManageNotifications) onManageNotifications();
+    else navigate('/cds-settings#alarm-notify');
+  };
   return <Dialog.Root open={panel !== null} onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
     <Dialog.Portal><div className="monitor-drawers">
       <Dialog.Overlay className="scrim" />
       <Dialog.Content className="drawer" style={{ height: '100dvh', minHeight: 0 }}
         onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}
         onPointerDownOutside={(event) => { if (busy) event.preventDefault(); }}>
-        {panel === 'connect' ? <ConnectDrawer key="connect" targets={targets} onClose={onClose} onSaved={onSaved}
-          onBusy={setBusy} onManage={onManageNotifications} /> : panel === 'notify' ? <NotificationDrawer key={targetId || 'default'}
+        {panel === 'connect' ? connectMode === 'agent'
+          ? <AgentMonitorConnect key="agent-connect" onClose={onClose} onSaved={onSaved} onBusy={setBusy}
+              onManageNotifications={manageNotifications} onUseMcp={() => setConnectMode('mcp')} />
+          : <ConnectDrawer key="mcp-connect" targets={targets} onClose={onClose} onSaved={onSaved}
+              onBusy={setBusy} onManage={manageNotifications} onUseAgent={() => setConnectMode('agent')} />
+          : panel === 'notify' ? <NotificationDrawer key={targetId || 'default'}
           targets={targets} targetId={targetId} onClose={onClose} onSaved={onSaved} onBusy={setBusy} onManage={onManageNotifications} /> : null}
       </Dialog.Content>
     </div></Dialog.Portal>
