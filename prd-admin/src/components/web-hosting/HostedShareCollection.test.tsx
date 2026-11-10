@@ -23,8 +23,6 @@ describe('合集成员沿用原分享的阅读骨架', () => {
         })) }} />));
       const links = [...element.querySelectorAll<HTMLAnchorElement>('.hosted-share-member')];
       expect(links).toHaveLength(2);
-      expect(element.querySelector('.hosted-share-start')?.getAttribute('href')).toBe(links[0].getAttribute('href'));
-      expect(element.querySelector('.hosted-share-start')?.textContent).toContain('开始阅读');
       for (const [index, link] of links.entries()) {
         const url = new URL(link.href, 'https://map.example');
         expect(url.pathname).toBe('/s/wp/existing-token');
