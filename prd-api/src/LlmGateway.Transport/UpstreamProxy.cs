@@ -85,6 +85,19 @@ public static class UpstreamProxy
 
     public static bool IsPublicAddress(IPAddress address) => SafeOutboundAddressPolicy.IsPublicAddress(address);
 
+    // 目标 DNS 交给自定义代理，仍拒绝不安全协议、userinfo、localhost 及显式保留 IP。
+    public static string? ValidateProxyTarget(string targetUrl)
+    {
+        if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https" or "wss"))
+            return "上游必须使用 HTTP、HTTPS 或 WSS 地址";
+        if (uri.UserInfo.Length > 0) return "上游地址不能携带 userinfo";
+        var host = uri.IdnHost.TrimEnd('.');
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(host, out var literal) && !IsPublicAddress(literal))
+            return "上游地址不能指向内网、回环或保留地址";
+        return null;
+    }
+
     public static SocketsHttpHandler CreateHandler(ResolvedUpstreamProxy proxy, bool publicOnly)
     {
         var handler = new SocketsHttpHandler

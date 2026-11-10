@@ -2766,6 +2766,9 @@ public class GatewayDataDomainGuardTests
             Assert.True(
                 body.Contains("ValidateProviderProbeTargetAsync", StringComparison.Ordinal),
                 $"{route} 会向用户填的地址发请求却没过内网校验");
+            Assert.Contains("var effectiveProxy = await upstreamProxies.ResolveAsync(http, doc)", body);
+            Assert.Contains("apiUrl, effectiveProxy, http.RequestAborted", body);
+            Assert.Contains("upstreamProxies.CreateClient(http, effectiveProxy)", body);
         }
     }
 

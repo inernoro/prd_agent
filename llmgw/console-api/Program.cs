@@ -12808,9 +12808,12 @@ var upstreamProbeHttp = new HttpClient(new SocketsHttpHandler
 ///
 /// 内部租户不受此限：本地上游预设（Ollama / vLLM）本来就要指向内网，
 /// 这条豁免与 Exchange 侧的既有策略同源，不是本次新开的口子。
-async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, CancellationToken ct)
+async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, ResolvedUpstreamProxy? proxy, CancellationToken ct)
 {
     if (TenantAccess.GetRequired(http).TenantId == internalTenantId) return null;
+    if (proxy?.Mode == "custom")
+        return GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(apiUrl, "openai")
+            ?? UpstreamProxy.ValidateProxyTarget(apiUrl);
     return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct);
 }
 
@@ -12866,7 +12869,8 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
             Message = "这个 Provider 没有配 API 地址", NextStep = "在高级选项里补上 API 地址后再测",
         }), jsonOptions);
 
-    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    var effectiveProxy = await upstreamProxies.ResolveAsync(http, doc);
+    var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (probeTargetError is not null)
         return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
         {
@@ -12916,7 +12920,7 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         // 上游先回头、再把 body 挂住慢慢流，下面这个读就没人管了，
         // 「保存后自动测一次」会挂死并占住一个控制台请求。
         using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var proxyClient = await upstreamProxies.CreateClientAsync(http, doc);
+        using var proxyClient = upstreamProxies.CreateClient(http, effectiveProxy);
         using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
         sw.Stop();
         var status = (int)resp.StatusCode;
@@ -13017,7 +13021,8 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
             "Claude 原生协议没有模型列表接口，请手动添加模型"), jsonOptions, 400);
 
     // 与「测试连接」同一道门：这条也会拿着用户填的地址向外发请求，不补上就等于留了个后门
-    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, http.RequestAborted);
+    var effectiveProxy = await upstreamProxies.ResolveAsync(http, doc);
+    var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (discoveryTargetError is not null)
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("UNSAFE_TARGET_URL", discoveryTargetError), jsonOptions, 400);
 
@@ -13037,7 +13042,7 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         // 与「测试连接」同款：外部租户强制内网校验，整条请求（含读 body）共用一个 15 秒预算
         req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
         using var discoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var proxyClient = await upstreamProxies.CreateClientAsync(http, doc);
+        using var proxyClient = upstreamProxies.CreateClient(http, effectiveProxy);
         using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
         if (!resp.IsSuccessStatusCode)
             return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,

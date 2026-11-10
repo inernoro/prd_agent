@@ -13,6 +13,16 @@ namespace PrdAgent.Tests;
 public class UpstreamProxyTests
 {
     [Fact]
+    public void ProxiedProbeValidationAllowsRemoteDnsButRejectsUnsafeLiteralTargets()
+    {
+        Assert.Null(UpstreamProxy.ValidateProxyTarget("https://proxy-only-models.invalid/v1"));
+        foreach (var url in new[] { "http://localhost./models", "http://127.0.0.1/models",
+            "https://user:secret@example.com/models", "http://192.0.2.1/models", "ftp://example.com/models",
+            "https://[2002:a00:1::]/models" })
+            Assert.NotNull(UpstreamProxy.ValidateProxyTarget(url));
+    }
+
+    [Fact]
     public void InvalidFallbackProxyCannotBreakValidPrimaryOrBecomeDirectFallback()
     {
         var invalid = new BsonDocument { { "Mode", "custom" }, { "Address", "http://proxy.example:8080" }, { "PasswordEncrypted", "broken" } };

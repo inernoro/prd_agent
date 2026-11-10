@@ -43,9 +43,8 @@ public sealed class UpstreamProxyService(IMongoDatabase database, IConfiguration
         => UpstreamProxy.Resolve(UpstreamProxy.Read(upstream), await GlobalAsync(TenantAccess.GetRequired(http).TenantId, http.RequestAborted),
             encrypted => { var result = GwApiKeyCrypto.Decrypt(encrypted, config); return result.Success ? result.PlainText : null; });
 
-    public async Task<HttpClient?> CreateClientAsync(HttpContext http, BsonDocument upstream)
+    public HttpClient? CreateClient(HttpContext http, ResolvedUpstreamProxy? resolved)
     {
-        var resolved = await ResolveAsync(http, upstream);
         return resolved is null ? null : new HttpClient(UpstreamProxy.CreateHandler(resolved, TenantAccess.GetRequired(http).TenantId != internalTenantId))
             { Timeout = TimeSpan.FromSeconds(15) };
     }
