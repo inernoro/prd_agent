@@ -2766,9 +2766,22 @@ public class GatewayDataDomainGuardTests
             Assert.True(
                 body.Contains("ValidateProviderProbeTargetAsync", StringComparison.Ordinal),
                 $"{route} 会向用户填的地址发请求却没过内网校验");
-            Assert.Contains("var effectiveProxy = await upstreamProxies.ResolveAsync(http, doc)", body);
+            Assert.Contains("upstreamProxies.TryResolveAsync(http, doc)", body);
+            Assert.Contains("INVALID_PROXY", body);
             Assert.Contains("apiUrl, effectiveProxy, http.RequestAborted", body);
             Assert.Contains("upstreamProxies.CreateClient(http, effectiveProxy)", body);
+        }
+        foreach (var route in new[] { "app.MapPost(\"/gw/exchanges\"", "app.MapPut(\"/gw/exchanges/{id}\"" })
+        {
+            var start = server.IndexOf(route, StringComparison.Ordinal);
+            Assert.True(start > 0);
+            var end = server.IndexOf("app.Map", start + route.Length, StringComparison.Ordinal);
+            var body = end > 0 ? server[start..end] : server[start..];
+            Assert.Contains("upstreamProxies.TryResolveAsync(http, pendingUpstream)", body);
+            Assert.Contains("INVALID_PROXY", body);
+            Assert.Contains("http.RequestAborted, effectiveProxy)", body);
+            Assert.True(body.IndexOf("upstreamProxies.BuildAsync", StringComparison.Ordinal)
+                < body.IndexOf("ValidateExternalExchangeTargetAsync", StringComparison.Ordinal));
         }
     }
 

@@ -16,6 +16,7 @@ public class UpstreamProxyTests
     public void ProxiedProbeValidationAllowsRemoteDnsButRejectsUnsafeLiteralTargets()
     {
         Assert.Null(UpstreamProxy.ValidateProxyTarget("https://proxy-only-models.invalid/v1"));
+        Assert.Null(UpstreamProxy.ValidateProxyTarget("wss://proxy-only-asr.invalid/asr"));
         foreach (var url in new[] { "http://localhost./models", "http://127.0.0.1/models",
             "https://user:secret@example.com/models", "http://192.0.2.1/models", "ftp://example.com/models",
             "https://[2002:a00:1::]/models" })

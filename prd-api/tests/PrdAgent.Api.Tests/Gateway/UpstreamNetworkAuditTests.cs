@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +20,27 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public class UpstreamNetworkAuditTests
 {
+    [Fact]
+    public async Task UnreadableProxyReturnsConfigurationErrorInsteadOfThrowingOrBecomingDirect()
+    {
+        var database = new Mock<IMongoDatabase>();
+        database.Setup(x => x.GetCollection<BsonDocument>("llmgw_tenants", null))
+            .Returns(Collection(new BsonDocument("_id", "test-org")));
+        var http = new DefaultHttpContext();
+        http.Items[TenantAccess.ItemKey] = new TenantAccessContext("test-org", "test", true,
+            "user", "tester", "membership", 1, "owner", []);
+        var upstream = new BsonDocument("UpstreamProxy", new BsonDocument
+        {
+            { "Mode", "custom" }, { "Address", "http://proxy.example:8080" },
+            { "Username", "test-user" }, { "PasswordEncrypted", "unreadable-ciphertext" },
+        });
+        var result = await new UpstreamProxyService(database.Object, new ConfigurationBuilder().Build(), "test-org")
+            .TryResolveAsync(http, upstream);
+        Assert.Null(result.Proxy);
+        Assert.NotNull(result.Error);
+        Assert.DoesNotContain("unreadable-ciphertext", result.Error!);
+    }
+
     [Fact]
     public async Task DisconnectedProbePersistsFailureBeforeStoppingRemainingSamples()
     {

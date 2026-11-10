@@ -12811,10 +12811,7 @@ var upstreamProbeHttp = new HttpClient(new SocketsHttpHandler
 async Task<string?> ValidateProviderProbeTargetAsync(HttpContext http, string apiUrl, ResolvedUpstreamProxy? proxy, CancellationToken ct)
 {
     if (TenantAccess.GetRequired(http).TenantId == internalTenantId) return null;
-    if (proxy?.Mode == "custom")
-        return GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(apiUrl, "openai")
-            ?? UpstreamProxy.ValidateProxyTarget(apiUrl);
-    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct);
+    return await ValidateExternalExchangeTargetAsync(apiUrl, "openai", ct, proxy);
 }
 
 // 一次导入的模型数上限。聚合型上游（OpenRouter）能列出几百个模型，全勾下来会把
@@ -12869,7 +12866,13 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
             Message = "这个 Provider 没有配 API 地址", NextStep = "在高级选项里补上 API 地址后再测",
         }), jsonOptions);
 
-    var effectiveProxy = await upstreamProxies.ResolveAsync(http, doc);
+    var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, doc);
+    if (proxyError is not null)
+        return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
+        {
+            Reachable = false, ProbedUrl = probeUrl, ElapsedMs = 0, FailureKind = "INVALID_PROXY",
+            Message = proxyError, NextStep = "检查代理配置；密码无法读取时重新填写后保存",
+        }), jsonOptions);
     var probeTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (probeTargetError is not null)
         return Json(ApiEnvelope<PlatformTestResult>.Ok(new PlatformTestResult
@@ -13021,7 +13024,9 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
             "Claude 原生协议没有模型列表接口，请手动添加模型"), jsonOptions, 400);
 
     // 与「测试连接」同一道门：这条也会拿着用户填的地址向外发请求，不补上就等于留了个后门
-    var effectiveProxy = await upstreamProxies.ResolveAsync(http, doc);
+    var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, doc);
+    if (proxyError is not null)
+        return Json(ApiEnvelope<UpstreamModelsData>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
     var discoveryTargetError = await ValidateProviderProbeTargetAsync(http, apiUrl, effectiveProxy, http.RequestAborted);
     if (discoveryTargetError is not null)
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("UNSAFE_TARGET_URL", discoveryTargetError), jsonOptions, 400);
@@ -14875,9 +14880,20 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
         return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
+    BsonDocument? proxyDocument = null;
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { proxyDocument = await upstreamProxies.BuildAsync(http, proxyInput); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
     if (tenantId != internalTenantId)
     {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
+        var pendingUpstream = new BsonDocument();
+        if (proxyDocument is not null) pendingUpstream[UpstreamProxy.Field] = proxyDocument;
+        var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, pendingUpstream);
+        if (proxyError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted, effectiveProxy);
         if (targetError is not null)
             return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
     }
@@ -14904,11 +14920,7 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
     var now = DateTime.UtcNow;
     var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
         draft, tenantId, id, encryptedApiKey, now, TenantAccess.GetRequired(http).Username);
-    if (body?.Proxy is { } proxyInput)
-    {
-        try { document[UpstreamProxy.Field] = await upstreamProxies.BuildAsync(http, proxyInput); }
-        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
-    }
+    if (proxyDocument is not null) document[UpstreamProxy.Field] = proxyDocument;
     string requiredAuditId;
     try
     {
@@ -15043,17 +15055,27 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
 
     var fb = Builders<BsonDocument>.Filter;
     var tenantId = TenantAccess.GetRequired(http).TenantId;
-    if (tenantId != internalTenantId)
-    {
-        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted);
-        if (targetError is not null)
-            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
-    }
     var tenantFilter = TenantAccess.Filter(http, fb.Eq("_id", id));
     var document = await gwModelExchanges.Find(tenantFilter).FirstOrDefaultAsync();
     if (document is null)
         return Json(ApiEnvelope<ExchangeItem>.Fail("NOT_FOUND", "Exchange 不存在或不属于当前租户"), jsonOptions, 404);
-
+    BsonDocument? proxyDocument = null;
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { proxyDocument = await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(document)); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
+    if (tenantId != internalTenantId)
+    {
+        var pendingUpstream = document.DeepClone().AsBsonDocument;
+        if (proxyDocument is not null) pendingUpstream[UpstreamProxy.Field] = proxyDocument;
+        var (effectiveProxy, proxyError) = await upstreamProxies.TryResolveAsync(http, pendingUpstream);
+        if (proxyError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", proxyError), jsonOptions, 400);
+        var targetError = await ValidateExternalExchangeTargetAsync(draft.TargetUrl, draft.TransformerType, http.RequestAborted, effectiveProxy);
+        if (targetError is not null)
+            return Json(ApiEnvelope<ExchangeItem>.Fail("UNSAFE_TARGET_URL", targetError), jsonOptions, 400);
+    }
     var currentVersion = document.AsNullableLong("Version") ?? 0;
     if (draft.Version != currentVersion)
         return Json(ApiEnvelope<ExchangeItem>.Fail("EXCHANGE_CONCURRENTLY_MODIFIED", "Exchange 已被其他操作修改，请刷新后重试"), jsonOptions, 409);
@@ -15073,12 +15095,8 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
     var nextVersion = currentVersion + 1;
     var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(
         draft, document, TenantAccess.GetRequired(http).Username, DateTime.UtcNow, nextVersion);
-    if (body?.Proxy is { } proxyInput)
-    {
-        try { update = Builders<BsonDocument>.Update.Combine(update, Builders<BsonDocument>.Update.Set(UpstreamProxy.Field,
-            await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(document)))); }
-        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
-    }
+    if (proxyDocument is not null)
+        update = Builders<BsonDocument>.Update.Combine(update, Builders<BsonDocument>.Update.Set(UpstreamProxy.Field, proxyDocument));
     string requiredAuditId;
     try
     {
@@ -16163,11 +16181,13 @@ static async Task<string> ReadUpstreamBodyAsync(HttpResponseMessage resp, int ma
     return System.Text.Encoding.UTF8.GetString(ms.ToArray());
 }
 
-static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct)
+static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl, string transformerType, CancellationToken ct, ResolvedUpstreamProxy? proxy = null)
 {
     var transportError = GatewayConfigurationProvisioning.ValidateExternalExchangeTransport(targetUrl, transformerType);
     if (transportError is not null)
         return transportError;
+    if (proxy?.Mode == "custom")
+        return UpstreamProxy.ValidateProxyTarget(targetUrl);
 
     if (!Uri.TryCreate(targetUrl, UriKind.Absolute, out var uri)
         || uri.Scheme is not ("http" or "https" or "wss"))
