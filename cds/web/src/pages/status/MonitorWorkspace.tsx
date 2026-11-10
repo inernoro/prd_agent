@@ -112,19 +112,19 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [size, setSize] = useState({ width: 1200, height: 750, narrow: window.innerWidth <= 760 });
   const current = stack[stack.length - 1];
-  const layoutCache = useRef<{ key: string; categoryIds: string[]; value: MonitorLayout; tracks?: string; counts: Record<string, number> }>();
+  const layoutCache = useRef<{ key: string; categoryIds: string[]; value: MonitorLayout; tracks?: string; counts: Record<string, number>; reserves: Record<string, number> }>();
   const measuredRows = useRef<{ key: string; value: string }>();
   const visibleSlots = useRef(new Map<string, string[]>());
   const layoutKey = JSON.stringify([density, size.width, size.height, size.narrow]);
   const ids = model.categories.map(c => c.id), previous = layoutCache.current;
   if (!previous || previous.key !== layoutKey || previous.categoryIds.some(id => !ids.includes(id))) {
-    layoutCache.current = { key: layoutKey, categoryIds: ids, counts: Object.fromEntries(model.categories.map(c => [c.id, c.services.length])), value: planMonitorLayout(model.categories.map(c => ({ id: c.id, count: c.services.length, reserve: c.custom ? 3 : 0 })), size.width, size.height, density, size.narrow) };
+    layoutCache.current = { key: layoutKey, categoryIds: ids, counts: Object.fromEntries(model.categories.map(c => [c.id, c.services.length])), reserves: Object.fromEntries(model.categories.map(c => [c.id, c.custom ? 3 : 0])), value: planMonitorLayout(model.categories.map(c => ({ id: c.id, count: c.services.length, reserve: c.custom ? 3 : 0 })), size.width, size.height, density, size.narrow) };
     visibleSlots.current.clear();
   } else if (ids.length > previous.categoryIds.length) {
     const added = model.categories.map((category, i) => ({ category, i })).filter(({ category }) => !previous.categoryIds.includes(category.id));
     const extra: LayoutBand[] = added.map(({ category, i }) => { const columns = Math.max(1, Math.floor((size.width - 40) / 182)), rows = Math.ceil(category.services.length / columns); return { level: MONITOR_LEVELS.L2, rows, height: 52 + rows * 47, spans: [24], parts: [{ indices: [i], stacked: false, span: 24, width: size.width - 24, columns, rows, visible: category.services.length }] }; });
     const tracks = measuredRows.current?.key === layoutKey ? measuredRows.current.value : previous.tracks;
-    layoutCache.current = { key: layoutKey, categoryIds: ids, counts: { ...previous.counts, ...Object.fromEntries(added.map(({ category }) => [category.id, category.services.length])) }, tracks: `${tracks ?? previous.value.bands.map(b => `${b.height}px`).join(' ')} ${extra.map(b => `${b.height}px`).join(' ')}`, value: { ...previous.value, bands: [...previous.value.bands, ...extra], fits: false } };
+    layoutCache.current = { key: layoutKey, categoryIds: ids, counts: { ...previous.counts, ...Object.fromEntries(added.map(({ category }) => [category.id, category.services.length])) }, reserves: { ...previous.reserves, ...Object.fromEntries(added.map(({ category }) => [category.id, category.custom ? 3 : 0])) }, tracks: `${tracks ?? previous.value.bands.map(b => `${b.height}px`).join(' ')} ${extra.map(b => `${b.height}px`).join(' ')}`, value: { ...previous.value, bands: [...previous.value.bands, ...extra], fits: false } };
   }
   const layout = layoutCache.current!.value;
   useLayoutEffect(() => { const grid = root.current?.querySelector<HTMLElement>('.cg'); if (!grid) return; const record = () => { const value = getComputedStyle(grid).gridTemplateRows; if (value !== 'none') measuredRows.current = { key: layoutKey, value }; }; record(); const observer = new ResizeObserver(record); observer.observe(grid); return () => observer.disconnect(); }, [layoutKey, ids.join('|'), layout.bands.length]);
@@ -280,7 +280,7 @@ export function MonitorWorkspace({ targets, summary, incidents, now, onAdd, onNo
   };
   const renderStack = (part: LayoutPart, band: LayoutBand) => {
     const count = part.stackColumns ?? 1, columns: Array<Array<{ i: number; height: number }>> = Array.from({ length: count }, () => []);
-    const heights = part.indices.map(i => { const c = model.categories[i], n = (layoutCache.current!.counts[c.id] ?? c.services.length) + (c.custom ? 3 : 0); return { i, height: 26 + n * (band.level.rowHeight + band.level.gap) - band.level.gap + 8 }; });
+    const heights = part.indices.map(i => { const c = model.categories[i], n = (layoutCache.current!.counts[c.id] ?? c.services.length) + (layoutCache.current!.reserves[c.id] ?? 0); return { i, height: 26 + n * (band.level.rowHeight + band.level.gap) - band.level.gap + 8 }; });
     const target = heights.reduce((sum, s) => sum + s.height, 0) / count; let column = 0, used = 0;
     heights.forEach(slot => { if (used > 0 && used + slot.height > target + 12 && column < count - 1) { column++; used = 0; } columns[column].push(slot); used += slot.height; });
     return <div className="stk" style={{ gridColumn: `span ${part.span}`, gridTemplateColumns: `repeat(${count},minmax(0,1fr))` }}>{columns.map((slots, i) => <div className="stack-column" key={i}>{slots.map(slot => <div className="stack-slot" key={model.categories[slot.i].id} style={{ height: slot.height }}>{renderCategory(model.categories[slot.i], part, band.level.key, true)}</div>)}</div>)}</div>;
