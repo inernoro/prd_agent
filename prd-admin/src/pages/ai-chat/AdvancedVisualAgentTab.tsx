@@ -7246,7 +7246,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
                             >
-                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'var(--text-primary)', fontSize: '3.5cqw' }} title={it.errorMessage || '生成失败'}>
                                 {it.errorMessage || '生成失败'}
                               </div>
                             </div>
@@ -7365,7 +7365,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               className="absolute inset-0 flex items-end justify-center pb-[8%]"
                               style={{ zIndex: 200 }}
                             >
-                              <div className="max-w-[90%] text-center truncate" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
+                              <div className="max-w-[90%] text-center truncate" style={{ color: 'var(--text-primary)', fontSize: '3.5cqw' }} title={it.errorMessage || '图片加载失败'}>
                                 {it.errorMessage || '图片加载失败'}
                               </div>
                             </div>
