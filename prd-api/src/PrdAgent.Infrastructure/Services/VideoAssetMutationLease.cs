@@ -74,14 +74,11 @@ public static class VideoAssetMutationLease
     public static async Task<bool> HasReferencesAsync(MongoDbContext db, string sha256, string url, CancellationToken ct)
     {
         var runFb = Builders<VideoGenRun>.Filter;
-        var runReferences = await db.VideoGenRuns.CountDocumentsAsync(
-            runFb.Or(
-                runFb.Eq(x => x.VideoAssetSha256, sha256),
-                runFb.Eq("Scenes.Versions.AssetSha256", sha256),
-                runFb.Eq(x => x.VideoAssetUrl, url),
-                runFb.Eq("Scenes.VideoUrl", url),
-                runFb.Eq("Scenes.Versions.VideoUrl", url)),
-            cancellationToken: ct);
+        var runFilter = runFb.Or(runFb.Eq(x => x.VideoAssetUrl, url),
+            runFb.Eq("Scenes.VideoUrl", url), runFb.Eq("Scenes.Versions.VideoUrl", url));
+        if (!string.IsNullOrEmpty(sha256))
+            runFilter |= runFb.Or(runFb.Eq(x => x.VideoAssetSha256, sha256), runFb.Eq("Scenes.Versions.AssetSha256", sha256));
+        var runReferences = await db.VideoGenRuns.CountDocumentsAsync(runFilter, cancellationToken: ct);
         if (runReferences > 0) return true;
 
         var projectFb = Builders<VideoProject>.Filter;
@@ -114,8 +111,8 @@ public static class VideoAssetMutationLease
         var held = new List<IAsyncDisposable>();
         try
         {
-            foreach (var sha in targets.Select(x => x.Sha).Distinct().Order(StringComparer.Ordinal))
-                held.Add(await AcquireAsync(db, $"generated-video:{sha}", ct));
+            foreach (var url in targets.Select(x => x.Url).Distinct().Order(StringComparer.Ordinal))
+                held.Add(await AcquireAsync(db, $"generated-video-reference:{url}", ct));
             foreach (var target in targets)
             {
                 if (!await HasReferencesAsync(db, target.Sha, target.Url, ct))
@@ -137,9 +134,11 @@ public static class VideoAssetMutationLease
         var path = Uri.TryCreate(clean, UriKind.Absolute, out var uri) ? uri.AbsolutePath : clean;
         if (!path.Contains("/video-agent/video/", StringComparison.Ordinal)) return null;
         var file = Path.GetFileName(path); var sha = Path.GetFileNameWithoutExtension(file);
-        if (sha.Length != 64 || !sha.All(Uri.IsHexDigit)) return null;
-        var canonical = storage.BuildUrlForLogicalKey($"{AppDomainPaths.DomainVideoAgent}/{AppDomainPaths.TypeVideo}/{file}");
-        return string.Equals(clean, canonical, StringComparison.Ordinal) ? (sha.ToLowerInvariant(), canonical) : null;
+        var logical = $"{AppDomainPaths.DomainVideoAgent}/{AppDomainPaths.TypeVideo}/{file}";
+        var fullSha = sha.Length == 64 && sha.All(Uri.IsHexDigit);
+        if (!fullSha && !AssetStorageDeletePolicy.IsContentAddressedGeneratedVideoKey(logical)) return null;
+        var canonical = storage.BuildUrlForLogicalKey(logical);
+        return string.Equals(clean, canonical, StringComparison.Ordinal) ? (fullSha ? sha.ToLowerInvariant() : string.Empty, canonical) : null;
     }
 
     private sealed class ReferenceHandles(List<IAsyncDisposable> held) : IAsyncDisposable

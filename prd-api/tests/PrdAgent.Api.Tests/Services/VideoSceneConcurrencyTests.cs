@@ -275,12 +275,14 @@ public partial class VideoSceneConcurrencyTests
 
     [Theory]
     [Trait("Category", "Unit")]
-    [InlineData("/local-assets/video-agent/video/", "/local-assets/video-agent/video/", true)]
-    [InlineData("https://assets.example.invalid/video-agent/video/", "https://assets.example.invalid/video-agent/video/", true)]
-    [InlineData("https://other.invalid/video-agent/video/", "https://assets.example.invalid/video-agent/video/", false)]
-    public void GeneratedReference_UsesStorageCanonicalUrlBeforeParsingRelativeQuery(string source, string target, bool expected)
+    [InlineData("/local-assets/video-agent/video/", "/local-assets/video-agent/video/", true, 64)]
+    [InlineData("https://assets.example.invalid/video-agent/video/", "https://assets.example.invalid/video-agent/video/", true, 64)]
+    [InlineData("https://other.invalid/video-agent/video/", "https://assets.example.invalid/video-agent/video/", false, 64)]
+    [InlineData("https://assets.example.invalid/prefix/video-agent/video/", "https://assets.example.invalid/prefix/video-agent/video/", true, 26)]
+    [InlineData("https://other.invalid/prefix/video-agent/video/", "https://assets.example.invalid/prefix/video-agent/video/", false, 26)]
+    public void GeneratedReference_UsesStorageCanonicalUrlBeforeParsingRelativeQuery(string source, string target, bool expected, int digestLength)
     {
-        var sha = new string('a', 64);
+        var sha = new string('a', digestLength);
         var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
         storage.Setup(x => x.BuildUrlForLogicalKey("video-agent/video/" + sha + ".mp4")).Returns(target + sha + ".mp4");
         var method = typeof(VideoAssetMutationLease).GetMethod("TryCanonicalGeneratedReference", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -288,7 +290,7 @@ public partial class VideoSceneConcurrencyTests
         if (expected)
         {
             var resolved = ((string Sha, string Url))result!;
-            resolved.Sha.ShouldBe(sha); resolved.Url.ShouldBe(target + sha + ".mp4");
+            resolved.Sha.ShouldBe(digestLength == 64 ? sha : string.Empty); resolved.Url.ShouldBe(target + sha + ".mp4");
         }
         else result.ShouldBeNull();
         storage.VerifyAll();
