@@ -77,7 +77,9 @@ class IndependentMonitorTest(unittest.TestCase):
             self.assertTrue(m.notify(config,state,'down',1000))
             payload=m.json.loads(request.call_args[0][0].data)
             self.assertEqual(payload['icon'],'https://static.example/observer-b.png')
-            self.assertEqual(payload['title'],'监控平台 · 生产：访问无响应')
+            self.assertEqual(payload['title'],'环境待确认 CDS')
+            self.assertEqual(payload['body'],'入口已不可用')
+            self.assertLessEqual(len(payload['title'] + ' ' + payload['body']),40)
             self.assertNotIn('CDS B',payload['body'])
             self.assertNotIn('fixture',str(m.public_snapshot(state,config,1000)))
 

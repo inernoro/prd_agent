@@ -13,6 +13,8 @@ import urllib.parse
 import uuid
 
 
+CATALOG = json.loads((Path(__file__).resolve().parents[1] / 'src/shared/notification-templates.json').read_text(encoding='utf-8'))
+
 def iso(now):
     return dt.datetime.fromtimestamp(now, dt.timezone.utc).isoformat()
 
@@ -130,14 +132,16 @@ def notify(config, state, transition, now, dispatcher=None):
     if transition == 'recovered' and not any(d.get('accepted') and d.get('incidentId') == event.get('id') and d.get('transition') != 'recovered' for d in state.get('deliveries', [])):
         return True
     identity = config.get('identity', {})
-    subject = config.get('displayName', '监控平台')
-    environment = identity.get('subject', {}).get('environment', '生产')
-    result = '已恢复' if transition == 'recovered' else '访问无响应' if event.get('reason') == 'unreachable' else '状态暂时无法确认'
-    title = subject + ' · ' + environment + '：' + result
-    payload = {'device_key': bark['key'], 'title': title,
-               'body': '外部检查持续失败，相关检查已合并。点击查看影响与处理建议。' if transition != 'recovered' else '外部访问已持续恢复。点击查看处理记录。',
+    declared = identity.get('subject', {}).get('environment')
+    environment = declared if declared in CATALOG['environments'] else next((key for key, label in CATALOG['environments'].items() if label == declared), CATALOG.get('environmentAliases', {}).get(declared, 'unknown'))
+    template_id = 'MON-03' if transition == 'recovered' else 'MON-01' if event.get('reason') == 'unreachable' else 'MON-02'
+    function = '入口' if event.get('reason') == 'unreachable' else '监控读取'
+    title = CATALOG['environments'][environment] + ' ' + CATALOG['systems']['cds']
+    body = CATALOG['templates'][template_id]['text'].replace('{function}', function).replace('{subject}', CATALOG['systems']['cds'])
+    payload = {'device_key': bark['key'], 'title': title, 'body': body,
+               'notificationOrigin': {'environment': environment, 'system': 'cds'},
                'url': incident_url(config, event.get('id', '')),
-               'group': subject + ' · ' + identity.get('subject', {}).get('environment', '生产'), 'level': 'passive' if transition == 'recovered' else 'active'}
+               'group': title, 'level': 'passive' if transition == 'recovered' else 'active'}
     icon = identity.get('observer', {}).get('iconUrl') or bark.get('iconUrl')
     if icon:
         parsed = urllib.parse.urlsplit(icon)
@@ -211,18 +215,18 @@ def main():
     import fcntl
     lock = config_path.with_name('monitor.lock').open('w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding='utf-8'))
     path = config_path.with_name('state.json')
-    state = json.loads(path.read_text()) if path.exists() else {}
+    state = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     spec = importlib.util.spec_from_file_location('alarm_relay', Path(__file__).with_name('independent-alarm-relay.py'))
     relay = importlib.util.module_from_spec(spec); spec.loader.exec_module(relay)
     guard_spec = importlib.util.spec_from_file_location('phone_dispatch', Path(__file__).with_name('phone-dispatch.py'))
     guard_module = importlib.util.module_from_spec(guard_spec); guard_spec.loader.exec_module(guard_module)
     dispatch_path = config_path.with_name('phone-dispatch-state.json')
-    dispatch_state = json.loads(dispatch_path.read_text()) if dispatch_path.exists() else {}
+    dispatch_state = json.loads(dispatch_path.read_text(encoding='utf-8')) if dispatch_path.exists() else {}
     dispatcher = guard_module.PhoneDispatch(dispatch_state, lambda: relay.save(dispatch_path, dispatch_state), relay.send)
     relay_path = config_path.with_name('relay-state.json')
-    relay_state = json.loads(relay_path.read_text()) if relay_path.exists() else {}
+    relay_state = json.loads(relay_path.read_text(encoding='utf-8')) if relay_path.exists() else {}
     cached_channels = relay_state.get('channels', [])
     if cached_channels and relay_state.get('enabled'):
         config['bark'] = cached_channels[0].get('bark', {})

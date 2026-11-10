@@ -6516,6 +6516,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * callers cannot collide. Returns the stored metadata.
    */
   createAcceptanceReport(input: {
+    classification?: import('../shared/notification-templates.js').ReportClassification;
+    monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
     reportType?: 'acceptance' | 'code-review';
     reviewTaskId?: string;
     title: string;
@@ -6633,6 +6635,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     return {
       id: crypto.randomUUID().replace(/-/g, ''),
+      classification: input.classification,
+      monitorEvent: input.monitorEvent,
       reportType: input.reportType,
       reviewTaskId: input.reviewTaskId,
       title: input.title,
@@ -6666,6 +6670,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   updateAcceptanceReport(
     id: string,
     updates: {
+      classification?: import('../shared/notification-templates.js').ReportClassification;
+      monitorEvent?: import('./notification-report.js').ReportMonitorEvent;
       title?: string;
       format?: 'html' | 'md';
       content?: string;
@@ -6807,6 +6813,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     meta: AcceptanceReportMeta,
     updates: Parameters<StateService['updateAcceptanceReport']>[1],
   ): void {
+    if (updates.classification !== undefined) meta.classification = updates.classification;
+    if (updates.monitorEvent !== undefined) meta.monitorEvent = updates.monitorEvent;
     if (updates.verdict !== undefined) meta.verdict = updates.verdict;
     if (updates.tier !== undefined) meta.tier = updates.tier;
     if (updates.defectCounts !== undefined) meta.defectCounts = updates.defectCounts;

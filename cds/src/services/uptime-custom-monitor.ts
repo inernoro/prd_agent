@@ -29,7 +29,7 @@ import {
   type AssertOp,
   type MonitorAssertion,
 } from './monitor-assertions.js';
-import type { UptimeSample } from './uptime-metrics.js';
+import type { UptimeMeasurement, UptimeSample } from './uptime-metrics.js';
 import { probeMcpMonitor } from './mcp-monitor.js';
 
 /**
@@ -728,6 +728,26 @@ export type CustomProbeOutcome = Omit<UptimeSample, 't'> & {
   observation?: MonitorObservation;
 };
 
+/** Use the configured field and RFC health+json observedUnit only; never infer P95 from request duration. */
+function healthMeasurement(
+  body: string,
+  componentId: string,
+  field: HealthAssertField,
+  op: HealthAssertOp,
+  expected: string,
+): UptimeMeasurement | undefined {
+  let doc: unknown;
+  try { doc = JSON.parse(body); } catch { return undefined; }
+  const check = findHealthCheck(doc, componentId);
+  if (!check) return undefined;
+  const value = check[field];
+  if (value !== undefined && value !== null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
+  if (typeof value === 'number' && !Number.isFinite(value)) return undefined;
+  const actual = typeof value === 'string' ? maskSecrets(value, { mask: true }).slice(0, 160) : value ?? null;
+  const unit = typeof check.observedUnit === 'string' ? maskSecrets(check.observedUnit, { mask: true }).slice(0, 24) : undefined;
+  return { name: componentId, field, op, expected, actual, ...(unit ? { unit } : {}) };
+}
+
 /**
  * 被动监控的样本量：这个窗口里到底有没有人用过。
  *
@@ -912,6 +932,9 @@ async function httpProbe(
         op,
         monitor.healthValue || '',
       );
+      const measurement = healthMeasurement(body, monitor.healthComponentId || '', field, op, monitor.healthValue || '');
+      const safeObserved = verdict.observed === undefined ? undefined : maskSecrets(verdict.observed, { mask: true });
+      const safeError = verdict.err === undefined ? undefined : maskSecrets(verdict.err, { mask: true });
       // 被动监控要留证据：判据结论之外，还得带上这个窗口的样本量。
       // 判据通过 + 样本量为 0 不是「一切正常」，是「没人用过」——两件事，界面分开说。
       let observation: MonitorObservation | undefined;
@@ -928,9 +951,9 @@ async function httpProbe(
             path: `${monitor.healthComponentId || ''}.${field}`,
             op,
             expected: monitor.healthValue,
-            ...(verdict.observed === undefined ? {} : { actual: verdict.observed }),
+            ...(safeObserved === undefined ? {} : { actual: safeObserved }),
             ok: verdict.ok,
-            ...(verdict.ok || !verdict.err ? {} : { err: verdict.err }),
+            ...(verdict.ok || !safeError ? {} : { err: safeError }),
           }],
           ...(sampleCount === undefined ? {} : { sampleCount }),
         };
@@ -940,7 +963,7 @@ async function httpProbe(
         const doc = JSON.parse(body);
         if (findHealthCheck(doc, monitor.healthComponentId || '')) {
           return { up: false, noData: true, ms: Date.now() - startedAt, code,
-            err: '当前窗口没有观测样本，保持上一条有效结论', observation };
+            err: '当前窗口没有观测样本，保持上一条有效结论', observation, ...(measurement ? { measurement } : {}) };
         }
       }
       if (!verdict.ok) {
@@ -950,11 +973,12 @@ async function httpProbe(
           if (typeof value === 'string') publicMessage = maskSecrets(value, { mask: true }).replace(/https?:\/\/[^\s<>"']+/gi, '[详情中查看]').slice(0, 160);
         } catch { /* 非法文档由原判据记录，不生成通知说明。 */ }
         // 判据不成立时 HTTP 往往仍是 200——「接口通但结论是坏的」正是这类探测的存在意义。
-        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err,
-          ...(verdict.observed !== undefined ? { finding: publicMessage || `当前读数 ${verdict.observed.slice(0, 80)}，应${({eq:'等于',ne:'不等于',lt:'低于',lte:'不高于',gt:'高于',gte:'不低于'} as Record<string,string>)[op]} ${String(monitor.healthValue).slice(0, 80)}。` } : {}),
+        return { up: false, ms: Date.now() - startedAt, code, err: safeError,
+          ...(measurement ? { measurement } : {}),
+          ...(safeObserved !== undefined ? { finding: publicMessage || `当前读数 ${safeObserved.slice(0, 80)}，应${({eq:'等于',ne:'不等于',lt:'低于',lte:'不高于',gt:'高于',gte:'不低于'} as Record<string,string>)[op]} ${String(monitor.healthValue).slice(0, 80)}。` } : {}),
           ...(observation ? { observation } : {}) };
       }
-      return { up: true, ms: Date.now() - startedAt, code, ...(observation ? { observation } : {}) };
+      return { up: true, ms: Date.now() - startedAt, code, ...(measurement ? { measurement } : {}), ...(observation ? { observation } : {}) };
     } else {
       await res.body?.cancel().catch(() => undefined);
     }

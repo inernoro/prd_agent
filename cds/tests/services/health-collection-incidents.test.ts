@@ -35,15 +35,15 @@ it('真实 HTTP：五项共同失败仅投递一次、重启不重报、无数�
   try{
     service=create();for(let i=0;i<4;i++)await cycle();await service.flush();
     expect(calls).toBe(4);expect(pushes).toHaveLength(1);
-    expect(decodeURIComponent(pushes[0].pathname)).toContain('5 项检查');
-    expect(decodeURIComponent(pushes[0].pathname)).toContain('尚未确认业务中断');
+    expect(decodeURIComponent(pushes[0].pathname)).toContain('监控读取失败');
+    expect(decodeURIComponent(pushes[0].pathname)).toContain('状态未知');
     expect(pushes[0].searchParams.get('icon')).toBe('https://static.example/observer-a.png');
     const member=service.getRecord('monitor@metric-0')!;
     expect(member.samples).toHaveLength(4);expect(member.samples.every(s=>s.noData)).toBe(true);
     expect(service.getSummary().targets.find(t=>t.id===member.id)?.availability24h).toBeNull();
     service=create();await service.load();await cycle();expect(pushes).toHaveLength(1);
     failed=false;for(let i=0;i<12;i++)await cycle();expect(pushes).toHaveLength(2);
-    expect(decodeURIComponent(pushes[1].pathname)).toContain('已稳定恢复');
+    expect(decodeURIComponent(pushes[1].pathname)).toContain('监控读取已恢复');
     expect(pushes[1].searchParams.get('level')).toBe('passive');
   }finally{await service!.flush();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));fs.rmSync(dir,{recursive:true,force:true});}
 });

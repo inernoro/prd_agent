@@ -97,26 +97,28 @@ describe('哪些出问题通知谁', () => {
 
 describe('通知正文', () => {
   // 唯一构造器：顺序写死为「谁出了什么事 → 要不要紧 → 下一步」，分支只填值。
-  it('第一句就说清谁出事、要不要紧，并给下一步', () => {
+  it('一句话说明来源与异常，详情由链接承载', () => {
     const m = renderAlarmMessage(EVENT, { boardUrl: 'https://cds.example.com/status' });
-    expect(m.title).toContain('MAP 后端');
+    expect(m.body).toContain('MAP 后端');
+    expect(m.title).toBe('环境待确认 系统待确认');
     expect(m.body).not.toContain('用户现在用不了');
-    expect(m.title).toContain('检查异常');
-    expect(m.body).toContain('检查连续未通过');
+    expect(m.body).toContain('检查异常');
+    expect(m.body).not.toContain('下一步');
     expect(m.url).toBe('https://cds.example.com/status');
     expect(m.level).toBe('active');
   });
 
   it('基础设施故障不冒充业务故障', () => {
     const m = renderAlarmMessage({ ...EVENT, kind: 'infra-down' });
-    expect(m.body).toContain('影响范围需结合实际业务核实');
+    expect(m.body).toContain('原因未明');
+    expect(m.body).not.toContain('已不可用');
     expect(m.level).toBe('active');
   });
 
-  it('恢复是 passive，并明说无需处理', () => {
+  it('恢复是 passive，短句明确已恢复', () => {
     const m = renderAlarmMessage({ ...EVENT, kind: 'business-recovered' });
     expect(m.level).toBe('passive');
-    expect(m.body).toContain('检查已持续恢复');
+    expect(m.body).toContain('已恢复');
   });
 
   it('拿不到面板地址就不放 —— 不编一个点不开的链接', () => {

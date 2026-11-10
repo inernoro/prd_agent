@@ -34,6 +34,7 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
+import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { isHumanSystemOwner } from './services/human-auth.js';
@@ -901,6 +902,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 自建存活监控 / 状态页（2026-07-27）
     'GET /uptime/summary': '查看存活总览',
     'GET /uptime/incidents': '列出存活故障',
+    'GET /uptime/incidents/:id': '查看故障通知上下文',
     // 监控中心自定义监控（2026-09-08）
     'GET /uptime/monitors': '列出自定义监控',
     'POST /uptime/monitors': '新增自定义监控',
@@ -1212,6 +1214,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/uptime\/incidents\/[^/]+$/, '查看故障通知上下文'],
     [/^GET \/code-reviews\/[^/]+\/usage$/, '查询审查用量'],
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
@@ -1594,6 +1597,7 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (isMonitorOnboardingAgentRoute(method, path)) return true;
   if (method === 'POST' && path === '/api/identity-connections') return true;
   if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && /^\/api\/identity-connections\/[^/]+\/ack$/.test(path)) return true;

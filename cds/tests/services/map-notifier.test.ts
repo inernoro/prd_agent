@@ -121,20 +121,21 @@ describe('通知载荷', () => {
     detectedAt: '2026-09-09T09:00:00.000Z',
   };
 
-  it('检查异常是 warning 级、带下一步；来源与分区固定', () => {
+  it('检查异常是 warning 级、短句与详情分离；来源与分区固定', () => {
     const p = buildNotificationPayload({ ...base, type: 'uptime.target.down' });
     expect(p.source).toBe('uptime-alert');   // 必须与 MAP SourceCatalog 登记的一致
     expect(p.section).toBe('admin');
     expect(p.level).toBe('warning');
-    expect(p.title).toContain('检查异常');
-    expect(p.message).toContain('下一步');   // 症状 + 下一步，不是只报个错
-    expect(p.message).toContain('检查连续未通过');
+    expect(p.message).toContain('检查异常');
+    expect(p.title).toBe('环境待确认 系统待确认');
+    expect(p.message).not.toContain('下一步');   // 症状 + 下一步，不是只报个错
+    expect(p.message).toContain('原因未明');
   });
 
   it('恢复是 info 级，不带下一步', () => {
     const p = buildNotificationPayload({ ...base, type: 'uptime.target.recovered' });
     expect(p.level).toBe('info');
-    expect(p.title).toContain('已稳定恢复');
+    expect(p.message).toContain('已恢复');
     expect(p.message).not.toContain('下一步');
   });
 
@@ -200,9 +201,9 @@ describe('接线守卫', () => {
   const indexSource = fs.readFileSync(path.join(REPO, 'cds/src/index.ts'), 'utf8');
 
   it('onAlert 里必须真的把告警投出去 —— 少这一行铃永远不会响', () => {
-    const at = indexSource.indexOf('onAlert: (type, data) => {');
+    const at = indexSource.indexOf('onAlert: async (type, data) => {');
     expect(at, '找不到 uptime 的 onAlert 接线，守卫的取值范围需要跟着改').toBeGreaterThanOrEqual(0);
-    const block = indexSource.slice(at, at + 1200);
+    const block = indexSource.slice(at, indexSource.indexOf('configurePhoneDispatch(', at));
     expect(block).toContain('cdsEventsBus.publish');
     // 断言「有东西被 send 出去」，而不是某个变量名的字面拼写：
     // 2026-09-14 通知器从启动时定死改成现解析（凭据改完不必重启），

@@ -10,6 +10,7 @@ import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/s
 import type { AlarmChannelConfig, AlarmEvent } from '../../src/services/alarm-route.js';
 
 const event: AlarmEvent = {
+  reportId: 'fixture-report', eventId: 'fixture-event',
   kind: 'business-down', projectId: 'cds-self-monitor', targetId: 'p95', targetName: '首屏接口 P95',
   message: '指标暂无样本', detectedAt: new Date().toISOString(), consecutiveFailures: 3,
 };
@@ -64,7 +65,7 @@ describe('通知逐次发送历史', () => {
     const result = await query(store);
     expect(result.status).toBe(200);
     expect(result.data.summary).toEqual({ total: 1, sent: 1, failed: 0, unknown: 0 });
-    expect(result.data.deliveries[0]).toMatchObject({ targetId: 'p95', channelName: '我的手机', title: '首屏接口 P95：检查异常' });
+    expect(result.data.deliveries[0]).toMatchObject({ reportId: 'fixture-report', eventId: 'fixture-event', targetId: 'p95', channelName: '我的手机', title: '环境待确认 系统待确认' });
   });
   it('发送失败保留原因，演练与实际告警分开，不追加重试', async () => {
     const { store, events } = journal();
