@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 # 与 CDS 报告中心、服务端共用唯一模板文件；不在 Python 里复制通知句子。
-CATALOG = json.loads((Path(__file__).resolve().parents[1] / 'src/shared/notification-templates.json').read_text())
+CATALOG = json.loads((Path(__file__).resolve().parents[1] / 'src/shared/notification-templates.json').read_text(encoding='utf-8'))
 
 
 class PhoneDispatch:

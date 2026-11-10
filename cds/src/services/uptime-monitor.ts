@@ -1246,9 +1246,9 @@ export class UptimeMonitorService {
        * 不接不报错，只是掉线永远没人被通知——所以有源码守卫钉住这行接线。
        */
       onAlarmSuppressed?: (data: { targetId: string; targetName: string; projectId: string; reason: string; at: number }) => void;
-      /** Actual incident creation/closure, independent of notification delivery policy. */
-      onIncident?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
       onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
+      /** 状态事实与通知抑制独立：未投递过故障的稳定恢复也须关闭原报告。 */
+      onReportEvent?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void | Promise<void>;
     },
   ) {
     this.load();
@@ -1887,7 +1887,6 @@ export class UptimeMonitorService {
     record.consecutiveFailures = next.consecutiveFailures;
     record.consecutiveSuccesses = next.consecutiveSuccesses;
     const cause = sample.err || (sample.code ? `HTTP ${sample.code}` : '探测连续失败');
-    const previousOpenIncident = record.incidents.find(incident => incident.endedAt === null);
     applyIncidentTransition(record.incidents, next.transition, {
       targetId: target.id,
       at: sample.t,
@@ -1895,10 +1894,6 @@ export class UptimeMonitorService {
       sample,
     }, MAX_INCIDENTS_PER_TARGET);
     if (next.transition === 'to-down') this.attachReleaseAttribution(target, record, sample.t);
-    const actualTransition = next.transition === 'to-down' ? !previousOpenIncident : next.transition === 'to-up' && !!previousOpenIncident;
-    if (next.transition && actualTransition && !record.excluded) this.emitIncident(
-      next.transition === 'to-down' ? 'uptime.target.down' : 'uptime.target.recovered', target, record, sample.t,
-      next.transition === 'to-down' ? cause : '探测已连续成功，服务恢复');
     // 所有业务监控共享持久化通知节奏；首次探测成功不等于从故障恢复。
     // 可用性与事件照常记录，通知只在真实故障及持续恢复后发送。
     if (target.source === 'custom' && !record.excluded) {
@@ -1907,6 +1902,11 @@ export class UptimeMonitorService {
       });
       if (decision.emit) this.emitAlert(decision.emit === 'down' ? 'uptime.target.down' : 'uptime.target.recovered', target, record, sample.t,
         decision.emit === 'down' ? cause : '指标连续稳定 10 分钟');
+      else if (decision.reason === 'no-delivered-down' || (next.transition === 'to-down' && decision.reason === 'cooldown-30m')) {
+        this.emitAlert(decision.reason === 'no-delivered-down' ? 'uptime.target.recovered' : 'uptime.target.down', target, record, sample.t,
+          decision.reason === 'no-delivered-down' ? '检查连续稳定 10 分钟，未发送恢复通知' : cause, false);
+        if (next.transition) this.deps.onAlarmSuppressed?.({ targetId: target.id, targetName: target.name, projectId: target.projectId, reason: decision.reason, at: sample.t });
+      }
       else if (next.transition && decision.reason) this.deps.onAlarmSuppressed?.({ targetId: target.id, targetName: target.name,
         projectId: target.projectId, reason: decision.reason, at: sample.t });
     } else if (next.transition && !record.excluded) {
@@ -1930,60 +1930,53 @@ export class UptimeMonitorService {
     await this.flush();
   }
 
-  private monitorEventData(type: UptimeAlertEventType, target: ProbeTarget, record: UptimeTargetRecord, at: number, message: string): UptimeAlertEventData {
-    const incident = [...record.incidents].reverse().find(i => type === 'uptime.target.down' ? i.endedAt === null : i.endedAt !== null);
-    const facet = this.environmentFacet(record, this.previewBranchLookup());
-    const urgent = type === 'uptime.target.down' && facet.environment === 'production'
-      && facet.observeMode === 'active' && !target.collection && target.monitor?.kind !== 'health-json';
-    return {
-      targetId: target.id,
-      ...(incident ? { incidentId: incident.id } : {}),
-      urgency: urgent ? 'urgent' : 'normal',
-      businessName: target.projectId === SELF_PROJECT_ID ? '部署平台' : target.projectName,
-      finding: record.lastSample?.finding,
-      assessment: target.collection ? 'observation-unavailable' : 'check-failed',
-      affectedChecks: target.collectionMembers?.length,
-      notificationEnvironment: facet.environment === 'preview' ? 'preview'
-        : target.source === 'release' ? (facet.environment === 'production' ? 'production' : facet.environment === 'staging' ? 'staging' : 'unknown')
-        : target.monitor?.environment === 'production' ? 'production' : target.monitor?.environment === 'staging' ? 'staging' : 'unknown',
-      environmentLabel: facet.environmentLabel,
-      ...(type === 'uptime.target.recovered' && target.source === 'custom'
-        ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),
-      projectId: target.projectId,
-      branchId: target.branchId,
-      targetName: target.monitor?.publicName || target.name,
-      source: target.source,
-      probeKind: target.probeKind,
-      ...(target.url ? { probeUrl: target.url } : {}),
-      message,
-      consecutiveFailures: record.consecutiveFailures,
-      detectedAt: new Date(at).toISOString(),
-    };
-  }
-
-  private emitIncident(type: UptimeAlertEventType, target: ProbeTarget, record: UptimeTargetRecord, at: number, message: string): void {
-    if (!this.deps.onIncident) return;
+  /** 把状态翻转转发给接线方（未接线时静默，见构造参数 onAlert 注释）。 */
+  private emitAlert(
+    type: UptimeAlertEventType,
+    target: ProbeTarget,
+    record: UptimeTargetRecord,
+    at: number,
+    message: string,
+    notify = true,
+  ): void {
+    const callback = notify ? this.deps.onAlert || this.deps.onReportEvent : this.deps.onReportEvent;
+    if (!callback) return;
     try {
-      const data = this.monitorEventData(type, target, record, at, message);
-      if (!data.incidentId) return;
-      void Promise.resolve(this.deps.onIncident(type, data))
-        .catch(err => this.deps.logger?.warn?.(`[uptime] 故障事件归档失败: ${(err as Error).message}`));
-    } catch (err) { this.deps.logger?.warn?.(`[uptime] 故障事件归档失败: ${(err as Error).message}`); }
-  }
-
-  /** Notification evidence is recorded only when notification policy emits an alert. */
-  private emitAlert(type: UptimeAlertEventType, target: ProbeTarget, record: UptimeTargetRecord, at: number, message: string): void {
-    if (!this.deps.onAlert) return;
-    try {
-      const data = this.monitorEventData(type, target, record, at, message);
-      const incident = record.incidents.find(i => i.id === data.incidentId);
-      if (incident && record.lastSample && record.lastSample.t === at) {
+      const incident = [...record.incidents].reverse().find(i => type === 'uptime.target.down' ? i.endedAt === null : i.endedAt !== null);
+      if (notify && incident && record.lastSample && record.lastSample.t === at) {
         const evidence = incident.notificationSamples ??= [];
         if (!evidence.some(s => s.t === at)) appendCapped(evidence, snapshotUptimeSample(record.lastSample), 20);
       }
-      void Promise.resolve(this.deps.onAlert(type, data))
-        .catch(err => this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`));
-    } catch (err) { this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`); }
+      const facet = this.environmentFacet(record, this.previewBranchLookup());
+      const urgent = type === 'uptime.target.down' && facet.environment === 'production'
+        && facet.observeMode === 'active' && !target.collection && target.monitor?.kind !== 'health-json';
+      void Promise.resolve(callback(type, {
+        targetId: target.id,
+        ...(incident ? { incidentId: incident.id } : {}),
+        urgency: urgent ? 'urgent' : 'normal',
+        businessName: target.projectId === SELF_PROJECT_ID ? '部署平台' : target.projectName,
+        finding: record.lastSample?.finding,
+        assessment: target.collection ? 'observation-unavailable' : 'check-failed',
+        affectedChecks: target.collectionMembers?.length,
+        notificationEnvironment: facet.environment === 'preview' ? 'preview'
+          : target.source === 'release' ? (facet.environment === 'production' ? 'production' : facet.environment === 'staging' ? 'staging' : 'unknown')
+          : target.monitor?.environment === 'production' ? 'production' : target.monitor?.environment === 'staging' ? 'staging' : 'unknown',
+        environmentLabel: facet.environmentLabel,
+        ...(type === 'uptime.target.recovered' && target.source === 'custom'
+          ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),
+        projectId: target.projectId,
+        branchId: target.branchId,
+        targetName: target.monitor?.publicName || target.name,
+        source: target.source,
+        probeKind: target.probeKind,
+        ...(target.url ? { probeUrl: target.url } : {}),
+        message,
+        consecutiveFailures: record.consecutiveFailures,
+        detectedAt: new Date(at).toISOString(),
+      })).catch(err => this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`));
+    } catch (err) {
+      this.deps.logger?.warn?.(`[uptime] 告警外发失败: ${(err as Error).message}`);
+    }
   }
 
   /**

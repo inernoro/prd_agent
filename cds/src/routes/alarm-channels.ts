@@ -1,4 +1,5 @@
 import { notificationEnvironment } from '../shared/notification-templates.js';
+import { monitorReportUrl } from '../services/monitor-incident-link.js';
 import type { AlarmRelay } from '../services/alarm-relay.js';
 import { parseAlarmIdentity, identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-identity.js';
 /*
@@ -358,7 +359,7 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     const environment = notificationEnvironment({ declared });
     const event = { ...drillEvent(now), identity, notificationFacts: { environment, system: 'cds' as const } };
     if (deps.recordEvent) {
-      try { const record = await deps.recordEvent(event); Object.assign(event, record); if (boardUrl) { const url = new URL(boardUrl); url.pathname = '/reports'; url.search = new URLSearchParams({ report: record.reportId }).toString(); boardUrl = url.toString(); } }
+      try { const record = await deps.recordEvent(event); Object.assign(event, record); if (boardUrl) { boardUrl = monitorReportUrl(boardUrl, record.reportId); } }
       catch { res.status(503).json({ message: '通知演练报告未保存，本次未发送，请稍后重试' }); return; }
     }
     if (deps.relay?.owns(channel.id)) {

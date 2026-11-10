@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { NOTIFICATION_TEMPLATES, renderNotification, matchesClassification, notificationEnvironment, parseReportClassification,
-  renderNotificationDigest, type NotificationFacts, type ReportClassification } from '../../src/shared/notification-templates.js';
+  renderNotificationDigest, notificationTemplatePattern, type NotificationFacts, type ReportClassification } from '../../src/shared/notification-templates.js';
 import { NotificationReportRecorder } from '../../src/services/notification-report.js';
 import { StateService } from '../../src/services/state.js';
 import { UptimeMonitorService, type UptimeAlertEventData, type UptimeAlertEventType } from '../../src/services/uptime-monitor.js';
@@ -41,7 +41,7 @@ describe('通知交叉分类与唯一模板目录', () => {
       config: { enabled: true, intervalMs: 60000, timeoutMs: 1000, failureThreshold: 1, recoveryThreshold: 1, maxSamples: 100,
         excludePatterns: [], scope: 'all', storePath: stateFile + '.uptime' },
       now: () => now, probe: async () => ({ up, ms: 3 }),
-      onIncident: (type: UptimeAlertEventType, data: UptimeAlertEventData) => {
+      onReportEvent: (type: UptimeAlertEventType, data: UptimeAlertEventData) => {
         const value = alarm(type, data); archived.push(value);
         const task = recorder.record(value); pending.push(task); return task.then(() => undefined);
       },
@@ -65,20 +65,21 @@ describe('通知交叉分类与唯一模板目录', () => {
       now += 60000; up = true; await service.probeNow('monitor@lifecycle'); await settled();
       const actualRecoveryAt = new Date(now).toISOString();
       const actual = state.getAcceptanceReport(failure.id)!;
-      expect(actual.monitorEvent).toMatchObject({ state: 'recovered', incidentId });
-      expect(actual.monitorEvent!.snapshots).toHaveLength(2);
-      expect(actual.monitorEvent!.snapshots.at(-1)?.detectedAt).toBe(actualRecoveryAt);
+      expect(actual.monitorEvent).toMatchObject({ state: 'open', incidentId });
+      expect(actual.monitorEvent!.snapshots).toHaveLength(1);
+      expect(actual.monitorEvent!.snapshots[0].detectedAt).not.toBe(actualRecoveryAt);
       expect(alerts).toHaveLength(1);
       expect(service.getIncident(incidentId!)!.notificationSamples).toHaveLength(1);
       for (let i = 0; i < 10; i++) { now += 60000; await service.probeNow('monitor@lifecycle'); await settled(); }
       expect(state.listAcceptanceReports(null)).toHaveLength(1);
       const report = state.getAcceptanceReport(failure.id)!;
       expect(report.monitorEvent!.state).toBe('recovered');
-      expect(report.monitorEvent!.snapshots).toHaveLength(delivery === '已送达' ? 3 : 2);
+      expect(report.monitorEvent!.snapshots).toHaveLength(2);
+      expect(report.monitorEvent!.snapshots.at(-1)?.detectedAt).toBe(new Date(now).toISOString());
       expect(alerts.map(a => a.type)).toEqual(delivery === '已送达' ? ['uptime.target.down', 'uptime.target.recovered'] : ['uptime.target.down']);
       expect(service.getIncident(incidentId!)!.notificationSamples).toHaveLength(delivery === '已送达' ? 2 : 1);
       if (delivery === '发送失败') expect(attempts).toEqual([{ ok: false }]);
-      const recovery = archived.find(a => a.kind === 'business-recovered')!;
+      const recovery = archived.find(a => a.kind === 'business-recovered') || alarm(alerts.at(-1)!.type, alerts.at(-1)!.data);
       const duplicate = await Promise.all([recorder.record(recovery), recorder.record(recovery)]);
       expect(duplicate.map(a => a.reportId)).toEqual([failure.id, failure.id]);
       expect(state.getAcceptanceReport(failure.id)!.monitorEvent!.snapshots).toEqual(report.monitorEvent!.snapshots);
@@ -96,6 +97,11 @@ describe('通知交叉分类与唯一模板目录', () => {
       expect(text, id).not.toMatch(/\{|\}|\n|点击|管理员|HTTP|token/);
     }
     expect(renderNotification('TASK-02', facts).sentence).toBe('正式 MAP 生图 OpenAI 5分钟失败3次');
+  });
+  it('目录全部使用中文变量，固定主体与真实通知一致', () => {
+    for (const id of Object.keys(NOTIFICATION_TEMPLATES) as Array<keyof typeof NOTIFICATION_TEMPLATES>) expect(notificationTemplatePattern(id)).not.toMatch(/\{[A-Za-z]/);
+    expect(notificationTemplatePattern('MON-02')).toBe('{环境} CDS 监控读取失败，{受影响系统}状态未知');
+    expect(notificationTemplatePattern('GW-06')).toBe('{环境} LLMGW {模型数}个模型未配价格');
   });
   it('缺少窗口不捏造5分钟，缺少次数、未知枚举、零次数、地址或密钥均拒绝', () => {
     expect(renderNotification('TASK-02', { ...facts, window: undefined }).sentence).not.toContain('5分钟');
@@ -154,4 +160,31 @@ describe('通知交叉分类与唯一模板目录', () => {
     expect(content).not.toContain('sk-private');
     expect(state.listAcceptanceReports(null).filter(r => r.sourceId === `monitor:${a.eventId}`)).toHaveLength(1);
   });
+  it('稳定恢复前的反复异常及冷却重报追加同一报告，稳定恢复后才开始新事件', async () => {
+    const state = new StateService(path.join(dir, crypto.randomUUID() + '.json'), dir); state.load();
+    const recorder = new NotificationReportRecorder(state);
+    const first = await recorder.record({ ...event, incidentId: 'first-probe-incident' });
+    const repeated = await recorder.record({ ...event, incidentId: 'flapping-probe-incident', detectedAt: '2026-11-11T01:30:00.000Z' });
+    expect(repeated).toEqual(first);
+    expect(state.listAcceptanceReports(null)).toHaveLength(1);
+    expect(state.getAcceptanceReport(first.reportId)!.monitorEvent!.snapshots).toHaveLength(2);
+    const recovered = await recorder.record({ ...event, kind: 'business-recovered', detectedAt: '2026-11-11T01:45:00.000Z' });
+    expect(recovered).toEqual(first);
+    expect(state.getAcceptanceReport(first.reportId)!.monitorEvent!.snapshots).toHaveLength(3);
+    const next = await recorder.record({ ...event, detectedAt: '2026-11-11T02:00:00.000Z' });
+    expect(next.reportId).not.toBe(first.reportId);
+    expect(state.listAcceptanceReports(null)).toHaveLength(2);
+  });
+
+  it('手机演练不虚构失败检查，也不显示并不存在的监控目标', async () => {
+    const state = new StateService(path.join(dir, crypto.randomUUID() + '.json'), dir); state.load();
+    const recorder = new NotificationReportRecorder(state);
+    const saved = await recorder.record({ ...event, targetId: undefined, drill: true });
+    const report = state.getAcceptanceReport(saved.reportId)!;
+    expect(report.monitorEvent!.snapshots[0].consecutiveFailedChecks).toBe(0);
+    const content = await state.readAcceptanceReportContentAsync(saved.reportId);
+    expect(content).toContain('不代表服务故障'); expect(content).toContain('## 演练记录');
+    expect(content).not.toContain('连续失败检查'); expect(content).not.toContain('查看同一监控目标');
+  });
+
 });
