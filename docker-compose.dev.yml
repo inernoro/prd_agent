@@ -176,13 +176,13 @@ services:
     networks:
       - prdagent-network
 
-  # 独立 LLM 网关服务 llmgw（dev）—— 自包含 llmgw/console-api 项目（不引用 PrdAgent.*，仅 NuGet）。
+  # 独立 LLM 网关服务 llmgw（dev）—— llmgw/console-api 项目（仅共享独立出站传输库，不引用 MAP 服务）。
   # 提供 /gw/healthz、/gw/auth/login、/gw/logs，监听 8090，宿主映射 5090。构建上下文与 CI
-  # （branch-image.yml: context ./llmgw/console-api）一致——不能再复用 api 镜像，否则跑的是 PrdAgent.Api.dll、/gw/* 全缺。
+  # （branch-image.yml: context 仓库根目录）一致——不能再复用 api 镜像，否则跑的是 PrdAgent.Api.dll、/gw/* 全缺。
   llmgw:
     build:
-      context: ./llmgw/console-api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: llmgw/console-api/Dockerfile
     image: prdagent-llmgw:dev
     container_name: prdagent-llmgw
     ports:

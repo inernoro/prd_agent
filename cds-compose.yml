@@ -204,6 +204,7 @@ x-cds-deploy-modes:
       # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
       buildScope:
         - "llmgw/console-api/**"
+        - "prd-api/src/LlmGateway.Transport/**"
         - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true

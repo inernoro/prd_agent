@@ -1549,8 +1549,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Ascending(\"TenantId\").Ascending(\"NameNormalized\")", initializer);
         Assert.Contains("Filter.Type(\"TenantId\", BsonType.String)", initializer);
         Assert.Contains("body: req", api);
-        Assert.Contains("IsExternalTenant(tenantId)", gateway);
-        Assert.Contains("CreateClient(\"SafeOutbound\")", gateway);
+        Assert.Contains("new UpstreamProxyClientScope(_httpClientFactory, IsExternalTenant(request.Context?.TenantId))", gateway);
+        Assert.Contains("CreateClient(\"SafeOutbound\")", ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/UpstreamProxyClientScope.cs"));
         Assert.Contains("requirePublicPinnedWebSocket: externalTenant", gateway);
         Assert.Contains("AddHttpClient(\"SafeOutbound\")", serving);
         Assert.Contains("SafeOutboundHttpHandlerFactory", serving);
@@ -4223,7 +4223,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw/serving/**", workflow);
         Assert.Contains("context: .", workflow);
         Assert.Contains("file: ./llmgw/serving/Dockerfile", workflow);
-        Assert.Contains("context: ./llmgw/console-api", devCompose);
+        Assert.Contains("context: .\n      dockerfile: llmgw/console-api/Dockerfile", devCompose);
+        Assert.Contains("COPY prd-api/src/LlmGateway.Transport/", ReadRepoFile("llmgw/console-api/Dockerfile"));
         Assert.Contains("context: ./llmgw/web", devCompose);
     }
 

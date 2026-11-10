@@ -8,6 +8,7 @@
 //     数值/日期类型混存导致的反序列化异常，日志查询统一以 BsonDocument 读取并手动安全映射。
 
 using System.Text;
+using PrdAgent.GatewayTransport;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Net;
@@ -3599,6 +3600,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
 }).RequireAuthorization("LogsRead");
 
 // 平台列表（密钥字段绝不外泄，只回 hasKey）
+var upstreamProxies = new UpstreamProxyService(gatewayDatabase, config, internalTenantId);
+upstreamProxies.MapEndpoints(app, jsonOptions);
+
 app.MapGet("/gw/platforms", async (HttpContext http) =>
 {
     var mapDocs = TenantAccess.GetRequired(http).TenantId == internalTenantId
@@ -12703,6 +12707,11 @@ app.MapPost("/gw/platforms", async (HttpContext http, [FromBody] CreatePlatformR
     var id = $"gw-platform-{Guid.NewGuid():N}";
     var now = DateTime.UtcNow;
     var document = GatewayConfigurationProvisioning.BuildPlatformDocument(draft, tenantId, id, encryptedApiKey, now);
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { document[UpstreamProxy.Field] = await upstreamProxies.BuildAsync(http, proxyInput); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
     try
     {
         await gwPlatforms.InsertOneAsync(document);
@@ -12907,7 +12916,8 @@ app.MapPost("/gw/platforms/{id}/test", async (HttpContext http, string id) =>
         // 上游先回头、再把 body 挂住慢慢流，下面这个读就没人管了，
         // 「保存后自动测一次」会挂死并占住一个控制台请求。
         using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
+        using var proxyClient = await upstreamProxies.CreateClientAsync(http, doc);
+        using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, probeCts.Token);
         sw.Stop();
         var status = (int)resp.StatusCode;
         int? modelCount = null;
@@ -13027,7 +13037,8 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         // 与「测试连接」同款：外部租户强制内网校验，整条请求（含读 body）共用一个 15 秒预算
         req.Options.Set(blockPrivateProbeTargets, TenantAccess.GetRequired(http).TenantId != internalTenantId);
         using var discoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        using var resp = await upstreamProbeHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
+        using var proxyClient = await upstreamProxies.CreateClientAsync(http, doc);
+        using var resp = await (proxyClient ?? upstreamProbeHttp).SendAsync(req, HttpCompletionOption.ResponseHeadersRead, discoveryCts.Token);
         if (!resp.IsSuccessStatusCode)
             return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_" + (int)resp.StatusCode,
                 $"上游返回 HTTP {(int)resp.StatusCode}，先点「测试连接」看具体原因"), jsonOptions, 502);
@@ -14318,6 +14329,17 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
 
     var updates = new List<UpdateDefinition<BsonDocument>>();
     var changes = new BsonDocument();
+    if (body.Proxy is { } proxyInput)
+    {
+        try
+        {
+            var proxy = await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(doc));
+            updates.Add(Builders<BsonDocument>.Update.Set(UpstreamProxy.Field, proxy));
+            changes["proxyMode"] = UpstreamProxy.View(proxy).Mode;
+            changes["proxyAddress"] = (BsonValue?)UpstreamProxy.View(proxy).Address ?? BsonNull.Value;
+        }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<PlatformItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
 
     if (body.Name is not null)
     {
@@ -14877,6 +14899,11 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
     var now = DateTime.UtcNow;
     var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
         draft, tenantId, id, encryptedApiKey, now, TenantAccess.GetRequired(http).Username);
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { document[UpstreamProxy.Field] = await upstreamProxies.BuildAsync(http, proxyInput); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
     string requiredAuditId;
     try
     {
@@ -15041,6 +15068,12 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
     var nextVersion = currentVersion + 1;
     var update = GatewayConfigurationProvisioning.BuildExchangeUpdate(
         draft, document, TenantAccess.GetRequired(http).Username, DateTime.UtcNow, nextVersion);
+    if (body?.Proxy is { } proxyInput)
+    {
+        try { update = Builders<BsonDocument>.Update.Combine(update, Builders<BsonDocument>.Update.Set(UpstreamProxy.Field,
+            await upstreamProxies.BuildAsync(http, proxyInput, UpstreamProxy.Read(document)))); }
+        catch (ArgumentException ex) { return Json(ApiEnvelope<ExchangeItem>.Fail("INVALID_PROXY", ex.Message), jsonOptions, 400); }
+    }
     string requiredAuditId;
     try
     {
@@ -18178,6 +18211,7 @@ static PlatformItem MapPlatform(BsonDocument d, IConfiguration? keyConfig = null
 
     return new PlatformItem
     {
+        Proxy = UpstreamProxy.View(UpstreamProxy.Read(d)),
         Id = d.GetStringOrEmpty("_id"),
         Name = d.GetStringOrEmpty("Name"),
         PlatformType = d.GetStringOrEmpty("PlatformType"),
@@ -18744,6 +18778,7 @@ static ExchangeItem MapExchange(BsonDocument d)
 
     return new ExchangeItem
     {
+        Proxy = UpstreamProxy.View(UpstreamProxy.Read(d)),
         Id = d.GetStringOrEmpty("_id"),
         Name = d.GetStringOrEmpty("Name"),
         ModelAlias = d.AsNullableString("ModelAlias") ?? string.Empty,
