@@ -20,6 +20,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ShortVideoMaterialWorker> _logger;
     private string? _currentRunId;
+    private ShortVideoMaterialRun? _currentRun;
 
     public ShortVideoMaterialWorker(IServiceScopeFactory scopeFactory, ILogger<ShortVideoMaterialWorker> logger)
     {
@@ -86,6 +87,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 recoverFilter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.ProcessingToken, (string?)null)
                     .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
@@ -132,6 +134,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 filter,
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.ProcessingToken, (string?)null)
                     .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_TIMEOUT)
                     .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
@@ -148,15 +151,17 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
 
     private async Task MarkCurrentRunFailedAsync(string message)
     {
-        if (string.IsNullOrWhiteSpace(_currentRunId)) return;
+        var currentRun = _currentRun;
+        if (currentRun is null) return;
         try
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             await db.ShortVideoMaterialRuns.UpdateOneAsync(
-                r => r.Id == _currentRunId && r.Status == "running",
+                ShortVideoMaterialProcessor.ActiveRunFilter(currentRun),
                 Builders<ShortVideoMaterialRun>.Update
                     .Set(r => r.Status, "failed")
+                    .Set(r => r.ProcessingToken, (string?)null)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, message)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
@@ -187,6 +192,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 ownerScope),
             Builders<ShortVideoMaterialRun>.Update
                 .Set(r => r.Status, "running")
+                .Set(r => r.ProcessingToken, Guid.NewGuid().ToString("N"))
                 .Set(r => r.ErrorCode, (string?)null)
                 .Set(r => r.ErrorMessage, (string?)null)
                 // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）
@@ -201,6 +207,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         if (run == null) return;
 
         _currentRunId = run.Id;
+        _currentRun = run;
         try
         {
             // 不用 WaitAsync 套超时:那只会让 await 提前返回、原 ProcessAsync 仍在后台跑(无 ct
@@ -212,20 +219,22 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[short-video-material] Process failed run={RunId}", run.Id);
-            var latest = await db.ShortVideoMaterialRuns.Find(r => r.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+            var latest = await db.ShortVideoMaterialRuns.Find(ShortVideoMaterialProcessor.ActiveRunFilter(run)).FirstOrDefaultAsync(CancellationToken.None);
             if (latest != null)
             {
                 latest.Status = "failed";
+                latest.ProcessingToken = null;
                 latest.ErrorCode = ErrorCodes.INTERNAL_ERROR;
                 latest.ErrorMessage = ex.Message;
                 ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
                 latest.UpdatedAt = DateTime.UtcNow;
-                await db.ShortVideoMaterialRuns.ReplaceOneAsync(r => r.Id == latest.Id, latest, cancellationToken: CancellationToken.None);
+                await db.ShortVideoMaterialRuns.ReplaceOneAsync(ShortVideoMaterialProcessor.ActiveRunFilter(run), latest, cancellationToken: CancellationToken.None);
             }
         }
         finally
         {
             _currentRunId = null;
+            _currentRun = null;
         }
     }
 }
@@ -364,7 +373,7 @@ public sealed class ShortVideoMaterialProcessor
         string runId,
         DateTime now)
     {
-        var fileName = BuildVideoFileName(title);
+        var fileName = BuildVideoFileName(title, video.MimeType);
         var attachment = new Attachment
         {
             UploaderId = userId,
@@ -531,13 +540,24 @@ public sealed class ShortVideoMaterialProcessor
         }
     }
 
-    private static string BuildVideoFileName(string title)
+    internal static string BuildVideoFileName(string title, string? mimeType)
     {
         var safe = Regex.Replace(title.Trim(), @"[\\/:*?""<>|\r\n]+", " ");
         safe = Regex.Replace(safe, @"\s+", " ").Trim();
         if (string.IsNullOrWhiteSpace(safe)) safe = "短视频素材";
         if (safe.Length > 60) safe = safe[..60].Trim();
-        return $"{safe}.mp4";
+        var extension = (mimeType ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
+            "video/quicktime" => "mov",
+            "video/webm" => "webm",
+            "video/x-matroska" => "mkv",
+            "video/x-msvideo" => "avi",
+            _ => throw new InvalidOperationException(
+                $"下载的视频格式不受支持（{mimeType ?? "未知"}），请改用 MP4、MOV、WebM、MKV 或 AVI 文件"),
+        };
+        return $"{safe}.{extension}";
     }
 
     private static string BuildVideoIndex(string title, string originalUrl, string platform, ParsedShortVideoSource parsed)
@@ -625,14 +645,26 @@ public sealed class ShortVideoMaterialProcessor
         return entry;
     }
 
+    internal static FilterDefinition<ShortVideoMaterialRun> ActiveRunFilter(ShortVideoMaterialRun run)
+    {
+        if (string.IsNullOrWhiteSpace(run.ProcessingToken))
+            throw new InvalidOperationException("短视频任务缺少本次处理标识，已停止继续写入");
+        var f = Builders<ShortVideoMaterialRun>.Filter;
+        return f.Eq(x => x.Id, run.Id) & f.Eq(x => x.UserId, run.UserId)
+            & f.Eq(x => x.OwnerInstanceId, run.OwnerInstanceId) & f.Eq(x => x.TaskPermitId, run.TaskPermitId)
+            & f.Eq(x => x.ProcessingToken, run.ProcessingToken) & f.Eq(x => x.Status, "running");
+    }
+
     private async Task SaveRunAsync(ShortVideoMaterialRun run)
     {
+        // 先冻结本次处理条件，再清终态标识；不允许迟到保存重建已删除或接管的记录。
+        var filter = ActiveRunFilter(run);
         run.UpdatedAt = DateTime.UtcNow;
-        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(
-            r => r.Id == run.Id,
-            run,
-            new ReplaceOptions { IsUpsert = true },
-            CancellationToken.None);
+        if (run.Status is "done" or "failed" or "cancelled") run.ProcessingToken = null;
+        var saved = await _db.ShortVideoMaterialRuns.ReplaceOneAsync(
+            filter, run, new ReplaceOptions { IsUpsert = false }, CancellationToken.None);
+        if (saved.MatchedCount != 1)
+            throw new InvalidOperationException("短视频任务处理权已失效，已停止继续写入");
     }
 
     public static List<ShortVideoMaterialStage> BuildInitialStages()
@@ -682,6 +714,17 @@ public sealed class ShortVideoMaterialProcessor
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
            && !string.IsNullOrWhiteSpace(uri.Host);
 
+    public static bool IsDirectVideoUrl(string? value)
+    {
+        if (!Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrWhiteSpace(uri.Host))
+            return false;
+
+        return Path.GetExtension(uri.AbsolutePath).ToLowerInvariant() is
+            ".mp4" or ".m4v" or ".mov" or ".webm" or ".mkv" or ".avi";
+    }
+
     public static string DetectPlatform(string url)
     {
         var lower = url.ToLowerInvariant();
@@ -698,6 +741,22 @@ public sealed class ShortVideoMaterialProcessor
     {
         var trimmedManual = manualText?.Trim();
         var hasManualText = !string.IsNullOrWhiteSpace(trimmedManual);
+        if (Uri.TryCreate(videoUrl.Trim(), UriKind.Absolute, out var directUri)
+            && string.Equals(Path.GetExtension(directUri.AbsolutePath), ".ogv", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("当前下载与转写流水线不支持 OGV 直链，请先转换为 MP4、MOV、WebM、MKV 或 AVI");
+        if (IsDirectVideoUrl(videoUrl))
+        {
+            return new ParsedShortVideoSource(
+                CleanTitle(requestedTitle),
+                trimmedManual,
+                hasManualText ? "manual" : "direct-video",
+                hasManualText
+                    ? "已识别到直接视频文件，并使用用户提供的文字作为后续加工来源"
+                    : "已识别到直接视频文件；默认先保存原始视频，再从视频执行真实转写",
+                null,
+                videoUrl,
+                null);
+        }
         var apiKey = ResolveTikHubApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
         {
