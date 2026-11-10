@@ -93,3 +93,7 @@
 结果入口为[检查与通知总览](https://cds.miduo.org/status/prd-agent#inspections)。[CDS原轮验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=dda0753c27c24231a66dea4db2c98ce3&report=7f9cb08f603344b7b5b0b8203b416fbd)保留143张证据与原结论；[手机按钮双主题专项](https://cds.miduo.org/reports?project=prd-agent&folder=dda0753c27c24231a66dea4db2c98ce3&report=862f49377d414542bd90d363bc72137b)保留原CDS证据；手机布局与网关停用原因已于本日通过原生发布上线MAP a377118c并正式专项验收，Redis与报告空白已上线CDS 898d3e823并实测。本次四项4/4=100%，不改写原143项覆盖与历史失败。
 
 本次收尾不再追加扩充功能或覆盖补测。原视频成片额度限制继续按用户要求暂缓，OpenRouter不动；周期任务既有记录与通知回执保留，不以专项完成时间冒充全量巡检时间。
+
+### 既有登录审计测试的独立故障判据
+
+响应过大、读取异常、解析失败与超时必须各自验证原审计结果。测试夹具仅让超时反例使用原 100 毫秒期限，其余内存响应允许有限处理时间；产品超时、鉴权和审计正文上限均不变。原所有场景、断言与超时反例保留，默认单元测试仍由准确提交的 CI 判定，不以本地编译替代。

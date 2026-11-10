@@ -9,7 +9,7 @@ import {
   GitBranch, GitCommitHorizontal, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { marked } from 'marked';
+import { buildMarkdownReportDocument } from '@/lib/report-document';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -2304,19 +2304,7 @@ function ReportViewer({
           setMdHtml(raw);
           return;
         }
-        const parsed = marked.parse(raw, { async: false }) as string;
-        const linkColor = theme === 'dark' ? '#60a5fa' : '#2563eb';
-        const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-          :root { color-scheme: ${theme}; }
-          body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 1.75rem clamp(1.75rem, 6vw, 6rem); max-width: 68.75rem; margin: 0 auto; }
-          pre { background: rgba(127,127,127,0.12); padding: 0.75rem; border-radius: 0.5rem; overflow: auto; }
-          code { background: rgba(127,127,127,0.12); padding: 1px 0.25rem; border-radius: 0.25rem; }
-          pre code { background: transparent; padding: 0; }
-          table { border-collapse: collapse; } th, td { border: 1px solid rgba(127,127,127,0.3); padding: 0.375rem 0.625rem; }
-          img { max-width: 100%; height: auto; }
-          a { color: ${linkColor}; }
-        </style></head><body>${parsed}</body></html>`;
-        setMdHtml(doc);
+        setMdHtml(buildMarkdownReportDocument(raw, theme));
       })
       .catch((err) => {
         if (reqRef.current !== token) return;
@@ -2343,8 +2331,8 @@ function ReportViewer({
 
   return (
     <div className={`flex min-h-0 flex-1 flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-[hsl(var(--background))] ${expanded ? 'fixed inset-0 z-[100] rounded-none' : 'rounded-md'}`}>
-      <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="flex flex-col items-stretch gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           {onBack ? (
             /* 桌面端也必须能回去（2026-09-08 验收发现）：主页改成「结论优先」之后，
                /reports 的默认画面是结论头条而不是列表；这个按钮原来带 lg:hidden，
@@ -2360,13 +2348,13 @@ function ReportViewer({
             </Button>
           ) : null}
           {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
-          <span className="truncate text-sm font-medium">{report.title}</span>
+          <span className="min-w-0 flex-1 break-words text-sm font-medium md:truncate" title={report.title}>{report.title}</span>
           <FormatBadge format={report.format} />
-          <span className="inline-flex shrink-0 items-center gap-1 text-[0.6875rem] text-muted-foreground" title={`报告时间：${formatTime(report.createdAt)}`}>
+          <span className="inline-flex basis-full items-center gap-1 text-[0.6875rem] text-muted-foreground md:basis-auto md:shrink-0" title={`报告时间：${formatTime(report.createdAt)}`}>
             <CalendarDays className="h-3.5 w-3.5" />报告时间 {formatTime(report.createdAt)}
           </span>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 md:shrink-0">
           {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
           <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[0.6875rem]" onClick={() => onSync(report)} title="使用 MAP 当前登录账号保存到我的验收知识库">
             <Save />保存到 MAP

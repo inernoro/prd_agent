@@ -29,10 +29,10 @@ let root: Root;
 let host: HTMLDivElement;
 const input = (placeholder: string) => document.querySelector<HTMLInputElement>(`input[placeholder="${placeholder}"]`)!;
 async function settle(ms = 30) { await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); }); }
-async function paste() {
+async function paste(text = notice) {
   const area = document.querySelector<HTMLTextAreaElement>('#version-message-formal')!;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(area, notice);
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(area, text);
     area.dispatchEvent(new Event('paste', { bubbles: true }));
     area.dispatchEvent(new Event('input', { bubbles: true }));
   });
@@ -56,6 +56,35 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); useAuthStore.setState(useAuthStore.getInitialState(), true); });
 
 describe('完整正式申领弹窗的原文回填', () => {
+  it('从通知开头、字段行内和结尾提取 TAPD 链接，保留其他链接及原文', async () => {
+    const first = 'https://www.tapd.cn/64054517/story/detail/1164054517001005107';
+    const second = 'https://www.tapd.cn/tapd_fe/64054517/story/detail/1164054517001005220?from=copy';
+    const third = 'https://www.tapd.cn/64054517/bugtrace/bugs/view/1164054517001005270';
+    const other = 'https://www.tapd.cn.example.test/story/123';
+    const original = `${first}\n${notice.replace('需求来源：内部', `需求来源：内部（${second}）`)}\n其他参考：${other}\n${third}，${first}`;
+    await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
+    const noLinks = document.querySelector<HTMLInputElement>('section[aria-label="TAPD 需求"] input[type="checkbox"]')!;
+    await act(async () => noLinks.click());
+    expect(noLinks.checked).toBe(true);
+    await paste(original);
+    expect(noLinks.checked).toBe(false);
+    expect([...document.querySelectorAll<HTMLInputElement>('section[aria-label="TAPD 需求"] input[type="url"]')].map((row) => row.value)).toEqual([first, second, third]);
+    const [, parsedText] = api.parseProductVersionMessage.mock.calls[0];
+    expect(parsedText).toContain(source.planUrl);
+    expect(parsedText).toContain(other);
+    for (const link of [first, second, third]) expect(parsedText).not.toContain(link);
+    expect(document.querySelector<HTMLTextAreaElement>('#version-message-formal')?.value).toBe(original);
+    expect(input('搜索方案名称或 T 号').value).toBe(`${source.tCode} · ${source.planName}`);
+  });
+
+  it('只粘贴 TAPD 链接也能直接回填', async () => {
+    const url = 'https://www.tapd.cn/tapd_fe/64054517/story/detail/1164054517001005220';
+    await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
+    await paste(url);
+    expect(input('https://www.tapd.cn/…').value).toBe(url);
+    expect(api.parseProductVersionMessage).not.toHaveBeenCalled();
+  });
+
   it('粘贴名称不同仍使用已匹配T保存的名称和关联资料，不提交对T的修改', async () => {
     api.parseProductVersionMessage.mockResolvedValue({ success: true, data: { result: {
       planName: '粘贴原文中的另一名称', matchedInitiationId: source.id, matchedApplicationId: source.productId,

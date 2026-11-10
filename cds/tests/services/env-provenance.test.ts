@@ -97,7 +97,35 @@ describe('resolveProfileRuntimeEnvWithProvenance — 溯源语义', () => {
     });
     expect(r.env['VITE_BUILD_ID']).toBe('abc123def456');
     expect(r.env['VITE_GIT_BRANCH']).toBe('claude/feat-x');
+    expect(r.env['CDS_BRANCH_SLUG']).toBe('claude-feat-x');
     expect(r.env['CDS_BUILD_TIME']).toBe('2026-07-06T08:00:00.000Z');
+  });
+
+  it('预构建模式的版本元数据使用实际镜像 ciTargetSha', () => {
+    const r = resolveProfileRuntimeEnvWithProvenance(
+      { ...BRANCH, ciTargetSha: 'built111', githubCommitSha: 'pushed222' },
+      { dockerImage: 'ghcr.io/acme/api:sha-${CDS_COMMIT_SHA}', prebuiltImage: true },
+      [],
+      [{ source: 'profile', env: { IMP_TARGET_SHA: '${CDS_COMMIT_SHA}' } }],
+      OPTS,
+    );
+    expect(r.env['CDS_COMMIT_SHA']).toBe('built111');
+    expect(r.env['IMP_TARGET_SHA']).toBe('built111');
+    expect(prov(r, 'CDS_COMMIT_SHA')).toMatchObject({
+      source: 'platform-injected',
+      detail: 'version-metadata',
+    });
+  });
+
+  it('源码模式不读取可能过期的 ciTargetSha', () => {
+    const r = resolveProfileRuntimeEnvWithProvenance(
+      { ...BRANCH, ciTargetSha: 'old-built', githubCommitSha: 'source333' },
+      { dockerImage: 'node:20', prebuiltImage: false },
+      [],
+      [],
+      OPTS,
+    );
+    expect(r.env['CDS_COMMIT_SHA']).toBe('source333');
   });
 
   it('per-branch DB 改写:dbScope=per-branch 的库名 key 打 per-branch-db,原来源进 shadowed', () => {
@@ -226,7 +254,7 @@ describe('resolveProfileRuntimeEnvWithProvenance — 与旧部署路径行为等
     // BULLMQ_PREFIX 为 2026-07-09 新增的平台注入项（分支队列隔离，通道 7）
     expect(Object.keys(r.env).sort()).toEqual([
       'BULLMQ_PREFIX', 'CDS_BUILD_TIME', 'COMMIT_SHA', 'GITHUB_SHA', 'GIT_COMMIT', 'Jwt__Issuer',
-      'SOURCE_VERSION', 'VITE_BUILD_ID', 'VITE_GIT_BRANCH',
+      'SOURCE_VERSION', 'VITE_BUILD_ID', 'VITE_GIT_BRANCH', 'CDS_BRANCH_SLUG',
     ].sort().concat(['CDS_COMMIT_SHA']).sort());
   });
 });

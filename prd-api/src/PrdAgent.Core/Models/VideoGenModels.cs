@@ -139,6 +139,9 @@ public static class VideoGenRunStatus
     /// <summary>用户已提交，等待 worker 拾取</summary>
     public const string Queued = "Queued";
 
+    /// <summary>带部署归属的新队列；旧 Worker 只领取 Queued，不能抢走新任务。</summary>
+    public const string ScopedQueued = "ScopedQueued";
+
     /// <summary>storyboard 模式：LLM 正在拆分镜</summary>
     public const string Scripting = "Scripting";
 
@@ -247,6 +250,11 @@ public class VideoGenScene : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// <summary>本镜成本（美元）</summary>
     public double? Cost { get; set; }
 
+    /// <summary>取消后仅查询原已提交作业的收据，不代表本地任务恢复生成。</summary>
+    public string? UpstreamStatus { get; set; }
+    public DateTime? ReconciledAt { get; set; }
+    public DateTime? ReceiptQueuedAt { get; set; }
+
     /// <summary>本镜单段视频 URL（已下载到 COS）</summary>
     public string? VideoUrl { get; set; }
 
@@ -289,7 +297,20 @@ public class VideoGenRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string AppKey { get; set; } = "video-agent";
     public string? ProjectId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
     public string Status { get; set; } = VideoGenRunStatus.Queued;
+
+    /// <summary>仅持久化内部队列身份，对外仍沿用 Queued 契约。</summary>
+    [BsonIgnore]
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string PublicStatus
+    {
+        get => Status == VideoGenRunStatus.ScopedQueued ? VideoGenRunStatus.Queued : Status;
+        set => Status = value;
+    }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? DeploymentSlug { get; set; }
 
     /// <summary>创作模式：direct（一镜直出）/ storyboard（拆分镜）</summary>
     public string Mode { get; set; } = VideoGenMode.Direct;

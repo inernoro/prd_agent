@@ -539,7 +539,7 @@ describe('Executor /exec/deploy', () => {
     const version = versions.create({ projectId: 'default', branchId: f.entry.id, commitSha: f.target, configHash: 'c'.repeat(64),
       profiles: [profile], branch: stateService.getBranch(f.entry.id)!, createdByRunId: 'owned-portable-reference' });
     expect(version.profiles[0]).toMatchObject({ artifactKind: 'prebuilt-image', artifactImage: runtimeImage, reusable: true });
-    expect(versions.materializeProfiles(version, [profile])[0].dockerImage).toBe(runtimeImage);
+    expect(versions.materializeProfiles(version, [profile], f.entry)[0].dockerImage).toBe(runtimeImage);
     expect(runningCommitSha(stateService.getBranch(f.entry.id)!)).toBe(f.target);
   });
 

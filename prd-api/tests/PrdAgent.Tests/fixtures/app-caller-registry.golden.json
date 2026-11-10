@@ -120,6 +120,12 @@
     ]
   },
   {
+    "code": "cds.code-review::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "channel-adapter.email.classify::chat",
     "modelTypes": [
       "chat"
@@ -339,6 +345,12 @@
     "code": "marketplace-skill.summary::chat",
     "modelTypes": [
       "chat"
+    ]
+  },
+  {
+    "code": "mcp-speech.synthesize::tts",
+    "modelTypes": [
+      "tts"
     ]
   },
   {

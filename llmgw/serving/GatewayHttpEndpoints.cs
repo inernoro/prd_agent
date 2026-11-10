@@ -58,6 +58,9 @@ public static class GatewayHttpEndpoints
         //   同样只接受 gateway key；为兼容 OpenAI SDK，允许 Authorization: Bearer <key>。
         app.Use(async (context, next) =>
         {
+            // These endpoints have their own trusted CDS issuer/task-capability authentication and physical token admission.
+            // They can resolve only an encrypted personal credential; never a platform pool.
+            if (context.GetEndpoint()?.Metadata.GetMetadata<CodeReviewUserKeyEndpoint>() is not null) { await next(); return; }
             var path = GatewayTaskRoutePolicy.Normalize(context.Request.Path.Value ?? string.Empty);
             // serving只承载网关数据面。新增已匹配端点默认进密钥/任务门，遗漏业务治理方法也不能发送上游。
             var protectedNewEndpoint = context.GetEndpoint() is not null

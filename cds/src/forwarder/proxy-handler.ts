@@ -25,7 +25,7 @@ import zlib from 'node:zlib';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
-import { buildWidgetScript } from '../widget-script.js';
+import { buildWidgetScript, isPreviewWidgetNavigation } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
 import { PreviewActivityCollector, type PreviewActivitySnapshot } from './preview-activity.js';
@@ -586,6 +586,7 @@ export class ProxyHandler {
           const shouldInjectWidget =
             !!route.branchId &&
             !!route.branchName &&
+            isPreviewWidgetNavigation(req) &&
             contentType.includes('text/html') &&
             status >= 200 && status < 300;
 

@@ -168,7 +168,7 @@ describe('原始证据与原版文档', () => {
     const finding = { filePath: 'src/a.ts', line: 12, category: 'security' as const, severity: 'high' as const, message: '<script>unsafe()</script>', tool: 'DeepAudit', verified: false as const };
     const missing = renderToStaticMarkup(createElement(FindingDetail, { finding }));
     expect(missing).toContain('&lt;script&gt;unsafe()&lt;/script&gt;');
-    expect(missing).not.toContain('<script>'); expect(missing).not.toContain('代码证据'); expect(missing).not.toContain('AI 解释');
+    expect(missing).not.toContain('<script>'); expect(missing).toContain('原始结果未提供代码片段'); expect(missing).not.toContain('<pre'); expect(missing).not.toContain('模型解释');
     const full = renderToStaticMarkup(createElement(FindingDetail, { finding: { ...finding, codeSnippet: '<img onerror="unsafe()">', aiExplanation: '原始解释' } }));
     expect(full).toContain('代码证据'); expect(full).toContain('&lt;img'); expect(full).toContain('原始解释');
   });
@@ -178,6 +178,7 @@ describe('原始证据与原版文档', () => {
     const document = buildCodeReviewDocument(original, 'html', 'dark', token);
     expect(document).toContain(original); expect(document).toContain(`script-src 'nonce-${token}'`);
     expect(document).toContain(`<script nonce="${token}">`);
+    expect(document.indexOf(`<script nonce="${token}">`)).toBeLessThan(document.indexOf(original));
     expect(document).not.toContain('color-scheme:dark');
     expect(buildCodeReviewDocument(original, 'html', 'dark', 'injected')).not.toContain('<script');
   });

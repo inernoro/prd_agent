@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.20.5
+  version: 0.20.6
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, checks current-site load and tells users about standby sites with host-isolated credentials, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.20.5 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
+> **版本**：v0.20.6 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -602,3 +602,7 @@ prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变
 设备恢复签发的用户身份仅可发现和补回此次原项目，不能建项目、不能借原账号其他授权扩范围。管理员在用户管理核对历史匿名凭据的确切项目、凭据ID与原账号后确认归属；不按Agent名推断，不批量迁移。已撤销和已有归属不可认领，认领保留原范围并立即受账号/项目撤权约束。原授权对话框支持搜索和定位原项目，仅过滤展示，不自动恢复勾选。
 
 历史结果首次整理可能返回 `result: null, resultLoading: true`；继续查询同一任务直至返回分页结果。该过程只读取已有问题，不恢复收费审查。
+
+## 代码审查用户 Key
+
+在“更多选项”可选择自己的 OpenAI、Anthropic、OpenRouter 或 DeepSeek Key；失败不回退平台额度。CLI 使用 `code-review submit --user-key-env <本地变量名> --provider <供应商> --model <模型> --token-limit <保护额度>`，不要把明文 Key 放在参数或报告中。`code-review usage <任务ID>` 查询网关同账本用量；只有 Key 所有者可以继续重试消费。MCP 的 `userKey.apiKeyEnv` 同样只填写本地环境变量名。
