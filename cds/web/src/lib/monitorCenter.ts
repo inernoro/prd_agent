@@ -21,7 +21,19 @@ export type MonitorEnvironment = 'production' | 'staging' | 'other' | 'preview';
 /** 观测方式：主动自己发一次真请求 / 被动读真实流量的窗口统计。 */
 export type ObserveMode = 'active' | 'passive';
 
+/** A real health-check reading; round-trip latency is not a business metric. */
+export interface UptimeMeasurement {
+  name: string;
+  field: 'status' | 'observedValue';
+  actual: string | number | boolean | null;
+  expected: string;
+  op: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+  unit?: string;
+}
+
 export interface UptimeSample {
+  measurement?: UptimeMeasurement;
+  finding?: string;
   noData?: boolean;
   t: number;
   up: boolean;
@@ -246,6 +258,9 @@ export interface UptimeIncidentView {
   endedAt: number | null;
   durationMs: number;
   cause: string;
+  /** Persisted samples at the incident transitions, absent for legacy records. */
+  startedSample?: UptimeSample;
+  endedSample?: UptimeSample;
   ongoing: boolean;
   /** 疑似引入本次故障的发布（生产目标才有）。无归因时后端不下发。 */
   releaseId?: string;
