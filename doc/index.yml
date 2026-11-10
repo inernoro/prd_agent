@@ -181,6 +181,7 @@ docs:
   design.workflow-agent.engine: "工作流引擎 · 设计"
 
   # 三、指南
+  guide.cds.code-review: "CDS DeepAudit 代码审查使用与维护 · 指南"
   guide.acceptance.daily-sop: "MAP 每日自动化验收 SOP · 指南"
   guide.acceptance.report-evidence: "MAP 验收报告与证据交互 · 指南"
   guide.ai-toolbox.ops: "AI 百宝箱 (AI Toolbox) · 指南"
@@ -299,6 +300,7 @@ docs:
   plan.platform.mcp-capability-completion: "MCP 接入与能力补齐 · 计划"
 
   # 五、计划
+  plan.cds.code-review-delivery: "CDS 代码审查需求兑现台账 · 计划"
   plan.platform.background-task-safety.phase0: "平台后台任务与消费最低保护 · 阶段 0 计划"
   plan.platform.background-task-safety.phase1: "平台任务级准入与统一出口 · 阶段 1 计划"
   plan.platform.background-task-safety.phase2: "平台业务幂等、执行租约与取消撤销 · 阶段 2 计划"

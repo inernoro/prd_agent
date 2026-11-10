@@ -53,6 +53,8 @@ public class VideoGenService : IVideoGenService
             Assets = NormalizeAssets(request?.Assets),
             TimelineTracks = NormalizeTimelineTracks(request?.TimelineTracks),
         };
+        await using var references = await VideoAssetMutationLease.GuardProjectReferencesAsync(
+            _db, _assetStorage, project.Assets, project.TimelineTracks, ct);
         await _db.VideoProjects.InsertOneAsync(project, cancellationToken: ct);
         return project;
     }
@@ -92,6 +94,10 @@ public class VideoGenService : IVideoGenService
     {
         var project = await GetProjectAsync(projectId, ownerAdminId, appKey, ct)
                       ?? throw new KeyNotFoundException("视频项目不存在");
+        var assets = request.Assets == null ? null : NormalizeAssets(request.Assets);
+        var tracks = request.TimelineTracks == null ? null : NormalizeTimelineTracks(request.TimelineTracks);
+        await using var references = await VideoAssetMutationLease.GuardProjectReferencesAsync(
+            _db, _assetStorage, assets ?? [], tracks ?? [], ct);
         var updates = new List<UpdateDefinition<VideoProject>>
         {
             Builders<VideoProject>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
@@ -108,8 +114,8 @@ public class VideoGenService : IVideoGenService
         if (request.DefaultResolution != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultResolution, NormalizeResolution(request.DefaultResolution, project.DefaultResolution)));
         if (request.DefaultDuration.HasValue) updates.Add(Builders<VideoProject>.Update.Set(x => x.DefaultDuration, NormalizeDuration(request.DefaultDuration)));
         if (request.GenerateAudio.HasValue) updates.Add(Builders<VideoProject>.Update.Set(x => x.GenerateAudio, request.GenerateAudio.Value));
-        if (request.Assets != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.Assets, NormalizeAssets(request.Assets)));
-        if (request.TimelineTracks != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.TimelineTracks, NormalizeTimelineTracks(request.TimelineTracks)));
+        if (assets != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.Assets, assets));
+        if (tracks != null) updates.Add(Builders<VideoProject>.Update.Set(x => x.TimelineTracks, tracks));
 
         await _db.VideoProjects.UpdateOneAsync(x => x.Id == projectId && x.OwnerAdminId == ownerAdminId,
             Builders<VideoProject>.Update.Combine(updates), cancellationToken: ct);
@@ -724,6 +730,8 @@ public class VideoGenService : IVideoGenService
                 _db,
                 $"generated-video:{artifact.Sha256}",
                 cleanupToken);
+            await using var referenceLeases = await VideoAssetMutationLease.AcquireReferencesAsync(
+                _db, artifact.Urls, cleanupToken);
             var referenceFilters = new List<FilterDefinition<VideoGenRun>>
             {
                 fb.Eq(x => x.VideoAssetSha256, artifact.Sha256),

@@ -21,6 +21,10 @@ public class ShortVideoMaterialRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// </summary>
     public string? OwnerInstanceId { get; set; }
 
+    /// <summary>本次处理的写回条件；不代替平台任务许可或执行代次，不向客户端暴露。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? ProcessingToken { get; set; }
+
     /// <summary>原始短视频链接</summary>
     public string VideoUrl { get; set; } = string.Empty;
 

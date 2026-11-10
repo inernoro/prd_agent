@@ -143,7 +143,7 @@ export function CodeReviewsPage(): JSX.Element {
           <select aria-label="筛选审查项目" className="cr-input cr-filter-project" value={projectId} onChange={e => updateList({ project: e.target.value || undefined })}><option value="">全部项目</option>{projects.map(p => <option key={p.id} value={p.id}>{p.aliasName || p.name}</option>)}</select>
           <select aria-label="筛选任务状态" className="cr-input cr-filter-state" value={status} onChange={e => updateList({ status: e.target.value })}><option value="all">全部状态</option><option value="active">处理中</option><option value="partial">部分覆盖</option><option value="attention">需处理</option><option value="completed">已完成 / 已保存</option><option value="failed">失败</option><option value="cancelled">已取消</option><option value="queued">排队中</option></select>
           <label className="cr-search cr-filter-query"><Search aria-hidden="true" /><span className="sr-only">搜索审查任务</span><input type="search" className="cr-input" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索报告、分支、SHA" maxLength={300} /></label>
-          <ReviewButton tone="ghost" className="cr-end" onClick={() => updateList({ history: history ? undefined : '1' })}>{history ? '最近审查' : '执行记录'}</ReviewButton>
+          <ReviewButton tone="ghost" className="cr-end" onClick={() => updateList({ history: history ? undefined : '1' })}>{history ? '仅看最近审查' : '全部执行（含历史）'}</ReviewButton>
         </div>
         {listError ? <div className="cr-row-inline"><ErrorNotice message={listError} /><ReviewButton onClick={requestRefresh}>重试读取</ReviewButton></div> : null}
         {data?.newCount ? <div className="cr-notice cr-row-inline" role="status">有 {data.newCount} 条新记录<ReviewButton tone="ghost" onClick={() => { cutoff.current = { scope: requestScope }; updateList({ page: '1' }); requestRefresh(); }}>显示</ReviewButton></div> : null}
@@ -152,7 +152,7 @@ export function CodeReviewsPage(): JSX.Element {
           {data?.tasks.length ? <ReviewTaskList items={data.tasks} selectedId="" projectName={projectName} onSelect={task => select(task)} hrefFor={rowHref} /> : <ReviewEmpty title={query || status !== 'all' ? '没有匹配的记录' : source === 'report' ? '还没有导入文档' : '还没有代码审查记录'} action={<ReviewButton onClick={() => { if (query || status !== 'all') updateList({ q: undefined, status: undefined }); else navigateView(source === 'report' ? 'import' : 'source'); }}>{query || status !== 'all' ? '清空筛选' : source === 'report' ? '导入报告' : '发起审查'}</ReviewButton>}>{query || status !== 'all' ? '调整筛选条件后重试。' : '上传源码，或直接选择平台已连接的项目和分支。'}</ReviewEmpty>}
           {data ? <ReviewPagination {...data.page} onOffset={offset => updateList({ page: String(offset / 10 + 1) })} /> : null}
         </div>}
-        {data ? <p className="cr-form-note" aria-live="polite">{loading ? '正在刷新 · ' : ''}{history ? '全部执行记录' : '每个项目的最近源码审查'}{data.historyCount ? ` · 另有 ${data.historyCount} 条历史执行可查看` : ''}</p> : null}
+        {data ? <div className="cr-list-scope"><p className="cr-form-note" aria-live="polite">{loading ? '正在刷新 · ' : ''}{history ? '全部执行记录，按提交时间排序' : '当前展示每个项目最近一次源码审查；导入文档单独保留。'}</p>{!history && data.historyCount > 0 ? <button type="button" className="cr-history-link" onClick={() => updateList({ history: '1' })}>查看 {data.historyCount.toLocaleString()} 条历史执行<ChevronRight aria-hidden="true" /></button> : null}</div> : null}
       </>}
   </div></Workspace></AppShell>;
 }

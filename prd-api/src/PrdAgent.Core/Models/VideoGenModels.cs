@@ -250,6 +250,11 @@ public class VideoGenScene : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// <summary>本镜成本（美元）</summary>
     public double? Cost { get; set; }
 
+    /// <summary>取消后仅查询原已提交作业的收据，不代表本地任务恢复生成。</summary>
+    public string? UpstreamStatus { get; set; }
+    public DateTime? ReconciledAt { get; set; }
+    public DateTime? ReceiptQueuedAt { get; set; }
+
     /// <summary>本镜单段视频 URL（已下载到 COS）</summary>
     public string? VideoUrl { get; set; }
 
