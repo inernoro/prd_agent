@@ -50,7 +50,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.20.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.20.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3629,7 +3629,16 @@ def cmd_code_review_submit(args: argparse.Namespace) -> None:
     for name in ("title", "email", "idempotency_key"):
         if value := getattr(args, name, None):
             fields["idempotencyKey" if name == "idempotency_key" else name] = value
+    if getattr(args, 'user_key_env', None):
+        capability = _code_review_request('GET', '/api/code-reviews/capabilities')
+        if capability.get('userKeyConfigured') is not True or capability.get('userKeyBindingVersion') != 1:
+            die('当前 CDS 不支持用户 Key 任务隔离，未提交审查或使用平台额度')
+        raw_key = os.environ.get(args.user_key_env, '').strip()
+        if not raw_key or not args.provider or not args.model:
+            die('用户 Key 需要已配置的 --user-key-env、--provider 与 --model')
+        fields['userKey'] = {'provider': args.provider, 'model': args.model, 'apiKey': raw_key, 'tokenLimit': args.token_limit}
     if args.zip_file:
+        if 'userKey' in fields: fields['userKey'] = json.dumps(fields['userKey'])
         if args.ref:
             die("ZIP 不接受 --ref；仓库版本只适用于 --github")
         filename, content = _code_review_file(args.zip_file, (".zip",), 100 * 1024 * 1024)
@@ -3668,6 +3677,10 @@ def cmd_code_review_task(args: argparse.Namespace) -> None:
     project = _code_review_project(args)
     endpoint = "/api/code-reviews/" + urllib.parse.quote(args.id, safe="")
     method = "GET"
+    if args.sub == "usage":
+        _code_review_assert_project(_code_review_request("GET", endpoint), project)
+        ok(_code_review_request("GET", endpoint + "/usage"))
+        return
     if args.sub == "show" and getattr(args, "results", False):
         query = {"includeResult": "1", "offset": args.offset, "limit": args.limit}
         if args.severity:
@@ -8119,6 +8132,8 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
 
     CDS 运行时变量白名单（由 CDS 服务端在容器启动时注入，verify 阶段无法预知）：
       - CDS_HOST：CDS 服务地址
+      - CDS_PROJECT_ID / CDS_PROJECT_SLUG：项目身份
+      - CDS_COMMIT_SHA / CDS_BRANCH_SLUG：本次部署的版本身份
       - CDS_*_PORT：CDS 为每个 service 分配的端口变量
       - CDS_*_HOST：CDS 为每个 service 分配的 hostname 变量
       - CDS_*_URL：CDS 自动组装的连接串
@@ -8128,6 +8143,13 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
     # 仅包含 CDS 服务端自动分配的网络层变量（端口/主机名/连接串）。
     # _PASSWORD / _USER / _DB 等凭据变量不在此列——它们必须由项目在 x-cds-env 中显式定义。
     _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL")
+    _CDS_RUNTIME_EXACT = {
+        "CDS_HOST",
+        "CDS_PROJECT_ID",
+        "CDS_PROJECT_SLUG",
+        "CDS_COMMIT_SHA",
+        "CDS_BRANCH_SLUG",
+    }
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
@@ -8145,7 +8167,9 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
             if var in env_self_keys:
                 continue
             # CDS 运行时变量白名单
-            if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
+            if var in _CDS_RUNTIME_EXACT or (
+                var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES)
+            ):
                 issues.append({
                     "severity": "INFO",
                     "service": svc_name,
@@ -10832,11 +10856,15 @@ def _build_parser() -> argparse.ArgumentParser:
     review_submit.add_argument("--title"); review_submit.add_argument("--email")
     review_submit.add_argument("--exclude", action="append", default=[], help="排除目录或模式，可重复")
     review_submit.add_argument("--idempotency-key", help="重试同一次提交时复用的幂等键")
+    review_submit.add_argument('--user-key-env', help='从本地环境变量读取用户 Key，不接受明文参数')
+    review_submit.add_argument('--provider', choices=['openai', 'anthropic', 'openrouter', 'deepseek'])
+    review_submit.add_argument('--model', help='用户 Key 的模型名称')
+    review_submit.add_argument('--token-limit', type=int, default=200000, help='任务保守 Token 保护额度')
     review_submit.set_defaults(func=cmd_code_review_submit)
     review_list = review.add_parser("list", help="列出当前项目的任务及报告")
     review_list.add_argument("--project"); review_list.set_defaults(func=cmd_code_review_list)
     review_list.add_argument("--include-branches", action="store_true", help="附带当前项目可审查的 CDS 分支 ID 与名称")
-    for action, help_text in (("show", "查询进度和结果"), ("cancel", "取消任务"), ("retry", "重试失败任务"), ("mail-retry", "只重试邮件投递")):
+    for action, help_text in (("show", "查询进度和结果"), ("usage", "查询用户 Key 用量"), ("cancel", "取消任务"), ("retry", "重试失败任务"), ("mail-retry", "只重试邮件投递")):
         review_task = review.add_parser(action, help=help_text)
         review_task.add_argument("id"); review_task.add_argument("--project")
         if action == "show":

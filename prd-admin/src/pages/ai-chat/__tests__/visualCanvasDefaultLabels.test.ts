@@ -11,6 +11,7 @@ import {
   type CanvasImageItem, type PersistedCanvasStateV1,
 } from '@/lib/visualAgentCanvasPersist';
 import { chipToken, inlineMarksToTokens, parseChipTokenText } from '@/lib/chipTokenText';
+import { cleanDisplayTitle } from '@/lib/visualAgentPromptUtils';
 
 // 与已有键盘回归一致：AST只定位，执行的是实际创建、标题和复制回调。
 // 不复制生产命名算法，不用源码是否含中文代替运行结果，也不声称覆盖真实系统剪贴板。
@@ -60,7 +61,7 @@ for (const declaration of source.statements.filter(ts.isImportDeclaration)) {
   }
 }
 function evaluate<T>(node: ts.Node, scope: Scope = {}): T {
-  return runInNewContext(transpile('(' + node.getText(source) + ')'), { ...labelBindings, ...scope }) as T;
+  return runInNewContext(transpile('(' + node.getText(source) + ')'), { cleanDisplayTitle, ...labelBindings, ...scope }) as T;
 }
 const place = one(find((node): node is ts.VariableDeclaration =>
   ts.isVariableDeclaration(node) && node.name.getText(source) === 'placeAtPointer'), '形状创建入口');
@@ -279,6 +280,17 @@ describe('既有文字类型的系统默认来源，不迁移显式正文', () =
 });
 
 describe('显式用户数据与图片引用身份不迁移', () => {
+  it.each(['shape', 'text', 'generator'] as const)('非图片%s的显式名称保留图片标记，标题不额外清洗', kind => {
+    const prompt = '  用户自己的 @img7 记录  ';
+    const item = kind === 'text' ? textFixture(prompt, prompt) : fixture(kind, prompt);
+    const before = JSON.stringify(item);
+    expect(title(item)).toBe(prompt);
+    const restored = roundTrip(item);
+    expect(restored.prompt).toContain('@img7');
+    expect(title(restored)).toBe(restored.prompt);
+    expect(JSON.stringify(item)).toBe(before);
+  });
+
   it.each(['用户自己的名字', 'Shape:rect', 'Image Generator'])('显式名称%s逐项往返保留', prompt => {
     for (const kind of ['shape', 'generator'] as const) {
       const item = fixture(kind, prompt), before = JSON.stringify(item), restored = roundTrip(item);

@@ -12,12 +12,14 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import type { EditorState, LexicalEditor } from 'lexical';
 import {
   $createParagraphNode,
+  $createRangeSelectionFromDom,
   $getRoot,
   $getSelection,
   $isElementNode,
   $isParagraphNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   COMMAND_PRIORITY_HIGH,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -28,7 +30,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 
 import {
   hasChipToken,
   inlineMarksToTokens,
-  parseChipTokenText,
+  parseComposerImageReferences,
 } from '@/lib/chipTokenText';
 import { ImageChipNode, $createImageChipNode, $isImageChipNode } from './ImageChipNode';
 import { ImageMentionPlugin, type ImageOption } from './ImageMentionPlugin';
@@ -214,7 +216,13 @@ function EditorInner({
         editor.update(() => {
           const selection = $getSelection();
           if ($isRangeSelection(selection)) {
-            selection.insertText(text);
+            for (const segment of parseComposerImageReferences(text, imageOptions)) {
+              if (segment.type === 'text') selection.insertText(segment.text);
+              else selection.insertNodes([$createImageChipNode({
+                canvasKey: segment.option.key, refId: segment.option.refId, src: segment.option.src,
+                label: segment.option.label, ready: segment.valid,
+              })]);
+            }
           }
         });
       },
@@ -273,15 +281,22 @@ function EditorInner({
         });
       },
     }),
-    [editor]
+    [editor, imageOptions]
   );
 
   // Lovart 式 chip 文本 token（对齐 BrandAI ChatPanel）：
   // - 复制/剪切：选区含 chip 时序列化为 "[@image:#N:canvasKey:src]" 纯文本，可跨输入框/外部应用携带；
   // - 粘贴：token 的 canvasKey 命中当前 imageOptions 才还原为就绪 chip（refId/src 以当前集合为准，
-  //   防陈旧 token 造幻觉引用），未命中保持纯文本；图片文件粘贴仍走既有 onPasteImage 通道。
+  //   防陈旧 token 造幻觉引用），未命中显示失效卡片；旧编号文字共用恢复入口，图片文件仍走 onPasteImage。
   useEffect(() => {
     const $serializeSelection = (): string | null => {
+      // 浏览器全选先于 Lexical 的 selectionchange 同步，紧接着复制/剪切时必须读取当前真实选区。
+      const domSelection = editor.getRootElement()?.ownerDocument.defaultView?.getSelection() ?? null;
+      const rootElement = editor.getRootElement();
+      if (domSelection && rootElement?.contains(domSelection.anchorNode) && rootElement.contains(domSelection.focusNode)) {
+        const liveSelection = $createRangeSelectionFromDom(domSelection, editor);
+        if (liveSelection) $setSelection(liveSelection);
+      }
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return null;
       const chipMeta = new Map<number, { canvasKey: string; src: string }>();
@@ -332,29 +347,23 @@ function EditorInner({
         const items = Array.from(dt.items ?? []);
         if (items.some((it) => it.type.startsWith('image/'))) return false;
         const text = dt.getData('text/plain');
-        if (!text || !hasChipToken(text)) return false;
+        if (!text || (!hasChipToken(text) && !/@img\d+/.test(text))) return false;
         event.preventDefault();
-        const optionByKey = new Map(imageOptions.map((o) => [o.key, o]));
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return true;
-        for (const seg of parseChipTokenText(text)) {
+        for (const seg of parseComposerImageReferences(text, imageOptions)) {
           if (seg.type === 'text') {
             if (seg.text) selection.insertText(seg.text);
             continue;
           }
-          const opt = optionByKey.get(seg.canvasKey);
-          if (!opt) {
-            // 不在当前画布可选集 → 原样保留 token 文本，不构造幻觉引用
-            selection.insertText(seg.raw);
-            continue;
-          }
+          const opt = seg.option;
           selection.insertNodes([
             $createImageChipNode({
               canvasKey: opt.key,
               refId: opt.refId,
               src: opt.src,
               label: opt.label,
-              ready: true, // 粘贴还原即就绪（实体色），同 BrandAI 语义
+              ready: seg.valid,
             }),
           ]);
         }

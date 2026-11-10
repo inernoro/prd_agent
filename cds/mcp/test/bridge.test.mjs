@@ -18,6 +18,7 @@ const key = 'cdsp_test_not_a_real_credential';
 const task = { id: 'task-1', projectId: 'project-one', status: 'running', reportId: 'report-1' };
 const completeCatalog = TOOLS.map((tool) => tool.name);
 let catalog = completeCatalog;
+let userKeyBindingVersion = 1;
 
 before(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-review-mcp-'));
@@ -35,7 +36,7 @@ before(async () => {
     res.setHeader('content-type', 'application/json');
     if (req.headers['x-ai-access-key'] !== key) { res.writeHead(401); res.end('{}'); return; }
     if (req.url === '/api/code-reviews/capabilities') {
-      res.end(JSON.stringify({ engineConfigured: true, mailConfigured: false, storageConfigured: true, tools: catalog }));
+      res.end(JSON.stringify({ engineConfigured: true, mailConfigured: false, storageConfigured: true, tools: catalog, userKeyConfigured: true, userKeyBindingVersion }));
       return;
     }
     if (req.url.includes('redirect')) { res.writeHead(302, { location: host + '/credential-sink' }); res.end('{}'); return; }
@@ -271,4 +272,40 @@ test('cold historical results remain pollable without retrying a review', async 
     assert.equal(response.isError, undefined); assert.equal(parsed(response).resultLoading, true);
     assert.equal(parsed(response).task.status, 'failed'); assert.equal(requests.at(-1).method, 'GET');
   });
+});
+
+test('real stdio BYOK submission reads only a named local variable and keeps the key out of the response', async () => {
+  const previous = process.env.MCP_BYOK_TEST_KEY;
+  process.env.MCP_BYOK_TEST_KEY = 'not-real-provider-test-credential';
+  try {
+    await withClient(async client => {
+      for (const source of [{ zipPath: 'code.zip' }, { githubUrl: 'https://github.com/owner/repo' }]) {
+        const result = await client.callTool({ name: 'cds_code_review_submit', arguments: { ...source, userKey: { provider: 'openai', model: 'gpt-4.1-mini', apiKeyEnv: 'MCP_BYOK_TEST_KEY', tokenLimit: 30000 } } });
+        assert.equal(result.isError, undefined);
+        assert.equal(JSON.stringify(result).includes(process.env.MCP_BYOK_TEST_KEY), false);
+        const outgoing = requests.filter(r => r.method === 'POST' && r.url === '/api/code-reviews').at(-1);
+        assert.ok(outgoing.body.includes(process.env.MCP_BYOK_TEST_KEY));
+        assert.equal(outgoing.body.includes('apiKeyEnv'), false);
+        assert.ok(outgoing.body.includes('30000'));
+      }
+      const count = requests.filter(r => r.method === 'POST').length;
+      const invalid = await client.callTool({ name: 'cds_code_review_submit', arguments: { githubUrl: 'https://github.com/owner/repo', userKey: { provider: 'openai', model: 'chosen', apiKey: 'plaintext-not-allowed' } } });
+      assert.equal(invalid.isError, true);
+      assert.equal(requests.filter(r => r.method === 'POST').length, count);
+    });
+  } finally { if (previous === undefined) delete process.env.MCP_BYOK_TEST_KEY; else process.env.MCP_BYOK_TEST_KEY = previous; }
+});
+
+
+test('a legacy backend cannot silently ignore BYOK and consume platform quota', async () => {
+  userKeyBindingVersion = undefined;
+  try {
+    await withClient(async client => {
+      const before = requests.filter(r => r.method === 'POST').length;
+      const result = await client.callTool({ name: 'cds_code_review_submit', arguments: { githubUrl: 'https://github.com/owner/repo', userKey: { provider: 'openai', model: 'chosen', apiKeyEnv: 'UNCONFIGURED_KEY_FOR_LEGACY_TEST' } } });
+      assert.equal(result.isError, true);
+      assert.ok(result.content[0].text.includes('不支持用户 Key 隔离'));
+      assert.equal(requests.filter(r => r.method === 'POST').length, before);
+    });
+  } finally { userKeyBindingVersion = 1; }
 });

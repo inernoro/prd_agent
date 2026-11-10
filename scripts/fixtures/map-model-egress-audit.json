@@ -2,6 +2,12 @@
   "version": 1,
   "scope": "prd-api/src 与 llmgw/serving；有限既有调用指纹，不豁免整目录",
   "files": {
+    "llmgw/serving/CodeReviewUserKeys.cs": {
+      "calls": {
+        "dependency:GetRequiredService:12bf3cc94a24b0ecb1545fe4": 1
+      },
+      "purpose": "现网个人审查密钥端点仅解析既有统一LlmGateway，按任务身份与物理额度准入发送；无新HTTP客户端或供应商SDK，新增调用仍逐指纹拒绝"
+    },
     "llmgw/serving/LiveAsrGatewayEndpoint.cs": {
       "calls": {
         "call:SendAsync:c59a53b24c4a50b349a20022": 1,

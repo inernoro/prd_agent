@@ -1214,7 +1214,9 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
         return (
           <span key={`${item.label}-${idx}`} className="inline-flex items-center gap-1.5">
             {item.href && !isLast ? (
-              <a href={item.href} className={className}>
+              item.href.startsWith('/') && !item.href.startsWith('//') ? <Link to={item.href} className={className}>
+                {item.label}
+              </Link> : <a href={item.href} className={className}>
                 {item.label}
               </a>
             ) : (

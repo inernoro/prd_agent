@@ -16,6 +16,7 @@ import type {
   ResolvedImageRef,
 } from './imageRefContract';
 import { cleanDisplayTitle } from './visualAgentPromptUtils';
+import { parseChipTokenText } from './chipTokenText';
 
 /**
  * 旧格式内联图片的正则（兼容首页带入）
@@ -45,17 +46,35 @@ export function resolveImageRefs(input: ImageRefResolveInput): ImageRefResolveRe
 
   // 用于追踪已处理的 refId（避免 chipRefs 和 text 重复）
   const processedRefIds = new Set<number>();
+  const missingReference = () => {
+    errors.push('参考图已移除或不在当前画板中，请重新选择图片后再生成。');
+  };
+  const normalizedText = parseChipTokenText(rawText).map((segment) => {
+    if (segment.type === 'text') {
+      return segment.text.replace(new RegExp(IMG_REF_REGEX.source, 'g'), (mark, id) => {
+        const chip = chipRefs.find((ref) => ref.refId === Number(id));
+        const item = chip && canvas.find((candidate) => candidate.key === chip.canvasKey);
+        return item ? `@img${item.refId}` : mark;
+      });
+    }
+    const item = canvas.find((candidate) => candidate.key === segment.canvasKey);
+    if (!item) {
+      missingReference();
+      return segment.raw;
+    }
+    return `@img${item.refId}`;
+  }).join('');
 
   // 1. 优先处理 chipRefs（来自 RichComposer）
   for (const chip of chipRefs) {
     const item = canvas.find((c) => c.key === chip.canvasKey);
     if (!item) {
-      warnings.push(`chip 引用的图片不存在: @img${chip.refId} (key=${chip.canvasKey})`);
+      missingReference();
       continue;
     }
     if (seenKeys.has(item.key)) continue;
     seenKeys.add(item.key);
-    processedRefIds.add(chip.refId);
+    processedRefIds.add(item.refId);
     refs.push({
       canvasKey: item.key,
       refId: item.refId,
@@ -66,12 +85,12 @@ export function resolveImageRefs(input: ImageRefResolveInput): ImageRefResolveRe
   }
 
   // 2. 解析文本中的 @imgN（仅补充 chipRefs 中没有的）
-  const textRefIds = extractRefIdsFromText(rawText);
+  const textRefIds = errors.length === 0 ? extractRefIdsFromText(normalizedText) : [];
   for (const refId of textRefIds) {
     if (processedRefIds.has(refId)) continue; // chip 已经有了
     const item = canvas.find((c) => c.refId === refId);
     if (!item) {
-      warnings.push(`文本中引用的图片不存在: @img${refId}`);
+      missingReference();
       continue;
     }
     if (seenKeys.has(item.key)) continue;
@@ -87,7 +106,7 @@ export function resolveImageRefs(input: ImageRefResolveInput): ImageRefResolveRe
   }
 
   // 3. 如果没有任何引用，使用 selectedKeys 作为默认
-  if (refs.length === 0 && selectedKeys.length > 0) {
+  if (errors.length === 0 && refs.length === 0 && selectedKeys.length > 0) {
     for (const key of selectedKeys) {
       const item = canvas.find((c) => c.key === key);
       if (!item) continue;
@@ -104,10 +123,10 @@ export function resolveImageRefs(input: ImageRefResolveInput): ImageRefResolveRe
   }
 
   // 4. 处理旧格式内联图片（仅当没有其他引用时）
-  let cleanText = rawText;
+  let cleanText = normalizedText;
   if (inlineImage?.src) {
     // 清理旧格式标记
-    cleanText = rawText.replace(OLD_FORMAT_REGEX, '').trim();
+    cleanText = normalizedText.replace(OLD_FORMAT_REGEX, '').trim();
 
     // 尝试在 canvas 中找到匹配的图片
     const inlineItem = canvas.find((c) => c.src === inlineImage.src);
